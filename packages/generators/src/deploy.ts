@@ -2,49 +2,46 @@ import type { AirDocument } from "@anvil/air";
 import { stringify as toYaml } from "yaml";
 
 /**
- * Deployment artifacts (spec: "Deployment artifacts"). Cloud Run is the
- * canonical target, generated as a **runtime-target plugin** — the compiler
- * compiles AIR, never Cloud Run directly. Each tool surface becomes one small,
- * stateless service. These are emitted at build time; Anvil holds no cloud
- * credentials and does not execute the deploy — it produces the artifacts and
- * the plan a human/CI applies.
+ * Deployment artifacts for Cloud Run. Anvil emits these at build time; it holds
+ * no cloud credentials and never applies them — a human/CI does.
  *
- * GCP-native, not generic YAML: Cloud Build → Artifact Registry → Cloud Run,
- * with a least-privilege service account, Secret Manager bindings, a durable
- * Firestore idempotency ledger (so the fail-closed prod contract holds), VPC
- * egress, structured logging/trace, Terraform, and per-environment overlays.
+ * **One owner per concern** (this is the whole point of the file). Earlier Anvil
+ * emitted five overlapping mechanisms — a knative `service.yaml`, an
+ * `iam.plan.json`, per-env `overlays/`, a `gcloud run deploy` step, *and*
+ * Terraform — that set the same image tag / env vars / IAM three different ways
+ * and drifted. Now:
+ *
+ *   - **Terraform** owns all infrastructure *and* runtime configuration: the
+ *     service account, Artifact Registry, Secret Manager + its IAM, the Firestore
+ *     idempotency ledger + its IAM, the Cloud Run service (image, env vars,
+ *     scaling, resources, ingress), and invoker IAM. It is the single source of
+ *     truth for every deployable setting.
+ *   - **Cloud Build** owns the pipeline: build the prebuilt image, push it, and
+ *     run `terraform apply` with the built image tag. It sets *no* runtime config
+ *     of its own — it only hands Terraform the image tag and project/region.
+ *   - **Dockerfile** owns the container (prebuilt runtime, never rebuilds Anvil).
+ *
+ * No file contains literal `PROJECT`/`REGION` placeholders; everything flows
+ * through Terraform variables, so the bundle is applyable as emitted.
  */
 export function generateDeploy(air: AirDocument): Record<string, string> {
-  const id = air.service.id;
-  const host = safeHost(air.service.servers[0]?.url);
   return {
     "deploy/Dockerfile": dockerfile(),
     "deploy/.dockerignore": dockerignore(),
     "deploy/cloudbuild.yaml": cloudBuild(air),
-    "deploy/cloudrun.service.yaml": cloudRunService(air),
-    "deploy/iam.plan.json": `${JSON.stringify(iamPlan(air), null, 2)}\n`,
     "deploy/terraform/main.tf": terraformMain(air),
-    "deploy/terraform/variables.tf": terraformVariables(),
-    "deploy/overlays/dev.env.yaml": overlay(air, "dev"),
-    "deploy/overlays/staging.env.yaml": overlay(air, "staging"),
-    "deploy/overlays/prod.env.yaml": overlay(air, "prod"),
-    "deploy/env.schema.json": `${JSON.stringify(envSchema(host), null, 2)}\n`,
+    "deploy/terraform/variables.tf": terraformVariables(air),
+    "deploy/env.schema.json": `${JSON.stringify(envSchema(safeHost(air.service.servers[0]?.url)), null, 2)}\n`,
     "deploy/secrets.required.yaml": toYaml(secretsContract(air)),
     "deploy/README.md": deployReadme(air),
-    "deploy/artifact-metadata.json": `${JSON.stringify(
-      {
-        service: id,
-        version: air.service.version,
-        anvilVersion: air.anvilVersion,
-        operations: air.operations.length,
-        approved: air.operations.filter((o) => o.state === "approved").length,
-        sourceKind: air.service.source.kind,
-        runtimeTarget: "cloud-run",
-      },
-      null,
-      2,
-    )}\n`,
   };
+}
+
+/** True when the surface has a required-idempotency mutation → needs Firestore. */
+function needsLedger(air: AirDocument): boolean {
+  return air.operations.some(
+    (o) => o.effect.kind === "mutation" && o.idempotency.mode === "required",
+  );
 }
 
 /**
@@ -78,7 +75,12 @@ function dockerignore(): string {
   return ["cli", "mcp", "mock", "skill", "docs", "tests", "deploy", "*.test.*", "src"].join("\n");
 }
 
-/** Cloud Build: build → push to Artifact Registry → deploy to Cloud Run. */
+/**
+ * Cloud Build owns the pipeline only: build → push → `terraform apply`. It sets
+ * no runtime config; it passes Terraform the built image tag (`$SHORT_SHA`) and
+ * project/region. Terraform is the single owner of the deployed service, so the
+ * image tag has exactly one source of truth.
+ */
 function cloudBuild(air: AirDocument): string {
   const id = air.service.id;
   const image = "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/" + `${id}-tools:$SHORT_SHA`;
@@ -91,26 +93,24 @@ function cloudBuild(air: AirDocument): string {
       },
       { id: "push", name: "gcr.io/cloud-builders/docker", args: ["push", image] },
       {
-        id: "deploy",
-        name: "gcr.io/google.com/cloudsdktool/cloud-sdk",
-        entrypoint: "gcloud",
+        id: "apply",
+        name: "hashicorp/terraform",
+        entrypoint: "sh",
         args: [
-          "run",
-          "deploy",
-          `${id}-tools`,
-          "--image",
-          image,
-          "--region",
-          "${_REGION}",
-          "--service-account",
-          `${id}-tools@\${PROJECT_ID}.iam.gserviceaccount.com`,
-          "--no-allow-unauthenticated",
-          "--ingress",
-          "internal",
-          "--vpc-egress",
-          "all-traffic",
-          "--set-env-vars",
-          `ANVIL_SERVICE_ID=${id},ANVIL_ENV=\${_ANVIL_ENV},ANVIL_LEDGER=\${_ANVIL_LEDGER}`,
+          "-c",
+          [
+            "cd deploy/terraform",
+            "terraform init -input=false",
+            // Terraform owns every deployed setting; Cloud Build only supplies the
+            // image tag it just built plus project/region. No env vars, IAM, or
+            // scaling are set here — that would be a second owner.
+            "terraform apply -input=false -auto-approve" +
+              ' -var project_id="$PROJECT_ID"' +
+              ' -var region="${_REGION}"' +
+              ' -var ar_repo="${_AR_REPO}"' +
+              ' -var image_tag="$SHORT_SHA"' +
+              ' -var anvil_env="${_ANVIL_ENV}"',
+          ].join(" && "),
         ],
       },
     ],
@@ -119,165 +119,25 @@ function cloudBuild(air: AirDocument): string {
       _REGION: "us-central1",
       _AR_REPO: "anvil",
       _ANVIL_ENV: "prod",
-      // Durable idempotency ledger — required for the fail-closed prod contract.
-      _ANVIL_LEDGER: `firestore://\${PROJECT_ID}/(default)`,
     },
     options: { logging: "CLOUD_LOGGING_ONLY" },
   });
 }
 
-function cloudRunService(air: AirDocument): string {
-  const id = air.service.id;
-  const prod = air.service.environment === "prod";
-  return toYaml({
-    apiVersion: "serving.knative.dev/v1",
-    kind: "Service",
-    metadata: {
-      name: `${id}-tools`,
-      annotations: { "run.googleapis.com/ingress": "internal" },
-    },
-    spec: {
-      template: {
-        metadata: {
-          annotations: {
-            "autoscaling.knative.dev/minScale": prod ? "1" : "0",
-            "autoscaling.knative.dev/maxScale": "10",
-            "run.googleapis.com/execution-environment": "gen2",
-            // Route upstream egress through a connector so hosts can be pinned.
-            "run.googleapis.com/vpc-access-connector":
-              "projects/PROJECT/locations/REGION/connectors/anvil",
-            "run.googleapis.com/vpc-access-egress": "all-traffic",
-          },
-        },
-        spec: {
-          containerConcurrency: 40,
-          timeoutSeconds: 60,
-          serviceAccountName: `${id}-tools@PROJECT.iam.gserviceaccount.com`,
-          containers: [
-            {
-              image: `REGION-docker.pkg.dev/PROJECT/anvil/${id}-tools:${air.service.version}`,
-              ports: [{ containerPort: 8080 }],
-              resources: { limits: { cpu: "1", memory: "512Mi" } },
-              env: [
-                { name: "ANVIL_SERVICE_ID", value: id },
-                { name: "ANVIL_ARTIFACT_VERSION", value: String(air.service.version) },
-                { name: "ANVIL_ENV", value: air.service.environment ?? "prod" },
-                { name: "ANVIL_ALLOWED_HOSTS", value: safeHost(air.service.servers[0]?.url) ?? "" },
-                { name: "ANVIL_AUTH_PROFILE", value: air.service.environment ?? "prod" },
-                // Durable ledger: without it the runtime fails closed on
-                // required-idempotency mutations outside dev (safety, not sugar).
-                { name: "ANVIL_LEDGER", value: "firestore://PROJECT/(default)" },
-                { name: "ANVIL_OTEL_EXPORTER", value: "cloud_trace" },
-                ...secretEnv(air),
-              ],
-              startupProbe: { httpGet: { path: "/readyz" } },
-              livenessProbe: { httpGet: { path: "/healthz" } },
-            },
-          ],
-        },
-      },
-    },
-  });
-}
-
-/** Secret Manager → env bindings for the service's auth material. */
-function secretEnv(air: AirDocument): Array<Record<string, unknown>> {
-  if (air.service.auth.type === "none") return [];
-  const id = air.service.id;
-  return [
-    {
-      name: `ANVIL_${id.toUpperCase()}_TOKEN`,
-      valueFrom: {
-        secretKeyRef: { name: `${id}-auth-token`, key: "latest" },
-      },
-    },
-  ];
-}
-
 /**
- * Least-privilege IAM plan: a dedicated runtime service account granted only
- * what this surface needs — read its secret, use the Firestore ledger, write
- * logs/traces/metrics — plus who may invoke it. No project-level roles.
+ * Terraform is the single owner of infrastructure *and* runtime configuration.
+ * Every deployed setting — SA, Artifact Registry, Secret + IAM, Firestore ledger
+ * + IAM, the Cloud Run service (image, env vars, scaling, resources, ingress),
+ * invoker IAM — is declared here and nowhere else.
  */
-function iamPlan(air: AirDocument): unknown {
-  const id = air.service.id;
-  const sa = `${id}-tools@PROJECT.iam.gserviceaccount.com`;
-  const needsSecret = air.service.auth.type !== "none";
-  const needsLedger = air.operations.some(
-    (o) => o.effect.kind === "mutation" && o.idempotency.mode === "required",
-  );
-  const grants: Array<{ role: string; member: string; on: string; why: string }> = [
-    {
-      role: "roles/logging.logWriter",
-      member: `serviceAccount:${sa}`,
-      on: "project",
-      why: "structured execution records to Cloud Logging",
-    },
-    {
-      role: "roles/cloudtrace.agent",
-      member: `serviceAccount:${sa}`,
-      on: "project",
-      why: "OpenTelemetry spans to Cloud Trace",
-    },
-    {
-      role: "roles/monitoring.metricWriter",
-      member: `serviceAccount:${sa}`,
-      on: "project",
-      why: "custom metrics to Cloud Monitoring",
-    },
-  ];
-  if (needsSecret) {
-    grants.push({
-      role: "roles/secretmanager.secretAccessor",
-      member: `serviceAccount:${sa}`,
-      on: `secret:${id}-auth-token`,
-      why: "read the upstream auth token at boot (scoped to this secret only)",
-    });
-  }
-  if (needsLedger) {
-    grants.push({
-      role: "roles/datastore.user",
-      member: `serviceAccount:${sa}`,
-      on: "project",
-      why: "read/write the Firestore idempotency ledger",
-    });
-  }
-  return {
-    serviceAccount: {
-      accountId: `${id}-tools`,
-      email: sa,
-      displayName: `Anvil runtime for ${id}`,
-    },
-    grants,
-    invokers: [
-      {
-        role: "roles/run.invoker",
-        member: "serviceAccount:CALLER@PROJECT.iam.gserviceaccount.com",
-        on: `service:${id}-tools`,
-        why: "the only identities allowed to call this internal service",
-      },
-    ],
-    workloadIdentity: {
-      note: "Bind the runtime SA to the Cloud Run service; callers authenticate with their own SA and an ID token. No keys are minted or stored.",
-    },
-    ledger: needsLedger
-      ? {
-          backend: "firestore",
-          collection: `anvil-idempotency-${id}`,
-          note: "durable, cross-instance replay protection",
-        }
-      : null,
-  };
-}
-
 function terraformMain(air: AirDocument): string {
   const id = air.service.id;
-  const needsSecret = air.service.auth.type !== "none";
-  const needsLedger = air.operations.some(
-    (o) => o.effect.kind === "mutation" && o.idempotency.mode === "required",
-  );
+  const secret = air.service.auth.type !== "none";
+  const ledger = needsLedger(air);
+  const host = safeHost(air.service.servers[0]?.url) ?? "";
   return `# Generated by Anvil — Cloud Run runtime for "${id}" (one tool surface).
-# Anvil emits this plan; it does not apply it (no cloud credentials held).
+# Anvil emits this plan; it does not apply it (no cloud credentials held). This
+# file is the single owner of every deployed setting for this service.
 
 resource "google_service_account" "runtime" {
   account_id   = "${id}-tools"
@@ -291,8 +151,27 @@ resource "google_artifact_registry_repository" "anvil" {
   format        = "DOCKER"
   project       = var.project_id
 }
+
+# Least privilege: logging / trace / metrics only, scoped to this SA.
+resource "google_project_iam_member" "logging" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:\${google_service_account.runtime.email}"
+}
+
+resource "google_project_iam_member" "trace" {
+  project = var.project_id
+  role    = "roles/cloudtrace.agent"
+  member  = "serviceAccount:\${google_service_account.runtime.email}"
+}
+
+resource "google_project_iam_member" "metrics" {
+  project = var.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:\${google_service_account.runtime.email}"
+}
 ${
-  needsSecret
+  secret
     ? `
 resource "google_secret_manager_secret" "auth_token" {
   secret_id = "${id}-auth-token"
@@ -300,6 +179,7 @@ resource "google_secret_manager_secret" "auth_token" {
   replication { auto {} }
 }
 
+# Scoped to this one secret — never a project-wide secret role.
 resource "google_secret_manager_secret_iam_member" "runtime_reads_token" {
   secret_id = google_secret_manager_secret.auth_token.id
   role      = "roles/secretmanager.secretAccessor"
@@ -308,7 +188,7 @@ resource "google_secret_manager_secret_iam_member" "runtime_reads_token" {
 `
     : ""
 }${
-  needsLedger
+  ledger
     ? `
 # Durable idempotency ledger. Required: the runtime fails closed on
 # required-idempotency mutations outside dev without it.
@@ -335,16 +215,51 @@ resource "google_cloud_run_v2_service" "tools" {
 
   template {
     service_account = google_service_account.runtime.email
-    scaling { min_instance_count = var.min_instances }
+    scaling {
+      min_instance_count = var.min_instances
+      max_instance_count = var.max_instances
+    }
     containers {
       image = "\${var.region}-docker.pkg.dev/\${var.project_id}/\${var.ar_repo}/${id}-tools:\${var.image_tag}"
+      resources { limits = { cpu = "1", memory = "512Mi" } }
+      ports { container_port = 8080 }
+
+      env {
+        name  = "ANVIL_SERVICE_ID"
+        value = "${id}"
+      }
       env {
         name  = "ANVIL_ENV"
         value = var.anvil_env
       }
       env {
+        name  = "ANVIL_ALLOWED_HOSTS"
+        value = "${host}"
+      }
+      env {
+        name  = "ANVIL_AUTH_PROFILE"
+        value = var.anvil_env
+      }
+      env {
+        name  = "ANVIL_OTEL_EXPORTER"
+        value = "cloud_trace"
+      }
+      env {
         name  = "ANVIL_LEDGER"
-        value = ${needsLedger ? '"firestore://\\${var.project_id}/(default)"' : '""'}
+        value = ${ledger ? '"firestore://\\${var.project_id}/(default)"' : '""'}
+      }${
+        secret
+          ? `
+      env {
+        name = "ANVIL_${id.toUpperCase()}_TOKEN"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.auth_token.secret_id
+            version = "latest"
+          }
+        }
+      }`
+          : ""
       }
     }
   }
@@ -362,7 +277,8 @@ resource "google_cloud_run_v2_service_iam_member" "invokers" {
 `;
 }
 
-function terraformVariables(): string {
+function terraformVariables(air: AirDocument): string {
+  const prod = air.service.environment === "prod";
   return `variable "project_id" { type = string }
 variable "region" {
   type    = string
@@ -379,28 +295,17 @@ variable "anvil_env" {
 }
 variable "min_instances" {
   type    = number
-  default = 1
+  default = ${prod ? 1 : 0}
+}
+variable "max_instances" {
+  type    = number
+  default = 10
 }
 variable "invoker_members" {
   type    = list(string)
   default = []
 }
 `;
-}
-
-/** Per-environment overlay: the knobs that differ across dev/staging/prod. */
-function overlay(air: AirDocument, env: "dev" | "staging" | "prod"): string {
-  const host = safeHost(air.service.servers[0]?.url) ?? "";
-  return toYaml({
-    env,
-    ANVIL_ENV: env,
-    ANVIL_ALLOWED_HOSTS: host,
-    // In-memory ledger is acceptable only in dev; staging/prod need durable.
-    ANVIL_LEDGER: env === "dev" ? "" : "firestore://PROJECT/(default)",
-    minScale: env === "prod" ? 1 : 0,
-    maxScale: env === "prod" ? 10 : 3,
-    ingress: "internal",
-  });
 }
 
 function secretsContract(air: AirDocument): unknown {
@@ -412,7 +317,8 @@ function secretsContract(air: AirDocument): unknown {
       {
         name: `${id}-auth-token`,
         env: `ANVIL_${id.toUpperCase()}_TOKEN`,
-        source: `projects/PROJECT/secrets/${id}-auth-token/versions/latest`,
+        // Provisioned by Terraform; populate the version out of band.
+        source: "google_secret_manager_secret.auth_token",
         scopes: air.service.auth.scopes,
       },
     ],
@@ -424,34 +330,44 @@ function deployReadme(air: AirDocument): string {
   return `# Deploying \`${id}-tools\` to Cloud Run
 
 Anvil emits these artifacts; you (or CI) apply them. Cloud Run is the canonical
-runtime target, generated from AIR as a plugin — nothing here is hand-written.
+runtime target, generated from AIR — nothing here is hand-written.
 
-## One-time setup (Terraform)
+**One owner per concern.** Terraform owns every deployed setting (service
+account, Artifact Registry, ${air.service.auth.type !== "none" ? "Secret Manager, " : ""}${needsLedger(air) ? "the Firestore idempotency ledger, " : ""}the Cloud Run service, its
+env vars, scaling, and IAM). Cloud Build only builds/pushes the image and runs
+\`terraform apply\` with the built tag. There is no second place that sets an
+image tag, env var, or IAM binding — so nothing can drift.
+
+## Build & deploy (Cloud Build → Terraform)
+\`\`\`bash
+gcloud builds submit --config deploy/cloudbuild.yaml \\
+  --substitutions _REGION=us-central1,_ANVIL_ENV=prod
+\`\`\`
+Cloud Build builds the prebuilt image, pushes it to Artifact Registry, then runs
+\`terraform apply\` passing the image tag. First run provisions the service
+account, Artifact Registry repo, ${air.service.auth.type !== "none" ? "Secret Manager secret, " : ""}${needsLedger(air) ? "Firestore ledger, " : ""}Cloud Run
+service, and least-privilege IAM.
+
+To apply Terraform directly (e.g. for a plan review):
 \`\`\`bash
 cd deploy/terraform
 terraform init
 terraform apply -var project_id=PROJECT -var image_tag=SHORT_SHA
 \`\`\`
-This creates the runtime service account, Artifact Registry repo,
-${air.service.auth.type !== "none" ? "the Secret Manager secret, " : ""}the
-Firestore idempotency ledger, and the Cloud Run service with least-privilege IAM.
-
-## Build & deploy (Cloud Build)
-\`\`\`bash
-gcloud builds submit --config deploy/cloudbuild.yaml \\
-  --substitutions _REGION=us-central1,_ANVIL_ENV=prod
-\`\`\`
 
 ## Safety notes
-- **Durable ledger is mandatory outside dev.** \`ANVIL_LEDGER\` points at Firestore;
-  the runtime refuses required-idempotency mutations if it is missing (fail closed).
-  The deployed image must register a Firestore ledger backend at boot
-  (\`registerLedgerBackend("firestore", …)\`) — the seam is in \`@anvil/runtime\`.
-- **Internal ingress + VPC egress** keep the surface and its upstream pinned.
+- **Durable ledger is mandatory outside dev.** \`ANVIL_LEDGER\` points at Firestore
+  (set by Terraform); the runtime refuses required-idempotency mutations if it is
+  missing (fail closed). The deployed image must register a Firestore ledger
+  backend at boot (\`registerLedgerBackend("firestore", …)\`) — the seam is in
+  \`@anvil/runtime\`.
+- **Internal ingress** keeps the surface pinned; the host allowlist
+  (\`ANVIL_ALLOWED_HOSTS\`) pins upstream egress.
 - **No keys are stored**: callers use their own service account + ID token; the
   runtime SA reads only its own secret.
 
-See \`iam.plan.json\` for the exact grants and \`overlays/\` for per-environment config.
+See \`terraform/main.tf\` for the exact resources and \`env.schema.json\` for the
+runtime env contract.
 `;
 }
 

@@ -48,9 +48,13 @@ export function discoverCapabilities(serviceId: string, operations: Operation[])
       intentExamples: intentExamples(group.label, group.ops),
       state: capabilityState(group.ops),
       evidence: {
-        items: [
+        claims: [
           {
-            kind: group.source === "tag" ? "spec" : "inferred",
+            subject: id,
+            predicate: "grouping",
+            value: group.source,
+            source: group.source === "tag" ? "spec" : "inferred",
+            method: group.source === "tag" ? "openapi_tag" : `${group.source}_heuristic`,
             note:
               group.source === "tag"
                 ? `Grouped by OpenAPI tag "${group.label}".`
@@ -60,7 +64,6 @@ export function discoverCapabilities(serviceId: string, operations: Operation[])
             confidence,
           },
         ],
-        confidence,
       },
     });
   }

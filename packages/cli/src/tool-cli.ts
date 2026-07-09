@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import {
   type AirDocument,
   cliFlag,
+  evidenceConfidence,
   type JsonSchema,
   type Operation,
   operationInputSchema,
@@ -420,7 +421,7 @@ function capabilityDetail(air: AirDocument, cap: AirDocument["capabilities"][num
   return [
     `${cap.displayName} — ${cap.id}`,
     cap.description ? `\n${cap.description}` : "",
-    `\nGrouping: ${cap.source} (confidence ${cap.evidence.confidence.toFixed(2)})`,
+    `\nGrouping: ${cap.source} (confidence ${evidenceConfidence(cap.evidence).toFixed(2)})`,
     `\nOperations:\n${ops.join("\n") || "  (none)"}`,
     wfs.length ? `\nWorkflows:\n${wfs.join("\n")}` : "",
   ]

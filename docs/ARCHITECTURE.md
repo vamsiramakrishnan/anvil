@@ -19,8 +19,11 @@ Schema emission. Each operation carries:
 - **bindings** — `cli.command`, `mcp.toolName`, `skill.intentExamples` (one op, three surfaces)
 - **state** — generated / review_required / approved / deprecated / blocked
 - **capabilityId** — the business capability this operation belongs to
-- **evidence** — where each semantic came from (spec, source, docs, incident,
-  inferred, …) and an aggregate confidence score
+- **evidence** — a set of **claims**, each scoped to one semantic
+  (`subject`/`predicate`/`value`) with its own provenance (`source`,
+  `sourceRef`, `method`), `confidence`, `reliability`, and review status.
+  Aggregate confidence is a *pure function* of the active claims
+  (`evidenceConfidence`) — never a stored number that can drift.
 
 Above operations sit the **primary abstraction**: agents reason about business
 capabilities, not URLs.
@@ -41,7 +44,11 @@ parse ── normalize ── classify ── enrich ── validate ── disc
 ```
 
 - **parse** (`@anvil/compiler/parse`): delegates to `@scalar/openapi-parser`
-  (deref + Swagger 2.0 → 3.1 upgrade). Adapter-shaped so other formats slot in.
+  (deref + Swagger 2.0 → 3.1 upgrade). Today there is exactly **one** parser
+  (OpenAPI/Swagger); a second format (GraphQL/gRPC/WSDL) is added by writing a
+  parser that emits AIR — the downstream passes (classify/validate/generate) are
+  format-agnostic over AIR and do not change. That boundary is *tested*, not just
+  asserted; it is an honest seam, not a plugin framework.
 - **normalize**: OpenAPI → AIR operations, deriving stable ids, CLI/MCP/skill
   bindings, params, errors, and auth.
 - **classify** (`@anvil/compiler/classify`): the effect/idempotency/risk/retry/

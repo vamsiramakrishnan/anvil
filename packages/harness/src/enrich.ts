@@ -1,4 +1,4 @@
-import type { AirDocument } from "@anvil/air";
+import { type AirDocument, evidenceConfidence } from "@anvil/air";
 import type { AnvilManifest, OperationManifest } from "@anvil/compiler";
 import { type HarnessAgent, type HarnessFinding, HeuristicHarnessAgent } from "./agent.js";
 import { EvidenceGraph } from "./evidence.js";
@@ -71,11 +71,18 @@ export async function runEnrichment(
     const findings = findingsByOp.get(op.id) ?? [];
     const { patch, decisions } = reconcile(op, findings);
     if (Object.keys(patch).length > 0) proposed[op.canonicalName] = patch;
+    // Confidence is derived from claims: the prior from AIR's existing claims,
+    // the new value from those plus the harness-gathered claims for this op. Any
+    // corroborating claim raises it — never a hand-set aggregate.
+    const priorConfidence = evidenceConfidence(op.evidence);
+    const newConfidence = evidenceConfidence({
+      claims: [...op.evidence.claims, ...graph.claimsFor(op.id)],
+    });
     operations.push({
       operationId: op.id,
       canonicalName: op.canonicalName,
-      priorConfidence: op.evidence.confidence,
-      newConfidence: Math.max(op.evidence.confidence, graph.confidenceFor(op.id)),
+      priorConfidence,
+      newConfidence,
       decisions,
     });
   }

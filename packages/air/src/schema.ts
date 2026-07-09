@@ -47,26 +47,81 @@ export const EvidenceKind = z.enum([
 ]);
 export type EvidenceKind = z.infer<typeof EvidenceKind>;
 
-export const EvidenceItem = z.object({
-  kind: EvidenceKind,
-  /** Free-form pointer to the origin (URL, file path, commit, ticket id). */
-  ref: z.string().optional(),
-  note: z.string().optional(),
-  /** 0..1 confidence contributed by this item. */
-  confidence: z.number().min(0).max(1).optional(),
-});
-export type EvidenceItem = z.infer<typeof EvidenceItem>;
+/** How one claim relates to another (referenced by claim id). */
+export const ClaimRelation = z.enum(["supports", "contradicts", "supersedes"]);
+export type ClaimRelation = z.infer<typeof ClaimRelation>;
+
+/** Per-claim review disposition. Rejected/superseded claims drop out of the aggregate. */
+export const ReviewStatus = z.enum(["unreviewed", "accepted", "rejected", "superseded"]);
+export type ReviewStatus = z.infer<typeof ReviewStatus>;
 
 /**
- * The evidence graph node for an operation. The harness loop accumulates items
- * and rolls them into a single confidence score; low confidence forces review.
+ * A **claim-scoped** piece of provenance: a single assertion about one semantic,
+ * with where it came from and how much to trust it. This replaces the old flat
+ * `EvidenceItem` + stored aggregate confidence — a confidence number now belongs
+ * to a specific claim, not vaguely to an operation. Multiple claims about the
+ * same `(subject, predicate)` may agree, conflict, or supersede one another; the
+ * aggregate is *derived* from them (see `evidenceConfidence`), never stored.
+ */
+export const Claim = z.object({
+  /** Stable id so other claims can reference this one (supports/contradicts/supersedes). */
+  id: z.string().optional(),
+  /** What the claim is about — the semantic target (operation id, capability id, …). */
+  subject: z.string(),
+  /** Which semantic is asserted, e.g. "exists", "idempotency.mode", "name.quality". */
+  predicate: z.string(),
+  /** The asserted value (a mode string, boolean, number, or text). */
+  value: z.unknown().optional(),
+  /** Origin kind of the evidence backing this claim. */
+  source: EvidenceKind,
+  /** Pointer to the origin (URL, file path, commit, ticket id, tool call). */
+  sourceRef: z.string().optional(),
+  /** Origin revision (commit sha, doc version) when known. */
+  sourceRevision: z.string().optional(),
+  /** How the value was extracted (declared, heuristic, regex, manifest, …). */
+  method: z.string().optional(),
+  /** Confidence in THIS claim's value, 0..1. */
+  confidence: z.number().min(0).max(1),
+  /** Reliability of the source, 0..1 (falls back to a per-kind default when unset). */
+  reliability: z.number().min(0).max(1).optional(),
+  /** ISO timestamp of extraction, when recorded. */
+  timestamp: z.string().optional(),
+  /** Relationship to another claim, by id. */
+  relation: z.object({ type: ClaimRelation, target: z.string() }).optional(),
+  /** Review disposition; rejected/superseded claims are excluded from the aggregate.
+   *  Absent means unreviewed (still active). */
+  review: ReviewStatus.optional(),
+  note: z.string().optional(),
+});
+export type Claim = z.infer<typeof Claim>;
+
+/**
+ * The evidence attached to a semantic node: a set of claims. There is no stored
+ * aggregate confidence — it is derived on demand from the active claims so it can
+ * never drift from its inputs (see `evidenceConfidence`).
  */
 export const Evidence = z.object({
-  items: z.array(EvidenceItem).default([]),
-  /** Aggregate confidence in the semantics attached to this operation. */
-  confidence: z.number().min(0).max(1).default(0),
+  claims: z.array(Claim).default([]),
 });
 export type Evidence = z.infer<typeof Evidence>;
+
+/** A claim counts toward the aggregate unless it was rejected or superseded. */
+export function claimIsActive(c: Claim): boolean {
+  return c.review !== "rejected" && c.review !== "superseded";
+}
+
+/**
+ * Derive aggregate confidence from claim-level inputs — a pure function, so the
+ * number is always explainable from the claims and can never be independently
+ * stored or drift. Combines active claims via noisy-OR (corroboration raises
+ * confidence; no single weak claim dominates), bounded to [0, 0.99].
+ */
+export function evidenceConfidence(evidence: Evidence): number {
+  const active = evidence.claims.filter(claimIsActive);
+  if (active.length === 0) return 0;
+  const product = active.reduce((acc, c) => acc * (1 - c.confidence), 1);
+  return Math.min(0.99, 1 - product);
+}
 
 /* -------------------------------------------------------------------------- */
 /* Building blocks                                                            */
@@ -266,7 +321,7 @@ export const Operation = z.object({
   state: OperationState.default("generated"),
   /** Human/validator notes explaining a non-approved state. */
   reviewNotes: z.array(z.string()).default([]),
-  evidence: Evidence.default({ items: [], confidence: 0 }),
+  evidence: Evidence.default({ claims: [] }),
   /** The primary capability this operation belongs to (see `Capability`). */
   capabilityId: z.string().optional(),
 });
@@ -305,7 +360,7 @@ export const Capability = z.object({
   /** Intent phrases an agent might use to find this capability. */
   intentExamples: z.array(z.string()).default([]),
   state: OperationState.default("generated"),
-  evidence: Evidence.default({ items: [], confidence: 0 }),
+  evidence: Evidence.default({ claims: [] }),
 });
 export type Capability = z.infer<typeof Capability>;
 
@@ -346,7 +401,7 @@ export const Workflow = z.object({
   /** How to undo a partially-completed run, if known. */
   rollbackStrategy: z.string().optional(),
   state: OperationState.default("generated"),
-  evidence: Evidence.default({ items: [], confidence: 0 }),
+  evidence: Evidence.default({ claims: [] }),
 });
 export type Workflow = z.infer<typeof Workflow>;
 

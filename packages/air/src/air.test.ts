@@ -4,6 +4,7 @@ import {
   airToJson,
   airToYaml,
   cliFlag,
+  evidenceConfidence,
   kebabCase,
   loadAirDocument,
   type Operation,
@@ -61,7 +62,9 @@ describe("AirDocument", () => {
     const op = air.operations[0] as Operation;
     expect(op.state).toBe("generated");
     expect(op.effect.reversible).toBe(false);
-    expect(op.evidence.confidence).toBe(0);
+    // No claims → derived confidence is 0 (there is no stored aggregate).
+    expect(op.evidence.claims).toEqual([]);
+    expect(evidenceConfidence(op.evidence)).toBe(0);
     expect(op.retries.baseDelayMs).toBe(200);
   });
 

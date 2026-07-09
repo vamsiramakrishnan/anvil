@@ -1,7 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type AirDocument, airToJson, airToYaml, operationInputSchema } from "@anvil/air";
-import { stringify as toYaml } from "yaml";
 import {
   compiledErrors,
   compiledOperations,
@@ -87,20 +86,15 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   }
 
   // Docs, deploy, mocks, conformance.
-  Object.assign(files, prefixNone(generateDocs(air)));
-  Object.assign(files, prefixNone(generateDeploy(air)));
+  Object.assign(files, generateDocs(air));
+  Object.assign(files, generateDeploy(air));
   files["mock/scenarios.json"] = `${JSON.stringify(generateScenarios(air), null, 2)}\n`;
   files["mock/server.mjs"] = generateMockServerSource(air);
   files["tests/conformance.test.ts"] = generateConformanceTest(air);
 
   // A package.json for the generated bundle so it is installable/deployable.
   files["package.json"] = `${JSON.stringify(bundlePackageJson(air), null, 2)}\n`;
-  void toYaml; // reserved for future yaml artifacts
   return { files };
-}
-
-function prefixNone(map: Record<string, string>): Record<string, string> {
-  return map;
 }
 
 function bundlePackageJson(air: AirDocument): unknown {

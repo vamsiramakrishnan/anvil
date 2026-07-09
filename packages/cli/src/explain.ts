@@ -1,5 +1,5 @@
 import type { AirDocument, Operation } from "@anvil/air";
-import { cliFlag } from "@anvil/air";
+import { cliFlag, evidenceConfidence } from "@anvil/air";
 
 /** Human-readable risk/idempotency/retry summary for one operation (`inspect-risk`). */
 export function riskSummary(op: Operation): string {
@@ -12,7 +12,7 @@ export function riskSummary(op: Operation): string {
     `  auth:          ${op.auth.type}${op.auth.scopes.length ? ` [${op.auth.scopes.join(", ")}]` : ""}`,
     `  acts as:       ${op.auth.principal}${op.auth.audience ? ` (aud: ${op.auth.audience})` : ""}`,
     `  state:         ${op.state}`,
-    `  confidence:    ${op.evidence.confidence.toFixed(2)}`,
+    `  confidence:    ${evidenceConfidence(op.evidence).toFixed(2)}`,
   ];
   return lines.join("\n");
 }
