@@ -18,19 +18,35 @@ graph as an unstructured list" the architecture brief calls out.
 Evidence is a set of **claims**. A `Claim` carries `subject`, `predicate`,
 `value`, `source`, `sourceRef`, `sourceRevision`, `method`, `confidence`,
 `reliability`, `timestamp`, an optional `relation`
-(`supports`/`contradicts`/`supersedes` → claim id), and a `review` status.
+(`supports`/`contradicts`/`supersedes` → claim id, with `id` required when a
+relation is present), and a `review` status.
 
-- **Aggregate confidence is derived**, not stored: `evidenceConfidence(evidence)`
-  is a pure noisy-OR over *active* (non-rejected, non-superseded) claims. It can
-  never drift from its inputs, and rejected/superseded claims cannot inflate it.
-- The harness `EvidenceGraph` now **delegates** confidence to that one function —
-  the duplicate combination rule is gone. `reliability` (source trust) stays a
-  separate axis because it gates the asymmetric-trust reconciler, which is a
-  different question from confidence in a value.
+Confidence is **resolved per semantic, never node-wide**:
+
+- **`confidenceFor(evidence, predicate)`** is the safety-relevant resolver.
+  Claims about *different* predicates never corroborate each other, so a strong
+  `exists` can never inflate a weak `idempotency.mode`. Within a predicate,
+  contradictions resolve deterministically: claims are grouped by asserted value,
+  each group is a noisy-OR of its members' **effective weights**, and the
+  best-supported value wins.
+- **`effectiveWeight = confidence × reliability`**, so ten confident claims from a
+  generated mock (reliability 0.3) cannot drive a semantic to certainty.
+  `SOURCE_RELIABILITY` lives in `@anvil/air` and the harness re-exports it — one
+  table, used by both the aggregate and the asymmetric-trust reconciler.
+- **Relations are enforced.** `resolveActiveClaims` drops reviewed-out claims and
+  any claim targeted by an active `supersedes` relation; dangling targets are
+  ignored, not trusted.
+- **`evidenceConfidence(evidence)`** remains, but only as a node-level **coverage
+  summary for display/triage** — the *weakest* per-predicate confidence. It
+  explicitly does **not** gate safety or approval.
+
+The harness `EvidenceGraph` delegates to these functions — the old duplicate
+noisy-OR/threshold rule is gone.
 
 ## Consequences
-- Confidence is explainable per claim; conflict resolves deterministically
-  (tested: order-independence + supersession exclusion).
+- Confidence is explainable per semantic; conflict, supersession, and unreliable
+  sources resolve deterministically (all tested).
+- Safety questions ask `confidenceFor(predicate)`; the node number is display-only.
 - Old bundles carrying `{ items, confidence }` load lossily (unknown keys
   stripped, `claims` defaults to `[]`); generated-output compatibility is not
   sacred at this stage.

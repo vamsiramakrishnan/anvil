@@ -22,8 +22,10 @@ Schema emission. Each operation carries:
 - **evidence** — a set of **claims**, each scoped to one semantic
   (`subject`/`predicate`/`value`) with its own provenance (`source`,
   `sourceRef`, `method`), `confidence`, `reliability`, and review status.
-  Aggregate confidence is a *pure function* of the active claims
-  (`evidenceConfidence`) — never a stored number that can drift.
+  Confidence is resolved *per semantic* — `confidenceFor(evidence, predicate)`,
+  weighted by source reliability and relation-aware — so a strong "exists" never
+  masks a weak "idempotency.mode". The node-level `evidenceConfidence` is a
+  display-only coverage summary and never gates safety.
 
 Above operations sit the **primary abstraction**: agents reason about business
 capabilities, not URLs.

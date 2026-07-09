@@ -60,8 +60,13 @@ This is exactly the "confidence number not attached to a specific claim" and
 "evidence graph implemented as an unstructured list" the North Star calls out.
 
 **Disposition: Replace.** Evidence is now **claim-scoped** — see §"Refactors".
-Aggregate confidence is *derived deterministically from claims* (a pure
-function), never stored independently.
+Confidence is resolved **per semantic** — `confidenceFor(evidence, predicate)`,
+weighted by source reliability (`effectiveWeight = confidence × reliability`) and
+relation-aware (supersession/contradiction). Claims about different predicates
+never corroborate each other, so a strong `exists` cannot mask a weak
+`idempotency.mode`. The node-level `evidenceConfidence` survives only as a
+display-only coverage summary (the weakest per-predicate confidence) and does not
+gate safety or approval.
 
 ## 3. Compiler pipeline
 
@@ -131,14 +136,23 @@ settings** and undeployable placeholders:
 
 | Concern | Owner (after) |
 |---|---|
-| Infrastructure (SA, AR, Secret, Firestore, Cloud Run service, IAM, env vars, scaling) | **Terraform** |
-| Build + push + apply | **Cloud Build** (builds the image, passes `image_tag`, runs `terraform apply`) |
+| Per-capability infra + runtime config (SA, Secret + IAM, ledger IAM, Cloud Run service, env vars, scaling) | **Terraform** |
+| Build + push + **plan** | **Cloud Build** (builds the image, passes `image_tag`, runs `terraform plan` — never auto-apply) |
 | Container | **Dockerfile** (prebuilt runtime, no in-image compiler build) |
 | Env contract / secret contract | `env.schema.json`, `secrets.required.yaml` |
+| Shared platform (Artifact Registry repo, Firestore `(default)` DB, TF state bucket) | **Prerequisites** — not generated (singletons a capability must not own) |
 
 **Deleted:** `cloudrun.service.yaml`, `iam.plan.json`, `overlays/*.env.yaml`,
-`artifact-metadata.json`. A boundary test asserts no two emitted files set the
-same knob and no `PROJECT`/`REGION` literals survive.
+`artifact-metadata.json`. **Bootstrap fixes (round 2):** the Artifact Registry
+repo and Firestore `(default)` database are no longer *created* by the
+per-capability module (they are project singletons — creating them per capability
+collides and, for AR, made push depend on a not-yet-applied repo). Terraform now
+declares a **GCS remote-state backend** (bound at `init`), and Cloud Build
+produces a reviewable **plan** rather than `apply -auto-approve`, since a
+capability deploy can change IAM/ingress/secrets. Boundary tests assert no two
+emitted files set the same knob, no `PROJECT`/`REGION` literals survive, the
+singletons are not recreated, remote state is configured, and the pipeline never
+auto-applies.
 
 ## 7. Generated package dependencies
 
