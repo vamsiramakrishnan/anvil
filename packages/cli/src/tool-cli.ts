@@ -13,7 +13,6 @@ import {
   type ExecuteContext,
   execute,
   FetchTransport,
-  hostIsAllowed,
   loadRuntimeConfig,
   resolveLedger,
   type Transport,
@@ -95,6 +94,34 @@ export async function runToolCli(
         return 1;
       }
       io.out(JSON.stringify({ valid: true }, null, 2));
+      return 0;
+    }
+    case "capabilities": {
+      const which = positionals[1];
+      if (!which) {
+        io.out(flags.json ? JSON.stringify(air.capabilities, null, 2) : capabilitiesTable(air));
+        return 0;
+      }
+      const cap = findCapability(air, which);
+      if (!cap) {
+        io.err(`No capability "${which}". Try \`${svc} capabilities\`.`);
+        return 1;
+      }
+      io.out(flags.json ? JSON.stringify(cap, null, 2) : capabilityDetail(air, cap));
+      return 0;
+    }
+    case "workflows": {
+      const which = positionals[1];
+      if (!which) {
+        io.out(flags.json ? JSON.stringify(air.workflows, null, 2) : workflowsTable(air));
+        return 0;
+      }
+      const wf = findWorkflow(air, which);
+      if (!wf) {
+        io.err(`No workflow "${which}". Try \`${svc} workflows\`.`);
+        return 1;
+      }
+      io.out(flags.json ? JSON.stringify(wf, null, 2) : workflowDetail(air, wf));
       return 0;
     }
   }
@@ -299,13 +326,103 @@ function notFound(io: CliIO, air: AirDocument, id?: string): number {
 }
 
 function catalog(air: AirDocument) {
-  return air.operations.map((op) => ({
-    command: op.cli.command,
-    id: op.id,
-    effect: op.effect.kind,
-    risk: op.effect.kind === "mutation" ? op.effect.risk : undefined,
-    state: op.state,
-  }));
+  return {
+    capabilities: air.capabilities.map((c) => ({
+      id: c.id,
+      displayName: c.displayName,
+      operations: c.operationIds.length,
+      workflows: c.workflowIds.length,
+      state: c.state,
+    })),
+    operations: air.operations.map((op) => ({
+      command: op.cli.command,
+      id: op.id,
+      capability: op.capabilityId,
+      effect: op.effect.kind,
+      risk: op.effect.kind === "mutation" ? op.effect.risk : undefined,
+      state: op.state,
+    })),
+  };
+}
+
+function findCapability(air: AirDocument, key: string) {
+  return air.capabilities.find(
+    (c) =>
+      c.id === key || c.id.endsWith(`.${key}`) || c.displayName.toLowerCase() === key.toLowerCase(),
+  );
+}
+
+function findWorkflow(air: AirDocument, key: string) {
+  return air.workflows.find(
+    (w) =>
+      w.id === key || w.id.endsWith(`.${key}`) || w.displayName.toLowerCase() === key.toLowerCase(),
+  );
+}
+
+function capabilitiesTable(air: AirDocument): string {
+  if (air.capabilities.length === 0) return "  (no capabilities)";
+  return air.capabilities
+    .map((c) => {
+      const name = c.id.split(".").slice(1).join(".") || c.id;
+      const wf = c.workflowIds.length ? `, ${c.workflowIds.length} workflow(s)` : "";
+      return `  ${name.padEnd(20)} ${String(c.operationIds.length).padStart(2)} op(s)${wf}  —  ${c.displayName}`;
+    })
+    .join("\n");
+}
+
+function capabilityDetail(air: AirDocument, cap: AirDocument["capabilities"][number]): string {
+  const ops = cap.operationIds
+    .map((id) => air.operations.find((o) => o.id === id))
+    .filter((o): o is Operation => Boolean(o))
+    .map(
+      (o) =>
+        `  ${o.cli.command.padEnd(34)} ${o.effect.kind}${o.confirmation.required ? " ⚠ confirm" : ""}`,
+    );
+  const wfs = cap.workflowIds
+    .map((id) => air.workflows.find((w) => w.id === id))
+    .filter((w): w is AirDocument["workflows"][number] => Boolean(w))
+    .map((w) => `  ${w.id.split(".").pop()}  —  ${w.displayName} (${w.steps.length} steps)`);
+  return [
+    `${cap.displayName} — ${cap.id}`,
+    cap.description ? `\n${cap.description}` : "",
+    `\nGrouping: ${cap.source} (confidence ${cap.evidence.confidence.toFixed(2)})`,
+    `\nOperations:\n${ops.join("\n") || "  (none)"}`,
+    wfs.length ? `\nWorkflows:\n${wfs.join("\n")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function workflowsTable(air: AirDocument): string {
+  if (air.workflows.length === 0) {
+    return "  (no workflows authored — declare them in the Anvil manifest)";
+  }
+  return air.workflows
+    .map((w) => {
+      const name = w.id.split(".").pop() ?? w.id;
+      return `  ${name.padEnd(24)} ${String(w.steps.length).padStart(2)} steps  —  ${w.displayName}`;
+    })
+    .join("\n");
+}
+
+function workflowDetail(air: AirDocument, wf: AirDocument["workflows"][number]): string {
+  const steps = wf.steps.map((s, i) => {
+    const op = air.operations.find((o) => o.id === s.operationId);
+    const cmd = op ? op.cli.command : s.operationId;
+    return `  ${i + 1}. ${cmd}${s.optional ? " (optional)" : ""}${s.description ? `  —  ${s.description}` : ""}`;
+  });
+  return [
+    `${wf.displayName} — ${wf.id}`,
+    wf.description ? `\n${wf.description}` : "",
+    wf.humanApproval ? "\n⚠ Requires human approval before running." : "",
+    `\nSteps:\n${steps.join("\n") || "  (none)"}`,
+    wf.rollbackStrategy ? `\nRollback: ${wf.rollbackStrategy}` : "",
+    wf.intentExamples.length
+      ? `\nExamples: ${wf.intentExamples.map((e) => `"${e}"`).join("; ")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function catalogTable(air: AirDocument): string {
@@ -324,6 +441,9 @@ function serviceHelp(air: AirDocument): string {
     `${air.service.displayName ?? svc} — generated by Anvil`,
     `\nUsage: ${svc} <resource> <action> [flags]`,
     `\nDiscovery:`,
+    `  ${svc} capabilities            List business capabilities (start here)`,
+    `  ${svc} capabilities <name>     Show a capability's operations + workflows`,
+    `  ${svc} workflows [<name>]      List workflows, or show one's steps`,
     `  ${svc} catalog                 List all operations`,
     `  ${svc} discover "<intent>"     Find the right operation`,
     `  ${svc} explain <operation>     Show an operation's full contract`,
@@ -331,8 +451,8 @@ function serviceHelp(air: AirDocument): string {
     `\nPer-operation flags:`,
     `  --help --schema --examples --explain --dry-run --json --trace`,
     `  --confirm --idempotency-key <k> --auth-profile <p> --timeout <ms> --no-retries`,
-    `\nOperations:`,
-    catalogTable(air),
+    `\nCapabilities:`,
+    capabilitiesTable(air),
     `\nUnsafe mutations refuse to run without --confirm. That refusal is correct.`,
   ].join("\n");
 }

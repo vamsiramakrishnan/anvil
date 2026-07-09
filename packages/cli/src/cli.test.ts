@@ -59,6 +59,39 @@ describe("tool CLI: discovery", () => {
     expect(io.text()).toContain("payments refunds create");
   });
 
+  it("lists capabilities as the primary index", async () => {
+    const io = bufferIO();
+    const code = await runToolCli(air, ["capabilities"], { io });
+    expect(code).toBe(0);
+    expect(io.text()).toMatch(/refunds/);
+    expect(io.text()).toMatch(/payments/);
+  });
+
+  it("shows a capability's operations and workflows", async () => {
+    const io = bufferIO();
+    const code = await runToolCli(air, ["capabilities", "refunds"], { io });
+    expect(code).toBe(0);
+    expect(io.text()).toContain("payments refunds create");
+    expect(io.text()).toMatch(/refund_customer/);
+  });
+
+  it("lists workflows and shows one's steps", async () => {
+    const list = bufferIO();
+    expect(await runToolCli(air, ["workflows"], { io: list })).toBe(0);
+    expect(list.text()).toMatch(/refund_customer/);
+
+    const detail = bufferIO();
+    expect(await runToolCli(air, ["workflows", "refund_customer"], { io: detail })).toBe(0);
+    expect(detail.text()).toContain("payments payments get");
+    expect(detail.text()).toContain("payments refunds create");
+    expect(detail.text()).toMatch(/human approval/i);
+  });
+
+  it("returns non-zero for an unknown capability", async () => {
+    const io = bufferIO();
+    expect(await runToolCli(air, ["capabilities", "nope"], { io })).toBe(1);
+  });
+
   it("explains an operation's contract", async () => {
     const io = bufferIO();
     await runToolCli(air, ["explain", "payments.refunds.create"], { io });
