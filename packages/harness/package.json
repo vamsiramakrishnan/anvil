@@ -1,14 +1,11 @@
 {
-  "name": "@anvil/cli",
+  "name": "@anvil/harness",
   "version": "0.1.0",
-  "description": "The anvil CLI and the shared engine that drives every generated tool CLI.",
+  "description": "Anvil harness — connect to published MCP servers to enrich AIR with evidence.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "anvil": "./dist/bin-anvil.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -27,16 +24,13 @@
   "dependencies": {
     "@anvil/air": "workspace:*",
     "@anvil/compiler": "workspace:*",
-    "@anvil/generators": "workspace:*",
-    "@anvil/harness": "workspace:*",
-    "@anvil/runtime": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.22.0",
-    "yaml": "^2.8.1"
+    "yaml": "^2.8.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.10",
-    "zod": "^4.4.3"
+    "vitest": "^4.1.10"
   }
 }
