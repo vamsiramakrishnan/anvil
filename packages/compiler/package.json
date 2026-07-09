@@ -1,0 +1,35 @@
+{
+  "name": "@anvil/compiler",
+  "version": "0.1.0",
+  "description": "Anvil compiler loop — parse, normalize, enrich, and validate specs into AIR.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../..",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@anvil/air": "workspace:*",
+    "@scalar/openapi-parser": "^0.28.8",
+    "yaml": "^2.8.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

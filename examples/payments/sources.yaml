@@ -1,0 +1,39 @@
+# Enrichment sources — published MCP servers Anvil connects to as a client.
+# Naming a `system` selects a built-in profile: the default server to run, which
+# tools to call, and how much to trust it. Omit `transport` to use the profile's
+# default server; secrets are read from the environment (${VAR}), never stored here.
+#
+#   GITHUB_TOKEN, GITLAB_TOKEN, CONFLUENCE_URL/CONFLUENCE_API_TOKEN, POSTMAN_API_KEY
+sources:
+  # Code hosts — implementation-grade evidence; can prove idempotency and enable
+  # retries (the safety-loosening bar).
+  - id: github
+    system: github
+    hints:
+      scope: ["repo:payments-platform/payments-service"]
+
+  - id: gitlab
+    system: gitlab
+    hints:
+      scope: ["payments-platform/payments-service"]
+
+  # Docs — can tighten safety (undocumented errors, deprecations, rate limits)
+  # but never loosen it on their own.
+  - id: confluence
+    system: confluence
+    hints:
+      scope: ["space:PAYMENTS"]
+
+  # Real usage — corroborates, but a saved request is not proof the server
+  # enforces the contract, so it stays below the loosen bar.
+  - id: postman
+    system: postman
+    hints:
+      scope: ["Payments API"]
+
+  # You can always override a profile with an explicit transport:
+  # - id: confluence-remote
+  #   system: confluence
+  #   transport:
+  #     kind: http
+  #     url: https://mcp.atlassian.com/v1/mcp

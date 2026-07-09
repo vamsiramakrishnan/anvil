@@ -1,0 +1,53 @@
+# Supplemental Anvil manifest (spec §4). Enriches semantics the OpenAPI spec
+# cannot express: idempotency contracts, confirmation policy, and approvals.
+service:
+  name: payments
+  display_name: Payments API
+  owner: payments-platform
+  environment: prod
+
+auth:
+  type: oauth2
+  scopes:
+    - payments.read
+    - payments.write
+
+operations:
+  # Refunds are irreversible financial mutations. Make them idempotent via an
+  # Idempotency-Key header so retries are safe, and require confirmation.
+  createRefund:
+    side_effect: mutation
+    risk: financial
+    reversible: false
+    idempotency:
+      strategy: required_request_key
+      key_location: header
+      header: Idempotency-Key
+    confirmation:
+      required: true
+      risk: financial
+      reason: This operation creates an irreversible financial mutation.
+    retries:
+      enabled: true
+      only_on:
+        - timeout
+        - "429"
+        - "503"
+      max_attempts: 3
+    state: approved
+
+  # Capture is a financial mutation but idempotent by payment id.
+  capturePayment:
+    side_effect: mutation
+    risk: financial
+    idempotency:
+      strategy: natural
+    confirmation:
+      required: true
+      risk: financial
+    state: approved
+
+  getCustomer:
+    state: approved
+  getPayment:
+    state: approved
