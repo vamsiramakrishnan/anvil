@@ -66,6 +66,12 @@ That refusal is the correct behavior.
 
 ## Architecture
 
+Anvil is a **compiler, not a framework** — the compiler and AIR are the product;
+every CLI, MCP server, skill, and deploy artifact is a replaceable *generated
+view*. See [`docs/PRODUCT_BOUNDARY.md`](docs/PRODUCT_BOUNDARY.md) for the north
+star (where the product boundary sits and why) and
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the two loops work.
+
 Two loops (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)):
 
 - **Compiler loop** — turns known truth (specs) into aligned artifacts.
