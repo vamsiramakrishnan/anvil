@@ -97,7 +97,7 @@ Two loops (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)):
 | Package | Role |
 | --- | --- |
 | `@anvil/air` | The Anvil Intermediate Representation (Zod-defined) + evidence model |
-| `@anvil/compiler` | Parse (OpenAPI) → normalize → **classify** → enrich → **validate** |
+| `@anvil/compiler` | Parse (OpenAPI) → normalize → **classify** → enrich → **validate** → **discover capabilities** |
 | `@anvil/runtime` | The safety runtime: error taxonomy, retry engine, idempotency ledger (durable-backend plugins, fail-closed in prod), auth profiles, policy hooks, executor |
 | `@anvil/mcp-runtime` | The thin MCP **serving** path: turns AIR into a live MCP server + serves precomputed skill/CLI resources. The deployed unit depends on this, not on the foundry |
 | `@anvil/generators` | The build-time artifact foundry: CLI, MCP server source, skill, docs, deploy, mocks, evals, conformance |
@@ -130,7 +130,7 @@ and Antigravity (`.agent/skills/anvil/SKILL.md`). Regenerate with `anvil skill <
 
 MVP focus (spec §19): OpenAPI 3.x / Swagger 2.0 REST JSON. The parser layer is an
 adapter interface, so gRPC / GraphQL / WSDL are additive. `pnpm test` runs the
-full suite (68 tests). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
+full suite (78 tests). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
 roadmap and what is implemented vs. staged.
 
 ## License

@@ -203,8 +203,88 @@ export const Operation = z.object({
   /** Human/validator notes explaining a non-approved state. */
   reviewNotes: z.array(z.string()).default([]),
   evidence: Evidence.default({ items: [], confidence: 0 }),
+  /** The primary capability this operation belongs to (see `Capability`). */
+  capabilityId: z.string().optional(),
 });
 export type Operation = z.infer<typeof Operation>;
+
+/* -------------------------------------------------------------------------- */
+/* Capabilities + workflows (the primary abstraction)                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How a capability was arrived at — so review sees whether the grouping is
+ * grounded in the spec (tags) or merely inferred (resource heuristic).
+ */
+export const CapabilitySource = z.enum(["tag", "resource", "manifest", "service"]);
+export type CapabilitySource = z.infer<typeof CapabilitySource>;
+
+/**
+ * A business capability — the abstraction agents actually reason about
+ * ("Refunds", "Payments"), not a URL. A capability owns operations and
+ * workflows; generators project it into a searchable surface. This is the shift
+ * from `POST /payments/refund` to `payments refunds`.
+ */
+export const Capability = z.object({
+  /** Stable, dotted id, e.g. payments.refunds. */
+  id: z.string(),
+  displayName: z.string(),
+  description: z.string().default(""),
+  /** How this grouping was determined (provenance for review). */
+  source: CapabilitySource.default("resource"),
+  /** Resource nouns this capability spans (e.g. ["refund"]). */
+  resources: z.array(z.string()).default([]),
+  /** Member operation ids (a capability is a view over operations). */
+  operationIds: z.array(z.string()).default([]),
+  /** Workflow ids owned by this capability. */
+  workflowIds: z.array(z.string()).default([]),
+  /** Intent phrases an agent might use to find this capability. */
+  intentExamples: z.array(z.string()).default([]),
+  state: OperationState.default("generated"),
+  evidence: Evidence.default({ items: [], confidence: 0 }),
+});
+export type Capability = z.infer<typeof Capability>;
+
+/** One step of a workflow: an operation invocation with optional guidance. */
+export const WorkflowStep = z.object({
+  /** The operation this step invokes. */
+  operationId: z.string(),
+  /** What this step accomplishes, agent-facing. */
+  description: z.string().default(""),
+  /** Whether the step may be skipped depending on prior results. */
+  optional: z.boolean().default(false),
+  /**
+   * Hints mapping prior step outputs to this step's inputs, e.g.
+   * `{ payment_id: "$.steps.findPayment.id" }`. Free-form; advisory for agents.
+   */
+  bindings: z.record(z.string(), z.string()).default({}),
+});
+export type WorkflowStep = z.infer<typeof WorkflowStep>;
+
+/**
+ * A first-class workflow: the ordered operations that accomplish a business
+ * task ("Refund customer"). Workflows are **authored or enriched**, never
+ * guessed — Anvil does not fabricate multi-step business logic it cannot prove
+ * (auto-inference is a staged seam). A generated CLI exposes them as
+ * `<service> workflows <name>`.
+ */
+export const Workflow = z.object({
+  /** Stable, dotted id, e.g. payments.refunds.refund_customer. */
+  id: z.string(),
+  /** The capability this workflow belongs to. */
+  capabilityId: z.string(),
+  displayName: z.string(),
+  description: z.string().default(""),
+  intentExamples: z.array(z.string()).default([]),
+  steps: z.array(WorkflowStep).default([]),
+  /** Whether the whole workflow needs a human in the loop before running. */
+  humanApproval: z.boolean().default(false),
+  /** How to undo a partially-completed run, if known. */
+  rollbackStrategy: z.string().optional(),
+  state: OperationState.default("generated"),
+  evidence: Evidence.default({ items: [], confidence: 0 }),
+});
+export type Workflow = z.infer<typeof Workflow>;
 
 /* -------------------------------------------------------------------------- */
 /* Service + document                                                         */
@@ -243,6 +323,10 @@ export const AirDocument = z.object({
   anvilVersion: z.string().default("0.1.0"),
   service: Service,
   operations: z.array(Operation).default([]),
+  /** Business capabilities — the primary abstraction, grouping operations. */
+  capabilities: z.array(Capability).default([]),
+  /** First-class workflows (authored/enriched, not guessed). */
+  workflows: z.array(Workflow).default([]),
   /** Reusable JSON Schema components referenced by operations. */
   schemas: z.record(z.string(), JsonSchema).default({}),
   diagnostics: z.array(Diagnostic).default([]),

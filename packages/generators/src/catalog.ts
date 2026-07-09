@@ -6,6 +6,7 @@ export interface CatalogEntry {
   canonicalName: string;
   displayName: string;
   description: string;
+  capability?: string;
   effect: string;
   risk: string;
   reversible: boolean;
@@ -20,9 +21,22 @@ export interface CatalogEntry {
   confidence: number;
 }
 
+/** A capability entry in the catalog — the primary index agents browse. */
+export interface CapabilityCatalogEntry {
+  id: string;
+  displayName: string;
+  description: string;
+  source: string;
+  operations: string[];
+  workflows: string[];
+  state: string;
+  confidence: number;
+}
+
 /** The operation catalog (spec §5.5) — the human/agent-readable index. */
 export function operationCatalog(air: AirDocument): {
   service: { id: string; version: string; displayName?: string };
+  capabilities: CapabilityCatalogEntry[];
   operations: CatalogEntry[];
 } {
   return {
@@ -31,11 +45,22 @@ export function operationCatalog(air: AirDocument): {
       version: air.service.version,
       displayName: air.service.displayName,
     },
+    capabilities: air.capabilities.map((c) => ({
+      id: c.id,
+      displayName: c.displayName,
+      description: c.description,
+      source: c.source,
+      operations: c.operationIds,
+      workflows: c.workflowIds,
+      state: c.state,
+      confidence: c.evidence.confidence,
+    })),
     operations: air.operations.map((op) => ({
       id: op.id,
       canonicalName: op.canonicalName,
       displayName: op.displayName,
       description: op.description,
+      capability: op.capabilityId,
       effect: op.effect.kind,
       risk: op.effect.risk,
       reversible: op.effect.reversible,

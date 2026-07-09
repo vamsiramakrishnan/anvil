@@ -166,11 +166,14 @@ Invoicing, Reporting, Subscriptions.
 Each capability owns its operations, workflows, documentation, examples, mocks,
 evals, and policies. **Agents should search for a capability, not a URL.**
 
-> **Today.** AIR is operation-centric; operations already carry the semantics a
-> capability would group. A first-class **Capability** node — grouping
-> operations + workflows + policies under one searchable business unit, and a
-> capability-scoped catalog/CLI surface — is **boundary**. This is the largest
-> single step from where the repo is to where the manifesto points.
+> **Today.** **Implemented.** AIR has a first-class **Capability** node, and a
+> capability-discovery compiler pass groups operations by OpenAPI tag (falling
+> back to the resource noun), stamping each operation with its `capabilityId` and
+> recording provenance + confidence. The catalog indexes capabilities, the
+> generated CLI leads with `<svc> capabilities` (browse the business units, then
+> drill into operations/workflows), and the skill opens with the capability list.
+> Capabilities owning *policies/mocks/evals* as bundled sub-artifacts is the
+> remaining **boundary** slice.
 
 ---
 
@@ -188,8 +191,15 @@ These workflows should be generated automatically and become part of the
 capability, so a generated CLI can offer `payments workflows refund` instead of
 forcing an agent to discover individual endpoints.
 
-> **Today.** Workflows are not yet a first-class AIR node. **Boundary** — a
-> `Workflow` type in AIR plus a workflow generator and a `workflows` CLI verb.
+> **Today.** **Implemented (authored), inference staged.** AIR has first-class
+> `Workflow` + `WorkflowStep` nodes; workflows are **authored in the manifest**
+> (or enriched), attached to a capability, and exposed as `<svc> workflows <name>`
+> plus a `reference/workflows.md` in the skill. Crucially, Anvil does **not
+> guess** multi-step business logic — auto-inference from a spec alone is the
+> staged seam, kept off by design because a fabricated workflow is exactly the
+> kind of guess Anvil exists to eliminate. Steps that reference an unknown
+> operation are dropped with a diagnostic, so a workflow is only as trustworthy
+> as the operations it names.
 
 ---
 
@@ -350,8 +360,8 @@ simply different **compiled views of the same capability**.
 | 2 | Everything is a plugin | Parsers **seam** · Generators **implemented** · Enrichment **seam** |
 | 3 | AIR richer than every source | **Implemented** — effect/idempotency/retry/confirmation/auth/evidence |
 | 4 | Skills are compiled capabilities | **Implemented** — skill package + MCP resources |
-| 5 | Capabilities as primary abstraction | **Boundary** — first-class Capability node |
-| 6 | Workflows are first-class | **Boundary** — Workflow node + generator + CLI verb |
+| 5 | Capabilities as primary abstraction | **Implemented** — Capability node + discovery pass + `capabilities` CLI verb; policy/mock bundling still **boundary** |
+| 6 | Workflows are first-class | **Implemented (authored)** — Workflow node + `workflows` CLI verb + skill; auto-inference **staged** by design |
 | 7 | AIR owns confidence | **Implemented** — provenance + asymmetric-trust reconciler |
 | 8 | Evidence graph | **Implemented** — structured claims → graph |
 | 9 | Incremental compilation | **Boundary** — evidence-keyed invalidation |

@@ -6,7 +6,8 @@ import {
   operationInputSchema,
   snakeCase,
 } from "@anvil/air";
-import { enrich, parseManifest } from "./manifest.js";
+import { discoverCapabilities } from "./capabilities.js";
+import { type AnvilManifest, buildWorkflows, enrich, parseManifest } from "./manifest.js";
 import { normalize } from "./normalize.js";
 import { parseSpec } from "./parse.js";
 import { validate } from "./validate.js";
@@ -29,7 +30,9 @@ export interface CompileInput {
 export async function compile(input: CompileInput): Promise<AirDocument> {
   const parsed = await parseSpec(input.spec);
   const doc = parsed.document;
-  const manifest = input.manifest ? parseManifest(input.manifest) : { operations: {} };
+  const manifest: AnvilManifest = input.manifest
+    ? parseManifest(input.manifest)
+    : { operations: {}, workflows: {} };
 
   const title = (doc.info?.title as string | undefined) ?? "service";
   const serviceId = input.serviceId ?? manifest.service?.name ?? snakeCase(title) ?? "service";
@@ -43,6 +46,16 @@ export async function compile(input: CompileInput): Promise<AirDocument> {
   }
 
   const { operations: validated, diagnostics } = validate(operations);
+
+  // Group operations into capabilities (the primary abstraction), then attach
+  // any authored workflows. Capability discovery stamps `capabilityId` on each
+  // operation in place.
+  const capabilities = discoverCapabilities(serviceId, validated);
+  const { workflows, diagnostics: workflowDiagnostics } = buildWorkflows(
+    manifest,
+    validated,
+    capabilities,
+  );
 
   const serviceAuth: AuthRequirement = validated.find((o) => o.auth.type !== "none")?.auth ?? {
     type: "none",
@@ -64,8 +77,10 @@ export async function compile(input: CompileInput): Promise<AirDocument> {
       servers: (doc.servers ?? []).map((s) => ({ url: s.url, description: s.description })),
     },
     operations: validated,
+    capabilities,
+    workflows,
     schemas: (doc.components?.schemas as Record<string, JsonSchema> | undefined) ?? {},
-    diagnostics,
+    diagnostics: [...diagnostics, ...workflowDiagnostics],
   };
 
   return loadAirDocument(air);

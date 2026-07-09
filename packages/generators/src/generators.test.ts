@@ -147,6 +147,31 @@ describe("resources", () => {
   });
 });
 
+describe("capabilities in generated artifacts", () => {
+  it("indexes capabilities in the catalog with their operations", () => {
+    const { files } = generateBundle(air);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const refunds = catalog.capabilities.find((c: { id: string }) => c.id === "payments.refunds");
+    expect(refunds).toBeDefined();
+    expect(refunds.workflows).toContain("payments.refunds.refund_customer");
+    // Operations carry their capability back-reference.
+    const refundOp = catalog.operations.find((o: { id: string }) => o.id.includes("refund"));
+    expect(refundOp.capability).toBe("payments.refunds");
+  });
+
+  it("leads the skill with capabilities and renders authored workflows", () => {
+    const { files } = generateBundle(air);
+    const skill = files["skill/SKILL.md"] as string;
+    expect(skill).toMatch(/Start with capabilities/);
+    expect(skill).toMatch(/refunds/);
+    const capsRef = files["skill/reference/capabilities.md"] as string;
+    expect(capsRef).toContain("payments.refunds");
+    const workflows = files["skill/reference/workflows.md"] as string;
+    expect(workflows).toContain("Refund a customer");
+    expect(workflows).toMatch(/human approval/i);
+  });
+});
+
 describe("bundle", () => {
   it("emits every aligned artifact from one AIR", () => {
     const { files } = generateBundle(air);
@@ -161,6 +186,7 @@ describe("bundle", () => {
       "runtime/operations.manifest.json",
       "skill/SKILL.md",
       "skill/reference/operations.md",
+      "skill/reference/capabilities.md",
       "deploy/Dockerfile",
       "deploy/cloudrun.service.yaml",
       "mock/scenarios.json",

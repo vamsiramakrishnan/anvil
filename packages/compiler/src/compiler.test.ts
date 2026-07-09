@@ -90,3 +90,54 @@ describe("compile pipeline (with manifest enrichment)", () => {
     expect(air.operations.find((o) => o.canonicalName === "get_customer")?.state).toBe("approved");
   });
 });
+
+describe("capability discovery", () => {
+  it("groups operations into capabilities from OpenAPI tags", async () => {
+    const air = await compile({ spec, serviceId: "payments" });
+    const ids = air.capabilities.map((c) => c.id).sort();
+    expect(ids).toEqual(["payments.customers", "payments.payments", "payments.refunds"]);
+    const refunds = air.capabilities.find((c) => c.id === "payments.refunds");
+    expect(refunds?.source).toBe("tag");
+    expect(refunds?.evidence.confidence).toBeGreaterThanOrEqual(0.9);
+    // Every operation is stamped with its primary capability.
+    const refund = air.operations.find((o) => o.canonicalName === "create_refund");
+    expect(refund?.capabilityId).toBe("payments.refunds");
+    expect(refunds?.operationIds).toContain(refund?.id);
+  });
+
+  it("marks a capability approved when any member operation is approved", async () => {
+    const air = await compile({ spec, manifest, serviceId: "payments" });
+    const refunds = air.capabilities.find((c) => c.id === "payments.refunds");
+    expect(refunds?.state).toBe("approved");
+  });
+});
+
+describe("authored workflows", () => {
+  it("builds a first-class workflow from the manifest and attaches it to a capability", async () => {
+    const air = await compile({ spec, manifest, serviceId: "payments" });
+    expect(air.workflows).toHaveLength(1);
+    const wf = air.workflows[0];
+    expect(wf?.id).toBe("payments.refunds.refund_customer");
+    expect(wf?.capabilityId).toBe("payments.refunds");
+    expect(wf?.humanApproval).toBe(true);
+    // Steps resolve their operation references to AIR operation ids.
+    const getPayment = air.operations.find((o) => o.canonicalName === "get_payment");
+    const createRefund = air.operations.find((o) => o.canonicalName === "create_refund");
+    expect(wf?.steps.map((s) => s.operationId)).toEqual([getPayment?.id, createRefund?.id]);
+    expect(wf?.steps[1]?.bindings.payment_id).toBe("$.steps.getPayment.id");
+    // The owning capability records the workflow.
+    const refunds = air.capabilities.find((c) => c.id === "payments.refunds");
+    expect(refunds?.workflowIds).toContain(wf?.id);
+  });
+
+  it("drops a step referencing an unknown operation with a diagnostic", async () => {
+    const badManifest = `${manifest}
+  broken_flow:
+    capability: refunds
+    steps:
+      - operation: doesNotExist
+`;
+    const air = await compile({ spec, manifest: badManifest, serviceId: "payments" });
+    expect(air.diagnostics.some((d) => d.code === "workflow_step_unresolved")).toBe(true);
+  });
+});

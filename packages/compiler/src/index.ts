@@ -4,6 +4,7 @@
  * result for safety. Build-time only; never on the runtime hot path.
  */
 
+export * from "./capabilities.js";
 export * from "./classify.js";
 export * from "./compile.js";
 export * from "./manifest.js";

@@ -1,4 +1,5 @@
-import type { Operation, RetryCondition } from "@anvil/air";
+import type { Capability, Diagnostic, Operation, RetryCondition, Workflow } from "@anvil/air";
+import { snakeCase } from "@anvil/air";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { classifyConfirmation, classifyRetry } from "./classify.js";
@@ -41,6 +42,33 @@ export const OperationManifest = z.object({
 });
 export type OperationManifest = z.infer<typeof OperationManifest>;
 
+/**
+ * A workflow authored in the manifest. Anvil never *guesses* multi-step
+ * business logic; this is how a human/harness declares it. Each step names an
+ * operation (by operationId / canonicalName / AIR id).
+ */
+export const WorkflowManifest = z.object({
+  display_name: z.string().optional(),
+  description: z.string().optional(),
+  /** Capability id/name to attach to. Defaults to the first step's capability. */
+  capability: z.string().optional(),
+  intent_examples: z.array(z.string()).optional(),
+  human_approval: z.boolean().optional(),
+  rollback: z.string().optional(),
+  state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
+  steps: z
+    .array(
+      z.object({
+        operation: z.string(),
+        description: z.string().optional(),
+        optional: z.boolean().optional(),
+        bindings: z.record(z.string(), z.string()).optional(),
+      }),
+    )
+    .default([]),
+});
+export type WorkflowManifest = z.infer<typeof WorkflowManifest>;
+
 export const AnvilManifest = z.object({
   service: z
     .object({
@@ -57,6 +85,7 @@ export const AnvilManifest = z.object({
     })
     .optional(),
   operations: z.record(z.string(), OperationManifest).default({}),
+  workflows: z.record(z.string(), WorkflowManifest).default({}),
 });
 export type AnvilManifest = z.infer<typeof AnvilManifest>;
 
@@ -160,3 +189,99 @@ export function enrich(operations: Operation[], manifest: AnvilManifest): Operat
     return op;
   });
 }
+
+/**
+ * Build first-class workflows from the manifest, resolving each step's operation
+ * reference to an AIR operation id and attaching the workflow to a capability.
+ * Steps that reference an unknown operation are dropped with a diagnostic — a
+ * workflow is only as trustworthy as the operations it names. Returns the
+ * workflows plus any diagnostics, and mutates capabilities to record ownership.
+ */
+export function buildWorkflows(
+  manifest: AnvilManifest,
+  operations: Operation[],
+  capabilities: Capability[],
+): { workflows: Workflow[]; diagnostics: Diagnostic[] } {
+  const workflows: Workflow[] = [];
+  const diagnostics: Diagnostic[] = [];
+  const capById = new Map(capabilities.map((c) => [c.id, c]));
+
+  for (const [name, wf] of Object.entries(manifest.workflows)) {
+    const steps: Workflow["steps"] = [];
+    for (const step of wf.steps) {
+      const op = operations.find((o) => matches(o, step.operation));
+      if (!op) {
+        diagnostics.push({
+          level: "warning",
+          code: "workflow_step_unresolved",
+          message: `Workflow "${name}" references unknown operation "${step.operation}"; step dropped.`,
+        });
+        continue;
+      }
+      steps.push({
+        operationId: op.id,
+        description: step.description ?? op.displayName,
+        optional: step.optional ?? false,
+        bindings: step.bindings ?? {},
+      });
+    }
+
+    // Resolve the owning capability: explicit, else the first step's capability.
+    const firstOpCap = steps.length
+      ? operations.find((o) => o.id === steps[0]?.operationId)?.capabilityId
+      : undefined;
+    const capabilityId = resolveCapabilityId(wf.capability, firstOpCap, capabilities);
+    if (!capabilityId) {
+      diagnostics.push({
+        level: "warning",
+        code: "workflow_capability_unresolved",
+        message: `Workflow "${name}" could not be attached to a capability; skipped.`,
+      });
+      continue;
+    }
+
+    const id = `${capabilityId}.${snakeCase(name)}`;
+    workflows.push({
+      id,
+      capabilityId,
+      displayName: wf.display_name ?? titleCase(name),
+      description: wf.description ?? "",
+      intentExamples: wf.intent_examples ?? [],
+      steps,
+      humanApproval: wf.human_approval ?? false,
+      rollbackStrategy: wf.rollback,
+      state: wf.state ?? "generated",
+      evidence: {
+        items: [
+          { kind: "spec", ref: "anvil-manifest", note: "authored workflow", confidence: 0.95 },
+        ],
+        confidence: 0.95,
+      },
+    });
+    capById.get(capabilityId)?.workflowIds.push(id);
+  }
+
+  return { workflows, diagnostics };
+}
+
+function resolveCapabilityId(
+  explicit: string | undefined,
+  fallback: string | undefined,
+  capabilities: Capability[],
+): string | undefined {
+  if (explicit) {
+    const hit = capabilities.find(
+      (c) => c.id === explicit || c.id.endsWith(`.${explicit}`) || c.displayName === explicit,
+    );
+    if (hit) return hit.id;
+  }
+  return fallback;
+}
+
+const titleCase = (s: string): string =>
+  s
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");

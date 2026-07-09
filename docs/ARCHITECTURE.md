@@ -18,13 +18,26 @@ Schema emission. Each operation carries:
 - **auth** — scheme + scopes
 - **bindings** — `cli.command`, `mcp.toolName`, `skill.intentExamples` (one op, three surfaces)
 - **state** — generated / review_required / approved / deprecated / blocked
+- **capabilityId** — the business capability this operation belongs to
 - **evidence** — where each semantic came from (spec, source, docs, incident,
   inferred, …) and an aggregate confidence score
+
+Above operations sit the **primary abstraction**: agents reason about business
+capabilities, not URLs.
+
+- **Capability** — a business unit ("Refunds", "Payments") that owns a set of
+  operations and workflows. Discovered by the compiler (grouped by OpenAPI tag,
+  falling back to the resource noun) with recorded `source` + confidence, so a
+  grouping is auditable rather than magical.
+- **Workflow** + **WorkflowStep** — an ordered sequence of operations that
+  accomplishes a business task ("Refund a customer"). Workflows are **authored
+  or enriched, never guessed** — Anvil does not fabricate multi-step business
+  logic; auto-inference is a staged seam.
 
 ## Loop 1 — the compiler loop (implemented)
 
 ```
-parse ── normalize ── classify ── enrich ── validate ── AIR ── generate
+parse ── normalize ── classify ── enrich ── validate ── discover-capabilities ── AIR ── generate
 ```
 
 - **parse** (`@anvil/compiler/parse`): delegates to `@scalar/openapi-parser`
@@ -42,6 +55,11 @@ parse ── normalize ── classify ── enrich ── validate ── AIR 
   non-idempotent mutations, forces confirmation on high-risk mutations, and
   checks name uniqueness. The build surfaces unsafe behavior instead of emitting
   it silently.
+- **discover-capabilities** (`@anvil/compiler/capabilities`): groups operations
+  into business capabilities (by tag, then resource) and attaches
+  manifest-authored workflows to them. The shift from operations to capabilities
+  as the unit agents browse. Workflow *inference* is deliberately not here — a
+  fabricated workflow is exactly the kind of guess Anvil exists to remove.
 
 ## Loop 2 — the harness loop (`@anvil/harness`)
 
@@ -116,17 +134,21 @@ the MCP resources spec (`resources/list` + `resources/read`, custom URI schemes,
 
 ## Implemented vs staged
 
-**Implemented & tested (68 tests):** AIR + evidence, OpenAPI/Swagger compiler,
-classifier, manifest enrichment, safety validator, the full safety runtime
-(including the durable-ledger fail-closed contract), the `@anvil/mcp-runtime`
-serving path (with a live in-memory client round-trip), precomputed
-resource-serving, skill package, catalog + compiled manifests, deploy artifacts,
-mocks, evals, conformance-test generation, the `anvil` CLI + shared tool-CLI
-engine, the self-skill + harness adapters, and the **harness loop** (MCP-client
-source connectors, evidence graph, asymmetric-trust reconciler, `anvil enrich`).
+**Implemented & tested (78 tests):** AIR + evidence, **capabilities + authored
+workflows** (discovery pass, `capabilities`/`workflows` CLI verbs, capability-led
+skill), OpenAPI/Swagger compiler, classifier, manifest enrichment, safety
+validator, the full safety runtime (including the durable-ledger fail-closed
+contract), the `@anvil/mcp-runtime` serving path (with a live in-memory client
+round-trip), precomputed resource-serving, skill package, catalog + compiled
+manifests, deploy artifacts, mocks, evals, conformance-test generation, the
+`anvil` CLI + shared tool-CLI engine, the self-skill + harness adapters, and the
+**harness loop** (MCP-client source connectors, evidence graph, asymmetric-trust
+reconciler, `anvil enrich`).
 
-**Staged (adapter seams exist):** gRPC / GraphQL / WSDL parsers, LLM-driven
-harness agents (the heuristic agent ships; an LLM `HarnessAgent` plugs into the
-same interface), learned classifiers, streaming & long-running operations, the
-hosted registry, and live cloud deploy execution (Anvil emits the artifacts and
-plan; it does not hold cloud credentials).
+**Staged (adapter seams exist):** gRPC / GraphQL / WSDL parsers, **workflow
+auto-inference** (the `Workflow` model ships; inferring flows from a spec is the
+staged seam, kept off by design), capability-bundled policies/mocks/evals,
+LLM-driven harness agents (the heuristic agent ships; an LLM `HarnessAgent` plugs
+into the same interface), learned classifiers, streaming & long-running
+operations, the hosted registry, and live cloud deploy execution (Anvil emits the
+artifacts and plan; it does not hold cloud credentials).

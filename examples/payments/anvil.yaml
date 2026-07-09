@@ -51,3 +51,23 @@ operations:
     state: approved
   getPayment:
     state: approved
+
+# Workflows are first-class and authored (never guessed). This one belongs to
+# the refunds capability: look up the payment, then issue an idempotent refund.
+workflows:
+  refund_customer:
+    display_name: Refund a customer
+    description: Find the payment, confirm it is refundable, then issue an idempotent refund.
+    capability: refunds
+    intent_examples:
+      - refund a customer
+      - give money back for a payment
+    human_approval: true
+    rollback: Refunds are irreversible; there is no automated rollback once issued.
+    steps:
+      - operation: getPayment
+        description: Look up the payment and verify it is refundable.
+      - operation: createRefund
+        description: Issue the refund with an idempotency key.
+        bindings:
+          payment_id: $.steps.getPayment.id
