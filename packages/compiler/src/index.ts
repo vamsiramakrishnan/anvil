@@ -8,6 +8,7 @@ export * from "./capabilities.js";
 export * from "./classify.js";
 export * from "./compile.js";
 export * from "./manifest.js";
+export * from "./naming.js";
 export * from "./normalize.js";
 export * from "./parse.js";
 export * from "./validate.js";

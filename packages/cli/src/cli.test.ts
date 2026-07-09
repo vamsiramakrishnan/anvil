@@ -216,7 +216,14 @@ paths:
     const command = nestedAir.operations[0]?.cli.command.split(" ").slice(1) ?? [];
     const code = await runToolCli(
       nestedAir,
-      [...command, "--body", '{"items":[{"sku":"a"}]}', "--confirm", "--base-url", "https://o.local"],
+      [
+        ...command,
+        "--body",
+        '{"items":[{"sku":"a"}]}',
+        "--confirm",
+        "--base-url",
+        "https://o.local",
+      ],
       { transport, env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv, io },
     );
     expect(code, io.text()).toBe(0);

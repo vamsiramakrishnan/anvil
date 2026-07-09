@@ -1,16 +1,16 @@
-import {
-  type AuthRequirement,
-  type AuthType,
-  type ErrorSpec,
-  type HttpMethod,
-  type JsonSchema,
-  type Operation,
-  type Param,
-  type ParamLocation,
-  type RequestBody,
-  snakeCase,
+import type {
+  AuthRequirement,
+  AuthType,
+  ErrorSpec,
+  HttpMethod,
+  JsonSchema,
+  Operation,
+  Param,
+  ParamLocation,
+  RequestBody,
 } from "@anvil/air";
 import { classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import { deriveNames, singularize } from "./naming.js";
 import type { OpenApiDocument, ParsedSpec, SecurityScheme } from "./parse.js";
 
 const HTTP_METHODS: HttpMethod[] = ["get", "put", "post", "delete", "patch", "head"];
@@ -40,67 +40,6 @@ interface RawOperation {
     { description?: string; content?: Record<string, { schema?: JsonSchema }> }
   >;
   security?: Array<Record<string, string[]>>;
-}
-
-const singularize = (s: string): string => {
-  if (/ies$/.test(s)) return s.replace(/ies$/, "y");
-  if (/ses$/.test(s)) return s.replace(/es$/, "");
-  if (/s$/.test(s) && !/ss$/.test(s)) return s.replace(/s$/, "");
-  return s;
-};
-
-function actionFor(method: HttpMethod, endsWithParam: boolean): string {
-  switch (method) {
-    case "get":
-    case "head":
-      return endsWithParam ? "get" : "list";
-    case "post":
-      return "create";
-    case "put":
-      return "replace";
-    case "patch":
-      return "update";
-    case "delete":
-      return "delete";
-    default:
-      return method;
-  }
-}
-
-interface DerivedNames {
-  id: string;
-  canonicalName: string;
-  displayName: string;
-  cliCommand: string;
-  toolName: string;
-  resource: string;
-}
-
-function deriveNames(
-  serviceId: string,
-  path: string,
-  method: HttpMethod,
-  raw: RawOperation,
-): DerivedNames {
-  const segments = path.split("/").filter(Boolean);
-  const concrete = segments.filter((s) => !s.startsWith("{"));
-  const resource = concrete.length ? (concrete[concrete.length - 1] as string) : serviceId;
-  const endsWithParam =
-    segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
-  const action = actionFor(method, endsWithParam);
-  const canonicalName = raw.operationId
-    ? snakeCase(raw.operationId)
-    : `${action}_${singularize(resource)}`;
-  const displayName =
-    raw.summary ?? canonicalName.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
-  return {
-    id: `${serviceId}.${snakeCase(resource)}.${action}`,
-    canonicalName,
-    displayName,
-    cliCommand: `${serviceId} ${resource} ${action}`,
-    toolName: `${serviceId}_${canonicalName}`,
-    resource,
-  };
 }
 
 function toParam(raw: RawParam): Param | null {
@@ -232,18 +171,17 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
   const doc = parsed.document;
   const paths = doc.paths ?? {};
   const operations: Operation[] = [];
-  const seenIds = new Map<string, number>();
 
   for (const [path, pathItem] of Object.entries(paths)) {
     for (const method of HTTP_METHODS) {
       const raw = pathItem[method] as RawOperation | undefined;
       if (!raw) continue;
 
+      // Naming is a first-class pass: derive names with a confidence, and let
+      // the collision pass (compile) disambiguate any clashes with meaningful
+      // tokens instead of a silent `_2`.
       const names = deriveNames(serviceId, path, method, raw);
-      let id = names.id;
-      const count = seenIds.get(id) ?? 0;
-      seenIds.set(id, count + 1);
-      if (count > 0) id = `${id}_${count + 1}`;
+      const id = names.id;
 
       const signal = `${raw.operationId ?? ""} ${raw.summary ?? ""} ${path}`;
       const { effect, idempotency } = classifyEffect(method, signal);
@@ -291,6 +229,12 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
               kind: "inferred",
               note: "effect/idempotency inferred from HTTP method",
               confidence: 0.5,
+            },
+            {
+              kind: "inferred",
+              ref: "naming",
+              note: names.signals.join("; "),
+              confidence: names.confidence,
             },
           ],
           confidence: 0.6,
