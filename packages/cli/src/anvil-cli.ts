@@ -3,7 +3,13 @@ import { dirname, join } from "node:path";
 import { type AirDocument, airFromJson, airFromYaml, airToYaml } from "@anvil/air";
 import { approveOperations, compile } from "@anvil/compiler";
 import { generateBundle, operationCatalog, writeBundle } from "@anvil/generators";
-import { parseSources, runEnrichment, type TransportFactory } from "@anvil/harness";
+import {
+  LOOSEN_THRESHOLD,
+  PROFILES,
+  parseSources,
+  runEnrichment,
+  type TransportFactory,
+} from "@anvil/harness";
 import { stringify as toYaml } from "yaml";
 import { parseArgs } from "./args.js";
 import { ANVIL_COMMANDS } from "./commands.js";
@@ -48,6 +54,8 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
         return cmdPackage(positionals.slice(1), io);
       case "deploy":
         return cmdDeploy(positionals.slice(1), flags, io);
+      case "sources":
+        return cmdSources(io);
       case "enrich":
         return await cmdEnrich(positionals.slice(1), flags, deps, io);
       case "run":
@@ -193,6 +201,24 @@ function cmdDeploy(args: string[], flags: Record<string, string | boolean>, io: 
   io.out("  3. bind secrets from deploy/secrets.required.yaml (Secret Manager)");
   io.out("  4. gcloud run services replace deploy/cloudrun.service.yaml");
   io.out("Anvil generates the artifacts; it does not hold your cloud credentials.");
+  return 0;
+}
+
+function cmdSources(io: CliIO): number {
+  io.out("Enrichment sources (published MCP servers Anvil connects to as a client):\n");
+  for (const p of Object.values(PROFILES)) {
+    if (p.system === "generic") continue;
+    const server =
+      p.defaultTransport?.kind === "stdio"
+        ? `${p.defaultTransport.command} ${p.defaultTransport.args.join(" ")}`
+        : (p.defaultTransport?.url ?? "—");
+    const canLoosen =
+      p.strong >= LOOSEN_THRESHOLD ? "can loosen (impl-grade)" : "tighten/corroborate only";
+    io.out(`  ${p.system.padEnd(11)} ${p.evidenceKind.padEnd(13)} ${canLoosen}`);
+    io.out(`  ${" ".repeat(11)} server: ${server}`);
+  }
+  io.out("\nName a `system` in your sources.yaml and omit `transport` to use these defaults.");
+  io.out("Secrets come from the environment (e.g. GITHUB_TOKEN, POSTMAN_API_KEY).");
   return 0;
 }
 
