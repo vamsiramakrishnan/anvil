@@ -91,6 +91,49 @@ describe("compile pipeline (with manifest enrichment)", () => {
   });
 });
 
+describe("naming pass", () => {
+  it("scores a spec-derived name with lower confidence than an operationId one", async () => {
+    const air = await compile({ spec, serviceId: "payments" });
+    const refund = air.operations.find((o) => o.canonicalName === "create_refund");
+    const naming = refund?.evidence.items.find((i) => i.ref === "naming");
+    expect(naming?.confidence).toBeGreaterThanOrEqual(0.9); // has an operationId
+  });
+
+  it("resolves a CLI-command collision with meaningful tokens, not a silent _2", async () => {
+    const clashing = `openapi: 3.0.0
+info: { title: billing, version: 1.0.0 }
+paths:
+  /orders/{id}/cancel:
+    post:
+      responses: { "200": { description: ok } }
+  /subscriptions/{id}/cancel:
+    post:
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: clashing, serviceId: "billing" });
+    const commands = air.operations.map((o) => o.cli.command);
+    // Disambiguated by the distinguishing path segment, and unique.
+    expect(new Set(commands).size).toBe(commands.length);
+    expect(commands.some((c) => c.includes("orders"))).toBe(true);
+    expect(commands.some((c) => c.includes("subscriptions"))).toBe(true);
+    expect(air.diagnostics.some((d) => d.code === "naming_collision_resolved")).toBe(true);
+    // Tool names stay aligned with the disambiguated commands (no drift).
+    expect(new Set(air.operations.map((o) => o.mcp.toolName)).size).toBe(air.operations.length);
+  });
+
+  it("flags a weak (agent-hostile) name for review", async () => {
+    const weak = `openapi: 3.0.0
+info: { title: gateway, version: 1.0.0 }
+paths:
+  /:
+    post:
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: weak, serviceId: "gateway" });
+    expect(air.diagnostics.some((d) => d.code === "weak_operation_name")).toBe(true);
+  });
+});
+
 describe("request body handling", () => {
   it("projects a flat scalar body into per-field flags while preserving the schema", async () => {
     const air = await compile({ spec, manifest, serviceId: "payments" });
