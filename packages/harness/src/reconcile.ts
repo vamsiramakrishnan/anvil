@@ -1,7 +1,17 @@
-import type { Operation } from "@anvil/air";
+import { type Operation, resolveSemantic } from "@anvil/air";
 import type { OperationManifest } from "@anvil/compiler";
 import type { HarnessFinding, OperationClaim } from "./agent.js";
 import { reliabilityOf } from "./evidence.js";
+
+/**
+ * Map a proposed-change type to the AIR predicate its evidence asserts, so a
+ * contested safety semantic can be detected before loosening. Only safety-relevant
+ * types are listed; others need no conflict gate.
+ */
+const SAFETY_PREDICATE_BY_CLAIM: Partial<Record<OperationClaim["type"], string>> = {
+  idempotency: "idempotency.mode",
+  confirmation: "confirmation.required",
+};
 
 /**
  * Asymmetric trust (the safety centerpiece). Enrichment that *loosens* safety
@@ -54,10 +64,27 @@ export function reconcile(op: Operation, findings: HarnessFinding[]): ReconcileR
     if (!claim) continue;
 
     const threshold = claim.direction === "loosen" ? LOOSEN_THRESHOLD : TIGHTEN_THRESHOLD;
-    const accepted = best >= threshold;
-    const reason = accepted
+    let accepted = best >= threshold;
+    let reason = accepted
       ? `accepted: ${claim.direction} backed by evidence at reliability ${best.toFixed(2)} ≥ ${threshold}`
       : `rejected: ${claim.direction} needs reliability ≥ ${threshold}; best available was ${best.toFixed(2)} (supply an Anvil manifest to override deliberately)`;
+
+    // Conflict gate: never auto-loosen a safety-sensitive semantic whose evidence
+    // is materially contested — a "winner by 0.02" is a review signal, not a fact.
+    if (accepted && claim.direction === "loosen") {
+      const predicate = SAFETY_PREDICATE_BY_CLAIM[claim.type];
+      if (predicate) {
+        const resolution = resolveSemantic({ claims: group.map((f) => f.evidence) }, predicate);
+        if (resolution.status === "conflicted") {
+          accepted = false;
+          reason =
+            `rejected: conflicting evidence for ${predicate} ` +
+            `(${JSON.stringify(resolution.value)} @${resolution.support.toFixed(2)} vs ` +
+            `${JSON.stringify(resolution.competingValue)} @${(resolution.competingSupport ?? 0).toFixed(2)}) ` +
+            "— review required, not auto-loosened";
+        }
+      }
+    }
     decisions.push({ claim, accepted, reason, evidenceReliability: best });
 
     if (!accepted) continue;

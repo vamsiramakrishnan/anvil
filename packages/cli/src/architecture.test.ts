@@ -1,6 +1,13 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { type Claim, confidenceFor, type Evidence, evidenceConfidence } from "@anvil/air";
+import {
+  type Claim,
+  confidenceFor,
+  conflictedSafetyPredicates,
+  type Evidence,
+  evidenceConfidence,
+  resolveSemantic,
+} from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { generateBundle } from "@anvil/generators";
 import { describe, expect, it } from "vitest";
@@ -200,5 +207,55 @@ describe("evidence is claim-scoped and deterministically derived", () => {
     const ev: Evidence = { claims: [claim({ confidence: 0.5 })] };
     // Evidence is exactly a claim list — there is no `confidence` field to desync.
     expect(Object.keys(ev)).toEqual(["claims"]);
+  });
+
+  it("reports a near-tie contradiction as conflicted, not a confident winner", () => {
+    // Two authoritative sources disagree on idempotency mode by a hair.
+    const ev: Evidence = {
+      claims: [
+        claim({
+          predicate: "idempotency.mode",
+          value: "required",
+          confidence: 0.95,
+          source: "source_impl",
+        }),
+        claim({
+          predicate: "idempotency.mode",
+          value: "none",
+          confidence: 0.92,
+          source: "source_impl",
+        }),
+      ],
+    };
+    const res = resolveSemantic(ev, "idempotency.mode");
+    expect(res.status).toBe("conflicted");
+    expect(res.competingValue).toBeDefined();
+    // idempotency.mode is safety-sensitive, so the conflict surfaces for review.
+    expect(conflictedSafetyPredicates(ev)).toContain("idempotency.mode");
+  });
+
+  it("reports a clear winner as resolved and an empty predicate as insufficient", () => {
+    const clear: Evidence = {
+      claims: [
+        claim({
+          predicate: "idempotency.mode",
+          value: "required",
+          confidence: 0.95,
+          source: "source_impl",
+        }),
+        claim({
+          predicate: "idempotency.mode",
+          value: "none",
+          confidence: 0.2,
+          source: "generated_mock",
+        }),
+      ],
+    };
+    const resolved = resolveSemantic(clear, "idempotency.mode");
+    expect(resolved.status).toBe("resolved");
+    expect(resolved.value).toBe("required");
+    expect(conflictedSafetyPredicates(clear)).toEqual([]);
+
+    expect(resolveSemantic({ claims: [] }, "idempotency.mode").status).toBe("insufficient");
   });
 });
