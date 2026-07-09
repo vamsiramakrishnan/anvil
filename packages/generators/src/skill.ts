@@ -1,4 +1,5 @@
 import type { AirDocument, Operation } from "@anvil/air";
+import { evidenceConfidence } from "@anvil/air";
 import { stringify as toYaml } from "yaml";
 
 /**
@@ -117,7 +118,7 @@ function capabilitiesRef(air: AirDocument): string {
     return `## ${cap.displayName}  (\`${cap.id}\`)
 ${cap.description}
 
-_Grouping: ${cap.source} · confidence ${cap.evidence.confidence.toFixed(2)}_
+_Grouping: ${cap.source} · confidence ${evidenceConfidence(cap.evidence).toFixed(2)}_
 
 Operations:
 ${opLines.join("\n")}

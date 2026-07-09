@@ -55,7 +55,7 @@ export async function compile(input: CompileInput): Promise<AirDocument> {
   const nameConfidence = new Map(
     validated.map((op) => [
       op.id,
-      op.evidence.items.find((i) => i.ref === "naming")?.confidence ?? 1,
+      op.evidence.claims.find((c) => c.predicate === "name.quality")?.confidence ?? 1,
     ]),
   );
   namingDiagnostics.push(...critiqueNames(validated, nameConfidence));

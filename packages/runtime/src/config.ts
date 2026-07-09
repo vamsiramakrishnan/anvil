@@ -21,11 +21,28 @@ export interface RuntimeConfig {
   ledger?: string;
 }
 
+/** The environments the runtime recognizes. Anything else is treated as prod. */
+export type RuntimeEnv = "dev" | "staging" | "prod";
+
+/**
+ * Normalize a raw env string, **failing closed**. Only the exact string `"dev"`
+ * enables development affordances (permissive host allowlist, process-local
+ * idempotency ledger). Anything unset, misspelled, or unknown resolves to
+ * `"prod"` — a runtime that cannot prove it is in dev must behave as production.
+ * This removes the old `?? "dev"` fallback that silently gave a misconfigured
+ * Cloud Run process dev semantics (any upstream host, no durable-ledger gate).
+ */
+export function normalizeEnv(raw: string | undefined): RuntimeEnv {
+  if (raw === "dev") return "dev";
+  if (raw === "staging") return "staging";
+  return "prod";
+}
+
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   return {
     serviceId: env.ANVIL_SERVICE_ID,
     artifactVersion: env.ANVIL_ARTIFACT_VERSION,
-    env: env.ANVIL_ENV ?? "dev",
+    env: normalizeEnv(env.ANVIL_ENV),
     allowedHosts: (env.ANVIL_ALLOWED_HOSTS ?? "")
       .split(",")
       .map((h) => h.trim())

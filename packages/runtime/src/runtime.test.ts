@@ -7,6 +7,7 @@ import {
   InMemoryLedger,
   InMemoryObserver,
   MockTransport,
+  normalizeEnv,
   registerLedgerBackend,
   requestFingerprint,
   resolveLedger,
@@ -407,6 +408,58 @@ describe("durable ledger (prod fail-closed)", () => {
 class DurableTestLedger extends InMemoryLedger {
   override readonly durable = true;
 }
+
+describe("production defaults fail closed (no dev fallback)", () => {
+  const args = {
+    input: { payment_id: "pay_1", amount: 2500 },
+    confirm: true,
+    idempotencyKey: "k1",
+  };
+
+  it("treats an unset env as prod for host pinning (empty allowlist denies)", async () => {
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    // No `env`, no `allowedHosts`: a misconfigured context must NOT silently get
+    // dev semantics (which would permit any upstream host).
+    const res = await execute(op(), args, {
+      baseUrl: "https://payments.internal.example.com",
+      transport,
+      sleep: async () => {},
+      rng: () => 0.5,
+      ledger: new DurableTestLedger(),
+    });
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.code).toBe("policy_denied");
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("treats an unset env as prod for the durable-ledger gate", async () => {
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    // Allowlist satisfied, but no env and only a process-local ledger: must fail
+    // closed on the required-idempotency mutation, not fall through as dev.
+    const res = await execute(op(), args, {
+      baseUrl: "https://payments.internal.example.com",
+      allowedHosts: ["payments.internal.example.com"],
+      transport,
+      sleep: async () => {},
+      rng: () => 0.5,
+      ledger: new InMemoryLedger(),
+    });
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.code).toBe("idempotency_ledger_unavailable");
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("normalizeEnv maps unset/unknown to prod and only exact 'dev' to dev", () => {
+    expect(normalizeEnv(undefined)).toBe("prod");
+    expect(normalizeEnv("")).toBe("prod");
+    expect(normalizeEnv("Dev")).toBe("prod");
+    expect(normalizeEnv("production")).toBe("prod");
+    expect(normalizeEnv("dev")).toBe("dev");
+    expect(normalizeEnv("staging")).toBe("staging");
+  });
+});
 
 describe("observability", () => {
   it("emits an execution record with no secrets", async () => {

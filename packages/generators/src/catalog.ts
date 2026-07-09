@@ -1,5 +1,5 @@
 import type { AirDocument, Operation } from "@anvil/air";
-import { operationInputSchema } from "@anvil/air";
+import { evidenceConfidence, operationInputSchema } from "@anvil/air";
 
 export interface CatalogEntry {
   id: string;
@@ -55,7 +55,7 @@ export function operationCatalog(air: AirDocument): {
       operations: c.operationIds,
       workflows: c.workflowIds,
       state: c.state,
-      confidence: c.evidence.confidence,
+      confidence: evidenceConfidence(c.evidence),
     })),
     operations: air.operations.map((op) => ({
       id: op.id,
@@ -76,7 +76,7 @@ export function operationCatalog(air: AirDocument): {
       mcpTool: op.mcp.toolName,
       state: op.state,
       intentExamples: op.skill.intentExamples,
-      confidence: op.evidence.confidence,
+      confidence: evidenceConfidence(op.evidence),
     })),
   };
 }

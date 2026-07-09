@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { evidenceConfidence } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { classifyConfirmation, classifyEffect } from "./classify.js";
 import { approveOperations, compile } from "./compile.js";
@@ -72,7 +73,7 @@ describe("compile pipeline (with manifest enrichment)", () => {
     expect(refund?.retries.retryOn).toContain("http_429");
     expect(refund?.confirmation.required).toBe(true);
     expect(refund?.state).toBe("approved");
-    expect(refund?.evidence.confidence).toBeGreaterThanOrEqual(0.95);
+    expect(evidenceConfidence(refund?.evidence ?? { claims: [] })).toBeGreaterThanOrEqual(0.95);
   });
 
   it("resolves oauth2 auth with scopes", async () => {
@@ -138,7 +139,7 @@ describe("naming pass", () => {
   it("scores a spec-derived name with lower confidence than an operationId one", async () => {
     const air = await compile({ spec, serviceId: "payments" });
     const refund = air.operations.find((o) => o.canonicalName === "create_refund");
-    const naming = refund?.evidence.items.find((i) => i.ref === "naming");
+    const naming = refund?.evidence.claims.find((c) => c.predicate === "name.quality");
     expect(naming?.confidence).toBeGreaterThanOrEqual(0.9); // has an operationId
   });
 
@@ -231,7 +232,7 @@ describe("capability discovery", () => {
     expect(ids).toEqual(["payments.customers", "payments.payments", "payments.refunds"]);
     const refunds = air.capabilities.find((c) => c.id === "payments.refunds");
     expect(refunds?.source).toBe("tag");
-    expect(refunds?.evidence.confidence).toBeGreaterThanOrEqual(0.9);
+    expect(evidenceConfidence(refunds?.evidence ?? { claims: [] })).toBeGreaterThanOrEqual(0.9);
     // Every operation is stamped with its primary capability.
     const refund = air.operations.find((o) => o.canonicalName === "create_refund");
     expect(refund?.capabilityId).toBe("payments.refunds");
