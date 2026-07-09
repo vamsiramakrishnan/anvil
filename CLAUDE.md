@@ -24,7 +24,8 @@ holds behavior checks.
 
 ## Packages
 `@anvil/air` (IR) · `@anvil/compiler` (parse/normalize/classify/validate) ·
-`@anvil/runtime` (safety hot path) · `@anvil/generators` (artifact foundry) ·
+`@anvil/runtime` (safety hot path) · `@anvil/mcp-runtime` (thin MCP serving path,
+the deployed unit) · `@anvil/generators` (build-time artifact foundry) ·
 `@anvil/cli` (`anvil` command + shared tool-CLI engine).
 
 The magic is not that Anvil generates code. It is that the CLI, MCP server, and

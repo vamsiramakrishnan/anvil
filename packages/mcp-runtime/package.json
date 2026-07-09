@@ -1,7 +1,7 @@
 {
-  "name": "@anvil/generators",
+  "name": "@anvil/mcp-runtime",
   "version": "0.1.0",
-  "description": "Anvil artifact generators — emit CLI, MCP, skill, docs, deploy, and tests from AIR.",
+  "description": "Anvil MCP serving runtime — the thin, deployable path that turns AIR into a live MCP server. Build-time generators do not run here.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -23,10 +23,8 @@
   },
   "dependencies": {
     "@anvil/air": "workspace:*",
-    "@anvil/mcp-runtime": "workspace:*",
     "@anvil/runtime": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.22.0",
-    "yaml": "^2.8.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

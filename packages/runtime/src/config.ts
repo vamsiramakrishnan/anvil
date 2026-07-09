@@ -12,6 +12,13 @@ export interface RuntimeConfig {
   authProfile?: string;
   policyBundle?: string;
   otelExporter?: string;
+  /**
+   * Durable idempotency ledger backend URI (e.g. `firestore://project/db`).
+   * Selects a registered ledger backend via `resolveLedger`. Absent → the
+   * process-local in-memory ledger, which fails closed for required-idempotency
+   * mutations outside `dev`.
+   */
+  ledger?: string;
 }
 
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -26,6 +33,7 @@ export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     authProfile: env.ANVIL_AUTH_PROFILE,
     policyBundle: env.ANVIL_POLICY_BUNDLE,
     otelExporter: env.ANVIL_OTEL_EXPORTER,
+    ledger: env.ANVIL_LEDGER,
   };
 }
 

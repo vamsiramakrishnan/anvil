@@ -35,8 +35,10 @@ const creds = {
 const baseDeps = (transport: MockTransport) => ({
   transport,
   credentials: creds,
+  // Mechanics tests run in dev, where the in-memory ledger is a valid backend;
+  // the prod durable-ledger fail-closed contract is covered in runtime tests.
   env: {
-    ANVIL_ENV: "prod",
+    ANVIL_ENV: "dev",
     ANVIL_ALLOWED_HOSTS: "payments.internal.example.com",
     ANVIL_AUTH_PROFILE: "prod",
   } as NodeJS.ProcessEnv,
@@ -55,6 +57,39 @@ describe("tool CLI: discovery", () => {
     const code = await runToolCli(air, ["discover", "refund a payment"], { io });
     expect(code).toBe(0);
     expect(io.text()).toContain("payments refunds create");
+  });
+
+  it("lists capabilities as the primary index", async () => {
+    const io = bufferIO();
+    const code = await runToolCli(air, ["capabilities"], { io });
+    expect(code).toBe(0);
+    expect(io.text()).toMatch(/refunds/);
+    expect(io.text()).toMatch(/payments/);
+  });
+
+  it("shows a capability's operations and workflows", async () => {
+    const io = bufferIO();
+    const code = await runToolCli(air, ["capabilities", "refunds"], { io });
+    expect(code).toBe(0);
+    expect(io.text()).toContain("payments refunds create");
+    expect(io.text()).toMatch(/refund_customer/);
+  });
+
+  it("lists workflows and shows one's steps", async () => {
+    const list = bufferIO();
+    expect(await runToolCli(air, ["workflows"], { io: list })).toBe(0);
+    expect(list.text()).toMatch(/refund_customer/);
+
+    const detail = bufferIO();
+    expect(await runToolCli(air, ["workflows", "refund_customer"], { io: detail })).toBe(0);
+    expect(detail.text()).toContain("payments payments get");
+    expect(detail.text()).toContain("payments refunds create");
+    expect(detail.text()).toMatch(/human approval/i);
+  });
+
+  it("returns non-zero for an unknown capability", async () => {
+    const io = bufferIO();
+    expect(await runToolCli(air, ["capabilities", "nope"], { io })).toBe(1);
   });
 
   it("explains an operation's contract", async () => {
@@ -152,6 +187,47 @@ describe("tool CLI: invocation", () => {
     const body = JSON.parse(transport.requests[0]?.body ?? "{}");
     expect(body.amount).toBe(2500); // coerced to integer
     expect(transport.requests[0]?.headers["Idempotency-Key"]).toBe("k1");
+  });
+
+  it("accepts a whole (nested) body via --body JSON and sends it verbatim", async () => {
+    const nestedAir = await compile({
+      spec: `openapi: 3.0.0
+info: { title: orders, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      tags: [orders]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items: { type: array, items: { type: object } }
+`,
+      serviceId: "orders",
+    });
+    // Approve the discovered operation so the CLI will invoke it.
+    for (const op of nestedAir.operations) op.state = "approved";
+    const transport = new MockTransport(() => ({ status: 201, headers: {}, body: "{}" }));
+    const io = bufferIO();
+    const command = nestedAir.operations[0]?.cli.command.split(" ").slice(1) ?? [];
+    const code = await runToolCli(
+      nestedAir,
+      [
+        ...command,
+        "--body",
+        '{"items":[{"sku":"a"}]}',
+        "--confirm",
+        "--base-url",
+        "https://o.local",
+      ],
+      { transport, env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv, io },
+    );
+    expect(code, io.text()).toBe(0);
+    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({ items: [{ sku: "a" }] });
   });
 });
 

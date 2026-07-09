@@ -6,7 +6,9 @@ import {
   operationInputSchema,
   snakeCase,
 } from "@anvil/air";
-import { enrich, parseManifest } from "./manifest.js";
+import { discoverCapabilities } from "./capabilities.js";
+import { type AnvilManifest, buildWorkflows, enrich, parseManifest } from "./manifest.js";
+import { critiqueNames, resolveNameCollisions } from "./naming.js";
 import { normalize } from "./normalize.js";
 import { parseSpec } from "./parse.js";
 import { validate } from "./validate.js";
@@ -29,12 +31,17 @@ export interface CompileInput {
 export async function compile(input: CompileInput): Promise<AirDocument> {
   const parsed = await parseSpec(input.spec);
   const doc = parsed.document;
-  const manifest = input.manifest ? parseManifest(input.manifest) : { operations: {} };
+  const manifest: AnvilManifest = input.manifest
+    ? parseManifest(input.manifest)
+    : { operations: {}, workflows: {} };
 
   const title = (doc.info?.title as string | undefined) ?? "service";
   const serviceId = input.serviceId ?? manifest.service?.name ?? snakeCase(title) ?? "service";
 
   let operations = normalize(serviceId, parsed);
+  // Naming pass: resolve any name collisions coherently across id/CLI/tool with
+  // meaningful tokens (never a silent `_2`) before enrichment or validation.
+  const namingDiagnostics = resolveNameCollisions(operations);
   operations = enrich(operations, manifest);
 
   // Attach the assembled input JSON Schema to each operation.
@@ -44,9 +51,30 @@ export async function compile(input: CompileInput): Promise<AirDocument> {
 
   const { operations: validated, diagnostics } = validate(operations);
 
+  // Critique the final names for agent-friendliness (reviewable diagnostics).
+  const nameConfidence = new Map(
+    validated.map((op) => [
+      op.id,
+      op.evidence.items.find((i) => i.ref === "naming")?.confidence ?? 1,
+    ]),
+  );
+  namingDiagnostics.push(...critiqueNames(validated, nameConfidence));
+
+  // Group operations into capabilities (the primary abstraction), then attach
+  // any authored workflows. Capability discovery stamps `capabilityId` on each
+  // operation in place.
+  const capabilities = discoverCapabilities(serviceId, validated);
+  const { workflows, diagnostics: workflowDiagnostics } = buildWorkflows(
+    manifest,
+    validated,
+    capabilities,
+  );
+
   const serviceAuth: AuthRequirement = validated.find((o) => o.auth.type !== "none")?.auth ?? {
     type: "none",
     scopes: [],
+    principal: "anonymous",
+    secretSource: "none",
   };
 
   const air = {
@@ -64,8 +92,10 @@ export async function compile(input: CompileInput): Promise<AirDocument> {
       servers: (doc.servers ?? []).map((s) => ({ url: s.url, description: s.description })),
     },
     operations: validated,
+    capabilities,
+    workflows,
     schemas: (doc.components?.schemas as Record<string, JsonSchema> | undefined) ?? {},
-    diagnostics,
+    diagnostics: [...diagnostics, ...namingDiagnostics, ...workflowDiagnostics],
   };
 
   return loadAirDocument(air);

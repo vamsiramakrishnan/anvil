@@ -6,7 +6,10 @@ export interface CatalogEntry {
   canonicalName: string;
   displayName: string;
   description: string;
+  capability?: string;
   effect: string;
+  action: string;
+  principal: string;
   risk: string;
   reversible: boolean;
   idempotency: string;
@@ -20,9 +23,22 @@ export interface CatalogEntry {
   confidence: number;
 }
 
+/** A capability entry in the catalog — the primary index agents browse. */
+export interface CapabilityCatalogEntry {
+  id: string;
+  displayName: string;
+  description: string;
+  source: string;
+  operations: string[];
+  workflows: string[];
+  state: string;
+  confidence: number;
+}
+
 /** The operation catalog (spec §5.5) — the human/agent-readable index. */
 export function operationCatalog(air: AirDocument): {
   service: { id: string; version: string; displayName?: string };
+  capabilities: CapabilityCatalogEntry[];
   operations: CatalogEntry[];
 } {
   return {
@@ -31,12 +47,25 @@ export function operationCatalog(air: AirDocument): {
       version: air.service.version,
       displayName: air.service.displayName,
     },
+    capabilities: air.capabilities.map((c) => ({
+      id: c.id,
+      displayName: c.displayName,
+      description: c.description,
+      source: c.source,
+      operations: c.operationIds,
+      workflows: c.workflowIds,
+      state: c.state,
+      confidence: c.evidence.confidence,
+    })),
     operations: air.operations.map((op) => ({
       id: op.id,
       canonicalName: op.canonicalName,
       displayName: op.displayName,
       description: op.description,
+      capability: op.capabilityId,
       effect: op.effect.kind,
+      action: op.effect.action,
+      principal: op.auth.principal,
       risk: op.effect.risk,
       reversible: op.effect.reversible,
       idempotency: op.idempotency.mode,
@@ -71,6 +100,14 @@ export function compiledOperations(air: AirDocument): unknown {
       sourceRef: op.sourceRef,
       effect: op.effect,
       params: op.input.params.map((p) => ({ name: p.name, in: p.in, required: p.required })),
+      body: op.input.body
+        ? {
+            required: op.input.body.required,
+            projection: op.input.body.projection,
+            contentType: op.input.body.contentType,
+            fields: op.input.body.fields.map((f) => ({ name: f.name, required: f.required })),
+          }
+        : undefined,
       idempotency: op.idempotency,
       retries: op.retries,
       confirmation: { required: op.confirmation.required },

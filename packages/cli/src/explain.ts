@@ -5,11 +5,12 @@ import { cliFlag } from "@anvil/air";
 export function riskSummary(op: Operation): string {
   const lines = [
     `${op.id}  (${op.cli.command})`,
-    `  effect:        ${op.effect.kind}${op.effect.kind === "mutation" ? ` (${op.effect.risk}, ${op.effect.reversible ? "reversible" : "IRREVERSIBLE"})` : ""}`,
+    `  effect:        ${op.effect.kind} / ${op.effect.action}${op.effect.kind === "mutation" ? ` (${op.effect.risk}, ${op.effect.reversible ? "reversible" : "IRREVERSIBLE"})` : ""}`,
     `  idempotency:   ${op.idempotency.mode}${op.idempotency.key ? ` via ${op.idempotency.key}` : ""}`,
-    `  retry-safe:    ${op.retries.mode === "safe" ? `yes (${op.retries.maxAttempts} attempts, ${op.retries.backoff})` : "no"}`,
+    `  retry-safe:    ${op.retries.mode === "safe" ? `yes (${op.retries.basis}; ${op.retries.maxAttempts} attempts, ${op.retries.backoff})` : "no"}`,
     `  confirmation:  ${op.confirmation.required ? "REQUIRED" : "not required"}`,
     `  auth:          ${op.auth.type}${op.auth.scopes.length ? ` [${op.auth.scopes.join(", ")}]` : ""}`,
+    `  acts as:       ${op.auth.principal}${op.auth.audience ? ` (aud: ${op.auth.audience})` : ""}`,
     `  state:         ${op.state}`,
     `  confidence:    ${op.evidence.confidence.toFixed(2)}`,
   ];
@@ -18,12 +19,23 @@ export function riskSummary(op: Operation): string {
 
 /** Full contract for one operation (`explain`). */
 export function explain(op: Operation): string {
-  const params = op.input.params
-    .map(
-      (p) =>
-        `  ${cliFlag(p.name)}${p.required ? " (required)" : ""}  [${p.in}]  ${p.description ?? typeName(p.schema)}`,
-    )
-    .join("\n");
+  const paramLines = op.input.params.map(
+    (p) =>
+      `  ${cliFlag(p.name)}${p.required ? " (required)" : ""}  [${p.in}]  ${p.description ?? typeName(p.schema)}`,
+  );
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    for (const f of body.fields) {
+      paramLines.push(
+        `  ${cliFlag(f.name)}${f.required ? " (required)" : ""}  [body]  ${f.description ?? typeName(f.schema)}`,
+      );
+    }
+  } else if (body) {
+    paramLines.push(
+      `  --body${body.required ? " (required)" : ""}  [body:${body.contentType}]  JSON body — structure preserved from the source schema (see --schema).`,
+    );
+  }
+  const params = paramLines.join("\n");
   const errors = op.errors
     .map((e) => `  ${e.code}${e.upstream?.httpStatus ? ` (${e.upstream.httpStatus})` : ""}`)
     .join("\n");

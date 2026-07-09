@@ -13,8 +13,8 @@ import {
   type ExecuteContext,
   execute,
   FetchTransport,
-  hostIsAllowed,
   loadRuntimeConfig,
+  resolveLedger,
   type Transport,
 } from "@anvil/runtime";
 import { parseArgs } from "./args.js";
@@ -24,6 +24,8 @@ import { type CliIO, processIO } from "./io.js";
 export interface ToolCliDeps {
   transport?: Transport;
   credentials?: CredentialResolver;
+  /** Override the idempotency ledger (tests inject a durable one). */
+  ledger?: ExecuteContext["ledger"];
   io?: CliIO;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -94,6 +96,34 @@ export async function runToolCli(
       io.out(JSON.stringify({ valid: true }, null, 2));
       return 0;
     }
+    case "capabilities": {
+      const which = positionals[1];
+      if (!which) {
+        io.out(flags.json ? JSON.stringify(air.capabilities, null, 2) : capabilitiesTable(air));
+        return 0;
+      }
+      const cap = findCapability(air, which);
+      if (!cap) {
+        io.err(`No capability "${which}". Try \`${svc} capabilities\`.`);
+        return 1;
+      }
+      io.out(flags.json ? JSON.stringify(cap, null, 2) : capabilityDetail(air, cap));
+      return 0;
+    }
+    case "workflows": {
+      const which = positionals[1];
+      if (!which) {
+        io.out(flags.json ? JSON.stringify(air.workflows, null, 2) : workflowsTable(air));
+        return 0;
+      }
+      const wf = findWorkflow(air, which);
+      if (!wf) {
+        io.err(`No workflow "${which}". Try \`${svc} workflows\`.`);
+        return 1;
+      }
+      io.out(flags.json ? JSON.stringify(wf, null, 2) : workflowDetail(air, wf));
+      return 0;
+    }
   }
 
   // Operation invocation: match the longest command tail against positionals.
@@ -147,6 +177,10 @@ async function invoke(
   const ctx: ExecuteContext = {
     transport: deps.transport ?? new FetchTransport(),
     credentials: deps.credentials ?? new EnvCredentialResolver(env),
+    // Wire the idempotency ledger so replay protection actually works from the
+    // CLI. ANVIL_LEDGER selects a durable backend; without one the executor
+    // fails closed on required-idempotency mutations outside dev.
+    ledger: deps.ledger ?? resolveLedger(config.ledger),
     baseUrl,
     authProfile: (flags["auth-profile"] as string) ?? config.authProfile,
     allowedHosts,
@@ -231,6 +265,18 @@ function buildInput(
     if (flags[flagName] !== undefined)
       base[propKey(p.name)] = coerce(flags[flagName] as string, p.schema);
   }
+  // Body projection: flat scalar fields become individual flags; a `whole` body
+  // is supplied as JSON via --body '<json>' (structure preserved end to end).
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    for (const f of body.fields) {
+      const flagName = cliFlag(f.name).slice(2);
+      if (flags[flagName] !== undefined)
+        base[propKey(f.name)] = coerce(flags[flagName] as string, f.schema);
+    }
+  } else if (body && typeof flags.body === "string") {
+    base.body = JSON.parse(flags.body);
+  }
   return base;
 }
 
@@ -245,18 +291,41 @@ function readInput(
 }
 
 function requiredMissing(op: Operation, input: Record<string, unknown>): string[] {
-  return op.input.params
-    .filter((p) => p.required)
-    .map((p) => propKey(p.name))
-    .filter((k) => input[k] === undefined || input[k] === null || input[k] === "");
+  const keys = op.input.params.filter((p) => p.required).map((p) => propKey(p.name));
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    for (const f of body.fields) if (f.required) keys.push(propKey(f.name));
+  } else if (body?.required) {
+    keys.push("body");
+  }
+  return keys.filter((k) => input[k] === undefined || input[k] === null || input[k] === "");
 }
 
 function exampleInvocation(op: Operation): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const p of op.input.params) out[propKey(p.name)] = p.example ?? sample(p.schema);
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    for (const f of body.fields) out[propKey(f.name)] = sample(f.schema);
+  } else if (body) {
+    out.body = sampleSchema(body.schema);
+  }
   if (op.idempotency.mode === "required") out.idempotency_key = `${op.canonicalName}-key`;
   if (op.confirmation.required) out.confirm = true;
   return out;
+}
+
+/** A minimal example value for an arbitrary JSON Schema (used for whole bodies). */
+function sampleSchema(schema: JsonSchema): unknown {
+  if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum[0];
+  const props = schema.properties as Record<string, JsonSchema> | undefined;
+  if (schema.type === "object" && props) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(props)) out[k] = sampleSchema(v);
+    return out;
+  }
+  if (schema.type === "array") return [sampleSchema((schema.items as JsonSchema) ?? {})];
+  return sample(schema);
 }
 
 function sample(schema: JsonSchema): unknown {
@@ -292,13 +361,103 @@ function notFound(io: CliIO, air: AirDocument, id?: string): number {
 }
 
 function catalog(air: AirDocument) {
-  return air.operations.map((op) => ({
-    command: op.cli.command,
-    id: op.id,
-    effect: op.effect.kind,
-    risk: op.effect.kind === "mutation" ? op.effect.risk : undefined,
-    state: op.state,
-  }));
+  return {
+    capabilities: air.capabilities.map((c) => ({
+      id: c.id,
+      displayName: c.displayName,
+      operations: c.operationIds.length,
+      workflows: c.workflowIds.length,
+      state: c.state,
+    })),
+    operations: air.operations.map((op) => ({
+      command: op.cli.command,
+      id: op.id,
+      capability: op.capabilityId,
+      effect: op.effect.kind,
+      risk: op.effect.kind === "mutation" ? op.effect.risk : undefined,
+      state: op.state,
+    })),
+  };
+}
+
+function findCapability(air: AirDocument, key: string) {
+  return air.capabilities.find(
+    (c) =>
+      c.id === key || c.id.endsWith(`.${key}`) || c.displayName.toLowerCase() === key.toLowerCase(),
+  );
+}
+
+function findWorkflow(air: AirDocument, key: string) {
+  return air.workflows.find(
+    (w) =>
+      w.id === key || w.id.endsWith(`.${key}`) || w.displayName.toLowerCase() === key.toLowerCase(),
+  );
+}
+
+function capabilitiesTable(air: AirDocument): string {
+  if (air.capabilities.length === 0) return "  (no capabilities)";
+  return air.capabilities
+    .map((c) => {
+      const name = c.id.split(".").slice(1).join(".") || c.id;
+      const wf = c.workflowIds.length ? `, ${c.workflowIds.length} workflow(s)` : "";
+      return `  ${name.padEnd(20)} ${String(c.operationIds.length).padStart(2)} op(s)${wf}  —  ${c.displayName}`;
+    })
+    .join("\n");
+}
+
+function capabilityDetail(air: AirDocument, cap: AirDocument["capabilities"][number]): string {
+  const ops = cap.operationIds
+    .map((id) => air.operations.find((o) => o.id === id))
+    .filter((o): o is Operation => Boolean(o))
+    .map(
+      (o) =>
+        `  ${o.cli.command.padEnd(34)} ${o.effect.kind}${o.confirmation.required ? " ⚠ confirm" : ""}`,
+    );
+  const wfs = cap.workflowIds
+    .map((id) => air.workflows.find((w) => w.id === id))
+    .filter((w): w is AirDocument["workflows"][number] => Boolean(w))
+    .map((w) => `  ${w.id.split(".").pop()}  —  ${w.displayName} (${w.steps.length} steps)`);
+  return [
+    `${cap.displayName} — ${cap.id}`,
+    cap.description ? `\n${cap.description}` : "",
+    `\nGrouping: ${cap.source} (confidence ${cap.evidence.confidence.toFixed(2)})`,
+    `\nOperations:\n${ops.join("\n") || "  (none)"}`,
+    wfs.length ? `\nWorkflows:\n${wfs.join("\n")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function workflowsTable(air: AirDocument): string {
+  if (air.workflows.length === 0) {
+    return "  (no workflows authored — declare them in the Anvil manifest)";
+  }
+  return air.workflows
+    .map((w) => {
+      const name = w.id.split(".").pop() ?? w.id;
+      return `  ${name.padEnd(24)} ${String(w.steps.length).padStart(2)} steps  —  ${w.displayName}`;
+    })
+    .join("\n");
+}
+
+function workflowDetail(air: AirDocument, wf: AirDocument["workflows"][number]): string {
+  const steps = wf.steps.map((s, i) => {
+    const op = air.operations.find((o) => o.id === s.operationId);
+    const cmd = op ? op.cli.command : s.operationId;
+    return `  ${i + 1}. ${cmd}${s.optional ? " (optional)" : ""}${s.description ? `  —  ${s.description}` : ""}`;
+  });
+  return [
+    `${wf.displayName} — ${wf.id}`,
+    wf.description ? `\n${wf.description}` : "",
+    wf.humanApproval ? "\n⚠ Requires human approval before running." : "",
+    `\nSteps:\n${steps.join("\n") || "  (none)"}`,
+    wf.rollbackStrategy ? `\nRollback: ${wf.rollbackStrategy}` : "",
+    wf.intentExamples.length
+      ? `\nExamples: ${wf.intentExamples.map((e) => `"${e}"`).join("; ")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function catalogTable(air: AirDocument): string {
@@ -317,6 +476,9 @@ function serviceHelp(air: AirDocument): string {
     `${air.service.displayName ?? svc} — generated by Anvil`,
     `\nUsage: ${svc} <resource> <action> [flags]`,
     `\nDiscovery:`,
+    `  ${svc} capabilities            List business capabilities (start here)`,
+    `  ${svc} capabilities <name>     Show a capability's operations + workflows`,
+    `  ${svc} workflows [<name>]      List workflows, or show one's steps`,
     `  ${svc} catalog                 List all operations`,
     `  ${svc} discover "<intent>"     Find the right operation`,
     `  ${svc} explain <operation>     Show an operation's full contract`,
@@ -324,8 +486,9 @@ function serviceHelp(air: AirDocument): string {
     `\nPer-operation flags:`,
     `  --help --schema --examples --explain --dry-run --json --trace`,
     `  --confirm --idempotency-key <k> --auth-profile <p> --timeout <ms> --no-retries`,
-    `\nOperations:`,
-    catalogTable(air),
+    `  --body '<json>'  (for operations whose body is not a flat object)`,
+    `\nCapabilities:`,
+    capabilitiesTable(air),
     `\nUnsafe mutations refuse to run without --confirm. That refusal is correct.`,
   ].join("\n");
 }

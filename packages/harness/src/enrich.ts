@@ -83,7 +83,7 @@ export async function runEnrichment(
   return {
     sources: connected,
     operations,
-    proposedManifest: { operations: proposed },
+    proposedManifest: { operations: proposed, workflows: {} },
     graph,
   };
 }
