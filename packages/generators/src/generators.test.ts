@@ -75,7 +75,9 @@ describe("MCP server", () => {
         authProfile: "prod",
         baseUrl: "https://payments.internal.example.com",
         allowedHosts: ["payments.internal.example.com"],
-        env: "prod",
+        // Mechanics test: dev allows the in-memory ledger. The prod durable-ledger
+        // fail-closed contract is covered by the runtime executor tests.
+        env: "dev",
       }),
     });
     const client = await connect(server);
@@ -119,7 +121,7 @@ describe("MCP server", () => {
         allowedHosts: ["payments.internal.example.com"],
         env: "prod",
       }),
-      resourceOptions: { mcpEndpoint: "https://payments-tools.run.app/mcp" },
+      resources: buildToolResources(air, { mcpEndpoint: "https://payments-tools.run.app/mcp" }),
     });
     const client = await connect(server);
     const { resources } = await client.listResources();
@@ -145,6 +147,44 @@ describe("resources", () => {
   });
 });
 
+describe("capabilities in generated artifacts", () => {
+  it("indexes capabilities in the catalog with their operations", () => {
+    const { files } = generateBundle(air);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const refunds = catalog.capabilities.find((c: { id: string }) => c.id === "payments.refunds");
+    expect(refunds).toBeDefined();
+    expect(refunds.workflows).toContain("payments.refunds.refund_customer");
+    // Operations carry their capability back-reference.
+    const refundOp = catalog.operations.find((o: { id: string }) => o.id.includes("refund"));
+    expect(refundOp.capability).toBe("payments.refunds");
+  });
+
+  it("leads the skill with capabilities and renders authored workflows", () => {
+    const { files } = generateBundle(air);
+    const skill = files["skill/SKILL.md"] as string;
+    expect(skill).toMatch(/Start with capabilities/);
+    expect(skill).toMatch(/refunds/);
+    const capsRef = files["skill/reference/capabilities.md"] as string;
+    expect(capsRef).toContain("payments.refunds");
+    const workflows = files["skill/reference/workflows.md"] as string;
+    expect(workflows).toContain("Refund a customer");
+    expect(workflows).toMatch(/human approval/i);
+  });
+
+  it("never advertises unapproved operations in the capability skill docs", async () => {
+    // No manifest → nothing is approved. The skill is the exposed surface, so
+    // its capability docs must not list any operation command.
+    const unapproved = await compile({ spec: read("openapi.yaml"), serviceId: "payments" });
+    expect(unapproved.operations.every((o) => o.state !== "approved")).toBe(true);
+    const { files } = generateBundle(unapproved);
+    const capsRef = files["skill/reference/capabilities.md"] as string;
+    expect(capsRef).toContain("No approved capabilities");
+    expect(capsRef).not.toContain("payments refunds create");
+    const skill = files["skill/SKILL.md"] as string;
+    expect(skill).not.toContain("payments refunds create");
+  });
+});
+
 describe("bundle", () => {
   it("emits every aligned artifact from one AIR", () => {
     const { files } = generateBundle(air);
@@ -159,6 +199,7 @@ describe("bundle", () => {
       "runtime/operations.manifest.json",
       "skill/SKILL.md",
       "skill/reference/operations.md",
+      "skill/reference/capabilities.md",
       "deploy/Dockerfile",
       "deploy/cloudrun.service.yaml",
       "mock/scenarios.json",
@@ -185,6 +226,46 @@ describe("bundle", () => {
     const test = files["tests/conformance.test.ts"] as string;
     expect(test).toContain("requires confirmation");
     expect(test).toContain("never auto-retries");
+  });
+});
+
+describe("GCP-native deploy", () => {
+  it("emits Cloud Build, Terraform, IAM, and per-environment overlays", () => {
+    const { files } = generateBundle(air);
+    for (const p of [
+      "deploy/cloudbuild.yaml",
+      "deploy/iam.plan.json",
+      "deploy/terraform/main.tf",
+      "deploy/terraform/variables.tf",
+      "deploy/overlays/dev.env.yaml",
+      "deploy/overlays/prod.env.yaml",
+    ]) {
+      expect(Object.keys(files), `missing ${p}`).toContain(p);
+    }
+  });
+
+  it("ships a prebuilt runtime image (no in-image Anvil build)", () => {
+    const { files } = generateBundle(air);
+    const dockerfile = files["deploy/Dockerfile"] as string;
+    expect(dockerfile).not.toContain("pnpm build");
+    expect(dockerfile).toContain("runtime/server.js");
+  });
+
+  it("wires a durable Firestore ledger with a least-privilege, scoped IAM plan", () => {
+    const { files } = generateBundle(air);
+    const iam = JSON.parse(files["deploy/iam.plan.json"] as string);
+    // The refund requires idempotency, so the plan must provision the ledger.
+    expect(iam.ledger.backend).toBe("firestore");
+    expect(iam.grants.map((g: { role: string }) => g.role)).toContain("roles/datastore.user");
+    // Secret access is scoped to this one secret, not project-wide.
+    const secret = iam.grants.find((g: { role: string }) => g.role.includes("secretmanager"));
+    expect(secret.on).toBe("secret:payments-auth-token");
+    // No project owner/editor anywhere in the plan.
+    const all = JSON.stringify(iam);
+    expect(all).not.toContain("roles/owner");
+    expect(all).not.toContain("roles/editor");
+    // Cloud Run service carries ANVIL_LEDGER so the fail-closed contract holds.
+    expect(files["deploy/cloudrun.service.yaml"]).toContain("ANVIL_LEDGER");
   });
 });
 

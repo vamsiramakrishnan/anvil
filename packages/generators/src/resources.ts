@@ -1,4 +1,5 @@
 import type { AirDocument } from "@anvil/air";
+import type { ServedResource } from "@anvil/mcp-runtime";
 import { operationCatalog } from "./catalog.js";
 import { generateSkill } from "./skill.js";
 
@@ -11,18 +12,11 @@ import { generateSkill } from "./skill.js";
  * file bundles under a custom URI scheme, with an `assistant` audience hint.
  *
  * URI scheme: anvil://<kind>/<service>/<path>
+ *
+ * A `ToolResource` is exactly the `ServedResource` the MCP runtime advertises —
+ * generators produce the data at build time, the runtime serves it.
  */
-export interface ToolResource {
-  uri: string;
-  name: string;
-  title: string;
-  description: string;
-  mimeType: string;
-  text: string;
-  /** MCP annotation: who this is for and how important. */
-  audience: Array<"user" | "assistant">;
-  priority: number;
-}
+export type ToolResource = ServedResource;
 
 export interface ResourceOptions {
   /** Where an installed CLI (and the agent) should reach this MCP server. */

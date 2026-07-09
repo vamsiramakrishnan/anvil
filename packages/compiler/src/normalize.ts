@@ -1,15 +1,16 @@
-import {
-  type AuthRequirement,
-  type AuthType,
-  type ErrorSpec,
-  type HttpMethod,
-  type JsonSchema,
-  type Operation,
-  type Param,
-  type ParamLocation,
-  snakeCase,
+import type {
+  AuthRequirement,
+  AuthType,
+  ErrorSpec,
+  HttpMethod,
+  JsonSchema,
+  Operation,
+  Param,
+  ParamLocation,
+  RequestBody,
 } from "@anvil/air";
-import { classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import { deriveNames, singularize } from "./naming.js";
 import type { OpenApiDocument, ParsedSpec, SecurityScheme } from "./parse.js";
 
 const HTTP_METHODS: HttpMethod[] = ["get", "put", "post", "delete", "patch", "head"];
@@ -41,67 +42,6 @@ interface RawOperation {
   security?: Array<Record<string, string[]>>;
 }
 
-const singularize = (s: string): string => {
-  if (/ies$/.test(s)) return s.replace(/ies$/, "y");
-  if (/ses$/.test(s)) return s.replace(/es$/, "");
-  if (/s$/.test(s) && !/ss$/.test(s)) return s.replace(/s$/, "");
-  return s;
-};
-
-function actionFor(method: HttpMethod, endsWithParam: boolean): string {
-  switch (method) {
-    case "get":
-    case "head":
-      return endsWithParam ? "get" : "list";
-    case "post":
-      return "create";
-    case "put":
-      return "replace";
-    case "patch":
-      return "update";
-    case "delete":
-      return "delete";
-    default:
-      return method;
-  }
-}
-
-interface DerivedNames {
-  id: string;
-  canonicalName: string;
-  displayName: string;
-  cliCommand: string;
-  toolName: string;
-  resource: string;
-}
-
-function deriveNames(
-  serviceId: string,
-  path: string,
-  method: HttpMethod,
-  raw: RawOperation,
-): DerivedNames {
-  const segments = path.split("/").filter(Boolean);
-  const concrete = segments.filter((s) => !s.startsWith("{"));
-  const resource = concrete.length ? (concrete[concrete.length - 1] as string) : serviceId;
-  const endsWithParam =
-    segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
-  const action = actionFor(method, endsWithParam);
-  const canonicalName = raw.operationId
-    ? snakeCase(raw.operationId)
-    : `${action}_${singularize(resource)}`;
-  const displayName =
-    raw.summary ?? canonicalName.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
-  return {
-    id: `${serviceId}.${snakeCase(resource)}.${action}`,
-    canonicalName,
-    displayName,
-    cliCommand: `${serviceId} ${resource} ${action}`,
-    toolName: `${serviceId}_${canonicalName}`,
-    resource,
-  };
-}
-
 function toParam(raw: RawParam): Param | null {
   const loc = raw.in as ParamLocation;
   if (!["path", "query", "header", "cookie"].includes(loc)) return null;
@@ -116,30 +56,61 @@ function toParam(raw: RawParam): Param | null {
   };
 }
 
-/** Flatten a JSON-body object schema into individual `in: body` params. */
-function bodyParams(schema: JsonSchema | undefined, required: boolean): Param[] {
-  if (!schema) return [];
+const SCALAR_TYPES = new Set(["string", "integer", "number", "boolean"]);
+
+/** A body field is flag-projectable when it is a scalar (or an enum of scalars). */
+function isScalarField(schema: JsonSchema): boolean {
+  if (Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf) || Array.isArray(schema.allOf)) {
+    return false;
+  }
+  if (Array.isArray(schema.enum)) return true;
+  if (schema.const !== undefined) return true;
+  return typeof schema.type === "string" && SCALAR_TYPES.has(schema.type);
+}
+
+/**
+ * Build the preserved request body plus its surface projection (spec: "preserve
+ * the body as a body, derive the CLI projection separately"). The body schema is
+ * kept verbatim; a flat object of scalars is additionally projected into
+ * per-field flags, while anything richer (nesting, arrays, unions) is surfaced
+ * whole so nothing is lost.
+ */
+function buildRequestBody(
+  content: Record<string, { schema?: JsonSchema }> | undefined,
+  required: boolean,
+): RequestBody | undefined {
+  if (!content) return undefined;
+  const contentType = content["application/json"]
+    ? "application/json"
+    : (Object.keys(content)[0] ?? "application/json");
+  const schema = content["application/json"]?.schema ?? Object.values(content)[0]?.schema;
+  if (!schema) return undefined;
+
   const props = schema.properties as Record<string, JsonSchema> | undefined;
   const requiredList = (schema.required as string[] | undefined) ?? [];
-  if (schema.type === "object" && props) {
-    return Object.entries(props).map(([name, propSchema]) => ({
-      name,
-      in: "body" as ParamLocation,
-      required: requiredList.includes(name),
-      schema: propSchema,
-      description: propSchema.description as string | undefined,
-      inferred: false,
-    }));
-  }
-  return [
-    {
-      name: "body",
-      in: "body" as ParamLocation,
+  const noCompositor =
+    !Array.isArray(schema.oneOf) && !Array.isArray(schema.anyOf) && !Array.isArray(schema.allOf);
+  const flat =
+    schema.type === "object" &&
+    props !== undefined &&
+    noCompositor &&
+    Object.values(props).every(isScalarField);
+
+  if (flat && props) {
+    return {
+      contentType,
       required,
       schema,
-      inferred: false,
-    },
-  ];
+      projection: "fields",
+      fields: Object.entries(props).map(([name, propSchema]) => ({
+        name,
+        required: requiredList.includes(name),
+        schema: propSchema,
+        description: propSchema.description as string | undefined,
+      })),
+    };
+  }
+  return { contentType, required, schema, projection: "whole", fields: [] };
 }
 
 function jsonSchemaOf(content?: Record<string, { schema?: JsonSchema }>): JsonSchema | undefined {
@@ -186,13 +157,17 @@ function resolveAuth(
   const schemes = doc.components?.securitySchemes ?? {};
   const security = opSecurity ?? doc.security ?? [];
   const first = security[0];
-  if (!first || Object.keys(first).length === 0) return { type: "none", scopes: [] };
+  if (!first || Object.keys(first).length === 0) {
+    const { principal, secretSource } = classifyAuth("none");
+    return { type: "none", scopes: [], principal, secretSource };
+  }
   const [schemeName, scopes] = Object.entries(first)[0] as [string, string[]];
   const scheme: SecurityScheme | undefined = schemes[schemeName];
   let type: AuthType = "custom_header";
   if (scheme?.type === "http") type = scheme.scheme === "basic" ? "basic" : "jwt_bearer";
   else if (scheme?.type) type = SCHEME_TO_AUTH[scheme.type] ?? "custom_header";
-  return { type, scopes: scopes ?? [] };
+  const { principal, secretSource } = classifyAuth(type);
+  return { type, scopes: scopes ?? [], principal, secretSource };
 }
 
 /** Normalize a parsed OpenAPI document into AIR operations (classifier applied). */
@@ -200,21 +175,23 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
   const doc = parsed.document;
   const paths = doc.paths ?? {};
   const operations: Operation[] = [];
-  const seenIds = new Map<string, number>();
 
   for (const [path, pathItem] of Object.entries(paths)) {
     for (const method of HTTP_METHODS) {
       const raw = pathItem[method] as RawOperation | undefined;
       if (!raw) continue;
 
+      // Naming is a first-class pass: derive names with a confidence, and let
+      // the collision pass (compile) disambiguate any clashes with meaningful
+      // tokens instead of a silent `_2`.
       const names = deriveNames(serviceId, path, method, raw);
-      let id = names.id;
-      const count = seenIds.get(id) ?? 0;
-      seenIds.set(id, count + 1);
-      if (count > 0) id = `${id}_${count + 1}`;
+      const id = names.id;
 
+      const segments = path.split("/").filter(Boolean);
+      const endsWithParam =
+        segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
       const signal = `${raw.operationId ?? ""} ${raw.summary ?? ""} ${path}`;
-      const { effect, idempotency } = classifyEffect(method, signal);
+      const { effect, idempotency } = classifyEffect(method, signal, endsWithParam);
       effect.resource = singularize(names.resource);
       const retries = classifyRetry(effect, idempotency);
       const confirmation = classifyConfirmation(effect, idempotency);
@@ -224,9 +201,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
         const p = toParam(rp);
         if (p) params.push(p);
       }
-      params.push(
-        ...bodyParams(jsonSchemaOf(raw.requestBody?.content), raw.requestBody?.required ?? false),
-      );
+      const body = buildRequestBody(raw.requestBody?.content, raw.requestBody?.required ?? false);
 
       const successRes =
         raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;
@@ -239,7 +214,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
         tags: raw.tags ?? [],
         sourceRef: { kind: parsed.kind, path, method, operationId: raw.operationId },
         effect,
-        input: { params },
+        input: { params, body },
         output: { schema: jsonSchemaOf(successRes?.content), description: successRes?.description },
         errors: errorSpecs(raw.responses),
         idempotency,
@@ -261,6 +236,12 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
               kind: "inferred",
               note: "effect/idempotency inferred from HTTP method",
               confidence: 0.5,
+            },
+            {
+              kind: "inferred",
+              ref: "naming",
+              note: names.signals.join("; "),
+              confidence: names.confidence,
             },
           ],
           confidence: 0.6,

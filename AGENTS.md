@@ -26,6 +26,7 @@ drifts from the CLI. Regenerate it with `anvil skill skills/anvil`.
 ## Repo layout
 - `packages/air` — AIR (the IR). `packages/compiler` — parse/normalize/classify/validate.
 - `packages/runtime` — the safety runtime (errors, retry, idempotency, executor).
+- `packages/mcp-runtime` — the thin MCP serving path (the deployed unit).
 - `packages/generators` — CLI/MCP/skill/docs/deploy/mocks/evals/conformance.
 - `packages/cli` — the `anvil` command + the shared tool-CLI engine.
 - `examples/payments` — the reference spec + manifest.

@@ -1,127 +1,17 @@
-import type { AirDocument, Operation } from "@anvil/air";
-import { type ExecuteContext, execute } from "@anvil/runtime";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { buildToolResources, type ResourceOptions } from "./resources.js";
-import { operationZodShape } from "./zodshape.js";
+import type { AirDocument } from "@anvil/air";
 
-export interface McpBuildOptions {
-  /**
-   * Produces the execution context for an operation call. In production this
-   * wires FetchTransport + credential resolver + ledger + observer; in tests it
-   * injects a MockTransport. This is the only seam between MCP and upstream.
-   */
-  contextFor: (op: Operation) => ExecuteContext;
-  /** Expose non-approved operations too (dev only). Default false (spec §17). */
-  includeUnapproved?: boolean;
-  /**
-   * Serve the skill + CLI install manifest as MCP resources so agents can
-   * discover and materialize them adjacent to themselves. Default true.
-   */
-  serveResources?: boolean;
-  resourceOptions?: ResourceOptions;
-}
+// The live MCP server now lives in @anvil/mcp-runtime (the thin serving path).
+// Re-exported here so build-time callers (tests, `anvil serve`) keep one import
+// site, while the *generated* deployed server depends on @anvil/mcp-runtime
+// directly and never pulls in this artifact foundry.
+export {
+  buildMcpServer,
+  type McpBuildOptions,
+  operationZodShape,
+  type ServedResource,
+} from "@anvil/mcp-runtime";
 
-function toolDescription(op: Operation): string {
-  const parts = [op.description || op.displayName];
-  if (op.effect.kind === "mutation") {
-    parts.push(
-      `This is a ${op.effect.reversible ? "" : "irreversible "}${op.effect.risk} mutation.`,
-    );
-    if (op.idempotency.mode === "required") parts.push("Requires an idempotency key.");
-    if (op.confirmation.required) parts.push("Requires confirm=true.");
-    parts.push(op.retries.mode === "safe" ? "Retry-safe." : "Not retry-safe.");
-  } else {
-    parts.push("Read-only.");
-  }
-  return parts.join(" ");
-}
-
-/**
- * Build a compliant MCP server exposing approved AIR operations as tools. Tool
- * metadata makes risk visible to the model (spec §8): standard hints plus Anvil
- * effect/idempotency semantics in `_meta`.
- */
-export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpServer {
-  const server = new McpServer({
-    name: `${air.service.id}-tools`,
-    version: air.service.version,
-  });
-
-  const ops = air.operations.filter((op) => options.includeUnapproved || op.state === "approved");
-
-  for (const op of ops) {
-    server.registerTool(
-      op.mcp.toolName,
-      {
-        title: op.displayName,
-        description: toolDescription(op),
-        inputSchema: operationZodShape(op),
-        annotations: {
-          title: op.displayName,
-          readOnlyHint: op.effect.kind === "read",
-          destructiveHint: op.effect.kind === "mutation" && !op.effect.reversible,
-          idempotentHint: op.idempotency.mode !== "none",
-          openWorldHint: true,
-        },
-        _meta: {
-          "anvil/effect": op.effect.kind,
-          "anvil/risk": op.effect.risk,
-          "anvil/retry_safe": op.retries.mode === "safe",
-          "anvil/idempotency": op.idempotency.mode,
-          "anvil/operation_id": op.id,
-        },
-      },
-      async (args: Record<string, unknown>) => {
-        const result = await execute(op, { input: args }, options.contextFor(op));
-        if (result.outcome === "success") {
-          const data = result.data ?? null;
-          return {
-            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-            structuredContent: isRecord(data) ? data : { result: data },
-          };
-        }
-        if (result.outcome === "dry_run") {
-          return {
-            content: [{ type: "text" as const, text: JSON.stringify(result.plan, null, 2) }],
-          };
-        }
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(result.envelope, null, 2) }],
-          isError: true,
-        };
-      },
-    );
-  }
-
-  // Serve the skill + CLI install manifest as MCP resources (researched design):
-  // the deployed server is self-describing, so an agent can pull its own skill
-  // and learn how to run the CLI adjacent to itself.
-  if (options.serveResources !== false) {
-    for (const resource of buildToolResources(air, options.resourceOptions)) {
-      server.registerResource(
-        resource.name,
-        resource.uri,
-        {
-          title: resource.title,
-          description: resource.description,
-          mimeType: resource.mimeType,
-          annotations: { audience: resource.audience, priority: resource.priority },
-        },
-        async (uri) => ({
-          contents: [{ uri: uri.href, mimeType: resource.mimeType, text: resource.text }],
-        }),
-      );
-    }
-  }
-
-  return server;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** The generated `mcp/server.ts` entrypoint that boots the server over stdio. */
+/** The generated `mcp/server.js` entrypoint that boots the server over stdio. */
 export function generateMcpServerSource(air: AirDocument): string {
   return `#!/usr/bin/env node
 // Generated by Anvil for service "${air.service.id}". Do not edit by hand —
@@ -129,27 +19,31 @@ export function generateMcpServerSource(air: AirDocument): string {
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { buildMcpServer } from "@anvil/generators";
+import { buildMcpServer } from "@anvil/mcp-runtime";
 import {
   EnvCredentialResolver,
   FetchTransport,
-  InMemoryLedger,
   InMemoryObserver,
   loadRuntimeConfig,
+  resolveLedger,
 } from "@anvil/runtime";
 import { loadAirDocument } from "@anvil/air";
 
 const air = loadAirDocument(
   JSON.parse(readFileSync(fileURLToPath(new URL("./air.json", import.meta.url)), "utf8")),
 );
+const resources = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./resources.json", import.meta.url)), "utf8"),
+);
 const config = loadRuntimeConfig();
 const transport = new FetchTransport();
 const credentials = new EnvCredentialResolver();
-const ledger = new InMemoryLedger();
+const ledger = resolveLedger(config.ledger);
 const observer = new InMemoryObserver();
 
 const baseUrl = air.service.servers[0]?.url ?? "";
 const server = buildMcpServer(air, {
+  resources,
   contextFor: () => ({
     transport,
     credentials,

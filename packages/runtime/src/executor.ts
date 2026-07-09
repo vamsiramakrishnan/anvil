@@ -104,9 +104,31 @@ function buildRequest(op: Operation, input: Record<string, unknown>, baseUrl: st
         headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${p.name}=${String(value)}`;
         break;
       case "body":
+        // Legacy AIR (bundles compiled before the body-model change) still carry
+        // body fields as in:"body" params. Honor them so an old bundle does not
+        // silently execute with an empty body; new AIR uses `input.body` below.
         body[p.name] = value;
         hasBody = true;
         break;
+    }
+  }
+
+  // Reconstruct the request body from the preserved body model. `fields`
+  // projection reads each field from the flat input; `whole` reads a single
+  // `body` value (its structure preserved), so nesting/arrays/unions survive.
+  let bodyValue: unknown = hasBody ? body : undefined;
+  if (op.input.body) {
+    if (op.input.body.projection === "fields") {
+      for (const f of op.input.body.fields) {
+        const value = input[propKey(f.name)];
+        if (value === undefined || value === null) continue;
+        body[f.name] = value;
+        hasBody = true;
+      }
+      if (hasBody) bodyValue = body;
+    } else if (input.body !== undefined && input.body !== null) {
+      bodyValue = input.body;
+      hasBody = true;
     }
   }
 
@@ -116,8 +138,8 @@ function buildRequest(op: Operation, input: Record<string, unknown>, baseUrl: st
   const url = `${base}${path}${qs ? `?${qs}` : ""}`;
   const req: HttpRequest = { method, url, headers };
   if (hasBody) {
-    req.headers["content-type"] = "application/json";
-    req.body = JSON.stringify(body);
+    req.headers["content-type"] = op.input.body?.contentType ?? "application/json";
+    req.body = JSON.stringify(bodyValue);
   }
   return req;
 }
@@ -181,11 +203,18 @@ export async function execute(
   try {
     await runHook(ctx.policy?.preValidate);
 
-    // 1. Required parameters present.
-    const missing = op.input.params
-      .filter((p) => p.required)
-      .map((p) => propKey(p.name))
-      .filter((k) => input[k] === undefined || input[k] === null || input[k] === "");
+    // 1. Required inputs present (params + projected body fields / whole body).
+    const requiredKeys = op.input.params.filter((p) => p.required).map((p) => propKey(p.name));
+    if (op.input.body) {
+      if (op.input.body.projection === "fields") {
+        for (const f of op.input.body.fields) if (f.required) requiredKeys.push(propKey(f.name));
+      } else if (op.input.body.required) {
+        requiredKeys.push("body");
+      }
+    }
+    const missing = requiredKeys.filter(
+      (k) => input[k] === undefined || input[k] === null || input[k] === "",
+    );
     if (missing.length > 0) {
       return fail(
         new AnvilError({
@@ -308,6 +337,31 @@ export async function execute(
     record.requestBytes = request.body ? byteLen(request.body) : 0;
 
     await runHook(ctx.policy?.preExecute, request);
+
+    // 7a. Fail closed on required idempotency without a *durable* ledger outside
+    // `dev`. Cloud Run scales horizontally; an in-memory (or absent) ledger
+    // gives no cross-instance replay protection, so executing an unsafe mutation
+    // here would be a safety lie. dev keeps the in-memory ledger. Placed after
+    // dry-run/host-pin/auth so a preview still works and security errors win.
+    const env = ctx.env ?? "dev";
+    if (
+      op.effect.kind === "mutation" &&
+      op.idempotency.mode === "required" &&
+      env !== "dev" &&
+      !ctx.ledger?.durable
+    ) {
+      return fail(
+        new AnvilError({
+          code: "idempotency_ledger_unavailable",
+          message:
+            `This operation requires idempotency, but no durable ledger is configured in env "${env}". ` +
+            "A process-local ledger cannot protect against duplicate execution across instances. " +
+            "Configure ANVIL_LEDGER (e.g. firestore://…) before invoking unsafe mutations.",
+          operation: op.id,
+          traceId,
+        }),
+      );
+    }
 
     // 8. Idempotency ledger for unsafe idempotent mutations.
     if (op.effect.kind === "mutation" && key && ctx.ledger) {

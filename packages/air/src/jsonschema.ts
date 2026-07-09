@@ -20,6 +20,30 @@ export function operationInputSchema(op: Operation): JsonSchema {
     if (p.required) required.push(key);
   }
 
+  // The body is projected onto the input surface without losing its schema:
+  // a flat object becomes one property per field; anything richer stays whole
+  // under a single `body` property carrying the verbatim schema.
+  const body = op.input.body;
+  if (body) {
+    if (body.projection === "fields") {
+      for (const f of body.fields) {
+        const key = propKey(f.name);
+        const schema: JsonSchema = { ...f.schema };
+        if (f.description && !("description" in schema)) schema.description = f.description;
+        properties[key] = schema;
+        if (f.required) required.push(key);
+      }
+    } else {
+      properties.body = {
+        ...body.schema,
+        description:
+          (body.schema.description as string | undefined) ??
+          "The request body. Provide the full object; its structure is preserved from the source schema.",
+      };
+      if (body.required) required.push("body");
+    }
+  }
+
   if (op.idempotency.mode === "required") {
     properties.idempotency_key = {
       type: "string",
