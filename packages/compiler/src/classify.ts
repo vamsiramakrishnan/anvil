@@ -1,12 +1,17 @@
 import {
+  type AuthPrincipal,
+  type AuthType,
   type Confirmation,
   type Effect,
   type EffectKind,
   type HttpMethod,
   type Idempotency,
+  type OperationAction,
+  type RetryBasis,
   type RetryCondition,
   type RetryPolicy,
   type RiskLevel,
+  type SecretSource,
   snakeCase,
 } from "@anvil/air";
 
@@ -72,28 +77,110 @@ export function classifyIdempotency(method: HttpMethod): Idempotency {
   }
 }
 
+const SEARCH = /(search|query|find|lookup|filter)/;
+const EXPORT = /(export|download|report|dump)/;
+const POLL = /(status|poll|wait|progress|health)/;
+const APPROVE = /(approve|authorize|accept|confirm|grant)/;
+const RESERVE = /(reserve|hold|lock|allocate)/;
+const SIMULATE = /(simulate|preview|dry_run|estimate|quote)/;
+const VALIDATE = /(validate|verify|check)/;
+const EXECUTE = /(execute|run|trigger|invoke|start|launch)/;
+
+/**
+ * The descriptive action verb (spec §10 richer vocabulary). It refines
+ * discovery/naming/metadata but NEVER the safety core — `kind` still decides
+ * retry/confirmation. Read methods map to read-family verbs; write methods map
+ * to mutation-family verbs, with naming/path keywords sharpening the choice.
+ */
+export function classifyAction(
+  method: HttpMethod,
+  kind: EffectKind,
+  endsWithParam: boolean,
+  signal: string,
+): OperationAction {
+  const s = snakeCase(signal);
+  if (kind === "read") {
+    if (EXPORT.test(s)) return "export";
+    if (SEARCH.test(s)) return "search";
+    if (POLL.test(s)) return "poll";
+    return endsWithParam ? "get" : "list";
+  }
+  // Mutation family — keyword intent first, then HTTP method.
+  if (SIMULATE.test(s)) return "simulate";
+  if (VALIDATE.test(s)) return "validate";
+  if (APPROVE.test(s)) return "approve";
+  if (DESTRUCTIVE.test(s) && /(cancel|revoke|terminate)/.test(s)) return "cancel";
+  if (COMMS.test(s)) return "send";
+  if (RESERVE.test(s)) return "reserve";
+  if (EXECUTE.test(s)) return "execute";
+  switch (method) {
+    case "post":
+      return "create";
+    case "put":
+      return "replace";
+    case "patch":
+      return "update";
+    case "delete":
+      return "delete";
+    default:
+      return "other";
+  }
+}
+
+/**
+ * Infer *whose authority* a call runs under and where the credential is sourced
+ * (spec §11). The decisive question for agent tools; refined by enrichment.
+ */
+export function classifyAuth(type: AuthType): {
+  principal: AuthPrincipal;
+  secretSource: SecretSource;
+} {
+  switch (type) {
+    case "none":
+      return { principal: "anonymous", secretSource: "none" };
+    case "workload_identity":
+      return { principal: "service", secretSource: "workload_identity" };
+    case "oauth2_on_behalf_of":
+      return { principal: "delegated", secretSource: "env" };
+    case "oauth2_authorization_code":
+      return { principal: "end_user", secretSource: "env" };
+    default:
+      return { principal: "service", secretSource: "env" };
+  }
+}
+
 export function classifyEffect(
   method: HttpMethod,
   signal: string,
+  endsWithParam = false,
 ): { effect: Effect; idempotency: Idempotency } {
   const kind = classifyEffectKind(method);
   const risk = classifyRisk(method, kind, signal);
   const reversible = !(risk === "financial" || risk === "destructive");
   const idempotency = classifyIdempotency(method);
-  return { effect: { kind, resource: undefined, risk, reversible }, idempotency };
+  const action = classifyAction(method, kind, endsWithParam, signal);
+  return { effect: { kind, action, resource: undefined, risk, reversible }, idempotency };
+}
+
+/** The descriptive basis behind a retry-safe posture, given how safety was proven. */
+function retryBasisFor(effect: Effect, idempotency: Idempotency): RetryBasis {
+  if (effect.kind === "read") return "read_safe";
+  if (idempotency.mode === "natural") return "natural_idempotent";
+  if (idempotency.mode === "required" || idempotency.mode === "key_supported") {
+    return "idempotency_key";
+  }
+  if (idempotency.mode === "client_id") return "natural_idempotent";
+  return "unproven";
 }
 
 /** Derive a retry policy consistent with the operation's idempotency (spec §11). */
 export function classifyRetry(effect: Effect, idempotency: Idempotency): RetryPolicy {
-  const proven =
-    effect.kind === "read" ||
-    idempotency.mode === "natural" ||
-    idempotency.mode === "client_id" ||
-    idempotency.mode === "required" ||
-    idempotency.mode === "key_supported";
+  const basis = retryBasisFor(effect, idempotency);
+  const proven = basis !== "unproven";
   if (!proven) {
     return {
       mode: "none",
+      basis: "unproven",
       maxAttempts: 1,
       backoff: "none",
       baseDelayMs: 200,
@@ -103,6 +190,7 @@ export function classifyRetry(effect: Effect, idempotency: Idempotency): RetryPo
   }
   return {
     mode: "safe",
+    basis,
     maxAttempts: 3,
     backoff: "exponential_jitter",
     baseDelayMs: 200,

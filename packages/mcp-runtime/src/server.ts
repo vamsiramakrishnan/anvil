@@ -84,9 +84,12 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         },
         _meta: {
           "anvil/effect": op.effect.kind,
+          "anvil/action": op.effect.action,
           "anvil/risk": op.effect.risk,
           "anvil/retry_safe": op.retries.mode === "safe",
+          "anvil/retry_basis": op.retries.basis,
           "anvil/idempotency": op.idempotency.mode,
+          "anvil/principal": op.auth.principal,
           "anvil/operation_id": op.id,
         },
       },

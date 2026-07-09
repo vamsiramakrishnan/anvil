@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  AuthPrincipal,
   AuthType,
   BackoffStrategy,
   DiagnosticLevel,
@@ -9,11 +10,14 @@ import {
   IdempotencyMechanism,
   IdempotencyMode,
   KeyDerivation,
+  OperationAction,
   OperationState,
   ParamLocation,
+  RetryBasis,
   RetryCondition,
   RetryMode,
   RiskLevel,
+  SecretSource,
   SourceKind,
 } from "./enums.js";
 
@@ -135,6 +139,8 @@ export type RequestBody = z.infer<typeof RequestBody>;
 
 export const Effect = z.object({
   kind: EffectKind,
+  /** Descriptive action verb (list/get/create/send/…); refines, never overrides, `kind`. */
+  action: OperationAction.default("other"),
   resource: z.string().optional(),
   risk: RiskLevel.default("low"),
   /** Whether the effect can be undone. Irreversible mutations always confirm. */
@@ -153,6 +159,8 @@ export type Idempotency = z.infer<typeof Idempotency>;
 
 export const RetryPolicy = z.object({
   mode: RetryMode,
+  /** Descriptive justification for the posture (auditable; does not gate). */
+  basis: RetryBasis.default("unproven"),
   maxAttempts: z.number().int().min(1).default(1),
   backoff: BackoffStrategy.default("none"),
   baseDelayMs: z.number().int().min(0).default(200),
@@ -171,6 +179,23 @@ export type Confirmation = z.infer<typeof Confirmation>;
 export const AuthRequirement = z.object({
   type: AuthType,
   scopes: z.array(z.string()).default([]),
+  /** Whose authority the call runs under — the decisive question for agents. */
+  principal: AuthPrincipal.default("service"),
+  /** Intended token audience / resource, when known. */
+  audience: z.string().optional(),
+  /** Where the runtime sources the credential (never the secret itself). */
+  secretSource: SecretSource.default("env"),
+  /** Delegation / impersonation chain for on-behalf-of calls. */
+  delegation: z
+    .object({
+      /** The acting party (e.g. the service account or agent). */
+      actor: z.string().optional(),
+      /** The party whose authority is borrowed (e.g. the end user). */
+      subject: z.string().optional(),
+    })
+    .optional(),
+  /** Tenant/isolation boundary the call is scoped to, when multi-tenant. */
+  tenant: z.string().optional(),
 });
 export type AuthRequirement = z.infer<typeof AuthRequirement>;
 
@@ -343,7 +368,12 @@ export const Service = z.object({
   owner: z.string().optional(),
   environment: z.string().optional(),
   source: z.object({ kind: SourceKind, uri: z.string().optional() }),
-  auth: AuthRequirement.default({ type: "none", scopes: [] }),
+  auth: AuthRequirement.default({
+    type: "none",
+    scopes: [],
+    principal: "anonymous",
+    secretSource: "none",
+  }),
   servers: z.array(Server).default([]),
 });
 export type Service = z.infer<typeof Service>;

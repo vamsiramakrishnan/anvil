@@ -31,6 +31,43 @@ export const OperationManifest = z.object({
       reason: z.string().optional(),
     })
     .optional(),
+  /** Override the descriptive action verb (list/get/create/send/…). */
+  action: z
+    .enum([
+      "list",
+      "get",
+      "search",
+      "export",
+      "simulate",
+      "validate",
+      "poll",
+      "create",
+      "update",
+      "replace",
+      "delete",
+      "send",
+      "execute",
+      "approve",
+      "cancel",
+      "reserve",
+      "other",
+    ])
+    .optional(),
+  /** Whose authority the call runs under, and how it is credentialed. */
+  auth: z
+    .object({
+      principal: z
+        .enum(["anonymous", "service", "end_user", "delegated", "impersonation"])
+        .optional(),
+      audience: z.string().optional(),
+      secret_source: z
+        .enum(["none", "env", "secret_manager", "workload_identity", "vault"])
+        .optional(),
+      tenant: z.string().optional(),
+      actor: z.string().optional(),
+      subject: z.string().optional(),
+    })
+    .optional(),
   retries: z
     .object({
       enabled: z.boolean().optional(),
@@ -137,8 +174,19 @@ export function enrich(operations: Operation[], manifest: AnvilManifest): Operat
     if (m.side_effect) op.effect.kind = m.side_effect;
     if (m.risk) op.effect.risk = m.risk;
     if (m.reversible !== undefined) op.effect.reversible = m.reversible;
+    if (m.action) op.effect.action = m.action;
     if (m.display_name) op.displayName = m.display_name;
     if (m.description) op.description = m.description;
+
+    if (m.auth) {
+      if (m.auth.principal) op.auth.principal = m.auth.principal;
+      if (m.auth.audience) op.auth.audience = m.auth.audience;
+      if (m.auth.secret_source) op.auth.secretSource = m.auth.secret_source;
+      if (m.auth.tenant) op.auth.tenant = m.auth.tenant;
+      if (m.auth.actor || m.auth.subject) {
+        op.auth.delegation = { actor: m.auth.actor, subject: m.auth.subject };
+      }
+    }
 
     if (m.idempotency?.strategy) {
       op.idempotency.mode = STRATEGY_TO_MODE[m.idempotency.strategy];

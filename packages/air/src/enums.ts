@@ -6,9 +6,52 @@ import { z } from "zod";
  * does not understand it, and the safety validator will flag it.
  */
 
-/** What an operation does to upstream state. */
+/**
+ * What an operation does to upstream state. This binary is the **safety core** —
+ * the retry engine, confirmation gate, and idempotency ledger all pivot on it,
+ * so it stays deliberately coarse and conservative (unknown ⇒ mutation).
+ */
 export const EffectKind = z.enum(["read", "mutation"]);
 export type EffectKind = z.infer<typeof EffectKind>;
+
+/**
+ * The richer, *descriptive* action verb layered over `EffectKind`. Real systems
+ * are messier than read/write, and agents route better on intent than on HTTP
+ * verbs. This never overrides the safety core — it refines discovery, naming,
+ * and tool metadata. Read-family: list/get/search/export/simulate/validate/poll.
+ * Mutation-family: create/update/replace/delete/send/execute/approve/cancel/reserve.
+ */
+export const OperationAction = z.enum([
+  "list",
+  "get",
+  "search",
+  "export",
+  "simulate",
+  "validate",
+  "poll",
+  "create",
+  "update",
+  "replace",
+  "delete",
+  "send",
+  "execute",
+  "approve",
+  "cancel",
+  "reserve",
+  "other",
+]);
+export type OperationAction = z.infer<typeof OperationAction>;
+
+/** Read-family actions — those that (descriptively) have no side effect. */
+export const READ_ACTIONS: readonly OperationAction[] = [
+  "list",
+  "get",
+  "search",
+  "export",
+  "simulate",
+  "validate",
+  "poll",
+];
 
 /** Blast radius of an operation. Drives confirmation defaults. */
 export const RiskLevel = z.enum(["none", "low", "medium", "high", "financial", "destructive"]);
@@ -43,6 +86,43 @@ export type KeyDerivation = z.infer<typeof KeyDerivation>;
 /** Retry posture. `safe` retries transient failures; `none` never auto-retries. */
 export const RetryMode = z.enum(["safe", "none"]);
 export type RetryMode = z.infer<typeof RetryMode>;
+
+/**
+ * *Why* a retry posture holds — a descriptive basis over the `safe|none` gate.
+ * Makes the retry decision auditable without changing the hot-path binary.
+ *   read_safe            — a read; safe to repeat
+ *   natural_idempotent   — repeat is a no-op by construction (PUT/DELETE by id)
+ *   idempotency_key      — safe only because a key dedups the write
+ *   ledger_guarded       — a durable ledger prevents duplicate execution
+ *   transport_only       — only pre-send transport errors may be retried
+ *   unproven             — idempotency could not be proven; never auto-retry
+ */
+export const RetryBasis = z.enum([
+  "read_safe",
+  "natural_idempotent",
+  "idempotency_key",
+  "ledger_guarded",
+  "transport_only",
+  "unproven",
+]);
+export type RetryBasis = z.infer<typeof RetryBasis>;
+
+/**
+ * Whose authority a call executes under — the decisive question for agent tools
+ * (is it acting as the service, the end user, or on someone's behalf?).
+ */
+export const AuthPrincipal = z.enum([
+  "anonymous",
+  "service",
+  "end_user",
+  "delegated",
+  "impersonation",
+]);
+export type AuthPrincipal = z.infer<typeof AuthPrincipal>;
+
+/** Where the credential material is sourced at runtime (never the secret itself). */
+export const SecretSource = z.enum(["none", "env", "secret_manager", "workload_identity", "vault"]);
+export type SecretSource = z.infer<typeof SecretSource>;
 
 export const BackoffStrategy = z.enum(["exponential_jitter", "exponential", "fixed", "none"]);
 export type BackoffStrategy = z.infer<typeof BackoffStrategy>;
