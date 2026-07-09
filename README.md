@@ -70,9 +70,21 @@ Two loops (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)):
 
 - **Compiler loop** — turns known truth (specs) into aligned artifacts.
 - **Harness loop** — finds missing truth (idempotency, undocumented errors,
-  agent-hostile names) via a `HarnessAgent` adapter interface and refines AIR.
-  The key artifact is **AIR + Evidence**: every operation carries where its
-  semantics came from and a confidence score.
+  agent-hostile names) and refines AIR. The key artifact is **AIR + Evidence**:
+  every operation carries where its semantics came from and a confidence score.
+  Anvil is an **MCP client** here — it connects to the MCP servers GitHub,
+  GitLab, Confluence, Notion, and Postman already publish (you install them; Anvil
+  doesn't build clients) and **proposes** a manifest patch. Enrichment is
+  propose-only and approval-gated, and under an **asymmetric-trust rule**:
+  loosening safety (e.g. enabling retries) requires high-reliability evidence
+  (implementation / contract tests / recorded traffic), while tightening safety
+  is cheap.
+
+  ```bash
+  anvil enrich generated/payments --sources examples/payments/sources.yaml
+  # → proposes an anvil.yaml patch; review it, then:
+  anvil compile examples/payments/openapi.yaml --manifest proposed.anvil.yaml --out generated/payments
+  ```
 
 ### Packages
 
@@ -82,6 +94,7 @@ Two loops (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)):
 | `@anvil/compiler` | Parse (OpenAPI) → normalize → **classify** → enrich → **validate** |
 | `@anvil/runtime` | The safety runtime: error taxonomy, retry engine, idempotency ledger, auth profiles, policy hooks, executor |
 | `@anvil/generators` | The artifact foundry: CLI, MCP, skill, docs, deploy, mocks, evals, conformance |
+| `@anvil/harness` | The harness loop: connects to **published** MCP servers (GitHub/GitLab/Confluence/…) to gather evidence and **propose** a manifest patch |
 | `@anvil/cli` | The `anvil` command + the shared engine that drives every generated tool CLI |
 
 Built library-first: OpenAPI parsing (`@scalar/openapi-parser`), validation

@@ -41,14 +41,29 @@ parse ── normalize ── classify ── enrich ── validate ── AIR 
   checks name uniqueness. The build surfaces unsafe behavior instead of emitting
   it silently.
 
-## Loop 2 — the harness loop (interfaces + seams)
+## Loop 2 — the harness loop (`@anvil/harness`)
 
 The harness finds the truth specs omit (which POSTs are really idempotent, which
-errors are undocumented, which names are agent-hostile). It is modeled as a
-`HarnessAgent` adapter interface so no single coding agent is hard-coded, and it
-feeds evidence back into AIR. The evidence model, confidence scoring, generated
-evals, and mock-with-provenance are in place; connector adapters (GitHub,
-Confluence, Postman) and learned classifiers are staged.
+errors are undocumented, which names are agent-hostile). **Anvil is an MCP client
+here:** it connects to the MCP servers GitHub, GitLab, Confluence, Notion, and
+Postman already publish — you install/point at them; Anvil builds no bespoke API
+clients. A pluggable `HarnessAgent` decides which of a source's tools to call and
+turns results into structured **claims** (never free text, so an untrusted wiki
+page can't smuggle instructions into AIR). Claims flow into the **evidence graph**
+and a **reconciler**.
+
+The reconciler enforces the **asymmetric-trust rule** — the safety centerpiece:
+
+- **Loosening** safety (mark a POST idempotent → enable retries, drop a
+  confirmation) requires high-reliability evidence: implementation, contract
+  tests, or recorded traffic (`≥ 0.85`). A pile of doc mentions is not enough.
+- **Tightening** safety (add an error, mark non-idempotent, require confirmation)
+  is cheap (`≥ 0.4`).
+- On conflict, the **safer** claim wins.
+
+Output is a **proposed manifest patch** — enrichment is propose-only and never
+mutates AIR. Review it, then feed it to `anvil compile --manifest`. `anvil enrich`
+drives this.
 
 ## The safety runtime (`@anvil/runtime`) — the hot path
 
@@ -87,14 +102,16 @@ custom URI schemes, `assistant` audience) and the 2026 skills-over-MCP pattern.
 
 ## Implemented vs staged
 
-**Implemented & tested (49 tests):** AIR + evidence, OpenAPI/Swagger compiler,
+**Implemented & tested (55 tests):** AIR + evidence, OpenAPI/Swagger compiler,
 classifier, manifest enrichment, safety validator, the full safety runtime,
 MCP server (with a live in-memory client round-trip), resource-serving, skill
 package, catalog + compiled manifests, deploy artifacts, mocks, evals,
-conformance-test generation, the `anvil` CLI + shared tool-CLI engine, and the
-self-skill + harness adapters.
+conformance-test generation, the `anvil` CLI + shared tool-CLI engine, the
+self-skill + harness adapters, and the **harness loop** (MCP-client source
+connectors, evidence graph, asymmetric-trust reconciler, `anvil enrich`).
 
-**Staged (adapter seams exist):** gRPC / GraphQL / WSDL parsers, connector-based
-enrichment, learned classifiers, streaming & long-running operations, the hosted
-registry, and live cloud deploy execution (Anvil emits the artifacts and plan;
-it does not hold cloud credentials).
+**Staged (adapter seams exist):** gRPC / GraphQL / WSDL parsers, LLM-driven
+harness agents (the heuristic agent ships; an LLM `HarnessAgent` plugs into the
+same interface), learned classifiers, streaming & long-running operations, the
+hosted registry, and live cloud deploy execution (Anvil emits the artifacts and
+plan; it does not hold cloud credentials).

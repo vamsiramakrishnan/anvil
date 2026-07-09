@@ -13,6 +13,7 @@ export default defineConfig({
       "@anvil/runtime": pkg("runtime"),
       "@anvil/compiler": pkg("compiler"),
       "@anvil/generators": pkg("generators"),
+      "@anvil/harness": pkg("harness"),
     },
   },
   test: {

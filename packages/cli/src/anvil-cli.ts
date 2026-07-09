@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import { type AirDocument, airFromJson, airFromYaml, airToYaml } from "@anvil/air";
 import { approveOperations, compile } from "@anvil/compiler";
 import { generateBundle, operationCatalog, writeBundle } from "@anvil/generators";
+import { parseSources, runEnrichment, type TransportFactory } from "@anvil/harness";
+import { stringify as toYaml } from "yaml";
 import { parseArgs } from "./args.js";
 import { ANVIL_COMMANDS } from "./commands.js";
 import { type CliIO, processIO } from "./io.js";
@@ -11,6 +13,8 @@ import { runToolCli, type ToolCliDeps } from "./tool-cli.js";
 
 export interface AnvilCliDeps extends ToolCliDeps {
   io?: CliIO;
+  /** Injectable MCP transport factory so `enrich` can be tested without spawning servers. */
+  transportFactory?: TransportFactory;
 }
 
 const VERSION = "0.1.0";
@@ -44,6 +48,8 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
         return cmdPackage(positionals.slice(1), io);
       case "deploy":
         return cmdDeploy(positionals.slice(1), flags, io);
+      case "enrich":
+        return await cmdEnrich(positionals.slice(1), flags, deps, io);
       case "run":
         return await cmdRun(positionals.slice(1), argv, deps, io);
       case "serve":
@@ -187,6 +193,57 @@ function cmdDeploy(args: string[], flags: Record<string, string | boolean>, io: 
   io.out("  3. bind secrets from deploy/secrets.required.yaml (Secret Manager)");
   io.out("  4. gcloud run services replace deploy/cloudrun.service.yaml");
   io.out("Anvil generates the artifacts; it does not hold your cloud credentials.");
+  return 0;
+}
+
+async function cmdEnrich(
+  args: string[],
+  flags: Record<string, string | boolean>,
+  deps: AnvilCliDeps,
+  io: CliIO,
+): Promise<number> {
+  const path = args[0];
+  const sourcesPath = flags.sources as string | undefined;
+  if (!path || !sourcesPath) {
+    io.err("Usage: anvil enrich <dir|air.yaml> --sources <file> [--write <manifest>] [--json]");
+    return 1;
+  }
+  const air = loadAir(path);
+  const sources = parseSources(readFileSync(sourcesPath, "utf8"));
+  const report = await runEnrichment(air, sources, { transportFactory: deps.transportFactory });
+
+  if (flags.json === true) {
+    io.out(JSON.stringify({ sources: report.sources, operations: report.operations }, null, 2));
+  } else {
+    io.out(
+      `Connected to ${report.sources.length} source(s): ${report.sources.join(", ") || "none"}`,
+    );
+    for (const op of report.operations) {
+      if (op.decisions.length === 0) continue;
+      io.out(
+        `\n${op.canonicalName} (confidence ${op.priorConfidence.toFixed(2)} → ${op.newConfidence.toFixed(2)})`,
+      );
+      for (const d of op.decisions) {
+        io.out(`  [${d.accepted ? "APPLY" : "SKIP "}] ${d.claim.type}: ${d.reason}`);
+      }
+    }
+  }
+
+  const patchCount = Object.keys(report.proposedManifest.operations).length;
+  if (patchCount === 0) {
+    io.out("\nNo enrichment proposed. AIR already reflects the available evidence.");
+    return 0;
+  }
+  const manifestYaml = toYaml(report.proposedManifest);
+  const writeTo = flags.write as string | undefined;
+  if (writeTo) {
+    writeFileSync(writeTo, manifestYaml, "utf8");
+    io.out(`\nProposed manifest for ${patchCount} operation(s) written to ${writeTo}.`);
+    io.out("Review it, then apply with `anvil compile <spec> --manifest " + writeTo + "`.");
+  } else {
+    io.out(`\nProposed manifest (review, then pass to \`anvil compile --manifest\`):\n`);
+    io.out(manifestYaml);
+  }
   return 0;
 }
 

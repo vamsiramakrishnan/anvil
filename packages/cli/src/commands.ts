@@ -48,6 +48,15 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     mutates: true,
   },
   {
+    name: "enrich",
+    usage: "anvil enrich <dir|air.yaml> --sources <file> [--write <manifest>] [--json]",
+    summary:
+      "Connect to published MCP servers (GitHub, Confluence, …) and propose a manifest patch.",
+    detail:
+      "Anvil is an MCP client here: it connects to the MCP servers those systems already publish, gathers evidence per operation, and proposes idempotency/confirmation/etc. Propose-only — nothing touches AIR. Loosening safety requires high-reliability (implementation/traffic) evidence; review the patch, then `anvil compile --manifest`.",
+    mutates: false,
+  },
+  {
     name: "run",
     usage: "anvil run <dir|air.yaml> <resource> <action> [flags]",
     summary: "Invoke an operation through the safety runtime.",

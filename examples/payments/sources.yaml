@@ -1,0 +1,24 @@
+# Enrichment sources — published MCP servers Anvil connects to as a client.
+# Install/point at the servers those systems already ship; Anvil does not build
+# GitHub/GitLab/Confluence clients. Secrets come from the environment.
+sources:
+  - id: github
+    system: github
+    transport:
+      kind: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN}
+    hints:
+      searchTool: search_code
+      scope: ["repo:payments-platform/payments-service"]
+
+  - id: confluence
+    system: confluence
+    transport:
+      kind: http
+      url: https://mcp.atlassian.com/v1/mcp
+    hints:
+      searchTool: search
+      scope: ["space:PAYMENTS"]
