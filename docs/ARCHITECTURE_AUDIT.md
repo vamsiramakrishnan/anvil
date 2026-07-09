@@ -60,13 +60,16 @@ This is exactly the "confidence number not attached to a specific claim" and
 "evidence graph implemented as an unstructured list" the North Star calls out.
 
 **Disposition: Replace.** Evidence is now **claim-scoped** — see §"Refactors".
-Confidence is resolved **per semantic** — `confidenceFor(evidence, predicate)`,
-weighted by source reliability (`effectiveWeight = confidence × reliability`) and
-relation-aware (supersession/contradiction). Claims about different predicates
-never corroborate each other, so a strong `exists` cannot mask a weak
-`idempotency.mode`. The node-level `evidenceConfidence` survives only as a
-display-only coverage summary (the weakest per-predicate confidence) and does not
-gate safety or approval.
+The resolver `resolveSemantic(evidence, predicate)` is **conflict-aware**: it
+returns `resolved` / `conflicted` / `insufficient`, weighted by source reliability
+(`effectiveWeight = confidence × reliability`) and relation-aware
+(supersession/contradiction). A near-tie contradiction is reported as
+`conflicted` (a review signal) rather than a confident winner-by-0.02, and the
+harness refuses to auto-loosen a contested safety-sensitive semantic
+(`SAFETY_SENSITIVE_PREDICATES`). Claims about different predicates never
+corroborate each other, so a strong `exists` cannot mask a weak
+`idempotency.mode`. `confidenceFor`/`evidenceConfidence` remain as display-only
+numbers and do not gate safety or approval.
 
 ## 3. Compiler pipeline
 

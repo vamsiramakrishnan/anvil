@@ -177,19 +177,68 @@ export function claimIsActive(c: Claim, all: Claim[] = [c]): boolean {
   return resolveActiveClaims(all).includes(c);
 }
 
+/** Support for one asserted value of a predicate (noisy-OR of its claims' weights). */
+export interface ValueSupport {
+  value: unknown;
+  support: number;
+  claims: Claim[];
+}
+
 /**
- * Confidence in **one semantic** — `(subject, predicate)` — the safety-relevant
- * resolver every consumer should ask for a specific question
- * (`confidenceFor(ev, "idempotency.mode")`). Claims about *different* predicates
- * never corroborate each other, so this never mixes "exists" with "idempotency".
- *
- * Contradictions within the predicate resolve deterministically: active claims
- * are grouped by asserted value, each group's confidence is the noisy-OR of its
- * members' effective weights, and the best-supported value wins. Bounded [0, 0.99].
+ * The outcome of resolving one semantic — `(subject, predicate)`:
+ *   - `resolved`     — one value dominates; `value`/`support` describe it.
+ *   - `conflicted`   — a competing value is within the margin; a confident number
+ *                      would be a lie, so the *status* forces a review decision.
+ *   - `insufficient` — no active claims for this predicate.
  */
-export function confidenceFor(evidence: Evidence, predicate: string): number {
+export interface SemanticResolution {
+  predicate: string;
+  status: "resolved" | "conflicted" | "insufficient";
+  value?: unknown;
+  support: number;
+  competingValue?: unknown;
+  competingSupport?: number;
+  claims: Claim[];
+}
+
+/** A runner-up value within this margin of the leader counts as a real conflict. */
+export const CONFLICT_MARGIN = 0.2;
+
+/**
+ * Safety-sensitive predicates: a material conflict here must force review rather
+ * than silently pick a winner. Loosening safety on a "winner by 0.02" is exactly
+ * the failure this prevents.
+ */
+export const SAFETY_SENSITIVE_PREDICATES: ReadonlySet<string> = new Set([
+  "idempotency.mode",
+  "effect.stateImpact",
+  "auth.principal",
+  "confirmation.required",
+  "retries.mode",
+]);
+
+function noisyOr(claims: Claim[]): number {
+  const product = claims.reduce((acc, c) => acc * (1 - effectiveWeight(c)), 1);
+  return Math.min(0.99, 1 - product);
+}
+
+/**
+ * Resolve one semantic — `(subject, predicate)` — **conflict-aware**. Claims about
+ * different predicates never corroborate each other; within the predicate, active
+ * claims are grouped by asserted value and each value's support is the noisy-OR of
+ * its members' effective weights. If a competing value's support is within
+ * `conflictMargin` of the leader's, the result is `conflicted` (not a confident
+ * number) — two authoritative sources disagreeing is a review signal, not 88%.
+ * Deterministic: value groups break ties by their JSON key.
+ */
+export function resolveSemantic(
+  evidence: Evidence,
+  predicate: string,
+  conflictMargin: number = CONFLICT_MARGIN,
+): SemanticResolution {
   const claims = resolveActiveClaims(evidence.claims).filter((c) => c.predicate === predicate);
-  if (claims.length === 0) return 0;
+  if (claims.length === 0) return { predicate, status: "insufficient", support: 0, claims: [] };
+
   const byValue = new Map<string, Claim[]>();
   for (const c of claims) {
     const key = JSON.stringify(c.value ?? null);
@@ -197,12 +246,34 @@ export function confidenceFor(evidence: Evidence, predicate: string): number {
     group.push(c);
     byValue.set(key, group);
   }
-  let best = 0;
-  for (const group of byValue.values()) {
-    const product = group.reduce((acc, c) => acc * (1 - effectiveWeight(c)), 1);
-    best = Math.max(best, Math.min(0.99, 1 - product));
+  const groups = [...byValue.entries()]
+    .map(([key, cs]) => ({ key, value: cs[0]?.value, support: noisyOr(cs), claims: cs }))
+    .sort((a, b) => b.support - a.support || a.key.localeCompare(b.key));
+
+  const leader = groups[0] as (typeof groups)[number];
+  const runner = groups[1];
+  if (runner && leader.support - runner.support < conflictMargin) {
+    return {
+      predicate,
+      status: "conflicted",
+      value: leader.value,
+      support: leader.support,
+      competingValue: runner.value,
+      competingSupport: runner.support,
+      claims,
+    };
   }
-  return best;
+  return { predicate, status: "resolved", value: leader.value, support: leader.support, claims };
+}
+
+/**
+ * Numeric confidence in one semantic (the leader value's support). This is the
+ * display/coverage number; consumers making a **safety decision** must use
+ * `resolveSemantic` and honour `status === "conflicted"` rather than trusting the
+ * bare number — see `SAFETY_SENSITIVE_PREDICATES`.
+ */
+export function confidenceFor(evidence: Evidence, predicate: string): number {
+  return resolveSemantic(evidence, predicate).support;
 }
 
 /** The distinct predicates asserted by active claims (sorted, deterministic). */
@@ -221,6 +292,18 @@ export function evidenceConfidence(evidence: Evidence): number {
   const predicates = evidencePredicates(evidence);
   if (predicates.length === 0) return 0;
   return Math.min(...predicates.map((p) => confidenceFor(evidence, p)));
+}
+
+/**
+ * Safety-sensitive predicates whose evidence is in material conflict — a caller
+ * must force review rather than act on the leader value. Empty when nothing
+ * safety-sensitive is contested.
+ */
+export function conflictedSafetyPredicates(evidence: Evidence): string[] {
+  return evidencePredicates(evidence).filter(
+    (p) =>
+      SAFETY_SENSITIVE_PREDICATES.has(p) && resolveSemantic(evidence, p).status === "conflicted",
+  );
 }
 
 /* -------------------------------------------------------------------------- */

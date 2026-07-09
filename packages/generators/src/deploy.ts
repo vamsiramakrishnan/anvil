@@ -410,6 +410,12 @@ terraform apply tfplan          # the reviewed plan; dev may auto-apply
   \`@anvil/runtime\`.
 - **Remote state is required.** Without the GCS backend an ephemeral build would
   start from empty state and try to recreate live resources.
+- **Lock down the state + plan bucket.** Terraform state and the published plan
+  (\`tfplan\`, and the human-readable \`tfplan.txt\`) can contain sensitive values.
+  The \`_TF_STATE_BUCKET\` must use uniform bucket-level access, restricted IAM (no
+  broad developer/public read), a retention/lifecycle policy, and encryption per
+  your policy. If \`tfplan.txt\` exposes more than you want in the review pack, drop
+  the \`terraform show\` step / its artifact path from \`cloudbuild.yaml\`.
 - **Internal ingress** keeps the surface pinned; the host allowlist
   (\`ANVIL_ALLOWED_HOSTS\`) pins upstream egress.
 - **No keys are stored**: callers use their own service account + ID token; the

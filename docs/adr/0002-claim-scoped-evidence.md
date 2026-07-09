@@ -23,12 +23,22 @@ relation is present), and a `review` status.
 
 Confidence is **resolved per semantic, never node-wide**:
 
-- **`confidenceFor(evidence, predicate)`** is the safety-relevant resolver.
-  Claims about *different* predicates never corroborate each other, so a strong
-  `exists` can never inflate a weak `idempotency.mode`. Within a predicate,
-  contradictions resolve deterministically: claims are grouped by asserted value,
-  each group is a noisy-OR of its members' **effective weights**, and the
-  best-supported value wins.
+- **`resolveSemantic(evidence, predicate)`** is the safety-relevant resolver. It
+  returns a `SemanticResolution` with a `status`:
+  - `resolved` — one value dominates;
+  - `conflicted` — a competing value is within `CONFLICT_MARGIN` (0.2) of the
+    leader, so a bare confidence number would be a lie — the *status* forces a
+    review decision (two authoritative sources disagreeing is not "88%");
+  - `insufficient` — no active claims.
+  Claims about *different* predicates never corroborate each other (a strong
+  `exists` can never inflate a weak `idempotency.mode`); within a predicate,
+  claims are grouped by asserted value, each group is a noisy-OR of its members'
+  **effective weights**, and ties break deterministically by value key.
+  `confidenceFor` is a thin numeric accessor (the leader's support) for display;
+  any *safety* decision must honour `status`. `SAFETY_SENSITIVE_PREDICATES`
+  (idempotency.mode, effect.stateImpact, auth.principal, confirmation.required,
+  retries.mode) must force review on conflict — the harness reconciler refuses to
+  auto-loosen a contested one (`conflictedSafetyPredicates`).
 - **`effectiveWeight = confidence × reliability`**, so ten confident claims from a
   generated mock (reliability 0.3) cannot drive a semantic to certainty.
   `SOURCE_RELIABILITY` lives in `@anvil/air` and the harness re-exports it — one
