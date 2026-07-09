@@ -1,0 +1,31 @@
+---
+name: anvil
+description: Use this skill to operate Anvil — compile API specifications into agent-ready CLI + MCP + skill bundles, enrich unsafe-operation semantics, approve operations, and deploy. Use when turning an OpenAPI/Swagger spec into safe agent tools.
+---
+
+# Operating Anvil
+
+Anvil is an agent toolchain compiler. It turns a spec into three aligned
+surfaces (CLI, MCP server, skill) from one model (AIR). Your job as a harness is
+to drive Anvil safely, not to invent semantics.
+
+## The loop
+1. `anvil compile <spec> --manifest <manifest> --out <dir>` — build the bundle.
+2. `anvil inspect <dir>` — read every operation's effect, risk, and idempotency.
+3. `anvil lint <dir>` — fix diagnostics. Non-idempotent mutations are `review_required`.
+4. Enrich: write an Anvil manifest to declare idempotency, confirmation, and retry policy for unsafe operations (see reference/workflow.md).
+5. `anvil approve <dir> <operation-id...>` — expose operations only after inspecting risk.
+6. `anvil package skill <dir>` and `anvil deploy cloud-run <dir> --env prod`.
+
+## Safety rules
+- **Never approve an operation you have not inspected.** Only approved operations are exposed.
+- **Do not** hand-wave idempotency. If a POST is not provably idempotent, either supply a manifest idempotency policy or leave it `review_required`.
+- Prefer `anvil run <dir> ... --dry-run` before any real invocation.
+- Treat `review_required` as a stop sign, not a nuisance.
+
+## Where to look
+- `reference/commands.md` — every command and what it does.
+- `reference/workflow.md` — the enrich → approve workflow and manifest shape.
+- `evals/operate_anvil.yaml` — behavior checks for operating Anvil.
+
+Run `anvil --help` before guessing.

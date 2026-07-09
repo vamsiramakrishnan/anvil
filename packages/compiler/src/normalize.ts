@@ -1,0 +1,273 @@
+import {
+  type AuthRequirement,
+  type AuthType,
+  type ErrorSpec,
+  type HttpMethod,
+  type JsonSchema,
+  type Operation,
+  type Param,
+  type ParamLocation,
+  snakeCase,
+} from "@anvil/air";
+import { classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import type { OpenApiDocument, ParsedSpec, SecurityScheme } from "./parse.js";
+
+const HTTP_METHODS: HttpMethod[] = ["get", "put", "post", "delete", "patch", "head"];
+
+interface RawParam {
+  name: string;
+  in: string;
+  required?: boolean;
+  schema?: JsonSchema;
+  description?: string;
+  example?: unknown;
+}
+
+interface RawOperation {
+  operationId?: string;
+  summary?: string;
+  description?: string;
+  tags?: string[];
+  deprecated?: boolean;
+  parameters?: RawParam[];
+  requestBody?: {
+    required?: boolean;
+    content?: Record<string, { schema?: JsonSchema }>;
+  };
+  responses?: Record<
+    string,
+    { description?: string; content?: Record<string, { schema?: JsonSchema }> }
+  >;
+  security?: Array<Record<string, string[]>>;
+}
+
+const singularize = (s: string): string => {
+  if (/ies$/.test(s)) return s.replace(/ies$/, "y");
+  if (/ses$/.test(s)) return s.replace(/es$/, "");
+  if (/s$/.test(s) && !/ss$/.test(s)) return s.replace(/s$/, "");
+  return s;
+};
+
+function actionFor(method: HttpMethod, endsWithParam: boolean): string {
+  switch (method) {
+    case "get":
+    case "head":
+      return endsWithParam ? "get" : "list";
+    case "post":
+      return "create";
+    case "put":
+      return "replace";
+    case "patch":
+      return "update";
+    case "delete":
+      return "delete";
+    default:
+      return method;
+  }
+}
+
+interface DerivedNames {
+  id: string;
+  canonicalName: string;
+  displayName: string;
+  cliCommand: string;
+  toolName: string;
+  resource: string;
+}
+
+function deriveNames(
+  serviceId: string,
+  path: string,
+  method: HttpMethod,
+  raw: RawOperation,
+): DerivedNames {
+  const segments = path.split("/").filter(Boolean);
+  const concrete = segments.filter((s) => !s.startsWith("{"));
+  const resource = concrete.length ? (concrete[concrete.length - 1] as string) : serviceId;
+  const endsWithParam =
+    segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
+  const action = actionFor(method, endsWithParam);
+  const canonicalName = raw.operationId
+    ? snakeCase(raw.operationId)
+    : `${action}_${singularize(resource)}`;
+  const displayName =
+    raw.summary ?? canonicalName.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+  return {
+    id: `${serviceId}.${snakeCase(resource)}.${action}`,
+    canonicalName,
+    displayName,
+    cliCommand: `${serviceId} ${resource} ${action}`,
+    toolName: `${serviceId}_${canonicalName}`,
+    resource,
+  };
+}
+
+function toParam(raw: RawParam): Param | null {
+  const loc = raw.in as ParamLocation;
+  if (!["path", "query", "header", "cookie"].includes(loc)) return null;
+  return {
+    name: raw.name,
+    in: loc,
+    required: raw.in === "path" ? true : Boolean(raw.required),
+    schema: raw.schema ?? { type: "string" },
+    description: raw.description,
+    example: raw.example,
+    inferred: false,
+  };
+}
+
+/** Flatten a JSON-body object schema into individual `in: body` params. */
+function bodyParams(schema: JsonSchema | undefined, required: boolean): Param[] {
+  if (!schema) return [];
+  const props = schema.properties as Record<string, JsonSchema> | undefined;
+  const requiredList = (schema.required as string[] | undefined) ?? [];
+  if (schema.type === "object" && props) {
+    return Object.entries(props).map(([name, propSchema]) => ({
+      name,
+      in: "body" as ParamLocation,
+      required: requiredList.includes(name),
+      schema: propSchema,
+      description: propSchema.description as string | undefined,
+      inferred: false,
+    }));
+  }
+  return [
+    {
+      name: "body",
+      in: "body" as ParamLocation,
+      required,
+      schema,
+      inferred: false,
+    },
+  ];
+}
+
+function jsonSchemaOf(content?: Record<string, { schema?: JsonSchema }>): JsonSchema | undefined {
+  if (!content) return undefined;
+  return content["application/json"]?.schema ?? Object.values(content)[0]?.schema;
+}
+
+const STATUS_TO_CODE: Record<string, ErrorSpec["code"]> = {
+  "400": "validation_error",
+  "401": "auth_required",
+  "403": "permission_denied",
+  "404": "not_found",
+  "409": "conflict",
+  "422": "validation_error",
+  "429": "rate_limited",
+  "500": "unknown_upstream_error",
+  "502": "upstream_unavailable",
+  "503": "upstream_unavailable",
+  "504": "upstream_timeout",
+};
+
+function errorSpecs(responses?: RawOperation["responses"]): ErrorSpec[] {
+  if (!responses) return [];
+  const out: ErrorSpec[] = [];
+  for (const [status, res] of Object.entries(responses)) {
+    const code = STATUS_TO_CODE[status];
+    if (!code) continue;
+    out.push({ code, upstream: { httpStatus: Number(status) }, message: res.description });
+  }
+  return out;
+}
+
+const SCHEME_TO_AUTH: Record<string, AuthType> = {
+  apiKey: "api_key",
+  oauth2: "oauth2_client_credentials",
+  openIdConnect: "oauth2_authorization_code",
+  mutualTLS: "mtls",
+};
+
+function resolveAuth(
+  doc: OpenApiDocument,
+  opSecurity: Array<Record<string, string[]>> | undefined,
+): AuthRequirement {
+  const schemes = doc.components?.securitySchemes ?? {};
+  const security = opSecurity ?? doc.security ?? [];
+  const first = security[0];
+  if (!first || Object.keys(first).length === 0) return { type: "none", scopes: [] };
+  const [schemeName, scopes] = Object.entries(first)[0] as [string, string[]];
+  const scheme: SecurityScheme | undefined = schemes[schemeName];
+  let type: AuthType = "custom_header";
+  if (scheme?.type === "http") type = scheme.scheme === "basic" ? "basic" : "jwt_bearer";
+  else if (scheme?.type) type = SCHEME_TO_AUTH[scheme.type] ?? "custom_header";
+  return { type, scopes: scopes ?? [] };
+}
+
+/** Normalize a parsed OpenAPI document into AIR operations (classifier applied). */
+export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
+  const doc = parsed.document;
+  const paths = doc.paths ?? {};
+  const operations: Operation[] = [];
+  const seenIds = new Map<string, number>();
+
+  for (const [path, pathItem] of Object.entries(paths)) {
+    for (const method of HTTP_METHODS) {
+      const raw = pathItem[method] as RawOperation | undefined;
+      if (!raw) continue;
+
+      const names = deriveNames(serviceId, path, method, raw);
+      let id = names.id;
+      const count = seenIds.get(id) ?? 0;
+      seenIds.set(id, count + 1);
+      if (count > 0) id = `${id}_${count + 1}`;
+
+      const signal = `${raw.operationId ?? ""} ${raw.summary ?? ""} ${path}`;
+      const { effect, idempotency } = classifyEffect(method, signal);
+      effect.resource = singularize(names.resource);
+      const retries = classifyRetry(effect, idempotency);
+      const confirmation = classifyConfirmation(effect, idempotency);
+
+      const params: Param[] = [];
+      for (const rp of raw.parameters ?? []) {
+        const p = toParam(rp);
+        if (p) params.push(p);
+      }
+      params.push(
+        ...bodyParams(jsonSchemaOf(raw.requestBody?.content), raw.requestBody?.required ?? false),
+      );
+
+      const successRes =
+        raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;
+
+      operations.push({
+        id,
+        canonicalName: names.canonicalName,
+        displayName: names.displayName,
+        description: raw.description ?? raw.summary ?? "",
+        tags: raw.tags ?? [],
+        sourceRef: { kind: parsed.kind, path, method, operationId: raw.operationId },
+        effect,
+        input: { params },
+        output: { schema: jsonSchemaOf(successRes?.content), description: successRes?.description },
+        errors: errorSpecs(raw.responses),
+        idempotency,
+        retries,
+        confirmation,
+        auth: resolveAuth(doc, raw.security),
+        streaming: false,
+        longRunning: false,
+        deprecated: Boolean(raw.deprecated),
+        cli: { command: names.cliCommand, aliases: [] },
+        mcp: { toolName: names.toolName },
+        skill: { intentExamples: [] },
+        state: "generated",
+        reviewNotes: [],
+        evidence: {
+          items: [
+            { kind: "spec", ref: `${method.toUpperCase()} ${path}`, confidence: 0.7 },
+            {
+              kind: "inferred",
+              note: "effect/idempotency inferred from HTTP method",
+              confidence: 0.5,
+            },
+          ],
+          confidence: 0.6,
+        },
+      });
+    }
+  }
+
+  return operations;
+}
