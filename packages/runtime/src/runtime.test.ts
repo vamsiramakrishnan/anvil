@@ -158,6 +158,29 @@ describe("request body reconstruction", () => {
     expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual(payload);
   });
 
+  it("still honors legacy in:body params (older AIR bundles)", async () => {
+    // A bundle compiled before the body-model change carries body fields as
+    // in:"body" params and no `input.body`. It must not execute with an empty body.
+    const legacyOp = op({
+      idempotency: { mode: "none", mechanism: "none", keyDerivation: "none" },
+      confirmation: { required: false },
+      input: {
+        params: [
+          { name: "payment_id", in: "path", required: true, schema: { type: "string" } },
+          { name: "amount", in: "body", required: true, schema: { type: "integer" } },
+        ],
+      },
+    });
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    const res = await execute(
+      legacyOp,
+      { input: { payment_id: "pay_1", amount: 2500 } },
+      { ...baseCtx, transport },
+    );
+    expect(res.outcome).toBe("success");
+    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({ amount: 2500 });
+  });
+
   it("fails closed when a required whole body is missing", async () => {
     const wholeOp = op({
       idempotency: { mode: "none", mechanism: "none", keyDerivation: "none" },

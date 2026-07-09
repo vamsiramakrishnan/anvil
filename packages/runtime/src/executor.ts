@@ -103,13 +103,20 @@ function buildRequest(op: Operation, input: Record<string, unknown>, baseUrl: st
       case "cookie":
         headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${p.name}=${String(value)}`;
         break;
+      case "body":
+        // Legacy AIR (bundles compiled before the body-model change) still carry
+        // body fields as in:"body" params. Honor them so an old bundle does not
+        // silently execute with an empty body; new AIR uses `input.body` below.
+        body[p.name] = value;
+        hasBody = true;
+        break;
     }
   }
 
   // Reconstruct the request body from the preserved body model. `fields`
   // projection reads each field from the flat input; `whole` reads a single
   // `body` value (its structure preserved), so nesting/arrays/unions survive.
-  let bodyValue: unknown;
+  let bodyValue: unknown = hasBody ? body : undefined;
   if (op.input.body) {
     if (op.input.body.projection === "fields") {
       for (const f of op.input.body.fields) {

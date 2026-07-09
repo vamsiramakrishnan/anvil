@@ -170,6 +170,19 @@ describe("capabilities in generated artifacts", () => {
     expect(workflows).toContain("Refund a customer");
     expect(workflows).toMatch(/human approval/i);
   });
+
+  it("never advertises unapproved operations in the capability skill docs", async () => {
+    // No manifest → nothing is approved. The skill is the exposed surface, so
+    // its capability docs must not list any operation command.
+    const unapproved = await compile({ spec: read("openapi.yaml"), serviceId: "payments" });
+    expect(unapproved.operations.every((o) => o.state !== "approved")).toBe(true);
+    const { files } = generateBundle(unapproved);
+    const capsRef = files["skill/reference/capabilities.md"] as string;
+    expect(capsRef).toContain("No approved capabilities");
+    expect(capsRef).not.toContain("payments refunds create");
+    const skill = files["skill/SKILL.md"] as string;
+    expect(skill).not.toContain("payments refunds create");
+  });
 });
 
 describe("bundle", () => {
