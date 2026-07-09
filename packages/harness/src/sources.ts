@@ -24,14 +24,29 @@ export const HttpTransport = z.object({
   headers: z.record(z.string(), z.string()).default({}),
 });
 
+export const SourceSystem = z.enum([
+  "github",
+  "gitlab",
+  "confluence",
+  "jira",
+  "notion",
+  "postman",
+  "generic",
+]);
+export type SourceSystem = z.infer<typeof SourceSystem>;
+
+export type Transport = z.infer<typeof StdioTransport> | z.infer<typeof HttpTransport>;
+
 export const SourceConfig = z.object({
   /** Stable id, e.g. "github", "confluence". */
   id: z.string(),
-  /** What kind of system this is — a hint for the harness agent, not a client. */
-  system: z
-    .enum(["github", "gitlab", "confluence", "jira", "notion", "postman", "generic"])
-    .default("generic"),
-  transport: z.discriminatedUnion("kind", [StdioTransport, HttpTransport]),
+  /** Which system this is. Selects a built-in profile (server + tools + weighting). */
+  system: SourceSystem.default("generic"),
+  /**
+   * Transport to the published MCP server. Optional: if omitted, the system's
+   * built-in profile supplies the default (e.g. `npx @modelcontextprotocol/server-github`).
+   */
+  transport: z.discriminatedUnion("kind", [StdioTransport, HttpTransport]).optional(),
   /**
    * Optional hints: which of the server's tools to prefer for search/read, and
    * scoping (repos, spaces). Keeps Anvil from hard-coding any server's API.

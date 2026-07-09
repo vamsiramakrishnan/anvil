@@ -57,6 +57,14 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     mutates: false,
   },
   {
+    name: "sources",
+    usage: "anvil sources",
+    summary: "List the enrichment sources (published MCP servers) Anvil can connect to.",
+    detail:
+      "Shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server Anvil runs for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman).",
+    mutates: false,
+  },
+  {
     name: "run",
     usage: "anvil run <dir|air.yaml> <resource> <action> [flags]",
     summary: "Invoke an operation through the safety runtime.",

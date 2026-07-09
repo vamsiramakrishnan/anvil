@@ -35,6 +35,13 @@ Connect to published MCP servers (GitHub, Confluence, …) and propose a manifes
 
 Anvil is an MCP client here: it connects to the MCP servers those systems already publish, gathers evidence per operation, and proposes idempotency/confirmation/etc. Propose-only — nothing touches AIR. Loosening safety requires high-reliability (implementation/traffic) evidence; review the patch, then `anvil compile --manifest`.
 
+### `anvil sources`
+`anvil sources`
+
+List the enrichment sources (published MCP servers) Anvil can connect to.
+
+Shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server Anvil runs for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman).
+
 ### `anvil run`  *(mutates)*
 `anvil run <dir|air.yaml> <resource> <action> [flags]`
 

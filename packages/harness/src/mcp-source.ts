@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { resolveTransport } from "./profiles.js";
 import type { SourceConfig } from "./sources.js";
 
 /** A minimal view of a connected MCP source: list its tools, call them, read text. */
@@ -19,19 +20,20 @@ export type TransportFactory = (config: SourceConfig) => Promise<Transport>;
 
 /** Default factory: spawn a published stdio server or connect to a remote http one. */
 export const defaultTransportFactory: TransportFactory = async (config) => {
-  if (config.transport.kind === "stdio") {
+  const transport = resolveTransport(config);
+  if (transport.kind === "stdio") {
     const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
     return new StdioClientTransport({
-      command: config.transport.command,
-      args: config.transport.args,
-      env: { ...process.env, ...config.transport.env } as Record<string, string>,
+      command: transport.command,
+      args: transport.args,
+      env: { ...process.env, ...transport.env } as Record<string, string>,
     });
   }
   const { StreamableHTTPClientTransport } = await import(
     "@modelcontextprotocol/sdk/client/streamableHttp.js"
   );
-  return new StreamableHTTPClientTransport(new URL(config.transport.url), {
-    requestInit: { headers: config.transport.headers },
+  return new StreamableHTTPClientTransport(new URL(transport.url), {
+    requestInit: { headers: transport.headers },
   });
 };
 

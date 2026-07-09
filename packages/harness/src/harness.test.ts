@@ -50,10 +50,22 @@ const githubSource: SourceConfig = {
   transport: { kind: "stdio", command: "x", args: [], env: {} },
   hints: { searchTool: "search_code", scope: [] },
 };
+const gitlabSource: SourceConfig = {
+  id: "gitlab",
+  system: "gitlab",
+  transport: { kind: "stdio", command: "x", args: [], env: {} },
+  hints: { searchTool: "search_code", scope: [] },
+};
 const confluenceSource: SourceConfig = {
   id: "confluence",
   system: "confluence",
   transport: { kind: "http", url: "https://mcp.atlassian.example/mcp", headers: {} },
+  hints: { searchTool: "search_code", scope: [] },
+};
+const postmanSource: SourceConfig = {
+  id: "postman",
+  system: "postman",
+  transport: { kind: "http", url: "https://mcp.postman.example/mcp", headers: {} },
   hints: { searchTool: "search_code", scope: [] },
 };
 
@@ -111,6 +123,37 @@ describe("harness enrichment", () => {
     const capture = report.proposedManifest.operations?.capture_payment;
     expect(capture?.idempotency?.strategy).toBe("none");
     expect(capture?.confirmation?.required).toBe(true);
+  });
+
+  it("lets GitLab (a code host) loosen safety just like GitHub", async () => {
+    const servers = {
+      gitlab: makeSourceServer((q) =>
+        q.includes("create_refund") ? "refund service sets the Idempotency-Key header" : "",
+      ),
+    };
+    const report = await runEnrichment(air, [gitlabSource], {
+      transportFactory: factoryFor(servers),
+    });
+    expect(report.proposedManifest.operations?.create_refund?.idempotency?.strategy).toBe(
+      "required_request_key",
+    );
+  });
+
+  it("treats a Postman example as corroborating only — it cannot loosen alone", async () => {
+    const servers = {
+      postman: makeSourceServer((q) =>
+        q.includes("create_refund") ? "saved request includes an Idempotency-Key header" : "",
+      ),
+    };
+    const report = await runEnrichment(air, [postmanSource], {
+      transportFactory: factoryFor(servers),
+    });
+    // Postman's strong weight is below the loosen threshold, so no patch.
+    expect(report.proposedManifest.operations?.create_refund).toBeUndefined();
+    const refund = report.operations.find((o) => o.canonicalName === "create_refund");
+    expect(refund?.decisions.find((d) => d.claim.type === "idempotency")?.accepted).toBe(false);
+    // But confidence still rises from the corroborating evidence.
+    expect(refund?.newConfidence).toBeGreaterThan(refund?.priorConfidence ?? 1);
   });
 
   it("raises evidence confidence and the patch applies through the compiler", async () => {
