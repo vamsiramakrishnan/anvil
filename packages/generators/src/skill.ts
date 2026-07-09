@@ -76,27 +76,40 @@ ${ops.length === 0 ? "_No operations are approved yet. Run `anvil approve` to ex
 `;
 }
 
-/** A compact capability list for SKILL.md — the primary index. */
+/**
+ * The skill is the *exposed* surface, so capability docs must resolve only
+ * **approved** member operations — never advertise operations that approval has
+ * not yet exposed. Capabilities with no approved members are omitted entirely.
+ */
+function approvedMembers(air: AirDocument, cap: AirDocument["capabilities"][number]): Operation[] {
+  return cap.operationIds
+    .map((id) => air.operations.find((o) => o.id === id))
+    .filter((o): o is Operation => Boolean(o) && o?.state === "approved");
+}
+
+/** A compact capability list for SKILL.md — the primary index (approved only). */
 function capabilitiesList(air: AirDocument): string {
-  if (air.capabilities.length === 0) return "";
-  const rows = air.capabilities.map((c) => {
-    const name = c.id.split(".").slice(1).join(".") || c.id;
-    const wf = c.workflowIds.length ? `, ${c.workflowIds.length} workflow(s)` : "";
-    return `- **${name}** — ${c.displayName} (${c.operationIds.length} op(s)${wf})`;
-  });
-  return `Capabilities:\n${rows.join("\n")}`;
+  const rows = air.capabilities
+    .map((c) => ({ c, ops: approvedMembers(air, c) }))
+    .filter(({ ops }) => ops.length > 0)
+    .map(({ c, ops }) => {
+      const name = c.id.split(".").slice(1).join(".") || c.id;
+      const wf = c.workflowIds.length ? `, ${c.workflowIds.length} workflow(s)` : "";
+      return `- **${name}** — ${c.displayName} (${ops.length} op(s)${wf})`;
+    });
+  return rows.length ? `Capabilities:\n${rows.join("\n")}` : "";
 }
 
 function capabilitiesRef(air: AirDocument): string {
-  if (air.capabilities.length === 0) return "# Capabilities\n\n_No capabilities discovered._\n";
-  const sections = air.capabilities.map((cap) => {
-    const ops = cap.operationIds
-      .map((id) => air.operations.find((o) => o.id === id))
-      .filter((o): o is Operation => Boolean(o))
-      .map(
-        (o) =>
-          `- \`${o.cli.command}\` — ${o.effect.kind}${o.confirmation.required ? " (confirm)" : ""}`,
-      );
+  const visible = air.capabilities
+    .map((cap) => ({ cap, ops: approvedMembers(air, cap) }))
+    .filter(({ ops }) => ops.length > 0);
+  if (visible.length === 0) return "# Capabilities\n\n_No approved capabilities yet._\n";
+  const sections = visible.map(({ cap, ops }) => {
+    const opLines = ops.map(
+      (o) =>
+        `- \`${o.cli.command}\` — ${o.effect.kind}${o.confirmation.required ? " (confirm)" : ""}`,
+    );
     const wfs = cap.workflowIds
       .map((id) => air.workflows.find((w) => w.id === id))
       .filter((w): w is AirDocument["workflows"][number] => Boolean(w))
@@ -107,13 +120,14 @@ ${cap.description}
 _Grouping: ${cap.source} · confidence ${cap.evidence.confidence.toFixed(2)}_
 
 Operations:
-${ops.join("\n") || "- (none)"}
+${opLines.join("\n")}
 ${wfs.length ? `\nWorkflows:\n${wfs.join("\n")}` : ""}`;
   });
   return `# Capabilities
 
 The primary abstraction: agents search for a capability, not a URL. Each
-capability owns operations and (authored) workflows.
+capability owns operations and (authored) workflows. Only approved operations
+are listed.
 
 ${sections.join("\n\n")}
 `;
