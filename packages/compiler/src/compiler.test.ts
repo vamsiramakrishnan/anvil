@@ -91,6 +91,53 @@ describe("compile pipeline (with manifest enrichment)", () => {
   });
 });
 
+describe("request body handling", () => {
+  it("projects a flat scalar body into per-field flags while preserving the schema", async () => {
+    const air = await compile({ spec, manifest, serviceId: "payments" });
+    const refund = air.operations.find((o) => o.canonicalName === "create_refund");
+    expect(refund?.input.body?.projection).toBe("fields");
+    expect(refund?.input.body?.fields.map((f) => f.name).sort()).toEqual([
+      "amount",
+      "currency",
+      "reason",
+    ]);
+    // Body fields are NOT stored as params (the model is not mutated by the surface).
+    expect(refund?.input.params.every((p) => p.in !== "body")).toBe(true);
+    // The verbatim body schema is still present.
+    expect(refund?.input.body?.schema.type).toBe("object");
+  });
+
+  it("preserves a nested/array body whole instead of flattening it", async () => {
+    const nested = `openapi: 3.0.0
+info: { title: orders, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items: { type: object, properties: { sku: { type: string } } }
+`;
+    const air = await compile({ spec: nested, serviceId: "orders" });
+    const op = air.operations[0];
+    expect(op?.input.body?.projection).toBe("whole");
+    // Array-of-objects structure survives (this is exactly what flattening lost).
+    const items = op?.input.body?.schema.properties as Record<string, { type?: string }>;
+    expect(items.items?.type).toBe("array");
+    // The assembled input surface carries a single `body` property.
+    const props = op?.input.schema?.properties as Record<string, unknown>;
+    expect(Object.keys(props)).toContain("body");
+  });
+});
+
 describe("capability discovery", () => {
   it("groups operations into capabilities from OpenAPI tags", async () => {
     const air = await compile({ spec, serviceId: "payments" });

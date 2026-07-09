@@ -7,6 +7,7 @@ import {
   type Operation,
   type Param,
   type ParamLocation,
+  type RequestBody,
   snakeCase,
 } from "@anvil/air";
 import { classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
@@ -116,30 +117,61 @@ function toParam(raw: RawParam): Param | null {
   };
 }
 
-/** Flatten a JSON-body object schema into individual `in: body` params. */
-function bodyParams(schema: JsonSchema | undefined, required: boolean): Param[] {
-  if (!schema) return [];
+const SCALAR_TYPES = new Set(["string", "integer", "number", "boolean"]);
+
+/** A body field is flag-projectable when it is a scalar (or an enum of scalars). */
+function isScalarField(schema: JsonSchema): boolean {
+  if (Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf) || Array.isArray(schema.allOf)) {
+    return false;
+  }
+  if (Array.isArray(schema.enum)) return true;
+  if (schema.const !== undefined) return true;
+  return typeof schema.type === "string" && SCALAR_TYPES.has(schema.type);
+}
+
+/**
+ * Build the preserved request body plus its surface projection (spec: "preserve
+ * the body as a body, derive the CLI projection separately"). The body schema is
+ * kept verbatim; a flat object of scalars is additionally projected into
+ * per-field flags, while anything richer (nesting, arrays, unions) is surfaced
+ * whole so nothing is lost.
+ */
+function buildRequestBody(
+  content: Record<string, { schema?: JsonSchema }> | undefined,
+  required: boolean,
+): RequestBody | undefined {
+  if (!content) return undefined;
+  const contentType = content["application/json"]
+    ? "application/json"
+    : (Object.keys(content)[0] ?? "application/json");
+  const schema = content["application/json"]?.schema ?? Object.values(content)[0]?.schema;
+  if (!schema) return undefined;
+
   const props = schema.properties as Record<string, JsonSchema> | undefined;
   const requiredList = (schema.required as string[] | undefined) ?? [];
-  if (schema.type === "object" && props) {
-    return Object.entries(props).map(([name, propSchema]) => ({
-      name,
-      in: "body" as ParamLocation,
-      required: requiredList.includes(name),
-      schema: propSchema,
-      description: propSchema.description as string | undefined,
-      inferred: false,
-    }));
-  }
-  return [
-    {
-      name: "body",
-      in: "body" as ParamLocation,
+  const noCompositor =
+    !Array.isArray(schema.oneOf) && !Array.isArray(schema.anyOf) && !Array.isArray(schema.allOf);
+  const flat =
+    schema.type === "object" &&
+    props !== undefined &&
+    noCompositor &&
+    Object.values(props).every(isScalarField);
+
+  if (flat && props) {
+    return {
+      contentType,
       required,
       schema,
-      inferred: false,
-    },
-  ];
+      projection: "fields",
+      fields: Object.entries(props).map(([name, propSchema]) => ({
+        name,
+        required: requiredList.includes(name),
+        schema: propSchema,
+        description: propSchema.description as string | undefined,
+      })),
+    };
+  }
+  return { contentType, required, schema, projection: "whole", fields: [] };
 }
 
 function jsonSchemaOf(content?: Record<string, { schema?: JsonSchema }>): JsonSchema | undefined {
@@ -224,9 +256,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
         const p = toParam(rp);
         if (p) params.push(p);
       }
-      params.push(
-        ...bodyParams(jsonSchemaOf(raw.requestBody?.content), raw.requestBody?.required ?? false),
-      );
+      const body = buildRequestBody(raw.requestBody?.content, raw.requestBody?.required ?? false);
 
       const successRes =
         raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;
@@ -239,7 +269,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
         tags: raw.tags ?? [],
         sourceRef: { kind: parsed.kind, path, method, operationId: raw.operationId },
         effect,
-        input: { params },
+        input: { params, body },
         output: { schema: jsonSchemaOf(successRes?.content), description: successRes?.description },
         errors: errorSpecs(raw.responses),
         idempotency,

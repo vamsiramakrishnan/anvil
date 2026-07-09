@@ -265,6 +265,18 @@ function buildInput(
     if (flags[flagName] !== undefined)
       base[propKey(p.name)] = coerce(flags[flagName] as string, p.schema);
   }
+  // Body projection: flat scalar fields become individual flags; a `whole` body
+  // is supplied as JSON via --body '<json>' (structure preserved end to end).
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    for (const f of body.fields) {
+      const flagName = cliFlag(f.name).slice(2);
+      if (flags[flagName] !== undefined)
+        base[propKey(f.name)] = coerce(flags[flagName] as string, f.schema);
+    }
+  } else if (body && typeof flags.body === "string") {
+    base.body = JSON.parse(flags.body);
+  }
   return base;
 }
 
@@ -279,18 +291,41 @@ function readInput(
 }
 
 function requiredMissing(op: Operation, input: Record<string, unknown>): string[] {
-  return op.input.params
-    .filter((p) => p.required)
-    .map((p) => propKey(p.name))
-    .filter((k) => input[k] === undefined || input[k] === null || input[k] === "");
+  const keys = op.input.params.filter((p) => p.required).map((p) => propKey(p.name));
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    for (const f of body.fields) if (f.required) keys.push(propKey(f.name));
+  } else if (body?.required) {
+    keys.push("body");
+  }
+  return keys.filter((k) => input[k] === undefined || input[k] === null || input[k] === "");
 }
 
 function exampleInvocation(op: Operation): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const p of op.input.params) out[propKey(p.name)] = p.example ?? sample(p.schema);
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    for (const f of body.fields) out[propKey(f.name)] = sample(f.schema);
+  } else if (body) {
+    out.body = sampleSchema(body.schema);
+  }
   if (op.idempotency.mode === "required") out.idempotency_key = `${op.canonicalName}-key`;
   if (op.confirmation.required) out.confirm = true;
   return out;
+}
+
+/** A minimal example value for an arbitrary JSON Schema (used for whole bodies). */
+function sampleSchema(schema: JsonSchema): unknown {
+  if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum[0];
+  const props = schema.properties as Record<string, JsonSchema> | undefined;
+  if (schema.type === "object" && props) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(props)) out[k] = sampleSchema(v);
+    return out;
+  }
+  if (schema.type === "array") return [sampleSchema((schema.items as JsonSchema) ?? {})];
+  return sample(schema);
 }
 
 function sample(schema: JsonSchema): unknown {
@@ -451,6 +486,7 @@ function serviceHelp(air: AirDocument): string {
     `\nPer-operation flags:`,
     `  --help --schema --examples --explain --dry-run --json --trace`,
     `  --confirm --idempotency-key <k> --auth-profile <p> --timeout <ms> --no-retries`,
+    `  --body '<json>'  (for operations whose body is not a flat object)`,
     `\nCapabilities:`,
     capabilitiesTable(air),
     `\nUnsafe mutations refuse to run without --confirm. That refusal is correct.`,

@@ -18,12 +18,23 @@ export function riskSummary(op: Operation): string {
 
 /** Full contract for one operation (`explain`). */
 export function explain(op: Operation): string {
-  const params = op.input.params
-    .map(
-      (p) =>
-        `  ${cliFlag(p.name)}${p.required ? " (required)" : ""}  [${p.in}]  ${p.description ?? typeName(p.schema)}`,
-    )
-    .join("\n");
+  const paramLines = op.input.params.map(
+    (p) =>
+      `  ${cliFlag(p.name)}${p.required ? " (required)" : ""}  [${p.in}]  ${p.description ?? typeName(p.schema)}`,
+  );
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    for (const f of body.fields) {
+      paramLines.push(
+        `  ${cliFlag(f.name)}${f.required ? " (required)" : ""}  [body]  ${f.description ?? typeName(f.schema)}`,
+      );
+    }
+  } else if (body) {
+    paramLines.push(
+      `  --body${body.required ? " (required)" : ""}  [body:${body.contentType}]  JSON body — structure preserved from the source schema (see --schema).`,
+    );
+  }
+  const params = paramLines.join("\n");
   const errors = op.errors
     .map((e) => `  ${e.code}${e.upstream?.httpStatus ? ` (${e.upstream.httpStatus})` : ""}`)
     .join("\n");

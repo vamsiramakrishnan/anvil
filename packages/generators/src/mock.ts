@@ -47,6 +47,12 @@ export function exampleInput(op: Operation): Record<string, unknown> {
   for (const p of op.input.params) {
     out[p.name] = p.example ?? exampleFromSchema(p.schema);
   }
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    for (const f of body.fields) out[f.name] = exampleFromSchema(f.schema);
+  } else if (body) {
+    out.body = exampleFromSchema(body.schema);
+  }
   if (op.idempotency.mode === "required") out.idempotency_key = `${op.canonicalName}-example-key`;
   if (op.confirmation.required) out.confirm = true;
   return out;
