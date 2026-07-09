@@ -229,5 +229,45 @@ describe("bundle", () => {
   });
 });
 
+describe("GCP-native deploy", () => {
+  it("emits Cloud Build, Terraform, IAM, and per-environment overlays", () => {
+    const { files } = generateBundle(air);
+    for (const p of [
+      "deploy/cloudbuild.yaml",
+      "deploy/iam.plan.json",
+      "deploy/terraform/main.tf",
+      "deploy/terraform/variables.tf",
+      "deploy/overlays/dev.env.yaml",
+      "deploy/overlays/prod.env.yaml",
+    ]) {
+      expect(Object.keys(files), `missing ${p}`).toContain(p);
+    }
+  });
+
+  it("ships a prebuilt runtime image (no in-image Anvil build)", () => {
+    const { files } = generateBundle(air);
+    const dockerfile = files["deploy/Dockerfile"] as string;
+    expect(dockerfile).not.toContain("pnpm build");
+    expect(dockerfile).toContain("runtime/server.js");
+  });
+
+  it("wires a durable Firestore ledger with a least-privilege, scoped IAM plan", () => {
+    const { files } = generateBundle(air);
+    const iam = JSON.parse(files["deploy/iam.plan.json"] as string);
+    // The refund requires idempotency, so the plan must provision the ledger.
+    expect(iam.ledger.backend).toBe("firestore");
+    expect(iam.grants.map((g: { role: string }) => g.role)).toContain("roles/datastore.user");
+    // Secret access is scoped to this one secret, not project-wide.
+    const secret = iam.grants.find((g: { role: string }) => g.role.includes("secretmanager"));
+    expect(secret.on).toBe("secret:payments-auth-token");
+    // No project owner/editor anywhere in the plan.
+    const all = JSON.stringify(iam);
+    expect(all).not.toContain("roles/owner");
+    expect(all).not.toContain("roles/editor");
+    // Cloud Run service carries ANVIL_LEDGER so the fail-closed contract holds.
+    expect(files["deploy/cloudrun.service.yaml"]).toContain("ANVIL_LEDGER");
+  });
+});
+
 // Keep the loader import meaningful for downstream consumers.
 void loadAirDocument;
