@@ -188,6 +188,40 @@ describe("tool CLI: invocation", () => {
     expect(body.amount).toBe(2500); // coerced to integer
     expect(transport.requests[0]?.headers["Idempotency-Key"]).toBe("k1");
   });
+
+  it("accepts a whole (nested) body via --body JSON and sends it verbatim", async () => {
+    const nestedAir = await compile({
+      spec: `openapi: 3.0.0
+info: { title: orders, version: 1.0.0 }
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      tags: [orders]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items: { type: array, items: { type: object } }
+`,
+      serviceId: "orders",
+    });
+    // Approve the discovered operation so the CLI will invoke it.
+    for (const op of nestedAir.operations) op.state = "approved";
+    const transport = new MockTransport(() => ({ status: 201, headers: {}, body: "{}" }));
+    const io = bufferIO();
+    const command = nestedAir.operations[0]?.cli.command.split(" ").slice(1) ?? [];
+    const code = await runToolCli(
+      nestedAir,
+      [...command, "--body", '{"items":[{"sku":"a"}]}', "--confirm", "--base-url", "https://o.local"],
+      { transport, env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv, io },
+    );
+    expect(code, io.text()).toBe(0);
+    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({ items: [{ sku: "a" }] });
+  });
 });
 
 describe("anvil CLI: end-to-end compile → inspect → lint", () => {

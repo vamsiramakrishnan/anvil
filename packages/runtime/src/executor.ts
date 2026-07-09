@@ -103,10 +103,25 @@ function buildRequest(op: Operation, input: Record<string, unknown>, baseUrl: st
       case "cookie":
         headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${p.name}=${String(value)}`;
         break;
-      case "body":
-        body[p.name] = value;
+    }
+  }
+
+  // Reconstruct the request body from the preserved body model. `fields`
+  // projection reads each field from the flat input; `whole` reads a single
+  // `body` value (its structure preserved), so nesting/arrays/unions survive.
+  let bodyValue: unknown;
+  if (op.input.body) {
+    if (op.input.body.projection === "fields") {
+      for (const f of op.input.body.fields) {
+        const value = input[propKey(f.name)];
+        if (value === undefined || value === null) continue;
+        body[f.name] = value;
         hasBody = true;
-        break;
+      }
+      if (hasBody) bodyValue = body;
+    } else if (input.body !== undefined && input.body !== null) {
+      bodyValue = input.body;
+      hasBody = true;
     }
   }
 
@@ -116,8 +131,8 @@ function buildRequest(op: Operation, input: Record<string, unknown>, baseUrl: st
   const url = `${base}${path}${qs ? `?${qs}` : ""}`;
   const req: HttpRequest = { method, url, headers };
   if (hasBody) {
-    req.headers["content-type"] = "application/json";
-    req.body = JSON.stringify(body);
+    req.headers["content-type"] = op.input.body?.contentType ?? "application/json";
+    req.body = JSON.stringify(bodyValue);
   }
   return req;
 }
@@ -181,11 +196,18 @@ export async function execute(
   try {
     await runHook(ctx.policy?.preValidate);
 
-    // 1. Required parameters present.
-    const missing = op.input.params
-      .filter((p) => p.required)
-      .map((p) => propKey(p.name))
-      .filter((k) => input[k] === undefined || input[k] === null || input[k] === "");
+    // 1. Required inputs present (params + projected body fields / whole body).
+    const requiredKeys = op.input.params.filter((p) => p.required).map((p) => propKey(p.name));
+    if (op.input.body) {
+      if (op.input.body.projection === "fields") {
+        for (const f of op.input.body.fields) if (f.required) requiredKeys.push(propKey(f.name));
+      } else if (op.input.body.required) {
+        requiredKeys.push("body");
+      }
+    }
+    const missing = requiredKeys.filter(
+      (k) => input[k] === undefined || input[k] === null || input[k] === "",
+    );
     if (missing.length > 0) {
       return fail(
         new AnvilError({

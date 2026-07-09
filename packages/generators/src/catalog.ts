@@ -96,6 +96,14 @@ export function compiledOperations(air: AirDocument): unknown {
       sourceRef: op.sourceRef,
       effect: op.effect,
       params: op.input.params.map((p) => ({ name: p.name, in: p.in, required: p.required })),
+      body: op.input.body
+        ? {
+            required: op.input.body.required,
+            projection: op.input.body.projection,
+            contentType: op.input.body.contentType,
+            fields: op.input.body.fields.map((f) => ({ name: f.name, required: f.required })),
+          }
+        : undefined,
       idempotency: op.idempotency,
       retries: op.retries,
       confirmation: { required: op.confirmation.required },

@@ -97,6 +97,42 @@ export const Param = z.object({
 });
 export type Param = z.infer<typeof Param>;
 
+/**
+ * A single top-level field of a request body, when the body is a flat object of
+ * scalars and can be surfaced as individual CLI flags / MCP properties. This is
+ * a *projection* of the body, not the body itself — the body schema is always
+ * preserved verbatim on `RequestBody.schema`.
+ */
+export const BodyField = z.object({
+  name: z.string(),
+  required: z.boolean().default(false),
+  schema: JsonSchema.default(() => ({ type: "string" })),
+  description: z.string().optional(),
+});
+export type BodyField = z.infer<typeof BodyField>;
+
+/**
+ * The request body, preserved as a body. Earlier Anvil flattened bodies into
+ * `in: body` params, which lost nesting, arrays-of-objects, and oneOf/anyOf.
+ * Now the full body schema is kept verbatim (`schema`), and the agent surface is
+ * a separate *projection*:
+ *   - `fields` — a flat object of scalars, surfaced as one flag/property each.
+ *   - `whole`  — anything richer (nested objects, arrays, unions); surfaced as a
+ *                single `body` field carrying the full schema, so nothing is lost.
+ * The CLI/MCP/skill all render from this one description — the surface shape
+ * never mutates the canonical model.
+ */
+export const RequestBody = z.object({
+  contentType: z.string().default("application/json"),
+  required: z.boolean().default(false),
+  /** The body's JSON Schema, preserved verbatim from the source. */
+  schema: JsonSchema.default(() => ({})),
+  projection: z.enum(["fields", "whole"]).default("whole"),
+  /** Top-level fields when `projection === "fields"`; empty for `whole`. */
+  fields: z.array(BodyField).default([]),
+});
+export type RequestBody = z.infer<typeof RequestBody>;
+
 export const Effect = z.object({
   kind: EffectKind,
   resource: z.string().optional(),
@@ -174,7 +210,10 @@ export const Operation = z.object({
   sourceRef: SourceRef,
   effect: Effect,
   input: z.object({
+    /** Non-body parameters only (path / query / header / cookie). */
     params: z.array(Param).default([]),
+    /** The request body, preserved as a body (not flattened into params). */
+    body: RequestBody.optional(),
     /** Assembled JSON Schema for the whole input, if computed. */
     schema: JsonSchema.optional(),
   }),

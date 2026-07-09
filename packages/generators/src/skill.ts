@@ -119,6 +119,18 @@ ${sections.join("\n\n")}
 `;
 }
 
+/** One line listing an operation's inputs (params + projected body). */
+function inputList(op: Operation): string {
+  const parts = op.input.params.map((p) => `\`${p.name}\`${p.required ? "*" : ""}`);
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    parts.push(...body.fields.map((f) => `\`${f.name}\`${f.required ? "*" : ""}`));
+  } else if (body) {
+    parts.push(`\`body\`${body.required ? "*" : ""} (JSON)`);
+  }
+  return parts.join(", ") || "none";
+}
+
 function operationsRef(ops: Operation[]): string {
   const rows = ops.map((op) => {
     const flags = [
@@ -135,7 +147,7 @@ ${op.description || op.displayName}
 
 - Semantics: ${flags}
 - Auth: ${op.auth.type}${op.auth.scopes.length ? ` (${op.auth.scopes.join(", ")})` : ""}
-- Inputs: ${op.input.params.map((p) => `\`${p.name}\`${p.required ? "*" : ""}`).join(", ") || "none"}
+- Inputs: ${inputList(op)}
 ${op.skill.intentExamples.length ? `- Example intents: ${op.skill.intentExamples.map((e) => `"${e}"`).join("; ")}` : ""}`;
   });
   return `# Operations\n\n\`*\` marks a required input.\n\n${rows.join("\n\n")}\n`;

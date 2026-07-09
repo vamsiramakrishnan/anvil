@@ -22,10 +22,18 @@ function op(overrides: Record<string, unknown> = {}): Operation {
     sourceRef: { kind: "openapi", path: "/payments/{payment_id}/refunds", method: "post" },
     effect: { kind: "mutation", resource: "refund", risk: "financial", reversible: false },
     input: {
-      params: [
-        { name: "payment_id", in: "path", required: true, schema: { type: "string" } },
-        { name: "amount", in: "body", required: true, schema: { type: "integer" } },
-      ],
+      params: [{ name: "payment_id", in: "path", required: true, schema: { type: "string" } }],
+      body: {
+        contentType: "application/json",
+        required: true,
+        schema: {
+          type: "object",
+          required: ["amount"],
+          properties: { amount: { type: "integer" } },
+        },
+        projection: "fields",
+        fields: [{ name: "amount", required: true, schema: { type: "integer" } }],
+      },
     },
     idempotency: {
       mode: "required",
@@ -109,6 +117,63 @@ describe("idempotency gate", () => {
     );
     expect(res.outcome).toBe("success");
     expect(transport.requests[0]?.headers["Idempotency-Key"]).toMatch(/^anvil-/);
+  });
+});
+
+describe("request body reconstruction", () => {
+  it("assembles a flat body from projected fields", async () => {
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    await execute(
+      op(),
+      { input: { payment_id: "pay_1", amount: 2500 }, confirm: true, idempotencyKey: "k1" },
+      { ...baseCtx, transport },
+    );
+    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({ amount: 2500 });
+    // payment_id is a path param — it must NOT leak into the body.
+    expect(transport.requests[0]?.url).toContain("/payments/pay_1/refunds");
+  });
+
+  it("sends a whole (nested) body verbatim without flattening", async () => {
+    const wholeOp = op({
+      idempotency: { mode: "none", mechanism: "none", keyDerivation: "none" },
+      confirmation: { required: false },
+      input: {
+        params: [],
+        body: {
+          contentType: "application/json",
+          required: true,
+          projection: "whole",
+          fields: [],
+          schema: {
+            type: "object",
+            properties: { items: { type: "array", items: { type: "object" } } },
+          },
+        },
+      },
+    });
+    const transport = new MockTransport(() => ok({ id: "o1" }));
+    const payload = { items: [{ sku: "a", qty: 2 }], note: "gift" };
+    const res = await execute(wholeOp, { input: { body: payload } }, { ...baseCtx, transport });
+    expect(res.outcome).toBe("success");
+    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual(payload);
+  });
+
+  it("fails closed when a required whole body is missing", async () => {
+    const wholeOp = op({
+      idempotency: { mode: "none", mechanism: "none", keyDerivation: "none" },
+      confirmation: { required: false },
+      input: {
+        params: [],
+        body: { required: true, projection: "whole", fields: [], schema: { type: "object" } },
+      },
+    });
+    const transport = new MockTransport(() => ok({}));
+    const res = await execute(wholeOp, { input: {} }, { ...baseCtx, transport });
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.code).toBe("validation_error");
+    expect(res.envelope.error.details?.missing).toContain("body");
+    expect(transport.requests).toHaveLength(0);
   });
 });
 
