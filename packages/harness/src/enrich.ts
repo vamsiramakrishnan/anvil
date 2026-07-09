@@ -1,4 +1,4 @@
-import { type AirDocument, evidenceConfidence } from "@anvil/air";
+import { type AirDocument, confidenceFor } from "@anvil/air";
 import type { AnvilManifest, OperationManifest } from "@anvil/compiler";
 import { type HarnessAgent, type HarnessFinding, HeuristicHarnessAgent } from "./agent.js";
 import { EvidenceGraph } from "./evidence.js";
@@ -71,13 +71,23 @@ export async function runEnrichment(
     const findings = findingsByOp.get(op.id) ?? [];
     const { patch, decisions } = reconcile(op, findings);
     if (Object.keys(patch).length > 0) proposed[op.canonicalName] = patch;
-    // Confidence is derived from claims: the prior from AIR's existing claims,
-    // the new value from those plus the harness-gathered claims for this op. Any
-    // corroborating claim raises it — never a hand-set aggregate.
-    const priorConfidence = evidenceConfidence(op.evidence);
-    const newConfidence = evidenceConfidence({
-      claims: [...op.evidence.claims, ...graph.claimsFor(op.id)],
-    });
+    // Confidence is resolved *per semantic*, not as one node-wide number: for each
+    // predicate the harness actually investigated, compare the confidence before
+    // and after adding its claims. The report surfaces the strongest such lift, so
+    // "confidence rose" means we learned more about a specific semantic — never
+    // that an "exists" claim inflated an unrelated "idempotency.mode".
+    const touched = new Set(graph.claimsFor(op.id).map((c) => c.predicate));
+    const after = { claims: [...op.evidence.claims, ...graph.claimsFor(op.id)] };
+    let priorConfidence = 0;
+    let newConfidence = 0;
+    for (const predicate of touched) {
+      const before = confidenceFor(op.evidence, predicate);
+      const now = confidenceFor(after, predicate);
+      if (now - before >= newConfidence - priorConfidence) {
+        priorConfidence = before;
+        newConfidence = now;
+      }
+    }
     operations.push({
       operationId: op.id,
       canonicalName: op.canonicalName,

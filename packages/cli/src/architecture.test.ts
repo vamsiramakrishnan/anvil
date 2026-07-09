@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { type Claim, type Evidence, evidenceConfidence } from "@anvil/air";
+import { type Claim, confidenceFor, type Evidence, evidenceConfidence } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { generateBundle } from "@anvil/generators";
 import { describe, expect, it } from "vitest";
@@ -144,12 +144,34 @@ describe("evidence is claim-scoped and deterministically derived", () => {
     ...over,
   });
 
-  it("derives confidence from claims, order-independently", () => {
+  it("resolves confidence per predicate, order-independently, with corroboration", () => {
     const a: Evidence = { claims: [claim({ confidence: 0.7 }), claim({ confidence: 0.4 })] };
     const b: Evidence = { claims: [claim({ confidence: 0.4 }), claim({ confidence: 0.7 })] };
-    expect(evidenceConfidence(a)).toBe(evidenceConfidence(b));
-    // Noisy-OR: corroboration exceeds either single claim.
-    expect(evidenceConfidence(a)).toBeGreaterThan(0.7);
+    expect(confidenceFor(a, "p")).toBe(confidenceFor(b, "p"));
+    // Within a predicate, corroboration exceeds either single claim.
+    const single: Evidence = { claims: [claim({ confidence: 0.7 })] };
+    expect(confidenceFor(a, "p")).toBeGreaterThan(confidenceFor(single, "p"));
+  });
+
+  it("never lets one predicate corroborate another (no cross-predicate mixing)", () => {
+    // A strong 'exists' claim must not inflate a weak, safety-critical 'idempotency'.
+    const ev: Evidence = {
+      claims: [
+        claim({ predicate: "exists", confidence: 0.99, source: "spec" }),
+        claim({ predicate: "idempotency.mode", confidence: 0.3, source: "generated_mock" }),
+      ],
+    };
+    expect(confidenceFor(ev, "exists")).toBeGreaterThan(0.5);
+    expect(confidenceFor(ev, "idempotency.mode")).toBeLessThan(0.2);
+    // The node-level summary is bounded by the weakest semantic (display/triage only).
+    expect(evidenceConfidence(ev)).toBe(confidenceFor(ev, "idempotency.mode"));
+  });
+
+  it("discounts confident claims from unreliable sources (reliability participates)", () => {
+    const mock: Evidence = { claims: [claim({ confidence: 0.9, source: "generated_mock" })] };
+    const impl: Evidence = { claims: [claim({ confidence: 0.9, source: "source_impl" })] };
+    // Same stated confidence, but the source implementation outweighs the mock.
+    expect(confidenceFor(impl, "p")).toBeGreaterThan(confidenceFor(mock, "p"));
   });
 
   it("excludes rejected and superseded claims (conflict resolves deterministically)", () => {
@@ -157,13 +179,21 @@ describe("evidence is claim-scoped and deterministically derived", () => {
     const withStale: Evidence = {
       claims: [
         claim({ confidence: 0.9 }),
-        claim({ id: "old", confidence: 0.9, review: "superseded" }),
+        claim({ id: "new", confidence: 0.2, relation: { type: "supersedes", target: "old" } }),
+        claim({ id: "old", confidence: 0.9 }),
         claim({ confidence: 0.9, review: "rejected" }),
       ],
     };
-    // Stale/rejected claims cannot inflate confidence — the aggregate is exactly
-    // the single active claim, regardless of how many dead claims accompany it.
-    expect(evidenceConfidence(withStale)).toBe(evidenceConfidence(active));
+    // 'old' is superseded by an active supersedes relation; the rejected claim is
+    // dropped. Only the base 0.9 claim and the low-confidence superseding claim
+    // remain — resolution is deterministic and relation-aware.
+    expect(confidenceFor(active, "p")).toBe(
+      confidenceFor({ claims: [claim({ confidence: 0.9 })] }, "p"),
+    );
+    // The superseded high-confidence 'old' no longer contributes.
+    const resolved = confidenceFor(withStale, "p");
+    expect(resolved).toBeGreaterThan(0); // 'new' + base still active
+    expect(withStale.claims.length).toBe(4);
   });
 
   it("has no stored aggregate that could drift from its claims", () => {

@@ -1,34 +1,28 @@
-import { type Claim, type EvidenceKind, evidenceConfidence } from "@anvil/air";
+import {
+  type Claim,
+  claimReliability,
+  confidenceFor,
+  evidenceConfidence,
+  SOURCE_RELIABILITY,
+} from "@anvil/air";
 
 /**
- * Reliability of each evidence *source kind* (spec: "mock source priority" /
- * evidence graph). This is the backbone of the asymmetric-trust rule: enrichment
- * that *reduces* safety must be backed by a high-reliability source. It weights
- * the source, distinct from a claim's own `confidence` in its value.
+ * Reliability of each evidence source kind is defined once, in `@anvil/air`
+ * (`SOURCE_RELIABILITY`), so the reconciler's asymmetric-trust gate and the
+ * confidence aggregate weigh sources the same way. Re-exported here for the
+ * harness's callers.
  */
-export const RELIABILITY: Record<EvidenceKind, number> = {
-  recorded_traffic: 0.95,
-  source_impl: 0.9,
-  test_fixture: 0.85,
-  spec: 0.7,
-  postman: 0.6,
-  incident: 0.6,
-  doc_example: 0.5,
-  inferred: 0.4,
-  generated_mock: 0.3,
-};
+export const RELIABILITY = SOURCE_RELIABILITY;
 
 /** Reliability of the source behind a claim: explicit, else the per-kind default. */
-export function reliabilityOf(claim: Claim): number {
-  return claim.reliability ?? RELIABILITY[claim.source];
-}
+export const reliabilityOf = claimReliability;
 
 /**
- * Accumulates claims per subject (operation id) and rolls them into a confidence
- * score. Confidence is *derived* by the one canonical function in `@anvil/air`
- * (`evidenceConfidence`) — the harness no longer carries a second, divergent
- * combination rule. Reliability (source trust) stays here because it gates the
- * reconciler, a separate concern from confidence in a value.
+ * Accumulates claims per subject (operation id). Confidence is *derived* by the
+ * one canonical, predicate-scoped resolver in `@anvil/air` — the harness carries
+ * no second combination rule. Reliability (source trust) stays a distinct axis
+ * because it gates the reconciler, which is a different question from confidence
+ * in a value.
  */
 export class EvidenceGraph {
   private readonly bySubject = new Map<string, Claim[]>();
@@ -52,8 +46,13 @@ export class EvidenceGraph {
     return this.claimsFor(subject).reduce((m, c) => Math.max(m, reliabilityOf(c)), 0);
   }
 
-  /** Confidence derived from this subject's harness-gathered claims alone. */
-  confidenceFor(subject: string): number {
+  /** Confidence in one semantic, derived from this subject's harness-gathered claims. */
+  confidenceFor(subject: string, predicate: string): number {
+    return confidenceFor({ claims: this.claimsFor(subject) }, predicate);
+  }
+
+  /** Display-only coverage summary across this subject's harness claims. */
+  coverage(subject: string): number {
     return evidenceConfidence({ claims: this.claimsFor(subject) });
   }
 }

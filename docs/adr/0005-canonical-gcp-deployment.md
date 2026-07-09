@@ -12,19 +12,33 @@ reconciled them — they drift by construction.
 
 ## Decision
 One owner per concern:
-- **Terraform** owns all infrastructure *and* runtime configuration — service
-  account, Artifact Registry, Secret Manager + IAM, Firestore ledger + IAM, the
-  Cloud Run service (image, env vars, scaling, resources, ingress), invoker IAM.
-- **Cloud Build** owns the pipeline only — build, push, `terraform apply` with the
-  built image tag. It sets no env vars, IAM, or scaling.
+- **Terraform** owns every *per-capability* setting — service account, Secret
+  Manager + IAM, ledger IAM, the Cloud Run service (image, env vars, scaling,
+  resources, ingress), invoker IAM. It sets nothing that a second file also sets.
+- **Cloud Build** owns the pipeline only — build, push, and `terraform plan` with
+  the built image tag. It sets no env vars, IAM, or scaling.
 - **Dockerfile** owns the container (prebuilt runtime; never rebuilds Anvil).
 
 **Deleted:** `cloudrun.service.yaml`, `iam.plan.json`, `overlays/*.env.yaml`,
 `artifact-metadata.json`.
 
+### Deployability (must actually apply from a clean project)
+- **Shared singletons are prerequisites, not generated.** The Artifact Registry
+  repo and the Firestore `(default)` database (one per project) are *not* created
+  by the per-capability module — creating them per capability collides, and
+  generating the AR repo created a bootstrap cycle where `docker push` needed a
+  repo a later Terraform step had not applied yet. They are documented prereqs.
+- **Remote state is mandatory.** Terraform declares a `backend "gcs"` bound at
+  `init -backend-config=…`, so an ephemeral build container never starts from
+  empty state and tries to recreate live resources.
+- **No auto-apply.** Cloud Build runs `terraform plan -out=tfplan` and publishes
+  the plan; apply is a separate promoted step behind review, because a capability
+  deploy can change IAM, ingress, and secrets. Dev may auto-apply the plan.
+
 ## Consequences
 - The image tag has exactly one source (Cloud Build → Terraform var); env vars,
   IAM, and scaling each have exactly one owner. No hand-synchronization.
 - No literal `PROJECT`/`REGION` placeholders — everything flows through Terraform
-  variables, so the bundle applies as emitted. A test asserts the deleted files
-  stay deleted and Cloud Build sets no runtime config.
+  variables. Tests assert the deleted files stay deleted, Cloud Build sets no
+  runtime config and never auto-applies, remote state is configured, and the
+  shared singletons are not recreated.

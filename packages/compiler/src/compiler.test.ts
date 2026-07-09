@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { evidenceConfidence } from "@anvil/air";
+import { confidenceFor } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { classifyConfirmation, classifyEffect } from "./classify.js";
 import { approveOperations, compile } from "./compile.js";
@@ -73,7 +73,11 @@ describe("compile pipeline (with manifest enrichment)", () => {
     expect(refund?.retries.retryOn).toContain("http_429");
     expect(refund?.confirmation.required).toBe(true);
     expect(refund?.state).toBe("approved");
-    expect(evidenceConfidence(refund?.evidence ?? { claims: [] })).toBeGreaterThanOrEqual(0.95);
+    // Manifest enrichment records a high-confidence, reviewed claim for that
+    // specific semantic — confidence is resolved per predicate, not node-wide.
+    const enriched = refund?.evidence.claims.find((c) => c.predicate === "enriched");
+    expect(enriched?.review).toBe("accepted");
+    expect(confidenceFor(refund?.evidence ?? { claims: [] }, "enriched")).toBeGreaterThan(0.6);
   });
 
   it("resolves oauth2 auth with scopes", async () => {
@@ -232,7 +236,9 @@ describe("capability discovery", () => {
     expect(ids).toEqual(["payments.customers", "payments.payments", "payments.refunds"]);
     const refunds = air.capabilities.find((c) => c.id === "payments.refunds");
     expect(refunds?.source).toBe("tag");
-    expect(evidenceConfidence(refunds?.evidence ?? { claims: [] })).toBeGreaterThanOrEqual(0.9);
+    // A tag-based grouping is spec-sourced (reliable); confidence is asked for the
+    // grouping semantic specifically, weighted by source reliability.
+    expect(confidenceFor(refunds?.evidence ?? { claims: [] }, "grouping")).toBeGreaterThan(0.5);
     // Every operation is stamped with its primary capability.
     const refund = air.operations.find((o) => o.canonicalName === "create_refund");
     expect(refund?.capabilityId).toBe("payments.refunds");
