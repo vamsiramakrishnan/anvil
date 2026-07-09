@@ -196,10 +196,15 @@ function cmdDeploy(args: string[], flags: Record<string, string | boolean>, io: 
     return 1;
   }
   io.out(`Deployment plan for '${env}' (artifacts in ${deployDir}):`);
-  io.out("  1. docker build -t <image> -f deploy/Dockerfile .");
-  io.out("  2. push to Artifact Registry");
-  io.out("  3. bind secrets from deploy/secrets.required.yaml (Secret Manager)");
-  io.out("  4. gcloud run services replace deploy/cloudrun.service.yaml");
+  io.out("Prereqs (shared, once per project): Artifact Registry repo, Terraform");
+  io.out("  state bucket, and — when a durable ledger is needed — the Firestore");
+  io.out("  (default) database. See deploy/README.md.");
+  io.out("  1. gcloud builds submit --config deploy/cloudbuild.yaml \\");
+  io.out("       --substitutions _ANVIL_ENV=" + env + ",_TF_STATE_BUCKET=<bucket>");
+  io.out("     → builds + pushes the image, then runs `terraform plan` (no auto-apply).");
+  io.out("  2. Review the published plan; secrets are declared in");
+  io.out("     deploy/secrets.required.yaml (Secret Manager, provisioned by Terraform).");
+  io.out("  3. terraform apply tfplan   (promoted, behind review; dev may auto-apply)");
   io.out("Anvil generates the artifacts; it does not hold your cloud credentials.");
   return 0;
 }
