@@ -35,8 +35,10 @@ const creds = {
 const baseDeps = (transport: MockTransport) => ({
   transport,
   credentials: creds,
+  // Mechanics tests run in dev, where the in-memory ledger is a valid backend;
+  // the prod durable-ledger fail-closed contract is covered in runtime tests.
   env: {
-    ANVIL_ENV: "prod",
+    ANVIL_ENV: "dev",
     ANVIL_ALLOWED_HOSTS: "payments.internal.example.com",
     ANVIL_AUTH_PROFILE: "prod",
   } as NodeJS.ProcessEnv,

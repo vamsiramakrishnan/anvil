@@ -75,7 +75,9 @@ describe("MCP server", () => {
         authProfile: "prod",
         baseUrl: "https://payments.internal.example.com",
         allowedHosts: ["payments.internal.example.com"],
-        env: "prod",
+        // Mechanics test: dev allows the in-memory ledger. The prod durable-ledger
+        // fail-closed contract is covered by the runtime executor tests.
+        env: "dev",
       }),
     });
     const client = await connect(server);
@@ -119,7 +121,7 @@ describe("MCP server", () => {
         allowedHosts: ["payments.internal.example.com"],
         env: "prod",
       }),
-      resourceOptions: { mcpEndpoint: "https://payments-tools.run.app/mcp" },
+      resources: buildToolResources(air, { mcpEndpoint: "https://payments-tools.run.app/mcp" }),
     });
     const client = await connect(server);
     const { resources } = await client.listResources();

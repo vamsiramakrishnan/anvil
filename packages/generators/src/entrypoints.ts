@@ -35,28 +35,35 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { buildMcpServer } from "@anvil/generators";
+import { buildMcpServer } from "@anvil/mcp-runtime";
 import {
   EnvCredentialResolver,
   FetchTransport,
-  InMemoryLedger,
   InMemoryObserver,
   loadRuntimeConfig,
+  resolveLedger,
 } from "@anvil/runtime";
 import { loadAirDocument } from "@anvil/air";
 
 const air = loadAirDocument(
   JSON.parse(readFileSync(fileURLToPath(new URL("./air.json", import.meta.url)), "utf8")),
 );
+const resources = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./resources.json", import.meta.url)), "utf8"),
+);
 const config = loadRuntimeConfig();
 const catalog = JSON.parse(
   readFileSync(fileURLToPath(new URL("./operations.manifest.json", import.meta.url)), "utf8"),
 );
 const observer = new InMemoryObserver();
+// Resolve the idempotency ledger once at boot. ANVIL_LEDGER selects a durable
+// backend; without one, required-idempotency mutations fail closed outside dev
+// (enforced in the executor) — a horizontally-scaled runtime never silently
+// trusts a process-local ledger.
 const deps = {
   transport: new FetchTransport(),
   credentials: new EnvCredentialResolver(),
-  ledger: new InMemoryLedger(),
+  ledger: resolveLedger(config.ledger),
   observer,
 };
 const baseUrl = air.service.servers[0]?.url ?? "";
@@ -78,7 +85,10 @@ const server = createServer(async (req, res) => {
   if (url.pathname === "/metrics") return json(res, 200, { records: observer.records.length });
   if (url.pathname === "/openapi") return json(res, 200, catalog);
   if (url.pathname === "/mcp") {
-    const mcp = buildMcpServer(air, { contextFor: () => mcpContext() });
+    // Stateless StreamableHTTP: a fresh server+transport per request, closed on
+    // response. Tool specs and resources are precomputed data, so per-request
+    // construction is cheap and holds no cross-request state.
+    const mcp = buildMcpServer(air, { resources, contextFor: () => mcpContext() });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
     res.on("close", () => transport.close());
     await mcp.connect(transport);

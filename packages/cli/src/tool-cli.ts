@@ -15,6 +15,7 @@ import {
   FetchTransport,
   hostIsAllowed,
   loadRuntimeConfig,
+  resolveLedger,
   type Transport,
 } from "@anvil/runtime";
 import { parseArgs } from "./args.js";
@@ -24,6 +25,8 @@ import { type CliIO, processIO } from "./io.js";
 export interface ToolCliDeps {
   transport?: Transport;
   credentials?: CredentialResolver;
+  /** Override the idempotency ledger (tests inject a durable one). */
+  ledger?: ExecuteContext["ledger"];
   io?: CliIO;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -147,6 +150,10 @@ async function invoke(
   const ctx: ExecuteContext = {
     transport: deps.transport ?? new FetchTransport(),
     credentials: deps.credentials ?? new EnvCredentialResolver(env),
+    // Wire the idempotency ledger so replay protection actually works from the
+    // CLI. ANVIL_LEDGER selects a durable backend; without one the executor
+    // fails closed on required-idempotency mutations outside dev.
+    ledger: deps.ledger ?? resolveLedger(config.ledger),
     baseUrl,
     authProfile: (flags["auth-profile"] as string) ?? config.authProfile,
     allowedHosts,
