@@ -1,0 +1,141 @@
+openapi: 3.0.3
+info:
+  title: Payments API
+  version: 2026-07-09
+  description: A small payments API used as the Anvil reference example.
+servers:
+  - url: https://payments.internal.example.com
+    description: Production
+paths:
+  /customers/{customer_id}:
+    get:
+      operationId: getCustomer
+      summary: Get a customer
+      tags: [customers]
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "404":
+          description: No such customer.
+  /payments/{payment_id}:
+    get:
+      operationId: getPayment
+      summary: Get a payment
+      tags: [payments]
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The payment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "404":
+          description: No such payment.
+  /payments/{payment_id}/refunds:
+    post:
+      operationId: createRefund
+      summary: Create a refund
+      description: Creates a refund for a captured payment. Irreversible.
+      tags: [refunds]
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, currency]
+              properties:
+                amount:
+                  type: integer
+                  minimum: 1
+                  description: Amount to refund in the smallest currency unit.
+                currency:
+                  type: string
+                  description: ISO 4217 currency code.
+                reason:
+                  type: string
+      responses:
+        "201":
+          description: The created refund.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refund"
+        "404":
+          description: No such payment.
+        "409":
+          description: A refund already exists.
+        "429":
+          description: Rate limited.
+  /payments/{payment_id}/capture:
+    post:
+      operationId: capturePayment
+      summary: Capture a payment
+      tags: [payments]
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The captured payment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.example.com/token
+          scopes:
+            payments.read: Read payments
+            payments.write: Write payments
+  schemas:
+    Customer:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string }
+    Payment:
+      type: object
+      properties:
+        id: { type: string }
+        amount: { type: integer }
+        currency: { type: string }
+        status: { type: string }
+    Refund:
+      type: object
+      properties:
+        id: { type: string }
+        payment_id: { type: string }
+        amount: { type: integer }
+        status: { type: string }
+security:
+  - oauth2: [payments.read]
