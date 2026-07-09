@@ -7,8 +7,10 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
+import type { HarnessFinding } from "./agent.js";
 import { runEnrichment } from "./enrich.js";
 import type { TransportFactory } from "./mcp-source.js";
+import { reconcile } from "./reconcile.js";
 import type { SourceConfig } from "./sources.js";
 
 const examples = fileURLToPath(new URL("../../../examples/payments/", import.meta.url));
@@ -173,5 +175,49 @@ describe("harness enrichment", () => {
     const refund = enriched.find((o) => o.canonicalName === "create_refund");
     expect(refund?.idempotency.mode).toBe("required");
     expect(refund?.retries.mode).toBe("safe");
+  });
+});
+
+describe("reconcile conflict gate", () => {
+  it("refuses to auto-loosen idempotency when two authoritative sources disagree", () => {
+    const op = air.operations.find((o) => o.canonicalName === "create_refund");
+    if (!op) throw new Error("fixture missing create_refund");
+    // Both sources are high-reliability (would clear the loosen bar), but they
+    // contradict each other on the mode by a hair — a review signal, not a fact.
+    const findings: HarnessFinding[] = [
+      {
+        operationId: op.id,
+        sourceId: "impl-a",
+        evidence: {
+          subject: op.id,
+          predicate: "idempotency.mode",
+          value: "required",
+          source: "source_impl",
+          confidence: 0.95,
+          reliability: 0.95,
+        },
+        claim: { type: "idempotency", mode: "required", direction: "loosen" },
+      },
+      {
+        operationId: op.id,
+        sourceId: "impl-b",
+        evidence: {
+          subject: op.id,
+          predicate: "idempotency.mode",
+          value: "none",
+          source: "source_impl",
+          confidence: 0.92,
+          reliability: 0.92,
+        },
+        claim: { type: "idempotency", mode: "required", direction: "loosen" },
+      },
+    ];
+    const { patch, decisions } = reconcile(op, findings);
+    // Not applied despite high reliability — the contested safety semantic is held
+    // for review rather than loosened on a razor-thin margin.
+    expect(patch.idempotency).toBeUndefined();
+    const decision = decisions.find((d) => d.claim.type === "idempotency");
+    expect(decision?.accepted).toBe(false);
+    expect(decision?.reason).toContain("conflicting evidence");
   });
 });

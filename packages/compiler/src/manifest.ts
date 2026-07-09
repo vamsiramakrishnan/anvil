@@ -226,13 +226,17 @@ export function enrich(operations: Operation[], manifest: AnvilManifest): Operat
 
     if (m.state) op.state = m.state;
 
-    op.evidence.items.push({
-      kind: "spec",
-      ref: "anvil-manifest",
+    op.evidence.claims.push({
+      subject: op.id,
+      predicate: "enriched",
+      value: true,
+      source: "spec",
+      sourceRef: "anvil-manifest",
+      method: "manifest",
       note: "enriched by supplemental Anvil manifest",
       confidence: 0.95,
+      review: "accepted",
     });
-    op.evidence.confidence = Math.max(op.evidence.confidence, 0.95);
 
     return op;
   });
@@ -300,10 +304,19 @@ export function buildWorkflows(
       rollbackStrategy: wf.rollback,
       state: wf.state ?? "generated",
       evidence: {
-        items: [
-          { kind: "spec", ref: "anvil-manifest", note: "authored workflow", confidence: 0.95 },
+        claims: [
+          {
+            subject: id,
+            predicate: "authored",
+            value: true,
+            source: "spec",
+            sourceRef: "anvil-manifest",
+            method: "manifest",
+            note: "authored workflow",
+            confidence: 0.95,
+            review: "accepted",
+          },
         ],
-        confidence: 0.95,
       },
     });
     capById.get(capabilityId)?.workflowIds.push(id);

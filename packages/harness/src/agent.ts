@@ -1,4 +1,4 @@
-import type { EvidenceItem, IdempotencyMode, Operation } from "@anvil/air";
+import type { Claim, IdempotencyMode, Operation } from "@anvil/air";
 import type { McpSource } from "./mcp-source.js";
 import { profileFor } from "./profiles.js";
 import type { SourceConfig } from "./sources.js";
@@ -24,7 +24,9 @@ export type OperationClaim =
 export interface HarnessFinding {
   operationId: string;
   sourceId: string;
-  evidence: EvidenceItem;
+  /** Claim-scoped provenance: what was observed, from where, how much to trust it. */
+  evidence: Claim;
+  /** The proposed safety change this finding argues for (acted on by the reconciler). */
   claim?: OperationClaim;
 }
 
@@ -90,13 +92,25 @@ export class HeuristicHarnessAgent implements HarnessAgent {
     const profile = profileFor(input.config.system);
     const ref = `${input.source.id}:${tool}`;
     const strongHeader = /idempotency-key/i.test(text);
-    const base = (note: string, confidence = profile.floor): EvidenceItem => ({
-      kind: profile.evidenceKind,
-      ref,
+    // A finding's evidence is a claim-scoped record. The heuristic's weight is
+    // used as the source *reliability* (what the reconciler thresholds on) and as
+    // the claim's own confidence — for a doc-scan agent these coincide.
+    const base = (
+      predicate: string,
+      note: string,
+      opts: { confidence?: number; value?: unknown } = {},
+    ): Claim => ({
+      subject: input.op.id,
+      predicate,
+      value: opts.value,
+      source: profile.evidenceKind,
+      sourceRef: ref,
+      method: "doc_scan",
+      confidence: opts.confidence ?? profile.floor,
+      reliability: opts.confidence ?? profile.floor,
       note,
-      confidence,
     });
-    const finding = (evidence: EvidenceItem, claim?: OperationClaim): HarnessFinding => ({
+    const finding = (evidence: Claim, claim?: OperationClaim): HarnessFinding => ({
       operationId: input.op.id,
       sourceId: input.source.id,
       evidence,
@@ -105,30 +119,41 @@ export class HeuristicHarnessAgent implements HarnessAgent {
 
     if (NOT_IDEMPOTENT.test(text)) {
       findings.push(
-        finding(base(`${input.source.id} indicates this operation is not idempotent`), {
-          type: "idempotency",
-          mode: "none",
-          direction: "tighten",
-        }),
+        finding(
+          base(
+            "idempotency.mode",
+            `${input.source.id} indicates this operation is not idempotent`,
+            {
+              value: "none",
+            },
+          ),
+          { type: "idempotency", mode: "none", direction: "tighten" },
+        ),
       );
     } else if (IDEMPOTENT_KEY.test(text) && input.op.effect.kind === "mutation") {
       // A strong signal (the literal Idempotency-Key) gets the profile's `strong`
       // weight; only code hosts set that high enough to clear the loosen bar.
       const confidence = strongHeader ? profile.strong : profile.floor;
       findings.push(
-        finding(base(`${input.source.id} references an idempotency key`, confidence), {
-          type: "idempotency",
-          mode: "required",
-          mechanism: strongHeader ? "header" : undefined,
-          header: strongHeader ? "Idempotency-Key" : undefined,
-          direction: "loosen", // enabling retries reduces safety — must clear the threshold
-        }),
+        finding(
+          base("idempotency.mode", `${input.source.id} references an idempotency key`, {
+            confidence,
+            value: "required",
+          }),
+          {
+            type: "idempotency",
+            mode: "required",
+            mechanism: strongHeader ? "header" : undefined,
+            header: strongHeader ? "Idempotency-Key" : undefined,
+            direction: "loosen", // enabling retries reduces safety — must clear the threshold
+          },
+        ),
       );
     }
 
     if (DEPRECATED.test(text)) {
       findings.push(
-        finding(base(`${input.source.id} mentions deprecation`), {
+        finding(base("deprecated", `${input.source.id} mentions deprecation`, { value: true }), {
           type: "deprecated",
           value: true,
           direction: "tighten",
@@ -137,12 +162,24 @@ export class HeuristicHarnessAgent implements HarnessAgent {
     }
 
     if (RATE_LIMIT.test(text) && input.op.errors.every((e) => e.code !== "rate_limited")) {
-      findings.push(finding(base(`${input.source.id} documents rate limiting for this operation`)));
+      findings.push(
+        finding(
+          base(
+            "errors.rate_limited",
+            `${input.source.id} documents rate limiting for this operation`,
+            {
+              value: true,
+            },
+          ),
+        ),
+      );
     }
 
     if (findings.length === 0) {
       // Even a bare hit is corroborating evidence for the operation's existence.
-      findings.push(finding(base(`${input.source.id} references this operation`)));
+      findings.push(
+        finding(base("exists", `${input.source.id} references this operation`, { value: true })),
+      );
     }
     return findings;
   }

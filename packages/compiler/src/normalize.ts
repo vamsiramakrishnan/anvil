@@ -230,21 +230,36 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
         state: "generated",
         reviewNotes: [],
         evidence: {
-          items: [
-            { kind: "spec", ref: `${method.toUpperCase()} ${path}`, confidence: 0.7 },
+          claims: [
             {
-              kind: "inferred",
+              subject: id,
+              predicate: "exists",
+              value: true,
+              source: "spec",
+              sourceRef: `${method.toUpperCase()} ${path}`,
+              method: "declared",
+              confidence: 0.7,
+            },
+            {
+              subject: id,
+              predicate: "effect.kind",
+              value: effect.kind,
+              source: "inferred",
+              method: "http_method_heuristic",
               note: "effect/idempotency inferred from HTTP method",
               confidence: 0.5,
             },
             {
-              kind: "inferred",
-              ref: "naming",
+              subject: id,
+              predicate: "name.quality",
+              value: names.canonicalName,
+              source: "inferred",
+              sourceRef: "naming",
+              method: "naming_pass",
               note: names.signals.join("; "),
               confidence: names.confidence,
             },
           ],
-          confidence: 0.6,
         },
       });
     }
