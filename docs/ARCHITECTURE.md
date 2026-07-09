@@ -1,7 +1,9 @@
 # Anvil architecture
 
 Anvil is a **spec-to-agent-tool foundry**. It has two loops and one canonical
-model.
+model. For *where the product boundary sits* — why Anvil is a compiler and not a
+framework, and which principles are implemented vs. still ahead — see
+[`PRODUCT_BOUNDARY.md`](PRODUCT_BOUNDARY.md). This document is the *how*.
 
 ## The canonical model: AIR + Evidence
 
