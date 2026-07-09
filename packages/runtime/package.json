@@ -1,0 +1,32 @@
+{
+  "name": "@anvil/runtime",
+  "version": "0.1.0",
+  "description": "Anvil safety runtime — the thin, stateless hot path for generated tools.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../..",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@anvil/air": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

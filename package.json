@@ -1,0 +1,35 @@
+{
+  "name": "@anvil/compiler",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Anvil — an agent toolchain compiler. Compiles API specifications into aligned CLI, MCP, and skill artifacts.",
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.5",
+    "@types/node": "^22.20.1",
+    "tsup": "^8.5.0",
+    "turbo": "^2.6.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "dependencies": {
+    "@scalar/openapi-parser": "^0.28.8"
+  }
+}
