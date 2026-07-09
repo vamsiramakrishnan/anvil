@@ -9,7 +9,7 @@ import type {
   ParamLocation,
   RequestBody,
 } from "@anvil/air";
-import { classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
 import { deriveNames, singularize } from "./naming.js";
 import type { OpenApiDocument, ParsedSpec, SecurityScheme } from "./parse.js";
 
@@ -157,13 +157,17 @@ function resolveAuth(
   const schemes = doc.components?.securitySchemes ?? {};
   const security = opSecurity ?? doc.security ?? [];
   const first = security[0];
-  if (!first || Object.keys(first).length === 0) return { type: "none", scopes: [] };
+  if (!first || Object.keys(first).length === 0) {
+    const { principal, secretSource } = classifyAuth("none");
+    return { type: "none", scopes: [], principal, secretSource };
+  }
   const [schemeName, scopes] = Object.entries(first)[0] as [string, string[]];
   const scheme: SecurityScheme | undefined = schemes[schemeName];
   let type: AuthType = "custom_header";
   if (scheme?.type === "http") type = scheme.scheme === "basic" ? "basic" : "jwt_bearer";
   else if (scheme?.type) type = SCHEME_TO_AUTH[scheme.type] ?? "custom_header";
-  return { type, scopes: scopes ?? [] };
+  const { principal, secretSource } = classifyAuth(type);
+  return { type, scopes: scopes ?? [], principal, secretSource };
 }
 
 /** Normalize a parsed OpenAPI document into AIR operations (classifier applied). */
@@ -183,8 +187,11 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
       const names = deriveNames(serviceId, path, method, raw);
       const id = names.id;
 
+      const segments = path.split("/").filter(Boolean);
+      const endsWithParam =
+        segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
       const signal = `${raw.operationId ?? ""} ${raw.summary ?? ""} ${path}`;
-      const { effect, idempotency } = classifyEffect(method, signal);
+      const { effect, idempotency } = classifyEffect(method, signal, endsWithParam);
       effect.resource = singularize(names.resource);
       const retries = classifyRetry(effect, idempotency);
       const confirmation = classifyConfirmation(effect, idempotency);

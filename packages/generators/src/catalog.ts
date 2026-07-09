@@ -8,6 +8,8 @@ export interface CatalogEntry {
   description: string;
   capability?: string;
   effect: string;
+  action: string;
+  principal: string;
   risk: string;
   reversible: boolean;
   idempotency: string;
@@ -62,6 +64,8 @@ export function operationCatalog(air: AirDocument): {
       description: op.description,
       capability: op.capabilityId,
       effect: op.effect.kind,
+      action: op.effect.action,
+      principal: op.auth.principal,
       risk: op.effect.risk,
       reversible: op.effect.reversible,
       idempotency: op.idempotency.mode,

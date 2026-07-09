@@ -73,6 +73,8 @@ export async function compile(input: CompileInput): Promise<AirDocument> {
   const serviceAuth: AuthRequirement = validated.find((o) => o.auth.type !== "none")?.auth ?? {
     type: "none",
     scopes: [],
+    principal: "anonymous",
+    secretSource: "none",
   };
 
   const air = {

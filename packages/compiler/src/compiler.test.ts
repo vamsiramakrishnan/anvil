@@ -91,6 +91,49 @@ describe("compile pipeline (with manifest enrichment)", () => {
   });
 });
 
+describe("semantic vocabulary (effect action / retry basis / auth principal)", () => {
+  it("derives a descriptive action verb without changing the safety kind", async () => {
+    const air = await compile({ spec, manifest, serviceId: "payments" });
+    const refund = air.operations.find((o) => o.canonicalName === "create_refund");
+    expect(refund?.effect.kind).toBe("mutation"); // safety core unchanged
+    expect(refund?.effect.action).toBe("create"); // richer descriptive layer
+    const getPayment = air.operations.find((o) => o.canonicalName === "get_payment");
+    expect(getPayment?.effect.action).toBe("get");
+  });
+
+  it("records the retry basis behind a safe posture", async () => {
+    const air = await compile({ spec, manifest, serviceId: "payments" });
+    const refund = air.operations.find((o) => o.canonicalName === "create_refund");
+    expect(refund?.retries.mode).toBe("safe");
+    expect(refund?.retries.basis).toBe("idempotency_key");
+    const getPayment = air.operations.find((o) => o.canonicalName === "get_payment");
+    expect(getPayment?.retries.basis).toBe("read_safe");
+  });
+
+  it("classifies the auth principal (whose authority) from the scheme", async () => {
+    const air = await compile({ spec, manifest, serviceId: "payments" });
+    const refund = air.operations.find((o) => o.canonicalName === "create_refund");
+    expect(refund?.auth.type).toBe("oauth2_client_credentials");
+    expect(refund?.auth.principal).toBe("service");
+  });
+
+  it("lets the manifest override principal / action / audience", async () => {
+    const m = `service: { name: payments }
+operations:
+  getPayment:
+    state: approved
+    action: export
+    auth:
+      principal: end_user
+      audience: https://payments.example.com`;
+    const air = await compile({ spec, manifest: m, serviceId: "payments" });
+    const getPayment = air.operations.find((o) => o.canonicalName === "get_payment");
+    expect(getPayment?.effect.action).toBe("export");
+    expect(getPayment?.auth.principal).toBe("end_user");
+    expect(getPayment?.auth.audience).toBe("https://payments.example.com");
+  });
+});
+
 describe("naming pass", () => {
   it("scores a spec-derived name with lower confidence than an operationId one", async () => {
     const air = await compile({ spec, serviceId: "payments" });
