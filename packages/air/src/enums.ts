@@ -105,6 +105,7 @@ export const ErrorCode = z.enum([
   "unsafe_retry_blocked",
   "confirmation_required",
   "idempotency_required",
+  "idempotency_ledger_unavailable",
   "schema_mismatch",
   "unsupported_operation",
   "policy_denied",

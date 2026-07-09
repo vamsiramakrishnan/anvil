@@ -299,17 +299,18 @@ async function cmdServe(args: string[], io: CliIO): Promise<number> {
     return 1;
   }
   const air = loadAir(dir);
-  const { buildMcpServer } = await import("@anvil/generators");
-  const { FetchTransport, EnvCredentialResolver, InMemoryLedger, loadRuntimeConfig } = await import(
+  const { buildMcpServer, buildToolResources } = await import("@anvil/generators");
+  const { FetchTransport, EnvCredentialResolver, loadRuntimeConfig, resolveLedger } = await import(
     "@anvil/runtime"
   );
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
   const config = loadRuntimeConfig();
   const transport = new FetchTransport();
   const credentials = new EnvCredentialResolver();
-  const ledger = new InMemoryLedger();
+  const ledger = resolveLedger(config.ledger);
   const baseUrl = air.service.servers[0]?.url ?? "";
   const server = buildMcpServer(air, {
+    resources: buildToolResources(air),
     contextFor: () => ({
       transport,
       credentials,

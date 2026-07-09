@@ -70,16 +70,23 @@ drives this.
 ## The safety runtime (`@anvil/runtime`) — the hot path
 
 ```
-validate → confirm → idempotency → dry-run? → host-pin → auth → ledger → retry → normalize → observe
+validate → confirm → idempotency → dry-run? → host-pin → auth → ledger-durability → ledger → retry → normalize → observe
 ```
 
-- **error taxonomy** — every failure maps to one of 15 codes, returned as a
+- **error taxonomy** — every failure maps to one of 16 codes, returned as a
   structured envelope (never raw upstream chaos).
 - **retry engine** — bounded exponential backoff + full jitter; `retryIsSafe`
   gates on idempotency so a non-idempotent mutation is *never* auto-retried.
 - **idempotency** — request fingerprinting (sha256 over canonical JSON) + an
   external **ledger** (reserve / replay / in-progress) because Cloud Run is
-  stateless.
+  stateless. The ledger is a **plugin**: `resolveLedger(ANVIL_LEDGER)` selects a
+  registered durable backend (Firestore/Spanner/…); durable backends declare
+  `durable: true`. A required-idempotency mutation **fails closed** outside `dev`
+  when no *durable* ledger is configured (`idempotency_ledger_unavailable`) — a
+  process-local ledger gives no cross-instance protection on a horizontally
+  scaled runtime, so the runtime refuses rather than silently pretend. Dry-run,
+  host-pinning, and auth are still checked first, so a preview always works and
+  security errors win.
 - **auth** — named profiles resolved from approved stores; secrets never reach
   execution records or agents.
 - **policy hooks** — six local enforcement points (pre/post validate/auth/
@@ -97,20 +104,26 @@ unit-tested against mocks with no network.
 - **Run time** only validates, enforces, calls upstream, normalizes, traces.
 
 The **MCP server is the deployed unit** (one small Cloud Run service per tool
-surface). It also serves the **skill and CLI over MCP resources**
-(`anvil://skill/…`, `anvil://cli/…`) so an agent materializes them adjacent to
-itself. Grounded in the MCP resources spec (`resources/list` + `resources/read`,
-custom URI schemes, `assistant` audience) and the 2026 skills-over-MCP pattern.
+surface). The generated server depends on **`@anvil/mcp-runtime`** — the thin
+serving path — and never on `@anvil/generators` (the build-time foundry): the
+build/run boundary is enforced by the dependency graph, not just by convention.
+It also serves the **skill and CLI over MCP resources** (`anvil://skill/…`,
+`anvil://cli/…`) so an agent materializes them adjacent to itself. Those
+resources are **precomputed at build time** (`resources.json`) and served
+verbatim — the runtime advertises them, it does not generate them. Grounded in
+the MCP resources spec (`resources/list` + `resources/read`, custom URI schemes,
+`assistant` audience) and the 2026 skills-over-MCP pattern.
 
 ## Implemented vs staged
 
-**Implemented & tested (55 tests):** AIR + evidence, OpenAPI/Swagger compiler,
-classifier, manifest enrichment, safety validator, the full safety runtime,
-MCP server (with a live in-memory client round-trip), resource-serving, skill
-package, catalog + compiled manifests, deploy artifacts, mocks, evals,
-conformance-test generation, the `anvil` CLI + shared tool-CLI engine, the
-self-skill + harness adapters, and the **harness loop** (MCP-client source
-connectors, evidence graph, asymmetric-trust reconciler, `anvil enrich`).
+**Implemented & tested (68 tests):** AIR + evidence, OpenAPI/Swagger compiler,
+classifier, manifest enrichment, safety validator, the full safety runtime
+(including the durable-ledger fail-closed contract), the `@anvil/mcp-runtime`
+serving path (with a live in-memory client round-trip), precomputed
+resource-serving, skill package, catalog + compiled manifests, deploy artifacts,
+mocks, evals, conformance-test generation, the `anvil` CLI + shared tool-CLI
+engine, the self-skill + harness adapters, and the **harness loop** (MCP-client
+source connectors, evidence graph, asymmetric-trust reconciler, `anvil enrich`).
 
 **Staged (adapter seams exist):** gRPC / GraphQL / WSDL parsers, LLM-driven
 harness agents (the heuristic agent ships; an LLM `HarnessAgent` plugs into the

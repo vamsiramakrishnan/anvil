@@ -15,7 +15,7 @@ import { generateCliSource, generateRuntimeServer } from "./entrypoints.js";
 import { generateEvals } from "./evals.js";
 import { generateMcpServerSource } from "./mcp.js";
 import { exampleInput, generateMockServerSource, generateScenarios } from "./mock.js";
-import type { ResourceOptions } from "./resources.js";
+import { buildToolResources, type ResourceOptions } from "./resources.js";
 import { generateSkill } from "./skill.js";
 
 export interface GeneratedBundle {
@@ -32,6 +32,9 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   const files: Record<string, string> = {};
   const airJson = airToJson(air);
   const id = air.service.id;
+  // Resources the deployed MCP server advertises (skill + catalog + CLI install
+  // manifest), computed once at build time and served verbatim by the runtime.
+  const resourcesJson = `${JSON.stringify(buildToolResources(air, options), null, 2)}\n`;
 
   // Canonical model.
   files["air.yaml"] = airToYaml(air);
@@ -53,10 +56,12 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
 
   // MCP server (stdio).
   files["mcp/air.json"] = airJson;
+  files["mcp/resources.json"] = resourcesJson;
   files["mcp/server.js"] = generateMcpServerSource(air);
 
   // Thin runtime server (Cloud Run hot path) + compiled manifests.
   files["runtime/air.json"] = airJson;
+  files["runtime/resources.json"] = resourcesJson;
   files["runtime/server.js"] = generateRuntimeServer(air);
   files["runtime/operations.manifest.json"] =
     `${JSON.stringify(compiledOperations(air), null, 2)}\n`;
@@ -91,7 +96,6 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   // A package.json for the generated bundle so it is installable/deployable.
   files["package.json"] = `${JSON.stringify(bundlePackageJson(air), null, 2)}\n`;
   void toYaml; // reserved for future yaml artifacts
-  void options;
   return { files };
 }
 
@@ -115,7 +119,7 @@ function bundlePackageJson(air: AirDocument): unknown {
     dependencies: {
       "@anvil/air": "^0.1.0",
       "@anvil/runtime": "^0.1.0",
-      "@anvil/generators": "^0.1.0",
+      "@anvil/mcp-runtime": "^0.1.0",
       "@anvil/cli": "^0.1.0",
       "@modelcontextprotocol/sdk": "^1.22.0",
     },

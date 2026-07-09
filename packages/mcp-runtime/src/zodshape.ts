@@ -6,6 +6,9 @@ import { z } from "zod";
  * Convert an AIR operation's assembled input schema into a Zod raw shape for
  * `McpServer.registerTool`. The SDK re-emits this as the tool's published JSON
  * Schema, so the MCP `inputSchema` and `cli --schema` stay derived from one AIR.
+ *
+ * This is a *serving-time* concern (it validates tool inputs on the hot path),
+ * so it lives in the MCP runtime — not in the build-time generators.
  */
 export function operationZodShape(op: Operation): z.ZodRawShape {
   const schema = op.input.schema ?? operationInputSchema(op);

@@ -16,4 +16,3 @@ export * from "./mcp.js";
 export * from "./mock.js";
 export * from "./resources.js";
 export * from "./skill.js";
-export * from "./zodshape.js";

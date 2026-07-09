@@ -7,7 +7,9 @@ import {
   InMemoryLedger,
   InMemoryObserver,
   MockTransport,
+  registerLedgerBackend,
   requestFingerprint,
+  resolveLedger,
   TransportError,
 } from "./index.js";
 
@@ -52,10 +54,12 @@ const ok = (body: unknown): HttpResponse => ({
   body: JSON.stringify(body),
 });
 
+// Mechanics tests run in `dev`, where the in-memory ledger is a legitimate
+// backend. The prod durable-ledger contract is exercised separately below.
 const baseCtx = {
   baseUrl: "https://payments.internal.example.com",
   allowedHosts: ["payments.internal.example.com"],
-  env: "prod",
+  env: "dev",
   sleep: async () => {},
   rng: () => 0.5,
 };
@@ -239,10 +243,11 @@ describe("host pinning", () => {
     const res = await execute(
       op(),
       { input: { payment_id: "pay_1", amount: 2500 }, confirm: true, idempotencyKey: "k1" },
-      { ...baseCtx, transport, baseUrl: "https://evil.example.com" },
+      { ...baseCtx, transport, env: "prod", baseUrl: "https://evil.example.com" },
     );
     expect(res.outcome).toBe("error");
     if (res.outcome !== "error") return;
+    // Host pinning is enforced before the ledger check, so the security error wins.
     expect(res.envelope.error.code).toBe("policy_denied");
   });
 });
@@ -269,6 +274,52 @@ describe("idempotency ledger", () => {
   });
 });
 
+describe("durable ledger (prod fail-closed)", () => {
+  const prod = { ...baseCtx, env: "prod" };
+  const args = {
+    input: { payment_id: "pay_1", amount: 2500 },
+    confirm: true,
+    idempotencyKey: "k1",
+  };
+
+  it("refuses a required-idempotency mutation in prod with no ledger — never touches upstream", async () => {
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    const res = await execute(op(), args, { ...prod, transport });
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.code).toBe("idempotency_ledger_unavailable");
+    expect(transport.requests).toHaveLength(0); // failed closed before any side effect
+  });
+
+  it("refuses when only a process-local (non-durable) ledger is configured in prod", async () => {
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    const res = await execute(op(), args, { ...prod, transport, ledger: new InMemoryLedger() });
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.code).toBe("idempotency_ledger_unavailable");
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("proceeds in prod once a durable ledger is configured", async () => {
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    const res = await execute(op(), args, { ...prod, transport, ledger: new DurableTestLedger() });
+    expect(res.outcome).toBe("success");
+    expect(transport.requests).toHaveLength(1);
+  });
+
+  it("still allows a dry-run preview in prod without a durable ledger", async () => {
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    const res = await execute(op(), { ...args, dryRun: true }, { ...prod, transport });
+    expect(res.outcome).toBe("dry_run");
+    expect(transport.requests).toHaveLength(0);
+  });
+});
+
+/** A ledger that reports itself durable — stands in for Firestore/Spanner in tests. */
+class DurableTestLedger extends InMemoryLedger {
+  override readonly durable = true;
+}
+
 describe("observability", () => {
   it("emits an execution record with no secrets", async () => {
     const observer = new InMemoryObserver();
@@ -292,5 +343,28 @@ describe("fingerprint", () => {
     const a = requestFingerprint("op", { a: 1, b: 2 });
     const b = requestFingerprint("op", { b: 2, a: 1 });
     expect(a).toBe(b);
+  });
+});
+
+describe("resolveLedger", () => {
+  it("returns a non-durable in-memory ledger when nothing is configured", () => {
+    const ledger = resolveLedger(undefined);
+    expect(ledger.durable).toBe(false);
+    expect(ledger).toBeInstanceOf(InMemoryLedger);
+  });
+
+  it("selects a registered durable backend by scheme", async () => {
+    let built = "";
+    registerLedgerBackend("faux", (uri) => {
+      built = uri;
+      return new DurableTestLedger();
+    });
+    const ledger = resolveLedger("faux://project/db");
+    expect(ledger.durable).toBe(true);
+    expect(built).toBe("faux://project/db");
+  });
+
+  it("throws (never boots into false safety) when the scheme is unregistered", () => {
+    expect(() => resolveLedger("unregistered://x")).toThrow(/no idempotency ledger backend/i);
   });
 });

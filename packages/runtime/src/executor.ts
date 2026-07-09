@@ -309,6 +309,31 @@ export async function execute(
 
     await runHook(ctx.policy?.preExecute, request);
 
+    // 7a. Fail closed on required idempotency without a *durable* ledger outside
+    // `dev`. Cloud Run scales horizontally; an in-memory (or absent) ledger
+    // gives no cross-instance replay protection, so executing an unsafe mutation
+    // here would be a safety lie. dev keeps the in-memory ledger. Placed after
+    // dry-run/host-pin/auth so a preview still works and security errors win.
+    const env = ctx.env ?? "dev";
+    if (
+      op.effect.kind === "mutation" &&
+      op.idempotency.mode === "required" &&
+      env !== "dev" &&
+      !ctx.ledger?.durable
+    ) {
+      return fail(
+        new AnvilError({
+          code: "idempotency_ledger_unavailable",
+          message:
+            `This operation requires idempotency, but no durable ledger is configured in env "${env}". ` +
+            "A process-local ledger cannot protect against duplicate execution across instances. " +
+            "Configure ANVIL_LEDGER (e.g. firestore://…) before invoking unsafe mutations.",
+          operation: op.id,
+          traceId,
+        }),
+      );
+    }
+
     // 8. Idempotency ledger for unsafe idempotent mutations.
     if (op.effect.kind === "mutation" && key && ctx.ledger) {
       const fp = requestFingerprint(op.id, input);
