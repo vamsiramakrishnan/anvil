@@ -201,7 +201,7 @@ describe("bundle", () => {
       "skill/reference/operations.md",
       "skill/reference/capabilities.md",
       "deploy/Dockerfile",
-      "deploy/cloudrun.service.yaml",
+      "deploy/terraform/main.tf",
       "mock/scenarios.json",
       "tests/conformance.test.ts",
       "package.json",
@@ -229,18 +229,28 @@ describe("bundle", () => {
   });
 });
 
-describe("GCP-native deploy", () => {
-  it("emits Cloud Build, Terraform, IAM, and per-environment overlays", () => {
+describe("GCP-native deploy (single owner per concern)", () => {
+  it("emits exactly one deploy path: Cloud Build (pipeline) + Terraform (infra)", () => {
     const { files } = generateBundle(air);
     for (const p of [
       "deploy/cloudbuild.yaml",
-      "deploy/iam.plan.json",
       "deploy/terraform/main.tf",
       "deploy/terraform/variables.tf",
-      "deploy/overlays/dev.env.yaml",
-      "deploy/overlays/prod.env.yaml",
+      "deploy/env.schema.json",
+      "deploy/secrets.required.yaml",
     ]) {
       expect(Object.keys(files), `missing ${p}`).toContain(p);
+    }
+    // The overlapping mechanisms are gone — a knative service.yaml, an
+    // iam.plan.json, and per-env overlays all set the same knobs and drifted.
+    for (const gone of [
+      "deploy/cloudrun.service.yaml",
+      "deploy/iam.plan.json",
+      "deploy/overlays/dev.env.yaml",
+      "deploy/overlays/prod.env.yaml",
+      "deploy/artifact-metadata.json",
+    ]) {
+      expect(Object.keys(files), `should not emit ${gone}`).not.toContain(gone);
     }
   });
 
@@ -251,21 +261,51 @@ describe("GCP-native deploy", () => {
     expect(dockerfile).toContain("runtime/server.js");
   });
 
-  it("wires a durable Firestore ledger with a least-privilege, scoped IAM plan", () => {
+  it("grants least-privilege ledger IAM without owning the shared Firestore singleton", () => {
     const { files } = generateBundle(air);
-    const iam = JSON.parse(files["deploy/iam.plan.json"] as string);
-    // The refund requires idempotency, so the plan must provision the ledger.
-    expect(iam.ledger.backend).toBe("firestore");
-    expect(iam.grants.map((g: { role: string }) => g.role)).toContain("roles/datastore.user");
-    // Secret access is scoped to this one secret, not project-wide.
-    const secret = iam.grants.find((g: { role: string }) => g.role.includes("secretmanager"));
-    expect(secret.on).toBe("secret:payments-auth-token");
-    // No project owner/editor anywhere in the plan.
-    const all = JSON.stringify(iam);
-    expect(all).not.toContain("roles/owner");
-    expect(all).not.toContain("roles/editor");
-    // Cloud Run service carries ANVIL_LEDGER so the fail-closed contract holds.
-    expect(files["deploy/cloudrun.service.yaml"]).toContain("ANVIL_LEDGER");
+    const tf = files["deploy/terraform/main.tf"] as string;
+    // The SA gets scoped datastore access...
+    expect(tf).toContain("roles/datastore.user");
+    // ...but the (default) Firestore database is a project singleton / prereq —
+    // creating it per-capability would collide across capability modules.
+    expect(tf).not.toContain('resource "google_firestore_database"');
+    // Same for the Artifact Registry repo: a shared platform prereq, not owned here.
+    expect(tf).not.toContain('resource "google_artifact_registry_repository"');
+    // Secret access is scoped to the one secret resource, not project-wide.
+    expect(tf).toContain("google_secret_manager_secret_iam_member");
+    // No project owner/editor anywhere.
+    expect(tf).not.toContain("roles/owner");
+    expect(tf).not.toContain("roles/editor");
+    // Terraform owns ANVIL_LEDGER so the fail-closed contract holds at runtime.
+    expect(tf).toContain("ANVIL_LEDGER");
+  });
+
+  it("uses durable remote state and never auto-applies (plan-only pipeline)", () => {
+    const { files } = generateBundle(air);
+    const cb = files["deploy/cloudbuild.yaml"] as string;
+    const tf = files["deploy/terraform/main.tf"] as string;
+    // Remote state is mandatory: a backend block + a bound init.
+    expect(tf).toContain('backend "gcs"');
+    expect(cb).toContain("backend-config");
+    // Cloud Build produces a plan, never an auto-approved apply.
+    expect(cb).toContain("terraform plan");
+    expect(cb).not.toContain("-auto-approve");
+    expect(cb).not.toContain("terraform apply");
+  });
+
+  it("has exactly one owner for the image tag and never leaks PROJECT/REGION placeholders", () => {
+    const { files } = generateBundle(air);
+    const cb = files["deploy/cloudbuild.yaml"] as string;
+    const tf = files["deploy/terraform/main.tf"] as string;
+    // Cloud Build sets no runtime config — no --set-env-vars, no `gcloud run
+    // deploy`. It only builds/pushes and hands Terraform the image tag.
+    expect(cb).not.toContain("set-env-vars");
+    expect(cb).not.toContain("run\n      - deploy");
+    expect(cb).toContain("image_tag");
+    // Terraform derives the image entirely from vars — no literal placeholders
+    // that a human must hand-edit (the old knative yaml had literal PROJECT/REGION).
+    expect(tf).not.toContain("PROJECT/locations/REGION");
+    expect(tf).not.toContain("REGION-docker.pkg.dev/PROJECT");
   });
 });
 

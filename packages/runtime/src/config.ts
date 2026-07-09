@@ -21,11 +21,43 @@ export interface RuntimeConfig {
   ledger?: string;
 }
 
-export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
+/** The environments the runtime recognizes. Anything else is treated as prod. */
+export type RuntimeEnv = "dev" | "staging" | "prod";
+
+/**
+ * Normalize a raw env string, **failing closed**. Only the exact string `"dev"`
+ * enables development affordances (permissive host allowlist, process-local
+ * idempotency ledger). Anything unset, misspelled, or unknown resolves to
+ * `"prod"` — a runtime that cannot prove it is in dev must behave as production.
+ * This removes the old `?? "dev"` fallback that silently gave a misconfigured
+ * Cloud Run process dev semantics (any upstream host, no durable-ledger gate).
+ */
+export function normalizeEnv(raw: string | undefined): RuntimeEnv {
+  if (raw === "dev") return "dev";
+  if (raw === "staging") return "staging";
+  return "prod";
+}
+
+/** True when a raw env value is set but not one of the recognized environments. */
+export function isUnrecognizedEnv(raw: string | undefined): boolean {
+  return raw !== undefined && raw !== "" && raw !== "dev" && raw !== "staging" && raw !== "prod";
+}
+
+export function loadRuntimeConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  onDiagnostic: (message: string) => void = (m) => console.warn(m),
+): RuntimeConfig {
+  // Fail closed, but not silently: a misspelled env (e.g. "prd") behaves as prod
+  // yet still surfaces a diagnostic so the misconfiguration is visible at boot.
+  if (isUnrecognizedEnv(env.ANVIL_ENV)) {
+    onDiagnostic(
+      `[anvil] ANVIL_ENV="${env.ANVIL_ENV}" is not one of dev|staging|prod; treating it as "prod" (fail closed). Fix the value to silence this.`,
+    );
+  }
   return {
     serviceId: env.ANVIL_SERVICE_ID,
     artifactVersion: env.ANVIL_ARTIFACT_VERSION,
-    env: env.ANVIL_ENV ?? "dev",
+    env: normalizeEnv(env.ANVIL_ENV),
     allowedHosts: (env.ANVIL_ALLOWED_HOSTS ?? "")
       .split(",")
       .map((h) => h.trim())

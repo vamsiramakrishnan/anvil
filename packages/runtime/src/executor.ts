@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Operation, propKey } from "@anvil/air";
 import { applyAuth, type CredentialResolver } from "./auth.js";
-import { hostIsAllowed } from "./config.js";
+import { hostIsAllowed, normalizeEnv } from "./config.js";
 import {
   AnvilError,
   type ErrorEnvelope,
@@ -301,12 +301,14 @@ export async function execute(
       });
     }
 
-    // 6. Allowed-host enforcement (fail closed).
-    if (!hostIsAllowed(baseRequest.url, ctx.allowedHosts ?? [], ctx.env ?? "dev")) {
+    // 6. Allowed-host enforcement (fail closed). `env` is normalized so an
+    // unset/unknown env is treated as prod (deny non-allowlisted hosts), never dev.
+    const env = normalizeEnv(ctx.env);
+    if (!hostIsAllowed(baseRequest.url, ctx.allowedHosts ?? [], env)) {
       return fail(
         new AnvilError({
           code: "policy_denied",
-          message: `Upstream host is not in the allowed hosts list for env '${ctx.env ?? "dev"}'.`,
+          message: `Upstream host is not in the allowed hosts list for env '${env}'.`,
           operation: op.id,
           traceId,
         }),
@@ -343,7 +345,6 @@ export async function execute(
     // gives no cross-instance replay protection, so executing an unsafe mutation
     // here would be a safety lie. dev keeps the in-memory ledger. Placed after
     // dry-run/host-pin/auth so a preview still works and security errors win.
-    const env = ctx.env ?? "dev";
     if (
       op.effect.kind === "mutation" &&
       op.idempotency.mode === "required" &&

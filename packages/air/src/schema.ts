@@ -47,26 +47,264 @@ export const EvidenceKind = z.enum([
 ]);
 export type EvidenceKind = z.infer<typeof EvidenceKind>;
 
-export const EvidenceItem = z.object({
-  kind: EvidenceKind,
-  /** Free-form pointer to the origin (URL, file path, commit, ticket id). */
-  ref: z.string().optional(),
-  note: z.string().optional(),
-  /** 0..1 confidence contributed by this item. */
-  confidence: z.number().min(0).max(1).optional(),
-});
-export type EvidenceItem = z.infer<typeof EvidenceItem>;
+/** How one claim relates to another (referenced by claim id). */
+export const ClaimRelation = z.enum(["supports", "contradicts", "supersedes"]);
+export type ClaimRelation = z.infer<typeof ClaimRelation>;
+
+/** Per-claim review disposition. Rejected/superseded claims drop out of the aggregate. */
+export const ReviewStatus = z.enum(["unreviewed", "accepted", "rejected", "superseded"]);
+export type ReviewStatus = z.infer<typeof ReviewStatus>;
 
 /**
- * The evidence graph node for an operation. The harness loop accumulates items
- * and rolls them into a single confidence score; low confidence forces review.
+ * A **claim-scoped** piece of provenance: a single assertion about one semantic,
+ * with where it came from and how much to trust it. This replaces the old flat
+ * `EvidenceItem` + stored aggregate confidence — a confidence number now belongs
+ * to a specific claim, not vaguely to an operation. Multiple claims about the
+ * same `(subject, predicate)` may agree, conflict, or supersede one another; the
+ * aggregate is *derived* from them (see `evidenceConfidence`), never stored.
+ */
+export const Claim = z
+  .object({
+    /** Stable id so other claims can reference this one (supports/contradicts/supersedes). */
+    id: z.string().optional(),
+    /** What the claim is about — the semantic target (operation id, capability id, …). */
+    subject: z.string(),
+    /** Which semantic is asserted, e.g. "exists", "idempotency.mode", "name.quality". */
+    predicate: z.string(),
+    /** The asserted value (a mode string, boolean, number, or text). */
+    value: z.unknown().optional(),
+    /** Origin kind of the evidence backing this claim. */
+    source: EvidenceKind,
+    /** Pointer to the origin (URL, file path, commit, ticket id, tool call). */
+    sourceRef: z.string().optional(),
+    /** Origin revision (commit sha, doc version) when known. */
+    sourceRevision: z.string().optional(),
+    /** How the value was extracted (declared, heuristic, regex, manifest, …). */
+    method: z.string().optional(),
+    /** Confidence in THIS claim's value, 0..1. */
+    confidence: z.number().min(0).max(1),
+    /** Reliability of the source, 0..1 (falls back to a per-kind default when unset). */
+    reliability: z.number().min(0).max(1).optional(),
+    /** ISO timestamp of extraction, when recorded. */
+    timestamp: z.string().optional(),
+    /** Relationship to another claim, by id. */
+    relation: z.object({ type: ClaimRelation, target: z.string() }).optional(),
+    /** Review disposition; rejected/superseded claims are excluded from the aggregate.
+     *  Absent means unreviewed (still active). */
+    review: ReviewStatus.optional(),
+    note: z.string().optional(),
+  })
+  .superRefine((c, ctx) => {
+    // A claim that participates in the graph (points at another claim) must be
+    // addressable itself, so the relation is auditable and not a dangling string.
+    if (c.relation && !c.id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "a claim with a `relation` must have a stable `id`",
+        path: ["id"],
+      });
+    }
+  });
+export type Claim = z.infer<typeof Claim>;
+
+/**
+ * The evidence attached to a semantic node: a set of claims. There is no stored
+ * aggregate confidence — it is derived on demand from the active claims so it can
+ * never drift from its inputs (see `evidenceConfidence`).
  */
 export const Evidence = z.object({
-  items: z.array(EvidenceItem).default([]),
-  /** Aggregate confidence in the semantics attached to this operation. */
-  confidence: z.number().min(0).max(1).default(0),
+  claims: z.array(Claim).default([]),
 });
 export type Evidence = z.infer<typeof Evidence>;
+
+/**
+ * Reliability of each evidence *source kind* — trust in the origin, distinct from
+ * confidence in the extracted value. A confident claim scraped from a generated
+ * mock is not authoritative; a terse one from a source implementation is. This is
+ * the canonical table (the harness re-exports it) so reliability weights the
+ * aggregate rather than being a separate, ignored axis.
+ */
+export const SOURCE_RELIABILITY: Record<EvidenceKind, number> = {
+  recorded_traffic: 0.95,
+  source_impl: 0.9,
+  test_fixture: 0.85,
+  spec: 0.7,
+  postman: 0.6,
+  incident: 0.6,
+  doc_example: 0.5,
+  inferred: 0.4,
+  generated_mock: 0.3,
+};
+
+/** Reliability of the source behind a claim: explicit, else the per-kind default. */
+export function claimReliability(c: Claim): number {
+  return c.reliability ?? SOURCE_RELIABILITY[c.source];
+}
+
+/**
+ * A claim's effective evidential weight: confidence in the value **discounted by
+ * source reliability**. So ten confident claims from generated mocks cannot drive
+ * a semantic to certainty — the mock's low reliability caps each contribution.
+ */
+export function effectiveWeight(c: Claim): number {
+  return c.confidence * claimReliability(c);
+}
+
+function reviewActive(c: Claim): boolean {
+  return c.review !== "rejected" && c.review !== "superseded";
+}
+
+/**
+ * Resolve which claims are live: drop reviewed-out claims, then drop any claim
+ * that is the target of an active `supersedes` relation. Relations reference
+ * claims by id; a relation whose target does not resolve is ignored (it has no
+ * effect) rather than silently trusted.
+ */
+export function resolveActiveClaims(claims: Claim[]): Claim[] {
+  const active = claims.filter(reviewActive);
+  const ids = new Set(active.map((c) => c.id).filter((id): id is string => Boolean(id)));
+  const superseded = new Set<string>();
+  for (const c of active) {
+    if (c.relation?.type === "supersedes" && ids.has(c.relation.target)) {
+      superseded.add(c.relation.target);
+    }
+  }
+  return active.filter((c) => !(c.id && superseded.has(c.id)));
+}
+
+/** A claim is active if it survives review and supersession resolution. */
+export function claimIsActive(c: Claim, all: Claim[] = [c]): boolean {
+  return resolveActiveClaims(all).includes(c);
+}
+
+/** Support for one asserted value of a predicate (noisy-OR of its claims' weights). */
+export interface ValueSupport {
+  value: unknown;
+  support: number;
+  claims: Claim[];
+}
+
+/**
+ * The outcome of resolving one semantic — `(subject, predicate)`:
+ *   - `resolved`     — one value dominates; `value`/`support` describe it.
+ *   - `conflicted`   — a competing value is within the margin; a confident number
+ *                      would be a lie, so the *status* forces a review decision.
+ *   - `insufficient` — no active claims for this predicate.
+ */
+export interface SemanticResolution {
+  predicate: string;
+  status: "resolved" | "conflicted" | "insufficient";
+  value?: unknown;
+  support: number;
+  competingValue?: unknown;
+  competingSupport?: number;
+  claims: Claim[];
+}
+
+/** A runner-up value within this margin of the leader counts as a real conflict. */
+export const CONFLICT_MARGIN = 0.2;
+
+/**
+ * Safety-sensitive predicates: a material conflict here must force review rather
+ * than silently pick a winner. Loosening safety on a "winner by 0.02" is exactly
+ * the failure this prevents.
+ */
+export const SAFETY_SENSITIVE_PREDICATES: ReadonlySet<string> = new Set([
+  "idempotency.mode",
+  "effect.stateImpact",
+  "auth.principal",
+  "confirmation.required",
+  "retries.mode",
+]);
+
+function noisyOr(claims: Claim[]): number {
+  const product = claims.reduce((acc, c) => acc * (1 - effectiveWeight(c)), 1);
+  return Math.min(0.99, 1 - product);
+}
+
+/**
+ * Resolve one semantic — `(subject, predicate)` — **conflict-aware**. Claims about
+ * different predicates never corroborate each other; within the predicate, active
+ * claims are grouped by asserted value and each value's support is the noisy-OR of
+ * its members' effective weights. If a competing value's support is within
+ * `conflictMargin` of the leader's, the result is `conflicted` (not a confident
+ * number) — two authoritative sources disagreeing is a review signal, not 88%.
+ * Deterministic: value groups break ties by their JSON key.
+ */
+export function resolveSemantic(
+  evidence: Evidence,
+  predicate: string,
+  conflictMargin: number = CONFLICT_MARGIN,
+): SemanticResolution {
+  const claims = resolveActiveClaims(evidence.claims).filter((c) => c.predicate === predicate);
+  if (claims.length === 0) return { predicate, status: "insufficient", support: 0, claims: [] };
+
+  const byValue = new Map<string, Claim[]>();
+  for (const c of claims) {
+    const key = JSON.stringify(c.value ?? null);
+    const group = byValue.get(key) ?? [];
+    group.push(c);
+    byValue.set(key, group);
+  }
+  const groups = [...byValue.entries()]
+    .map(([key, cs]) => ({ key, value: cs[0]?.value, support: noisyOr(cs), claims: cs }))
+    .sort((a, b) => b.support - a.support || a.key.localeCompare(b.key));
+
+  const leader = groups[0] as (typeof groups)[number];
+  const runner = groups[1];
+  if (runner && leader.support - runner.support < conflictMargin) {
+    return {
+      predicate,
+      status: "conflicted",
+      value: leader.value,
+      support: leader.support,
+      competingValue: runner.value,
+      competingSupport: runner.support,
+      claims,
+    };
+  }
+  return { predicate, status: "resolved", value: leader.value, support: leader.support, claims };
+}
+
+/**
+ * Numeric confidence in one semantic (the leader value's support). This is the
+ * display/coverage number; consumers making a **safety decision** must use
+ * `resolveSemantic` and honour `status === "conflicted"` rather than trusting the
+ * bare number — see `SAFETY_SENSITIVE_PREDICATES`.
+ */
+export function confidenceFor(evidence: Evidence, predicate: string): number {
+  return resolveSemantic(evidence, predicate).support;
+}
+
+/** The distinct predicates asserted by active claims (sorted, deterministic). */
+export function evidencePredicates(evidence: Evidence): string[] {
+  return [...new Set(resolveActiveClaims(evidence.claims).map((c) => c.predicate))].sort();
+}
+
+/**
+ * A node-level **coverage summary for display and triage only** — it MUST NOT
+ * gate safety or approval (safety asks `confidenceFor` for the specific
+ * semantic). It reports the *weakest* per-predicate confidence: a node is only as
+ * trustworthy as its least-supported semantic, so a strong "exists" cannot mask a
+ * weak "idempotency.mode". Returns 0 when there are no active claims.
+ */
+export function evidenceConfidence(evidence: Evidence): number {
+  const predicates = evidencePredicates(evidence);
+  if (predicates.length === 0) return 0;
+  return Math.min(...predicates.map((p) => confidenceFor(evidence, p)));
+}
+
+/**
+ * Safety-sensitive predicates whose evidence is in material conflict — a caller
+ * must force review rather than act on the leader value. Empty when nothing
+ * safety-sensitive is contested.
+ */
+export function conflictedSafetyPredicates(evidence: Evidence): string[] {
+  return evidencePredicates(evidence).filter(
+    (p) =>
+      SAFETY_SENSITIVE_PREDICATES.has(p) && resolveSemantic(evidence, p).status === "conflicted",
+  );
+}
 
 /* -------------------------------------------------------------------------- */
 /* Building blocks                                                            */
@@ -266,7 +504,7 @@ export const Operation = z.object({
   state: OperationState.default("generated"),
   /** Human/validator notes explaining a non-approved state. */
   reviewNotes: z.array(z.string()).default([]),
-  evidence: Evidence.default({ items: [], confidence: 0 }),
+  evidence: Evidence.default({ claims: [] }),
   /** The primary capability this operation belongs to (see `Capability`). */
   capabilityId: z.string().optional(),
 });
@@ -305,7 +543,7 @@ export const Capability = z.object({
   /** Intent phrases an agent might use to find this capability. */
   intentExamples: z.array(z.string()).default([]),
   state: OperationState.default("generated"),
-  evidence: Evidence.default({ items: [], confidence: 0 }),
+  evidence: Evidence.default({ claims: [] }),
 });
 export type Capability = z.infer<typeof Capability>;
 
@@ -346,7 +584,7 @@ export const Workflow = z.object({
   /** How to undo a partially-completed run, if known. */
   rollbackStrategy: z.string().optional(),
   state: OperationState.default("generated"),
-  evidence: Evidence.default({ items: [], confidence: 0 }),
+  evidence: Evidence.default({ claims: [] }),
 });
 export type Workflow = z.infer<typeof Workflow>;
 
