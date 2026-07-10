@@ -7,14 +7,9 @@ import { reconcile } from "../reconcile.js";
 import type { SkillExecutor } from "../skills/executor.js";
 import { skillByName } from "../skills/registry.js";
 import { validateProposal } from "../skills/validate.js";
-import {
-  contextForCase,
-  detectConflicts,
-  readEvidence,
-  readProposal,
-  verifyFrozenEvidence,
-} from "./commands.js";
 import type { AgentDriver } from "./driver.js";
+import { verifyFrozenEvidence } from "./evidence.js";
+import { contextForCase } from "./identity-binding.js";
 import {
   asSkillExecutor,
   type InvestigationHarness,
@@ -24,6 +19,7 @@ import {
   proposalFromCase,
   type SearchStep,
 } from "./investigation.js";
+import { transition, verifyFrozenStages } from "./lifecycle.js";
 import { openCase } from "./materialize.js";
 import {
   CASE_AUX,
@@ -32,6 +28,7 @@ import {
   parseClaimSet,
   type ValidationReport,
 } from "./model.js";
+import { detectConflicts, readEvidence, readProposal } from "./proposal.js";
 
 /**
  * The **case-backed investigation harness**: the design's answer to "give Claude
@@ -165,8 +162,11 @@ function summarize(status: InvestigationStatus, conflicts: number, claims: numbe
 export function closeCase(air: AirDocument, dir: string): Refinement | undefined {
   const proposalDoc = readProposal(dir);
   if (!proposalDoc) return undefined;
-  // Integrity: every verified filesystem excerpt must still match its source. If the
-  // repository changed under the investigation, its evidence is no longer trustworthy.
+  // Integrity, in two layers. First: the frozen output stages (evidence, claims,
+  // proposal) must not have been rewritten since they were frozen. Second: every
+  // verified filesystem excerpt must still match its source — if the repository
+  // changed under the investigation, its evidence is no longer trustworthy.
+  verifyFrozenStages(dir);
   const integrity = verifyFrozenEvidence(dir);
   if (!integrity.ok) {
     throw new Error(
@@ -179,7 +179,9 @@ export function closeCase(air: AirDocument, dir: string): Refinement | undefined
   const skill = skillByName(task.skill);
   if (!skill) throw new Error(`Unknown skill '${task.skill}' for case at ${dir}.`);
   const validated = validateProposal(skill, proposalFromCase(proposalDoc), context);
-  return reconcile({ air, context, validated });
+  const refinement = reconcile({ air, context, validated });
+  transition(dir, "closed");
+  return refinement;
 }
 
 /** Open a case for a deficiency without running any driver (materialise-only). */

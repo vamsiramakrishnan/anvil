@@ -10,10 +10,11 @@ import { HeuristicSkillExecutor } from "../../skills/executor.js";
 import { skillFor } from "../../skills/registry.js";
 import { validateProposal } from "../../skills/validate.js";
 import { targetKey } from "../../target.js";
-import { addEvidence, finalize, synthesizeProposal, validateCaseProposal } from "../commands.js";
 import { ScriptedAgentDriver } from "../driver.js";
+import { addEvidence } from "../evidence.js";
 import { closeCase, readInvestigation } from "../executor.js";
 import { openCase } from "../materialize.js";
+import { finalize, synthesizeProposal, validateCaseProposal } from "../proposal.js";
 import {
   type BatteryReport,
   type BatteryRow,

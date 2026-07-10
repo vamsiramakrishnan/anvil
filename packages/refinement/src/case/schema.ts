@@ -109,7 +109,7 @@ export const zRunIdentity = z.object({
 /* ------------------------------- case inputs ------------------------------ */
 
 export const zCaseTask = z.object({
-  caseId: z.string(),
+  caseKey: z.string(),
   skill: z.string(),
   skillVersion: z.number(),
   deficiency: zDeficiencyCode,

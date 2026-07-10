@@ -19,7 +19,17 @@ const describeField: RefinementSkill = {
     allowed: ["source_impl", "test_fixture", "spec", "doc_example", "postman"],
     minimumStrength: "corroborated",
   },
-  output: { predicates: ["field.description"], fields: ["description"] },
+  output: {
+    predicates: ["field.description"],
+    supportingPredicates: [
+      "field.visibility",
+      "field.unit",
+      "field.usage",
+      "field.lifecycle",
+      "field.sensitivity",
+    ],
+    fields: ["description"],
+  },
   constraints: [
     "do_not_invent_business_rules",
     "do_not_change_field_type",
@@ -47,7 +57,11 @@ const describeOperation: RefinementSkill = {
     allowed: ["source_impl", "test_fixture", "spec", "doc_example", "postman"],
     minimumStrength: "corroborated",
   },
-  output: { predicates: ["operation.description"], fields: ["description"] },
+  output: {
+    predicates: ["operation.description"],
+    supportingPredicates: ["operation.effect", "operation.behavior"],
+    fields: ["description"],
+  },
   constraints: ["do_not_invent_business_rules", "preserve_domain_terms"],
   validation: [
     "patch_within_boundary",
@@ -70,7 +84,11 @@ const generateExamples: RefinementSkill = {
     allowed: ["spec", "source_impl", "test_fixture", "doc_example", "postman", "generated_mock"],
     minimumStrength: "single",
   },
-  output: { predicates: ["field.example"], fields: ["examples"] },
+  output: {
+    predicates: ["field.example"],
+    supportingPredicates: ["field.format", "field.description"],
+    fields: ["examples"],
+  },
   constraints: ["do_not_change_field_type", "do_not_change_requiredness"],
   validation: [
     "patch_within_boundary",
@@ -92,7 +110,11 @@ const enrichErrors: RefinementSkill = {
     allowed: ["source_impl", "test_fixture", "spec", "incident", "doc_example"],
     minimumStrength: "single",
   },
-  output: { predicates: ["error.message", "error.retryable"], fields: ["message", "retryable"] },
+  output: {
+    predicates: ["error.message", "error.retryable"],
+    supportingPredicates: ["error.cause", "error.httpStatus"],
+    fields: ["message", "retryable"],
+  },
   // Retryability can only tighten from evidence here; loosening it (retryable=true)
   // is a safety change reserved for the reconcile stage's asymmetric trust gate.
   constraints: ["do_not_loosen_safety"],

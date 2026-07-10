@@ -74,6 +74,24 @@ export function withinScopes(scopes: string[], candidate: string): boolean {
 }
 
 /**
+ * A fully-qualified reference to one case run: the stable `caseKey`
+ * (`<skill>--<target-key>`, shared by every run for the same semantic target) plus
+ * the `runId` (one execution). These are the *only* two identifiers a case carries —
+ * there is deliberately no third `caseId` that duplicates one of them.
+ */
+export interface CaseRunRef {
+  /** Stable skill + target identity, shared across every run of the same case. */
+  caseKey: string;
+  /** One execution of that case. */
+  runId: string;
+}
+
+/** Project the `CaseRunRef` out of a stamped run identity. */
+export function runRef(identity: RunIdentity): CaseRunRef {
+  return { caseKey: identity.caseKey, runId: identity.runId };
+}
+
+/**
  * The immutable identity stamped on a case run: a run id plus content hashes of the
  * exact inputs it was opened against, so a run is auditable and can never be
  * confused with one opened against a different model, skill, or policy.

@@ -1,12 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CASE_FILES } from "./model.js";
 import {
-  type AgentProcessRunner,
-  type AgentRunResult,
-  allowlistedEnv,
-  NodeAgentProcessRunner,
-} from "./process-runner.js";
+  type CredentialProfile,
+  defaultExecutionPolicy,
+  type ExecutionBackend,
+  type ExecutionPolicy,
+  NativeExecutionBackend,
+} from "./execution-policy.js";
+import { CASE_FILES } from "./model.js";
+import type { AgentProcessRunner, AgentRunResult } from "./process-runner.js";
 
 /**
  * An **agent driver** performs the investigation *inside* a materialised case: it
@@ -38,14 +40,23 @@ export interface ClaudeCodeDriverOptions {
   command?: string;
   /** Extra CLI flags, e.g. `["--model", "claude-opus-4-8", "--permission-mode", "plan"]`. */
   extraArgs?: string[];
-  /** Hard wall-clock cap for one investigation. */
-  timeoutMs?: number;
   /**
-   * Environment variable names to pass through to the agent, on top of PATH/HOME.
-   * The investigation gets a minimal environment, not the parent's whole secret surface.
+   * The credential profile the run needs. The backend resolves the minimal
+   * environment for it — the driver never enumerates raw provider variables.
    */
-  envAllowlist?: string[];
-  /** Injectable process runner (defaults to the async NodeAgentProcessRunner). */
+  credentialProfile?: CredentialProfile;
+  /**
+   * The execution policy (filesystem/network/env/timeout/sandbox). Defaults to the
+   * native policy for the credential profile; override to raise the timeout or, later,
+   * select a sandboxed backend's policy.
+   */
+  policy?: ExecutionPolicy;
+  /** Where the invocation runs. Defaults to the native (unsandboxed) backend. */
+  backend?: ExecutionBackend;
+  /**
+   * Injectable process runner. A convenience that wraps the default native backend
+   * around a custom runner (used by tests); ignored when `backend` is supplied.
+   */
   runner?: AgentProcessRunner;
 }
 
@@ -53,10 +64,12 @@ export class ClaudeCodeAgentDriver implements AgentDriver {
   readonly name = "claude-code";
   /** The structured execution log of the last run, for observability. */
   lastResult?: AgentRunResult;
-  private readonly runner: AgentProcessRunner;
+  private readonly backend: ExecutionBackend;
+  private readonly policy: ExecutionPolicy;
 
   constructor(private readonly options: ClaudeCodeDriverOptions = {}) {
-    this.runner = options.runner ?? new NodeAgentProcessRunner();
+    this.backend = options.backend ?? new NativeExecutionBackend(options.runner);
+    this.policy = options.policy ?? defaultExecutionPolicy(options.credentialProfile);
   }
 
   async run(caseDir: string): Promise<void> {
@@ -73,20 +86,18 @@ export class ClaudeCodeAgentDriver implements AgentDriver {
       "this case directory.",
     ].join("\n");
 
-    const env = allowlistedEnv(
-      this.options.envAllowlist ?? ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "HTTPS_PROXY"],
-    );
     let result: AgentRunResult;
     try {
-      result = await this.runner.run({
-        command,
-        args: ["-p", prompt, ...(this.options.extraArgs ?? [])],
-        cwd: caseDir,
-        env,
-        timeoutMs: this.options.timeoutMs ?? 20 * 60 * 1000,
-        onStdout: (s) => process.stdout.write(s),
-        onStderr: (s) => process.stderr.write(s),
-      });
+      result = await this.backend.execute(
+        {
+          command,
+          args: ["-p", prompt, ...(this.options.extraArgs ?? [])],
+          cwd: caseDir,
+          onStdout: (s) => process.stdout.write(s),
+          onStderr: (s) => process.stderr.write(s),
+        },
+        this.policy,
+      );
     } catch (err) {
       const hint =
         (err as NodeJS.ErrnoException).code === "ENOENT"
