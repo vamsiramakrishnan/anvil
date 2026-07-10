@@ -64,15 +64,32 @@ export interface RefinementSkill {
   targetKind: SemanticTarget["kind"];
   /** Context slices to assemble before running. */
   context: ContextNeed[];
-  /** Which source kinds are admissible, and the minimum aggregate strength. */
-  evidence: { allowed: EvidenceKind[]; minimumStrength: EvidenceStrength };
   /**
-   * The output boundary. `predicates` are the claim predicates it may assert;
-   * `fields` are the **target-relative** semantic keys it may write (e.g.
-   * `description`, `examples`, `message`). A key outside `fields` — or any
-   * structural key like `schema`/`type`/`required` — is a boundary violation.
+   * Which source kinds are admissible, and the minimum aggregate strength.
+   * `minimumVerification` is the skill-wide trust bar a claim's evidence must
+   * clear (`"verified"` demands a source Anvil re-hashed itself; `"allow_unverified"`
+   * accepts a caller-supplied excerpt). `fieldVerification` is a narrow, optional
+   * per-output-field override (keyed by the skill's target-relative field name,
+   * e.g. `"retryable"`) for the rare field that needs a stricter bar than the
+   * skill default — not a general policy engine.
    */
-  output: { predicates: string[]; fields: string[] };
+  evidence: {
+    allowed: EvidenceKind[];
+    minimumStrength: EvidenceStrength;
+    minimumVerification: "verified" | "allow_unverified";
+    fieldVerification?: Record<string, "verified" | "allow_unverified">;
+  };
+  /**
+   * The output boundary. `predicates` are the claim predicates the patch asserts;
+   * `supportingPredicates` are the narrow intermediate facts an investigation may
+   * legitimately record on the way there (kept deliberately small); `fields` are
+   * the **target-relative** semantic keys it may write (e.g. `description`,
+   * `examples`, `message`). A key outside `fields` — or a predicate outside
+   * `predicates` ∪ `supportingPredicates`, or any structural key like
+   * `schema`/`type`/`required` — is a boundary violation. The skill owns this
+   * whole contract, so evidence policy never has a second owner that can drift.
+   */
+  output: { predicates: string[]; supportingPredicates: string[]; fields: string[] };
   constraints: SkillConstraint[];
   /** The checks a proposal from this skill must pass to be `validated`. */
   validation: ValidationCheckId[];

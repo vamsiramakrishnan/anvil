@@ -18,8 +18,19 @@ const describeField: RefinementSkill = {
   evidence: {
     allowed: ["source_impl", "test_fixture", "spec", "doc_example", "postman"],
     minimumStrength: "corroborated",
+    minimumVerification: "allow_unverified",
   },
-  output: { predicates: ["field.description"], fields: ["description"] },
+  output: {
+    predicates: ["field.description"],
+    supportingPredicates: [
+      "field.visibility",
+      "field.unit",
+      "field.usage",
+      "field.lifecycle",
+      "field.sensitivity",
+    ],
+    fields: ["description"],
+  },
   constraints: [
     "do_not_invent_business_rules",
     "do_not_change_field_type",
@@ -46,8 +57,13 @@ const describeOperation: RefinementSkill = {
   evidence: {
     allowed: ["source_impl", "test_fixture", "spec", "doc_example", "postman"],
     minimumStrength: "corroborated",
+    minimumVerification: "allow_unverified",
   },
-  output: { predicates: ["operation.description"], fields: ["description"] },
+  output: {
+    predicates: ["operation.description"],
+    supportingPredicates: ["operation.effect", "operation.behavior"],
+    fields: ["description"],
+  },
   constraints: ["do_not_invent_business_rules", "preserve_domain_terms"],
   validation: [
     "patch_within_boundary",
@@ -69,8 +85,13 @@ const generateExamples: RefinementSkill = {
   evidence: {
     allowed: ["spec", "source_impl", "test_fixture", "doc_example", "postman", "generated_mock"],
     minimumStrength: "single",
+    minimumVerification: "allow_unverified",
   },
-  output: { predicates: ["field.example"], fields: ["examples"] },
+  output: {
+    predicates: ["field.example"],
+    supportingPredicates: ["field.format", "field.description"],
+    fields: ["examples"],
+  },
   constraints: ["do_not_change_field_type", "do_not_change_requiredness"],
   validation: [
     "patch_within_boundary",
@@ -91,8 +112,16 @@ const enrichErrors: RefinementSkill = {
   evidence: {
     allowed: ["source_impl", "test_fixture", "spec", "incident", "doc_example"],
     minimumStrength: "single",
+    // Descriptions may rest on unverified evidence, but `retryable` is safety-affecting
+    // and requires a source Anvil verified itself.
+    minimumVerification: "allow_unverified",
+    fieldVerification: { retryable: "verified" },
   },
-  output: { predicates: ["error.message", "error.retryable"], fields: ["message", "retryable"] },
+  output: {
+    predicates: ["error.message", "error.retryable"],
+    supportingPredicates: ["error.cause", "error.httpStatus"],
+    fields: ["message", "retryable"],
+  },
   // Retryability can only tighten from evidence here; loosening it (retryable=true)
   // is a safety change reserved for the reconcile stage's asymmetric trust gate.
   constraints: ["do_not_loosen_safety"],

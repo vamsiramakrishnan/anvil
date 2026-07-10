@@ -4,6 +4,8 @@ import {
   type AgentRunResult,
   allowlistedEnv,
   ClaudeCodeAgentDriver,
+  defaultExecutionPolicy,
+  NativeExecutionBackend,
   NodeAgentProcessRunner,
 } from "./index.js";
 
@@ -101,5 +103,120 @@ describe("ClaudeCodeAgentDriver configures the runner", () => {
     writeFileSync(join(dir, "CASE.md"), "# Case\ninvestigate.", "utf8");
     await expect(driver.run(dir)).rejects.toThrow(/exited 2/);
     expect(driver.lastResult?.exitCode).toBe(2);
+  });
+});
+
+describe("execution policy + native backend", () => {
+  it("resolves the claude-code credential profile into a minimal env allowlist", () => {
+    const policy = defaultExecutionPolicy("claude-code");
+    expect(policy.sandbox).toBe("native");
+    expect(policy.filesystem).toEqual({ repository: "read-only", case: "read-write" });
+    expect(policy.environmentAllowlist).toContain("ANTHROPIC_API_KEY");
+    expect(policy.environmentAllowlist).not.toContain("SECRET");
+  });
+
+  it("the native backend narrows the environment to the policy allowlist", async () => {
+    let sawEnv: NodeJS.ProcessEnv | undefined;
+    const runner: AgentProcessRunner = {
+      run: async (req) => {
+        sawEnv = req.env;
+        return {
+          exitCode: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          startedAt: "t0",
+          endedAt: "t1",
+          durationMs: 1,
+          timedOut: false,
+          canceled: false,
+        };
+      },
+    };
+    const backend = new NativeExecutionBackend(runner);
+    const policy = {
+      ...defaultExecutionPolicy(),
+      environmentAllowlist: ["ANTHROPIC_API_KEY"],
+      allowDegradedNative: true,
+    };
+    await backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy);
+    // PATH/HOME always kept; arbitrary parent vars are dropped.
+    expect(
+      Object.keys(sawEnv ?? {}).every((k) => ["PATH", "HOME", "ANTHROPIC_API_KEY"].includes(k)),
+    ).toBe(true);
+  });
+
+  function noopRunner(): AgentProcessRunner {
+    return {
+      run: async () => ({
+        exitCode: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        startedAt: "t0",
+        endedAt: "t1",
+        durationMs: 1,
+        timedOut: false,
+        canceled: false,
+      }),
+    };
+  }
+
+  it("defaults to host network (native cannot honestly claim a proxy)", () => {
+    expect(defaultExecutionPolicy().network).toBe("host");
+  });
+
+  it("rejects network: none unless allowDegradedNative is set", async () => {
+    const backend = new NativeExecutionBackend(noopRunner());
+    const policy = {
+      ...defaultExecutionPolicy(),
+      network: "none" as const,
+      allowDegradedNative: false,
+    };
+    await expect(
+      backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy),
+    ).rejects.toThrow(/network/);
+  });
+
+  it("rejects network: proxy unless allowDegradedNative is set", async () => {
+    const backend = new NativeExecutionBackend(noopRunner());
+    const policy = {
+      ...defaultExecutionPolicy(),
+      network: "proxy" as const,
+      allowDegradedNative: false,
+    };
+    await expect(
+      backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy),
+    ).rejects.toThrow(/network/);
+  });
+
+  it("still rejects network: host without allowDegradedNative, because filesystem can't be enforced", async () => {
+    const backend = new NativeExecutionBackend(noopRunner());
+    const policy = {
+      ...defaultExecutionPolicy(),
+      network: "host" as const,
+      allowDegradedNative: false,
+    };
+    await expect(
+      backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy),
+    ).rejects.toThrow(/filesystem\.repository/);
+  });
+
+  it("with allowDegradedNative: true, succeeds and attaches an attestation of what was degraded", async () => {
+    const backend = new NativeExecutionBackend(noopRunner());
+    const policy = {
+      ...defaultExecutionPolicy(),
+      network: "proxy" as const,
+      allowDegradedNative: true,
+    };
+    const result = await backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy);
+    expect(result.attestation?.requestedSandbox).toBe("native");
+    expect(result.attestation?.actualSandbox).toBe("native");
+    expect(result.attestation?.degraded.length).toBeGreaterThan(0);
+    expect(result.attestation?.degraded.some((d) => d.includes("filesystem.repository"))).toBe(
+      true,
+    );
+    expect(result.attestation?.degraded.some((d) => d.includes("filesystem.case"))).toBe(true);
+    expect(result.attestation?.degraded.some((d) => d.includes("network=proxy"))).toBe(true);
   });
 });

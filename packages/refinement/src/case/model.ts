@@ -12,8 +12,10 @@ import {
   zClaimSet,
   type zClauseVerdict,
   type zEvidenceArtifact,
+  zEvidenceCoordinate,
   type zEvidencePolicyDoc,
   zEvidenceReport,
+  type zEvidenceVerification,
   type zProcedureDoc,
   type zProposedCheck,
   type zTestPlan,
@@ -85,14 +87,15 @@ export const CASE_OUTPUT = {
 
 /**
  * Auxiliary outputs that are not one-per-phase: the retrieval plan, any behavioural
- * experiments, the single `result.json` (the honest outcome), and the stage-freeze
- * record. These are optional — a case can close on a `result.json` alone.
+ * experiments, the single `result.json` (the honest outcome), and the lifecycle
+ * record (current run state + stage-freeze hashes). These are optional — a case can
+ * close on a `result.json` alone.
  */
 export const CASE_AUX = {
   searchPlan: "output/search-plan.json",
   experiments: "output/experiments.json",
   result: "output/result.json",
-  stages: "output/stages.json",
+  lifecycle: "output/lifecycle.json",
 } as const;
 
 /* -------------------------------------------------------------------------- */
@@ -114,6 +117,8 @@ export function parseCaseDocument(json: unknown): CaseDocument {
 }
 export type EvidenceArtifact = z.infer<typeof zEvidenceArtifact>;
 export type EvidenceReport = z.infer<typeof zEvidenceReport>;
+export type EvidenceCoordinate = z.infer<typeof zEvidenceCoordinate>;
+export type EvidenceVerification = z.infer<typeof zEvidenceVerification>;
 export type ClaimSet = z.infer<typeof zClaimSet>;
 export type CaseProposal = z.infer<typeof zCaseProposal>;
 export type ClauseVerdict = z.infer<typeof zClauseVerdict>;
@@ -133,6 +138,11 @@ export function parseCaseProposal(json: unknown): CaseProposal {
 /** Parse `output/evidence.json`. */
 export function parseEvidenceReport(json: unknown): EvidenceReport {
   return zEvidenceReport.parse(json);
+}
+
+/** Parse an agent-submitted evidence coordinate, rejecting an ambiguous shape. */
+export function parseEvidenceCoordinate(json: unknown): EvidenceCoordinate {
+  return zEvidenceCoordinate.parse(json);
 }
 
 /** Parse `output/claims.json`. */

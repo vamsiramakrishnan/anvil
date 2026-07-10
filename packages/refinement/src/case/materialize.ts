@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AirDocument, Claim } from "@anvil/air";
 import type { Deficiency } from "../deficiency.js";
 import { assembleContext, evidenceForTarget } from "../skills/context.js";
@@ -8,9 +8,11 @@ import { skillFor } from "../skills/registry.js";
 import { describeTarget, targetKey } from "../target.js";
 import {
   buildRunIdentity,
+  type CaseRunRef,
   type CaseWorkspace,
   type RunIdentity,
   resolveWorkspace,
+  runRef,
 } from "./identity.js";
 import {
   type AllowedToolsDoc,
@@ -25,6 +27,7 @@ import {
   PHASE_ROLE,
 } from "./model.js";
 import { type InvestigationProcedure, procedureFor } from "./procedure.js";
+import { writeJson } from "./store.js";
 
 /**
  * The `anvil case` helper commands available inside a case — only the rails that
@@ -39,24 +42,6 @@ export const CASE_HELPERS = [
   "anvil case validate-proposal <case> <air>",
   "anvil case finalize <case> [--status ...]",
 ];
-
-/**
- * Supporting predicates per skill: the narrow, intermediate facts an investigation
- * may legitimately record beyond the skill's output predicates. Kept deliberately
- * small — an executor may not assert free-form predicates into `claims.json`.
- */
-export const SUPPORTING_PREDICATES: Record<string, string[]> = {
-  "describe-field": [
-    "field.visibility",
-    "field.unit",
-    "field.usage",
-    "field.lifecycle",
-    "field.sensitivity",
-  ],
-  "describe-operation": ["operation.effect", "operation.behavior"],
-  "generate-examples": ["field.format", "field.description"],
-  "enrich-errors": ["error.cause", "error.httpStatus"],
-};
 
 /** Human wording for each machine constraint, for the brief's "you may not" list. */
 const CONSTRAINT_PROSE: Record<SkillConstraint, string> = {
@@ -88,19 +73,14 @@ export interface OpenCaseOptions {
   executor?: string;
   /** Injectable clock (ms) for reproducible run ids in tests. */
   now?: number;
-  /**
-   * What to do if the computed run directory already exists and is populated.
-   * `reject` (default) refuses — a new run never silently consumes stale output;
-   * `resume` reuses it; `replace` clears its `output/` and rewrites the inputs.
-   */
-  onExisting?: "reject" | "resume" | "replace";
 }
 
 export interface MaterializedCase {
-  caseId: string;
-  /** The case key `<skill>--<target-key>` (stable across runs). */
-  caseKey: string;
-  runId: string;
+  /**
+   * The fully-qualified reference to this run: `caseKey` (stable skill + target) and
+   * `runId` (this execution). These are the only two identifiers a case carries.
+   */
+  ref: CaseRunRef;
   dir: string;
   skill: RefinementSkill;
   context: SkillContext;
@@ -113,8 +93,8 @@ export interface MaterializedCase {
   procedure: InvestigationProcedure;
 }
 
-/** A filesystem-safe id for a case: `${skill}--${targetKey}` with unsafe chars folded. */
-export function caseId(skill: string, deficiencyTargetKey: string): string {
+/** A filesystem-safe case key: `${skill}--${targetKey}` with unsafe chars folded. */
+export function caseKeyFor(skill: string, deficiencyTargetKey: string): string {
   return `${skill}--${deficiencyTargetKey}`.replace(/[^a-zA-Z0-9._-]+/g, "-");
 }
 
@@ -158,10 +138,12 @@ function buildPolicyDoc(skill: RefinementSkill): EvidencePolicyDoc {
     allowedSources: skill.evidence.allowed,
     minimumStrength: skill.evidence.minimumStrength,
     writablePredicates: skill.output.predicates,
-    supportingPredicates: SUPPORTING_PREDICATES[skill.name] ?? [],
+    supportingPredicates: skill.output.supportingPredicates,
     writableFields: skill.output.fields,
     constraints: skill.constraints,
     mustNot: skill.constraints.map((c) => CONSTRAINT_PROSE[c]),
+    minimumVerification: skill.evidence.minimumVerification,
+    fieldVerification: skill.evidence.fieldVerification,
   };
 }
 
@@ -181,7 +163,7 @@ function renderBrief(
   proc: InvestigationProcedure,
 ): string {
   const lines: string[] = [];
-  lines.push(`# Case: ${task.caseId}`);
+  lines.push(`# Case: ${task.caseKey}`);
   lines.push("");
   lines.push(task.question);
   lines.push("");
@@ -246,12 +228,6 @@ function renderBrief(
 /* openCase                                                                   */
 /* -------------------------------------------------------------------------- */
 
-function writeJson(dir: string, rel: string, value: unknown): void {
-  const full = join(dir, rel);
-  mkdirSync(dirname(full), { recursive: true });
-  writeFileSync(full, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-}
-
 /**
  * Materialise a case for one deficiency: an isolated directory the executor works
  * inside. Reads AIR only to assemble the target's facts and prior evidence; never
@@ -273,7 +249,7 @@ export function openCase(
   const prior = evidenceForTarget(air, deficiency);
   const context = assembleContext(air, deficiency, prior);
   const proc = procedureFor(skill);
-  const caseKey = caseId(skill.name, targetKey(deficiency.target));
+  const caseKey = caseKeyFor(skill.name, targetKey(deficiency.target));
 
   // Containment: resolve inspect scopes within an explicit repository root, rejecting
   // any that escape it. The repository is read-only; the case dir is the only writable place.
@@ -300,9 +276,7 @@ export function openCase(
   const targetDoc = buildTargetDoc(context, prior);
   const tools = buildToolsDoc(workspace);
   const materialized: MaterializedCase = {
-    caseId: caseKey,
-    caseKey,
-    runId: identity.runId,
+    ref: runRef(identity),
     dir,
     skill,
     context,
@@ -315,16 +289,13 @@ export function openCase(
     procedure: proc,
   };
 
-  const onExisting = options.onExisting ?? "reject";
+  // Immutable run: `openCase` only ever *creates*. A run directory that already
+  // carries a canonical document is a prior run — never silently overwritten. To
+  // reopen one, call `resumeCase(dir)`; to discard it, `deleteRun(dir)`.
   if (isPopulatedRun(dir)) {
-    if (onExisting === "reject") {
-      throw new Error(
-        `Run '${dir}' already exists. Pass onExisting: 'resume' to reuse it or 'replace' to overwrite — a new run never consumes stale output implicitly.`,
-      );
-    }
-    // Resume reuses the run as-is; only replace rewrites the canonical inputs + views.
-    if (onExisting === "resume") return materialized;
-    if (onExisting === "replace") rmSync(join(dir, "output"), { recursive: true, force: true });
+    throw new Error(
+      `Run '${dir}' already exists — this is an immutable run. Use resumeCase('${dir}') to reopen it or deleteRun('${dir}') to discard it.`,
+    );
   }
 
   // The one canonical document; CASE.md and expected-output.schema.json are views of it.
@@ -383,7 +354,7 @@ function buildTask(
   proc: InvestigationProcedure,
 ): CaseTask {
   return {
-    caseId: caseKey,
+    caseKey,
     skill: skill.name,
     skillVersion: skill.version,
     deficiency: deficiency.code,
