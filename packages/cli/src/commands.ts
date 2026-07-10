@@ -128,4 +128,20 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
       "Layer 0 — capture what the customer actually supplied, before any compilation. `anvil source add <path|dir>` detects the spec format (OpenAPI 3.0/3.1 or Swagger 2.0, YAML or JSON) without compiling, hashes the file set deterministically, and locks a snapshot under .anvil/sources/<id>/ (source.json plus verbatim raw/ copies). A directory of specs becomes one snapshot with many files. `list` and `show` are read-only; `validate <id>` re-hashes raw/ and confirms it still matches the locked source.json, so tampering or drift is caught before it can contaminate a compile. The sourceHash is content-derived only — re-importing unchanged content yields the same hash — and broken input produces structured diagnostics, never a crash.",
     mutates: true,
   },
+  {
+    name: "certify",
+    usage: "anvil certify <dir|air.yaml> [--json]",
+    summary: "Run the certification gates over a bundle and write certification.json.",
+    detail:
+      "Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates and the MCP tool list, CLI catalog, and runtime manifest expose exactly the same approved operations), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.",
+    mutates: true,
+  },
+  {
+    name: "publish",
+    usage: "anvil publish <dir> --target cloud-run [--env ENV] [--allow-uncertified]",
+    summary: "Gated publish: verify the certification, then emit the deployment plan.",
+    detail:
+      "Publication requires a PASSING certification whose bundle hash matches the current bundle content — a stale certificate fails. On success it prints the Cloud Run deployment plan (same as `anvil deploy cloud-run`) and writes publication.json into the bundle. `--allow-uncertified` waives the gate for non-prod environments only; publishing to prod (via --env prod or ANVIL_ENV=prod) fails closed without a valid certification, flag or no flag. No cloud credentials are held and no API calls are made.",
+    mutates: true,
+  },
 ];

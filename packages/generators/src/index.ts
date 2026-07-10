@@ -7,6 +7,7 @@
 
 export * from "./bundle.js";
 export * from "./catalog.js";
+export * from "./certify.js";
 export * from "./conformance.js";
 export * from "./deploy.js";
 export * from "./docs.js";
