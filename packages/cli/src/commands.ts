@@ -66,7 +66,7 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
   },
   {
     name: "refine",
-    usage: "anvil refine <plan|skills|run|review|apply> <dir|air.yaml> [flags]",
+    usage: "anvil refine <plan|skills|skill|run|review|apply> <dir|air.yaml> [flags]",
     summary: "Detect, propose, measure, and apply refinements to AIR (the quality flywheel).",
     detail:
       "`anvil refine plan` runs Anvil's deterministic detectors and reports a refinement plan — documentation gaps, weak naming/routing, unproven safety semantics, and mock/eval coverage holes — grouped by severity, category, and the narrow skill that owns each fix. `anvil refine skills` lists those skills as typed contracts (trigger, evidence policy, output boundary, validation), whose executor is kept separate from their semantics. `anvil refine run` routes each in-scope deficiency to its skill, proposes an evidence-backed semantic patch, validates it, then MEASURES only the eval families it affects — with a safety guard that must never regress — and reconciles the result through an auto-approval policy into a reviewable refinement pack (--severity/--skill/--safe-only/--out). `anvil refine review <pack-dir>` prints the human review. `anvil refine apply` applies only the auto-approved refinements to AIR (the sole mutating step; --dry-run to preview), which `anvil compile` then reprojects across the CLI, MCP, and skill at once.",
