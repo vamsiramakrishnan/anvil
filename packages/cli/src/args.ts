@@ -15,7 +15,12 @@ const BOOLEAN_FLAGS = new Set([
   "quiet",
   "allow-degraded-native",
   "allow-uncertified",
-  // Progressive-disclosure views: always boolean so they never swallow a value.
+  "allow-large",
+  // Capability show sections and progressive-disclosure views: always boolean
+  // so they never swallow a value.
+  "operations",
+  "auth",
+  "evidence",
   "schema",
   "examples",
   "errors",

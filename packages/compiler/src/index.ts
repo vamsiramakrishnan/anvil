@@ -5,6 +5,7 @@
  */
 
 export * from "./capabilities.js";
+export * from "./capability-review.js";
 export * from "./classify.js";
 export * from "./compile.js";
 export * from "./manifest.js";

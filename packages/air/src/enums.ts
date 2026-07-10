@@ -157,6 +157,16 @@ export const OperationState = z.enum([
 ]);
 export type OperationState = z.infer<typeof OperationState>;
 
+/**
+ * Explicit review lifecycle of a **capability grouping** — orthogonal to the
+ * derived member `state`. `state` summarizes what the member operations are;
+ * `lifecycle` records what a reviewer decided about the grouping itself.
+ * Discovery always yields `proposed`; only an `approved` capability may be
+ * compiled into a capability bundle (`anvil build`).
+ */
+export const CapabilityLifecycle = z.enum(["proposed", "approved", "rejected", "deprecated"]);
+export type CapabilityLifecycle = z.infer<typeof CapabilityLifecycle>;
+
 /** Supported authentication schemes (spec §13). */
 export const AuthType = z.enum([
   "none",
