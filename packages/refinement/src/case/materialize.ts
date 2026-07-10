@@ -110,6 +110,11 @@ function buildTargetDoc(context: SkillContext, priorEvidence: Claim[]): CaseTarg
     doc.operationId = context.operation.id;
     doc.operationName = context.operation.canonicalName;
     doc.operationEffect = context.operation.effect.kind;
+    doc.operationDescription = context.operation.description;
+  }
+  if (context.errorSpec) {
+    doc.errorMessage = context.errorSpec.message;
+    doc.errorRetryable = context.errorSpec.retryable;
   }
   if (context.field) {
     const f = context.field;

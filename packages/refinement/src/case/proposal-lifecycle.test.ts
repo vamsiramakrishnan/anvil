@@ -12,14 +12,16 @@
  * `openCase` + `addEvidence` to ground it) but are defined locally — test files do
  * not share fixture state across each other.
  */
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AirDocument, loadAirDocument } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import type { Deficiency } from "../deficiency.js";
+import { makeDeficiency } from "../deficiency.js";
 import {
   addEvidence,
+  CASE_OUTPUT,
   closeCase,
   currentState,
   finalize,
@@ -30,7 +32,7 @@ import {
   validateCaseProposal,
 } from "../index.js";
 import { buildRefinementPlan } from "../plan.js";
-import { targetKey } from "../target.js";
+import { type SemanticTarget, targetKey } from "../target.js";
 
 /* -------------------------------------------------------------------------- */
 /* Fixtures                                                                    */
@@ -253,5 +255,237 @@ describe("currentState stays 'proposal_frozen' regardless of the validation outc
   it("for a rejected proposal", async () => {
     const { dir } = await weakRejectedCase();
     expect(currentState(dir)).toBe("proposal_frozen");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* finalize() trusts lifecycle validation metadata, not mutable critique.json */
+/* -------------------------------------------------------------------------- */
+
+/** Rewrite the mutable critique.json's status — the tamper a dishonest executor would attempt. */
+function tamperCritiqueStatus(dir: string, status: "validated" | "rejected"): void {
+  const path = join(dir, CASE_OUTPUT.critique);
+  const report = JSON.parse(readFileSync(path, "utf8"));
+  report.status = status;
+  writeFileSync(path, JSON.stringify(report, null, 2));
+}
+
+describe("finalize uses the lifecycle validation record, not critique.json", () => {
+  it("editing a rejected critique.json to 'validated' does not permit proposal_generated", async () => {
+    const { dir } = await weakRejectedCase(); // lifecycle: rejected, critique: rejected
+    tamperCritiqueStatus(dir, "validated");
+    expect(() => finalize(dir, { status: "proposal_generated" })).toThrow(
+      /Inconsistent validation records/,
+    );
+  });
+
+  it("editing a validated critique.json to 'rejected' is detected", async () => {
+    const { dir } = await groundedValidatedCase(); // lifecycle: validated, critique: validated
+    tamperCritiqueStatus(dir, "rejected");
+    expect(() => finalize(dir)).toThrow(/Inconsistent validation records/);
+  });
+
+  it("treats the lifecycle record as authoritative even when critique.json is absent", async () => {
+    const { dir } = await groundedValidatedCase();
+    rmSync(join(dir, CASE_OUTPUT.critique));
+    finalize(dir);
+    expect(readResult(dir)?.status).toBe("proposal_generated");
+  });
+
+  it("a proposal with no lifecycle validation record cannot finalize as generated", async () => {
+    const { dir } = openFixtureCase();
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "refunds/service.ts:118",
+    });
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "test_fixture",
+      ref: "refunds/service.test.ts:20",
+    });
+    synthesizeProposal(dir, { description: REASON_TEXT });
+    // Deliberately skip validateCaseProposal → no lifecycle validation record exists.
+    expect(() => finalize(dir, { status: "proposal_generated" })).toThrow(
+      /did not pass validate-proposal/,
+    );
+  });
+
+  it("a validated proposal finalizes cleanly as proposal_generated", async () => {
+    const { dir } = await groundedValidatedCase();
+    finalize(dir, { status: "proposal_generated" });
+    expect(readResult(dir)?.status).toBe("proposal_generated");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* finalize supported proves the current semantic value                       */
+/* -------------------------------------------------------------------------- */
+
+const CURRENT_DESC = "The reason recorded with the refund, already documented and correct.";
+
+/** A document whose `reason` field already carries a description. */
+function docWithDescribedReason(desc: string): AirDocument {
+  return loadAirDocument({
+    service: {
+      id: "payments",
+      displayName: "Payments",
+      version: "2026-07-10",
+      source: { kind: "openapi", uri: "./payments.openapi.yaml" },
+    },
+    operations: [
+      {
+        id: "payments.refunds.create",
+        canonicalName: "create_refund",
+        displayName: "Create refund",
+        description: "Create a refund against a captured payment.",
+        sourceRef: { kind: "openapi", path: "/refunds", method: "post" },
+        effect: { kind: "mutation", action: "create", risk: "financial", reversible: false },
+        input: {
+          params: [{ name: "paymentId", in: "path", required: true, schema: { type: "string" } }],
+          body: {
+            projection: "fields",
+            fields: [
+              { name: "reason", required: true, schema: { type: "string" }, description: desc },
+            ],
+          },
+        },
+        errors: [{ code: "conflict", message: "Refund conflicts.", retryable: false }],
+        idempotency: { mode: "required", mechanism: "header", header: "Idempotency-Key" },
+        retries: { mode: "safe" },
+        confirmation: { required: true },
+        auth: { type: "api_key" },
+        cli: { command: "payments refunds create" },
+        mcp: { toolName: "payments_create_refund" },
+        skill: { intentExamples: ["Refund a payment."] },
+      },
+    ],
+  });
+}
+
+/** Open a describe-field case whose target field already has a description (synthetic
+ * deficiency — the plan would not raise `missing_field_description` here, but that is
+ * exactly the point: we are testing `supported`, which needs a current value). */
+function openDescribedFieldCase(desc: string): { air: AirDocument; dir: string } {
+  const air = docWithDescribedReason(desc);
+  const target: SemanticTarget = {
+    kind: "field",
+    operationId: "payments.refunds.create",
+    path: "input.body.reason",
+  };
+  const deficiency = makeDeficiency("missing_field_description", target, "", {}, "medium");
+  const dir = openCase(air, deficiency, { root: scratch() }).dir;
+  return { air, dir };
+}
+
+/** Open an enrich-errors case whose target error already has retryability set (verified-required field). */
+function openErrorRetryableCase(): { air: AirDocument; dir: string } {
+  const air = docWithDescribedReason(CURRENT_DESC);
+  const target: SemanticTarget = {
+    kind: "error",
+    operationId: "payments.refunds.create",
+    code: "conflict",
+  };
+  const deficiency = makeDeficiency("error_retryability_unclear", target, "", {}, "medium");
+  const dir = openCase(air, deficiency, { root: scratch() }).dir;
+  return { air, dir };
+}
+
+describe("finalize 'supported' proves the current value is already correct", () => {
+  it("a missing-description case cannot finalize as supported", async () => {
+    const { dir } = openFixtureCase(); // reason has NO description
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "refunds/service.ts:118",
+    });
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "test_fixture",
+      ref: "refunds/service.test.ts:20",
+    });
+    expect(() => finalize(dir, { status: "supported" })).toThrow(/there is nothing to support/);
+  });
+
+  it("an existing description with an exact grounding claim finalizes as supported", async () => {
+    const { dir } = openDescribedFieldCase(CURRENT_DESC);
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: CURRENT_DESC,
+      source: "source_impl",
+      ref: "refunds/service.ts:118",
+    });
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: CURRENT_DESC,
+      source: "test_fixture",
+      ref: "refunds/service.test.ts:20",
+    });
+    finalize(dir, { status: "supported" });
+    expect(readResult(dir)?.status).toBe("supported");
+  });
+
+  it("an unrelated (supporting) claim cannot justify supported", async () => {
+    const { dir } = openDescribedFieldCase(CURRENT_DESC);
+    await addEvidence(dir, {
+      predicate: "field.usage",
+      value: "internal",
+      source: "source_impl",
+      ref: "refunds/service.ts:118",
+    });
+    expect(() => finalize(dir, { status: "supported" })).toThrow(
+      /no admissible claim asserts the current field.description value/,
+    );
+  });
+
+  it("a claim for a different value cannot justify supported", async () => {
+    const { dir } = openDescribedFieldCase(CURRENT_DESC);
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: "A completely different description.",
+      source: "source_impl",
+      ref: "refunds/service.ts:118",
+    });
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: "A completely different description.",
+      source: "test_fixture",
+      ref: "refunds/service.test.ts:20",
+    });
+    expect(() => finalize(dir, { status: "supported" })).toThrow(
+      /no admissible claim asserts the current field.description value/,
+    );
+  });
+
+  it("conflicting claims cannot justify supported", async () => {
+    const { dir } = openDescribedFieldCase(CURRENT_DESC);
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: CURRENT_DESC,
+      source: "source_impl",
+      ref: "refunds/service.ts:118",
+    });
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: "A different, contradicting description.",
+      source: "doc_example",
+      ref: "docs/refunds.md:3",
+    });
+    expect(() => finalize(dir, { status: "supported" })).toThrow(/unresolved conflicting claims/);
+  });
+
+  it("unverified evidence cannot justify supported when verified evidence is required", async () => {
+    const { dir } = openErrorRetryableCase(); // enrich-errors, retryable requires verified
+    await addEvidence(dir, {
+      predicate: "error.retryable",
+      value: false,
+      source: "incident",
+      ref: "incidents/INC-2210",
+    });
+    expect(() => finalize(dir, { status: "supported" })).toThrow(/requires verified evidence/);
   });
 });

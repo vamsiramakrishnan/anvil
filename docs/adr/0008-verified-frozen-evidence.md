@@ -57,3 +57,19 @@ model is ready for those sources without a second evidence type.
   Rejected: it forks reconciliation and claim-grounding logic; one canonical
   artifact shape keeps the trust model uniform. See
   `docs/INVESTIGATION_ARCHITECTURE.md`.
+
+## Update (PR #7) — identity, single verification truth, enforcement
+
+- **Artifact identity is the source coordinate, not the content.** A local
+  artifact's id derives from `{kind, repositoryRevision, path, startLine,
+  endLine, contentHash}` and an external artifact's from `{kind, source, uri,
+  contentHash}`. Two distinct coordinates holding the same excerpt get distinct
+  ids, so identical bytes can never collapse independent provenance or let a
+  source corroborate itself. A changed revision changes the id.
+- **One source of verification truth.** The standalone `verified` boolean is
+  removed; `verification.status` (`verified` / `unverified`) is authoritative
+  everywhere (schema, type, acquisition, tamper re-hash, rendering).
+- **Verification is enforced, not merely stored.** The deterministic check
+  `evidence_meets_verification` holds each patched value's grounding artifact to
+  the skill's per-field trust bar during validation, and the approval policy
+  routes proposals grounded only by unverified evidence to review.

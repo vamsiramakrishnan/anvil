@@ -13,6 +13,7 @@ const BOOLEAN_FLAGS = new Set([
   "no-retries",
   "all",
   "quiet",
+  "allow-degraded-native",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {

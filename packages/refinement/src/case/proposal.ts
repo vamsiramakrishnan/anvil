@@ -1,13 +1,19 @@
 import type { AirDocument, Claim } from "@anvil/air";
 import type { JsonValue } from "../skills/contract.js";
 import { skillByName } from "../skills/registry.js";
-import { meetsStrength, strengthOf, validateProposal } from "../skills/validate.js";
+import {
+  isVerifiedGrounding,
+  meetsStrength,
+  strengthOf,
+  validateProposal,
+} from "../skills/validate.js";
 import { allowedPredicates } from "./evidence.js";
 import { bindProposalToCase, caseIdentity, contextForCase } from "./identity-binding.js";
 import type { Conflict, InvestigationStatus } from "./investigation.js";
 import {
   freezeStage,
   isStageFrozen,
+  readProposalValidation,
   recordProposalValidation,
   transition,
   verifyFrozenStage,
@@ -17,7 +23,10 @@ import {
   CASE_AUX,
   CASE_OUTPUT,
   type CaseProposal,
+  type CaseTargetDoc,
   type ClaimSet,
+  type EvidenceArtifact,
+  type EvidencePolicyDoc,
   type EvidenceReport,
   parseCaseProposal,
   parseClaimSet,
@@ -167,7 +176,15 @@ export function validateCaseProposal(
   const skill = skillByName(task.skill);
   if (!skill) throw new Error(`Unknown skill '${task.skill}'.`);
 
-  const validated = validateProposal(skill, proposal, context);
+  // Resolve grounding claims against the FROZEN evidence report so verification-sensitive
+  // checks hold each patched value to its field's trust bar (verified vs allow_unverified).
+  // Parse it through the schema so a forged artifact (e.g. a pathless "verified" one) is
+  // rejected at the trust boundary rather than trusted here.
+  const frozenRaw = readOptionalJson(dir, CASE_OUTPUT.research);
+  const frozenEvidence = frozenRaw ? parseEvidenceReport(frozenRaw) : { artifacts: [] };
+  const validated = validateProposal(skill, proposal, context, {
+    artifacts: frozenEvidence.artifacts,
+  });
   const clauses = Object.entries(proposal.patch.set).map(([key, value]) => {
     const failing = validated.outcomes.find(
       (o) =>
@@ -202,6 +219,117 @@ export function validateCaseProposal(
   return { report, text };
 }
 
+/* --------------------------- supported evidence --------------------------- */
+
+/**
+ * The output predicate and *current* value a `supported` finalize must prove is already
+ * correct, read from the case's frozen target snapshot. Returns `undefined` when the
+ * target carries no current value for the skill's output (a missing description, an
+ * error with no message, …) — in which case `supported` is impossible: there is nothing
+ * to support. An empty/whitespace description counts as absent for exactly this reason.
+ */
+function currentSemanticValue(
+  skill: string,
+  tdoc: CaseTargetDoc,
+): { predicate: string; field: string; value: unknown } | undefined {
+  const nonEmpty = (v: string | undefined): string | undefined =>
+    v !== undefined && v.trim().length > 0 ? v : undefined;
+  switch (skill) {
+    case "describe-field": {
+      const v = nonEmpty(tdoc.field?.existingDescription);
+      return v === undefined
+        ? undefined
+        : { predicate: "field.description", field: "description", value: v };
+    }
+    case "describe-operation": {
+      const v = nonEmpty(tdoc.operationDescription);
+      return v === undefined
+        ? undefined
+        : { predicate: "operation.description", field: "description", value: v };
+    }
+    case "generate-examples": {
+      const v = tdoc.field?.example;
+      return v === undefined
+        ? undefined
+        : { predicate: "field.example", field: "examples", value: v };
+    }
+    case "enrich-errors": {
+      // Retryability is the safety-critical fact; when it is set, `supported` must prove
+      // that, at the field's (verified) bar. Otherwise fall back to the message.
+      if (tdoc.errorRetryable !== undefined) {
+        return { predicate: "error.retryable", field: "retryable", value: tdoc.errorRetryable };
+      }
+      const v = nonEmpty(tdoc.errorMessage);
+      return v === undefined
+        ? undefined
+        : { predicate: "error.message", field: "message", value: v };
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Whether the current semantic value is genuinely *proven already correct* by the case's
+ * evidence — the honest bar for a `supported` finalize. It is not enough that some claim
+ * exists: an admissible claim must assert the exact output predicate AND the exact
+ * current value, the corroborating evidence must meet the skill's minimum strength, and —
+ * where the field demands verified evidence — at least one grounding artifact must be
+ * verified. A missing current value, an unrelated claim, a claim for a different value,
+ * or unverified-only evidence for a verified-required field all make `supported` invalid.
+ */
+function evaluateSupported(
+  skill: string,
+  tdoc: CaseTargetDoc,
+  policy: EvidencePolicyDoc,
+  claims: Claim[],
+  artifacts: EvidenceArtifact[],
+): { ok: true } | { ok: false; reason: string } {
+  const current = currentSemanticValue(skill, tdoc);
+  if (!current) {
+    return {
+      ok: false,
+      reason:
+        "the target has no current value for this skill's output (there is nothing to support)",
+    };
+  }
+  const admissible = claims.filter((c) => policy.allowedSources.includes(c.source));
+  const matching = admissible.filter(
+    (c) =>
+      c.predicate === current.predicate &&
+      JSON.stringify(c.value) === JSON.stringify(current.value),
+  );
+  if (matching.length === 0) {
+    return {
+      ok: false,
+      reason: `no admissible claim asserts the current ${current.predicate} value`,
+    };
+  }
+  if (!meetsStrength(strengthOf(matching), policy.minimumStrength)) {
+    return {
+      ok: false,
+      reason: `evidence supporting the current value is below the required strength (${policy.minimumStrength})`,
+    };
+  }
+  const required = policy.fieldVerification?.[current.field] ?? policy.minimumVerification;
+  if (required === "verified") {
+    const byId = new Map(artifacts.map((a) => [a.id, a]));
+    // A verified requirement is met only by a re-hashable verified artifact (see
+    // isVerifiedGrounding) — a pathless "verified" artifact cannot be re-verified.
+    const verified = matching.some((c) => {
+      const art = c.sourceRef ? byId.get(c.sourceRef) : undefined;
+      return art !== undefined && isVerifiedGrounding(art);
+    });
+    if (!verified) {
+      return {
+        ok: false,
+        reason: `${current.field} requires verified evidence, but the supporting claim(s) rest on unverified artifacts`,
+      };
+    }
+  }
+  return { ok: true };
+}
+
 /* -------------------------------- finalize -------------------------------- */
 
 export interface FinalizeInput {
@@ -222,6 +350,8 @@ interface FinalizeFacts {
   conflictCount: number;
   evidenceStrengthMet: boolean;
   hasUsableEvidence: boolean;
+  /** Whether the current semantic value is actually proven correct (the `supported` bar). */
+  currentValueSupport: { ok: true } | { ok: false; reason: string };
   blockedSources?: FinalizeInput["blockedSources"];
 }
 
@@ -268,10 +398,17 @@ function validateRequestedStatus(requested: InvestigationStatus, facts: Finalize
           "Cannot finalize as 'supported': a proposal exists (a proposal means something was proposed to change, not that the current semantics are already supported).",
         );
       }
-      if (!facts.hasUsableEvidence) {
+      if (facts.conflictCount > 0) {
         throw new Error(
-          "Cannot finalize as 'supported': no claims were recorded that corroborate the current semantics.",
+          "Cannot finalize as 'supported': there are unresolved conflicting claims about the target.",
         );
+      }
+      // `supported` is a positive claim that the CURRENT value is already right — it must
+      // be proven, not merely accompanied by some evidence. A missing current value, an
+      // unrelated claim, a claim for a different value, or unverified-only evidence for a
+      // verified-required field all make it invalid.
+      if (!facts.currentValueSupport.ok) {
+        throw new Error(`Cannot finalize as 'supported': ${facts.currentValueSupport.reason}.`);
       }
       return;
   }
@@ -292,19 +429,42 @@ export function finalize(dir: string, input: FinalizeInput = {}): string {
   const proposal = readProposal(dir);
   const claimSet = readOptionalJson<ClaimSet>(dir, CASE_OUTPUT.extract);
   const evidence = readOptionalJson<EvidenceReport>(dir, CASE_OUTPUT.research);
-  const validation = readOptionalJson<ValidationReport>(dir, CASE_OUTPUT.critique);
+  // critique.json is REVIEW MATERIAL only — it is mutable and not in any freeze hash.
+  // The authoritative pass/fail verdict is the lifecycle validation record, written by
+  // the rails and never by the executor.
+  const critique = readOptionalJson<ValidationReport>(dir, CASE_OUTPUT.critique);
+  const lifecycleValidation = readProposalValidation(dir);
+  // Tamper detection: a mutable critique.json that disagrees with the authoritative
+  // lifecycle record means someone edited the critique to flip the verdict. Refuse rather
+  // than assemble a dishonest result over it.
+  if (critique && lifecycleValidation && critique.status !== lifecycleValidation.status) {
+    throw new Error(
+      `Inconsistent validation records: critique.json says '${critique.status}' but the lifecycle validation record says '${lifecycleValidation.status}'. The lifecycle record is authoritative; refusing to finalize over a tampered critique.`,
+    );
+  }
+  const proposalValidated = lifecycleValidation?.status === "validated";
   const experiments = readOptionalJson<{ experiments: unknown[] }>(dir, CASE_AUX.experiments);
   const conflicts = claimSet ? detectConflicts(parseClaimSet(claimSet).claims) : [];
 
   if (input.status) {
     const policy = loadPolicy(dir);
+    const task = loadTask(dir);
+    const tdoc = loadTargetDoc(dir);
     const claims = claimSet ? parseClaimSet(claimSet).claims : [];
     const facts: FinalizeFacts = {
       hasProposal: Boolean(proposal),
-      proposalValidated: validation?.status === "validated",
+      // Authoritative: the lifecycle record, never the mutable critique.json.
+      proposalValidated,
       conflictCount: conflicts.length,
       evidenceStrengthMet: meetsStrength(strengthOf(claims), policy.minimumStrength),
       hasUsableEvidence: claims.length > 0,
+      currentValueSupport: evaluateSupported(
+        task.skill,
+        tdoc,
+        policy,
+        claims,
+        evidence?.artifacts ?? [],
+      ),
       blockedSources: input.blockedSources,
     };
     validateRequestedStatus(input.status, facts);
@@ -313,7 +473,7 @@ export function finalize(dir: string, input: FinalizeInput = {}): string {
   let status: InvestigationStatus;
   if (input.status) {
     status = input.status;
-  } else if (proposal && validation?.status === "validated") {
+  } else if (proposal && proposalValidated) {
     status = "proposal_generated";
   } else if (conflicts.length > 0) {
     status = "conflicted";
@@ -329,7 +489,10 @@ export function finalize(dir: string, input: FinalizeInput = {}): string {
     conflicts,
     experiments: experiments?.experiments ?? [],
     proposal: status === "proposal_generated" ? proposal : undefined,
-    validation: validation ?? undefined,
+    // critique is included for human review, but the authoritative verdict is the
+    // lifecycle validation record recorded alongside it.
+    validation: critique ?? undefined,
+    proposalValidation: lifecycleValidation ?? undefined,
     blockedSources: status === "blocked_by_missing_source" ? input.blockedSources : undefined,
   };
   writeJson(dir, CASE_AUX.result, result);

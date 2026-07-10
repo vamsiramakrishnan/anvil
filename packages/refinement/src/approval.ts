@@ -1,13 +1,29 @@
 import type { Claim } from "@anvil/air";
 import type { ApprovalDecision } from "./model.js";
-import type { SkillProposal } from "./skills/contract.js";
-import { meetsStrength, strengthOf } from "./skills/validate.js";
+import type { SkillProposal, VerifiableArtifact } from "./skills/contract.js";
+import { isVerifiedGrounding, meetsStrength, strengthOf } from "./skills/validate.js";
 
 export interface ApprovalInput {
   skill: string;
   proposal: SkillProposal;
   evidence: Claim[];
+  /**
+   * The frozen artifacts that actually ground the patched values (see
+   * `groundingArtifacts`). Supplied on the case path; omitted on the deterministic
+   * heuristic path, where there are no frozen artifacts and the verification guard is
+   * inert. Only these artifacts count toward verification — never an unrelated verified
+   * artifact from elsewhere in the case.
+   */
+  groundingArtifacts?: VerifiableArtifact[];
 }
+
+/** The four skills whose output is eligible for automatic approval. */
+const AUTO_APPROVAL_SKILLS = new Set([
+  "describe-field",
+  "describe-operation",
+  "generate-examples",
+  "enrich-errors",
+]);
 
 /**
  * The auto-approval policy: decides `auto` vs `review`, never `reject` — a
@@ -25,12 +41,36 @@ export function classifyApproval(input: ApprovalInput): ApprovalDecision {
   const strength = strengthOf(input.evidence);
   const set = input.proposal.patch.set;
 
+  // Whether the evidence that grounds THIS proposal's patched values is unverified-only.
+  // Undefined groundingArtifacts = the heuristic path (no frozen artifacts) — the guard
+  // stays inert there. An empty grounding set is not treated as unverified-only (there is
+  // nothing to be unverified); ungrounded proposals fail validation before reaching here.
+  const grounding = input.groundingArtifacts;
+  const unverifiedOnly =
+    grounding !== undefined &&
+    grounding.length > 0 &&
+    // "verified" here means re-hashable (a forgeable pathless "verified" artifact does
+    // not count), so a proposal backed only by such artifacts still routes to review.
+    !grounding.some(isVerifiedGrounding);
+
   // Rule 1 — safety loosening guard: enabling retries reduces safety, so it is
   // never auto-approved on anything less than authoritative evidence.
   if (set.retryable === true && strength !== "authoritative") {
     return {
       tier: "review",
       reason: "loosening retry (retryable=true) requires authoritative evidence",
+    };
+  }
+
+  // Rule 1b — verification guard: an auto-eligible proposal grounded ONLY by unverified
+  // external evidence never auto-approves, however strong its aggregate strength. Verified
+  // grounding is necessary (not sufficient) for automatic approval. For retryable=true this
+  // stacks on Rule 1's authoritative bar; for retryable=false it prevents an unverified
+  // claim from inventing non-retryability (validation also rejects that upstream).
+  if (AUTO_APPROVAL_SKILLS.has(input.skill) && unverifiedOnly) {
+    return {
+      tier: "review",
+      reason: "proposal is grounded only by unverified external evidence",
     };
   }
 

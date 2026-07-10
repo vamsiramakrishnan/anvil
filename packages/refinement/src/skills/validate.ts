@@ -8,6 +8,8 @@ import {
   type SkillProposal,
   STRUCTURAL_KEYS,
   type ValidationCheckId,
+  type ValidationEvidenceContext,
+  type VerifiableArtifact,
 } from "./contract.js";
 
 /* -------------------------------------------------------------------------- */
@@ -110,7 +112,16 @@ type Check = (
   skill: RefinementSkill,
   proposal: SkillProposal,
   context: SkillContext,
+  evidence?: ValidationEvidenceContext,
 ) => ValidationOutcome;
+
+/** The verification bar a given output field must clear: its per-field override, else the skill default. */
+function requiredVerification(
+  skill: RefinementSkill,
+  field: string,
+): "verified" | "allow_unverified" {
+  return skill.evidence.fieldVerification?.[field] ?? skill.evidence.minimumVerification;
+}
 
 const STOPWORDS = new Set(["the", "a", "an", "of", "for", "to", "this", "is", "with", "and", "or"]);
 
@@ -197,6 +208,72 @@ const CHECKS: Record<ValidationCheckId, Check> = {
     return ok("evidence_supports_value", "every patched value is grounded by a claim");
   },
 
+  evidence_meets_verification(skill, proposal, _context, evidence) {
+    // Verification is a case-investigation guarantee — it can only be enforced against
+    // the FROZEN evidence report. The heuristic refinement path has no frozen artifacts
+    // and supplies none, so the check is inert there; the case path always supplies it.
+    if (!evidence) {
+      return ok(
+        "evidence_meets_verification",
+        "no frozen evidence report supplied; verification is enforced on the case path",
+      );
+    }
+    const byId = new Map(evidence.artifacts.map((a) => [a.id, a]));
+
+    // Resolve the claims that ground THIS value to their frozen artifacts, then hold
+    // them to the field's verification bar. A grounding claim whose sourceRef does not
+    // resolve to a frozen artifact cannot satisfy the requirement (point 7); a claim
+    // that does not ground the value is irrelevant and never consulted (point 8).
+    const checkValue = (field: string, value: JsonValue): ValidationOutcome | null => {
+      const grounding = proposal.claims.filter((c) => claimGrounds(c, field, value));
+      if (grounding.length === 0) {
+        return fail(
+          "evidence_meets_verification",
+          `no grounding claim for '${field}' = ${JSON.stringify(value)}`,
+        );
+      }
+      const resolved: VerifiableArtifact[] = [];
+      for (const c of grounding) {
+        const art = c.sourceRef ? byId.get(c.sourceRef) : undefined;
+        if (!art) {
+          return fail(
+            "evidence_meets_verification",
+            `${field} claim references unknown frozen artifact '${c.sourceRef ?? "(none)"}'`,
+          );
+        }
+        resolved.push(art);
+      }
+      // "Verified" here means re-hashable (see isVerifiedGrounding): a verified status with
+      // no re-readable coordinate cannot be re-verified and must not clear the bar.
+      if (
+        requiredVerification(skill, field) === "verified" &&
+        !resolved.some(isVerifiedGrounding)
+      ) {
+        return fail(
+          "evidence_meets_verification",
+          `${field} requires verified evidence, but no grounding artifact is verified and re-hashable`,
+        );
+      }
+      return null;
+    };
+
+    for (const [field, value] of patchEntries(proposal.patch)) {
+      if (field === "examples" && Array.isArray(value)) {
+        for (const el of value) {
+          const outcome = checkValue(field, el as JsonValue);
+          if (outcome) return outcome;
+        }
+        continue;
+      }
+      const outcome = checkValue(field, value);
+      if (outcome) return outcome;
+    }
+    return ok(
+      "evidence_meets_verification",
+      "every patched value is grounded by evidence meeting its verification bar",
+    );
+  },
+
   description_nonempty(_skill, proposal) {
     const d = proposal.patch.set.description;
     return typeof d === "string" && d.trim().length > 0
@@ -254,11 +331,58 @@ export function validateProposal(
   skill: RefinementSkill,
   proposal: SkillProposal,
   context: SkillContext,
+  evidenceContext?: ValidationEvidenceContext,
 ): ValidatedProposal {
-  const outcomes = skill.validation.map((id) => CHECKS[id](skill, proposal, context));
+  const outcomes = skill.validation.map((id) =>
+    CHECKS[id](skill, proposal, context, evidenceContext),
+  );
   const status = outcomes.every((o) => o.ok) ? "validated" : "rejected";
   return { proposal, outcomes, status };
 }
 
 /** The full set of implemented validation checks (for introspection/tests). */
 export const VALIDATION_CHECKS = Object.keys(CHECKS) as ValidationCheckId[];
+
+/**
+ * Whether an artifact counts as *trustworthy* verified evidence: its status is
+ * `verified` AND it carries a re-readable coordinate (a repository path) Anvil can
+ * re-hash. A `verified` status with no such coordinate cannot be re-verified — a
+ * hand-written or buggy `evidence.json` could assert it — so it does NOT satisfy a
+ * verified-evidence requirement. Used by both the validation check and the approval
+ * guard so "verified" means the same thing in both.
+ */
+export function isVerifiedGrounding(a: VerifiableArtifact): boolean {
+  return a.verification.status === "verified" && typeof a.path === "string" && a.path.length > 0;
+}
+
+/**
+ * The frozen artifacts that actually ground a proposal's patched values: for each
+ * patched value (each example element for `examples`), the artifacts referenced by a
+ * claim that grounds it. Artifacts referenced only by non-grounding claims — and
+ * unrelated artifacts entirely — are excluded, so an approval decision counts only
+ * evidence that backs the change, never a stray verified artifact from elsewhere in the
+ * case. Generic over the artifact shape so both the case model and the minimal
+ * `VerifiableArtifact` view flow through unchanged.
+ */
+export function groundingArtifacts<A extends { id: string }>(
+  proposal: SkillProposal,
+  artifacts: A[],
+): A[] {
+  const byId = new Map(artifacts.map((a) => [a.id, a]));
+  const out = new Map<string, A>();
+  const collect = (field: string, value: JsonValue): void => {
+    for (const c of proposal.claims) {
+      if (!claimGrounds(c, field, value)) continue;
+      const art = c.sourceRef ? byId.get(c.sourceRef) : undefined;
+      if (art) out.set(art.id, art);
+    }
+  };
+  for (const [field, value] of patchEntries(proposal.patch)) {
+    if (field === "examples" && Array.isArray(value)) {
+      for (const el of value) collect(field, el as JsonValue);
+    } else {
+      collect(field, value);
+    }
+  }
+  return [...out.values()];
+}

@@ -43,6 +43,7 @@ const describeField: RefinementSkill = {
     "claims_from_allowed_sources",
     "evidence_meets_minimum_strength",
     "evidence_supports_value",
+    "evidence_meets_verification",
     "description_nonempty",
     "description_not_tautological",
   ],
@@ -71,6 +72,7 @@ const describeOperation: RefinementSkill = {
     "claims_from_allowed_sources",
     "evidence_meets_minimum_strength",
     "evidence_supports_value",
+    "evidence_meets_verification",
     "description_nonempty",
     "description_not_tautological",
   ],
@@ -99,6 +101,7 @@ const generateExamples: RefinementSkill = {
     "claims_from_allowed_sources",
     "evidence_meets_minimum_strength",
     "evidence_supports_value",
+    "evidence_meets_verification",
     "examples_validate_against_schema",
   ],
 };
@@ -131,6 +134,7 @@ const enrichErrors: RefinementSkill = {
     "claims_from_allowed_sources",
     "evidence_meets_minimum_strength",
     "evidence_supports_value",
+    "evidence_meets_verification",
   ],
 };
 
