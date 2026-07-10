@@ -187,8 +187,18 @@ export function closeCase(air: AirDocument, dir: string): Refinement | undefined
   const { task, context } = contextForCase(air, dir);
   const skill = skillByName(task.skill);
   if (!skill) throw new Error(`Unknown skill '${task.skill}' for case at ${dir}.`);
-  const validated = validateProposal(skill, proposalFromCase(proposalDoc), context);
-  const refinement = reconcile({ air, context, validated });
+  // Re-validate against the frozen evidence report so the verification bar is enforced
+  // on the close path exactly as it was at validate-proposal time.
+  const frozenEvidence = readEvidence(dir);
+  const validated = validateProposal(skill, proposalFromCase(proposalDoc), context, {
+    artifacts: frozenEvidence?.artifacts ?? [],
+  });
+  const refinement = reconcile({
+    air,
+    context,
+    validated,
+    evidenceArtifacts: frozenEvidence?.artifacts ?? [],
+  });
   transition(dir, "closed");
   return refinement;
 }

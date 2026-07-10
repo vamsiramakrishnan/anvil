@@ -92,17 +92,59 @@ describe("ClaudeCodeAgentDriver configures the runner", () => {
     };
   }
 
-  it("throws on a non-zero exit and records the execution log", async () => {
-    const driver = new ClaudeCodeAgentDriver({ runner: fakeRunner({ exitCode: 2 }) });
-    // A minimal case dir with just a CASE.md is enough to build the prompt.
+  async function minimalCaseDir(): Promise<string> {
     const { mkdtempSync, writeFileSync, mkdirSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const dir = mkdtempSync(join(tmpdir(), "anvil-driver-"));
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "CASE.md"), "# Case\ninvestigate.", "utf8");
+    return dir;
+  }
+
+  it("throws on a non-zero exit and records the execution log", async () => {
+    // Degraded native must be acknowledged, else the run refuses before launching.
+    const driver = new ClaudeCodeAgentDriver({
+      runner: fakeRunner({ exitCode: 2 }),
+      allowDegradedNative: true,
+    });
+    const dir = await minimalCaseDir();
     await expect(driver.run(dir)).rejects.toThrow(/exited 2/);
     expect(driver.lastResult?.exitCode).toBe(2);
+  });
+
+  it("refuses to start a default native investigation (degraded not acknowledged)", async () => {
+    const driver = new ClaudeCodeAgentDriver({ runner: fakeRunner({ exitCode: 0 }) });
+    const dir = await minimalCaseDir();
+    await expect(driver.run(dir)).rejects.toThrow(
+      /cannot enforce repository read-only and case-only writes/,
+    );
+    // It never launched the agent, so there is no recorded result.
+    expect(driver.lastResult).toBeUndefined();
+  });
+
+  it("permits native execution when --allow-degraded-native is acknowledged", async () => {
+    const driver = new ClaudeCodeAgentDriver({
+      runner: fakeRunner({ exitCode: 0 }),
+      allowDegradedNative: true,
+    });
+    const dir = await minimalCaseDir();
+    await expect(driver.run(dir)).resolves.toBeUndefined();
+    expect(driver.lastResult?.exitCode).toBe(0);
+  });
+
+  it("records an attestation naming every unenforced guarantee on a permitted native run", async () => {
+    const driver = new ClaudeCodeAgentDriver({
+      runner: fakeRunner({ exitCode: 0 }),
+      allowDegradedNative: true,
+    });
+    const dir = await minimalCaseDir();
+    await driver.run(dir);
+    const att = driver.lastResult?.attestation;
+    expect(att?.requestedSandbox).toBe("native");
+    expect(att?.actualSandbox).toBe("native");
+    expect(att?.degraded.some((d) => d.includes("filesystem.repository"))).toBe(true);
+    expect(att?.degraded.some((d) => d.includes("filesystem.case"))).toBe(true);
   });
 });
 
@@ -113,6 +155,11 @@ describe("execution policy + native backend", () => {
     expect(policy.filesystem).toEqual({ repository: "read-only", case: "read-write" });
     expect(policy.environmentAllowlist).toContain("ANTHROPIC_API_KEY");
     expect(policy.environmentAllowlist).not.toContain("SECRET");
+  });
+
+  it("does not accept degraded native execution by default", () => {
+    expect(defaultExecutionPolicy().allowDegradedNative).toBe(false);
+    expect(defaultExecutionPolicy("claude-code").allowDegradedNative).toBe(false);
   });
 
   it("the native backend narrows the environment to the policy allowlist", async () => {

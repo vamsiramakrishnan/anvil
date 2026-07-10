@@ -210,31 +210,52 @@ On ingestion Anvil:
 
 ```
 EvidenceArtifact {
-  id            stable artifact id claims reference
+  id            stable artifact id claims reference (see "identity" below)
   uri           the source coordinate, canonicalised
   source        evidence kind (implementation, contract_test, doc, …)
   revision?     repository revision the excerpt was read at
   contentHash   hash of the frozen excerpt
   excerpt       the exact bytes Anvil read (not agent-supplied)
   acquiredAt    acquisition timestamp
+  verification  { status: "verified", verifier } | { status: "unverified", reason }
 }
 ```
+
+**Artifact identity is the source coordinate, not the content.** A local
+repository artifact's `id` is derived from `{kind, repositoryRevision, path,
+startLine, endLine, contentHash}`; an external artifact's from `{kind, source,
+uri, contentHash}`. Two *distinct* coordinates that happen to hold the same
+excerpt therefore receive **different** ids — content alone can never collapse
+two independent sources into one, or let a file "corroborate itself." A changed
+revision changes the id, so provenance is coordinate-exact.
+
+**Verification has one source of truth: `verification.status`.** There is no
+separate `verified` boolean that could drift from it. A local-repository artifact
+is `verified` (Anvil read and hashed the exact bytes itself); an external
+artifact is `unverified` (the excerpt is caller-supplied and cannot be
+independently confirmed until a real second-source provider resolves it).
 
 Claims (`output/claims.json`) then reference **frozen artifact ids**. A claim
 cannot carry an authoritative excerpt of its own; the excerpt is whatever Anvil
 read from the verified source. This closes the obvious attack: an agent cannot
 write a persuasive quote and attribute it to a file that does not say that.
 
-Non-filesystem sources (GitHub, Confluence, and other MCP-served sources, added
-later) use the **same canonical artifact form** — the same `{id, uri, source,
-revision, contentHash, excerpt, acquiredAt}` shape and the same freeze-then-hash
-discipline — so the trust boundary does not depend on where evidence came from.
+**Verification participates in validation and approval, not just storage.**
+- The deterministic check `evidence_meets_verification` resolves each patched
+  value's grounding claims to their frozen artifacts and holds them to the
+  skill's per-field trust bar (`fieldVerification[field] ?? minimumVerification`).
+  A field that requires `verified` evidence (e.g. an error's `retryable`) rejects
+  a proposal grounded only in unverified claims.
+- The approval policy routes any auto-eligible proposal grounded **only** by
+  unverified artifacts to `review`, however strong its aggregate strength.
+  Verified grounding is *necessary but not sufficient* — every existing strength
+  and safety rule still applies. Only the artifacts that ground the patched
+  values count; an unrelated verified artifact elsewhere in the case does not
+  upgrade an unverified proposal.
 
-> **Current vs target.** `addEvidence` today records an `EvidenceArtifact` with
-> `{uri, span, relevance, source}` and stores the agent's supplied value on the
-> claim; it enforces the source policy but does not yet read/verify/hash the
-> excerpt. The target replaces agent-supplied excerpts with Anvil-read,
-> hashed, immutable artifacts as described above.
+Non-filesystem sources (GitHub, Confluence, and other MCP-served sources, added
+later) use the **same canonical artifact form** and the same freeze-then-hash
+discipline, so the trust boundary does not depend on where evidence came from.
 
 ## 6. Schema as the single source of truth
 
@@ -325,10 +346,29 @@ The **honest statuses** a case can finalise with:
 | status | meaning |
 | --- | --- |
 | `proposal_generated` | evidence grounds a validated, in-boundary patch |
-| `supported` | current semantics are already correct; nothing to change |
+| `supported` | the current semantic value is *proven* already correct; nothing to change |
 | `conflicted` | sources disagree; declining is the correct answer |
 | `insufficient_evidence` | not enough admissible evidence to ground a patch |
 | `blocked_by_missing_source` | a required source was unavailable |
+
+`supported` is a **positive claim that must be proven**, not the absence of a
+proposal. Anvil derives the skill's current output value from the case's frozen
+target snapshot (e.g. a field's existing description, an error's current
+retryability) and accepts `supported` only when: no patch exists; a current value
+actually *exists*; at least one admissible claim asserts that exact predicate and
+exact value; that evidence meets the skill's minimum strength **and** verification
+bar; and no unresolved conflict exists. A missing-description case can therefore
+**never** finalise as `supported` — there is no current description to support.
+
+**Finalization trusts lifecycle validation metadata, not `critique.json`.** The
+authoritative pass/fail verdict for a proposal is the `proposalValidation` record
+written into `lifecycle.json` by the `validate-proposal` rail — never the mutable
+`critique.json`, which is review material and is not part of any stage-freeze
+hash. `finalize` reads the lifecycle record to decide `proposal_generated`, and
+refuses outright if a present `critique.json` disagrees with it (a tamper
+signal). Editing a rejected `critique.json` to look validated therefore cannot
+produce a dishonest `result.json`, and a proposal with no lifecycle validation
+record cannot finalise as `proposal_generated`.
 
 Only `proposal_generated` carries a patch. Every other status is a **first-class
 outcome**, not a failure — it returns everything learned (plan, artifacts,
@@ -393,9 +433,29 @@ What local enforcement **does** provide today:
 What is **not** claimed as present:
 
 - **Full container isolation** (`/case` writable, `/repo` read-only, no network
-  egress) is an **optional future mode**. It is the right long-term answer and
-  the seam is designed for it, but the current framework does not run the agent
-  in a container, and this document does not pretend it does.
+  egress) is an **optional future mode**. **Bubblewrap and container backends are
+  intentionally deferred — not implemented.** The `ExecutionBackend` seam and its
+  capability declarations are ready for them, but no sandboxed backend exists yet.
+
+**Degraded native execution now requires explicit consent.** Because the native
+backend cannot enforce the filesystem split (repository read-only, case-only
+writes), `defaultExecutionPolicy()` sets `allowDegradedNative: false`, and a
+native investigation **refuses to start** unless the caller opts in:
+
+```
+anvil case investigate <case-dir> --allow-degraded-native
+```
+
+Without the flag, the driver fails fast with:
+
+> Native execution cannot enforce repository read-only and case-only writes.
+> Use a sandboxed backend or pass --allow-degraded-native to acknowledge the
+> reduced containment.
+
+Degradation is never enabled implicitly "because Bubblewrap is unavailable." When
+it is acknowledged, the run still records an **execution attestation** naming
+every guarantee the backend could not enforce, so the gap is visible in the run's
+metadata rather than assumed away.
 
 The security posture the framework actually relies on is **not** containment —
 it is that the agent's output is *untrusted until deterministically validated*.

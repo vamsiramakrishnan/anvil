@@ -8,6 +8,10 @@
 - Minimum aggregate strength: **corroborated**
   (`single` = one source · `corroborated` = two independent sources · `authoritative`
   = one implementation/recorded-traffic source).
+- Minimum verification: **allow_unverified**
+  (`verified` = a source Anvil re-hashed itself · `allow_unverified` = a caller-supplied
+  excerpt is acceptable). Enforced per patched value by `evidence_meets_verification`.
+- Per-field verification overrides: none.
 
 ## Output boundary
 - May assert claim predicates: `field.description`
@@ -26,6 +30,7 @@
 - `claims_from_allowed_sources`
 - `evidence_meets_minimum_strength`
 - `evidence_supports_value`
+- `evidence_meets_verification`
 - `description_nonempty`
 - `description_not_tautological`
 

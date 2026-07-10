@@ -54,8 +54,8 @@ export interface EvidenceAcquirer {
 /**
  * The local repository provider: a filesystem coordinate is *verified*. The path must
  * resolve inside an allowed scope, the line range must be valid, and Anvil reads the
- * exact bytes and hashes them (`verified: true`). Anvil never trusts an agent-provided
- * excerpt for a source it can read itself.
+ * exact bytes and hashes them (`verification.status === "verified"`). Anvil never trusts
+ * an agent-provided excerpt for a source it can read itself.
  */
 export class LocalRepositoryEvidenceAcquirer implements EvidenceAcquirer {
   readonly kind = "local_repository" as const;
@@ -93,8 +93,19 @@ export class LocalRepositoryEvidenceAcquirer implements EvidenceAcquirer {
     const uri = coordinate.startLine
       ? `${rel}#L${coordinate.startLine}-L${coordinate.endLine ?? coordinate.startLine}`
       : rel;
+    // Identity is the SOURCE COORDINATE, not the content: two distinct files (or spans,
+    // or revisions) that happen to contain the same excerpt are independent provenance
+    // and must not collapse to one id. Content alone would falsely "corroborate" itself.
+    const id = hashJson({
+      kind: "local_repository",
+      revision: workspace.repositoryRevision,
+      path: rel,
+      startLine: coordinate.startLine,
+      endLine: coordinate.endLine ?? coordinate.startLine,
+      contentHash,
+    }).slice(0, 20);
     return {
-      id: contentHash.slice(0, 12),
+      id,
       uri,
       source: coordinate.source as EvidenceArtifact["source"],
       revision: workspace.repositoryRevision,
@@ -105,7 +116,6 @@ export class LocalRepositoryEvidenceAcquirer implements EvidenceAcquirer {
       path: rel,
       startLine: coordinate.startLine,
       endLine: coordinate.endLine ?? coordinate.startLine,
-      verified: true,
       verification: { status: "verified", verifier: "local_repository" },
     };
   }
@@ -113,9 +123,10 @@ export class LocalRepositoryEvidenceAcquirer implements EvidenceAcquirer {
 
 /**
  * The external artifact provider: a source Anvil cannot read itself (a Postman run,
- * an incident, a doc URL). It keeps the provided excerpt, hashed but `verified: false`.
- * When a real second-source integration arrives (GitHub/Confluence MCP), it replaces
- * this with an acquirer that actually resolves the pointer.
+ * an incident, a doc URL). It keeps the provided excerpt, hashed but
+ * `verification.status === "unverified"`. When a real second-source integration arrives
+ * (GitHub/Confluence MCP), it replaces this with an acquirer that actually resolves the
+ * pointer.
  */
 export class ExternalArtifactEvidenceAcquirer implements EvidenceAcquirer {
   readonly kind = "external_artifact" as const;
@@ -126,15 +137,22 @@ export class ExternalArtifactEvidenceAcquirer implements EvidenceAcquirer {
     const uri = coordinate.uri;
     const excerpt = coordinate.excerpt ?? "";
     const contentHash = hashContent(excerpt);
+    // Identity is the SOURCE (kind + source + uri + content), not the excerpt alone —
+    // two different URIs are two independent pointers even with identical excerpts.
+    const id = hashJson({
+      kind: "external_artifact",
+      source: coordinate.source,
+      uri,
+      contentHash,
+    }).slice(0, 20);
     return {
-      id: hashJson({ uri, excerpt, source: coordinate.source }).slice(0, 12),
+      id,
       uri,
       source: coordinate.source as EvidenceArtifact["source"],
       contentHash,
       excerpt,
       acquiredAt: new Date(context.now ?? Date.now()).toISOString(),
       relevance: coordinate.note,
-      verified: false,
       verification: {
         status: "unverified",
         reason: "external artifact; excerpt is caller-supplied and not independently confirmed",
@@ -280,7 +298,10 @@ export async function addEvidence(
   writeJson(dir, CASE_OUTPUT.extract, claims);
 
   const kind = policy.writablePredicates.includes(input.predicate) ? "output" : "supporting";
-  const prov = artifact.verified ? `verified ${artifact.uri}` : `unverified ${artifact.uri}`;
+  const prov =
+    artifact.verification.status === "verified"
+      ? `verified ${artifact.uri}`
+      : `unverified ${artifact.uri}`;
   return `Recorded ${claims.claims.length} claim(s). Latest (${kind}): ${input.predicate}=${JSON.stringify(input.value)} from ${input.source} [${prov}, artifact ${artifact.id}].`;
 }
 
@@ -298,7 +319,7 @@ export function verifyFrozenEvidence(dir: string): {
   const report = readOptionalJson<EvidenceReport>(dir, CASE_OUTPUT.research) ?? { artifacts: [] };
   const mismatches: Array<{ id: string; uri: string; reason: string }> = [];
   for (const a of report.artifacts) {
-    if (!a.verified || !a.path) continue;
+    if (a.verification.status !== "verified" || !a.path) continue;
     const abs = resolve(workspace.repositoryRoot, a.path);
     if (!existsSync(abs)) {
       mismatches.push({ id: a.id, uri: a.uri, reason: "source path no longer exists" });

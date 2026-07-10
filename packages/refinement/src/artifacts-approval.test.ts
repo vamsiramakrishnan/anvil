@@ -2,7 +2,8 @@ import { type AirDocument, type Claim, loadAirDocument } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { classifyApproval } from "./approval.js";
 import { affectedArtifacts } from "./artifacts.js";
-import type { JsonValue, SkillProposal } from "./skills/contract.js";
+import type { JsonValue, SkillProposal, VerifiableArtifact } from "./skills/contract.js";
+import { groundingArtifacts } from "./skills/validate.js";
 import type { SemanticTarget } from "./target.js";
 
 /**
@@ -293,6 +294,125 @@ describe("classifyApproval", () => {
     expect(decision).toEqual({
       tier: "review",
       reason: "no auto-approval rule matched; human review required",
+    });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* classifyApproval — verification guard (Defect 3)                           */
+/* -------------------------------------------------------------------------- */
+
+const DESC = "The reason for the refund.";
+
+function artifact(id: string, status: "verified" | "unverified"): VerifiableArtifact {
+  return { id, verification: { status } };
+}
+
+describe("classifyApproval verification guard", () => {
+  it("routes a corroborated but UNVERIFIED description to review", () => {
+    const decision = classifyApproval({
+      skill: "describe-field",
+      proposal: proposal("describe-field", fieldTarget, { description: DESC }),
+      evidence: [
+        claim({ source: "doc_example", sourceRef: "a1" }),
+        claim({ source: "test_fixture", sourceRef: "a2" }),
+      ],
+      groundingArtifacts: [artifact("a1", "unverified"), artifact("a2", "unverified")],
+    });
+    expect(decision).toEqual({
+      tier: "review",
+      reason: "proposal is grounded only by unverified external evidence",
+    });
+  });
+
+  it("auto-approves a corroborated AND verified description", () => {
+    const decision = classifyApproval({
+      skill: "describe-field",
+      proposal: proposal("describe-field", fieldTarget, { description: DESC }),
+      evidence: [
+        claim({ source: "source_impl", sourceRef: "a1" }),
+        claim({ source: "test_fixture", sourceRef: "a2" }),
+      ],
+      groundingArtifacts: [artifact("a1", "verified"), artifact("a2", "unverified")],
+    });
+    expect(decision).toEqual({
+      tier: "auto",
+      reason: "description grounded by corroborated+ evidence",
+    });
+  });
+
+  it("still applies the strength rule to a verified but weak description", () => {
+    const decision = classifyApproval({
+      skill: "describe-field",
+      proposal: proposal("describe-field", fieldTarget, { description: DESC }),
+      evidence: [claim({ source: "doc_example", sourceRef: "a1" })],
+      groundingArtifacts: [artifact("a1", "verified")],
+    });
+    // Verified, but single-source → the existing corroboration bar still routes to review.
+    expect(decision.tier).toBe("review");
+    expect(decision.reason).toBe("description needs corroborating evidence for auto-approval");
+  });
+
+  it("routes an unverified generated example to review", () => {
+    const decision = classifyApproval({
+      skill: "generate-examples",
+      proposal: proposal("generate-examples", fieldTarget, { examples: ["customer requested"] }),
+      evidence: [
+        claim({ predicate: "field.example", value: "customer requested", sourceRef: "a1" }),
+      ],
+      groundingArtifacts: [artifact("a1", "unverified")],
+    });
+    expect(decision).toEqual({
+      tier: "review",
+      reason: "proposal is grounded only by unverified external evidence",
+    });
+  });
+
+  it("sends verified retryable=true (no message) to review per the existing safety rule", () => {
+    const decision = classifyApproval({
+      skill: "enrich-errors",
+      proposal: proposal("enrich-errors", errorTarget, { retryable: true }),
+      evidence: [claim({ source: "source_impl", sourceRef: "a1", predicate: "error.retryable" })],
+      groundingArtifacts: [artifact("a1", "verified")],
+    });
+    // Verified grounding does not by itself auto-approve a retry loosening; the existing
+    // rules still route a bare retryable=true to review.
+    expect(decision.tier).toBe("review");
+  });
+
+  it("preserves the existing auto path for an authoritative, verified error message", () => {
+    const decision = classifyApproval({
+      skill: "enrich-errors",
+      proposal: proposal("enrich-errors", errorTarget, {
+        message: "Conflicted with an in-flight refund.",
+      }),
+      evidence: [claim({ source: "source_impl", sourceRef: "a1", predicate: "error.message" })],
+      groundingArtifacts: [artifact("a1", "verified")],
+    });
+    // Verified grounding leaves the existing message auto-approval intact.
+    expect(decision.tier).toBe("auto");
+  });
+
+  it("does not let an unrelated verified artifact upgrade an unverified proposal", () => {
+    const p = proposal("describe-field", fieldTarget, { description: DESC });
+    p.claims = [claim({ source: "doc_example", sourceRef: "grounds-it" })];
+    // The report holds the grounding (unverified) artifact plus an unrelated verified one.
+    const report: VerifiableArtifact[] = [
+      artifact("grounds-it", "unverified"),
+      artifact("unrelated-verified", "verified"),
+    ];
+    const grounding = groundingArtifacts(p, report);
+    // Only the artifact that actually grounds the description is counted.
+    expect(grounding.map((a) => a.id)).toEqual(["grounds-it"]);
+    const decision = classifyApproval({
+      skill: "describe-field",
+      proposal: p,
+      evidence: p.claims,
+      groundingArtifacts: grounding,
+    });
+    expect(decision).toEqual({
+      tier: "review",
+      reason: "proposal is grounded only by unverified external evidence",
     });
   });
 });
