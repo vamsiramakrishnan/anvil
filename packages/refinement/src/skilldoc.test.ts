@@ -19,9 +19,15 @@ describe("refinement skill package", () => {
     }
   });
 
-  it("keeps SKILL.md a small, self-describing entry point", () => {
+  it("keeps SKILL.md a small, self-describing entry point with valid frontmatter", () => {
     const skill = files["SKILL.md"] ?? "";
-    expect(skill).toMatch(/^---\nname: refinement/);
+    const front = skill.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+    const name = front.match(/^name:\s*(.+)$/m)?.[1]?.trim() ?? "";
+    const description = front.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
+    expect(name).toBe("refinement");
+    expect(name).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    expect(description.length).toBeGreaterThan(0);
+    expect(description.length).toBeLessThanOrEqual(1024);
     expect(skill).toContain("No executor edits canonical AIR");
     expect(skill.length).toBeLessThan(5000); // progressive-disclosure budget
   });
