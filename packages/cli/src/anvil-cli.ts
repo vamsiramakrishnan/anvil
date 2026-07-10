@@ -515,7 +515,7 @@ async function cmdCase(
     case "inspect-target":
       return emit(io, () => caseService.inspect(caseDirArg(rest)));
     case "add-evidence":
-      return cmdCaseAddEvidence(rest, flags, io);
+      return await cmdCaseAddEvidence(rest, flags, io);
     case "validate-claims":
       return emit(io, () => caseService.validateClaims(caseDirArg(rest)));
     case "synthesize":
@@ -529,6 +529,10 @@ async function cmdCase(
         caseService.finalize(caseDirArg(rest), {
           status: typeof flags.status === "string" ? (flags.status as never) : undefined,
           summary: typeof flags.summary === "string" ? flags.summary : undefined,
+          blockedSources:
+            typeof flags["blocked-sources"] === "string"
+              ? (JSON.parse(flags["blocked-sources"]) as never)
+              : undefined,
         }),
       );
     case "investigate":
@@ -552,7 +556,9 @@ async function cmdCase(
       io.err("       anvil case synthesize      <case-dir> field=value [field=value ...]");
       io.err("       anvil case validate-proposal <case-dir> <dir|air.yaml>");
       io.err("       anvil case investigate     <case-dir> [--command claude] [--model M]");
-      io.err("       anvil case finalize        <case-dir> [--status S] [--summary ..]");
+      io.err(
+        '       anvil case finalize        <case-dir> [--status S] [--summary ..] [--blocked-sources \'[{"source":"..","reason":".."}]\']',
+      );
       io.err("       anvil case delete          <case-dir>");
       io.err("       anvil case close           <case-dir> <dir|air.yaml> [--json]");
       return sub && sub !== "help" ? 1 : 0;
@@ -636,11 +642,11 @@ function cmdCaseOpen(args: string[], flags: Record<string, string | boolean>, io
   return 0;
 }
 
-function cmdCaseAddEvidence(
+async function cmdCaseAddEvidence(
   args: string[],
   flags: Record<string, string | boolean>,
   io: CliIO,
-): number {
+): Promise<number> {
   const dir = args[0];
   const predicate = flags.predicate as string | undefined;
   const source = flags.source as string | undefined;
@@ -672,7 +678,7 @@ function cmdCaseAddEvidence(
     note: flags.note as string | undefined,
     confidence: Number.isFinite(confidence) ? confidence : undefined,
   };
-  io.out(caseService.addEvidence(dir, input));
+  io.out(await caseService.addEvidence(dir, input));
   return 0;
 }
 

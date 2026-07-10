@@ -19,7 +19,7 @@ import {
   proposalFromCase,
   type SearchStep,
 } from "./investigation.js";
-import { transition, verifyFrozenStages } from "./lifecycle.js";
+import { readProposalValidation, transition, verifyFrozenStages } from "./lifecycle.js";
 import { openCase } from "./materialize.js";
 import {
   CASE_AUX,
@@ -173,6 +173,15 @@ export function closeCase(air: AirDocument, dir: string): Refinement | undefined
       `Frozen evidence no longer matches the source repository: ${integrity.mismatches
         .map((m) => `${m.uri} (${m.reason})`)
         .join("; ")}. Refusing to close this case.`,
+    );
+  }
+  // Gate: a proposal that never ran through validate-proposal, or that ran and was
+  // rejected, must never reach reconcile() — the files, not a caller's assumption,
+  // decide what "validated" means.
+  const recorded = readProposalValidation(dir);
+  if (recorded?.status !== "validated") {
+    throw new Error(
+      `Cannot close: this case's proposal was ${recorded ? "rejected by" : "never run through"} validate-proposal. Run \`anvil case validate-proposal\` and confirm it reports VALIDATED before closing.`,
     );
   }
   const { task, context } = contextForCase(air, dir);

@@ -64,8 +64,21 @@ export interface RefinementSkill {
   targetKind: SemanticTarget["kind"];
   /** Context slices to assemble before running. */
   context: ContextNeed[];
-  /** Which source kinds are admissible, and the minimum aggregate strength. */
-  evidence: { allowed: EvidenceKind[]; minimumStrength: EvidenceStrength };
+  /**
+   * Which source kinds are admissible, and the minimum aggregate strength.
+   * `minimumVerification` is the skill-wide trust bar a claim's evidence must
+   * clear (`"verified"` demands a source Anvil re-hashed itself; `"allow_unverified"`
+   * accepts a caller-supplied excerpt). `fieldVerification` is a narrow, optional
+   * per-output-field override (keyed by the skill's target-relative field name,
+   * e.g. `"retryable"`) for the rare field that needs a stricter bar than the
+   * skill default — not a general policy engine.
+   */
+  evidence: {
+    allowed: EvidenceKind[];
+    minimumStrength: EvidenceStrength;
+    minimumVerification: "verified" | "allow_unverified";
+    fieldVerification?: Record<string, "verified" | "allow_unverified">;
+  };
   /**
    * The output boundary. `predicates` are the claim predicates the patch asserts;
    * `supportingPredicates` are the narrow intermediate facts an investigation may

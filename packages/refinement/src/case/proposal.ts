@@ -8,6 +8,7 @@ import type { Conflict, InvestigationStatus } from "./investigation.js";
 import {
   freezeStage,
   isStageFrozen,
+  recordProposalValidation,
   transition,
   verifyFrozenStage,
   verifyFrozenStages,
@@ -187,6 +188,9 @@ export function validateCaseProposal(
   // Freeze the proposal and advance: the critic examines a frozen artifact.
   freezeStage(dir, "synthesis");
   transition(dir, "proposal_frozen");
+  // Record validated/rejected separately from the state name, so a reader always
+  // knows the outcome without re-parsing critique.json.
+  recordProposalValidation(dir, validated.status);
 
   const failed = validated.outcomes.filter((o) => !o.ok);
   const text = [
@@ -203,15 +207,83 @@ export function validateCaseProposal(
 export interface FinalizeInput {
   status?: InvestigationStatus;
   summary?: string;
+  /** Required when requesting `blocked_by_missing_source` — the concrete source(s) that were unavailable. */
+  blockedSources?: Array<{ source: string; reason: string }>;
+}
+
+/**
+ * The facts `validateRequestedStatus` checks a requested status against — everything
+ * `finalize` already loaded from the case's artifacts, named so the switch below reads
+ * like the claims it is actually verifying.
+ */
+interface FinalizeFacts {
+  hasProposal: boolean;
+  proposalValidated: boolean;
+  conflictCount: number;
+  evidenceStrengthMet: boolean;
+  hasUsableEvidence: boolean;
+  blockedSources?: FinalizeInput["blockedSources"];
+}
+
+/**
+ * An explicit `--status` is a claim, not a fact — Anvil decides whether the artifacts
+ * actually support it. Only reached when `input.status` is supplied; the implicit
+ * derivation in `finalize` below is already artifact-derived by construction and is
+ * not re-checked here.
+ */
+function validateRequestedStatus(requested: InvestigationStatus, facts: FinalizeFacts): void {
+  switch (requested) {
+    case "proposal_generated":
+      if (!facts.hasProposal || !facts.proposalValidated) {
+        throw new Error(
+          "Cannot finalize as 'proposal_generated': no proposal exists, or it did not pass validate-proposal.",
+        );
+      }
+      return;
+    case "conflicted":
+      if (facts.conflictCount === 0) {
+        throw new Error("Cannot finalize as 'conflicted': no contradicting claims were recorded.");
+      }
+      return;
+    case "insufficient_evidence":
+      if (facts.proposalValidated) {
+        throw new Error("Cannot finalize as 'insufficient_evidence': a validated proposal exists.");
+      }
+      if (facts.hasUsableEvidence && facts.evidenceStrengthMet) {
+        throw new Error(
+          "Cannot finalize as 'insufficient_evidence': the recorded evidence already meets the required strength.",
+        );
+      }
+      return;
+    case "blocked_by_missing_source":
+      if (!facts.blockedSources || facts.blockedSources.length === 0) {
+        throw new Error(
+          "Cannot finalize as 'blocked_by_missing_source' without --blocked-sources — record which source was unavailable and why.",
+        );
+      }
+      return;
+    case "supported":
+      if (facts.hasProposal) {
+        throw new Error(
+          "Cannot finalize as 'supported': a proposal exists (a proposal means something was proposed to change, not that the current semantics are already supported).",
+        );
+      }
+      if (!facts.hasUsableEvidence) {
+        throw new Error(
+          "Cannot finalize as 'supported': no claims were recorded that corroborate the current semantics.",
+        );
+      }
+      return;
+  }
 }
 
 /**
  * Close the executor's side of a case: assemble `output/result.json` from whatever
  * phase outputs exist, choosing an honest status, and advance the run to `finalized`.
  * Every frozen stage is verified first, so a result can never be assembled over
- * evidence or a proposal that was rewritten after it was frozen. The explicit
- * `--status` always wins — the agent may know it is blocked on a missing source that
- * the files cannot show.
+ * evidence or a proposal that was rewritten after it was frozen. An explicit
+ * `--status` is validated against the artifacts before it is honoured — the agent may
+ * suggest a status, but Anvil decides whether it is legitimate.
  */
 export function finalize(dir: string, input: FinalizeInput = {}): string {
   // Integrity gate: nothing frozen may have changed before we record an outcome.
@@ -223,6 +295,20 @@ export function finalize(dir: string, input: FinalizeInput = {}): string {
   const validation = readOptionalJson<ValidationReport>(dir, CASE_OUTPUT.critique);
   const experiments = readOptionalJson<{ experiments: unknown[] }>(dir, CASE_AUX.experiments);
   const conflicts = claimSet ? detectConflicts(parseClaimSet(claimSet).claims) : [];
+
+  if (input.status) {
+    const policy = loadPolicy(dir);
+    const claims = claimSet ? parseClaimSet(claimSet).claims : [];
+    const facts: FinalizeFacts = {
+      hasProposal: Boolean(proposal),
+      proposalValidated: validation?.status === "validated",
+      conflictCount: conflicts.length,
+      evidenceStrengthMet: meetsStrength(strengthOf(claims), policy.minimumStrength),
+      hasUsableEvidence: claims.length > 0,
+      blockedSources: input.blockedSources,
+    };
+    validateRequestedStatus(input.status, facts);
+  }
 
   let status: InvestigationStatus;
   if (input.status) {
@@ -244,6 +330,7 @@ export function finalize(dir: string, input: FinalizeInput = {}): string {
     experiments: experiments?.experiments ?? [],
     proposal: status === "proposal_generated" ? proposal : undefined,
     validation: validation ?? undefined,
+    blockedSources: status === "blocked_by_missing_source" ? input.blockedSources : undefined,
   };
   writeJson(dir, CASE_AUX.result, result);
   transition(dir, "finalized");

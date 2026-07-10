@@ -38,10 +38,18 @@ interface StageRecord {
   frozenAt: string;
 }
 
+/** The outcome `validate-proposal` recorded — distinct from `proposal_frozen`, which
+ * only says the proposal can no longer change, not whether it passed. */
+export interface ProposalValidationRecord {
+  status: "validated" | "rejected";
+  at: string;
+}
+
 interface LifecycleDoc {
   state: CaseRunState;
   stages: Partial<Record<CaseStage, StageRecord>>;
   history: Array<{ state: CaseRunState; at: string }>;
+  proposalValidation?: ProposalValidationRecord;
 }
 
 /**
@@ -100,6 +108,24 @@ export function transition(dir: string, to: CaseRunState, now?: number): void {
   doc.state = to;
   doc.history.push({ state: to, at });
   writeJson(dir, CASE_AUX.lifecycle, doc);
+}
+
+/* ---------------------------- proposal validation -------------------------- */
+
+/** Record the outcome of validate-proposal in the lifecycle doc — distinct from the state name, so a reader always knows whether the frozen proposal passed or failed. */
+export function recordProposalValidation(
+  dir: string,
+  status: "validated" | "rejected",
+  now?: number,
+): void {
+  const doc = readLifecycle(dir);
+  doc.proposalValidation = { status, at: new Date(now ?? Date.now()).toISOString() };
+  writeJson(dir, CASE_AUX.lifecycle, doc);
+}
+
+/** The recorded proposal-validation outcome, if `validate-proposal` has run. */
+export function readProposalValidation(dir: string): ProposalValidationRecord | undefined {
+  return readLifecycle(dir).proposalValidation;
 }
 
 /* -------------------------------- stages ---------------------------------- */

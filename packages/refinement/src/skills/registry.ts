@@ -18,6 +18,7 @@ const describeField: RefinementSkill = {
   evidence: {
     allowed: ["source_impl", "test_fixture", "spec", "doc_example", "postman"],
     minimumStrength: "corroborated",
+    minimumVerification: "allow_unverified",
   },
   output: {
     predicates: ["field.description"],
@@ -56,6 +57,7 @@ const describeOperation: RefinementSkill = {
   evidence: {
     allowed: ["source_impl", "test_fixture", "spec", "doc_example", "postman"],
     minimumStrength: "corroborated",
+    minimumVerification: "allow_unverified",
   },
   output: {
     predicates: ["operation.description"],
@@ -83,6 +85,7 @@ const generateExamples: RefinementSkill = {
   evidence: {
     allowed: ["spec", "source_impl", "test_fixture", "doc_example", "postman", "generated_mock"],
     minimumStrength: "single",
+    minimumVerification: "allow_unverified",
   },
   output: {
     predicates: ["field.example"],
@@ -109,6 +112,10 @@ const enrichErrors: RefinementSkill = {
   evidence: {
     allowed: ["source_impl", "test_fixture", "spec", "incident", "doc_example"],
     minimumStrength: "single",
+    // Descriptions may rest on unverified evidence, but `retryable` is safety-affecting
+    // and requires a source Anvil verified itself.
+    minimumVerification: "allow_unverified",
+    fieldVerification: { retryable: "verified" },
   },
   output: {
     predicates: ["error.message", "error.retryable"],

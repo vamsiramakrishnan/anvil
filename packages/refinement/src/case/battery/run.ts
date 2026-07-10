@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AirDocument, loadAirDocument } from "@anvil/air";
 import type { Deficiency } from "../../deficiency.js";
-import type { ApprovalTier, RefinementStatus } from "../../model.js";
+import type { ApprovalTier, Refinement, RefinementStatus } from "../../model.js";
 import { buildRefinementPlan } from "../../plan.js";
 import { assembleContext, evidenceForTarget } from "../../skills/context.js";
 import { HeuristicSkillExecutor } from "../../skills/executor.js";
@@ -134,9 +134,9 @@ async function runScenario(s: FieldScenario, root: string): Promise<BatteryRow> 
   // Isolate every scenario in its own root so two scenarios that share a field
   // name (hence a case id) can never leak evidence into one another.
   const dir = openCase(air, deficiency, { root: join(root, s.id) }).dir;
-  await new ScriptedAgentDriver((d) => {
+  await new ScriptedAgentDriver(async (d) => {
     for (const ev of s.repository) {
-      addEvidence(d, {
+      await addEvidence(d, {
         predicate: ev.predicate,
         value: ev.value,
         source: ev.source,
@@ -156,10 +156,27 @@ async function runScenario(s: FieldScenario, root: string): Promise<BatteryRow> 
   }).run(dir);
 
   const result = readInvestigation(dir);
-  const refinement = closeCase(air, dir);
-  const refinementStatus: RefinementStatus | "none" = refinement?.status ?? "none";
+  // closeCase now refuses (throws) to close a case whose proposal exists but never
+  // validated, or was recorded rejected — the same disposition `reconcile` used to
+  // reach independently. Score that refusal the way `reconcile` used to score it
+  // (rejected/reject), so scenarios that deliberately probe the strength/validation
+  // rail (e.g. weak_single_source) still report a coarse outcome instead of crashing
+  // the whole battery run.
+  let refinementStatus: RefinementStatus | "none" = "none";
+  let approvalTier: ApprovalTier | "none" = "none";
+  try {
+    const refinement: Refinement | undefined = closeCase(air, dir);
+    refinementStatus = refinement?.status ?? "none";
+    approvalTier = refinement?.approval.tier ?? "none";
+  } catch (err) {
+    if (err instanceof Error && /^Cannot close: this case's proposal was/.test(err.message)) {
+      refinementStatus = "rejected";
+      approvalTier = "reject";
+    } else {
+      throw err;
+    }
+  }
   const outcome = outcomeOf(refinementStatus);
-  const approvalTier: ApprovalTier | "none" = refinement?.approval.tier ?? "none";
 
   const investigationClosed = result.status === "proposal_generated";
   const contribution: Contribution = investigationClosed

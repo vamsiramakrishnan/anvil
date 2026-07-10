@@ -8,8 +8,10 @@ import {
   CASE_OUTPUT,
   type ClaimSet,
   type EvidenceArtifact,
+  type EvidenceCoordinate,
   type EvidencePolicyDoc,
   type EvidenceReport,
+  parseEvidenceCoordinate,
 } from "./model.js";
 import { loadPolicy, loadTargetDoc, loadTools, readOptionalJson, writeJson } from "./store.js";
 
@@ -18,27 +20,13 @@ import { loadPolicy, loadTargetDoc, loadTools, readOptionalJson, writeJson } fro
  * trusted excerpt; it hands a *coordinate*, and an `EvidenceAcquirer` resolves and
  * freezes the artifact. Today there are two providers — the local repository (read,
  * hash, and verify the exact bytes) and an external artifact (an opaque pointer with
- * a caller-supplied, unverifiable excerpt) — chosen by the shape of the coordinate,
- * never by an `if (source === ...)` ladder. New providers (GitHub MCP, Confluence
- * MCP, Jira, recorded traffic) become new acquirers, not new branches in `addEvidence`.
+ * a caller-supplied, unverifiable excerpt) — chosen by the coordinate's `kind`, never
+ * by an `if (source === ...)` ladder. New providers (GitHub MCP, Confluence MCP,
+ * Jira, recorded traffic) become new acquirers, not new branches in `addEvidence`.
  */
 
 /** A frozen evidence artifact — what a provider returns after resolving a coordinate. */
 export type FrozenEvidenceArtifact = EvidenceArtifact;
-
-/** What an agent submits: where the evidence is, not what it says. */
-export interface EvidenceCoordinate {
-  source: string;
-  /** A filesystem source coordinate — the local provider reads and verifies it. */
-  path?: string;
-  startLine?: number;
-  endLine?: number;
-  /** A non-filesystem source pointer (Postman, incident, doc URL). */
-  uri?: string;
-  /** The provided excerpt for a non-filesystem source (cannot be verified). */
-  excerpt?: string;
-  note?: string;
-}
 
 /** The environment a provider resolves a coordinate against. */
 export interface AcquisitionContext {
@@ -47,12 +35,20 @@ export interface AcquisitionContext {
   now?: number;
 }
 
-/** A pluggable evidence provider: resolve a coordinate into a frozen artifact. */
+/**
+ * A pluggable evidence provider: resolve a coordinate into a frozen artifact. `kind`
+ * matches exactly one arm of the `EvidenceCoordinate` discriminated union — there is
+ * no catch-all provider, so a coordinate of an unregistered kind fails loudly in
+ * `acquirerFor` rather than being silently absorbed by whichever provider is last.
+ * Async so a future remote provider (GitHub/Confluence/Jira MCP) is a drop-in
+ * implementation, not an API migration — today's providers do only synchronous IO.
+ */
 export interface EvidenceAcquirer {
-  readonly kind: "local_repository" | "external_artifact";
-  /** Whether this provider handles the given coordinate shape. */
-  supports(coordinate: EvidenceCoordinate): boolean;
-  acquire(coordinate: EvidenceCoordinate, context: AcquisitionContext): FrozenEvidenceArtifact;
+  readonly kind: EvidenceCoordinate["kind"];
+  acquire(
+    coordinate: EvidenceCoordinate,
+    context: AcquisitionContext,
+  ): Promise<FrozenEvidenceArtifact>;
 }
 
 /**
@@ -63,12 +59,12 @@ export interface EvidenceAcquirer {
  */
 export class LocalRepositoryEvidenceAcquirer implements EvidenceAcquirer {
   readonly kind = "local_repository" as const;
-  supports(coordinate: EvidenceCoordinate): boolean {
-    return coordinate.path !== undefined;
-  }
-  acquire(coordinate: EvidenceCoordinate, context: AcquisitionContext): FrozenEvidenceArtifact {
+  async acquire(
+    coordinate: Extract<EvidenceCoordinate, { kind: "local_repository" }>,
+    context: AcquisitionContext,
+  ): Promise<FrozenEvidenceArtifact> {
     const { workspace } = context;
-    const path = coordinate.path as string;
+    const path = coordinate.path;
     const abs = isAbsolute(path) ? resolve(path) : resolve(workspace.repositoryRoot, path);
     const scopes = workspace.inspectScopes.length
       ? workspace.inspectScopes
@@ -110,6 +106,7 @@ export class LocalRepositoryEvidenceAcquirer implements EvidenceAcquirer {
       startLine: coordinate.startLine,
       endLine: coordinate.endLine ?? coordinate.startLine,
       verified: true,
+      verification: { status: "verified", verifier: "local_repository" },
     };
   }
 }
@@ -122,11 +119,11 @@ export class LocalRepositoryEvidenceAcquirer implements EvidenceAcquirer {
  */
 export class ExternalArtifactEvidenceAcquirer implements EvidenceAcquirer {
   readonly kind = "external_artifact" as const;
-  supports(_coordinate: EvidenceCoordinate): boolean {
-    return true;
-  }
-  acquire(coordinate: EvidenceCoordinate, context: AcquisitionContext): FrozenEvidenceArtifact {
-    const uri = coordinate.uri ?? "(unspecified)";
+  async acquire(
+    coordinate: Extract<EvidenceCoordinate, { kind: "external_artifact" }>,
+    context: AcquisitionContext,
+  ): Promise<FrozenEvidenceArtifact> {
+    const uri = coordinate.uri;
     const excerpt = coordinate.excerpt ?? "";
     const contentHash = hashContent(excerpt);
     return {
@@ -138,23 +135,29 @@ export class ExternalArtifactEvidenceAcquirer implements EvidenceAcquirer {
       acquiredAt: new Date(context.now ?? Date.now()).toISOString(),
       relevance: coordinate.note,
       verified: false,
+      verification: {
+        status: "unverified",
+        reason: "external artifact; excerpt is caller-supplied and not independently confirmed",
+      },
     };
   }
 }
 
-/** The providers, in resolution order — the first that supports the coordinate wins. */
-export const EVIDENCE_ACQUIRERS: readonly EvidenceAcquirer[] = [
+/** The default providers — one per `EvidenceCoordinate` kind. */
+export const DEFAULT_EVIDENCE_ACQUIRERS: readonly EvidenceAcquirer[] = [
   new LocalRepositoryEvidenceAcquirer(),
   new ExternalArtifactEvidenceAcquirer(),
 ];
 
-/** Pick the provider for a coordinate (local for a path, external otherwise). */
+/** Pick the provider whose `kind` matches the coordinate's — no catch-all fallback. */
 export function acquirerFor(
   coordinate: EvidenceCoordinate,
-  acquirers: readonly EvidenceAcquirer[] = EVIDENCE_ACQUIRERS,
+  acquirers: readonly EvidenceAcquirer[] = DEFAULT_EVIDENCE_ACQUIRERS,
 ): EvidenceAcquirer {
-  const provider = acquirers.find((a) => a.supports(coordinate));
-  if (!provider) throw new Error(`No evidence provider handles source '${coordinate.source}'.`);
+  const provider = acquirers.find((a) => a.kind === coordinate.kind);
+  if (!provider) {
+    throw new Error(`No evidence provider registered for coordinate kind '${coordinate.kind}'.`);
+  }
   return provider;
 }
 
@@ -186,13 +189,21 @@ export interface AddEvidenceInput {
 }
 
 /**
- * Record one piece of evidence: enforce the source AND predicate policy, then hand
- * the *coordinate* to the resolved provider, which freezes the artifact (research
- * phase) and returns it. The atomic claim it grounds (extract phase) references the
- * frozen artifact by id, so it can never point at an excerpt the source does not
- * actually contain.
+ * Record one piece of evidence: enforce the source AND predicate policy, build the
+ * coordinate and validate it through `parseEvidenceCoordinate` (so a malformed shape
+ * is rejected by the Zod schema itself, not just by a hand-rolled check), then hand it
+ * to the resolved provider, which freezes the artifact (research phase) and returns
+ * it. The atomic claim it grounds (extract phase) references the frozen artifact by
+ * id, so it can never point at an excerpt the source does not actually contain.
+ *
+ * Async because acquisition is (providers may do remote IO in the future); every
+ * caller must `await` it.
  */
-export function addEvidence(dir: string, input: AddEvidenceInput): string {
+export async function addEvidence(
+  dir: string,
+  input: AddEvidenceInput,
+  acquirers: readonly EvidenceAcquirer[] = DEFAULT_EVIDENCE_ACQUIRERS,
+): Promise<string> {
   if (isStageFrozen(dir, "research")) {
     throw new Error(
       "The research stage is frozen (a proposal was synthesized). Open a new run to gather more evidence.",
@@ -214,16 +225,36 @@ export function addEvidence(dir: string, input: AddEvidenceInput): string {
     );
   }
 
-  const coordinate: EvidenceCoordinate = {
-    source: input.source,
-    path: input.path,
-    startLine: input.startLine,
-    endLine: input.endLine,
-    uri: input.uri ?? input.ref,
-    excerpt: input.excerpt,
-    note: input.note,
-  };
-  const artifact = acquirerFor(coordinate).acquire(coordinate, {
+  const uri = input.uri ?? input.ref;
+  if (input.path !== undefined && uri !== undefined) {
+    throw new Error(
+      "Evidence cannot specify both a filesystem path and a uri — choose one coordinate kind.",
+    );
+  }
+  if (input.path === undefined && uri === undefined) {
+    throw new Error(
+      "Evidence needs either a filesystem path (--path) or a source uri (--uri/--ref).",
+    );
+  }
+  const coordinate = parseEvidenceCoordinate(
+    input.path !== undefined
+      ? {
+          kind: "local_repository",
+          source: input.source,
+          path: input.path,
+          startLine: input.startLine,
+          endLine: input.endLine,
+          note: input.note,
+        }
+      : {
+          kind: "external_artifact",
+          source: input.source,
+          uri,
+          excerpt: input.excerpt,
+          note: input.note,
+        },
+  );
+  const artifact = await acquirerFor(coordinate, acquirers).acquire(coordinate, {
     workspace: loadTools(dir).workspace,
     now: input.now,
   });

@@ -142,6 +142,8 @@ function buildPolicyDoc(skill: RefinementSkill): EvidencePolicyDoc {
     writableFields: skill.output.fields,
     constraints: skill.constraints,
     mustNot: skill.constraints.map((c) => CONSTRAINT_PROSE[c]),
+    minimumVerification: skill.evidence.minimumVerification,
+    fieldVerification: skill.evidence.fieldVerification,
   };
 }
 
