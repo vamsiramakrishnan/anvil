@@ -28,6 +28,8 @@ import {
 } from "@anvil/refinement";
 import { stringify as toYaml } from "yaml";
 import { parseArgs } from "./args.js";
+import { cmdBuild } from "./cmd-build.js";
+import { cmdCapability } from "./cmd-capability.js";
 import { ANVIL_COMMANDS } from "./commands.js";
 import { type CliIO, processIO } from "./io.js";
 import { generateAnvilSkill } from "./self-skill.js";
@@ -66,6 +68,10 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
         return cmdLint(positionals[1], io);
       case "approve":
         return cmdApprove(positionals.slice(1), io);
+      case "capability":
+        return cmdCapability(positionals.slice(1), flags, io);
+      case "build":
+        return cmdBuild(positionals.slice(1), flags, io);
       case "package":
         return cmdPackage(positionals.slice(1), io);
       case "deploy":

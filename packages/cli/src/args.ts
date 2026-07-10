@@ -14,6 +14,10 @@ const BOOLEAN_FLAGS = new Set([
   "all",
   "quiet",
   "allow-degraded-native",
+  "allow-large",
+  "operations",
+  "auth",
+  "evidence",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {

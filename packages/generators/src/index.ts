@@ -6,6 +6,7 @@
  */
 
 export * from "./bundle.js";
+export * from "./capability-view.js";
 export * from "./catalog.js";
 export * from "./conformance.js";
 export * from "./deploy.js";
