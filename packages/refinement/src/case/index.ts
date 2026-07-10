@@ -12,6 +12,7 @@
  * admissibility, safety, validation, and application.
  */
 
+export * from "./battery/index.js";
 export * from "./commands.js";
 export * from "./driver.js";
 export * from "./escalate.js";
