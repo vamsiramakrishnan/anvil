@@ -420,6 +420,38 @@ describe("verified frozen evidence", () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* Phase staging — freeze research on synthesize, proposal on critique        */
+/* -------------------------------------------------------------------------- */
+
+describe("immutable phase staging", () => {
+  it("freezes research on synthesize and the proposal on validate", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    addEvidence(c.dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "s:1",
+    });
+    synthesizeProposal(c.dir, { description: REASON_TEXT });
+    // Research is frozen: the synthesizer cannot rewrite its own evidence.
+    expect(() =>
+      addEvidence(c.dir, {
+        predicate: "field.description",
+        value: "late",
+        source: "source_impl",
+        ref: "s:2",
+      }),
+    ).toThrow(/research stage is frozen/);
+    validateCaseProposal(air, c.dir);
+    // The critique froze the proposal: it cannot be re-synthesized in this run.
+    expect(() => synthesizeProposal(c.dir, { description: REASON_TEXT })).toThrow(
+      /synthesis stage is frozen/,
+    );
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* Identity binding — a proposal for field A can never patch field B          */
 /* -------------------------------------------------------------------------- */
 

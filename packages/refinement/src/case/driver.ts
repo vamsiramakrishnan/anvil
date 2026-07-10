@@ -1,7 +1,12 @@
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CASE_FILES } from "./model.js";
+import {
+  type AgentProcessRunner,
+  type AgentRunResult,
+  allowlistedEnv,
+  NodeAgentProcessRunner,
+} from "./process-runner.js";
 
 /**
  * An **agent driver** performs the investigation *inside* a materialised case: it
@@ -21,10 +26,12 @@ export interface AgentDriver {
 }
 
 /**
- * The live driver: shells out to the Claude Code CLI in headless print mode against
- * the case directory. This is build-time only — it is never on Anvil's serving hot
- * path — and is invoked solely by `anvil case investigate`, never by the tests. The
- * command is configurable so Codex or any other headless coding agent can stand in.
+ * The live driver: configures the reusable async `AgentProcessRunner` to shell out to
+ * the Claude Code CLI in headless print mode against the case directory. This is
+ * build-time only — never on Anvil's serving hot path — and invoked solely by
+ * `anvil case investigate`, never by the tests. The command is configurable so Codex
+ * or any other headless coding agent can stand in, and the runner is injectable so
+ * the driver can be tested without a real agent binary.
  */
 export interface ClaudeCodeDriverOptions {
   /** The headless coding-agent command (default `claude`). */
@@ -33,12 +40,24 @@ export interface ClaudeCodeDriverOptions {
   extraArgs?: string[];
   /** Hard wall-clock cap for one investigation. */
   timeoutMs?: number;
-  env?: NodeJS.ProcessEnv;
+  /**
+   * Environment variable names to pass through to the agent, on top of PATH/HOME.
+   * The investigation gets a minimal environment, not the parent's whole secret surface.
+   */
+  envAllowlist?: string[];
+  /** Injectable process runner (defaults to the async NodeAgentProcessRunner). */
+  runner?: AgentProcessRunner;
 }
 
 export class ClaudeCodeAgentDriver implements AgentDriver {
   readonly name = "claude-code";
-  constructor(private readonly options: ClaudeCodeDriverOptions = {}) {}
+  /** The structured execution log of the last run, for observability. */
+  lastResult?: AgentRunResult;
+  private readonly runner: AgentProcessRunner;
+
+  constructor(private readonly options: ClaudeCodeDriverOptions = {}) {
+    this.runner = options.runner ?? new NodeAgentProcessRunner();
+  }
 
   async run(caseDir: string): Promise<void> {
     const command = this.options.command ?? "claude";
@@ -54,29 +73,34 @@ export class ClaudeCodeAgentDriver implements AgentDriver {
       "this case directory.",
     ].join("\n");
 
-    const args = ["-p", prompt, ...(this.options.extraArgs ?? [])];
-    let result: ReturnType<typeof spawnSync>;
+    const env = allowlistedEnv(
+      this.options.envAllowlist ?? ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "HTTPS_PROXY"],
+    );
+    let result: AgentRunResult;
     try {
-      result = spawnSync(command, args, {
+      result = await this.runner.run({
+        command,
+        args: ["-p", prompt, ...(this.options.extraArgs ?? [])],
         cwd: caseDir,
-        env: this.options.env ?? process.env,
-        timeout: this.options.timeoutMs ?? 20 * 60 * 1000,
-        encoding: "utf8",
-        stdio: ["ignore", "inherit", "inherit"],
+        env,
+        timeoutMs: this.options.timeoutMs ?? 20 * 60 * 1000,
+        onStdout: (s) => process.stdout.write(s),
+        onStderr: (s) => process.stderr.write(s),
       });
     } catch (err) {
-      throw new Error(`Failed to launch '${command}': ${(err as Error).message}`);
-    }
-    if (result.error) {
       const hint =
-        (result.error as NodeJS.ErrnoException).code === "ENOENT"
+        (err as NodeJS.ErrnoException).code === "ENOENT"
           ? ` — is '${command}' installed and on PATH?`
           : "";
-      throw new Error(`Agent driver '${command}' failed: ${result.error.message}${hint}`);
+      throw new Error(
+        `Agent driver '${command}' failed to launch: ${(err as Error).message}${hint}`,
+      );
     }
-    if (typeof result.status === "number" && result.status !== 0) {
-      throw new Error(`Agent driver '${command}' exited ${result.status}.`);
-    }
+    this.lastResult = result;
+    if (result.timedOut) throw new Error(`Agent driver '${command}' timed out.`);
+    if (result.canceled) throw new Error(`Agent driver '${command}' was canceled.`);
+    if (result.exitCode !== 0)
+      throw new Error(`Agent driver '${command}' exited ${result.exitCode}.`);
   }
 }
 

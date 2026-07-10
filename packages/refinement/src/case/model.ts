@@ -83,6 +83,8 @@ export const CASE_AUX = {
   searchPlan: "output/search-plan.json",
   experiments: "output/experiments.json",
   result: "output/result.json",
+  /** Records which immutable stages have been frozen (research, synthesis). */
+  stages: "output/stages.json",
 } as const;
 
 /* -------------------------------------------------------------------------- */

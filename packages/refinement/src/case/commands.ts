@@ -159,6 +159,38 @@ export function inspectTarget(dir: string): string {
   return lines.join("\n");
 }
 
+/* -------------------------------- stages ---------------------------------- */
+
+/**
+ * The immutable stages of an investigation. Research+claims freeze when a proposal
+ * is synthesized (so the synthesizer cannot rewrite its own evidence afterwards),
+ * and the proposal freezes when it is validated (so the critic examines a frozen
+ * artifact). This is *self-critique* within one process, not independent review —
+ * an independent critic would be a second driver run against the frozen outputs.
+ */
+export type CaseStage = "research" | "synthesis";
+
+interface StageRecord {
+  hash: string;
+  frozenAt: string;
+}
+
+function readStages(dir: string): Partial<Record<CaseStage, StageRecord>> {
+  return readOptionalJson<Partial<Record<CaseStage, StageRecord>>>(dir, CASE_AUX.stages) ?? {};
+}
+
+/** Has a stage been frozen for this case run? */
+export function isStageFrozen(dir: string, stage: CaseStage): boolean {
+  return Boolean(readStages(dir)[stage]);
+}
+
+/** Freeze a stage: record a content hash of its outputs; it may not be rewritten after. */
+export function freezeStage(dir: string, stage: CaseStage, contents: unknown, now?: number): void {
+  const stages = readStages(dir);
+  stages[stage] = { hash: hashJson(contents), frozenAt: new Date(now ?? Date.now()).toISOString() };
+  writeJson(dir, CASE_AUX.stages, stages);
+}
+
 /* ------------------------------ predicate policy -------------------------- */
 
 /**
@@ -274,6 +306,11 @@ export function freezeArtifact(
  * source does not actually contain.
  */
 export function addEvidence(dir: string, input: AddEvidenceInput): string {
+  if (isStageFrozen(dir, "research")) {
+    throw new Error(
+      "The research stage is frozen (a proposal was synthesized). Open a new run to gather more evidence.",
+    );
+  }
   const policy = loadPolicy(dir);
   const tdoc = loadTargetDoc(dir);
   if (!policy.allowedSources.includes(input.source as never)) {
@@ -360,6 +397,11 @@ export function verifyFrozenEvidence(dir: string): {
  * `test-proposal`.
  */
 export function synthesizeProposal(dir: string, set: Record<string, JsonValue>): string {
+  if (isStageFrozen(dir, "synthesis")) {
+    throw new Error(
+      "The synthesis stage is frozen (the proposal was validated). Open a new run to revise it.",
+    );
+  }
   const task = loadTask(dir);
   const tdoc = loadTargetDoc(dir);
   const policy = loadPolicy(dir);
@@ -370,6 +412,7 @@ export function synthesizeProposal(dir: string, set: Record<string, JsonValue>):
     );
   }
   const claims = (readOptionalJson<ClaimSet>(dir, CASE_OUTPUT.extract) ?? { claims: [] }).claims;
+  const evidence = readOptionalJson<EvidenceReport>(dir, CASE_OUTPUT.research) ?? { artifacts: [] };
   const proposal: CaseProposal = {
     skill: task.skill,
     skillVersion: task.skillVersion,
@@ -379,10 +422,12 @@ export function synthesizeProposal(dir: string, set: Record<string, JsonValue>):
     patch: { target: tdoc.target, set },
   };
   writeJson(dir, CASE_OUTPUT.synthesize, proposal);
+  // Freeze research+claims: the synthesizer cannot rewrite its own evidence after this.
+  freezeStage(dir, "research", { claims, artifacts: evidence.artifacts });
   const kv = Object.entries(set)
     .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
     .join(" ");
-  return `Wrote ${CASE_OUTPUT.synthesize} (${claims.length} claim(s)): ${kv}. Now run \`anvil case validate-proposal\`.`;
+  return `Wrote ${CASE_OUTPUT.synthesize} (${claims.length} claim(s)): ${kv}. Research is now frozen; run \`anvil case validate-proposal\`.`;
 }
 
 /* ---------------------------- validate-claims ----------------------------- */
@@ -489,6 +534,8 @@ export function validateCaseProposal(
     status: validated.status,
   };
   writeJson(dir, CASE_OUTPUT.critique, report);
+  // Freeze the proposal: the critic examines a frozen artifact it cannot rewrite.
+  freezeStage(dir, "synthesis", proposal);
 
   const failed = validated.outcomes.filter((o) => !o.ok);
   const text = [
