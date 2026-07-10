@@ -23,6 +23,7 @@
 export * from "./apply.js";
 export * from "./approval.js";
 export * from "./artifacts.js";
+export * from "./assess.js";
 export * from "./case/index.js";
 export * from "./deficiency.js";
 export * from "./detect.js";

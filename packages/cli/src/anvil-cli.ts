@@ -13,16 +13,20 @@ import {
 import {
   type AddEvidenceInput,
   applyApproved,
+  assessReadiness,
   buildRefinementPlan,
   ClaudeCodeAgentDriver,
   caseService,
   discoverSkills,
   generateRefinementSkill,
   packFiles,
+  renderOperationReadiness,
   renderReviewMarkdown,
+  restrictToSeverity,
   runRefinements,
   semanticDiff,
   skillFor,
+  summarizeAssessment,
   summarizeRefinementPlan,
   targetKey,
 } from "@anvil/refinement";
@@ -62,6 +66,8 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
         return await cmdCompile(positionals.slice(1), flags, io);
       case "inspect":
         return cmdInspect(positionals[1], flags, io);
+      case "assess":
+        return cmdAssess(positionals.slice(1), flags, io);
       case "lint":
         return cmdLint(positionals[1], io);
       case "approve":
@@ -152,6 +158,85 @@ function cmdInspect(
     );
   }
   return 0;
+}
+
+const SEVERITIES = ["info", "low", "medium", "high", "blocking"] as const;
+
+/**
+ * `anvil assess` — the agent-readiness triage (Layer 2). Read-only: for every
+ * operation it reports whether it can safely become an agent capability, and if
+ * not, the gap that stands in the way. Reuses the deterministic detectors, so it
+ * never disagrees with `anvil refine plan`; it only frames them per operation.
+ *
+ *   anvil assess <dir|air.yaml>                    the whole-service summary
+ *   anvil assess <dir> <operation>                 drill into one operation
+ *   anvil assess <dir> operation <operation>       (same, plan-style spelling)
+ *   anvil assess <dir> --severity blocking         narrow to a minimum severity
+ *   anvil assess <dir> --explain                   include why each gap matters
+ *   anvil assess <dir> --json                      the full machine-readable view
+ *
+ * Exits non-zero when any operation is blocked — so it gates a pipeline.
+ */
+function cmdAssess(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
+  const path = args[0];
+  if (!path) {
+    io.err("Usage: anvil assess <dir|air.yaml> [<operation>] [--severity S] [--explain] [--json]");
+    return 1;
+  }
+  const air = loadAir(path);
+  const assessment = assessReadiness(air);
+
+  // Plan-style `... operation <name>` and the terse `... <name>` both drill in.
+  const selector = args[1] === "operation" ? args[2] : args[1];
+  if (selector) {
+    const op = findOperation(air, selector);
+    if (!op) {
+      io.err(`No operation matches '${selector}' in ${air.service.id}.`);
+      return 1;
+    }
+    const readiness = assessment.operations.find((o) => o.operationId === op.id);
+    if (!readiness) return 1;
+    io.out(
+      flags.json === true
+        ? JSON.stringify(readiness, null, 2)
+        : renderOperationReadiness(readiness),
+    );
+    return readiness.disposition === "blocked" ? 1 : 0;
+  }
+
+  let view = assessment;
+  const filtered = typeof flags.severity === "string";
+  if (filtered) {
+    const min = flags.severity as string;
+    if (!(SEVERITIES as readonly string[]).includes(min)) {
+      io.err(`Unknown severity '${min}'. Use one of: ${SEVERITIES.join(", ")}.`);
+      return 1;
+    }
+    view = restrictToSeverity(assessment, min as (typeof SEVERITIES)[number]);
+  }
+
+  io.out(
+    flags.json === true
+      ? JSON.stringify(view, null, 2)
+      : // A severity filter means "show me those operations", so switch to the
+        // per-operation detail listing instead of the blocked/decision triage.
+        summarizeAssessment(view, { explain: flags.explain === true, detail: filtered }),
+  );
+  // A blocked operation is the signal the surface cannot ship as-is.
+  return assessment.summary.blocked > 0 ? 1 : 0;
+}
+
+/** Resolve an operation by id, canonical name, tool name, or CLI command tail. */
+function findOperation(air: AirDocument, selector: string) {
+  return air.operations.find(
+    (o) =>
+      o.id === selector ||
+      o.canonicalName === selector ||
+      o.mcp.toolName === selector ||
+      o.cli.command === selector ||
+      o.cli.command.endsWith(` ${selector}`) ||
+      o.id.endsWith(`.${selector}`),
+  );
 }
 
 function cmdLint(path: string | undefined, io: CliIO): number {

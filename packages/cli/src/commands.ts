@@ -32,6 +32,14 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     mutates: false,
   },
   {
+    name: "assess",
+    usage: "anvil assess <dir|air.yaml> [<operation>] [--severity S] [--explain] [--json]",
+    summary: "Triage which operations are agent-ready, and explain every blocking gap.",
+    detail:
+      "Read-only. Runs Anvil's deterministic detectors and gives every operation a readiness disposition — ready, refinement_required, human_decision_required, blocked, or excluded — with a service-level score and summary. Reuses the same detectors as `anvil refine plan`, so the per-operation triage never disagrees with the deficiency list. Drill into one operation, filter by minimum severity, or `--explain` why each gap matters to an agent. Exits non-zero when any operation is blocked.",
+    mutates: false,
+  },
+  {
     name: "lint",
     usage: "anvil lint <dir|air.yaml>",
     summary: "Show safety diagnostics; exit non-zero if there are errors.",
