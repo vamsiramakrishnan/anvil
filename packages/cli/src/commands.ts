@@ -73,6 +73,15 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     mutates: true,
   },
   {
+    name: "case",
+    usage:
+      "anvil case <open|list|inspect|add-evidence|validate-claims|synthesize|validate-proposal|investigate|finalize|close> ...",
+    summary: "Run a bounded investigation for one deficiency as an isolated case.",
+    detail:
+      "The investigation framework. `anvil case list <dir>` shows the deficiencies a case can be opened for; `anvil case open <dir> <target-key>` materializes an isolated case workspace (CASE.md + task/target/evidence-policy/allowed-tools/expected-output.schema + workspace/ + output/) that gives a coding agent a *case, not a prompt*. Inside a case, the agent works only with rails that enforce Anvil semantics — repository search and language tooling are the agent's own job, not Anvil's: `inspect`, `add-evidence` (enforces the source AND predicate policy), `validate-claims` (strength + contradictions + predicate policy), `synthesize` (composes the proposal from gathered claims), `validate-proposal` (deterministic validation), and `finalize` (records an honest status — proposal_generated / conflicted / insufficient_evidence / …). `anvil case investigate <case>` drives the live coding agent; `anvil case close <case> <air>` re-enters Anvil's rails — validating and reconciling the proposal into a refinement, bound to the case identity. The agent owns investigation and synthesis; Anvil owns admissibility, safety, validation, and application. AIR is never edited by a case.",
+    mutates: true,
+  },
+  {
     name: "run",
     usage: "anvil run <dir|air.yaml> <resource> <action> [flags]",
     summary: "Invoke an operation through the safety runtime.",

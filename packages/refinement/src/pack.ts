@@ -1,15 +1,15 @@
-import type { AirDocument, Claim } from "@anvil/air";
+import type { AirDocument } from "@anvil/air";
 import { applyPatches, type SemanticChange } from "./apply.js";
 import type { Deficiency, Severity } from "./deficiency.js";
 import { severityRank } from "./deficiency.js";
 import type { Refinement } from "./model.js";
 import { buildRefinementPlan, type RefinementPlan } from "./plan.js";
 import { reconcile } from "./reconcile.js";
-import { assembleContext } from "./skills/context.js";
+import { assembleContext, evidenceForTarget } from "./skills/context.js";
 import { HeuristicSkillExecutor, type SkillExecutor } from "./skills/executor.js";
 import { skillFor } from "./skills/registry.js";
 import { validateProposal } from "./skills/validate.js";
-import { describeTarget, targetKey, targetOperationId } from "./target.js";
+import { describeTarget, targetKey } from "./target.js";
 
 /**
  * The back half of the flywheel: turn a plan into a **refinement pack**. A pack is
@@ -48,29 +48,6 @@ export interface RefinementPack {
   plan: RefinementPlan;
   refinements: Refinement[];
   summary: RefinementSummary;
-}
-
-/**
- * The evidence gathered for a target — the owning node's active claims, scoped to
- * those actually about this target. A claim is in scope when it is unsubjected, or
- * its `subject` names the target (its key, the operation, or the field path / error
- * code). Scoping keeps a sibling field's description evidence from leaking onto the
- * field next to it.
- */
-function evidenceForTarget(air: AirDocument, deficiency: Deficiency): Claim[] {
-  const t = deficiency.target;
-  const opId = targetOperationId(t);
-  let claims: Claim[] = [];
-  if (opId) claims = air.operations.find((o) => o.id === opId)?.evidence.claims ?? [];
-  else if (t.kind === "capability")
-    claims = air.capabilities.find((c) => c.id === t.capabilityId)?.evidence.claims ?? [];
-
-  const keys = new Set<string>([targetKey(t)]);
-  if (opId) keys.add(opId);
-  if (t.kind === "field" || t.kind === "enum") keys.add(t.path);
-  if (t.kind === "error") keys.add(t.code);
-  if (t.kind === "capability") keys.add(t.capabilityId);
-  return claims.filter((c) => !c.subject || keys.has(c.subject));
 }
 
 /**
