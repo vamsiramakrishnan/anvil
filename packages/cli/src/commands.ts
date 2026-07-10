@@ -90,6 +90,22 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     mutates: true,
   },
   {
+    name: "capability",
+    usage: "anvil capability <propose|list|show|approve|reject|diff> <dir|air.yaml> [id] [flags]",
+    summary: "Review capability groupings: propose, inspect, approve, reject, or diff.",
+    detail:
+      "The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. `approve`/`reject` persist the review decision to the AIR file. Approval enforces the tool budget: a capability disclosing more than 20 tools is blocked without --allow-large (more than 15 warns). Only an approved capability can be built with `anvil build`.",
+    mutates: true,
+  },
+  {
+    name: "build",
+    usage: "anvil build <dir|air.yaml> <capability-id> [--out dir]",
+    summary: "Compile one approved capability into an aligned CLI + MCP + skill bundle.",
+    detail:
+      "Narrows the AIR document to the capability's approved operations and reachable schemas, then reuses the whole-service generator, so the capability bundle is the same aligned projection of a smaller model. Refuses (with a structured error) a capability that is missing, not lifecycle-approved, or would build empty. Stamps a content-addressed bundle.json (capabilityHash + contractHash shared by every surface); rebuilding unchanged input reproduces identical hashes.",
+    mutates: true,
+  },
+  {
     name: "run",
     usage: "anvil run <dir|air.yaml> <resource> <action> [flags]",
     summary: "Invoke an operation through the safety runtime.",
