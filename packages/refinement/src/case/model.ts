@@ -67,7 +67,7 @@ export const CASE_OUTPUT = {
   research: "output/evidence.json",
   extract: "output/claims.json",
   synthesize: "output/proposal.json",
-  critique: "output/validation-report.json",
+  critique: "output/critique.json",
   test: "output/tests.json",
 } as const satisfies Record<CasePhase, string>;
 
@@ -136,8 +136,10 @@ export interface CaseTargetDoc {
 export interface EvidencePolicyDoc {
   allowedSources: EvidenceKind[];
   minimumStrength: EvidenceStrength;
-  /** Claim predicates the executor may assert. */
+  /** Output predicates: the claim predicates the patch asserts. */
   writablePredicates: string[];
+  /** Supporting predicates: narrow intermediate facts an investigation may record. */
+  supportingPredicates: string[];
   /** Target-relative semantic keys the executor may write. */
   writableFields: string[];
   constraints: SkillConstraint[];

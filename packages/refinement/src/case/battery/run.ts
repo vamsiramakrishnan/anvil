@@ -10,7 +10,7 @@ import { HeuristicSkillExecutor } from "../../skills/executor.js";
 import { skillFor } from "../../skills/registry.js";
 import { validateProposal } from "../../skills/validate.js";
 import { targetKey } from "../../target.js";
-import { addEvidence, finalize, synthesizeProposal, testProposal } from "../commands.js";
+import { addEvidence, finalize, synthesizeProposal, validateCaseProposal } from "../commands.js";
 import { ScriptedAgentDriver } from "../driver.js";
 import { closeCase, readInvestigation } from "../executor.js";
 import { openCase } from "../materialize.js";
@@ -149,7 +149,7 @@ async function runScenario(s: FieldScenario, root: string): Promise<BatteryRow> 
     }
     if (s.draft) {
       synthesizeProposal(d, s.draft);
-      testProposal(air, d);
+      validateCaseProposal(air, d);
     }
     finalize(d);
   }).run(dir);

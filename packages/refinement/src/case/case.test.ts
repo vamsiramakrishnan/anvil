@@ -24,7 +24,7 @@ import {
   ScriptedAgentDriver,
   skillFor,
   synthesizeProposal,
-  testProposal,
+  validateCaseProposal,
   validateClaims,
 } from "../index.js";
 import { runRefinements } from "../pack.js";
@@ -128,7 +128,7 @@ function groundedInvestigation(air: AirDocument) {
       ref: "refunds/service.test.ts:20",
     });
     synthesizeProposal(dir, { description: REASON_TEXT });
-    testProposal(air, dir);
+    validateCaseProposal(air, dir);
     finalize(dir);
   });
 }
@@ -188,6 +188,42 @@ describe("case helper commands enforce the rails", () => {
     expect(() =>
       addEvidence(c.dir, { predicate: "field.description", value: "x", source: "generated_mock" }),
     ).toThrow(/not admissible/);
+  });
+
+  it("add-evidence refuses an off-policy predicate but accepts a supporting one", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    expect(() =>
+      addEvidence(c.dir, { predicate: "field.invented_rule", value: "x", source: "source_impl" }),
+    ).toThrow(/not permitted/);
+    expect(() =>
+      addEvidence(c.dir, {
+        predicate: "field.visibility",
+        value: "customer_visible",
+        source: "source_impl",
+      }),
+    ).not.toThrow();
+  });
+
+  it("validate-claims independently rejects a hand-written off-policy predicate", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    writeFileSync(
+      join(c.dir, CASE_OUTPUT.extract),
+      JSON.stringify({
+        claims: [
+          {
+            subject: "input.body.reason",
+            predicate: "field.invented_rule",
+            value: "x",
+            source: "source_impl",
+            confidence: 0.9,
+          },
+        ],
+      }),
+      "utf8",
+    );
+    expect(validateClaims(c.dir)).toMatch(/off-policy predicate/);
   });
 
   it("validate-claims reports strength and surfaces contradictions", () => {
@@ -560,7 +596,7 @@ describe("varied field investigations produce honest outcomes", () => {
       await new ScriptedAgentDriver((d) => {
         c.investigate(d, air);
         if (existsSync(join(d, CASE_OUTPUT.synthesize))) {
-          testProposal(air, d);
+          validateCaseProposal(air, d);
           finalize(d);
         }
       }).run(dir);
