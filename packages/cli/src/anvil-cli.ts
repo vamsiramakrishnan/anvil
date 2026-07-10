@@ -10,7 +10,16 @@ import {
   runEnrichment,
   type TransportFactory,
 } from "@anvil/harness";
-import { buildRefinementPlan, discoverSkills, summarizeRefinementPlan } from "@anvil/refinement";
+import {
+  applyApproved,
+  buildRefinementPlan,
+  discoverSkills,
+  packFiles,
+  renderReviewMarkdown,
+  runRefinements,
+  semanticDiff,
+  summarizeRefinementPlan,
+} from "@anvil/refinement";
 import { stringify as toYaml } from "yaml";
 import { parseArgs } from "./args.js";
 import { ANVIL_COMMANDS } from "./commands.js";
@@ -60,7 +69,7 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
       case "enrich":
         return await cmdEnrich(positionals.slice(1), flags, deps, io);
       case "refine":
-        return cmdRefine(positionals.slice(1), flags, io);
+        return await cmdRefine(positionals.slice(1), flags, io);
       case "run":
         return await cmdRun(positionals.slice(1), argv, deps, io);
       case "serve":
@@ -282,26 +291,46 @@ async function cmdEnrich(
 }
 
 /**
- * `anvil refine <subcommand>`. `plan` runs the deterministic detectors and prints
- * a refinement plan; `skills` lists the typed skill contracts that close those
- * deficiencies. Both are read-only — they gather no evidence and never mutate AIR.
- * `run`/`review`/`apply` are reserved for later stages (evidence gathering,
- * skill-proposed patches, reconciliation, measured acceptance).
+ * `anvil refine <subcommand>` — the quality flywheel.
+ *   plan    detect what AIR is missing or weak (read-only)
+ *   skills  list the typed skill contracts (read-only)
+ *   run     propose → validate → measure → reconcile into a refinement pack
+ *   review  print a pack's human review
+ *   apply   apply only the auto-approved refinements to AIR (mutates AIR)
+ * Detection and measurement are deterministic; only `apply` changes AIR, and only
+ * from refinements the policy already approved.
  */
-function cmdRefine(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
+async function cmdRefine(
+  args: string[],
+  flags: Record<string, string | boolean>,
+  io: CliIO,
+): Promise<number> {
   const sub = args[0];
-  if (sub === "skills") {
-    return cmdRefineSkills(flags, io);
+  switch (sub) {
+    case "skills":
+      return cmdRefineSkills(flags, io);
+    case "run":
+      return await cmdRefineRun(args.slice(1), flags, io);
+    case "review":
+      return cmdRefineReview(args.slice(1), io);
+    case "apply":
+      return await cmdRefineApply(args.slice(1), flags, io);
+    case "plan":
+      break;
+    default:
+      if (sub && sub !== "help") io.err(`Unknown refine subcommand: '${sub}'.`);
+      io.err("Usage: anvil refine plan   <dir|air.yaml> [--json]");
+      io.err("       anvil refine skills [--json]");
+      io.err(
+        "       anvil refine run    <dir|air.yaml> [--severity S] [--skill N] [--safe-only] [--out DIR] [--json]",
+      );
+      io.err("       anvil refine review <pack-dir>");
+      io.err(
+        "       anvil refine apply  <dir|air.yaml> [--severity S] [--skill N] [--safe-only] [--dry-run]",
+      );
+      return sub && sub !== "help" ? 1 : 0;
   }
-  if (sub !== "plan") {
-    if (sub && sub !== "help") {
-      io.err(`Unknown or not-yet-available refine subcommand: '${sub}'.`);
-    }
-    io.err("Usage: anvil refine plan <dir|air.yaml> [--json]");
-    io.err("       anvil refine skills [--json]");
-    io.err("plan/skills are available today; run/review/apply land in a later stage.");
-    return sub && sub !== "help" ? 1 : 0;
-  }
+
   const air = loadAir(args[1]);
   const plan = buildRefinementPlan(air);
   if (flags.json === true) {
@@ -311,6 +340,108 @@ function cmdRefine(args: string[], flags: Record<string, string | boolean>, io: 
   }
   // Blocking safety gaps are the signal that the artifact should not ship as-is.
   return plan.blocking.length > 0 ? 1 : 0;
+}
+
+/** Parse the shared run/apply selection flags into RunOptions. */
+function refineOptions(flags: Record<string, string | boolean>) {
+  return {
+    minSeverity: typeof flags.severity === "string" ? (flags.severity as never) : undefined,
+    skill: typeof flags.skill === "string" ? flags.skill : undefined,
+    safeOnly: flags["safe-only"] === true,
+  };
+}
+
+/** `anvil refine run` — build a refinement pack; optionally write it to --out. */
+async function cmdRefineRun(
+  args: string[],
+  flags: Record<string, string | boolean>,
+  io: CliIO,
+): Promise<number> {
+  const air = loadAir(args[0]);
+  const pack = await runRefinements(air, refineOptions(flags));
+
+  if (flags.json === true) {
+    io.out(JSON.stringify(pack, null, 2));
+  } else {
+    const s = pack.summary;
+    io.out(`Refinement run — ${pack.service.id} @ ${pack.service.version}`);
+    io.out(
+      `  ${s.proposed} proposed · ${s.approved} approved · ${s.review} awaiting review · ` +
+        `${s.rejected} rejected · ${s.regressed} regressed · ${s.skipped} skipped`,
+    );
+    for (const r of pack.refinements) {
+      const set = Object.entries(r.proposal.set)
+        .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+        .join(" ");
+      io.out(
+        `  [${r.status.padEnd(9)}] ${r.skill} → ${r.id.split(":").slice(1).join(":")}  ${set}`,
+      );
+    }
+    io.out("\nDetection and measurement were deterministic; AIR was not changed.");
+  }
+
+  const outDir = flags.out as string | undefined;
+  if (outDir) {
+    mkdirSync(outDir, { recursive: true });
+    for (const [name, contents] of Object.entries(packFiles(pack))) {
+      writeFileSync(join(outDir, name), contents, "utf8");
+    }
+    io.out(`\nWrote refinement pack (${Object.keys(packFiles(pack)).length} files) to ${outDir}.`);
+    io.out(`Review it (\`anvil refine review ${outDir}\`), then \`anvil refine apply\`.`);
+  }
+  return 0;
+}
+
+/** `anvil refine review` — print the human review from a pack directory. */
+function cmdRefineReview(args: string[], io: CliIO): number {
+  const dir = args[0];
+  if (!dir) {
+    io.err("Usage: anvil refine review <pack-dir>");
+    return 1;
+  }
+  const reviewPath = join(dir, "review.md");
+  if (!existsSync(reviewPath)) {
+    io.err(`No review.md in ${dir}. Run \`anvil refine run --out ${dir}\` first.`);
+    return 1;
+  }
+  io.out(readFileSync(reviewPath, "utf8"));
+  return 0;
+}
+
+/** `anvil refine apply` — apply only the auto-approved refinements to AIR. */
+async function cmdRefineApply(
+  args: string[],
+  flags: Record<string, string | boolean>,
+  io: CliIO,
+): Promise<number> {
+  const airPath = resolveAirPath(args[0]);
+  const air = loadAir(args[0]);
+  const pack = await runRefinements(air, refineOptions(flags));
+  const { air: next, applied, changes } = applyApproved(air, pack);
+
+  if (applied.length === 0) {
+    io.out("No auto-approved refinements to apply.");
+    if (pack.summary.review > 0)
+      io.out(
+        `  ${pack.summary.review} refinement(s) await human review; promote them deliberately.`,
+      );
+    return 0;
+  }
+
+  io.out(`Applying ${applied.length} approved refinement(s):`);
+  io.out(semanticDiff(changes));
+
+  if (flags["dry-run"] === true) {
+    io.out("\n(dry run — AIR was not written)");
+    return 0;
+  }
+  writeFileSync(airPath, airToYaml(next), "utf8");
+  io.out(
+    `\nWrote ${airPath}. Regenerate the bundle with \`anvil compile\` to reproject the change.`,
+  );
+  if (pack.summary.review > 0)
+    io.out(`  ${pack.summary.review} refinement(s) left for human review (not applied).`);
+  return 0;
 }
 
 /** `anvil refine skills` — list the typed skill contracts (read-only). */
