@@ -10,7 +10,7 @@ import {
   runEnrichment,
   type TransportFactory,
 } from "@anvil/harness";
-import { buildRefinementPlan, summarizeRefinementPlan } from "@anvil/refinement";
+import { buildRefinementPlan, discoverSkills, summarizeRefinementPlan } from "@anvil/refinement";
 import { stringify as toYaml } from "yaml";
 import { parseArgs } from "./args.js";
 import { ANVIL_COMMANDS } from "./commands.js";
@@ -282,19 +282,24 @@ async function cmdEnrich(
 }
 
 /**
- * `anvil refine <subcommand>`. Only `plan` is wired today: it runs the
- * deterministic detectors and prints a refinement plan. It gathers no evidence
- * and never mutates AIR. `run`/`review`/`apply` are reserved for later stages
- * (evidence gathering, skill-proposed patches, measured acceptance).
+ * `anvil refine <subcommand>`. `plan` runs the deterministic detectors and prints
+ * a refinement plan; `skills` lists the typed skill contracts that close those
+ * deficiencies. Both are read-only — they gather no evidence and never mutate AIR.
+ * `run`/`review`/`apply` are reserved for later stages (evidence gathering,
+ * skill-proposed patches, reconciliation, measured acceptance).
  */
 function cmdRefine(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
   const sub = args[0];
+  if (sub === "skills") {
+    return cmdRefineSkills(flags, io);
+  }
   if (sub !== "plan") {
     if (sub && sub !== "help") {
       io.err(`Unknown or not-yet-available refine subcommand: '${sub}'.`);
     }
     io.err("Usage: anvil refine plan <dir|air.yaml> [--json]");
-    io.err("Only `plan` is available today; run/review/apply land in a later stage.");
+    io.err("       anvil refine skills [--json]");
+    io.err("plan/skills are available today; run/review/apply land in a later stage.");
     return sub && sub !== "help" ? 1 : 0;
   }
   const air = loadAir(args[1]);
@@ -306,6 +311,26 @@ function cmdRefine(args: string[], flags: Record<string, string | boolean>, io: 
   }
   // Blocking safety gaps are the signal that the artifact should not ship as-is.
   return plan.blocking.length > 0 ? 1 : 0;
+}
+
+/** `anvil refine skills` — list the typed skill contracts (read-only). */
+function cmdRefineSkills(flags: Record<string, string | boolean>, io: CliIO): number {
+  const skills = discoverSkills();
+  if (flags.json === true) {
+    io.out(JSON.stringify(skills, null, 2));
+    return 0;
+  }
+  io.out("Refinement skills (typed procedures; executor is separate from semantics):\n");
+  for (const s of skills) {
+    io.out(`  ${s.name} v${s.version}  → ${s.triggers.join(", ")}`);
+    io.out(`    target: ${s.targetKind}   writes: ${s.output.fields.join(", ")}`);
+    io.out(`    evidence: ${s.evidence.minimumStrength} from ${s.evidence.allowed.join("/")}`);
+    io.out(`    validation: ${s.validation.join(", ")}`);
+  }
+  io.out(
+    "\nProposals from any executor are judged by these deterministic checks before they count.",
+  );
+  return 0;
 }
 
 async function cmdRun(
