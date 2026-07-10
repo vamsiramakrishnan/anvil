@@ -141,6 +141,15 @@ export function resolveNameCollisions(operations: Operation[]): Diagnostic[] {
 
   for (const [command, group] of byCommand) {
     if (group.length < 2) continue;
+    // Identity must not depend on source-file ordering: when the token falls
+    // back to the HTTP method or an index, whoever comes first in the group
+    // decides who gets the bare token. Order the group by (path, method) so a
+    // reshuffled spec still derives the same ids.
+    group.sort(
+      (a, b) =>
+        (a.sourceRef.path ?? "").localeCompare(b.sourceRef.path ?? "") ||
+        (a.sourceRef.method ?? "").localeCompare(b.sourceRef.method ?? ""),
+    );
     const usedTokens = new Set<string>();
     for (const [index, op] of group.entries()) {
       let token = distinguishingToken(op, group) ?? op.sourceRef.method ?? String(index + 1);

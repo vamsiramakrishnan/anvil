@@ -14,6 +14,12 @@ const BOOLEAN_FLAGS = new Set([
   "all",
   "quiet",
   "allow-degraded-native",
+  // Progressive-disclosure views: always boolean so they never swallow a value.
+  "schema",
+  "examples",
+  "errors",
+  "policy",
+  "explain",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
