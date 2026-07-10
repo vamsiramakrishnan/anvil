@@ -12,9 +12,15 @@ describe("anvil self-skill", () => {
     }
   });
 
-  it("keeps SKILL.md small and safety-first", () => {
+  it("keeps SKILL.md small and safety-first, with a valid frontmatter slug", () => {
     const skill = generateAnvilSkill()["SKILL.md"] ?? "";
-    expect(skill).toMatch(/^---\nname: anvil/);
+    const front = skill.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+    const name = front.match(/^name:\s*(.+)$/m)?.[1]?.trim() ?? "";
+    const description = front.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
+    expect(name).toBe("anvil");
+    expect(name).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    expect(description.length).toBeGreaterThan(0);
+    expect(description.length).toBeLessThanOrEqual(1024);
     expect(skill).toContain("Safety rules");
     expect(skill.length).toBeLessThan(5000); // progressive disclosure budget
   });

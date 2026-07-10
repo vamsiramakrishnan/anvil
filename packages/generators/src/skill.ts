@@ -1,6 +1,16 @@
 import type { AirDocument, Operation } from "@anvil/air";
-import { evidenceConfidence } from "@anvil/air";
+import { evidenceConfidence, kebabCase } from "@anvil/air";
 import { stringify as toYaml } from "yaml";
+
+/**
+ * The skill's identifier for the frontmatter `name` and manifest. Agent Skills
+ * require a lowercase, hyphenated slug (`[a-z0-9-]`), so a service id like
+ * `payments_api` must be kebab-cased — an underscore in `name` makes the skill
+ * unloadable by a harness.
+ */
+function skillName(air: AirDocument): string {
+  return kebabCase(air.service.id);
+}
 
 /**
  * The skill package (spec §9 + "Progressive disclosure for skills"). SKILL.md
@@ -14,7 +24,8 @@ export function generateSkill(air: AirDocument): Record<string, string> {
 
   files["SKILL.md"] = skillMd(air, exposed);
   files["manifest.yaml"] = toYaml({
-    name: svc.id,
+    name: skillName(air),
+    service_id: svc.id,
     display_name: svc.displayName,
     version: svc.version,
     owner: svc.owner,
@@ -34,11 +45,12 @@ export function generateSkill(air: AirDocument): Record<string, string> {
 
 function skillMd(air: AirDocument, ops: Operation[]): string {
   const id = air.service.id;
+  const label = air.service.displayName ?? id;
   const reads = ops.filter((o) => o.effect.kind === "read");
   const writes = ops.filter((o) => o.effect.kind === "mutation");
   return `---
-name: ${id}
-description: Use this skill to operate the ${air.service.displayName ?? id} safely — ${reads.length} read and ${writes.length} write operations, with typed inputs, structured errors, and enforced confirmation on unsafe mutations.
+name: ${skillName(air)}
+description: Use this skill to operate ${label} safely — ${reads.length} read and ${writes.length} write operations exposed as aligned CLI and MCP tools with typed inputs, structured errors, and enforced confirmation on unsafe mutations. Use when an agent needs to discover, read the contract of, or invoke an operation of this API.
 ---
 
 # ${air.service.displayName ?? id}
