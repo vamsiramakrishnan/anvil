@@ -9,6 +9,7 @@ import type {
 } from "../skills/contract.js";
 import type { ValidationOutcome } from "../skills/validate.js";
 import type { SemanticTarget } from "../target.js";
+import type { CaseWorkspace } from "./identity.js";
 
 /**
  * The **case** model. A case is what turns "run a skill" from a single opaque
@@ -55,6 +56,7 @@ export const PHASE_ROLE: Record<CasePhase, string> = {
 /** The fixed case files a materialised case carries (relative to the case dir). */
 export const CASE_FILES = {
   brief: "CASE.md",
+  run: "run.json",
   task: "task.json",
   target: "target.json",
   evidencePolicy: "evidence-policy.json",
@@ -147,10 +149,10 @@ export interface EvidencePolicyDoc {
   mustNot: string[];
 }
 
-/** `allowed-tools.json` — what the executor may inspect, run, and must never do. */
+/** `allowed-tools.json` — the workspace the executor may read, the rails, and the deny-list. */
 export interface AllowedToolsDoc {
-  /** Repository scopes the executor may read (paths / globs). Empty = agent chooses. */
-  inspect: string[];
+  /** The repository root, revision, and canonical scopes the executor may read. */
+  workspace: CaseWorkspace;
   /** The `anvil case` helper commands available inside the case. */
   helpers: string[];
   /** Hard prohibitions — modifying source, inventing rules, changing structure, … */

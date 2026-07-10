@@ -17,6 +17,7 @@ export * from "./commands.js";
 export * from "./driver.js";
 export * from "./escalate.js";
 export * from "./executor.js";
+export * from "./identity.js";
 export * from "./investigation.js";
 export * from "./materialize.js";
 export * from "./metrics.js";

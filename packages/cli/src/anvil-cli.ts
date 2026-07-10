@@ -605,7 +605,9 @@ function cmdCaseList(args: string[], flags: Record<string, string | boolean>, io
 function cmdCaseOpen(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
   const key = args[1];
   if (!args[0] || !key) {
-    io.err("Usage: anvil case open <dir|air.yaml> <target-key> [--out DIR] [--inspect a,b]");
+    io.err(
+      "Usage: anvil case open <dir|air.yaml> <target-key> [--out DIR] [--inspect a,b] [--repo-root DIR] [--resume|--replace]",
+    );
     return 1;
   }
   const air = loadAir(args[0]);
@@ -617,8 +619,17 @@ function cmdCaseOpen(args: string[], flags: Record<string, string | boolean>, io
   }
   const inspect =
     typeof flags.inspect === "string" ? flags.inspect.split(",").map((s) => s.trim()) : undefined;
-  const c = openCase(air, deficiency, { root: (flags.out as string) ?? ".refinement", inspect });
-  io.out(`Opened case '${c.caseId}' at ${c.dir}`);
+  const onExisting =
+    flags.replace === true ? "replace" : flags.resume === true ? "resume" : "reject";
+  const c = openCase(air, deficiency, {
+    root: (flags.out as string) ?? ".refinement",
+    inspect,
+    repositoryRoot:
+      typeof flags["repo-root"] === "string" ? (flags["repo-root"] as string) : undefined,
+    executor: typeof flags.executor === "string" ? (flags.executor as string) : "cli",
+    onExisting,
+  });
+  io.out(`Opened case '${c.caseId}' run ${c.runId} at ${c.dir}`);
   io.out(`  skill: ${c.skill.name}  ·  question: ${c.task.question}`);
   io.out(
     `  read CASE.md, then use \`anvil case ...\` helpers or \`anvil case investigate ${c.dir}\`.`,

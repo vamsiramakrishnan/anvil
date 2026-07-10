@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AirDocument, Claim } from "@anvil/air";
 import type { Deficiency } from "../deficiency.js";
@@ -6,6 +6,12 @@ import { assembleContext, evidenceForTarget } from "../skills/context.js";
 import type { RefinementSkill, SkillConstraint, SkillContext } from "../skills/contract.js";
 import { skillFor } from "../skills/registry.js";
 import { describeTarget, targetKey } from "../target.js";
+import {
+  buildRunIdentity,
+  type CaseWorkspace,
+  type RunIdentity,
+  resolveWorkspace,
+} from "./identity.js";
 import {
   type AllowedToolsDoc,
   CASE_FILES,
@@ -72,15 +78,33 @@ const BASE_DENY = [
 export interface OpenCaseOptions {
   /** Root the `cases/` dir is created under (default `.refinement`). */
   root?: string;
-  /** Repository scopes the executor may inspect (paths/globs). */
+  /** Repository scopes the executor may inspect (resolved within the repo root). */
   inspect?: string[];
+  /** The repository root scopes resolve against and must stay within (default cwd). */
+  repositoryRoot?: string;
+  repositoryRevision?: string;
+  /** Identity of the executor this run is opened for (recorded in run.json). */
+  executor?: string;
+  /** Injectable clock (ms) for reproducible run ids in tests. */
+  now?: number;
+  /**
+   * What to do if the computed run directory already exists and is populated.
+   * `reject` (default) refuses — a new run never silently consumes stale output;
+   * `resume` reuses it; `replace` clears its `output/` and rewrites the inputs.
+   */
+  onExisting?: "reject" | "resume" | "replace";
 }
 
 export interface MaterializedCase {
   caseId: string;
+  /** The case key `<skill>--<target-key>` (stable across runs). */
+  caseKey: string;
+  runId: string;
   dir: string;
   skill: RefinementSkill;
   context: SkillContext;
+  identity: RunIdentity;
+  workspace: CaseWorkspace;
   task: CaseTask;
   target: CaseTargetDoc;
   policy: EvidencePolicyDoc;
@@ -140,8 +164,8 @@ function buildPolicyDoc(skill: RefinementSkill): EvidencePolicyDoc {
   };
 }
 
-function buildToolsDoc(inspect: string[]): AllowedToolsDoc {
-  return { inspect, helpers: CASE_HELPERS, deny: BASE_DENY };
+function buildToolsDoc(workspace: CaseWorkspace): AllowedToolsDoc {
+  return { workspace, helpers: CASE_HELPERS, deny: BASE_DENY };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -164,9 +188,9 @@ function renderBrief(
   lines.push(`**Deficiency** — \`${task.deficiency}\` (${task.severity})`);
   lines.push("");
 
-  lines.push("You may inspect:");
-  for (const s of tools.inspect.length
-    ? tools.inspect
+  lines.push(`You may inspect (read-only, within ${tools.workspace.repositoryRoot}):`);
+  for (const s of tools.workspace.inspectScopes.length
+    ? tools.workspace.inspectScopes
     : ["(the relevant repository, as you plan)"]) {
     lines.push(`- ${s}`);
   }
@@ -248,11 +272,110 @@ export function openCase(
   const prior = evidenceForTarget(air, deficiency);
   const context = assembleContext(air, deficiency, prior);
   const proc = procedureFor(skill);
-  const id = caseId(skill.name, targetKey(deficiency.target));
-  const dir = join(root, "cases", id);
+  const caseKey = caseId(skill.name, targetKey(deficiency.target));
 
-  const task: CaseTask = {
-    caseId: id,
+  // Containment: resolve inspect scopes within an explicit repository root, rejecting
+  // any that escape it. The repository is read-only; the case dir is the only writable place.
+  const workspace = resolveWorkspace({
+    repositoryRoot: options.repositoryRoot,
+    repositoryRevision: options.repositoryRevision,
+    inspect: options.inspect,
+  });
+  const policy = buildPolicyDoc(skill);
+
+  // Immutable run: a fresh, content+time-addressed run directory per open. A new run
+  // never silently consumes a previous run's output.
+  const identity = buildRunIdentity({
+    caseKey,
+    air,
+    skillVersion: skill.version,
+    policy,
+    executor: options.executor,
+    repositoryRevision: workspace.repositoryRevision,
+    now: options.now,
+  });
+  const dir = join(root, "cases", caseKey, identity.runId);
+  const onExisting = options.onExisting ?? "reject";
+  if (isPopulatedRun(dir)) {
+    if (onExisting === "reject") {
+      throw new Error(
+        `Run '${dir}' already exists. Pass onExisting: 'resume' to reuse it or 'replace' to overwrite — a new run never consumes stale output implicitly.`,
+      );
+    }
+    if (onExisting === "replace") rmSync(join(dir, "output"), { recursive: true, force: true });
+    if (onExisting === "resume") {
+      // Reuse the run as-is; return its identity without rewriting inputs/outputs.
+      const targetDoc = buildTargetDoc(context, prior);
+      const tools = buildToolsDoc(workspace);
+      const task = buildTask(caseKey, skill, deficiency, proc);
+      return {
+        caseId: caseKey,
+        caseKey,
+        runId: identity.runId,
+        dir,
+        skill,
+        context,
+        identity,
+        workspace,
+        task,
+        target: targetDoc,
+        policy,
+        tools,
+        procedure: proc,
+      };
+    }
+  }
+
+  const task = buildTask(caseKey, skill, deficiency, proc);
+  const targetDoc = buildTargetDoc(context, prior);
+  const tools = buildToolsDoc(workspace);
+
+  mkdirSync(join(dir, "workspace"), { recursive: true });
+  mkdirSync(join(dir, "output"), { recursive: true });
+  writeFileSync(join(dir, "workspace", ".gitkeep"), "", "utf8");
+  writeFileSync(join(dir, "output", ".gitkeep"), "", "utf8");
+  writeJson(dir, CASE_FILES.run, identity);
+  writeJson(dir, CASE_FILES.task, task);
+  writeJson(dir, CASE_FILES.target, targetDoc);
+  writeJson(dir, CASE_FILES.evidencePolicy, policy);
+  writeJson(dir, CASE_FILES.allowedTools, tools);
+  writeJson(dir, CASE_FILES.expectedSchema, expectedOutputSchema(policy.writableFields));
+  writeFileSync(
+    join(dir, CASE_FILES.brief),
+    renderBrief(task, targetDoc, policy, tools, proc),
+    "utf8",
+  );
+
+  return {
+    caseId: caseKey,
+    caseKey,
+    runId: identity.runId,
+    dir,
+    skill,
+    context,
+    identity,
+    workspace,
+    task,
+    target: targetDoc,
+    policy,
+    tools,
+    procedure: proc,
+  };
+}
+
+/** A run directory that already carries its canonical inputs (i.e. a real prior run). */
+function isPopulatedRun(dir: string): boolean {
+  return existsSync(join(dir, CASE_FILES.task));
+}
+
+function buildTask(
+  caseKey: string,
+  skill: RefinementSkill,
+  deficiency: Deficiency,
+  proc: InvestigationProcedure,
+): CaseTask {
+  return {
+    caseId: caseKey,
     skill: skill.name,
     skillVersion: skill.version,
     deficiency: deficiency.code,
@@ -269,35 +392,5 @@ export function openCase(
       if (!acc.includes(s.phase)) acc.push(s.phase);
       return acc;
     }, []),
-  };
-  const targetDoc = buildTargetDoc(context, prior);
-  const policy = buildPolicyDoc(skill);
-  const tools = buildToolsDoc(options.inspect ?? []);
-
-  mkdirSync(join(dir, "workspace"), { recursive: true });
-  mkdirSync(join(dir, "output"), { recursive: true });
-  writeFileSync(join(dir, "workspace", ".gitkeep"), "", "utf8");
-  writeFileSync(join(dir, "output", ".gitkeep"), "", "utf8");
-  writeJson(dir, CASE_FILES.task, task);
-  writeJson(dir, CASE_FILES.target, targetDoc);
-  writeJson(dir, CASE_FILES.evidencePolicy, policy);
-  writeJson(dir, CASE_FILES.allowedTools, tools);
-  writeJson(dir, CASE_FILES.expectedSchema, expectedOutputSchema(policy.writableFields));
-  writeFileSync(
-    join(dir, CASE_FILES.brief),
-    renderBrief(task, targetDoc, policy, tools, proc),
-    "utf8",
-  );
-
-  return {
-    caseId: id,
-    dir,
-    skill,
-    context,
-    task,
-    target: targetDoc,
-    policy,
-    tools,
-    procedure: proc,
   };
 }

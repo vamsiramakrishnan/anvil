@@ -153,7 +153,7 @@ describe("openCase — give the agent a case, not a prompt", () => {
     expect(existsSync(join(c.dir, "output"))).toBe(true);
 
     const brief = readFileSync(join(c.dir, CASE_FILES.brief), "utf8");
-    expect(brief).toContain("You may inspect:");
+    expect(brief).toContain("You may inspect");
     expect(brief).toContain("payments-service/src");
     expect(brief).toContain("You may not:");
     expect(brief).toContain("modify source files");
@@ -174,6 +174,68 @@ describe("openCase — give the agent a case, not a prompt", () => {
     const air = doc();
     const fake = { ...reasonDeficiency(air), code: "auth_principal_unclear" as const };
     expect(() => openCase(air, fake, { root: scratch() })).toThrow(/No skill/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Immutable runs + repository containment                                    */
+/* -------------------------------------------------------------------------- */
+
+describe("immutable runs and containment", () => {
+  it("stamps each run with an immutable identity and never consumes stale output", () => {
+    const air = doc();
+    const root = scratch();
+    const d = reasonDeficiency(air);
+    const first = openCase(air, d, { root, now: 1000 });
+    // Deposit output into the first run.
+    addEvidence(first.dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "s:1",
+    });
+    synthesizeProposal(first.dir, { description: REASON_TEXT });
+
+    // A later open creates a NEW run directory; the stale proposal is not visible.
+    const second = openCase(air, d, { root, now: 2000 });
+    expect(second.runId).not.toBe(first.runId);
+    expect(second.dir).not.toBe(first.dir);
+    expect(readProposal(second.dir)).toBeUndefined();
+    expect(second.identity.airHash).toBe(first.identity.airHash);
+  });
+
+  it("refuses to reopen an existing run unless resume/replace is explicit", () => {
+    const air = doc();
+    const root = scratch();
+    const d = reasonDeficiency(air);
+    openCase(air, d, { root, now: 1000 });
+    // Same clock → same run id → same directory: a bare reopen is refused.
+    expect(() => openCase(air, d, { root, now: 1000 })).toThrow(/already exists/);
+    // Resume is explicit and returns the same run.
+    const resumed = openCase(air, d, { root, now: 1000, onExisting: "resume" });
+    expect(existsSync(join(resumed.dir, CASE_FILES.task))).toBe(true);
+  });
+
+  it("rejects an inspect scope that escapes the repository root", () => {
+    const air = doc();
+    expect(() =>
+      openCase(air, reasonDeficiency(air), {
+        root: scratch(),
+        repositoryRoot: "/home/user/anvil",
+        inspect: ["../../etc"],
+      }),
+    ).toThrow(/outside the repository root/);
+  });
+
+  it("records the workspace with canonical scopes inside the repository root", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), {
+      root: scratch(),
+      repositoryRoot: "/home/user/anvil",
+      inspect: ["packages/refinement"],
+    });
+    expect(c.workspace.repositoryRoot).toBe("/home/user/anvil");
+    expect(c.workspace.inspectScopes).toEqual(["/home/user/anvil/packages/refinement"]);
   });
 });
 
