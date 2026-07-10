@@ -24,6 +24,7 @@ import {
   LocalRepositoryEvidenceAcquirer,
   openCase,
   parseEvidenceCoordinate,
+  parseEvidenceReport,
 } from "../index.js";
 import { buildRefinementPlan } from "../plan.js";
 import { targetKey } from "../target.js";
@@ -348,6 +349,50 @@ describe("evidence artifact identity", () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* Verified artifacts must be re-hashable (no pathless "verified")            */
+/* -------------------------------------------------------------------------- */
+
+describe("verified artifact identity requires a re-readable coordinate", () => {
+  it("parseEvidenceReport rejects a pathless verified artifact", () => {
+    const forged = {
+      artifacts: [
+        {
+          id: "forged",
+          uri: "fake://x",
+          source: "source_impl",
+          contentHash: "deadbeef",
+          excerpt: "claimed",
+          acquiredAt: new Date(0).toISOString(),
+          // verified, but no `path` → cannot be re-hashed → rejected at the boundary.
+          verification: { status: "verified", verifier: "local_repository" },
+        },
+      ],
+    };
+    expect(() => parseEvidenceReport(forged)).toThrow();
+  });
+
+  it("accepts a verified artifact that carries a path", () => {
+    const ok = {
+      artifacts: [
+        {
+          id: "real",
+          uri: "src/x.ts#L1-L1",
+          source: "source_impl",
+          contentHash: "deadbeef",
+          excerpt: "claimed",
+          acquiredAt: new Date(0).toISOString(),
+          path: "src/x.ts",
+          startLine: 1,
+          endLine: 1,
+          verification: { status: "verified", verifier: "local_repository" },
+        },
+      ],
+    };
+    expect(() => parseEvidenceReport(ok)).not.toThrow();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* Injectable acquirers via CaseService                                       */
 /* -------------------------------------------------------------------------- */
 
@@ -365,6 +410,10 @@ describe("CaseService injects custom evidence acquirers", () => {
       contentHash: "deadbeef",
       excerpt: "hand-crafted excerpt from the fake acquirer",
       acquiredAt: new Date(0).toISOString(),
+      // A verified artifact must carry a re-readable path coordinate.
+      path: "fake/source.ts",
+      startLine: 1,
+      endLine: 1,
       verification: { status: "verified", verifier: "local_repository" },
     };
     const fakeAcquirer: EvidenceAcquirer = {

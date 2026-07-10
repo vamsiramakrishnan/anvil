@@ -1,7 +1,12 @@
 import type { AirDocument, Claim } from "@anvil/air";
 import type { JsonValue } from "../skills/contract.js";
 import { skillByName } from "../skills/registry.js";
-import { meetsStrength, strengthOf, validateProposal } from "../skills/validate.js";
+import {
+  isVerifiedGrounding,
+  meetsStrength,
+  strengthOf,
+  validateProposal,
+} from "../skills/validate.js";
 import { allowedPredicates } from "./evidence.js";
 import { bindProposalToCase, caseIdentity, contextForCase } from "./identity-binding.js";
 import type { Conflict, InvestigationStatus } from "./investigation.js";
@@ -173,9 +178,10 @@ export function validateCaseProposal(
 
   // Resolve grounding claims against the FROZEN evidence report so verification-sensitive
   // checks hold each patched value to its field's trust bar (verified vs allow_unverified).
-  const frozenEvidence = readOptionalJson<EvidenceReport>(dir, CASE_OUTPUT.research) ?? {
-    artifacts: [],
-  };
+  // Parse it through the schema so a forged artifact (e.g. a pathless "verified" one) is
+  // rejected at the trust boundary rather than trusted here.
+  const frozenRaw = readOptionalJson(dir, CASE_OUTPUT.research);
+  const frozenEvidence = frozenRaw ? parseEvidenceReport(frozenRaw) : { artifacts: [] };
   const validated = validateProposal(skill, proposal, context, {
     artifacts: frozenEvidence.artifacts,
   });
@@ -308,9 +314,12 @@ function evaluateSupported(
   const required = policy.fieldVerification?.[current.field] ?? policy.minimumVerification;
   if (required === "verified") {
     const byId = new Map(artifacts.map((a) => [a.id, a]));
-    const verified = matching.some(
-      (c) => c.sourceRef && byId.get(c.sourceRef)?.verification.status === "verified",
-    );
+    // A verified requirement is met only by a re-hashable verified artifact (see
+    // isVerifiedGrounding) — a pathless "verified" artifact cannot be re-verified.
+    const verified = matching.some((c) => {
+      const art = c.sourceRef ? byId.get(c.sourceRef) : undefined;
+      return art !== undefined && isVerifiedGrounding(art);
+    });
     if (!verified) {
       return {
         ok: false,

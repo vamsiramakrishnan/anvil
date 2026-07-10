@@ -9,6 +9,7 @@ import {
   STRUCTURAL_KEYS,
   type ValidationCheckId,
   type ValidationEvidenceContext,
+  type VerifiableArtifact,
 } from "./contract.js";
 
 /* -------------------------------------------------------------------------- */
@@ -231,7 +232,7 @@ const CHECKS: Record<ValidationCheckId, Check> = {
           `no grounding claim for '${field}' = ${JSON.stringify(value)}`,
         );
       }
-      const resolved: Array<{ verification: { status: "verified" | "unverified" } }> = [];
+      const resolved: VerifiableArtifact[] = [];
       for (const c of grounding) {
         const art = c.sourceRef ? byId.get(c.sourceRef) : undefined;
         if (!art) {
@@ -242,13 +243,15 @@ const CHECKS: Record<ValidationCheckId, Check> = {
         }
         resolved.push(art);
       }
+      // "Verified" here means re-hashable (see isVerifiedGrounding): a verified status with
+      // no re-readable coordinate cannot be re-verified and must not clear the bar.
       if (
         requiredVerification(skill, field) === "verified" &&
-        !resolved.some((a) => a.verification.status === "verified")
+        !resolved.some(isVerifiedGrounding)
       ) {
         return fail(
           "evidence_meets_verification",
-          `${field} requires verified evidence, but all grounding artifacts are unverified`,
+          `${field} requires verified evidence, but no grounding artifact is verified and re-hashable`,
         );
       }
       return null;
@@ -339,6 +342,18 @@ export function validateProposal(
 
 /** The full set of implemented validation checks (for introspection/tests). */
 export const VALIDATION_CHECKS = Object.keys(CHECKS) as ValidationCheckId[];
+
+/**
+ * Whether an artifact counts as *trustworthy* verified evidence: its status is
+ * `verified` AND it carries a re-readable coordinate (a repository path) Anvil can
+ * re-hash. A `verified` status with no such coordinate cannot be re-verified — a
+ * hand-written or buggy `evidence.json` could assert it — so it does NOT satisfy a
+ * verified-evidence requirement. Used by both the validation check and the approval
+ * guard so "verified" means the same thing in both.
+ */
+export function isVerifiedGrounding(a: VerifiableArtifact): boolean {
+  return a.verification.status === "verified" && typeof a.path === "string" && a.path.length > 0;
+}
 
 /**
  * The frozen artifacts that actually ground a proposal's patched values: for each
