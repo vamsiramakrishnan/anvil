@@ -49,7 +49,7 @@ node packages/cli/dist/bin-anvil.js inspect generated/payments
 
 # Triage which operations are agent-ready, and why the rest are not.
 node packages/cli/dist/bin-anvil.js assess generated/payments
-node packages/cli/dist/bin-anvil.js assess generated/payments create   # drill into one operation
+node packages/cli/dist/bin-anvil.js assess generated/payments payments.refunds.create   # drill into one operation
 
 # Dry-run an unsafe mutation — no side effects, secrets redacted.
 ANVIL_ENV=prod ANVIL_ALLOWED_HOSTS=payments.internal.example.com \

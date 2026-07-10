@@ -103,7 +103,13 @@ function describeEffect(op: Operation): string {
  * disposition is honest about the single hardest thing standing in the way.
  */
 function dispositionFor(op: Operation, defs: readonly Deficiency[]): Disposition {
-  if (op.deprecated) return "excluded";
+  // The lifecycle state machine outranks detector gaps: deprecation can arrive
+  // via the manifest/enrichment as `state: deprecated` without the boolean, and
+  // a review can set `state: blocked` for reasons recorded in reviewNotes that
+  // no detector re-derives from AIR. Readiness must never contradict a human's
+  // explicit lifecycle decision.
+  if (op.deprecated || op.state === "deprecated") return "excluded";
+  if (op.state === "blocked") return "blocked";
   if (defs.some((d) => d.severity === "blocking")) return "blocked";
   // An unproven safety posture (high-severity safety gap) is a human's call: a
   // skill can gather evidence, but a person decides whether to trust the effect.
