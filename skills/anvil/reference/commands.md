@@ -61,7 +61,7 @@ The investigation framework. `anvil case list <dir>` shows the deficiencies a ca
 
 Invoke an operation through the safety runtime.
 
-Supports --dry-run, --confirm, --idempotency-key, --schema, --examples, --json, --trace. Unsafe mutations refuse without --confirm.
+Supports --dry-run, --confirm, --idempotency-key, --schema, --examples, --errors, --policy, --explain, --json, --trace. Unsafe mutations refuse without --confirm; failures are structured envelopes with stable exit codes (2 input, 3 needs-flags, 4 auth, 5 policy, 6 upstream state, 7 upstream availability).
 
 ### `anvil serve`
 `anvil serve mcp <dir>`

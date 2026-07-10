@@ -40,6 +40,8 @@ interface RawOperation {
     { description?: string; content?: Record<string, { schema?: JsonSchema }> }
   >;
   security?: Array<Record<string, string[]>>;
+  /** Vendor extension: the spec author declares a repeat call is a no-op. */
+  "x-idempotent"?: unknown;
 }
 
 function toParam(raw: RawParam): Param | null {
@@ -193,6 +195,12 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
       const signal = `${raw.operationId ?? ""} ${raw.summary ?? ""} ${path}`;
       const { effect, idempotency } = classifyEffect(method, signal, endsWithParam);
       effect.resource = singularize(names.resource);
+      // `x-idempotent: true` is a spec-level declaration (Swagger 2.0 and 3.x
+      // alike) that repeating the call is a no-op. Honor it as natural
+      // idempotency so retries become provably safe — confirmation still
+      // applies to risky mutations, so this never loosens the approval gate.
+      const declaredIdempotent = raw["x-idempotent"] === true;
+      if (declaredIdempotent && idempotency.mode === "none") idempotency.mode = "natural";
       const retries = classifyRetry(effect, idempotency);
       const confirmation = classifyConfirmation(effect, idempotency);
 
@@ -249,6 +257,19 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
               note: "effect/idempotency inferred from HTTP method",
               confidence: 0.5,
             },
+            ...(declaredIdempotent
+              ? [
+                  {
+                    subject: id,
+                    predicate: "idempotency.mode",
+                    value: idempotency.mode,
+                    source: "spec" as const,
+                    sourceRef: `${method.toUpperCase()} ${path} x-idempotent`,
+                    method: "declared",
+                    confidence: 0.8,
+                  },
+                ]
+              : []),
             {
               subject: id,
               predicate: "name.quality",

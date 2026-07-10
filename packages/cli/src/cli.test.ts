@@ -133,7 +133,7 @@ describe("tool CLI: invocation", () => {
     expect(io.text()).toContain("/payments/pay_1/refunds");
   });
 
-  it("refuses an unsafe mutation without --confirm (structured error, exit 1)", async () => {
+  it("refuses an unsafe mutation without --confirm (structured error, exit 3)", async () => {
     const transport = new MockTransport(() => ok({}));
     const io = bufferIO();
     const code = await runToolCli(
@@ -152,7 +152,8 @@ describe("tool CLI: invocation", () => {
       ],
       { ...baseDeps(transport), io },
     );
-    expect(code).toBe(1);
+    // Safety refusals map to the stable exit code 3 (see EXIT_CODES).
+    expect(code).toBe(3);
     expect(io.text()).toContain("confirmation_required");
     expect(transport.requests).toHaveLength(0);
   });
