@@ -183,6 +183,25 @@ describe("capabilities in generated artifacts", () => {
     const skill = files["skill/SKILL.md"] as string;
     expect(skill).not.toContain("payments refunds create");
   });
+
+  it("gives the skill a valid Agent-Skill name slug", async () => {
+    // With no serviceId, the id derives from the title "Payments API" as
+    // `payments_api`. A skill `name` must be a lowercase-hyphen slug — an
+    // underscore makes the skill unloadable by a harness — so it is kebab-cased.
+    const derived = await compile({ spec: read("openapi.yaml") });
+    expect(derived.service.id).toBe("payments_api");
+    const { files } = generateBundle(derived);
+    const front = (files["skill/SKILL.md"] as string).match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+    const name = front.match(/^name:\s*(.+)$/m)?.[1]?.trim() ?? "";
+    const description = front.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
+    expect(name).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+    expect(name).toBe("payments-api");
+    expect(description.length).toBeGreaterThan(0);
+    expect(description.length).toBeLessThanOrEqual(1024);
+    const manifest = files["skill/manifest.yaml"] as string;
+    expect(manifest).toContain("name: payments-api");
+    expect(manifest).toContain("service_id: payments_api");
+  });
 });
 
 describe("bundle", () => {
