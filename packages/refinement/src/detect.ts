@@ -293,7 +293,7 @@ const indistinctDescriptions: Detector = {
     const byKey = new Map<string, Operation[]>();
     for (const op of air.operations) {
       if (isBlank(op.description)) continue;
-      const key = `${op.capabilityId ?? ""} ${op.description.trim()}`;
+      const key = `${op.capabilityId ?? ""} | ${op.description.trim()}`;
       const list = byKey.get(key) ?? [];
       list.push(op);
       byKey.set(key, list);
@@ -569,6 +569,18 @@ const CATEGORY_ORDER: Record<Deficiency["category"], number> = {
 };
 
 /**
+ * The dedupe identity of a deficiency. Normally (code, target), but some codes
+ * legitimately recur on the same target, distinguished only by a fact: a
+ * `contested_safety_semantic` targets the whole operation and differs per
+ * contested `predicate`. Joining that predicate keeps two contested safety
+ * predicates on one operation from collapsing and hiding a separate blocker.
+ */
+function deficiencyKey(d: Deficiency): string {
+  const discriminator = typeof d.facts.predicate === "string" ? ` #${d.facts.predicate}` : "";
+  return `${d.code} ${targetKey(d.target)}${discriminator}`;
+}
+
+/**
  * Run detectors and return a deterministic, deduped list. Two detectors that flag
  * the same `(code, target)` collapse to one (the higher severity wins). Sorted
  * worst-first — by severity, then category, then operation, then code — so the
@@ -581,7 +593,7 @@ export function runDetectors(
   const byKey = new Map<string, Deficiency>();
   for (const detector of detectors) {
     for (const d of detector.detect(air)) {
-      const key = `${d.code} ${targetKey(d.target)}`;
+      const key = deficiencyKey(d);
       const existing = byKey.get(key);
       if (!existing || severityRank(d.severity) > severityRank(existing.severity)) {
         byKey.set(key, d);
@@ -597,6 +609,6 @@ export function runDetectors(
     const opB = targetOperationId(b.target) ?? "";
     if (opA !== opB) return opA.localeCompare(opB);
     if (a.code !== b.code) return a.code.localeCompare(b.code);
-    return targetKey(a.target).localeCompare(targetKey(b.target));
+    return deficiencyKey(a).localeCompare(deficiencyKey(b));
   });
 }

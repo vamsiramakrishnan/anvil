@@ -291,4 +291,73 @@ describe("refinement plan", () => {
     expect(plan.deficiencies).toEqual([]);
     expect(summarizeRefinementPlan(plan)).toContain("No deficiencies detected");
   });
+
+  it("keeps every contested safety predicate on one operation as a separate blocker", () => {
+    // Two safety-sensitive predicates in conflict on the same operation. They share
+    // the `contested_safety_semantic` code and operation target and differ only by
+    // predicate, so dedupe must not collapse them into one (PR #4 review).
+    const air = loadAirDocument({
+      service: {
+        id: "payments",
+        displayName: "Payments",
+        version: "1",
+        source: { kind: "openapi" },
+      },
+      operations: [
+        {
+          id: "payments.transfers.create",
+          canonicalName: "create_transfer",
+          displayName: "Create transfer",
+          description: "Creates a transfer.",
+          sourceRef: { kind: "openapi", path: "/transfers", method: "post" },
+          effect: { kind: "mutation", action: "create", risk: "financial" },
+          input: { params: [] },
+          idempotency: { mode: "required", mechanism: "header", key: "Idempotency-Key" },
+          retries: { mode: "none" },
+          confirmation: { required: true, risk: "financial" },
+          auth: { type: "oauth2_client_credentials", scopes: ["payments.write"] },
+          cli: { command: "payments transfers create" },
+          mcp: { toolName: "payments_create_transfer" },
+          skill: { intentExamples: ["Create a transfer."] },
+          evidence: {
+            claims: [
+              {
+                subject: "x",
+                predicate: "idempotency.mode",
+                value: "required",
+                source: "source_impl",
+                confidence: 0.9,
+              },
+              {
+                subject: "x",
+                predicate: "idempotency.mode",
+                value: "none",
+                source: "test_fixture",
+                confidence: 0.95,
+              },
+              {
+                subject: "x",
+                predicate: "confirmation.required",
+                value: true,
+                source: "source_impl",
+                confidence: 0.9,
+              },
+              {
+                subject: "x",
+                predicate: "confirmation.required",
+                value: false,
+                source: "test_fixture",
+                confidence: 0.95,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const contested = runDetectors(air).filter((d) => d.code === "contested_safety_semantic");
+    expect(contested.map((d) => d.facts.predicate).sort()).toEqual([
+      "confirmation.required",
+      "idempotency.mode",
+    ]);
+  });
 });
