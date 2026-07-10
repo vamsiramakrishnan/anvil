@@ -94,6 +94,19 @@ describe("skill registry", () => {
       }
     }
   });
+
+  it("every skill declares a minimumVerification bar", () => {
+    for (const skill of discoverSkills()) {
+      expect(["verified", "allow_unverified"], skill.name).toContain(
+        skill.evidence.minimumVerification,
+      );
+    }
+  });
+
+  it("enrich-errors requires verified evidence for retryable", () => {
+    const skill = skillByName("enrich-errors")!;
+    expect(skill.evidence.fieldVerification).toEqual({ retryable: "verified" });
+  });
 });
 
 describe("assembleContext", () => {

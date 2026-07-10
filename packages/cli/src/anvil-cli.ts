@@ -11,26 +11,20 @@ import {
   type TransportFactory,
 } from "@anvil/harness";
 import {
-  addEvidence,
+  type AddEvidenceInput,
   applyApproved,
   buildRefinementPlan,
   ClaudeCodeAgentDriver,
-  closeCase,
+  caseService,
   discoverSkills,
-  finalize,
   generateRefinementSkill,
-  inspectTarget,
-  openCase,
   packFiles,
   renderReviewMarkdown,
   runRefinements,
   semanticDiff,
   skillFor,
   summarizeRefinementPlan,
-  synthesizeProposal,
   targetKey,
-  validateCaseProposal,
-  validateClaims,
 } from "@anvil/refinement";
 import { stringify as toYaml } from "yaml";
 import { parseArgs } from "./args.js";
@@ -519,26 +513,35 @@ async function cmdCase(
       return cmdCaseOpen(rest, flags, io);
     case "inspect":
     case "inspect-target":
-      return emit(io, () => inspectTarget(caseDirArg(rest)));
+      return emit(io, () => caseService.inspect(caseDirArg(rest)));
     case "add-evidence":
-      return cmdCaseAddEvidence(rest, flags, io);
+      return await cmdCaseAddEvidence(rest, flags, io);
     case "validate-claims":
-      return emit(io, () => validateClaims(caseDirArg(rest)));
+      return emit(io, () => caseService.validateClaims(caseDirArg(rest)));
     case "synthesize":
       return emit(io, () =>
-        synthesizeProposal(caseDirArg(rest), parseSetPairs(rest.slice(1)) as never),
+        caseService.synthesize(caseDirArg(rest), parseSetPairs(rest.slice(1)) as never),
       );
     case "validate-proposal":
       return cmdCaseValidateProposal(rest, io);
     case "finalize":
       return emit(io, () =>
-        finalize(caseDirArg(rest), {
+        caseService.finalize(caseDirArg(rest), {
           status: typeof flags.status === "string" ? (flags.status as never) : undefined,
           summary: typeof flags.summary === "string" ? flags.summary : undefined,
+          blockedSources:
+            typeof flags["blocked-sources"] === "string"
+              ? (JSON.parse(flags["blocked-sources"]) as never)
+              : undefined,
         }),
       );
     case "investigate":
       return await cmdCaseInvestigate(rest, flags, io);
+    case "delete":
+      return emit(io, () => {
+        caseService.delete(caseDirArg(rest));
+        return `Deleted run ${caseDirArg(rest)}.`;
+      });
     case "close":
       return cmdCaseClose(rest, flags, io);
     default:
@@ -553,7 +556,10 @@ async function cmdCase(
       io.err("       anvil case synthesize      <case-dir> field=value [field=value ...]");
       io.err("       anvil case validate-proposal <case-dir> <dir|air.yaml>");
       io.err("       anvil case investigate     <case-dir> [--command claude] [--model M]");
-      io.err("       anvil case finalize        <case-dir> [--status S] [--summary ..]");
+      io.err(
+        '       anvil case finalize        <case-dir> [--status S] [--summary ..] [--blocked-sources \'[{"source":"..","reason":".."}]\']',
+      );
+      io.err("       anvil case delete          <case-dir>");
       io.err("       anvil case close           <case-dir> <dir|air.yaml> [--json]");
       return sub && sub !== "help" ? 1 : 0;
   }
@@ -606,7 +612,7 @@ function cmdCaseOpen(args: string[], flags: Record<string, string | boolean>, io
   const key = args[1];
   if (!args[0] || !key) {
     io.err(
-      "Usage: anvil case open <dir|air.yaml> <target-key> [--out DIR] [--inspect a,b] [--repo-root DIR] [--resume|--replace]",
+      "Usage: anvil case open <dir|air.yaml> <target-key> [--out DIR] [--inspect a,b] [--repo-root DIR]",
     );
     return 1;
   }
@@ -619,17 +625,16 @@ function cmdCaseOpen(args: string[], flags: Record<string, string | boolean>, io
   }
   const inspect =
     typeof flags.inspect === "string" ? flags.inspect.split(",").map((s) => s.trim()) : undefined;
-  const onExisting =
-    flags.replace === true ? "replace" : flags.resume === true ? "resume" : "reject";
-  const c = openCase(air, deficiency, {
+  // `open` always creates a fresh, immutable run. To reopen an existing run, pass its
+  // directory to the in-case helpers; to discard one, `anvil case delete <dir>`.
+  const c = caseService.open(air, deficiency, {
     root: (flags.out as string) ?? ".refinement",
     inspect,
     repositoryRoot:
       typeof flags["repo-root"] === "string" ? (flags["repo-root"] as string) : undefined,
     executor: typeof flags.executor === "string" ? (flags.executor as string) : "cli",
-    onExisting,
   });
-  io.out(`Opened case '${c.caseId}' run ${c.runId} at ${c.dir}`);
+  io.out(`Opened case '${c.ref.caseKey}' run ${c.ref.runId} at ${c.dir}`);
   io.out(`  skill: ${c.skill.name}  ·  question: ${c.task.question}`);
   io.out(
     `  read CASE.md, then use \`anvil case ...\` helpers or \`anvil case investigate ${c.dir}\`.`,
@@ -637,11 +642,11 @@ function cmdCaseOpen(args: string[], flags: Record<string, string | boolean>, io
   return 0;
 }
 
-function cmdCaseAddEvidence(
+async function cmdCaseAddEvidence(
   args: string[],
   flags: Record<string, string | boolean>,
   io: CliIO,
-): number {
+): Promise<number> {
   const dir = args[0];
   const predicate = flags.predicate as string | undefined;
   const source = flags.source as string | undefined;
@@ -661,20 +666,19 @@ function cmdCaseAddEvidence(
     startLine = Number.isFinite(a) ? a : undefined;
     endLine = Number.isFinite(b) ? b : startLine;
   }
-  io.out(
-    addEvidence(dir, {
-      predicate,
-      value: value as never,
-      source,
-      path: typeof flags.path === "string" ? flags.path : undefined,
-      startLine,
-      endLine,
-      uri: typeof flags.uri === "string" ? flags.uri : undefined,
-      ref: flags.ref as string | undefined,
-      note: flags.note as string | undefined,
-      confidence: Number.isFinite(confidence) ? confidence : undefined,
-    }),
-  );
+  const input: AddEvidenceInput = {
+    predicate,
+    value: value as never,
+    source,
+    path: typeof flags.path === "string" ? flags.path : undefined,
+    startLine,
+    endLine,
+    uri: typeof flags.uri === "string" ? flags.uri : undefined,
+    ref: flags.ref as string | undefined,
+    note: flags.note as string | undefined,
+    confidence: Number.isFinite(confidence) ? confidence : undefined,
+  };
+  io.out(await caseService.addEvidence(dir, input));
   return 0;
 }
 
@@ -685,7 +689,7 @@ function cmdCaseValidateProposal(args: string[], io: CliIO): number {
     return 1;
   }
   const air = loadAir(args[1]);
-  io.out(validateCaseProposal(air, dir).text);
+  io.out(caseService.validateProposal(air, dir));
   return 0;
 }
 
@@ -719,7 +723,7 @@ function cmdCaseClose(args: string[], flags: Record<string, string | boolean>, i
     return 1;
   }
   const air = loadAir(args[1]);
-  const refinement = closeCase(air, dir);
+  const refinement = caseService.close(air, dir);
   if (!refinement) {
     io.out("Case produced no proposal (an honest decline). Nothing to reconcile.");
     return 0;

@@ -16,6 +16,7 @@ import { type AirDocument, type Claim, loadAirDocument } from "@anvil/air";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Deficiency } from "../deficiency.js";
 import {
+  acquirerFor,
   addEvidence,
   bindProposalToCase,
   CaseInvestigationHarness,
@@ -24,8 +25,11 @@ import {
   caseIdentity,
   caseMetrics,
   closeCase,
+  currentState,
+  deleteRun,
   detectConflicts,
   ESCALATION_TIERS,
+  ExternalArtifactEvidenceAcquirer,
   escalate,
   finalize,
   type InvestigationResult,
@@ -33,6 +37,7 @@ import {
   parseCaseProposal,
   readInvestigation,
   readProposal,
+  resumeCase,
   ScriptedAgentDriver,
   skillFor,
   synthesizeProposal,
@@ -127,15 +132,15 @@ afterEach(() => {
  * rebuild the real skill context.
  */
 function groundedInvestigation(air: AirDocument) {
-  return new ScriptedAgentDriver((dir) => {
-    addEvidence(dir, {
+  return new ScriptedAgentDriver(async (dir) => {
+    await addEvidence(dir, {
       predicate: "field.description",
       value: REASON_TEXT,
       source: "source_impl",
       ref: "refunds/service.ts:118-143",
       note: "reason is persisted and rendered on the receipt",
     });
-    addEvidence(dir, {
+    await addEvidence(dir, {
       predicate: "field.description",
       value: REASON_TEXT,
       source: "test_fixture",
@@ -261,13 +266,13 @@ describe("Zod schema source of truth", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("immutable runs and containment", () => {
-  it("stamps each run with an immutable identity and never consumes stale output", () => {
+  it("stamps each run with an immutable identity and never consumes stale output", async () => {
     const air = doc();
     const root = scratch();
     const d = reasonDeficiency(air);
     const first = openCase(air, d, { root, now: 1000 });
     // Deposit output into the first run.
-    addEvidence(first.dir, {
+    await addEvidence(first.dir, {
       predicate: "field.description",
       value: REASON_TEXT,
       source: "source_impl",
@@ -277,22 +282,29 @@ describe("immutable runs and containment", () => {
 
     // A later open creates a NEW run directory; the stale proposal is not visible.
     const second = openCase(air, d, { root, now: 2000 });
-    expect(second.runId).not.toBe(first.runId);
+    expect(second.ref.runId).not.toBe(first.ref.runId);
     expect(second.dir).not.toBe(first.dir);
     expect(readProposal(second.dir)).toBeUndefined();
     expect(second.identity.airHash).toBe(first.identity.airHash);
   });
 
-  it("refuses to reopen an existing run unless resume/replace is explicit", () => {
+  it("refuses to overwrite an immutable run; resume and delete are explicit verbs", () => {
     const air = doc();
     const root = scratch();
     const d = reasonDeficiency(air);
-    openCase(air, d, { root, now: 1000 });
-    // Same clock → same run id → same directory: a bare reopen is refused.
-    expect(() => openCase(air, d, { root, now: 1000 })).toThrow(/already exists/);
-    // Resume is explicit and returns the same run.
-    const resumed = openCase(air, d, { root, now: 1000, onExisting: "resume" });
-    expect(existsSync(join(resumed.dir, CASE_FILES.doc))).toBe(true);
+    const first = openCase(air, d, { root, now: 1000 });
+    // Same clock → same run id → same directory: `open` never overwrites a prior run.
+    expect(() => openCase(air, d, { root, now: 1000 })).toThrow(/immutable run/);
+    // `resumeCase` explicitly reopens the same run and loads its canonical document.
+    const resumed = resumeCase(first.dir);
+    expect(resumed.dir).toBe(first.dir);
+    expect(resumed.doc.task.caseKey).toBe(first.ref.caseKey);
+    // `deleteRun` is the explicit destructive verb; afterwards the run can be recreated.
+    deleteRun(first.dir);
+    expect(existsSync(join(first.dir, CASE_FILES.doc))).toBe(false);
+    const recreated = openCase(air, d, { root, now: 1000 });
+    expect(recreated.dir).toBe(first.dir);
+    expect(currentState(recreated.dir)).toBe("open");
   });
 
   it("rejects an inspect scope that escapes the repository root", () => {
@@ -323,27 +335,26 @@ describe("immutable runs and containment", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("case helper commands enforce the rails", () => {
-  it("add-evidence refuses an inadmissible source", () => {
+  it("add-evidence refuses an inadmissible source", async () => {
     const air = doc();
     const c = openCase(air, reasonDeficiency(air), { root: scratch() });
-    expect(() =>
+    await expect(
       addEvidence(c.dir, { predicate: "field.description", value: "x", source: "generated_mock" }),
-    ).toThrow(/not admissible/);
+    ).rejects.toThrow(/not admissible/);
   });
 
-  it("add-evidence refuses an off-policy predicate but accepts a supporting one", () => {
+  it("add-evidence refuses an off-policy predicate but accepts a supporting one", async () => {
     const air = doc();
     const c = openCase(air, reasonDeficiency(air), { root: scratch() });
-    expect(() =>
+    await expect(
       addEvidence(c.dir, { predicate: "field.invented_rule", value: "x", source: "source_impl" }),
-    ).toThrow(/not permitted/);
-    expect(() =>
-      addEvidence(c.dir, {
-        predicate: "field.visibility",
-        value: "customer_visible",
-        source: "source_impl",
-      }),
-    ).not.toThrow();
+    ).rejects.toThrow(/not permitted/);
+    await addEvidence(c.dir, {
+      predicate: "field.visibility",
+      value: "customer_visible",
+      source: "source_impl",
+      ref: "s:1",
+    });
   });
 
   it("validate-claims independently rejects a hand-written off-policy predicate", () => {
@@ -367,16 +378,16 @@ describe("case helper commands enforce the rails", () => {
     expect(validateClaims(c.dir)).toMatch(/off-policy predicate/);
   });
 
-  it("validate-claims reports strength and surfaces contradictions", () => {
+  it("validate-claims reports strength and surfaces contradictions", async () => {
     const air = doc();
     const c = openCase(air, reasonDeficiency(air), { root: scratch() });
-    addEvidence(c.dir, {
+    await addEvidence(c.dir, {
       predicate: "field.description",
       value: "A",
       source: "doc_example",
       ref: "docs/refunds.md:3",
     });
-    addEvidence(c.dir, {
+    await addEvidence(c.dir, {
       predicate: "field.description",
       value: "B",
       source: "spec",
@@ -429,10 +440,10 @@ describe("verified frozen evidence", () => {
     });
   }
 
-  it("reads and freezes the exact excerpt, and the excerpt matches the source hash", () => {
+  it("reads and freezes the exact excerpt, and the excerpt matches the source hash", async () => {
     const { repo } = repoWithSource();
     const c = openWithRepo(repo);
-    addEvidence(c.dir, {
+    await addEvidence(c.dir, {
       predicate: "field.description",
       value: REASON_TEXT,
       source: "source_impl",
@@ -449,23 +460,23 @@ describe("verified frozen evidence", () => {
     expect(verifyFrozenEvidence(c.dir).ok).toBe(true);
   });
 
-  it("rejects an evidence path outside the allowed scope", () => {
+  it("rejects an evidence path outside the allowed scope", async () => {
     const { repo } = repoWithSource();
     const c = openWithRepo(repo);
-    expect(() =>
+    await expect(
       addEvidence(c.dir, {
         predicate: "field.description",
         value: "x",
         source: "source_impl",
         path: "../../etc/passwd",
       }),
-    ).toThrow(/outside the allowed scopes/);
+    ).rejects.toThrow(/outside the allowed scopes/);
   });
 
-  it("rejects an invalid line range", () => {
+  it("rejects an invalid line range", async () => {
     const { repo } = repoWithSource();
     const c = openWithRepo(repo);
-    expect(() =>
+    await expect(
       addEvidence(c.dir, {
         predicate: "field.description",
         value: "x",
@@ -474,13 +485,13 @@ describe("verified frozen evidence", () => {
         startLine: 3,
         endLine: 999,
       }),
-    ).toThrow(/Invalid line range/);
+    ).rejects.toThrow(/Invalid line range/);
   });
 
-  it("fails to close when the source is modified after acquisition", () => {
+  it("fails to close when the source is modified after acquisition", async () => {
     const { repo, file } = repoWithSource();
     const c = openWithRepo(repo);
-    addEvidence(c.dir, {
+    await addEvidence(c.dir, {
       predicate: "field.description",
       value: REASON_TEXT,
       source: "source_impl",
@@ -501,10 +512,10 @@ describe("verified frozen evidence", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("immutable phase staging", () => {
-  it("freezes research on synthesize and the proposal on validate", () => {
+  it("freezes research on synthesize and the proposal on validate", async () => {
     const air = doc();
     const c = openCase(air, reasonDeficiency(air), { root: scratch() });
-    addEvidence(c.dir, {
+    await addEvidence(c.dir, {
       predicate: "field.description",
       value: REASON_TEXT,
       source: "source_impl",
@@ -512,14 +523,14 @@ describe("immutable phase staging", () => {
     });
     synthesizeProposal(c.dir, { description: REASON_TEXT });
     // Research is frozen: the synthesizer cannot rewrite its own evidence.
-    expect(() =>
+    await expect(
       addEvidence(c.dir, {
         predicate: "field.description",
         value: "late",
         source: "source_impl",
         ref: "s:2",
       }),
-    ).toThrow(/research stage is frozen/);
+    ).rejects.toThrow(/research stage is frozen/);
     validateCaseProposal(air, c.dir);
     // The critique froze the proposal: it cannot be re-synthesized in this run.
     expect(() => synthesizeProposal(c.dir, { description: REASON_TEXT })).toThrow(
@@ -529,12 +540,142 @@ describe("immutable phase staging", () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* Explicit run lifecycle state machine                                       */
+/* -------------------------------------------------------------------------- */
+
+describe("explicit run lifecycle", () => {
+  async function ground(dir: string) {
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "s:1",
+    });
+    await addEvidence(dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "test_fixture",
+      ref: "t:1",
+    });
+  }
+
+  it("advances open → research_frozen → proposal_frozen → finalized → closed", async () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    expect(currentState(c.dir)).toBe("open");
+    await ground(c.dir);
+    expect(currentState(c.dir)).toBe("open"); // gathering evidence does not advance state
+    synthesizeProposal(c.dir, { description: REASON_TEXT });
+    expect(currentState(c.dir)).toBe("research_frozen");
+    validateCaseProposal(air, c.dir);
+    expect(currentState(c.dir)).toBe("proposal_frozen");
+    finalize(c.dir);
+    expect(currentState(c.dir)).toBe("finalized");
+    expect(closeCase(air, c.dir)?.status).not.toBe("rejected");
+    expect(currentState(c.dir)).toBe("closed");
+  });
+
+  it("lets an honest decline finalize straight from open", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    finalize(c.dir);
+    expect(currentState(c.dir)).toBe("finalized");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Tamper-evident frozen stages — verified before every state transition      */
+/* -------------------------------------------------------------------------- */
+
+describe("tamper-evident frozen stages", () => {
+  it("rejects a claims.json rewritten after the research stage is frozen", async () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    await addEvidence(c.dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "s:1",
+    });
+    synthesizeProposal(c.dir, { description: REASON_TEXT }); // freezes research
+    // Someone injects an extra claim into the frozen claims file.
+    const claims = JSON.parse(readFileSync(join(c.dir, CASE_OUTPUT.extract), "utf8"));
+    claims.claims.push({
+      subject: "input.body.reason",
+      predicate: "field.description",
+      value: "injected",
+      source: "source_impl",
+      confidence: 0.9,
+    });
+    writeFileSync(join(c.dir, CASE_OUTPUT.extract), JSON.stringify(claims), "utf8");
+    // Every downstream transition refuses the mutated stage.
+    expect(() => validateCaseProposal(air, c.dir)).toThrow(/modified after it was frozen/);
+    expect(() => finalize(c.dir)).toThrow(/modified after it was frozen/);
+  });
+
+  it("rejects a proposal.json rewritten after the synthesis stage is frozen", async () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    await addEvidence(c.dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "s:1",
+    });
+    await addEvidence(c.dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "test_fixture",
+      ref: "t:1",
+    });
+    synthesizeProposal(c.dir, { description: REASON_TEXT });
+    validateCaseProposal(air, c.dir); // freezes synthesis
+    // Tamper with the frozen proposal (same target, so identity binding still passes).
+    const proposal = JSON.parse(readFileSync(join(c.dir, CASE_OUTPUT.synthesize), "utf8"));
+    proposal.patch.set.description = "silently changed after the freeze";
+    writeFileSync(join(c.dir, CASE_OUTPUT.synthesize), JSON.stringify(proposal), "utf8");
+    expect(() => finalize(c.dir)).toThrow(/modified after it was frozen/);
+    expect(() => closeCase(air, c.dir)).toThrow(/modified after it was frozen/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Evidence acquisition provider boundary                                     */
+/* -------------------------------------------------------------------------- */
+
+describe("evidence acquisition provider boundary", () => {
+  it("routes a filesystem coordinate to the local provider and a pointer to the external one", () => {
+    expect(
+      acquirerFor({ kind: "local_repository", source: "source_impl", path: "src/x.ts" }).kind,
+    ).toBe("local_repository");
+    expect(
+      acquirerFor({ kind: "external_artifact", source: "postman", uri: "https://example" }).kind,
+    ).toBe("external_artifact");
+  });
+
+  it("the external provider keeps a caller excerpt but never marks it verified", async () => {
+    const art = await new ExternalArtifactEvidenceAcquirer().acquire(
+      {
+        kind: "external_artifact",
+        source: "doc_example",
+        uri: "docs://x",
+        excerpt: "claimed text",
+      },
+      { workspace: { repositoryRoot: "/repo", inspectScopes: [] }, now: 1 },
+    );
+    expect(art.verified).toBe(false);
+    expect(art.excerpt).toBe("claimed text");
+    expect(art.source).toBe("doc_example");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* Identity binding — a proposal for field A can never patch field B          */
 /* -------------------------------------------------------------------------- */
 
 describe("proposal ↔ case identity binding", () => {
-  function groundedProposal(air: AirDocument, dir: string): CaseProposal {
-    addEvidence(dir, {
+  async function groundedProposal(air: AirDocument, dir: string): Promise<CaseProposal> {
+    await addEvidence(dir, {
       predicate: "field.description",
       value: REASON_TEXT,
       source: "source_impl",
@@ -546,10 +687,10 @@ describe("proposal ↔ case identity binding", () => {
     return p;
   }
 
-  it("rejects a proposal whose target differs from the case target", () => {
+  it("rejects a proposal whose target differs from the case target", async () => {
     const air = doc();
     const c = openCase(air, reasonDeficiency(air), { root: scratch() });
-    const p = groundedProposal(air, c.dir);
+    const p = await groundedProposal(air, c.dir);
     const tampered: CaseProposal = {
       ...p,
       target: {
@@ -561,10 +702,10 @@ describe("proposal ↔ case identity binding", () => {
     expect(() => bindProposalToCase(tampered, caseIdentity(c.dir))).toThrow(/target .* ≠/);
   });
 
-  it("rejects a proposal whose patch target differs from the case target", () => {
+  it("rejects a proposal whose patch target differs from the case target", async () => {
     const air = doc();
     const c = openCase(air, reasonDeficiency(air), { root: scratch() });
-    const p = groundedProposal(air, c.dir);
+    const p = await groundedProposal(air, c.dir);
     const tampered: CaseProposal = {
       ...p,
       patch: {
@@ -579,10 +720,10 @@ describe("proposal ↔ case identity binding", () => {
     expect(() => bindProposalToCase(tampered, caseIdentity(c.dir))).toThrow(/patch.target .* ≠/);
   });
 
-  it("rejects skill / version / deficiency mismatches", () => {
+  it("rejects skill / version / deficiency mismatches", async () => {
     const air = doc();
     const c = openCase(air, reasonDeficiency(air), { root: scratch() });
-    const p = groundedProposal(air, c.dir);
+    const p = await groundedProposal(air, c.dir);
     const id = caseIdentity(c.dir);
     expect(() => bindProposalToCase({ ...p, skill: "generate-examples" }, id)).toThrow(/skill/);
     expect(() => bindProposalToCase({ ...p, skillVersion: 999 }, id)).toThrow(/skillVersion/);
@@ -591,10 +732,10 @@ describe("proposal ↔ case identity binding", () => {
     );
   });
 
-  it("rejects a tampered proposal.json at read/close time", () => {
+  it("rejects a tampered proposal.json at read/close time", async () => {
     const air = doc();
     const c = openCase(air, reasonDeficiency(air), { root: scratch() });
-    const p = groundedProposal(air, c.dir);
+    const p = await groundedProposal(air, c.dir);
     // An executor hand-edits the frozen proposal to point at another field.
     const tampered = {
       ...p,
@@ -662,14 +803,19 @@ describe("CaseInvestigationHarness end-to-end", () => {
   it("reports a conflict rather than forcing a proposal", async () => {
     const air = doc();
     const dir = openCase(air, reasonDeficiency(air), { root: scratch() }).dir;
-    await new ScriptedAgentDriver((d) => {
-      addEvidence(d, {
+    await new ScriptedAgentDriver(async (d) => {
+      await addEvidence(d, {
         predicate: "field.description",
         value: "A",
         source: "doc_example",
         ref: "docs:1",
       });
-      addEvidence(d, { predicate: "field.description", value: "B", source: "spec", ref: "spec:2" });
+      await addEvidence(d, {
+        predicate: "field.description",
+        value: "B",
+        source: "spec",
+        ref: "spec:2",
+      });
       finalize(d);
     }).run(dir);
     const result = readInvestigation(dir);
@@ -781,15 +927,15 @@ describe("caseMetrics measures the investigator as a component", () => {
 describe("varied field investigations produce honest outcomes", () => {
   type Case = {
     name: string;
-    investigate: (dir: string, air: AirDocument) => void;
+    investigate: (dir: string, air: AirDocument) => void | Promise<void>;
     expected: InvestigationResult["status"];
   };
 
   const cases: Case[] = [
     {
       name: "explicitly documented (single authoritative source)",
-      investigate: (dir) => {
-        addEvidence(dir, {
+      investigate: async (dir) => {
+        await addEvidence(dir, {
           predicate: "field.description",
           value: REASON_TEXT,
           source: "source_impl",
@@ -801,14 +947,14 @@ describe("varied field investigations produce honest outcomes", () => {
     },
     {
       name: "only visible in tests (corroborated)",
-      investigate: (dir) => {
-        addEvidence(dir, {
+      investigate: async (dir) => {
+        await addEvidence(dir, {
           predicate: "field.description",
           value: REASON_TEXT,
           source: "test_fixture",
           ref: "t:1",
         });
-        addEvidence(dir, {
+        await addEvidence(dir, {
           predicate: "field.description",
           value: REASON_TEXT,
           source: "doc_example",
@@ -820,14 +966,14 @@ describe("varied field investigations produce honest outcomes", () => {
     },
     {
       name: "conflicting docs vs code",
-      investigate: (dir) => {
-        addEvidence(dir, {
+      investigate: async (dir) => {
+        await addEvidence(dir, {
           predicate: "field.description",
           value: "one thing",
           source: "doc_example",
           ref: "d:1",
         });
-        addEvidence(dir, {
+        await addEvidence(dir, {
           predicate: "field.description",
           value: "another",
           source: "source_impl",
@@ -844,7 +990,13 @@ describe("varied field investigations produce honest outcomes", () => {
     },
     {
       name: "blocked by a missing source",
-      investigate: (dir) => finalize(dir, { status: "blocked_by_missing_source" }),
+      investigate: (dir) =>
+        finalize(dir, {
+          status: "blocked_by_missing_source",
+          blockedSources: [
+            { source: "postman", reason: "collection not shared with the investigation" },
+          ],
+        }),
       expected: "blocked_by_missing_source",
     },
   ];
@@ -857,8 +1009,8 @@ describe("varied field investigations produce honest outcomes", () => {
     it(c.name, async () => {
       const air = doc();
       const dir = openCase(air, reasonDeficiency(air), { root: scratch() }).dir;
-      await new ScriptedAgentDriver((d) => {
-        c.investigate(d, air);
+      await new ScriptedAgentDriver(async (d) => {
+        await c.investigate(d, air);
         if (existsSync(join(d, CASE_OUTPUT.synthesize))) {
           validateCaseProposal(air, d);
           finalize(d);

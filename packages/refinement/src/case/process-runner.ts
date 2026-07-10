@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import type { ExecutionAttestation } from "./execution-policy.js";
 
 /**
  * A reusable, asynchronous, observable process runner. It owns the generic child
@@ -32,6 +33,8 @@ export interface AgentRunResult {
   durationMs: number;
   timedOut: boolean;
   canceled: boolean;
+  /** Set only by a capability-aware backend that ran under a degraded policy; never set here. */
+  attestation?: ExecutionAttestation;
 }
 
 export interface AgentProcessRunner {
