@@ -163,6 +163,18 @@ describe("readiness assessment", () => {
     expect(dispositionOf(air, "billing.invoices.legacy_get")).toBe("excluded");
   });
 
+  it("honors the lifecycle state machine over detector gaps", () => {
+    // `state: deprecated` without the boolean (the manifest/enrichment path)
+    // must exclude; `state: blocked` must block even with zero detector gaps.
+    const air = fixture();
+    const get = air.operations.find((o) => o.id === "billing.invoices.get");
+    if (!get) throw new Error("missing");
+    get.state = "blocked";
+    expect(dispositionOf(air, "billing.invoices.get")).toBe("blocked");
+    get.state = "deprecated";
+    expect(dispositionOf(air, "billing.invoices.get")).toBe("excluded");
+  });
+
   it("summarizes counts and scores readiness over assessable operations", () => {
     const a = assessReadiness(fixture());
     expect(a.summary).toEqual({

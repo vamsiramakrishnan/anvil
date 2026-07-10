@@ -192,11 +192,19 @@ function cmdAssess(args: string[], flags: Record<string, string | boolean>, io: 
   // Plan-style `... operation <name>` and the terse `... <name>` both drill in.
   const selector = args[1] === "operation" ? args[2] : args[1];
   if (selector) {
-    const op = findOperation(air, selector);
-    if (!op) {
+    const matches = findOperations(air, selector);
+    if (matches.length === 0) {
       io.err(`No operation matches '${selector}' in ${air.service.id}.`);
       return 1;
     }
+    if (matches.length > 1) {
+      // A suffix like `create` often matches several resources; drilling into
+      // the wrong operation's readiness silently would be worse than stopping.
+      io.err(`'${selector}' is ambiguous in ${air.service.id}. Did you mean:`);
+      for (const m of matches) io.err(`  ${m.id}  (${m.cli.command})`);
+      return 1;
+    }
+    const op = matches[0];
     const readiness = assessment.operations.find((o) => o.operationId === op.id);
     if (!readiness) return 1;
     io.out(
@@ -229,16 +237,23 @@ function cmdAssess(args: string[], flags: Record<string, string | boolean>, io: 
   return assessment.summary.blocked > 0 ? 1 : 0;
 }
 
-/** Resolve an operation by id, canonical name, tool name, or CLI command tail. */
-function findOperation(air: AirDocument, selector: string) {
-  return air.operations.find(
+/**
+ * Resolve operations by id, canonical name, tool name, or CLI command tail.
+ * An exact identifier match wins outright; tail forms (` create`, `.create`)
+ * are conveniences that may match several operations — the caller decides
+ * whether ambiguity is an error (it is, for a drill-down).
+ */
+function findOperations(air: AirDocument, selector: string) {
+  const exact = air.operations.filter(
     (o) =>
       o.id === selector ||
       o.canonicalName === selector ||
       o.mcp.toolName === selector ||
-      o.cli.command === selector ||
-      o.cli.command.endsWith(` ${selector}`) ||
-      o.id.endsWith(`.${selector}`),
+      o.cli.command === selector,
+  );
+  if (exact.length > 0) return exact;
+  return air.operations.filter(
+    (o) => o.cli.command.endsWith(` ${selector}`) || o.id.endsWith(`.${selector}`),
   );
 }
 

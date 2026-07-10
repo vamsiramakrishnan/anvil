@@ -280,10 +280,20 @@ describe("anvil CLI: end-to-end compile → inspect → lint", () => {
           report.summary.excluded,
       );
 
-      // Drill into one operation by its CLI command tail.
+      // Drill into one operation by an unambiguous CLI command tail.
       const ioO = bufferIO();
-      await runAnvilCli(["assess", dir, "create"], { io: ioO });
+      const drillCode = await runAnvilCli(["assess", dir, "refunds create"], { io: ioO });
+      expect(drillCode).toBe(0);
       expect(ioO.text()).toContain("disposition");
+
+      // A tail matching several operations (refunds create + capture create)
+      // must refuse and list the candidates, not silently pick one.
+      const ioAmb = bufferIO();
+      const ambCode = await runAnvilCli(["assess", dir, "create"], { io: ioAmb });
+      expect(ambCode).toBe(1);
+      expect(ioAmb.text()).toContain("ambiguous");
+      expect(ioAmb.text()).toContain("payments.refunds.create");
+      expect(ioAmb.text()).toContain("payments.capture.create");
 
       // `anvil run` must forward flags to the tool engine (regression).
       const transport = new MockTransport(() => ok({}));
