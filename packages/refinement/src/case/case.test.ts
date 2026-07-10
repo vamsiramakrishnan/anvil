@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AirDocument, type Claim, loadAirDocument } from "@anvil/air";
@@ -6,8 +6,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Deficiency } from "../deficiency.js";
 import {
   addEvidence,
+  bindProposalToCase,
   CaseInvestigationHarness,
+  type CaseProposal,
   caseExecutor,
+  caseIdentity,
   caseMetrics,
   closeCase,
   detectConflicts,
@@ -17,6 +20,7 @@ import {
   type InvestigationResult,
   openCase,
   readInvestigation,
+  readProposal,
   ScriptedAgentDriver,
   skillFor,
   synthesizeProposal,
@@ -221,6 +225,91 @@ describe("case helper commands enforce the rails", () => {
     expect(() => synthesizeProposal(c.dir, { type: "number" })).toThrow(
       /outside this skill's boundary/,
     );
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Identity binding — a proposal for field A can never patch field B          */
+/* -------------------------------------------------------------------------- */
+
+describe("proposal ↔ case identity binding", () => {
+  function groundedProposal(air: AirDocument, dir: string): CaseProposal {
+    addEvidence(dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "refunds/service.ts:118",
+    });
+    synthesizeProposal(dir, { description: REASON_TEXT });
+    const p = readProposal(dir);
+    if (!p) throw new Error("no proposal");
+    return p;
+  }
+
+  it("rejects a proposal whose target differs from the case target", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    const p = groundedProposal(air, c.dir);
+    const tampered: CaseProposal = {
+      ...p,
+      target: {
+        kind: "field",
+        operationId: "payments.refunds.create",
+        path: "input.params.paymentId",
+      },
+    };
+    expect(() => bindProposalToCase(tampered, caseIdentity(c.dir))).toThrow(/target .* ≠/);
+  });
+
+  it("rejects a proposal whose patch target differs from the case target", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    const p = groundedProposal(air, c.dir);
+    const tampered: CaseProposal = {
+      ...p,
+      patch: {
+        target: {
+          kind: "field",
+          operationId: "payments.refunds.create",
+          path: "input.params.paymentId",
+        },
+        set: p.patch.set,
+      },
+    };
+    expect(() => bindProposalToCase(tampered, caseIdentity(c.dir))).toThrow(/patch.target .* ≠/);
+  });
+
+  it("rejects skill / version / deficiency mismatches", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    const p = groundedProposal(air, c.dir);
+    const id = caseIdentity(c.dir);
+    expect(() => bindProposalToCase({ ...p, skill: "generate-examples" }, id)).toThrow(/skill/);
+    expect(() => bindProposalToCase({ ...p, skillVersion: 999 }, id)).toThrow(/skillVersion/);
+    expect(() => bindProposalToCase({ ...p, deficiency: "required_field_no_example" }, id)).toThrow(
+      /deficiency/,
+    );
+  });
+
+  it("rejects a tampered proposal.json at read/close time", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    const p = groundedProposal(air, c.dir);
+    // An executor hand-edits the frozen proposal to point at another field.
+    const tampered = {
+      ...p,
+      patch: {
+        target: {
+          kind: "field",
+          operationId: "payments.refunds.create",
+          path: "input.params.paymentId",
+        },
+        set: p.patch.set,
+      },
+    };
+    writeFileSync(join(c.dir, CASE_OUTPUT.synthesize), JSON.stringify(tampered), "utf8");
+    expect(() => readProposal(c.dir)).toThrow(/not bound to its case/);
+    expect(() => closeCase(air, c.dir)).toThrow(/not bound to its case/);
   });
 });
 
