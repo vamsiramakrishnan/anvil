@@ -15,6 +15,7 @@ import {
   CASE_AUX,
   CASE_FILES,
   CASE_OUTPUT,
+  type CaseDocument,
   type CaseProposal,
   type CaseTargetDoc,
   type CaseTask,
@@ -22,6 +23,7 @@ import {
   type EvidenceArtifact,
   type EvidencePolicyDoc,
   type EvidenceReport,
+  parseCaseDocument,
   parseCaseProposal,
   parseClaimSet,
   parseEvidenceReport,
@@ -49,17 +51,22 @@ function writeJson(dir: string, rel: string, value: unknown): void {
   writeFileSync(join(dir, rel), `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+/** Load and validate the one canonical case document. */
+export function loadCaseDocument(dir: string): CaseDocument {
+  return parseCaseDocument(readJson(dir, CASE_FILES.doc));
+}
 export function loadTask(dir: string): CaseTask {
-  return readJson<CaseTask>(dir, CASE_FILES.task);
+  return loadCaseDocument(dir).task;
 }
 export function loadTargetDoc(dir: string): CaseTargetDoc {
-  return readJson<CaseTargetDoc>(dir, CASE_FILES.target);
+  return loadCaseDocument(dir).target;
 }
 export function loadPolicy(dir: string): EvidencePolicyDoc {
-  return readJson<EvidencePolicyDoc>(dir, CASE_FILES.evidencePolicy);
+  return loadCaseDocument(dir).policy;
 }
 export function loadTools(dir: string): AllowedToolsDoc {
-  return readJson<AllowedToolsDoc>(dir, CASE_FILES.allowedTools);
+  const doc = loadCaseDocument(dir);
+  return { workspace: doc.workspace, helpers: doc.tools.helpers, deny: doc.tools.deny };
 }
 
 /* ------------------------------ identity binding -------------------------- */

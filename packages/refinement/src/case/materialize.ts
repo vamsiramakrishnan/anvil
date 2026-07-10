@@ -16,6 +16,7 @@ import {
   type AllowedToolsDoc,
   CASE_FILES,
   CASE_OUTPUT,
+  type CaseDocument,
   type CaseFieldFacts,
   type CaseTargetDoc,
   type CaseTask,
@@ -295,58 +296,10 @@ export function openCase(
     now: options.now,
   });
   const dir = join(root, "cases", caseKey, identity.runId);
-  const onExisting = options.onExisting ?? "reject";
-  if (isPopulatedRun(dir)) {
-    if (onExisting === "reject") {
-      throw new Error(
-        `Run '${dir}' already exists. Pass onExisting: 'resume' to reuse it or 'replace' to overwrite — a new run never consumes stale output implicitly.`,
-      );
-    }
-    if (onExisting === "replace") rmSync(join(dir, "output"), { recursive: true, force: true });
-    if (onExisting === "resume") {
-      // Reuse the run as-is; return its identity without rewriting inputs/outputs.
-      const targetDoc = buildTargetDoc(context, prior);
-      const tools = buildToolsDoc(workspace);
-      const task = buildTask(caseKey, skill, deficiency, proc);
-      return {
-        caseId: caseKey,
-        caseKey,
-        runId: identity.runId,
-        dir,
-        skill,
-        context,
-        identity,
-        workspace,
-        task,
-        target: targetDoc,
-        policy,
-        tools,
-        procedure: proc,
-      };
-    }
-  }
-
   const task = buildTask(caseKey, skill, deficiency, proc);
   const targetDoc = buildTargetDoc(context, prior);
   const tools = buildToolsDoc(workspace);
-
-  mkdirSync(join(dir, "workspace"), { recursive: true });
-  mkdirSync(join(dir, "output"), { recursive: true });
-  writeFileSync(join(dir, "workspace", ".gitkeep"), "", "utf8");
-  writeFileSync(join(dir, "output", ".gitkeep"), "", "utf8");
-  writeJson(dir, CASE_FILES.run, identity);
-  writeJson(dir, CASE_FILES.task, task);
-  writeJson(dir, CASE_FILES.target, targetDoc);
-  writeJson(dir, CASE_FILES.evidencePolicy, policy);
-  writeJson(dir, CASE_FILES.allowedTools, tools);
-  writeJson(dir, CASE_FILES.expectedSchema, expectedOutputSchema(policy.writableFields));
-  writeFileSync(
-    join(dir, CASE_FILES.brief),
-    renderBrief(task, targetDoc, policy, tools, proc),
-    "utf8",
-  );
-
-  return {
+  const materialized: MaterializedCase = {
     caseId: caseKey,
     caseKey,
     runId: identity.runId,
@@ -361,11 +314,66 @@ export function openCase(
     tools,
     procedure: proc,
   };
+
+  const onExisting = options.onExisting ?? "reject";
+  if (isPopulatedRun(dir)) {
+    if (onExisting === "reject") {
+      throw new Error(
+        `Run '${dir}' already exists. Pass onExisting: 'resume' to reuse it or 'replace' to overwrite — a new run never consumes stale output implicitly.`,
+      );
+    }
+    // Resume reuses the run as-is; only replace rewrites the canonical inputs + views.
+    if (onExisting === "resume") return materialized;
+    if (onExisting === "replace") rmSync(join(dir, "output"), { recursive: true, force: true });
+  }
+
+  // The one canonical document; CASE.md and expected-output.schema.json are views of it.
+  const doc = buildCaseDocument(materialized, deficiency);
+  mkdirSync(join(dir, "workspace"), { recursive: true });
+  mkdirSync(join(dir, "output"), { recursive: true });
+  writeFileSync(join(dir, "workspace", ".gitkeep"), "", "utf8");
+  writeFileSync(join(dir, "output", ".gitkeep"), "", "utf8");
+  writeJson(dir, CASE_FILES.doc, doc);
+  writeJson(dir, CASE_FILES.expectedSchema, doc.expectedOutput);
+  writeFileSync(
+    join(dir, CASE_FILES.brief),
+    renderBrief(task, targetDoc, policy, tools, proc),
+    "utf8",
+  );
+
+  return materialized;
 }
 
-/** A run directory that already carries its canonical inputs (i.e. a real prior run). */
+/** A run directory that already carries its canonical input document (a real prior run). */
 function isPopulatedRun(dir: string): boolean {
-  return existsSync(join(dir, CASE_FILES.task));
+  return existsSync(join(dir, CASE_FILES.doc));
+}
+
+/** Assemble the canonical `case.json` from the materialised parts. */
+function buildCaseDocument(m: MaterializedCase, deficiency: Deficiency): CaseDocument {
+  return {
+    version: 1,
+    identity: m.identity,
+    task: m.task,
+    target: m.target,
+    workspace: m.workspace,
+    skill: { name: m.skill.name, version: m.skill.version },
+    policy: m.policy,
+    tools: { helpers: m.tools.helpers, deny: m.tools.deny },
+    procedure: {
+      skill: m.procedure.skill,
+      question: m.procedure.question(deficiency.target),
+      searchHints: m.procedure.searchHints,
+      steps: m.procedure.steps.map((s) => ({ phase: s.phase, instruction: s.instruction })),
+    },
+    expectedOutput: expectedOutputSchema({
+      skill: m.skill.name,
+      skillVersion: m.skill.version,
+      deficiency: deficiency.code,
+      target: deficiency.target,
+      writableFields: m.policy.writableFields,
+    }),
+  };
 }
 
 function buildTask(

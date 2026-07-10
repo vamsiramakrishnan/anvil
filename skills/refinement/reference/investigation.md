@@ -15,15 +15,14 @@ anvil case close <case> <dir>         # re-enter Anvil's rails: validate + recon
 
 ## The case directory
 ```
-CASE.md                    # short, procedural brief (question, may/may-not, method)
-task.json                  # the brief in machine form
-target.json                # the semantic coordinate + AIR facts + prior evidence
-evidence-policy.json       # admissible sources, minimum strength, output boundary
-allowed-tools.json         # what you may inspect, the helpers, hard prohibitions
-expected-output.schema.json# the contract output/proposal.json is held to
+case.json                  # THE canonical input: identity, task, target, workspace,
+                           #   policy, tools, procedure, expectedOutput (one source of truth)
+CASE.md                    # generated view: short, procedural brief
+expected-output.schema.json# generated view: the contract output/proposal.json is held to
 workspace/                 # your scratch space
 output/                    # where each phase deposits its result
 ```
+CASE.md and expected-output.schema.json are GENERATED from case.json — never edit them.
 
 ## Phases (keep outputs separate — do not let one pass both invent and approve)
 - **Researcher** → `output/evidence.json`
