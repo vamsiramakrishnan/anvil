@@ -261,6 +261,30 @@ describe("anvil CLI: end-to-end compile → inspect → lint", () => {
       expect(lintCode).toBe(0); // no errors, only warnings/info
       expect(io3.text().length).toBeGreaterThan(0);
 
+      // `anvil assess` triages the same bundle into per-operation readiness.
+      const ioA = bufferIO();
+      await runAnvilCli(["assess", dir], { io: ioA });
+      expect(ioA.text()).toContain("Readiness — payments");
+      expect(ioA.text()).toMatch(/score \d+\/100/);
+
+      const ioJ = bufferIO();
+      await runAnvilCli(["assess", dir, "--json"], { io: ioJ });
+      const report = JSON.parse(ioJ.text());
+      expect(typeof report.score).toBe("number");
+      // Every operation in the bundle receives a disposition.
+      expect(report.operations).toHaveLength(
+        report.summary.ready +
+          report.summary.refinementRequired +
+          report.summary.humanDecisionRequired +
+          report.summary.blocked +
+          report.summary.excluded,
+      );
+
+      // Drill into one operation by its CLI command tail.
+      const ioO = bufferIO();
+      await runAnvilCli(["assess", dir, "create"], { io: ioO });
+      expect(ioO.text()).toContain("disposition");
+
       // `anvil run` must forward flags to the tool engine (regression).
       const transport = new MockTransport(() => ok({}));
       const io4 = bufferIO();
