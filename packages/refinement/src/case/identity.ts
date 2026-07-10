@@ -16,6 +16,11 @@ export function hashJson(value: unknown): string {
     .digest("hex");
 }
 
+/** A content hash (sha256 hex) of a raw string — used to freeze an evidence excerpt. */
+export function hashContent(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
 /**
  * The repository the investigation may read. Scopes are resolved to canonical
  * absolute paths and proven to lie within the repository root; the case directory

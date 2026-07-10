@@ -647,17 +647,29 @@ function cmdCaseAddEvidence(
   const source = flags.source as string | undefined;
   if (!dir || !predicate || !source) {
     io.err(
-      "Usage: anvil case add-evidence <case-dir> --predicate P --source K [--value V] [--ref path:lines] [--note ..] [--confidence n]",
+      "Usage: anvil case add-evidence <case-dir> --predicate P --source K [--value V] [--path file --lines a-b] [--uri U] [--note ..] [--confidence n]",
     );
     return 1;
   }
   const value = typeof flags.value === "string" ? coerceValue(flags.value) : flags.value;
   const confidence = typeof flags.confidence === "string" ? Number(flags.confidence) : undefined;
+  // --lines a-b (or a) → a verified filesystem coordinate for --path.
+  let startLine: number | undefined;
+  let endLine: number | undefined;
+  if (typeof flags.lines === "string") {
+    const [a, b] = flags.lines.split("-").map((n) => Number(n.trim()));
+    startLine = Number.isFinite(a) ? a : undefined;
+    endLine = Number.isFinite(b) ? b : startLine;
+  }
   io.out(
     addEvidence(dir, {
       predicate,
       value: value as never,
       source,
+      path: typeof flags.path === "string" ? flags.path : undefined,
+      startLine,
+      endLine,
+      uri: typeof flags.uri === "string" ? flags.uri : undefined,
       ref: flags.ref as string | undefined,
       note: flags.note as string | undefined,
       confidence: Number.isFinite(confidence) ? confidence : undefined,

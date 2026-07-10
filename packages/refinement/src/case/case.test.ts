@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AirDocument, type Claim, loadAirDocument } from "@anvil/air";
@@ -26,10 +26,12 @@ import {
   synthesizeProposal,
   validateCaseProposal,
   validateClaims,
+  verifyFrozenEvidence,
 } from "../index.js";
 import { runRefinements } from "../pack.js";
 import { buildRefinementPlan } from "../plan.js";
 import { targetKey } from "../target.js";
+import { hashContent } from "./identity.js";
 import { CASE_FILES, CASE_OUTPUT } from "./model.js";
 
 /* -------------------------------------------------------------------------- */
@@ -323,6 +325,97 @@ describe("case helper commands enforce the rails", () => {
     expect(() => synthesizeProposal(c.dir, { type: "number" })).toThrow(
       /outside this skill's boundary/,
     );
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Verified frozen evidence                                                   */
+/* -------------------------------------------------------------------------- */
+
+describe("verified frozen evidence", () => {
+  /** A temp repository with one source file whose line 3 states the field meaning. */
+  function repoWithSource(): { repo: string; file: string } {
+    const repo = scratch();
+    mkdirSync(join(repo, "src"), { recursive: true });
+    const file = join(repo, "src", "service.ts");
+    writeFileSync(file, "// header\nfunction refund() {\n  // reason: shown on the receipt\n}\n");
+    return { repo, file };
+  }
+
+  function openWithRepo(repo: string) {
+    const air = doc();
+    return openCase(air, reasonDeficiency(air), {
+      root: scratch(),
+      repositoryRoot: repo,
+      inspect: ["src"],
+      now: 1,
+    });
+  }
+
+  it("reads and freezes the exact excerpt, and the excerpt matches the source hash", () => {
+    const { repo } = repoWithSource();
+    const c = openWithRepo(repo);
+    addEvidence(c.dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      path: "src/service.ts",
+      startLine: 3,
+      endLine: 3,
+      now: 1,
+    });
+    const report = JSON.parse(readFileSync(join(c.dir, CASE_OUTPUT.research), "utf8"));
+    const art = report.artifacts[0];
+    expect(art.verified).toBe(true);
+    expect(art.excerpt).toBe("  // reason: shown on the receipt");
+    expect(art.contentHash).toBe(hashContent(art.excerpt));
+    expect(verifyFrozenEvidence(c.dir).ok).toBe(true);
+  });
+
+  it("rejects an evidence path outside the allowed scope", () => {
+    const { repo } = repoWithSource();
+    const c = openWithRepo(repo);
+    expect(() =>
+      addEvidence(c.dir, {
+        predicate: "field.description",
+        value: "x",
+        source: "source_impl",
+        path: "../../etc/passwd",
+      }),
+    ).toThrow(/outside the allowed scopes/);
+  });
+
+  it("rejects an invalid line range", () => {
+    const { repo } = repoWithSource();
+    const c = openWithRepo(repo);
+    expect(() =>
+      addEvidence(c.dir, {
+        predicate: "field.description",
+        value: "x",
+        source: "source_impl",
+        path: "src/service.ts",
+        startLine: 3,
+        endLine: 999,
+      }),
+    ).toThrow(/Invalid line range/);
+  });
+
+  it("fails to close when the source is modified after acquisition", () => {
+    const { repo, file } = repoWithSource();
+    const c = openWithRepo(repo);
+    addEvidence(c.dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      path: "src/service.ts",
+      startLine: 3,
+      endLine: 3,
+    });
+    synthesizeProposal(c.dir, { description: REASON_TEXT });
+    // The agent (or anyone) mutates the source after Anvil froze the excerpt.
+    writeFileSync(file, "// header\nfunction refund() {\n  // TAMPERED\n}\n");
+    expect(verifyFrozenEvidence(c.dir).ok).toBe(false);
+    expect(() => closeCase(doc(), c.dir)).toThrow(/no longer matches the source/);
   });
 });
 
