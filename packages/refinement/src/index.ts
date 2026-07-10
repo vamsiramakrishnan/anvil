@@ -30,5 +30,6 @@ export * from "./model.js";
 export * from "./pack.js";
 export * from "./plan.js";
 export * from "./reconcile.js";
+export * from "./skilldoc.js";
 export * from "./skills/index.js";
 export * from "./target.js";

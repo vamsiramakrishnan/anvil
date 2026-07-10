@@ -14,6 +14,7 @@ import {
   applyApproved,
   buildRefinementPlan,
   discoverSkills,
+  generateRefinementSkill,
   packFiles,
   renderReviewMarkdown,
   runRefinements,
@@ -309,6 +310,8 @@ async function cmdRefine(
   switch (sub) {
     case "skills":
       return cmdRefineSkills(flags, io);
+    case "skill":
+      return cmdRefineSkillDoc(args.slice(1), io);
     case "run":
       return await cmdRefineRun(args.slice(1), flags, io);
     case "review":
@@ -321,6 +324,7 @@ async function cmdRefine(
       if (sub && sub !== "help") io.err(`Unknown refine subcommand: '${sub}'.`);
       io.err("Usage: anvil refine plan   <dir|air.yaml> [--json]");
       io.err("       anvil refine skills [--json]");
+      io.err("       anvil refine skill  [<out-dir>]   (emit the harness skill package)");
       io.err(
         "       anvil refine run    <dir|air.yaml> [--severity S] [--skill N] [--safe-only] [--out DIR] [--json]",
       );
@@ -349,6 +353,24 @@ function refineOptions(flags: Record<string, string | boolean>) {
     skill: typeof flags.skill === "string" ? flags.skill : undefined,
     safeOnly: flags["safe-only"] === true,
   };
+}
+
+/** `anvil refine skill` — emit the progressive-disclosure harness skill package. */
+function cmdRefineSkillDoc(args: string[], io: CliIO): number {
+  const files = generateRefinementSkill();
+  const outDir = args[0];
+  if (!outDir) {
+    io.out(files["SKILL.md"] ?? "");
+    return 0;
+  }
+  for (const [rel, contents] of Object.entries(files)) {
+    const full = join(outDir, rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, contents, "utf8");
+  }
+  io.out(`Wrote the refinement skill to ${outDir} (SKILL.md + reference/ + evals/).`);
+  io.out("Point a coding-agent harness (Claude Code, Codex, Antigravity) at it to run the loop.");
+  return 0;
 }
 
 /** `anvil refine run` — build a refinement pack; optionally write it to --out. */
