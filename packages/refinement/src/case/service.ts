@@ -3,7 +3,12 @@ import type { Deficiency } from "../deficiency.js";
 import type { Refinement } from "../model.js";
 import type { JsonValue } from "../skills/contract.js";
 import type { AgentDriver } from "./driver.js";
-import { type AddEvidenceInput, addEvidence } from "./evidence.js";
+import {
+  type AddEvidenceInput,
+  addEvidence,
+  DEFAULT_EVIDENCE_ACQUIRERS,
+  type EvidenceAcquirer,
+} from "./evidence.js";
 import { closeCase } from "./executor.js";
 import type { CaseRunState } from "./lifecycle.js";
 import { currentState } from "./lifecycle.js";
@@ -26,7 +31,18 @@ import { deleteRun, inspectTarget, type ResumedRun, resumeCase } from "./store.j
  * CLI → CaseService → domain modules, never the command implementation *being* the
  * domain implementation.
  */
+export interface CaseServiceDependencies {
+  /** Override the evidence providers (e.g. inject a fake in tests). Defaults applied if omitted. */
+  evidenceAcquirers?: readonly EvidenceAcquirer[];
+}
+
 export class CaseService {
+  private readonly evidenceAcquirers: readonly EvidenceAcquirer[];
+
+  constructor(deps: CaseServiceDependencies = {}) {
+    this.evidenceAcquirers = deps.evidenceAcquirers ?? DEFAULT_EVIDENCE_ACQUIRERS;
+  }
+
   /** Materialise a fresh, immutable run for a deficiency. */
   open(air: AirDocument, deficiency: Deficiency, options?: OpenCaseOptions): MaterializedCase {
     return openCase(air, deficiency, options);
@@ -53,8 +69,8 @@ export class CaseService {
   }
 
   /** Record one piece of evidence (research + extract phases). */
-  addEvidence(dir: string, input: AddEvidenceInput): string {
-    return addEvidence(dir, input);
+  async addEvidence(dir: string, input: AddEvidenceInput): Promise<string> {
+    return addEvidence(dir, input, this.evidenceAcquirers);
   }
 
   /** Report claim strength, admissibility, predicate policy, and contradictions. */

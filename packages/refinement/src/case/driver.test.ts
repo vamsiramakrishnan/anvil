@@ -134,11 +134,89 @@ describe("execution policy + native backend", () => {
       },
     };
     const backend = new NativeExecutionBackend(runner);
-    const policy = { ...defaultExecutionPolicy(), environmentAllowlist: ["ANTHROPIC_API_KEY"] };
+    const policy = {
+      ...defaultExecutionPolicy(),
+      environmentAllowlist: ["ANTHROPIC_API_KEY"],
+      allowDegradedNative: true,
+    };
     await backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy);
     // PATH/HOME always kept; arbitrary parent vars are dropped.
     expect(
       Object.keys(sawEnv ?? {}).every((k) => ["PATH", "HOME", "ANTHROPIC_API_KEY"].includes(k)),
     ).toBe(true);
+  });
+
+  function noopRunner(): AgentProcessRunner {
+    return {
+      run: async () => ({
+        exitCode: 0,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        startedAt: "t0",
+        endedAt: "t1",
+        durationMs: 1,
+        timedOut: false,
+        canceled: false,
+      }),
+    };
+  }
+
+  it("defaults to host network (native cannot honestly claim a proxy)", () => {
+    expect(defaultExecutionPolicy().network).toBe("host");
+  });
+
+  it("rejects network: none unless allowDegradedNative is set", async () => {
+    const backend = new NativeExecutionBackend(noopRunner());
+    const policy = {
+      ...defaultExecutionPolicy(),
+      network: "none" as const,
+      allowDegradedNative: false,
+    };
+    await expect(
+      backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy),
+    ).rejects.toThrow(/network/);
+  });
+
+  it("rejects network: proxy unless allowDegradedNative is set", async () => {
+    const backend = new NativeExecutionBackend(noopRunner());
+    const policy = {
+      ...defaultExecutionPolicy(),
+      network: "proxy" as const,
+      allowDegradedNative: false,
+    };
+    await expect(
+      backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy),
+    ).rejects.toThrow(/network/);
+  });
+
+  it("still rejects network: host without allowDegradedNative, because filesystem can't be enforced", async () => {
+    const backend = new NativeExecutionBackend(noopRunner());
+    const policy = {
+      ...defaultExecutionPolicy(),
+      network: "host" as const,
+      allowDegradedNative: false,
+    };
+    await expect(
+      backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy),
+    ).rejects.toThrow(/filesystem\.repository/);
+  });
+
+  it("with allowDegradedNative: true, succeeds and attaches an attestation of what was degraded", async () => {
+    const backend = new NativeExecutionBackend(noopRunner());
+    const policy = {
+      ...defaultExecutionPolicy(),
+      network: "proxy" as const,
+      allowDegradedNative: true,
+    };
+    const result = await backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy);
+    expect(result.attestation?.requestedSandbox).toBe("native");
+    expect(result.attestation?.actualSandbox).toBe("native");
+    expect(result.attestation?.degraded.length).toBeGreaterThan(0);
+    expect(result.attestation?.degraded.some((d) => d.includes("filesystem.repository"))).toBe(
+      true,
+    );
+    expect(result.attestation?.degraded.some((d) => d.includes("filesystem.case"))).toBe(true);
+    expect(result.attestation?.degraded.some((d) => d.includes("network=proxy"))).toBe(true);
   });
 });

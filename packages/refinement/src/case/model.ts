@@ -12,8 +12,10 @@ import {
   zClaimSet,
   type zClauseVerdict,
   type zEvidenceArtifact,
+  zEvidenceCoordinate,
   type zEvidencePolicyDoc,
   zEvidenceReport,
+  type zEvidenceVerification,
   type zProcedureDoc,
   type zProposedCheck,
   type zTestPlan,
@@ -115,6 +117,8 @@ export function parseCaseDocument(json: unknown): CaseDocument {
 }
 export type EvidenceArtifact = z.infer<typeof zEvidenceArtifact>;
 export type EvidenceReport = z.infer<typeof zEvidenceReport>;
+export type EvidenceCoordinate = z.infer<typeof zEvidenceCoordinate>;
+export type EvidenceVerification = z.infer<typeof zEvidenceVerification>;
 export type ClaimSet = z.infer<typeof zClaimSet>;
 export type CaseProposal = z.infer<typeof zCaseProposal>;
 export type ClauseVerdict = z.infer<typeof zClauseVerdict>;
@@ -134,6 +138,11 @@ export function parseCaseProposal(json: unknown): CaseProposal {
 /** Parse `output/evidence.json`. */
 export function parseEvidenceReport(json: unknown): EvidenceReport {
   return zEvidenceReport.parse(json);
+}
+
+/** Parse an agent-submitted evidence coordinate, rejecting an ambiguous shape. */
+export function parseEvidenceCoordinate(json: unknown): EvidenceCoordinate {
+  return zEvidenceCoordinate.parse(json);
 }
 
 /** Parse `output/claims.json`. */

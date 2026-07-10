@@ -70,6 +70,40 @@ export const zDeficiencyCode = z.enum(
   Object.keys(DEFICIENCY_CATALOG) as [DeficiencyCode, ...DeficiencyCode[]],
 );
 
+/**
+ * Where a piece of evidence lives — a discriminated union so a coordinate with
+ * neither `path` nor `uri` (or both) can never be constructed. `local_repository`
+ * is a filesystem coordinate Anvil can read and verify itself; `external_artifact`
+ * is an opaque pointer whose excerpt is caller-supplied and unverifiable.
+ */
+export const zEvidenceCoordinate = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("local_repository"),
+    source: EvidenceKind,
+    path: z.string().min(1),
+    startLine: z.number().optional(),
+    endLine: z.number().optional(),
+    note: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("external_artifact"),
+    source: EvidenceKind,
+    uri: z.string().min(1),
+    excerpt: z.string().optional(),
+    note: z.string().optional(),
+  }),
+]);
+
+/**
+ * Why an artifact is or isn't trusted, alongside the bare `verified` boolean on
+ * `zEvidenceArtifact` (kept for tamper-detection re-hashing). `verified` a source
+ * verifier could confirm the bytes; `unverified` records why not.
+ */
+export const zEvidenceVerification = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("verified"), verifier: z.literal("local_repository") }),
+  z.object({ status: z.literal("unverified"), reason: z.string() }),
+]);
+
 /** The semantic target — a discriminated union, so a malformed target fails to parse. */
 export const zSemanticTarget = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("service") }),
@@ -152,6 +186,10 @@ export const zEvidencePolicyDoc = z.object({
   writableFields: z.array(z.string()),
   constraints: z.array(zSkillConstraint),
   mustNot: z.array(z.string()),
+  /** The skill-wide default trust bar a claim's evidence must clear. */
+  minimumVerification: z.enum(["verified", "allow_unverified"]),
+  /** A narrow, optional per-output-field override of `minimumVerification`. */
+  fieldVerification: z.record(z.string(), z.enum(["verified", "allow_unverified"])).optional(),
 });
 
 export const zAllowedToolsDoc = z.object({
@@ -209,6 +247,7 @@ export const zEvidenceArtifact = z.object({
   startLine: z.number().optional(),
   endLine: z.number().optional(),
   verified: z.boolean(),
+  verification: zEvidenceVerification,
 });
 export const zEvidenceReport = z.object({ artifacts: z.array(zEvidenceArtifact) });
 
