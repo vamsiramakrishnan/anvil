@@ -1,3 +1,6 @@
+import { CASE_HELPERS } from "./case/materialize.js";
+import { PHASE_ROLE } from "./case/model.js";
+import { procedureFor } from "./case/procedure.js";
 import { DEFICIENCY_CATALOG } from "./deficiency.js";
 import type { EvalFamily } from "./model.js";
 import type { RefinementSkill, ValidationCheckId } from "./skills/contract.js";
@@ -18,6 +21,7 @@ export function generateRefinementSkill(): Record<string, string> {
   const files: Record<string, string> = {
     "SKILL.md": skillMd(),
     "reference/loop.md": loopRef(),
+    "reference/investigation.md": investigationRef(),
     "reference/proposal-contract.md": proposalRef(),
     "reference/reconciliation.md": reconciliationRef(),
     "evals/refine.yaml": evals(),
@@ -66,14 +70,87 @@ validates, measures, reconciles, and applies.
 core decides. A proposal outside its skill's boundary, ungrounded by evidence, or
 that regresses any measured family is rejected — however confident you are.
 
+## Two ways to execute a skill
+- **Inline** — gather evidence and emit a proposal directly (cheap, deterministic-friendly).
+- **As a case** — for anything needing real repository investigation, open a *case*: an
+  isolated directory Anvil materializes for one deficiency, with a brief, the target's
+  facts, an evidence policy, an allowed-tools contract, and an \`output/\` to deposit
+  machine-readable results into. You own investigation and synthesis; Anvil owns
+  admissibility, safety, validation, and application. See \`reference/investigation.md\`.
+
 ## Where to look (progressive disclosure)
 - **L1** \`reference/loop.md\` — the \`anvil refine\` commands, the deficiency catalog, the pack layout.
-- **L2** \`reference/skills/*.md\` — one contract per skill: when it fires, what evidence it admits, what it may write, how to execute it.
+- **L1** \`reference/investigation.md\` — the case framework: \`anvil case\` helpers, the phases, honest declines.
+- **L2** \`reference/skills/*.md\` — one contract per skill, plus its investigation method (how to actually find the truth).
 - **L3** \`reference/proposal-contract.md\` — the exact proposal JSON you emit, with an example.
 - **L4** \`reference/reconciliation.md\` — the validators, the eval families, and the approval policy.
 - \`evals/refine.yaml\` — behaviour checks for operating the loop.
 
 Run \`anvil refine plan <dir>\` before guessing.
+`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* L1 — the investigation (case) framework                                   */
+/* -------------------------------------------------------------------------- */
+
+function investigationRef(): string {
+  const helpers = CASE_HELPERS.map((h) => `- \`${h}\``).join("\n");
+  return `# Investigating as a case
+
+A *case* turns "run a skill" into a bounded research job with a body. Anvil
+materializes an isolated directory for one deficiency; you investigate inside it and
+deposit machine-readable outputs. You never edit AIR — the deterministic core
+validates, measures, and reconciles what you emit.
+
+## Open and drive a case
+\`\`\`
+anvil case list <dir>                 # deficiencies you can open a case for
+anvil case open <dir> <target-key>    # materialize .refinement/cases/<id>/
+anvil case investigate <case>         # drive the live agent (or work it by hand)
+anvil case close <case> <dir>         # re-enter Anvil's rails: validate + reconcile
+\`\`\`
+
+## The case directory
+\`\`\`
+CASE.md                    # short, procedural brief (question, may/may-not, method)
+task.json                  # the brief in machine form
+target.json                # the semantic coordinate + AIR facts + prior evidence
+evidence-policy.json       # admissible sources, minimum strength, output boundary
+allowed-tools.json         # what you may inspect, the helpers, hard prohibitions
+expected-output.schema.json# the contract output/proposal.json is held to
+workspace/                 # your scratch space
+output/                    # where each phase deposits its result
+\`\`\`
+
+## Phases (keep outputs separate — do not let one pass both invent and approve)
+${["research", "extract", "synthesize", "critique", "test"]
+  .map(
+    (p) =>
+      `- **${PHASE_ROLE[p as keyof typeof PHASE_ROLE]}** → \`output/${p === "research" ? "evidence" : p === "extract" ? "claims" : p === "synthesize" ? "proposal" : p === "critique" ? "validation-report" : "tests"}.json\``,
+  )
+  .join("\n")}
+
+## Executable rails (prefer these over hand-written JSON)
+${helpers}
+
+The CLI enforces the source policy, allowed predicates, patch boundaries, and the
+output schema. You contribute intelligence; Anvil supplies the rails.
+
+## Plan your own retrieval
+The deterministic layer decides *what* deficiency exists; you decide *how* to
+investigate it. Do not wait to be handed context — start from the search hints in
+CASE.md and navigate the repository yourself.
+
+## Knowing when NOT to refine is the point
+A proposal is not required. Finalize with an honest status:
+- \`proposal_generated\` — evidence grounds an in-boundary patch.
+- \`supported\` — the current semantics are already correct; nothing to change.
+- \`conflicted\` — sources disagree; record the contradiction, propose nothing.
+- \`insufficient_evidence\` — not enough admissible evidence.
+- \`blocked_by_missing_source\` — a source you need is unavailable.
+
+A harness that declines cleanly is worth more than one that always produces a patch.
 `;
 }
 
@@ -144,6 +221,10 @@ const EXECUTOR_NOTES: Record<string, string> = {
 
 function skillRef(skill: RefinementSkill): string {
   const note = EXECUTOR_NOTES[skill.name] ?? "Ground every asserted value in admissible evidence.";
+  const proc = procedureFor(skill);
+  const method = proc.steps
+    .map((s, i) => `${i + 1}. _(${PHASE_ROLE[s.phase]})_ ${s.instruction}`)
+    .join("\n");
   return `# Skill: ${skill.name} (v${skill.version})
 
 **Triggers:** ${skill.triggers.map((t) => `\`${t}\``).join(", ")}
@@ -171,6 +252,12 @@ ${skill.context.map((c) => `- ${c}`).join("\n")}
 
 ## Executor's job
 ${note}
+
+## Investigation method
+A repeatable procedure — the *how*, not just the constraints. Open a case
+(\`anvil case open <dir> <target-key>\`) and work it in phases:
+
+${method}
 
 If you cannot satisfy the evidence policy and stay inside the output boundary,
 return **no proposal** — that is the correct, honest outcome.

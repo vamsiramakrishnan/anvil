@@ -32,5 +32,16 @@
 ## Executor's job
 Map the declared error to its real meaning from the implementation or tests: the human-facing `message`, and whether it is `retryable`. Emit `error.message` / `error.retryable` claims. Note the asymmetry: marking an error `retryable=true` LOOSENS safety and needs authoritative (implementation or recorded-traffic) evidence; tightening (`retryable=false`) is always safe.
 
+## Investigation method
+A repeatable procedure — the *how*, not just the constraints. Open a case
+(`anvil case open <dir> <target-key>`) and work it in phases:
+
+1. _(Researcher)_ Find where the error is raised and under what condition.
+2. _(Researcher)_ Inspect tests and incidents that show whether a retry succeeds or duplicates work.
+3. _(Claim extractor)_ Extract claims for the human message and for retryability, with sources.
+4. _(Synthesizer)_ Set `message` and, ONLY when tightening, `retryable`. Loosening (retryable=true) needs authoritative evidence and defers to review.
+5. _(Critic)_ Check the retryability direction against the evidence class before proposing.
+6. _(Test writer)_ Record the error-recovery check the enrichment should improve.
+
 If you cannot satisfy the evidence policy and stay inside the output boundary,
 return **no proposal** — that is the correct, honest outcome.

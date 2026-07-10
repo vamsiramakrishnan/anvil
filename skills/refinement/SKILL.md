@@ -31,9 +31,18 @@ validates, measures, reconciles, and applies.
 core decides. A proposal outside its skill's boundary, ungrounded by evidence, or
 that regresses any measured family is rejected — however confident you are.
 
+## Two ways to execute a skill
+- **Inline** — gather evidence and emit a proposal directly (cheap, deterministic-friendly).
+- **As a case** — for anything needing real repository investigation, open a *case*: an
+  isolated directory Anvil materializes for one deficiency, with a brief, the target's
+  facts, an evidence policy, an allowed-tools contract, and an `output/` to deposit
+  machine-readable results into. You own investigation and synthesis; Anvil owns
+  admissibility, safety, validation, and application. See `reference/investigation.md`.
+
 ## Where to look (progressive disclosure)
 - **L1** `reference/loop.md` — the `anvil refine` commands, the deficiency catalog, the pack layout.
-- **L2** `reference/skills/*.md` — one contract per skill: when it fires, what evidence it admits, what it may write, how to execute it.
+- **L1** `reference/investigation.md` — the case framework: `anvil case` helpers, the phases, honest declines.
+- **L2** `reference/skills/*.md` — one contract per skill, plus its investigation method (how to actually find the truth).
 - **L3** `reference/proposal-contract.md` — the exact proposal JSON you emit, with an example.
 - **L4** `reference/reconciliation.md` — the validators, the eval families, and the approval policy.
 - `evals/refine.yaml` — behaviour checks for operating the loop.

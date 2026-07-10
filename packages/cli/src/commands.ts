@@ -73,6 +73,15 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     mutates: true,
   },
   {
+    name: "case",
+    usage:
+      "anvil case <open|list|inspect-target|search-symbol|list-callers|show-schema|add-evidence|validate-claims|test-proposal|investigate|finalize|close> ...",
+    summary: "Run a bounded investigation for one deficiency as an isolated case.",
+    detail:
+      "The investigation framework. `anvil case list <dir>` shows the deficiencies a case can be opened for; `anvil case open <dir> <target-key>` materializes an isolated case directory (CASE.md + task/target/evidence-policy/allowed-tools/expected-output.schema + workspace/ + output/) that gives a coding agent a *case, not a prompt*. Inside a case, the agent works with executable rails rather than hand-written JSON: `inspect-target`, `show-schema`, `search-symbol`, `list-callers`, `add-evidence` (enforces the source policy), `validate-claims` (strength + contradictions), `test-proposal` (deterministic validation), and `finalize` (records an honest status — proposal_generated / conflicted / insufficient_evidence / …). `anvil case investigate <case>` drives the live Claude Code agent; `anvil case close <case> <air>` re-enters Anvil's rails — validating and reconciling the proposal into a refinement. The agent owns investigation and synthesis; Anvil owns admissibility, safety, validation, and application. AIR is never edited by a case.",
+    mutates: true,
+  },
+  {
     name: "run",
     usage: "anvil run <dir|air.yaml> <resource> <action> [flags]",
     summary: "Invoke an operation through the safety runtime.",
