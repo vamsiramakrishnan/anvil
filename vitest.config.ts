@@ -14,6 +14,7 @@ export default defineConfig({
       "@anvil/compiler": pkg("compiler"),
       "@anvil/generators": pkg("generators"),
       "@anvil/harness": pkg("harness"),
+      "@anvil/refinement": pkg("refinement"),
     },
   },
   test: {
