@@ -163,14 +163,29 @@ export interface AllowedToolsDoc {
 /* Phase outputs (written by the executor)                                    */
 /* -------------------------------------------------------------------------- */
 
-/** One piece of located evidence — the Researcher's atom. */
+/**
+ * A **frozen** evidence artifact. For a filesystem source Anvil reads the exact
+ * bytes at the coordinate, computes the hash, and stores the excerpt — the executor
+ * never supplies an authoritative excerpt separately from the verified source
+ * (`verified: true`). Non-filesystem sources carry a provided excerpt that Anvil
+ * could not read back (`verified: false`). Claims reference an artifact by `id`.
+ */
 export interface EvidenceArtifact {
+  id: string;
   uri: string;
-  revision?: string;
-  span?: { start: number; end: number };
-  relevance: string;
   source: EvidenceKind;
-  excerpt?: string;
+  revision?: string;
+  /** sha256 of the exact excerpt bytes. */
+  contentHash: string;
+  excerpt: string;
+  acquiredAt: string;
+  relevance?: string;
+  /** Repo-relative path (filesystem sources only). */
+  path?: string;
+  startLine?: number;
+  endLine?: number;
+  /** True only when Anvil itself read the excerpt from an in-scope source. */
+  verified: boolean;
 }
 
 /** `output/evidence.json` — what the Researcher found. */

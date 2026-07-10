@@ -7,7 +7,13 @@ import { reconcile } from "../reconcile.js";
 import type { SkillExecutor } from "../skills/executor.js";
 import { skillByName } from "../skills/registry.js";
 import { validateProposal } from "../skills/validate.js";
-import { contextForCase, detectConflicts, readEvidence, readProposal } from "./commands.js";
+import {
+  contextForCase,
+  detectConflicts,
+  readEvidence,
+  readProposal,
+  verifyFrozenEvidence,
+} from "./commands.js";
 import type { AgentDriver } from "./driver.js";
 import {
   asSkillExecutor,
@@ -159,6 +165,16 @@ function summarize(status: InvestigationStatus, conflicts: number, claims: numbe
 export function closeCase(air: AirDocument, dir: string): Refinement | undefined {
   const proposalDoc = readProposal(dir);
   if (!proposalDoc) return undefined;
+  // Integrity: every verified filesystem excerpt must still match its source. If the
+  // repository changed under the investigation, its evidence is no longer trustworthy.
+  const integrity = verifyFrozenEvidence(dir);
+  if (!integrity.ok) {
+    throw new Error(
+      `Frozen evidence no longer matches the source repository: ${integrity.mismatches
+        .map((m) => `${m.uri} (${m.reason})`)
+        .join("; ")}. Refusing to close this case.`,
+    );
+  }
   const { task, context } = contextForCase(air, dir);
   const skill = skillByName(task.skill);
   if (!skill) throw new Error(`Unknown skill '${task.skill}' for case at ${dir}.`);

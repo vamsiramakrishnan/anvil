@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { AirDocument, Claim } from "@anvil/air";
 import type { DeficiencyCode } from "../deficiency.js";
 import { makeDeficiency } from "../deficiency.js";
@@ -8,6 +8,7 @@ import type { JsonValue, SkillContext } from "../skills/contract.js";
 import { skillByName } from "../skills/registry.js";
 import { meetsStrength, strengthOf, validateProposal } from "../skills/validate.js";
 import { type SemanticTarget, targetKey } from "../target.js";
+import { type CaseWorkspace, hashContent, hashJson, withinScopes } from "./identity.js";
 import type { Conflict, InvestigationStatus } from "./investigation.js";
 import {
   type AllowedToolsDoc,
@@ -18,6 +19,7 @@ import {
   type CaseTargetDoc,
   type CaseTask,
   type ClaimSet,
+  type EvidenceArtifact,
   type EvidencePolicyDoc,
   type EvidenceReport,
   parseCaseProposal,
@@ -175,16 +177,101 @@ export interface AddEvidenceInput {
   predicate: string;
   value?: JsonValue;
   source: string;
+  /** A filesystem source coordinate — Anvil reads and freezes the exact excerpt. */
+  path?: string;
+  startLine?: number;
+  endLine?: number;
+  /** A non-filesystem source pointer (Postman, incident, doc URL). */
+  uri?: string;
+  /** The provided excerpt for a non-filesystem source (cannot be verified). */
+  excerpt?: string;
+  /** Legacy alias for `uri` (a bare source pointer). */
   ref?: string;
   note?: string;
   confidence?: number;
-  span?: { start: number; end: number };
+  /** Injectable clock (ms) for reproducible acquisition timestamps in tests. */
+  now?: number;
 }
 
 /**
- * Record one piece of evidence: appends both an evidence artifact (research phase)
- * and the atomic claim it grounds (extract phase). Enforces the source policy — an
- * inadmissible source is refused here, not silently accepted and rejected later.
+ * Freeze an evidence artifact. A filesystem coordinate is verified: the path must
+ * resolve inside an allowed scope, the line range must be valid, and Anvil reads
+ * the exact bytes and hashes them (`verified: true`). A non-filesystem source keeps
+ * the provided excerpt, hashed but unverified. Anvil never trusts an agent-provided
+ * excerpt for a source it can read itself.
+ */
+export function freezeArtifact(
+  workspace: CaseWorkspace,
+  input: AddEvidenceInput,
+): EvidenceArtifact {
+  const acquiredAt = new Date(input.now ?? Date.now()).toISOString();
+  if (input.path) {
+    const abs = isAbsolute(input.path)
+      ? resolve(input.path)
+      : resolve(workspace.repositoryRoot, input.path);
+    const scopes = workspace.inspectScopes.length
+      ? workspace.inspectScopes
+      : [workspace.repositoryRoot];
+    if (!withinScopes(scopes, abs)) {
+      throw new Error(
+        `Evidence path '${input.path}' resolves outside the allowed scopes (${scopes.join(", ")}).`,
+      );
+    }
+    if (!existsSync(abs)) throw new Error(`Evidence path '${input.path}' does not exist.`);
+    const content = readFileSync(abs, "utf8");
+    const lines = content.split("\n");
+    let excerpt = content;
+    if (input.startLine !== undefined) {
+      const start = input.startLine;
+      const end = input.endLine ?? input.startLine;
+      if (start < 1 || end < start || end > lines.length) {
+        throw new Error(
+          `Invalid line range ${start}-${end} for '${input.path}' (${lines.length} lines).`,
+        );
+      }
+      excerpt = lines.slice(start - 1, end).join("\n");
+    }
+    const contentHash = hashContent(excerpt);
+    const rel = relative(workspace.repositoryRoot, abs);
+    const uri = input.startLine
+      ? `${rel}#L${input.startLine}-L${input.endLine ?? input.startLine}`
+      : rel;
+    return {
+      id: contentHash.slice(0, 12),
+      uri,
+      source: input.source as EvidenceArtifact["source"],
+      revision: workspace.repositoryRevision,
+      contentHash,
+      excerpt,
+      acquiredAt,
+      relevance: input.note,
+      path: rel,
+      startLine: input.startLine,
+      endLine: input.endLine ?? input.startLine,
+      verified: true,
+    };
+  }
+  const uri = input.uri ?? input.ref ?? "(unspecified)";
+  const excerpt = input.excerpt ?? "";
+  const contentHash = hashContent(excerpt);
+  return {
+    id: hashJson({ uri, excerpt, source: input.source }).slice(0, 12),
+    uri,
+    source: input.source as EvidenceArtifact["source"],
+    contentHash,
+    excerpt,
+    acquiredAt,
+    relevance: input.note,
+    verified: false,
+  };
+}
+
+/**
+ * Record one piece of evidence: freezes an artifact (research phase) and appends the
+ * atomic claim it grounds (extract phase). Enforces the source AND predicate policy,
+ * and — for filesystem sources — verifies and freezes the exact excerpt. The claim
+ * references the frozen artifact by id, so it can never point at an excerpt the
+ * source does not actually contain.
  */
 export function addEvidence(dir: string, input: AddEvidenceInput): string {
   const policy = loadPolicy(dir);
@@ -202,33 +289,64 @@ export function addEvidence(dir: string, input: AddEvidenceInput): string {
         `supporting: ${policy.supportingPredicates.join(", ") || "(none)"}.`,
     );
   }
+
+  const artifact = freezeArtifact(loadTools(dir).workspace, input);
+  const evidence = readOptionalJson<EvidenceReport>(dir, CASE_OUTPUT.research) ?? { artifacts: [] };
+  evidence.artifacts.push(artifact);
+  writeJson(dir, CASE_OUTPUT.research, evidence);
+
   const subject = tdoc.field?.path ?? tdoc.operationId ?? tdoc.errorCode ?? tdoc.key;
   const claim: Claim = {
     subject,
     predicate: input.predicate,
     value: input.value,
     source: input.source as Claim["source"],
-    sourceRef: input.ref,
+    // The claim references the FROZEN artifact, not a raw agent-provided pointer.
+    sourceRef: artifact.id,
+    sourceRevision: artifact.revision,
     method: "case_investigation",
     confidence: input.confidence ?? 0.8,
     note: input.note,
   };
-
   const claims = readOptionalJson<ClaimSet>(dir, CASE_OUTPUT.extract) ?? { claims: [] };
   claims.claims.push(claim);
   writeJson(dir, CASE_OUTPUT.extract, claims);
 
-  const evidence = readOptionalJson<EvidenceReport>(dir, CASE_OUTPUT.research) ?? { artifacts: [] };
-  evidence.artifacts.push({
-    uri: input.ref ?? "(unspecified)",
-    span: input.span,
-    relevance: input.note ?? `${input.predicate} = ${JSON.stringify(input.value)}`,
-    source: input.source as Claim["source"],
-  });
-  writeJson(dir, CASE_OUTPUT.research, evidence);
-
   const kind = policy.writablePredicates.includes(input.predicate) ? "output" : "supporting";
-  return `Recorded ${claims.claims.length} claim(s). Latest (${kind}): ${input.predicate}=${JSON.stringify(input.value)} from ${input.source}${input.ref ? ` (${input.ref})` : ""}.`;
+  const prov = artifact.verified ? `verified ${artifact.uri}` : `unverified ${artifact.uri}`;
+  return `Recorded ${claims.claims.length} claim(s). Latest (${kind}): ${input.predicate}=${JSON.stringify(input.value)} from ${input.source} [${prov}, artifact ${artifact.id}].`;
+}
+
+/**
+ * Re-verify the frozen filesystem evidence against the source repository: every
+ * verified artifact's excerpt must still hash to what was recorded. A mismatch means
+ * the source changed (or was tampered with) after acquisition — the investigation's
+ * evidence is no longer trustworthy and close should refuse it.
+ */
+export function verifyFrozenEvidence(dir: string): {
+  ok: boolean;
+  mismatches: Array<{ id: string; uri: string; reason: string }>;
+} {
+  const workspace = loadTools(dir).workspace;
+  const report = readOptionalJson<EvidenceReport>(dir, CASE_OUTPUT.research) ?? { artifacts: [] };
+  const mismatches: Array<{ id: string; uri: string; reason: string }> = [];
+  for (const a of report.artifacts) {
+    if (!a.verified || !a.path) continue;
+    const abs = resolve(workspace.repositoryRoot, a.path);
+    if (!existsSync(abs)) {
+      mismatches.push({ id: a.id, uri: a.uri, reason: "source path no longer exists" });
+      continue;
+    }
+    const lines = readFileSync(abs, "utf8").split("\n");
+    const excerpt =
+      a.startLine !== undefined
+        ? lines.slice(a.startLine - 1, a.endLine ?? a.startLine).join("\n")
+        : lines.join("\n");
+    if (hashContent(excerpt) !== a.contentHash) {
+      mismatches.push({ id: a.id, uri: a.uri, reason: "source content changed since acquisition" });
+    }
+  }
+  return { ok: mismatches.length === 0, mismatches };
 }
 
 /* ------------------------------- synthesize ------------------------------- */
