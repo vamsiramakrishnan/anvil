@@ -85,14 +85,15 @@ export const CASE_OUTPUT = {
 
 /**
  * Auxiliary outputs that are not one-per-phase: the retrieval plan, any behavioural
- * experiments, the single `result.json` (the honest outcome), and the stage-freeze
- * record. These are optional — a case can close on a `result.json` alone.
+ * experiments, the single `result.json` (the honest outcome), and the lifecycle
+ * record (current run state + stage-freeze hashes). These are optional — a case can
+ * close on a `result.json` alone.
  */
 export const CASE_AUX = {
   searchPlan: "output/search-plan.json",
   experiments: "output/experiments.json",
   result: "output/result.json",
-  stages: "output/stages.json",
+  lifecycle: "output/lifecycle.json",
 } as const;
 
 /* -------------------------------------------------------------------------- */

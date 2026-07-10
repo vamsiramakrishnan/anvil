@@ -16,6 +16,7 @@ import { type AirDocument, type Claim, loadAirDocument } from "@anvil/air";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Deficiency } from "../deficiency.js";
 import {
+  acquirerFor,
   addEvidence,
   bindProposalToCase,
   CaseInvestigationHarness,
@@ -24,8 +25,11 @@ import {
   caseIdentity,
   caseMetrics,
   closeCase,
+  currentState,
+  deleteRun,
   detectConflicts,
   ESCALATION_TIERS,
+  ExternalArtifactEvidenceAcquirer,
   escalate,
   finalize,
   type InvestigationResult,
@@ -33,6 +37,7 @@ import {
   parseCaseProposal,
   readInvestigation,
   readProposal,
+  resumeCase,
   ScriptedAgentDriver,
   skillFor,
   synthesizeProposal,
@@ -277,22 +282,29 @@ describe("immutable runs and containment", () => {
 
     // A later open creates a NEW run directory; the stale proposal is not visible.
     const second = openCase(air, d, { root, now: 2000 });
-    expect(second.runId).not.toBe(first.runId);
+    expect(second.ref.runId).not.toBe(first.ref.runId);
     expect(second.dir).not.toBe(first.dir);
     expect(readProposal(second.dir)).toBeUndefined();
     expect(second.identity.airHash).toBe(first.identity.airHash);
   });
 
-  it("refuses to reopen an existing run unless resume/replace is explicit", () => {
+  it("refuses to overwrite an immutable run; resume and delete are explicit verbs", () => {
     const air = doc();
     const root = scratch();
     const d = reasonDeficiency(air);
-    openCase(air, d, { root, now: 1000 });
-    // Same clock → same run id → same directory: a bare reopen is refused.
-    expect(() => openCase(air, d, { root, now: 1000 })).toThrow(/already exists/);
-    // Resume is explicit and returns the same run.
-    const resumed = openCase(air, d, { root, now: 1000, onExisting: "resume" });
-    expect(existsSync(join(resumed.dir, CASE_FILES.doc))).toBe(true);
+    const first = openCase(air, d, { root, now: 1000 });
+    // Same clock → same run id → same directory: `open` never overwrites a prior run.
+    expect(() => openCase(air, d, { root, now: 1000 })).toThrow(/immutable run/);
+    // `resumeCase` explicitly reopens the same run and loads its canonical document.
+    const resumed = resumeCase(first.dir);
+    expect(resumed.dir).toBe(first.dir);
+    expect(resumed.doc.task.caseKey).toBe(first.ref.caseKey);
+    // `deleteRun` is the explicit destructive verb; afterwards the run can be recreated.
+    deleteRun(first.dir);
+    expect(existsSync(join(first.dir, CASE_FILES.doc))).toBe(false);
+    const recreated = openCase(air, d, { root, now: 1000 });
+    expect(recreated.dir).toBe(first.dir);
+    expect(currentState(recreated.dir)).toBe("open");
   });
 
   it("rejects an inspect scope that escapes the repository root", () => {
@@ -525,6 +537,129 @@ describe("immutable phase staging", () => {
     expect(() => synthesizeProposal(c.dir, { description: REASON_TEXT })).toThrow(
       /synthesis stage is frozen/,
     );
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Explicit run lifecycle state machine                                       */
+/* -------------------------------------------------------------------------- */
+
+describe("explicit run lifecycle", () => {
+  function ground(dir: string) {
+    addEvidence(dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "s:1",
+    });
+    addEvidence(dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "test_fixture",
+      ref: "t:1",
+    });
+  }
+
+  it("advances open → research_frozen → proposal_frozen → finalized → closed", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    expect(currentState(c.dir)).toBe("open");
+    ground(c.dir);
+    expect(currentState(c.dir)).toBe("open"); // gathering evidence does not advance state
+    synthesizeProposal(c.dir, { description: REASON_TEXT });
+    expect(currentState(c.dir)).toBe("research_frozen");
+    validateCaseProposal(air, c.dir);
+    expect(currentState(c.dir)).toBe("proposal_frozen");
+    finalize(c.dir);
+    expect(currentState(c.dir)).toBe("finalized");
+    expect(closeCase(air, c.dir)?.status).not.toBe("rejected");
+    expect(currentState(c.dir)).toBe("closed");
+  });
+
+  it("lets an honest decline finalize straight from open", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    finalize(c.dir);
+    expect(currentState(c.dir)).toBe("finalized");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Tamper-evident frozen stages — verified before every state transition      */
+/* -------------------------------------------------------------------------- */
+
+describe("tamper-evident frozen stages", () => {
+  it("rejects a claims.json rewritten after the research stage is frozen", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    addEvidence(c.dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "s:1",
+    });
+    synthesizeProposal(c.dir, { description: REASON_TEXT }); // freezes research
+    // Someone injects an extra claim into the frozen claims file.
+    const claims = JSON.parse(readFileSync(join(c.dir, CASE_OUTPUT.extract), "utf8"));
+    claims.claims.push({
+      subject: "input.body.reason",
+      predicate: "field.description",
+      value: "injected",
+      source: "source_impl",
+      confidence: 0.9,
+    });
+    writeFileSync(join(c.dir, CASE_OUTPUT.extract), JSON.stringify(claims), "utf8");
+    // Every downstream transition refuses the mutated stage.
+    expect(() => validateCaseProposal(air, c.dir)).toThrow(/modified after it was frozen/);
+    expect(() => finalize(c.dir)).toThrow(/modified after it was frozen/);
+  });
+
+  it("rejects a proposal.json rewritten after the synthesis stage is frozen", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    addEvidence(c.dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "source_impl",
+      ref: "s:1",
+    });
+    addEvidence(c.dir, {
+      predicate: "field.description",
+      value: REASON_TEXT,
+      source: "test_fixture",
+      ref: "t:1",
+    });
+    synthesizeProposal(c.dir, { description: REASON_TEXT });
+    validateCaseProposal(air, c.dir); // freezes synthesis
+    // Tamper with the frozen proposal (same target, so identity binding still passes).
+    const proposal = JSON.parse(readFileSync(join(c.dir, CASE_OUTPUT.synthesize), "utf8"));
+    proposal.patch.set.description = "silently changed after the freeze";
+    writeFileSync(join(c.dir, CASE_OUTPUT.synthesize), JSON.stringify(proposal), "utf8");
+    expect(() => finalize(c.dir)).toThrow(/modified after it was frozen/);
+    expect(() => closeCase(air, c.dir)).toThrow(/modified after it was frozen/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Evidence acquisition provider boundary                                     */
+/* -------------------------------------------------------------------------- */
+
+describe("evidence acquisition provider boundary", () => {
+  it("routes a filesystem coordinate to the local provider and a pointer to the external one", () => {
+    expect(acquirerFor({ source: "source_impl", path: "src/x.ts" }).kind).toBe("local_repository");
+    expect(acquirerFor({ source: "postman", uri: "https://example" }).kind).toBe(
+      "external_artifact",
+    );
+  });
+
+  it("the external provider keeps a caller excerpt but never marks it verified", () => {
+    const art = new ExternalArtifactEvidenceAcquirer().acquire(
+      { source: "doc_example", uri: "docs://x", excerpt: "claimed text" },
+      { workspace: { repositoryRoot: "/repo", inspectScopes: [] }, now: 1 },
+    );
+    expect(art.verified).toBe(false);
+    expect(art.excerpt).toBe("claimed text");
+    expect(art.source).toBe("doc_example");
   });
 });
 

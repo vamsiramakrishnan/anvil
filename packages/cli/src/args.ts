@@ -13,8 +13,6 @@ const BOOLEAN_FLAGS = new Set([
   "no-retries",
   "all",
   "quiet",
-  "resume",
-  "replace",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {

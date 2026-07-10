@@ -4,6 +4,8 @@ import {
   type AgentRunResult,
   allowlistedEnv,
   ClaudeCodeAgentDriver,
+  defaultExecutionPolicy,
+  NativeExecutionBackend,
   NodeAgentProcessRunner,
 } from "./index.js";
 
@@ -101,5 +103,42 @@ describe("ClaudeCodeAgentDriver configures the runner", () => {
     writeFileSync(join(dir, "CASE.md"), "# Case\ninvestigate.", "utf8");
     await expect(driver.run(dir)).rejects.toThrow(/exited 2/);
     expect(driver.lastResult?.exitCode).toBe(2);
+  });
+});
+
+describe("execution policy + native backend", () => {
+  it("resolves the claude-code credential profile into a minimal env allowlist", () => {
+    const policy = defaultExecutionPolicy("claude-code");
+    expect(policy.sandbox).toBe("native");
+    expect(policy.filesystem).toEqual({ repository: "read-only", case: "read-write" });
+    expect(policy.environmentAllowlist).toContain("ANTHROPIC_API_KEY");
+    expect(policy.environmentAllowlist).not.toContain("SECRET");
+  });
+
+  it("the native backend narrows the environment to the policy allowlist", async () => {
+    let sawEnv: NodeJS.ProcessEnv | undefined;
+    const runner: AgentProcessRunner = {
+      run: async (req) => {
+        sawEnv = req.env;
+        return {
+          exitCode: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          startedAt: "t0",
+          endedAt: "t1",
+          durationMs: 1,
+          timedOut: false,
+          canceled: false,
+        };
+      },
+    };
+    const backend = new NativeExecutionBackend(runner);
+    const policy = { ...defaultExecutionPolicy(), environmentAllowlist: ["ANTHROPIC_API_KEY"] };
+    await backend.execute({ command: "echo", args: [], cwd: process.cwd() }, policy);
+    // PATH/HOME always kept; arbitrary parent vars are dropped.
+    expect(
+      Object.keys(sawEnv ?? {}).every((k) => ["PATH", "HOME", "ANTHROPIC_API_KEY"].includes(k)),
+    ).toBe(true);
   });
 });

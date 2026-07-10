@@ -67,12 +67,16 @@ export interface RefinementSkill {
   /** Which source kinds are admissible, and the minimum aggregate strength. */
   evidence: { allowed: EvidenceKind[]; minimumStrength: EvidenceStrength };
   /**
-   * The output boundary. `predicates` are the claim predicates it may assert;
-   * `fields` are the **target-relative** semantic keys it may write (e.g.
-   * `description`, `examples`, `message`). A key outside `fields` — or any
-   * structural key like `schema`/`type`/`required` — is a boundary violation.
+   * The output boundary. `predicates` are the claim predicates the patch asserts;
+   * `supportingPredicates` are the narrow intermediate facts an investigation may
+   * legitimately record on the way there (kept deliberately small); `fields` are
+   * the **target-relative** semantic keys it may write (e.g. `description`,
+   * `examples`, `message`). A key outside `fields` — or a predicate outside
+   * `predicates` ∪ `supportingPredicates`, or any structural key like
+   * `schema`/`type`/`required` — is a boundary violation. The skill owns this
+   * whole contract, so evidence policy never has a second owner that can drift.
    */
-  output: { predicates: string[]; fields: string[] };
+  output: { predicates: string[]; supportingPredicates: string[]; fields: string[] };
   constraints: SkillConstraint[];
   /** The checks a proposal from this skill must pass to be `validated`. */
   validation: ValidationCheckId[];
