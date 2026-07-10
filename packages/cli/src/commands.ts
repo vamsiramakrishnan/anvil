@@ -66,10 +66,10 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
   },
   {
     name: "refine",
-    usage: "anvil refine plan <dir|air.yaml> [--json]",
+    usage: "anvil refine plan <dir|air.yaml> [--json] | anvil refine skills [--json]",
     summary: "Detect what AIR is missing or weak, deterministically (no agents).",
     detail:
-      "`anvil refine plan` runs Anvil's deterministic detectors over the model and reports a refinement plan — documentation gaps, weak agent-facing naming/routing, unproven safety semantics, and mock/eval coverage holes — grouped by severity, category, and the narrow skill that would own each fix. It gathers no evidence and never mutates AIR; it only names the work. Evidence gathering, patch proposal, and measured acceptance land in later stages.",
+      "`anvil refine plan` runs Anvil's deterministic detectors over the model and reports a refinement plan — documentation gaps, weak agent-facing naming/routing, unproven safety semantics, and mock/eval coverage holes — grouped by severity, category, and the narrow skill that would own each fix. `anvil refine skills` lists those skills as typed contracts (trigger, evidence policy, output boundary, validation), whose executor is kept separate from their semantics so any harness can run them and be judged by the same checks. Both are read-only: they gather no evidence and never mutate AIR. Evidence gathering, patch proposal, reconciliation, and measured acceptance land in later stages.",
     mutates: false,
   },
   {
