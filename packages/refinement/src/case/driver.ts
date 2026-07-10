@@ -6,6 +6,7 @@ import {
   type ExecutionBackend,
   type ExecutionPolicy,
   NativeExecutionBackend,
+  unenforcedFilesystemGuarantees,
 } from "./execution-policy.js";
 import { CASE_FILES } from "./model.js";
 import type { AgentProcessRunner, AgentRunResult } from "./process-runner.js";
@@ -51,6 +52,14 @@ export interface ClaudeCodeDriverOptions {
    * select a sandboxed backend's policy.
    */
   policy?: ExecutionPolicy;
+  /**
+   * Explicit consent to run under a backend that cannot enforce the case's filesystem
+   * split (repository read-only, case-only writes) — i.e. native execution today.
+   * Absent, a native run refuses to start rather than silently accepting the reduced
+   * containment. Wired to the CLI's `--allow-degraded-native`. Overrides
+   * `policy.allowDegradedNative` when supplied.
+   */
+  allowDegradedNative?: boolean;
   /** Where the invocation runs. Defaults to the native (unsandboxed) backend. */
   backend?: ExecutionBackend;
   /**
@@ -69,10 +78,25 @@ export class ClaudeCodeAgentDriver implements AgentDriver {
 
   constructor(private readonly options: ClaudeCodeDriverOptions = {}) {
     this.backend = options.backend ?? new NativeExecutionBackend(options.runner);
-    this.policy = options.policy ?? defaultExecutionPolicy(options.credentialProfile);
+    const base = options.policy ?? defaultExecutionPolicy(options.credentialProfile);
+    this.policy =
+      options.allowDegradedNative !== undefined
+        ? { ...base, allowDegradedNative: options.allowDegradedNative }
+        : base;
   }
 
   async run(caseDir: string): Promise<void> {
+    // Containment preflight: if the chosen backend cannot enforce the case's filesystem
+    // split (native can't) and the caller has not explicitly accepted degraded
+    // execution, refuse before launching anything. Degradation must be consented to, not
+    // discovered after a real agent has already run unsandboxed.
+    const unenforced = unenforcedFilesystemGuarantees(this.backend);
+    if (unenforced.length > 0 && this.policy.allowDegradedNative !== true) {
+      throw new Error(
+        "Native execution cannot enforce repository read-only and case-only writes.\n" +
+          "Use a sandboxed backend or pass --allow-degraded-native to acknowledge the reduced containment.",
+      );
+    }
     const command = this.options.command ?? "claude";
     const brief = readFileSync(join(caseDir, CASE_FILES.brief), "utf8");
     const prompt = [

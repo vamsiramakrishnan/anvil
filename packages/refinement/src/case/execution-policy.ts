@@ -50,9 +50,12 @@ export type CredentialProfile = keyof typeof CREDENTIAL_PROFILES;
 /**
  * The default policy for a credential profile: native sandbox, unrestricted (host)
  * network — the only network state native honestly satisfies without configuring
- * anything — and `allowDegradedNative: true`, because no sandboxed backend exists yet
- * and every real invocation today is native. Making that degradation an explicit,
- * visible field beats a policy that silently claims guarantees it doesn't have.
+ * anything — and `allowDegradedNative: false`. No sandboxed backend exists yet, so the
+ * native backend cannot enforce the filesystem split; that degradation must be an
+ * explicit, acknowledged choice rather than a silent default. A native run therefore
+ * refuses to start unless the caller opts in (`--allow-degraded-native`). Never flip
+ * this to `true` "because Bubblewrap is unavailable" — the whole point is that the gap
+ * is visible and consented to, not assumed away.
  */
 export function defaultExecutionPolicy(
   profile: CredentialProfile = "claude-code",
@@ -63,8 +66,22 @@ export function defaultExecutionPolicy(
     environmentAllowlist: [...CREDENTIAL_PROFILES[profile]],
     timeoutMs: DEFAULT_AGENT_TIMEOUT_MS,
     sandbox: "native",
-    allowDegradedNative: true,
+    allowDegradedNative: false,
   };
+}
+
+/**
+ * The filesystem guarantees the policy's fixed split asks for that a backend cannot
+ * enforce, phrased for a human ("repository read-only", "case-only writes"). A native
+ * backend returns both; a real sandbox returns none. This is what lets a driver refuse
+ * to start a native run — with a message naming exactly what containment is missing —
+ * before it opts into degraded execution.
+ */
+export function unenforcedFilesystemGuarantees(backend: ExecutionBackend): string[] {
+  const out: string[] = [];
+  if (!backend.capabilities.enforceReadOnlyRepository) out.push("repository read-only");
+  if (!backend.capabilities.enforceCaseWriteBoundary) out.push("case-only writes");
+  return out;
 }
 
 /** A resolved request to run one agent process — what a driver hands a backend. */

@@ -19,12 +19,15 @@ import {
   DEFAULT_EVIDENCE_ACQUIRERS,
   type EvidenceAcquirer,
   type EvidenceCoordinate,
+  ExternalArtifactEvidenceAcquirer,
   type FrozenEvidenceArtifact,
+  LocalRepositoryEvidenceAcquirer,
   openCase,
   parseEvidenceCoordinate,
 } from "../index.js";
 import { buildRefinementPlan } from "../plan.js";
 import { targetKey } from "../target.js";
+import type { CaseWorkspace } from "./identity.js";
 import { CASE_OUTPUT } from "./model.js";
 
 /* -------------------------------------------------------------------------- */
@@ -210,7 +213,7 @@ describe("addEvidence is async", () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* Verification field — consistent with the `verified` boolean                */
+/* Verification field — the single source of verification truth                */
 /* -------------------------------------------------------------------------- */
 
 describe("evidence verification field", () => {
@@ -225,8 +228,9 @@ describe("evidence verification field", () => {
     });
     const report = JSON.parse(readFileSync(join(c.dir, CASE_OUTPUT.research), "utf8"));
     const art = report.artifacts[0];
-    expect(art.verified).toBe(true);
     expect(art.verification).toEqual({ status: "verified", verifier: "local_repository" });
+    // Verification lives only in `verification.status`; there is no standalone boolean.
+    expect(art.verified).toBeUndefined();
   });
 
   it("an external artifact is unverified with a reason string", async () => {
@@ -240,10 +244,106 @@ describe("evidence verification field", () => {
     });
     const report = JSON.parse(readFileSync(join(c.dir, CASE_OUTPUT.research), "utf8"));
     const art = report.artifacts[0];
-    expect(art.verified).toBe(false);
     expect(art.verification.status).toBe("unverified");
     expect(typeof art.verification.reason).toBe("string");
     expect(art.verification.reason.length).toBeGreaterThan(0);
+    expect(art.verified).toBeUndefined();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Artifact identity — coordinate + revision + content, never content alone    */
+/* -------------------------------------------------------------------------- */
+
+describe("evidence artifact identity", () => {
+  /** A repo with two distinct files that contain the SAME excerpt line. */
+  function repoWithTwins(): { workspace: CaseWorkspace; revision: string } {
+    const repo = scratch();
+    mkdirSync(join(repo, "src"), { recursive: true });
+    const line = "// reason: shown on the receipt\n";
+    writeFileSync(join(repo, "src", "a.ts"), line);
+    writeFileSync(join(repo, "src", "b.ts"), line);
+    return {
+      workspace: { repositoryRoot: repo, repositoryRevision: "rev-1", inspectScopes: [repo] },
+      revision: "rev-1",
+    };
+  }
+
+  const local = new LocalRepositoryEvidenceAcquirer();
+
+  it("gives the same excerpt at two different files different ids", async () => {
+    const { workspace } = repoWithTwins();
+    const a = await local.acquire(
+      {
+        kind: "local_repository",
+        source: "source_impl",
+        path: "src/a.ts",
+        startLine: 1,
+        endLine: 1,
+      },
+      { workspace, now: 1 },
+    );
+    const b = await local.acquire(
+      {
+        kind: "local_repository",
+        source: "source_impl",
+        path: "src/b.ts",
+        startLine: 1,
+        endLine: 1,
+      },
+      { workspace, now: 1 },
+    );
+    expect(a.contentHash).toBe(b.contentHash); // identical bytes
+    expect(a.id).not.toBe(b.id); // but independent provenance → different identity
+  });
+
+  it("gives the same file/span/revision/content a stable id", async () => {
+    const { workspace } = repoWithTwins();
+    const coord = {
+      kind: "local_repository" as const,
+      source: "source_impl" as const,
+      path: "src/a.ts",
+      startLine: 1,
+      endLine: 1,
+    };
+    const a = await local.acquire(coord, { workspace, now: 1 });
+    const b = await local.acquire(coord, { workspace, now: 999 }); // time does not affect identity
+    expect(a.id).toBe(b.id);
+  });
+
+  it("changes the id when the repository revision changes", async () => {
+    const { workspace } = repoWithTwins();
+    const coord = {
+      kind: "local_repository" as const,
+      source: "source_impl" as const,
+      path: "src/a.ts",
+      startLine: 1,
+      endLine: 1,
+    };
+    const atRev1 = await local.acquire(coord, { workspace, now: 1 });
+    const atRev2 = await local.acquire(coord, {
+      workspace: { ...workspace, repositoryRevision: "rev-2" },
+      now: 1,
+    });
+    expect(atRev1.id).not.toBe(atRev2.id);
+  });
+
+  it("gives external artifacts with different uris different ids", async () => {
+    const external = new ExternalArtifactEvidenceAcquirer();
+    const ctx: AcquisitionContext = {
+      workspace: { repositoryRoot: "/repo", inspectScopes: [] },
+      now: 1,
+    };
+    const a = await external.acquire(
+      { kind: "external_artifact", source: "doc_example", uri: "docs://x", excerpt: "same text" },
+      ctx,
+    );
+    const b = await external.acquire(
+      { kind: "external_artifact", source: "doc_example", uri: "docs://y", excerpt: "same text" },
+      ctx,
+    );
+    expect(a.contentHash).toBe(b.contentHash);
+    expect(a.id).not.toBe(b.id);
   });
 });
 
@@ -265,7 +365,6 @@ describe("CaseService injects custom evidence acquirers", () => {
       contentHash: "deadbeef",
       excerpt: "hand-crafted excerpt from the fake acquirer",
       acquiredAt: new Date(0).toISOString(),
-      verified: true,
       verification: { status: "verified", verifier: "local_repository" },
     };
     const fakeAcquirer: EvidenceAcquirer = {

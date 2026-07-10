@@ -454,7 +454,7 @@ describe("verified frozen evidence", () => {
     });
     const report = JSON.parse(readFileSync(join(c.dir, CASE_OUTPUT.research), "utf8"));
     const art = report.artifacts[0];
-    expect(art.verified).toBe(true);
+    expect(art.verification.status).toBe("verified");
     expect(art.excerpt).toBe("  // reason: shown on the receipt");
     expect(art.contentHash).toBe(hashContent(art.excerpt));
     expect(verifyFrozenEvidence(c.dir).ok).toBe(true);
@@ -663,7 +663,7 @@ describe("evidence acquisition provider boundary", () => {
       },
       { workspace: { repositoryRoot: "/repo", inspectScopes: [] }, now: 1 },
     );
-    expect(art.verified).toBe(false);
+    expect(art.verification.status).toBe("unverified");
     expect(art.excerpt).toBe("claimed text");
     expect(art.source).toBe("doc_example");
   });

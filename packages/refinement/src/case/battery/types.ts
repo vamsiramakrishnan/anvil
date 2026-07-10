@@ -46,6 +46,13 @@ export interface ScenarioEvidence {
   /** A source pointer; two distinct refs = two independent sources (corroboration). */
   ref: string;
   note?: string;
+  /**
+   * When true, the runner materialises a real repository file and cites it by path, so
+   * the frozen artifact is VERIFIED (`local_repository`). Default (false/absent) records
+   * an external, unverified artifact from `ref`. This is how the battery exercises the
+   * verification-aware validation and approval rails with real fixtures.
+   */
+  verified?: boolean;
 }
 
 export interface FieldScenario {
@@ -78,6 +85,8 @@ export interface FieldScenario {
     outcome: Outcome;
     /** The approval tier, when a proposal was reconciled. */
     approval?: ApprovalTier;
+    /** The verification disposition, when the scenario probes the verification rail. */
+    verification?: VerificationDisposition;
   };
 }
 
@@ -103,6 +112,18 @@ export function outcomeOf(status: RefinementStatus | "none"): Outcome {
   }
 }
 
+/**
+ * How verification bore on a scenario's outcome — the axis that distinguishes a
+ * proposal held for review *because its evidence was unverified* from one *rejected by
+ * validation*, and from a genuinely verified auto-approval. `not_applicable` covers the
+ * honest declines and conflicts that never grounded a value.
+ */
+export type VerificationDisposition =
+  | "verified_grounding" // grounded by at least one verified artifact
+  | "unverified_grounding" // grounded, but only by unverified artifacts
+  | "verification_failed" // validation rejected on evidence_meets_verification
+  | "not_applicable"; // no proposal, or nothing grounded a value
+
 /** What the investigator contributed on one scenario, relative to the baseline. */
 export type Contribution =
   | "investigation_only" // baseline could not; investigation grounded a proposal
@@ -121,6 +142,8 @@ export interface BatteryRow {
   outcome: Outcome;
   approvalTier: ApprovalTier | "none";
   contribution: Contribution;
+  /** How verification bore on this scenario's disposition. */
+  verificationDisposition: VerificationDisposition;
   /** True when the observed outcome matched the scenario's expectation. */
   matchedExpectation: boolean;
 }
