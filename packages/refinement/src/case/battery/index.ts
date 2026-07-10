@@ -2,6 +2,7 @@ import { EXEMPLAR_SCENARIOS } from "./scenarios.exemplars.js";
 import type { FieldScenario } from "./types.js";
 
 export * from "./effectiveness.js";
+export { EFFECTIVENESS_CASES } from "./effectiveness-cases.js";
 export * from "./run.js";
 export * from "./types.js";
 
