@@ -211,7 +211,7 @@ function cmdAssess(args: string[], flags: Record<string, string | boolean>, io: 
       return 1;
     }
     const op = matches[0];
-    const readiness = assessment.operations.find((o) => o.operationId === op.id);
+    const readiness = assessment.operations.find((o) => o.operationId === op?.id);
     if (!readiness) return 1;
     io.out(
       flags.json === true
