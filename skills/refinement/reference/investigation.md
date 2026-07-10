@@ -29,17 +29,15 @@ output/                    # where each phase deposits its result
 - **Researcher** → `output/evidence.json`
 - **Claim extractor** → `output/claims.json`
 - **Synthesizer** → `output/proposal.json`
-- **Critic** → `output/validation-report.json`
+- **Critic** → `output/critique.json`
 - **Test writer** → `output/tests.json`
 
 ## Executable rails (prefer these over hand-written JSON)
-- `anvil case inspect-target <case>`
-- `anvil case show-schema <case>`
-- `anvil case search-symbol <case> <symbol>`
-- `anvil case list-callers <case> <symbol>`
-- `anvil case add-evidence <case> --predicate p --value v --source k --ref path:lines`
+- `anvil case inspect <case>`
+- `anvil case add-evidence <case> --predicate p --source k --path file --lines a-b`
 - `anvil case validate-claims <case>`
-- `anvil case test-proposal <case>`
+- `anvil case synthesize <case> field=value`
+- `anvil case validate-proposal <case> <air>`
 - `anvil case finalize <case> [--status ...]`
 
 The CLI enforces the source policy, allowed predicates, patch boundaries, and the

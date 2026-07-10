@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AirDocument, Claim } from "@anvil/air";
 import type { DeficiencyCode } from "../deficiency.js";
@@ -150,90 +150,23 @@ export function inspectTarget(dir: string): string {
   if (t.errorCode) lines.push(`  error code: ${t.errorCode}`);
   lines.push(`  admissible sources: ${p.allowedSources.join(", ")} (min ${p.minimumStrength})`);
   lines.push(`  writable fields: ${p.writableFields.join(", ") || "(none)"}`);
+  lines.push(`  output predicates: ${p.writablePredicates.join(", ") || "(none)"}`);
+  lines.push(`  supporting predicates: ${p.supportingPredicates.join(", ") || "(none)"}`);
   lines.push(`  prior evidence: ${t.priorEvidence.length} claim(s)`);
+  lines.push(`  expected output schema: ${CASE_FILES.expectedSchema}`);
   return lines.join("\n");
 }
 
-/* -------------------------------- show-schema ----------------------------- */
+/* ------------------------------ predicate policy -------------------------- */
 
-export function showSchema(dir: string): string {
-  const t = loadTargetDoc(dir);
-  const schema = readOptionalJson<Record<string, unknown>>(dir, CASE_FILES.expectedSchema);
-  const lines: string[] = [];
-  if (t.field) {
-    lines.push(`field schema for ${t.field.name}:`);
-    lines.push(
-      JSON.stringify(
-        { type: t.field.type, required: t.field.required, enum: t.field.enumValues },
-        null,
-        2,
-      ),
-    );
-    lines.push("");
-  }
-  lines.push("expected output/proposal.json schema:");
-  lines.push(JSON.stringify(schema ?? {}, null, 2));
-  return lines.join("\n");
-}
-
-/* ----------------------------- search helpers ----------------------------- */
-
-const TEXT_EXT = /\.(ts|tsx|js|jsx|py|go|rb|java|kt|rs|json|ya?ml|md|txt|graphql|proto)$/i;
-const SKIP_DIR = /^(node_modules|\.git|dist|build|coverage|\.turbo|out)$/;
-
-function* walk(root: string, budget = { files: 4000 }): Generator<string> {
-  if (budget.files <= 0 || !existsSync(root)) return;
-  const st = statSync(root);
-  if (st.isFile()) {
-    if (TEXT_EXT.test(root)) {
-      budget.files--;
-      yield root;
-    }
-    return;
-  }
-  if (!st.isDirectory()) return;
-  for (const entry of readdirSync(root)) {
-    if (SKIP_DIR.test(entry)) continue;
-    yield* walk(join(root, entry), budget);
-    if (budget.files <= 0) return;
-  }
-}
-
-/** Grep the case's allowed inspect scopes for a symbol. Bounded; capped output. */
-export function searchSymbol(dir: string, symbol: string, limit = 50): string {
-  const scopes = loadTools(dir).inspect;
-  if (scopes.length === 0) {
-    return "No inspect scopes are set for this case. An investigation may search the repository directly (this helper only covers declared scopes).";
-  }
-  const needle = symbol.toLowerCase();
-  const hits: string[] = [];
-  for (const scope of scopes) {
-    for (const file of walk(scope)) {
-      let text: string;
-      try {
-        text = readFileSync(file, "utf8");
-      } catch {
-        continue;
-      }
-      const lines = text.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i]?.toLowerCase().includes(needle)) {
-          hits.push(`${file}:${i + 1}: ${lines[i]?.trim().slice(0, 120)}`);
-          if (hits.length >= limit) break;
-        }
-      }
-      if (hits.length >= limit) break;
-    }
-    if (hits.length >= limit) break;
-  }
-  if (hits.length === 0) return `No matches for '${symbol}' in: ${scopes.join(", ")}`;
-  const capped = hits.length >= limit ? `\n… capped at ${limit} matches` : "";
-  return `${hits.join("\n")}${capped}`;
-}
-
-/** Callers are just references to a symbol; a thin, honestly-named alias over search. */
-export function listCallers(dir: string, symbol: string, limit = 50): string {
-  return searchSymbol(dir, symbol, limit);
+/**
+ * The predicates a claim may assert for this case: the skill's *output* predicates
+ * (the ones the patch asserts) plus a narrow set of *supporting* predicates (the
+ * intermediate facts an investigation legitimately records). Anything else is
+ * rejected — an executor may not smuggle a free-form predicate into `claims.json`.
+ */
+export function allowedPredicates(policy: EvidencePolicyDoc): Set<string> {
+  return new Set<string>([...policy.writablePredicates, ...policy.supportingPredicates]);
 }
 
 /* ------------------------------ add-evidence ------------------------------ */
@@ -261,6 +194,14 @@ export function addEvidence(dir: string, input: AddEvidenceInput): string {
       `Source '${input.source}' is not admissible for this case. Allowed: ${policy.allowedSources.join(", ")}.`,
     );
   }
+  const allowed = allowedPredicates(policy);
+  if (!allowed.has(input.predicate)) {
+    throw new Error(
+      `Predicate '${input.predicate}' is not permitted for this case. ` +
+        `Output: ${policy.writablePredicates.join(", ") || "(none)"}; ` +
+        `supporting: ${policy.supportingPredicates.join(", ") || "(none)"}.`,
+    );
+  }
   const subject = tdoc.field?.path ?? tdoc.operationId ?? tdoc.errorCode ?? tdoc.key;
   const claim: Claim = {
     subject,
@@ -286,11 +227,8 @@ export function addEvidence(dir: string, input: AddEvidenceInput): string {
   });
   writeJson(dir, CASE_OUTPUT.research, evidence);
 
-  const warn =
-    policy.writablePredicates.length > 0 && !policy.writablePredicates.includes(input.predicate)
-      ? `  (note: '${input.predicate}' is not a final patch predicate — it can support the patch as intermediate evidence)`
-      : "";
-  return `Recorded ${claims.claims.length} claim(s). Latest: ${input.predicate}=${JSON.stringify(input.value)} from ${input.source}${input.ref ? ` (${input.ref})` : ""}.${warn}`;
+  const kind = policy.writablePredicates.includes(input.predicate) ? "output" : "supporting";
+  return `Recorded ${claims.claims.length} claim(s). Latest (${kind}): ${input.predicate}=${JSON.stringify(input.value)} from ${input.source}${input.ref ? ` (${input.ref})` : ""}.`;
 }
 
 /* ------------------------------- synthesize ------------------------------- */
@@ -326,7 +264,7 @@ export function synthesizeProposal(dir: string, set: Record<string, JsonValue>):
   const kv = Object.entries(set)
     .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
     .join(" ");
-  return `Wrote ${CASE_OUTPUT.synthesize} (${claims.length} claim(s)): ${kv}. Now run \`anvil case test-proposal\`.`;
+  return `Wrote ${CASE_OUTPUT.synthesize} (${claims.length} claim(s)): ${kv}. Now run \`anvil case validate-proposal\`.`;
 }
 
 /* ---------------------------- validate-claims ----------------------------- */
@@ -356,6 +294,10 @@ export function validateClaims(dir: string): string {
 
   const lines: string[] = [];
   const inadmissible = claims.filter((c) => !policy.allowedSources.includes(c.source));
+  // Independent predicate-policy enforcement: even a hand-written claims.json is
+  // held to the same output/supporting predicate policy add-evidence enforces.
+  const allowed = allowedPredicates(policy);
+  const offPolicy = claims.filter((c) => !allowed.has(c.predicate));
   const strength = strengthOf(claims);
   const meets = meetsStrength(strength, policy.minimumStrength);
   const conflicts = detectConflicts(claims);
@@ -371,6 +313,13 @@ export function validateClaims(dir: string): string {
   } else {
     lines.push("  ✓ every claim is from an admissible source");
   }
+  if (offPolicy.length > 0) {
+    lines.push(
+      `  ✗ ${offPolicy.length} claim(s) assert off-policy predicates: ${[...new Set(offPolicy.map((c) => c.predicate))].join(", ")}`,
+    );
+  } else {
+    lines.push("  ✓ every claim asserts an allowed predicate");
+  }
   if (conflicts.length > 0) {
     lines.push(`  ⚠ ${conflicts.length} contradiction(s):`);
     for (const c of conflicts) {
@@ -384,15 +333,15 @@ export function validateClaims(dir: string): string {
   return lines.join("\n");
 }
 
-/* ----------------------------- test-proposal ------------------------------ */
+/* --------------------------- validate-proposal ---------------------------- */
 
 /**
  * Run the skill's deterministic validation against the case's `output/proposal.json`
- * and write `output/validation-report.json`. This is the Critic's machine half: the
- * agent falsifies clauses in prose; this proves the patch is grounded, in-boundary,
- * and schema-valid. Requires AIR to rebuild the real skill context.
+ * and write `output/critique.json`. This is the Critic's machine half: the agent
+ * falsifies clauses in prose; this proves the patch is grounded, in-boundary, and
+ * schema-valid. Requires AIR to rebuild the real skill context.
  */
-export function testProposal(
+export function validateCaseProposal(
   air: AirDocument,
   dir: string,
 ): { report: ValidationReport; text: string } {

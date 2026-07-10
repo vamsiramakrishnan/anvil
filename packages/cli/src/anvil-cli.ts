@@ -20,19 +20,16 @@ import {
   finalize,
   generateRefinementSkill,
   inspectTarget,
-  listCallers,
   openCase,
   packFiles,
   renderReviewMarkdown,
   runRefinements,
-  searchSymbol,
   semanticDiff,
-  showSchema,
   skillFor,
   summarizeRefinementPlan,
   synthesizeProposal,
   targetKey,
-  testProposal,
+  validateCaseProposal,
   validateClaims,
 } from "@anvil/refinement";
 import { stringify as toYaml } from "yaml";
@@ -505,7 +502,7 @@ function cmdRefineSkills(flags: Record<string, string | boolean>, io: CliIO): nu
 /**
  * `anvil case <subcommand>` — the investigation framework. `open`/`list` operate on
  * an AIR model; the in-case helpers (`inspect-target`, `search-symbol`, …) operate
- * on a materialized case directory. Only `open`/`add-evidence`/`test-proposal`/
+ * on a materialized case directory. Only `open`/`add-evidence`/`validate-proposal`/
  * `finalize`/`investigate` write, and only ever inside the case directory — never AIR.
  */
 async function cmdCase(
@@ -520,14 +517,9 @@ async function cmdCase(
       return cmdCaseList(rest, flags, io);
     case "open":
       return cmdCaseOpen(rest, flags, io);
+    case "inspect":
     case "inspect-target":
       return emit(io, () => inspectTarget(caseDirArg(rest)));
-    case "show-schema":
-      return emit(io, () => showSchema(caseDirArg(rest)));
-    case "search-symbol":
-      return emit(io, () => searchSymbol(caseDirArg(rest), symbolArg(rest)));
-    case "list-callers":
-      return emit(io, () => listCallers(caseDirArg(rest), symbolArg(rest)));
     case "add-evidence":
       return cmdCaseAddEvidence(rest, flags, io);
     case "validate-claims":
@@ -536,8 +528,8 @@ async function cmdCase(
       return emit(io, () =>
         synthesizeProposal(caseDirArg(rest), parseSetPairs(rest.slice(1)) as never),
       );
-    case "test-proposal":
-      return cmdCaseTestProposal(rest, io);
+    case "validate-proposal":
+      return cmdCaseValidateProposal(rest, io);
     case "finalize":
       return emit(io, () =>
         finalize(caseDirArg(rest), {
@@ -553,16 +545,13 @@ async function cmdCase(
       if (sub && sub !== "help") io.err(`Unknown case subcommand: '${sub}'.`);
       io.err("Usage: anvil case list      <dir|air.yaml> [--json]");
       io.err("       anvil case open      <dir|air.yaml> <target-key> [--out DIR] [--inspect a,b]");
-      io.err("       anvil case inspect-target <case-dir>");
-      io.err("       anvil case show-schema    <case-dir>");
-      io.err("       anvil case search-symbol  <case-dir> <symbol>");
-      io.err("       anvil case list-callers   <case-dir> <symbol>");
+      io.err("       anvil case inspect        <case-dir>");
       io.err(
-        "       anvil case add-evidence   <case-dir> --predicate P --value V --source K [--ref path:lines] [--note ..] [--confidence n]",
+        "       anvil case add-evidence   <case-dir> --predicate P --source K [--path file --lines a-b] [--value V] [--note ..] [--confidence n]",
       );
       io.err("       anvil case validate-claims <case-dir>");
       io.err("       anvil case synthesize      <case-dir> field=value [field=value ...]");
-      io.err("       anvil case test-proposal   <case-dir> <dir|air.yaml>");
+      io.err("       anvil case validate-proposal <case-dir> <dir|air.yaml>");
       io.err("       anvil case investigate     <case-dir> [--command claude] [--model M]");
       io.err("       anvil case finalize        <case-dir> [--status S] [--summary ..]");
       io.err("       anvil case close           <case-dir> <dir|air.yaml> [--json]");
@@ -580,12 +569,6 @@ function caseDirArg(rest: string[]): string {
   const dir = rest[0];
   if (!dir) throw new Error("Provide the case directory (see `anvil case open`).");
   return dir;
-}
-
-function symbolArg(rest: string[]): string {
-  const sym = rest[1];
-  if (!sym) throw new Error("Provide a symbol to search for.");
-  return sym;
 }
 
 /** `anvil case list` — the deficiencies a case can be opened for (those with a skill). */
@@ -672,14 +655,14 @@ function cmdCaseAddEvidence(
   return 0;
 }
 
-function cmdCaseTestProposal(args: string[], io: CliIO): number {
+function cmdCaseValidateProposal(args: string[], io: CliIO): number {
   const dir = args[0];
   if (!dir || !args[1]) {
-    io.err("Usage: anvil case test-proposal <case-dir> <dir|air.yaml>");
+    io.err("Usage: anvil case validate-proposal <case-dir> <dir|air.yaml>");
     return 1;
   }
   const air = loadAir(args[1]);
-  io.out(testProposal(air, dir).text);
+  io.out(validateCaseProposal(air, dir).text);
   return 0;
 }
 

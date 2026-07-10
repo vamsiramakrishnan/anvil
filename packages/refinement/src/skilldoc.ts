@@ -127,7 +127,7 @@ output/                    # where each phase deposits its result
 ${["research", "extract", "synthesize", "critique", "test"]
   .map(
     (p) =>
-      `- **${PHASE_ROLE[p as keyof typeof PHASE_ROLE]}** → \`output/${p === "research" ? "evidence" : p === "extract" ? "claims" : p === "synthesize" ? "proposal" : p === "critique" ? "validation-report" : "tests"}.json\``,
+      `- **${PHASE_ROLE[p as keyof typeof PHASE_ROLE]}** → \`output/${p === "research" ? "evidence" : p === "extract" ? "claims" : p === "synthesize" ? "proposal" : p === "critique" ? "critique" : "tests"}.json\``,
   )
   .join("\n")}
 

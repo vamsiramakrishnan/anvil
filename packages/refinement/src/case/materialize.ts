@@ -19,17 +19,37 @@ import {
 } from "./model.js";
 import { type InvestigationProcedure, procedureFor } from "./procedure.js";
 
-/** The `anvil case` helper commands available to an executor inside a case. */
+/**
+ * The `anvil case` helper commands available inside a case — only the rails that
+ * enforce *Anvil* semantics. Repository search and language tooling are the coding
+ * agent's own job; Anvil does not ship a weak re-implementation of them.
+ */
 export const CASE_HELPERS = [
-  "anvil case inspect-target <case>",
-  "anvil case show-schema <case>",
-  "anvil case search-symbol <case> <symbol>",
-  "anvil case list-callers <case> <symbol>",
-  "anvil case add-evidence <case> --predicate p --value v --source k --ref path:lines",
+  "anvil case inspect <case>",
+  "anvil case add-evidence <case> --predicate p --source k --path file --lines a-b",
   "anvil case validate-claims <case>",
-  "anvil case test-proposal <case>",
+  "anvil case synthesize <case> field=value",
+  "anvil case validate-proposal <case> <air>",
   "anvil case finalize <case> [--status ...]",
 ];
+
+/**
+ * Supporting predicates per skill: the narrow, intermediate facts an investigation
+ * may legitimately record beyond the skill's output predicates. Kept deliberately
+ * small — an executor may not assert free-form predicates into `claims.json`.
+ */
+export const SUPPORTING_PREDICATES: Record<string, string[]> = {
+  "describe-field": [
+    "field.visibility",
+    "field.unit",
+    "field.usage",
+    "field.lifecycle",
+    "field.sensitivity",
+  ],
+  "describe-operation": ["operation.effect", "operation.behavior"],
+  "generate-examples": ["field.format", "field.description"],
+  "enrich-errors": ["error.cause", "error.httpStatus"],
+};
 
 /** Human wording for each machine constraint, for the brief's "you may not" list. */
 const CONSTRAINT_PROSE: Record<SkillConstraint, string> = {
@@ -113,6 +133,7 @@ function buildPolicyDoc(skill: RefinementSkill): EvidencePolicyDoc {
     allowedSources: skill.evidence.allowed,
     minimumStrength: skill.evidence.minimumStrength,
     writablePredicates: skill.output.predicates,
+    supportingPredicates: SUPPORTING_PREDICATES[skill.name] ?? [],
     writableFields: skill.output.fields,
     constraints: skill.constraints,
     mustNot: skill.constraints.map((c) => CONSTRAINT_PROSE[c]),
