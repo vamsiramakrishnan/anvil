@@ -28,6 +28,7 @@ import {
 } from "@anvil/refinement";
 import { stringify as toYaml } from "yaml";
 import { parseArgs } from "./args.js";
+import { cmdSource } from "./cmd-source.js";
 import { ANVIL_COMMANDS } from "./commands.js";
 import { type CliIO, processIO } from "./io.js";
 import { generateAnvilSkill } from "./self-skill.js";
@@ -70,6 +71,8 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
         return cmdPackage(positionals.slice(1), io);
       case "deploy":
         return cmdDeploy(positionals.slice(1), flags, io);
+      case "source":
+        return await cmdSource(positionals.slice(1), flags, io);
       case "sources":
         return cmdSources(io);
       case "enrich":

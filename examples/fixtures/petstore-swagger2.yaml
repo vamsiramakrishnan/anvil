@@ -1,0 +1,23 @@
+# A minimal Swagger 2.0 document — exercises legacy-format detection and the
+# 2.0 → 3.x upgrade path.
+swagger: "2.0"
+info:
+  title: Petstore Classic
+  version: 1.0.0
+host: petstore.example.com
+basePath: /v1
+schemes: [https]
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      summary: List pets
+      responses:
+        "200":
+          description: A list of pets
+    post:
+      operationId: createPet
+      summary: Create a pet
+      responses:
+        "201":
+          description: Created
