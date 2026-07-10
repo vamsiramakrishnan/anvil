@@ -10,6 +10,7 @@ import {
   runEnrichment,
   type TransportFactory,
 } from "@anvil/harness";
+import { buildRefinementPlan, summarizeRefinementPlan } from "@anvil/refinement";
 import { stringify as toYaml } from "yaml";
 import { parseArgs } from "./args.js";
 import { ANVIL_COMMANDS } from "./commands.js";
@@ -58,6 +59,8 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
         return cmdSources(io);
       case "enrich":
         return await cmdEnrich(positionals.slice(1), flags, deps, io);
+      case "refine":
+        return cmdRefine(positionals.slice(1), flags, io);
       case "run":
         return await cmdRun(positionals.slice(1), argv, deps, io);
       case "serve":
@@ -276,6 +279,33 @@ async function cmdEnrich(
     io.out(manifestYaml);
   }
   return 0;
+}
+
+/**
+ * `anvil refine <subcommand>`. Only `plan` is wired today: it runs the
+ * deterministic detectors and prints a refinement plan. It gathers no evidence
+ * and never mutates AIR. `run`/`review`/`apply` are reserved for later stages
+ * (evidence gathering, skill-proposed patches, measured acceptance).
+ */
+function cmdRefine(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
+  const sub = args[0];
+  if (sub !== "plan") {
+    if (sub && sub !== "help") {
+      io.err(`Unknown or not-yet-available refine subcommand: '${sub}'.`);
+    }
+    io.err("Usage: anvil refine plan <dir|air.yaml> [--json]");
+    io.err("Only `plan` is available today; run/review/apply land in a later stage.");
+    return sub && sub !== "help" ? 1 : 0;
+  }
+  const air = loadAir(args[1]);
+  const plan = buildRefinementPlan(air);
+  if (flags.json === true) {
+    io.out(JSON.stringify(plan, null, 2));
+  } else {
+    io.out(summarizeRefinementPlan(plan));
+  }
+  // Blocking safety gaps are the signal that the artifact should not ship as-is.
+  return plan.blocking.length > 0 ? 1 : 0;
 }
 
 async function cmdRun(
