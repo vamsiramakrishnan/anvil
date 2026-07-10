@@ -30,6 +30,7 @@ import {
   finalize,
   type InvestigationResult,
   openCase,
+  parseCaseProposal,
   readInvestigation,
   readProposal,
   ScriptedAgentDriver,
@@ -177,16 +178,81 @@ describe("openCase — give the agent a case, not a prompt", () => {
     // Honest declines are advertised.
     expect(brief).toContain("insufficient_evidence");
 
-    // The evidence policy is the skill's, as data.
-    const policy = JSON.parse(readFileSync(join(c.dir, CASE_FILES.evidencePolicy), "utf8"));
-    expect(policy.writableFields).toEqual(["description"]);
-    expect(policy.allowedSources).toContain("source_impl");
+    // One canonical document; the evidence policy is a section of it, as data.
+    const caseDoc = JSON.parse(readFileSync(join(c.dir, CASE_FILES.doc), "utf8"));
+    expect(caseDoc.version).toBe(1);
+    expect(caseDoc.policy.writableFields).toEqual(["description"]);
+    expect(caseDoc.policy.allowedSources).toContain("source_impl");
+    // CASE.md and the expected-output schema are generated views of the canonical doc.
+    expect(existsSync(join(c.dir, CASE_FILES.expectedSchema))).toBe(true);
   });
 
   it("refuses to open a case for a deficiency with no implemented skill", () => {
     const air = doc();
     const fake = { ...reasonDeficiency(air), code: "auth_principal_unclear" as const };
     expect(() => openCase(air, fake, { root: scratch() })).toThrow(/No skill/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Zod is the single schema source — malformed output is rejected             */
+/* -------------------------------------------------------------------------- */
+
+describe("Zod schema source of truth", () => {
+  const base = {
+    skill: "describe-field",
+    skillVersion: 1,
+    deficiency: "missing_field_description",
+    target: { kind: "field", operationId: "payments.refunds.create", path: "input.body.reason" },
+    claims: [
+      {
+        subject: "input.body.reason",
+        predicate: "field.description",
+        value: "ok",
+        source: "source_impl",
+        confidence: 0.9,
+      },
+    ],
+    patch: {
+      target: { kind: "field", operationId: "payments.refunds.create", path: "input.body.reason" },
+      set: { description: "ok" },
+    },
+  };
+
+  it("accepts a well-formed proposal", () => {
+    expect(() => parseCaseProposal(base)).not.toThrow();
+  });
+
+  it("rejects an invalid evidence source kind", () => {
+    expect(() =>
+      parseCaseProposal({ ...base, claims: [{ ...base.claims[0], source: "made_up_source" }] }),
+    ).toThrow();
+  });
+
+  it("rejects a confidence outside [0, 1]", () => {
+    expect(() =>
+      parseCaseProposal({ ...base, claims: [{ ...base.claims[0], confidence: 5 }] }),
+    ).toThrow();
+  });
+
+  it("rejects a malformed semantic target", () => {
+    expect(() => parseCaseProposal({ ...base, target: { kind: "bogus" } })).toThrow();
+  });
+
+  it("rejects an unknown deficiency code", () => {
+    expect(() => parseCaseProposal({ ...base, deficiency: "not_a_real_code" })).toThrow();
+  });
+
+  it("generates a proposal schema pinned to the case constants", () => {
+    const air = doc();
+    const c = openCase(air, reasonDeficiency(air), { root: scratch() });
+    const schema = JSON.parse(readFileSync(join(c.dir, CASE_FILES.expectedSchema), "utf8"));
+    const text = JSON.stringify(schema);
+    // The generated JSON Schema bakes in the exact skill, deficiency, and boundary.
+    expect(text).toContain("describe-field");
+    expect(text).toContain("missing_field_description");
+    expect(text).toContain("additionalProperties");
+    expect(text).toContain("description");
   });
 });
 
@@ -226,7 +292,7 @@ describe("immutable runs and containment", () => {
     expect(() => openCase(air, d, { root, now: 1000 })).toThrow(/already exists/);
     // Resume is explicit and returns the same run.
     const resumed = openCase(air, d, { root, now: 1000, onExisting: "resume" });
-    expect(existsSync(join(resumed.dir, CASE_FILES.task))).toBe(true);
+    expect(existsSync(join(resumed.dir, CASE_FILES.doc))).toBe(true);
   });
 
   it("rejects an inspect scope that escapes the repository root", () => {

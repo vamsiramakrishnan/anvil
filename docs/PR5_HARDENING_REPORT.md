@@ -24,6 +24,17 @@ but the agent is now bounded and attributable in code, not in prose.
 
 ## Simplified (consolidated)
 
+- **One canonical input document.** The five separate input files (`task.json`,
+  `target.json`, `evidence-policy.json`, `allowed-tools.json`, `run.json`) are gone.
+  A case now has one `case.json` (version, identity, task, target, workspace, skill,
+  policy, tools, procedure, expectedOutput); `CASE.md` and
+  `expected-output.schema.json` are **generated views** of it and cannot drift.
+- **One schema source of truth.** All case documents and phase outputs are defined by
+  Zod schemas in `case/schema.ts`; the TypeScript types (`z.infer`), the runtime
+  parsing (`.parse`), and the proposal JSON Schema (`z.toJSONSchema`, with the case's
+  skill/deficiency/target/writable-field constants baked in and
+  `additionalProperties:false`) are all derived from them. The hand-written parsers
+  and the `as unknown as Claim` casts are gone.
 - **One introspection rail** (`inspect`) instead of `inspect-target` + `show-schema`.
 - **Generic process lifecycle** was consolidated into one reusable
   `AgentProcessRunner`; the Claude driver only *configures* it. Timeouts, streaming,
@@ -42,6 +53,7 @@ but the agent is now bounded and attributable in code, not in prose.
 | "only inspect these paths" | **Containment**: inspect scopes resolve against an explicit repository root and are rejected if they escape it (path traversal). The repo is read-only; the case dir is the only writable place. |
 | "use admissible evidence" | **Predicate policy**: claims must assert an output or a narrow supporting predicate; enforced at ingestion *and* independently at validation (even for a hand-written `claims.json`). |
 | "cite real sources" | **Frozen evidence**: filesystem evidence is ingested by coordinate; Anvil verifies the path is in scope, validates the line range, reads the exact bytes, hashes them, and freezes an immutable artifact the claim references by id. Close re-verifies every excerpt against the repo and refuses a tampered/stale source. |
+| "parse output carefully" | **Zod at the boundary**: invalid evidence source kinds, out-of-range confidence, malformed targets, unknown deficiency codes, and non-JSON patch values are rejected by `.parse` — no hand-written parsers, no unsafe casts. |
 | "don't invent, don't guess" | **Honest declines** are first-class statuses the reconciler already understood; the battery now measures them. |
 | "separate the phases" | **Immutable staging**: research+claims freeze on synthesize; the proposal freezes on validate. |
 
@@ -57,11 +69,8 @@ but the agent is now bounded and attributable in code, not in prose.
   process performs research → synthesis → critique; the stages are *frozen* so the
   later phase cannot rewrite the earlier output, but true independence would require a
   second driver run against the frozen artifacts.
-- **One canonical case document (§6) and Zod-as-source-of-truth (§5) are not yet
-  landed.** The case still materialises several input files and uses hand-written
-  parsers (with loud runtime validation) rather than one `case.json` + derived Zod
-  schemas. This is the primary remaining refactor; it is additive to the guarantees
-  above (which already hold) and is scoped in `docs/INVESTIGATION_ARCHITECTURE.md`.
+- *(Resolved)* One canonical `case.json` (§6) and Zod-as-source-of-truth (§5) have
+  now landed — see "Simplified" above. No documentary-only case parsing remains.
 
 ## Benchmark readiness — what the battery can and cannot prove
 
