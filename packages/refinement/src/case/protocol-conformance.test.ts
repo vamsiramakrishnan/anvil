@@ -1,3 +1,14 @@
+/**
+ * The **case protocol conformance suite**. Deterministic, no real coding agent, and
+ * therefore safe to run in ordinary CI. It proves the *mechanics* of the framework:
+ * case creation, identity binding, stale-run prevention, source + predicate policy,
+ * parser rejection, deterministic close/reconcile, honest declines, evidence
+ * freezing/immutability, phase staging, and repository containment.
+ *
+ * It does NOT measure how good a real investigator is — that is the separate,
+ * opt-in *investigator effectiveness battery* (`battery/effectiveness.ts`), which
+ * invokes the real Claude Code driver and is excluded from unit CI.
+ */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
