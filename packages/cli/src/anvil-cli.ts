@@ -11,15 +11,29 @@ import {
   type TransportFactory,
 } from "@anvil/harness";
 import {
+  addEvidence,
   applyApproved,
   buildRefinementPlan,
+  ClaudeCodeAgentDriver,
+  closeCase,
   discoverSkills,
+  finalize,
   generateRefinementSkill,
+  inspectTarget,
+  listCallers,
+  openCase,
   packFiles,
   renderReviewMarkdown,
   runRefinements,
+  searchSymbol,
   semanticDiff,
+  showSchema,
+  skillFor,
   summarizeRefinementPlan,
+  synthesizeProposal,
+  targetKey,
+  testProposal,
+  validateClaims,
 } from "@anvil/refinement";
 import { stringify as toYaml } from "yaml";
 import { parseArgs } from "./args.js";
@@ -71,6 +85,8 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
         return await cmdEnrich(positionals.slice(1), flags, deps, io);
       case "refine":
         return await cmdRefine(positionals.slice(1), flags, io);
+      case "case":
+        return await cmdCase(positionals.slice(1), flags, io);
       case "run":
         return await cmdRun(positionals.slice(1), argv, deps, io);
       case "serve":
@@ -484,6 +500,260 @@ function cmdRefineSkills(flags: Record<string, string | boolean>, io: CliIO): nu
     "\nProposals from any executor are judged by these deterministic checks before they count.",
   );
   return 0;
+}
+
+/**
+ * `anvil case <subcommand>` — the investigation framework. `open`/`list` operate on
+ * an AIR model; the in-case helpers (`inspect-target`, `search-symbol`, …) operate
+ * on a materialized case directory. Only `open`/`add-evidence`/`test-proposal`/
+ * `finalize`/`investigate` write, and only ever inside the case directory — never AIR.
+ */
+async function cmdCase(
+  args: string[],
+  flags: Record<string, string | boolean>,
+  io: CliIO,
+): Promise<number> {
+  const sub = args[0];
+  const rest = args.slice(1);
+  switch (sub) {
+    case "list":
+      return cmdCaseList(rest, flags, io);
+    case "open":
+      return cmdCaseOpen(rest, flags, io);
+    case "inspect-target":
+      return emit(io, () => inspectTarget(caseDirArg(rest)));
+    case "show-schema":
+      return emit(io, () => showSchema(caseDirArg(rest)));
+    case "search-symbol":
+      return emit(io, () => searchSymbol(caseDirArg(rest), symbolArg(rest)));
+    case "list-callers":
+      return emit(io, () => listCallers(caseDirArg(rest), symbolArg(rest)));
+    case "add-evidence":
+      return cmdCaseAddEvidence(rest, flags, io);
+    case "validate-claims":
+      return emit(io, () => validateClaims(caseDirArg(rest)));
+    case "synthesize":
+      return emit(io, () =>
+        synthesizeProposal(caseDirArg(rest), parseSetPairs(rest.slice(1)) as never),
+      );
+    case "test-proposal":
+      return cmdCaseTestProposal(rest, io);
+    case "finalize":
+      return emit(io, () =>
+        finalize(caseDirArg(rest), {
+          status: typeof flags.status === "string" ? (flags.status as never) : undefined,
+          summary: typeof flags.summary === "string" ? flags.summary : undefined,
+        }),
+      );
+    case "investigate":
+      return await cmdCaseInvestigate(rest, flags, io);
+    case "close":
+      return cmdCaseClose(rest, flags, io);
+    default:
+      if (sub && sub !== "help") io.err(`Unknown case subcommand: '${sub}'.`);
+      io.err("Usage: anvil case list      <dir|air.yaml> [--json]");
+      io.err("       anvil case open      <dir|air.yaml> <target-key> [--out DIR] [--inspect a,b]");
+      io.err("       anvil case inspect-target <case-dir>");
+      io.err("       anvil case show-schema    <case-dir>");
+      io.err("       anvil case search-symbol  <case-dir> <symbol>");
+      io.err("       anvil case list-callers   <case-dir> <symbol>");
+      io.err(
+        "       anvil case add-evidence   <case-dir> --predicate P --value V --source K [--ref path:lines] [--note ..] [--confidence n]",
+      );
+      io.err("       anvil case validate-claims <case-dir>");
+      io.err("       anvil case synthesize      <case-dir> field=value [field=value ...]");
+      io.err("       anvil case test-proposal   <case-dir> <dir|air.yaml>");
+      io.err("       anvil case investigate     <case-dir> [--command claude] [--model M]");
+      io.err("       anvil case finalize        <case-dir> [--status S] [--summary ..]");
+      io.err("       anvil case close           <case-dir> <dir|air.yaml> [--json]");
+      return sub && sub !== "help" ? 1 : 0;
+  }
+}
+
+/** Run a case helper that returns text, printing it (or the error) with a stable exit code. */
+function emit(io: CliIO, fn: () => string): number {
+  io.out(fn());
+  return 0;
+}
+
+function caseDirArg(rest: string[]): string {
+  const dir = rest[0];
+  if (!dir) throw new Error("Provide the case directory (see `anvil case open`).");
+  return dir;
+}
+
+function symbolArg(rest: string[]): string {
+  const sym = rest[1];
+  if (!sym) throw new Error("Provide a symbol to search for.");
+  return sym;
+}
+
+/** `anvil case list` — the deficiencies a case can be opened for (those with a skill). */
+function cmdCaseList(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
+  const air = loadAir(args[0]);
+  const plan = buildRefinementPlan(air);
+  const rows = plan.deficiencies
+    .filter((d) => skillFor(d.code))
+    .map((d) => ({
+      key: targetKey(d.target),
+      skill: skillFor(d.code)?.name,
+      code: d.code,
+      severity: d.severity,
+    }));
+  if (flags.json === true) {
+    io.out(JSON.stringify(rows, null, 2));
+    return 0;
+  }
+  if (rows.length === 0) {
+    io.out("No deficiencies with an implemented skill. Nothing to investigate.");
+    return 0;
+  }
+  io.out(`Cases available for ${plan.service.id} @ ${plan.service.version}:`);
+  for (const r of rows) {
+    io.out(
+      `  ${(r.key as string).padEnd(44)} ${(r.skill ?? "").padEnd(20)} ${r.code} (${r.severity})`,
+    );
+  }
+  io.out("\nOpen one with `anvil case open <dir|air.yaml> <target-key>`.");
+  return 0;
+}
+
+/** `anvil case open` — materialize a case for a specific target. */
+function cmdCaseOpen(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
+  const key = args[1];
+  if (!args[0] || !key) {
+    io.err("Usage: anvil case open <dir|air.yaml> <target-key> [--out DIR] [--inspect a,b]");
+    return 1;
+  }
+  const air = loadAir(args[0]);
+  const plan = buildRefinementPlan(air);
+  const deficiency = plan.deficiencies.find((d) => targetKey(d.target) === key && skillFor(d.code));
+  if (!deficiency) {
+    io.err(`No investigable deficiency at target '${key}'. Run \`anvil case list ${args[0]}\`.`);
+    return 1;
+  }
+  const inspect =
+    typeof flags.inspect === "string" ? flags.inspect.split(",").map((s) => s.trim()) : undefined;
+  const c = openCase(air, deficiency, { root: (flags.out as string) ?? ".refinement", inspect });
+  io.out(`Opened case '${c.caseId}' at ${c.dir}`);
+  io.out(`  skill: ${c.skill.name}  ·  question: ${c.task.question}`);
+  io.out(
+    `  read CASE.md, then use \`anvil case ...\` helpers or \`anvil case investigate ${c.dir}\`.`,
+  );
+  return 0;
+}
+
+function cmdCaseAddEvidence(
+  args: string[],
+  flags: Record<string, string | boolean>,
+  io: CliIO,
+): number {
+  const dir = args[0];
+  const predicate = flags.predicate as string | undefined;
+  const source = flags.source as string | undefined;
+  if (!dir || !predicate || !source) {
+    io.err(
+      "Usage: anvil case add-evidence <case-dir> --predicate P --source K [--value V] [--ref path:lines] [--note ..] [--confidence n]",
+    );
+    return 1;
+  }
+  const value = typeof flags.value === "string" ? coerceValue(flags.value) : flags.value;
+  const confidence = typeof flags.confidence === "string" ? Number(flags.confidence) : undefined;
+  io.out(
+    addEvidence(dir, {
+      predicate,
+      value: value as never,
+      source,
+      ref: flags.ref as string | undefined,
+      note: flags.note as string | undefined,
+      confidence: Number.isFinite(confidence) ? confidence : undefined,
+    }),
+  );
+  return 0;
+}
+
+function cmdCaseTestProposal(args: string[], io: CliIO): number {
+  const dir = args[0];
+  if (!dir || !args[1]) {
+    io.err("Usage: anvil case test-proposal <case-dir> <dir|air.yaml>");
+    return 1;
+  }
+  const air = loadAir(args[1]);
+  io.out(testProposal(air, dir).text);
+  return 0;
+}
+
+async function cmdCaseInvestigate(
+  args: string[],
+  flags: Record<string, string | boolean>,
+  io: CliIO,
+): Promise<number> {
+  const dir = args[0];
+  if (!dir) {
+    io.err("Usage: anvil case investigate <case-dir> [--command claude] [--model M]");
+    return 1;
+  }
+  const extraArgs = typeof flags.model === "string" ? ["--model", flags.model] : [];
+  const driver = new ClaudeCodeAgentDriver({
+    command: typeof flags.command === "string" ? flags.command : undefined,
+    extraArgs,
+  });
+  io.err(`anvil: driving ${driver.name} against ${dir} …`);
+  await driver.run(dir);
+  io.out(
+    `Investigation finished. Review ${join(dir, "output")}, then \`anvil case close ${dir} <air>\`.`,
+  );
+  return 0;
+}
+
+function cmdCaseClose(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
+  const dir = args[0];
+  if (!dir || !args[1]) {
+    io.err("Usage: anvil case close <case-dir> <dir|air.yaml> [--json]");
+    return 1;
+  }
+  const air = loadAir(args[1]);
+  const refinement = closeCase(air, dir);
+  if (!refinement) {
+    io.out("Case produced no proposal (an honest decline). Nothing to reconcile.");
+    return 0;
+  }
+  if (flags.json === true) {
+    io.out(JSON.stringify(refinement, null, 2));
+    return 0;
+  }
+  const set = Object.entries(refinement.proposal.set)
+    .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+    .join(" ");
+  io.out(
+    `Refinement: [${refinement.status}] ${refinement.skill} → ${refinement.id.split(":").slice(1).join(":")}`,
+  );
+  io.out(`  ${set}`);
+  io.out(`  approval: ${refinement.approval.tier} — ${refinement.approval.reason}`);
+  const failed = refinement.validation.filter((v) => !v.ok);
+  if (failed.length > 0) io.out(`  validation failed: ${failed.map((v) => v.check).join(", ")}`);
+  io.out("\nApply approved refinements with `anvil refine apply` (the reconciler is shared).");
+  return 0;
+}
+
+/** Coerce a --value string to JSON when it parses, else keep it as a string. */
+function coerceValue(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/** Parse `field=value` positionals into a patch set, coercing each value to JSON when it parses. */
+function parseSetPairs(pairs: string[]): Record<string, ReturnType<typeof coerceValue>> {
+  const set: Record<string, unknown> = {};
+  for (const p of pairs) {
+    const eq = p.indexOf("=");
+    if (eq < 0) throw new Error(`Expected field=value, got '${p}'.`);
+    set[p.slice(0, eq)] = coerceValue(p.slice(eq + 1));
+  }
+  return set;
 }
 
 async function cmdRun(
