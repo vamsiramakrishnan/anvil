@@ -76,9 +76,12 @@ function claim(
 function artifacts(
   ...pairs: Array<[string, "verified" | "unverified"]>
 ): ValidationEvidenceContext {
+  // A verified artifact is given a path so it counts as re-hashable; a pathless verified
+  // artifact is exercised explicitly by the forge-guard test below.
   const list: VerifiableArtifact[] = pairs.map(([id, status]) => ({
     id,
     verification: { status },
+    ...(status === "verified" ? { path: `src/${id}.ts` } : {}),
   }));
   return { artifacts: list };
 }
@@ -186,6 +189,19 @@ describe("evidence_meets_verification", () => {
       artifacts(["a1", "unverified"], ["a2", "verified"]),
     );
     expect(outcome.ok).toBe(true);
+  });
+
+  it("does not count a pathless 'verified' artifact (not re-hashable) as verified", () => {
+    const p = proposal(fieldTarget, { description: DESC }, [
+      claim("field.description", DESC, "a1"),
+    ]);
+    // status says verified, but there is no re-readable coordinate → cannot be trusted.
+    const forged: ValidationEvidenceContext = {
+      artifacts: [{ id: "a1", verification: { status: "verified" } }],
+    };
+    const outcome = verificationOutcome(skill(), p, forged);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toContain("re-hashable");
   });
 
   it("is inert (passes) when no frozen evidence report is supplied", () => {

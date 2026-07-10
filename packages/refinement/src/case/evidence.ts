@@ -319,7 +319,18 @@ export function verifyFrozenEvidence(dir: string): {
   const report = readOptionalJson<EvidenceReport>(dir, CASE_OUTPUT.research) ?? { artifacts: [] };
   const mismatches: Array<{ id: string; uri: string; reason: string }> = [];
   for (const a of report.artifacts) {
-    if (a.verification.status !== "verified" || !a.path) continue;
+    if (a.verification.status !== "verified") continue;
+    // A verified artifact MUST carry a re-readable coordinate; without one its bytes
+    // cannot be re-hashed, so it cannot be trusted as verified (a hand-written
+    // evidence.json could otherwise forge a pathless "verified" artifact).
+    if (!a.path) {
+      mismatches.push({
+        id: a.id,
+        uri: a.uri,
+        reason: "verified artifact has no re-readable path coordinate",
+      });
+      continue;
+    }
     const abs = resolve(workspace.repositoryRoot, a.path);
     if (!existsSync(abs)) {
       mismatches.push({ id: a.id, uri: a.uri, reason: "source path no longer exists" });

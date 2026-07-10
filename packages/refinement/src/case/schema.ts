@@ -242,20 +242,31 @@ export const zCaseDocument = z.object({
 
 /* ------------------------------ phase outputs ----------------------------- */
 
-export const zEvidenceArtifact = z.object({
-  id: z.string(),
-  uri: z.string(),
-  source: EvidenceKind,
-  revision: z.string().optional(),
-  contentHash: z.string(),
-  excerpt: z.string(),
-  acquiredAt: z.string(),
-  relevance: z.string().optional(),
-  path: z.string().optional(),
-  startLine: z.number().optional(),
-  endLine: z.number().optional(),
-  verification: zEvidenceVerification,
-});
+export const zEvidenceArtifact = z
+  .object({
+    id: z.string(),
+    uri: z.string(),
+    source: EvidenceKind,
+    revision: z.string().optional(),
+    contentHash: z.string(),
+    excerpt: z.string(),
+    acquiredAt: z.string(),
+    relevance: z.string().optional(),
+    path: z.string().optional(),
+    startLine: z.number().optional(),
+    endLine: z.number().optional(),
+    verification: zEvidenceVerification,
+  })
+  // A `verified` artifact must carry a re-readable path coordinate so its bytes can be
+  // re-hashed; a pathless "verified" artifact cannot be re-verified and is rejected at
+  // the trust boundary (a hand-written evidence.json cannot forge one).
+  .refine(
+    (a) => a.verification.status !== "verified" || (a.path !== undefined && a.path.length > 0),
+    {
+      message: "a verified artifact must carry a re-readable path coordinate",
+      path: ["path"],
+    },
+  );
 export const zEvidenceReport = z.object({ artifacts: z.array(zEvidenceArtifact) });
 
 export const zClaimSet = z.object({ claims: z.array(Claim) });

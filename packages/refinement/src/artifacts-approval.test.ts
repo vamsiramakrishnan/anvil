@@ -305,7 +305,12 @@ describe("classifyApproval", () => {
 const DESC = "The reason for the refund.";
 
 function artifact(id: string, status: "verified" | "unverified"): VerifiableArtifact {
-  return { id, verification: { status } };
+  // A verified artifact must carry a re-readable path to count as re-hashable.
+  return {
+    id,
+    verification: { status },
+    ...(status === "verified" ? { path: `src/${id}.ts` } : {}),
+  };
 }
 
 describe("classifyApproval verification guard", () => {

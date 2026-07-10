@@ -63,6 +63,14 @@ export type ValidationCheckId =
 export interface VerifiableArtifact {
   id: string;
   verification: { status: "verified" | "unverified" };
+  /**
+   * The re-readable source coordinate (a repository path) a `verified` artifact must
+   * carry so Anvil can re-hash its bytes. A `verified` status *without* one cannot be
+   * re-verified — a hand-written `evidence.json` could forge it — so such an artifact is
+   * never counted as verified. The case `EvidenceArtifact` (which has an optional `path`)
+   * is structurally assignable to this.
+   */
+  path?: string;
 }
 
 /**

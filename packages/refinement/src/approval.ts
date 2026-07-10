@@ -1,7 +1,7 @@
 import type { Claim } from "@anvil/air";
 import type { ApprovalDecision } from "./model.js";
 import type { SkillProposal, VerifiableArtifact } from "./skills/contract.js";
-import { meetsStrength, strengthOf } from "./skills/validate.js";
+import { isVerifiedGrounding, meetsStrength, strengthOf } from "./skills/validate.js";
 
 export interface ApprovalInput {
   skill: string;
@@ -49,7 +49,9 @@ export function classifyApproval(input: ApprovalInput): ApprovalDecision {
   const unverifiedOnly =
     grounding !== undefined &&
     grounding.length > 0 &&
-    grounding.every((a) => a.verification.status !== "verified");
+    // "verified" here means re-hashable (a forgeable pathless "verified" artifact does
+    // not count), so a proposal backed only by such artifacts still routes to review.
+    !grounding.some(isVerifiedGrounding);
 
   // Rule 1 — safety loosening guard: enabling retries reduces safety, so it is
   // never auto-approved on anything less than authoritative evidence.
