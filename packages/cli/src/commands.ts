@@ -65,6 +65,14 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     mutates: false,
   },
   {
+    name: "refine",
+    usage: "anvil refine plan <dir|air.yaml> [--json]",
+    summary: "Detect what AIR is missing or weak, deterministically (no agents).",
+    detail:
+      "`anvil refine plan` runs Anvil's deterministic detectors over the model and reports a refinement plan — documentation gaps, weak agent-facing naming/routing, unproven safety semantics, and mock/eval coverage holes — grouped by severity, category, and the narrow skill that would own each fix. It gathers no evidence and never mutates AIR; it only names the work. Evidence gathering, patch proposal, and measured acceptance land in later stages.",
+    mutates: false,
+  },
+  {
     name: "run",
     usage: "anvil run <dir|air.yaml> <resource> <action> [flags]",
     summary: "Invoke an operation through the safety runtime.",
