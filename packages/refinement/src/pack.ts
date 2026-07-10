@@ -61,7 +61,7 @@ export async function runRefinements(
   air: AirDocument,
   options: RunOptions = {},
 ): Promise<RefinementPack> {
-  const executor = options.executor ?? new HeuristicSkillExecutor();
+  const executor: SkillExecutor = options.executor ?? new HeuristicSkillExecutor();
   const plan = buildRefinementPlan(air);
   const minRank = options.minSeverity ? severityRank(options.minSeverity) : 0;
 
@@ -91,8 +91,17 @@ export async function runRefinements(
       skipped++;
       continue;
     }
-    const validated = validateProposal(skill, proposal, context);
-    refinements.push(reconcile({ air, context, validated }));
+    // If the executor grounds proposals in a frozen evidence report (the case-backed
+    // one does), carry those artifacts into validation AND reconcile so the verification
+    // check and approval guard are enforced here too — not just on the `closeCase` path.
+    const artifacts = executor.evidenceArtifactsFor?.(proposal);
+    const validated = validateProposal(
+      skill,
+      proposal,
+      context,
+      artifacts ? { artifacts } : undefined,
+    );
+    refinements.push(reconcile({ air, context, validated, evidenceArtifacts: artifacts }));
   }
 
   const summary: RefinementSummary = {

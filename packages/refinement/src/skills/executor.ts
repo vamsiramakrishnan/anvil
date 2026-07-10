@@ -6,6 +6,7 @@ import type {
   SemanticPatch,
   SkillContext,
   SkillProposal,
+  VerifiableArtifact,
 } from "./contract.js";
 
 /**
@@ -19,6 +20,15 @@ import type {
 export interface SkillExecutor {
   name: string;
   execute(skill: RefinementSkill, context: SkillContext): Promise<SkillProposal | null>;
+  /**
+   * The frozen evidence artifacts backing a proposal this executor produced, if it
+   * grounds proposals in a frozen evidence report. Executors with no frozen report (the
+   * heuristic transformer) omit this; the case-backed executor implements it so
+   * `runRefinements` can carry the artifacts into verification-aware validation and
+   * approval instead of silently losing them at this seam. Returning `undefined` leaves
+   * the verification check inert (correct for the heuristic path).
+   */
+  evidenceArtifactsFor?(proposal: SkillProposal): VerifiableArtifact[] | undefined;
 }
 
 function claimsFor(
