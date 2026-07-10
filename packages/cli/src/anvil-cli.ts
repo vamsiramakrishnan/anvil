@@ -555,7 +555,9 @@ async function cmdCase(
       io.err("       anvil case validate-claims <case-dir>");
       io.err("       anvil case synthesize      <case-dir> field=value [field=value ...]");
       io.err("       anvil case validate-proposal <case-dir> <dir|air.yaml>");
-      io.err("       anvil case investigate     <case-dir> [--command claude] [--model M]");
+      io.err(
+        "       anvil case investigate     <case-dir> [--command claude] [--model M] [--allow-degraded-native]",
+      );
       io.err(
         '       anvil case finalize        <case-dir> [--status S] [--summary ..] [--blocked-sources \'[{"source":"..","reason":".."}]\']',
       );
@@ -700,13 +702,16 @@ async function cmdCaseInvestigate(
 ): Promise<number> {
   const dir = args[0];
   if (!dir) {
-    io.err("Usage: anvil case investigate <case-dir> [--command claude] [--model M]");
+    io.err(
+      "Usage: anvil case investigate <case-dir> [--command claude] [--model M] [--allow-degraded-native]",
+    );
     return 1;
   }
   const extraArgs = typeof flags.model === "string" ? ["--model", flags.model] : [];
   const driver = new ClaudeCodeAgentDriver({
     command: typeof flags.command === "string" ? flags.command : undefined,
     extraArgs,
+    allowDegradedNative: flags["allow-degraded-native"] === true,
   });
   io.err(`anvil: driving ${driver.name} against ${dir} …`);
   await driver.run(dir);

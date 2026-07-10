@@ -64,3 +64,14 @@ current setup a "sandbox" would overstate the guarantee.
   eventual boundary, but the build-time-only driver runs on trusted developer/CI
   hosts today, and the git-cleanliness + minimal-env measures cover the immediate
   risk without the operational weight.
+
+## Update (PR #7) — degraded native execution requires explicit consent
+
+`defaultExecutionPolicy()` now sets `allowDegradedNative: false`. Because the
+native backend cannot enforce the filesystem split, a native investigation
+refuses to start unless the caller opts in with `--allow-degraded-native`
+(wired to `ClaudeCodeAgentDriver` via the execution policy). Degradation is never
+enabled implicitly because a sandbox is unavailable; when acknowledged, the run
+records an attestation naming every guarantee the backend could not enforce.
+Bubblewrap and container backends remain intentionally deferred — the seam is
+ready, the backends are unwritten.

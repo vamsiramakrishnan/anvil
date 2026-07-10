@@ -119,13 +119,27 @@ export function proposalFromCase(p: CaseProposal): SkillProposal {
  * existing `runRefinements` loop can drive it unchanged: a `proposal_generated`
  * result yields its proposal; every other (honest-decline) status yields `null`.
  * The richer result is available to callers that use `investigate` directly.
+ *
+ * The adapter also carries the case's **frozen evidence artifacts** for each proposal
+ * (via `evidenceArtifactsFor`), so `runRefinements` enforces verification-aware
+ * validation and approval on case-backed proposals exactly as `closeCase` does — the
+ * artifacts are not silently lost at this seam. (`closeCase` remains the primary,
+ * richer join point; this keeps the fallback pipeline honest too.)
  */
 export function asSkillExecutor(harness: InvestigationHarness): SkillExecutor {
+  // Map each produced proposal to the frozen artifacts that back it. A WeakMap keyed by
+  // the returned proposal object avoids any cross-call races in the sequential loop.
+  const artifactsByProposal = new WeakMap<SkillProposal, EvidenceArtifact[]>();
   return {
     name: harness.name,
     async execute(skill: RefinementSkill, context: SkillContext): Promise<SkillProposal | null> {
       const result = await harness.investigate({ skill, deficiency: context.deficiency, context });
-      return result.status === "proposal_generated" ? (result.proposal ?? null) : null;
+      if (result.status !== "proposal_generated" || !result.proposal) return null;
+      artifactsByProposal.set(result.proposal, result.artifacts ?? []);
+      return result.proposal;
+    },
+    evidenceArtifactsFor(proposal: SkillProposal): EvidenceArtifact[] | undefined {
+      return artifactsByProposal.get(proposal);
     },
   };
 }

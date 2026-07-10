@@ -256,6 +256,16 @@ function skillRef(skill: RefinementSkill): string {
 - Minimum aggregate strength: **${skill.evidence.minimumStrength}**
   (\`single\` = one source · \`corroborated\` = two independent sources · \`authoritative\`
   = one implementation/recorded-traffic source).
+- Minimum verification: **${skill.evidence.minimumVerification}**
+  (\`verified\` = a source Anvil re-hashed itself · \`allow_unverified\` = a caller-supplied
+  excerpt is acceptable). Enforced per patched value by \`evidence_meets_verification\`.
+- Per-field verification overrides: ${
+    skill.evidence.fieldVerification && Object.keys(skill.evidence.fieldVerification).length > 0
+      ? Object.entries(skill.evidence.fieldVerification)
+          .map(([f, v]) => `\`${f}\` → **${v}**`)
+          .join(", ")
+      : "none"
+  }.
 
 ## Output boundary
 - May assert claim predicates: ${skill.output.predicates.map((p) => `\`${p}\``).join(", ")}
@@ -342,6 +352,8 @@ const CHECK_DOC: Record<ValidationCheckId, string> = {
   claims_from_allowed_sources: "every claim is from a source the skill admits",
   evidence_meets_minimum_strength: "the claims' aggregate strength meets the skill's minimum",
   evidence_supports_value: "each patched value is asserted by a claim (nothing invented)",
+  evidence_meets_verification:
+    "each patched value's grounding artifact clears the field's verification bar (verified vs allow_unverified)",
   description_nonempty: "the description is non-empty",
   description_not_tautological: "the description adds meaning beyond the name",
   examples_validate_against_schema: "every example validates against the field's schema",

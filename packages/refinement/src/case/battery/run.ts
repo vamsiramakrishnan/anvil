@@ -1,6 +1,6 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type AirDocument, loadAirDocument } from "@anvil/air";
 import type { Deficiency } from "../../deficiency.js";
 import type { ApprovalTier, Refinement, RefinementStatus } from "../../model.js";
@@ -8,13 +8,21 @@ import { buildRefinementPlan } from "../../plan.js";
 import { assembleContext, evidenceForTarget } from "../../skills/context.js";
 import { HeuristicSkillExecutor } from "../../skills/executor.js";
 import { skillFor } from "../../skills/registry.js";
-import { validateProposal } from "../../skills/validate.js";
+import { groundingArtifacts, validateProposal } from "../../skills/validate.js";
 import { targetKey } from "../../target.js";
 import { ScriptedAgentDriver } from "../driver.js";
 import { addEvidence } from "../evidence.js";
 import { closeCase, readInvestigation } from "../executor.js";
 import { openCase } from "../materialize.js";
-import { finalize, synthesizeProposal, validateCaseProposal } from "../proposal.js";
+import { CASE_OUTPUT, type ValidationReport } from "../model.js";
+import {
+  finalize,
+  readEvidence,
+  readProposal,
+  synthesizeProposal,
+  validateCaseProposal,
+} from "../proposal.js";
+import { readOptionalJson } from "../store.js";
 import {
   type BatteryReport,
   type BatteryRow,
@@ -23,6 +31,7 @@ import {
   type FieldScenario,
   outcomeOf,
   type ScenarioClass,
+  type VerificationDisposition,
 } from "./types.js";
 
 /* -------------------------------------------------------------------------- */
@@ -132,17 +141,39 @@ async function runScenario(s: FieldScenario, root: string): Promise<BatteryRow> 
   // Investigation: deposit the repository evidence via the rails, then synthesize
   // (or decline), test, and finalize — the scripted stand-in for a Claude Code run.
   // Isolate every scenario in its own root so two scenarios that share a field
-  // name (hence a case id) can never leak evidence into one another.
-  const dir = openCase(air, deficiency, { root: join(root, s.id) }).dir;
+  // name (hence a case id) can never leak evidence into one another. Verified evidence
+  // is materialised as a real repo file so its frozen artifact is genuinely verified.
+  const scenarioRoot = join(root, s.id);
+  const repoRoot = join(scenarioRoot, "repo");
+  const dir = openCase(air, deficiency, { root: scenarioRoot, repositoryRoot: repoRoot }).dir;
   await new ScriptedAgentDriver(async (d) => {
+    let fileSeq = 0;
     for (const ev of s.repository) {
-      await addEvidence(d, {
-        predicate: ev.predicate,
-        value: ev.value,
-        source: ev.source,
-        ref: ev.ref,
-        note: ev.note,
-      });
+      if (ev.verified) {
+        // A real repository coordinate: write the excerpt to a file and cite it by path,
+        // so the acquirer reads and hashes the bytes itself (verification.status = verified).
+        const rel = join("evidence", `${s.id}-${fileSeq++}.txt`);
+        const abs = join(repoRoot, rel);
+        mkdirSync(dirname(abs), { recursive: true });
+        writeFileSync(abs, `${String(ev.value)}\n`);
+        await addEvidence(d, {
+          predicate: ev.predicate,
+          value: ev.value,
+          source: ev.source,
+          path: rel,
+          startLine: 1,
+          endLine: 1,
+          note: ev.note,
+        });
+      } else {
+        await addEvidence(d, {
+          predicate: ev.predicate,
+          value: ev.value,
+          source: ev.source,
+          ref: ev.ref,
+          note: ev.note,
+        });
+      }
     }
     if (s.finalizeStatus) {
       finalize(d, { status: s.finalizeStatus });
@@ -177,6 +208,7 @@ async function runScenario(s: FieldScenario, root: string): Promise<BatteryRow> 
     }
   }
   const outcome = outcomeOf(refinementStatus);
+  const verificationDisposition = dispositionOf(dir);
 
   const investigationClosed = result.status === "proposal_generated";
   const contribution: Contribution = investigationClosed
@@ -190,7 +222,8 @@ async function runScenario(s: FieldScenario, root: string): Promise<BatteryRow> 
   const matchedExpectation =
     result.status === s.expected.investigation &&
     outcome === s.expected.outcome &&
-    (s.expected.approval === undefined || approvalTier === s.expected.approval);
+    (s.expected.approval === undefined || approvalTier === s.expected.approval) &&
+    (s.expected.verification === undefined || verificationDisposition === s.expected.verification);
 
   return {
     id: s.id,
@@ -203,8 +236,31 @@ async function runScenario(s: FieldScenario, root: string): Promise<BatteryRow> 
     outcome,
     approvalTier,
     contribution,
+    verificationDisposition,
     matchedExpectation,
   };
+}
+
+/**
+ * How verification bore on a finished case: `verification_failed` when validation
+ * rejected on the verification check; otherwise, over the artifacts that actually ground
+ * the proposal's patched values, `verified_grounding` if any is verified, else
+ * `unverified_grounding`; `not_applicable` when nothing grounded a value (a decline,
+ * a conflict, or no proposal). Read straight from the frozen case artifacts.
+ */
+function dispositionOf(dir: string): VerificationDisposition {
+  const critique = readOptionalJson<ValidationReport>(dir, CASE_OUTPUT.critique);
+  if (critique?.checks.some((c) => c.check === "evidence_meets_verification" && !c.ok)) {
+    return "verification_failed";
+  }
+  const proposal = readProposal(dir);
+  const evidence = readEvidence(dir);
+  if (!proposal || !evidence) return "not_applicable";
+  const grounding = groundingArtifacts(proposal, evidence.artifacts);
+  if (grounding.length === 0) return "not_applicable";
+  return grounding.some((a) => a.verification.status === "verified")
+    ? "verified_grounding"
+    : "unverified_grounding";
 }
 
 /* -------------------------------------------------------------------------- */
@@ -291,7 +347,7 @@ export function renderBatteryReport(report: BatteryReport): string {
     lines.push(
       `  ${flag} ${r.id.padEnd(28)} ${r.contribution.padEnd(18)} ` +
         `base=${r.baselineProposed ? "y" : "n"} invsg=${r.investigationStatus} ` +
-        `refine=${r.refinementStatus}/${r.approvalTier}`,
+        `refine=${r.refinementStatus}/${r.approvalTier} verif=${r.verificationDisposition}`,
     );
   }
   lines.push("");

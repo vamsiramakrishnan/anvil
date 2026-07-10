@@ -52,6 +52,7 @@ export const zValidationCheckId = z.enum([
   "claims_from_allowed_sources",
   "evidence_meets_minimum_strength",
   "evidence_supports_value",
+  "evidence_meets_verification",
   "description_nonempty",
   "description_not_tautological",
   "examples_validate_against_schema",
@@ -95,9 +96,10 @@ export const zEvidenceCoordinate = z.discriminatedUnion("kind", [
 ]);
 
 /**
- * Why an artifact is or isn't trusted, alongside the bare `verified` boolean on
- * `zEvidenceArtifact` (kept for tamper-detection re-hashing). `verified` a source
- * verifier could confirm the bytes; `unverified` records why not.
+ * Whether an artifact is trusted, and why — the **single source of truth** for an
+ * artifact's verification state (there is deliberately no separate `verified` boolean
+ * that could disagree with it). `verified` means a source verifier confirmed the exact
+ * bytes; `unverified` records why it could not.
  */
 export const zEvidenceVerification = z.discriminatedUnion("status", [
   z.object({ status: z.literal("verified"), verifier: z.literal("local_repository") }),
@@ -170,11 +172,17 @@ export const zCaseTargetDoc = z.object({
   operationId: z.string().optional(),
   operationName: z.string().optional(),
   operationEffect: z.string().optional(),
+  /** The operation's current description, snapshotted so `supported` can prove it. */
+  operationDescription: z.string().optional(),
   field: zCaseFieldFacts.optional(),
   siblingFields: z
     .array(z.object({ name: z.string(), description: z.string().optional() }))
     .optional(),
   errorCode: z.string().optional(),
+  /** The error's current human-facing message, snapshotted so `supported` can prove it. */
+  errorMessage: z.string().optional(),
+  /** The error's current retryability, snapshotted so `supported` can prove it. */
+  errorRetryable: z.boolean().optional(),
   priorEvidence: z.array(Claim),
 });
 
@@ -234,21 +242,31 @@ export const zCaseDocument = z.object({
 
 /* ------------------------------ phase outputs ----------------------------- */
 
-export const zEvidenceArtifact = z.object({
-  id: z.string(),
-  uri: z.string(),
-  source: EvidenceKind,
-  revision: z.string().optional(),
-  contentHash: z.string(),
-  excerpt: z.string(),
-  acquiredAt: z.string(),
-  relevance: z.string().optional(),
-  path: z.string().optional(),
-  startLine: z.number().optional(),
-  endLine: z.number().optional(),
-  verified: z.boolean(),
-  verification: zEvidenceVerification,
-});
+export const zEvidenceArtifact = z
+  .object({
+    id: z.string(),
+    uri: z.string(),
+    source: EvidenceKind,
+    revision: z.string().optional(),
+    contentHash: z.string(),
+    excerpt: z.string(),
+    acquiredAt: z.string(),
+    relevance: z.string().optional(),
+    path: z.string().optional(),
+    startLine: z.number().optional(),
+    endLine: z.number().optional(),
+    verification: zEvidenceVerification,
+  })
+  // A `verified` artifact must carry a re-readable path coordinate so its bytes can be
+  // re-hashed; a pathless "verified" artifact cannot be re-verified and is rejected at
+  // the trust boundary (a hand-written evidence.json cannot forge one).
+  .refine(
+    (a) => a.verification.status !== "verified" || (a.path !== undefined && a.path.length > 0),
+    {
+      message: "a verified artifact must carry a re-readable path coordinate",
+      path: ["path"],
+    },
+  );
 export const zEvidenceReport = z.object({ artifacts: z.array(zEvidenceArtifact) });
 
 export const zClaimSet = z.object({ claims: z.array(Claim) });

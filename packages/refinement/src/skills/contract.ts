@@ -47,10 +47,41 @@ export type ValidationCheckId =
   | "claims_from_allowed_sources"
   | "evidence_meets_minimum_strength"
   | "evidence_supports_value"
+  | "evidence_meets_verification"
   | "description_nonempty"
   | "description_not_tautological"
   | "examples_validate_against_schema"
   | "error_message_nonempty";
+
+/**
+ * The minimal view of a frozen evidence artifact the `evidence_meets_verification`
+ * check needs: its `id` (a claim references it by `sourceRef`) and whether a source
+ * verifier confirmed its bytes. The case layer's richer `EvidenceArtifact` is
+ * structurally assignable to this, so the generic validator resolves grounding claims
+ * to real verification state WITHOUT importing the case model or reading the filesystem.
+ */
+export interface VerifiableArtifact {
+  id: string;
+  verification: { status: "verified" | "unverified" };
+  /**
+   * The re-readable source coordinate (a repository path) a `verified` artifact must
+   * carry so Anvil can re-hash its bytes. A `verified` status *without* one cannot be
+   * re-verified — a hand-written `evidence.json` could forge it — so such an artifact is
+   * never counted as verified. The case `EvidenceArtifact` (which has an optional `path`)
+   * is structurally assignable to this.
+   */
+  path?: string;
+}
+
+/**
+ * The frozen evidence report handed to `validateProposal` so verification-sensitive
+ * checks can resolve a claim's `sourceRef` to the artifact it actually rests on. The
+ * case path always supplies it; the deterministic heuristic path omits it (it has no
+ * frozen artifacts), leaving `evidence_meets_verification` inert there.
+ */
+export interface ValidationEvidenceContext {
+  artifacts: VerifiableArtifact[];
+}
 
 /**
  * The typed contract for one refinement skill.

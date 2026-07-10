@@ -4,14 +4,20 @@ import { classifyApproval } from "./approval.js";
 import { affectedArtifacts } from "./artifacts.js";
 import { evalDelta, familiesFor } from "./evals/index.js";
 import type { Refinement, RefinementStatus } from "./model.js";
-import type { SkillContext } from "./skills/contract.js";
-import type { ValidatedProposal } from "./skills/validate.js";
+import type { SkillContext, VerifiableArtifact } from "./skills/contract.js";
+import { groundingArtifacts, type ValidatedProposal } from "./skills/validate.js";
 import { targetKey } from "./target.js";
 
 export interface ReconcileInput {
   air: AirDocument;
   context: SkillContext;
   validated: ValidatedProposal;
+  /**
+   * The frozen evidence report backing the proposal (case path). Its artifacts feed the
+   * approval policy's verification guard — only the ones grounding the patched values
+   * count. Omitted on the heuristic path, where the guard is inert.
+   */
+  evidenceArtifacts?: VerifiableArtifact[];
 }
 
 /**
@@ -31,6 +37,11 @@ export interface ReconcileInput {
 export function reconcile(input: ReconcileInput): Refinement {
   const { air, context, validated } = input;
   const proposal = validated.proposal;
+  // Only the artifacts that ground the patched values inform approval — never a stray
+  // verified artifact from elsewhere in the case. Undefined on the heuristic path.
+  const grounding = input.evidenceArtifacts
+    ? groundingArtifacts(proposal, input.evidenceArtifacts)
+    : undefined;
   const artifacts = affectedArtifacts(proposal.target, context.operation);
 
   const base = {
@@ -62,6 +73,7 @@ export function reconcile(input: ReconcileInput): Refinement {
     skill: proposal.skill,
     proposal,
     evidence: proposal.claims,
+    groundingArtifacts: grounding,
   });
 
   let status: RefinementStatus;
