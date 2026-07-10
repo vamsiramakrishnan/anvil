@@ -24,6 +24,7 @@
   "dependencies": {
     "@anvil/air": "workspace:*",
     "@anvil/mcp-runtime": "workspace:*",
+    "@anvil/refinement": "workspace:*",
     "@anvil/runtime": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.22.0",
     "yaml": "^2.8.1",
