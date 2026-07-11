@@ -6,7 +6,7 @@ import type { DriftRecord } from "@anvil/compiler";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml, stringify as toYaml } from "yaml";
 import { runAnvilCli } from "./anvil-cli.js";
-import { cmdDrift } from "./cmd-drift.js";
+import { runDriftAccept } from "./commands/drift.js";
 import { bufferIO } from "./io.js";
 
 const examples = fileURLToPath(new URL("../../../examples/", import.meta.url));
@@ -60,12 +60,9 @@ describe("anvil drift", () => {
   it("accept stamps reviewedAt via the injectable clock and stores the note", async () => {
     const io = bufferIO();
     const clock = () => new Date("2026-07-10T12:00:00.000Z");
-    const code = cmdDrift(
-      ["accept", recordId],
-      { root, note: "spec change tracked in PAY-123" },
-      io,
-      { now: clock },
-    );
+    const code = runDriftAccept(recordId, { root, note: "spec change tracked in PAY-123" }, io, {
+      now: clock,
+    });
     expect(code).toBe(0);
     const stored = JSON.parse(
       readFileSync(join(root, ".anvil", "drift", `${recordId}.json`), "utf8"),
@@ -79,7 +76,7 @@ describe("anvil drift", () => {
     expect(listed.io.text()).toContain("reviewed");
 
     // Re-accepting is refused (the review trail stays honest), not overwritten.
-    const again = cmdDrift(["accept", recordId], { root }, bufferIO(), { now: clock });
+    const again = runDriftAccept(recordId, { root }, bufferIO(), { now: clock });
     expect(again).toBe(0);
     const after = JSON.parse(
       readFileSync(join(root, ".anvil", "drift", `${recordId}.json`), "utf8"),
