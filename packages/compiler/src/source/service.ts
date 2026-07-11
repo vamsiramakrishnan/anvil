@@ -9,7 +9,12 @@ import { type CompilerSourceResult, compilerSourceFromSnapshot } from "./compile
 import { deriveSnapshotId, sha256Hex } from "./hash.js";
 import type { SourceImporter, SourceImportResult } from "./import.js";
 import type { SourceDiagnostic, SourceOriginKind, SourceSnapshot, SourceStatus } from "./model.js";
-import type { LoadSnapshotResult, SnapshotListing, SourceSnapshotStore } from "./store.js";
+import {
+  type LoadSnapshotResult,
+  type SnapshotListing,
+  type SourceSnapshotStore,
+  verifySnapshot,
+} from "./store.js";
 
 export interface SourceServiceDeps {
   importer: SourceImporter;
@@ -87,10 +92,17 @@ export class SourceService {
    * Bind a locked snapshot to a compiler input: load its verbatim bytes and
    * choose the entrypoint. This is how `anvil compile --source` and `agentify`
    * hand the immutable snapshot to the compiler instead of re-reading a path.
+   *
+   * The raw/ bytes are re-verified against the locked record first: without
+   * this gate a tampered snapshot would compile from unchecked bytes while the
+   * AIR still recorded the original sourceHash — binding the contract to bytes
+   * it never actually compiled. A non-intact snapshot is refused here.
    */
   async compilerSource(snapshotId: string, entrypointPath?: string): Promise<CompilerSourceResult> {
     const { snapshot, files, diagnostics } = await this.store.readFiles(snapshotId);
     if (!snapshot || !files) return { diagnostics };
+    const integrity = verifySnapshot(snapshot, files);
+    if (!integrity.ok) return { diagnostics: [...diagnostics, ...integrity.diagnostics] };
     return compilerSourceFromSnapshot(snapshot, files, entrypointPath);
   }
 

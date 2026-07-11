@@ -99,6 +99,21 @@ describe("anvil compile — the snapshot is the compiler input", () => {
     expect(validate.io.text()).toContain("intact");
   });
 
+  it("refuses to compile a snapshot whose locked raw/ bytes were tampered", async () => {
+    const spec = join(root, "spec");
+    cpSync(multifile, spec, { recursive: true });
+    const id = await lockMultifile(spec);
+
+    // Tamper the LOCKED copy under raw/, not the original — the compile path
+    // must not bind an AIR to a sourceHash it did not actually compile.
+    const raw = join(root, ".anvil", "sources", id, "raw", "schemas", "entry.yaml");
+    writeFileSync(raw, `${readFileSync(raw, "utf8")}\n# tampered\n`);
+
+    const { code, io } = await cli("compile", "--source", id, "--out", join(root, "out"));
+    expect(code).toBe(1);
+    expect(io.text()).toContain("source/file_changed");
+  });
+
   it("imports-and-locks a spec path, then compiles that snapshot", async () => {
     const spec = join(root, "spec");
     cpSync(multifile, spec, { recursive: true });
