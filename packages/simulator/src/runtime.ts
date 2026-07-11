@@ -89,7 +89,7 @@ export class Simulator {
     return this.store.get(name) as Map<string, Entity>;
   }
 
-  private fault(op: Operation, ctx: InvokeContext): SimResult | undefined {
+  private fault(ctx: InvokeContext): SimResult | undefined {
     if (!ctx.faultScenario) return undefined;
     const profile = this.def.faults.find((f) => f.scenario === ctx.faultScenario);
     if (!profile) return undefined;
@@ -166,7 +166,7 @@ export class Simulator {
     }
 
     // Fault injection (after the safety gates, before the effect).
-    const fault = this.fault(op, ctx);
+    const fault = this.fault(ctx);
     if (fault) return fault;
 
     const result = op.effect.kind === "read" ? this.read(op, ctx) : this.mutate(op, input);

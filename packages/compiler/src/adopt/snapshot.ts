@@ -115,12 +115,12 @@ export interface McpDrift {
 export function diffMcpSurface(prev: McpSurfaceSnapshot, next: McpSurfaceSnapshot): McpDrift {
   const prevTools = new Map(prev.tools.map((t) => [t.name, t]));
   const nextTools = new Map(next.tools.map((t) => [t.name, t]));
-  const changed = (a: McpTool, b: McpTool) => hashCanonical(a) !== hashCanonical(b);
+  const digest = (t: McpTool | undefined) => (t ? hashCanonical(t) : "");
   return {
     addedTools: [...nextTools.keys()].filter((n) => !prevTools.has(n)).sort(),
     removedTools: [...prevTools.keys()].filter((n) => !nextTools.has(n)).sort(),
     changedTools: [...nextTools.keys()]
-      .filter((n) => prevTools.has(n) && changed(prevTools.get(n)!, nextTools.get(n)!))
+      .filter((n) => prevTools.has(n) && digest(prevTools.get(n)) !== digest(nextTools.get(n)))
       .sort(),
     protocolChanged: prev.protocolVersion !== next.protocolVersion,
   };

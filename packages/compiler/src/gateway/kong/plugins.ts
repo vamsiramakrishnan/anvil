@@ -6,7 +6,7 @@
  */
 import type { EvidenceCoordinate, GatewayDiagnostic } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
-import type { KongPlugin, KongService } from "./model.js";
+import type { KongService } from "./model.js";
 
 const AUTH_PLUGINS: Record<string, string> = {
   "key-auth": "API key",

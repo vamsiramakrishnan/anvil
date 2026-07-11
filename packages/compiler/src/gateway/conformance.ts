@@ -14,7 +14,7 @@
  */
 import { compileContract } from "../contract/snapshot.js";
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "./adapter.js";
-import type { GatewayApiImport, GatewayApiRef, GatewayInventorySnapshot } from "./model.js";
+import type { GatewayApiImport, GatewayApiRef } from "./model.js";
 
 export interface ConformanceFixture<TConnection extends GatewayConnection = GatewayConnection> {
   connection: TConnection;
