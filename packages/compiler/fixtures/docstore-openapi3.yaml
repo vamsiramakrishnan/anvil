@@ -1,0 +1,160 @@
+# The OpenAPI 3.0 half of the docstore equivalence pair — the same document
+# store API as docstore-swagger2.yaml expressed in 3.0 idioms: shared
+# components.parameters, multipart/form-data requestBody with a binary field,
+# authorizationCode oauth2 flow beside an apiKey scheme, a per-operation
+# security override, and style/explode where 2.0 said collectionFormat.
+# Compiling both must yield semantically equivalent AIR.
+openapi: 3.0.3
+info:
+  title: Document Store API
+  version: 2.3.0
+  x-api-owner: docs-platform
+servers:
+  - url: https://docs.example.com/api/v2
+security:
+  - oauth2: [docs.read]
+paths:
+  /folders/{folder_id}/documents:
+    get:
+      operationId: listDocuments
+      summary: List documents
+      tags: [documents]
+      parameters:
+        - $ref: "#/components/parameters/FolderId"
+        - name: label
+          in: query
+          # collectionFormat: csv in 2.0 — an unexploded comma-joined list.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: Documents in the folder.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Document"
+    post:
+      operationId: createDocument
+      summary: Create a document
+      tags: [documents]
+      parameters:
+        - $ref: "#/components/parameters/FolderId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentCreate"
+      responses:
+        "201":
+          description: The created document.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "422":
+          description: Invalid document.
+  /folders/{folder_id}/documents/{document_id}/content:
+    put:
+      operationId: uploadContent
+      summary: Upload document content
+      tags: [documents]
+      x-rate-limit-tier: gold
+      parameters:
+        - $ref: "#/components/parameters/FolderId"
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                checksum:
+                  type: string
+      responses:
+        "204":
+          description: Content stored.
+  /usage:
+    get:
+      operationId: getUsage
+      summary: Get usage
+      tags: [admin]
+      security:
+        - apiKeyHeader: []
+      responses:
+        "200":
+          description: Account usage.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Usage"
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://auth.example.com/authorize
+          tokenUrl: https://auth.example.com/token
+          scopes:
+            docs.read: Read documents
+            docs.write: Write documents
+    apiKeyHeader:
+      type: apiKey
+      name: X-Api-Key
+      in: header
+  parameters:
+    FolderId:
+      name: folder_id
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        mime_type:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+    DocumentCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        mime_type:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+    Usage:
+      type: object
+      properties:
+        bytes_used:
+          type: integer
+        document_count:
+          type: integer

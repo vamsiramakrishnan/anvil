@@ -24,10 +24,12 @@
   "dependencies": {
     "@anvil/air": "workspace:*",
     "@scalar/openapi-parser": "^0.28.8",
+    "swagger2openapi": "^7.0.8",
     "yaml": "^2.8.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/swagger2openapi": "^7.0.4",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
