@@ -111,4 +111,18 @@ describe("target validation", () => {
     expect(GEMINI_ENTERPRISE_PROFILE.version).toMatch(/^\d{4}\./);
     expect(GEMINI_ENTERPRISE_PROFILE.unsupportedAssumptions.length).toBeGreaterThan(0);
   });
+
+  it("warns that an unverified profile is a draft, structurally (Gemini labeling)", () => {
+    expect(GEMINI_ENTERPRISE_PROFILE.verificationStatus).toBe("unverified");
+    const result = validateTarget(air, GEMINI_ENTERPRISE_PROFILE, {
+      endpoint: "https://x.example/mcp",
+    });
+    // A green (no-error) validation still surfaces the unverified-profile warning.
+    expect(result.ok).toBe(true);
+    expect(result.findings.map((f) => f.code)).toContain("target/unverified_profile");
+    // A verified profile does not warn.
+    const verified = { ...GEMINI_ENTERPRISE_PROFILE, verificationStatus: "verified" as const };
+    const clean = validateTarget(air, verified, { endpoint: "https://x.example/mcp" });
+    expect(clean.findings.map((f) => f.code)).not.toContain("target/unverified_profile");
+  });
 });
