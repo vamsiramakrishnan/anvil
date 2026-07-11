@@ -1,5 +1,19 @@
 # anvil commands
 
+### `anvil source`  *(mutates)*
+`anvil source <add|list|show|validate> [args] [--json]`
+
+Import and lock API source specs as content-addressed snapshots.
+
+Layer 0 — capture what the customer actually supplied, before any compilation. `anvil source add <path|dir>` detects the spec format (OpenAPI 3.0/3.1 or Swagger 2.0, YAML or JSON) without compiling, hashes the file set deterministically, and locks a snapshot under .anvil/sources/<id>/ (source.json plus verbatim raw/ copies). A directory of specs becomes one snapshot with many files. `list` and `show` are read-only; `validate <id>` re-hashes raw/ and confirms it still matches the locked source.json, so tampering or drift is caught before it can contaminate a compile. The sourceHash is content-derived only — re-importing unchanged content yields the same hash — and broken input produces structured diagnostics, never a crash.
+
+### `anvil agentify`  *(mutates)*
+`anvil agentify <spec> [--manifest f] [--service id] [--out dir] [--root ws] [--json]`
+
+One-shot discovery: lock the source, compile, assess readiness, and propose capabilities — then stop for review.
+
+Convenience orchestration of the discovery flow — the same library calls as running `anvil source add` (locks a content-addressed snapshot under .anvil/sources), `anvil compile` (writes the bundle, default generated/<service-id>), `anvil assess` (the readiness triage; blocked operations are surfaced prominently but do not stop the flow), and `anvil capability propose` (read-only re-discovery over the stored groupings) individually, so the compiled AIR is byte-identical to the four-command path. It then STOPS for human review. It deliberately does NOT approve any capability or operation (every grouping stays `proposed`, every unproven mutation stays `review_required`), does NOT certify, and does NOT publish — no certification.json or publication.json is ever written. A broken spec stops at the snapshot layer with structured diagnostics and exit 1; nothing downstream runs.
+
 ### `anvil compile`  *(mutates)*
 `anvil compile <spec> [--manifest f] [--service id] [--out dir] [--endpoint url]`
 
@@ -21,33 +35,12 @@ Triage which operations are agent-ready, and explain every blocking gap.
 
 Read-only. Runs Anvil's deterministic detectors and gives every operation a readiness disposition — ready, refinement_required, human_decision_required, blocked, or excluded — with a service-level score and summary. Reuses the same detectors as `anvil refine plan`, so the per-operation triage never disagrees with the deficiency list. Drill into one operation, filter by minimum severity, or `--explain` why each gap matters to an agent. Exits non-zero when any operation is blocked.
 
-### `anvil lint`
-`anvil lint <dir|air.yaml>`
+### `anvil capability`  *(mutates)*
+`anvil capability <propose|list|show|approve|reject|diff> <dir|air.yaml> [id] [flags]`
 
-Show safety diagnostics; exit non-zero if there are errors.
+Review capability groupings: propose, inspect, approve, reject, or diff.
 
-Surfaces unproven idempotency, missing confirmation, duplicate names, and incoherent retry policy.
-
-### `anvil approve`  *(mutates)*
-`anvil approve <dir|air.yaml> <operation-id...>`
-
-Approve operations so they are exposed by the generated artifacts.
-
-Only approved operations appear in the MCP server, CLI catalog, and compiled runtime manifest. Approve deliberately, after inspecting risk.
-
-### `anvil enrich`
-`anvil enrich <dir|air.yaml> --sources <file> [--write <manifest>] [--json]`
-
-Connect to published MCP servers (GitHub, Confluence, …) and propose a manifest patch.
-
-Anvil is an MCP client here: it connects to the MCP servers those systems already publish, gathers evidence per operation, and proposes idempotency/confirmation/etc. Propose-only — nothing touches AIR. Loosening safety requires high-reliability (implementation/traffic) evidence; review the patch, then `anvil compile --manifest`.
-
-### `anvil sources`
-`anvil sources`
-
-List the enrichment sources (published MCP servers) Anvil can connect to.
-
-Shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server Anvil runs for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman).
+The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. `approve`/`reject` persist the review decision to the AIR file. Approval enforces the tool budget: a capability disclosing more than 20 tools is blocked without --allow-large (more than 15 warns). Only an approved capability can be built with `anvil build`.
 
 ### `anvil refine`  *(mutates)*
 `anvil refine <plan|skills|skill|run|review|apply> <dir|air.yaml> [flags]`
@@ -63,12 +56,33 @@ Run a bounded investigation for one deficiency as an isolated case.
 
 The investigation framework. `anvil case list <dir>` shows the deficiencies a case can be opened for; `anvil case open <dir> <target-key>` materializes an isolated case workspace (CASE.md + task/target/evidence-policy/allowed-tools/expected-output.schema + workspace/ + output/) that gives a coding agent a *case, not a prompt*. Inside a case, the agent works only with rails that enforce Anvil semantics — repository search and language tooling are the agent's own job, not Anvil's: `inspect`, `add-evidence` (enforces the source AND predicate policy), `validate-claims` (strength + contradictions + predicate policy), `synthesize` (composes the proposal from gathered claims), `validate-proposal` (deterministic validation), and `finalize` (records an honest status — proposal_generated / conflicted / insufficient_evidence / …). `anvil case investigate <case>` drives the live coding agent; `anvil case close <case> <air>` re-enters Anvil's rails — validating and reconciling the proposal into a refinement, bound to the case identity. The agent owns investigation and synthesis; Anvil owns admissibility, safety, validation, and application. AIR is never edited by a case.
 
-### `anvil capability`  *(mutates)*
-`anvil capability <propose|list|show|approve|reject|diff> <dir|air.yaml> [id] [flags]`
+### `anvil enrich`
+`anvil enrich <dir|air.yaml> --sources <file> [--write <manifest>] [--json]`
 
-Review capability groupings: propose, inspect, approve, reject, or diff.
+Connect to published MCP servers (GitHub, Confluence, …) and propose a manifest patch.
 
-The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. `approve`/`reject` persist the review decision to the AIR file. Approval enforces the tool budget: a capability disclosing more than 20 tools is blocked without --allow-large (more than 15 warns). Only an approved capability can be built with `anvil build`.
+Anvil is an MCP client here: it connects to the MCP servers those systems already publish, gathers evidence per operation, and proposes idempotency/confirmation/etc. Propose-only — nothing touches AIR. Loosening safety requires high-reliability (implementation/traffic) evidence; review the patch, then `anvil compile --manifest`.
+
+### `anvil sources`
+`anvil sources`
+
+List the enrichment sources (published MCP servers) Anvil can connect to.
+
+Shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server Anvil runs for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman).
+
+### `anvil approve`  *(mutates)*
+`anvil approve <dir|air.yaml> <operation-id...>`
+
+Approve operations so they are exposed by the generated artifacts.
+
+Only approved operations appear in the MCP server, CLI catalog, and compiled runtime manifest. Approve deliberately, after inspecting risk.
+
+### `anvil lint`
+`anvil lint <dir|air.yaml>`
+
+Show safety diagnostics; exit non-zero if there are errors.
+
+Surfaces unproven idempotency, missing confirmation, duplicate names, and incoherent retry policy.
 
 ### `anvil build`  *(mutates)*
 `anvil build <dir|air.yaml> <capability-id> [--out dir]`
@@ -76,6 +90,41 @@ The capability review lifecycle. `propose` re-runs discovery and prints each gro
 Compile one approved capability into an aligned CLI + MCP + skill bundle.
 
 Narrows the AIR document to the capability's approved operations and reachable schemas, then reuses the whole-service generator, so the capability bundle is the same aligned projection of a smaller model. Refuses (with a structured error) a capability that is missing, not lifecycle-approved, or would build empty. Stamps a content-addressed bundle.json (capabilityHash + contractHash shared by every surface); rebuilding unchanged input reproduces identical hashes.
+
+### `anvil certify`  *(mutates)*
+`anvil certify <dir|air.yaml> [--json]`
+
+Run the certification gates over a bundle and write certification.json.
+
+Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates and the MCP tool list, CLI catalog, and runtime manifest expose exactly the same approved operations), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.
+
+### `anvil publish`  *(mutates)*
+`anvil publish <dir> --target cloud-run [--env ENV] [--allow-uncertified]`
+
+Gated publish: verify the certification, then emit the deployment plan.
+
+Publication requires a PASSING certification whose bundle hash matches the current bundle content — a stale certificate fails. On success it prints the Cloud Run deployment plan (same as `anvil deploy cloud-run`) and writes publication.json into the bundle. `--allow-uncertified` waives the gate for non-prod environments only; publishing to prod (via --env prod or ANVIL_ENV=prod) fails closed without a valid certification, flag or no flag. No cloud credentials are held and no API calls are made.
+
+### `anvil deploy`
+`anvil deploy cloud-run <dir> [--env prod]`
+
+Print the Cloud Run deployment plan for a bundle.
+
+Anvil generates the deploy artifacts (Dockerfile, service YAML, env/secret contracts); it does not hold cloud credentials.
+
+### `anvil sync`  *(mutates)*
+`anvil sync <spec-path> <dir|air.yaml> [--manifest f] [--root ws] [--json]`
+
+Detect semantic drift between the current spec and a stored AIR contract.
+
+Layer 6 — drift and recertification. Re-imports the spec through the Layer 0 snapshot layer (unchanged content is a fast path: same sourceHash, no drift), recompiles it in memory, and diffs the fresh contract against the stored AIR: operations added/removed, field type and requiredness changes, auth scope/type changes, retry/idempotency/confirmation semantics, pagination, and documentation-only edits (info). Safety-loosening drift (a dropped confirmation, new retries, an idempotency claim crossing "none", auth vanishing) is blocking; other safety-semantic drift is high. Reports which capabilities are affected and which certifications must be re-earned even though their bundle bytes are untouched, then writes a drift record to .anvil/drift/<id>.json. Never mutates AIR, never applies spec changes, never touches capability lifecycles. Exits non-zero on high/blocking drift so it can gate a pipeline.
+
+### `anvil drift`  *(mutates)*
+`anvil drift <list|show|accept> [id] [--note ..] [--root ws] [--json]`
+
+List, inspect, and mark reviewed the drift records `anvil sync` stored.
+
+`list` shows every stored drift record with its severity mix and review status; `show <id>` prints one record in full (items grouped by severity, affected capabilities, invalidated certifications). `accept <id> [--note ..]` stamps reviewedAt on the record — bookkeeping only: accepting drift never edits AIR, never restores a certification, and never changes capability lifecycles. Act on drift deliberately with `anvil compile`, `anvil certify`, and the capability review commands.
 
 ### `anvil run`  *(mutates)*
 `anvil run <dir|air.yaml> <resource> <action> [flags]`
@@ -97,52 +146,3 @@ Boots the MCP server for local agent use. The same server deploys to Cloud Run f
 Locate and verify the portable skill package.
 
 The skill is also served over MCP as anvil://skill/<service>/... resources.
-
-### `anvil deploy`
-`anvil deploy cloud-run <dir> [--env prod]`
-
-Print the Cloud Run deployment plan for a bundle.
-
-Anvil generates the deploy artifacts (Dockerfile, service YAML, env/secret contracts); it does not hold cloud credentials.
-
-### `anvil source`  *(mutates)*
-`anvil source <add|list|show|validate> [args] [--json]`
-
-Import and lock API source specs as content-addressed snapshots.
-
-Layer 0 — capture what the customer actually supplied, before any compilation. `anvil source add <path|dir>` detects the spec format (OpenAPI 3.0/3.1 or Swagger 2.0, YAML or JSON) without compiling, hashes the file set deterministically, and locks a snapshot under .anvil/sources/<id>/ (source.json plus verbatim raw/ copies). A directory of specs becomes one snapshot with many files. `list` and `show` are read-only; `validate <id>` re-hashes raw/ and confirms it still matches the locked source.json, so tampering or drift is caught before it can contaminate a compile. The sourceHash is content-derived only — re-importing unchanged content yields the same hash — and broken input produces structured diagnostics, never a crash.
-
-### `anvil certify`  *(mutates)*
-`anvil certify <dir|air.yaml> [--json]`
-
-Run the certification gates over a bundle and write certification.json.
-
-Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates and the MCP tool list, CLI catalog, and runtime manifest expose exactly the same approved operations), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.
-
-### `anvil publish`  *(mutates)*
-`anvil publish <dir> --target cloud-run [--env ENV] [--allow-uncertified]`
-
-Gated publish: verify the certification, then emit the deployment plan.
-
-Publication requires a PASSING certification whose bundle hash matches the current bundle content — a stale certificate fails. On success it prints the Cloud Run deployment plan (same as `anvil deploy cloud-run`) and writes publication.json into the bundle. `--allow-uncertified` waives the gate for non-prod environments only; publishing to prod (via --env prod or ANVIL_ENV=prod) fails closed without a valid certification, flag or no flag. No cloud credentials are held and no API calls are made.
-
-### `anvil agentify`  *(mutates)*
-`anvil agentify <spec> [--manifest f] [--service id] [--out dir] [--root ws] [--json]`
-
-One-shot discovery: lock the source, compile, assess readiness, and propose capabilities — then stop for review.
-
-Convenience orchestration of the discovery flow — the same library calls as running `anvil source add` (locks a content-addressed snapshot under .anvil/sources), `anvil compile` (writes the bundle, default generated/<service-id>), `anvil assess` (the readiness triage; blocked operations are surfaced prominently but do not stop the flow), and `anvil capability propose` (read-only re-discovery over the stored groupings) individually, so the compiled AIR is byte-identical to the four-command path. It then STOPS for human review. It deliberately does NOT approve any capability or operation (every grouping stays `proposed`, every unproven mutation stays `review_required`), does NOT certify, and does NOT publish — no certification.json or publication.json is ever written. A broken spec stops at the snapshot layer with structured diagnostics and exit 1; nothing downstream runs.
-
-### `anvil sync`  *(mutates)*
-`anvil sync <spec-path> <dir|air.yaml> [--manifest f] [--root ws] [--json]`
-
-Detect semantic drift between the current spec and a stored AIR contract.
-
-Layer 6 — drift and recertification. Re-imports the spec through the Layer 0 snapshot layer (unchanged content is a fast path: same sourceHash, no drift), recompiles it in memory, and diffs the fresh contract against the stored AIR: operations added/removed, field type and requiredness changes, auth scope/type changes, retry/idempotency/confirmation semantics, pagination, and documentation-only edits (info). Safety-loosening drift (a dropped confirmation, new retries, an idempotency claim crossing "none", auth vanishing) is blocking; other safety-semantic drift is high. Reports which capabilities are affected and which certifications must be re-earned even though their bundle bytes are untouched, then writes a drift record to .anvil/drift/<id>.json. Never mutates AIR, never applies spec changes, never touches capability lifecycles. Exits non-zero on high/blocking drift so it can gate a pipeline.
-
-### `anvil drift`  *(mutates)*
-`anvil drift <list|show|accept> [id] [--note ..] [--root ws] [--json]`
-
-List, inspect, and mark reviewed the drift records `anvil sync` stored.
-
-`list` shows every stored drift record with its severity mix and review status; `show <id>` prints one record in full (items grouped by severity, affected capabilities, invalidated certifications). `accept <id> [--note ..]` stamps reviewedAt on the record — bookkeeping only: accepting drift never edits AIR, never restores a certification, and never changes capability lifecycles. Act on drift deliberately with `anvil compile`, `anvil certify`, and the capability review commands.

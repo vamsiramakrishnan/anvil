@@ -986,7 +986,9 @@ function loadAir(path?: string): AirDocument {
 }
 
 function topHelp(): string {
-  const rows = ANVIL_COMMANDS.map((c) => `  ${c.name.padEnd(9)} ${c.summary}`);
+  // Column width follows the longest command so the summary column stays aligned.
+  const pad = Math.max(...ANVIL_COMMANDS.map((c) => c.name.length)) + 1;
+  const rows = ANVIL_COMMANDS.map((c) => `  ${c.name.padEnd(pad)} ${c.summary}`);
   return [
     "anvil — an agent toolchain compiler",
     "",
@@ -994,7 +996,7 @@ function topHelp(): string {
     "",
     "Commands:",
     ...rows,
-    "  skill     Emit the skill that lets an agent harness operate anvil",
+    `  ${"skill".padEnd(pad)} Emit the skill that lets an agent harness operate anvil`,
     "",
     "Run `anvil <command>` with no args for usage. The CLI, MCP server, and skill",
     "are all generated from one AIR model. No drift.",
