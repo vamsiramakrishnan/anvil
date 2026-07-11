@@ -4,6 +4,7 @@
  * result for safety. Build-time only; never on the runtime hot path.
  */
 
+export * from "./adopt/index.js";
 export * from "./capabilities.js";
 export * from "./capability/index.js";
 export * from "./capability-review.js";
