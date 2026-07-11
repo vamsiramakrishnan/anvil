@@ -36,6 +36,34 @@ describe("classifier", () => {
     expect(effect.risk).toBe("destructive");
     expect(effect.reversible).toBe(false);
   });
+
+  it("classifies a POST search endpoint as a read, not a mutation", () => {
+    // A common REST convention (Elasticsearch, GitHub, Jira's POST /search/jql):
+    // the query is too large/complex for a query string, so it rides a POST body,
+    // but the endpoint has no persisted side effect.
+    const { effect, idempotency } = classifyEffect(
+      "post",
+      "searchAndReconsileIssuesUsingJqlPost /search/jql",
+    );
+    expect(effect.kind).toBe("read");
+    expect(effect.action).toBe("search");
+    expect(idempotency.mode).toBe("natural");
+    expect(classifyConfirmation(effect, idempotency).required).toBe(false);
+  });
+
+  it("does not reclassify a POST that merely mentions an unrelated verb substring", () => {
+    // "research" contains "search" as a substring but is not the search verb —
+    // word-boundary matching must not false-positive on it.
+    const { effect } = classifyEffect("post", "createResearchNote /research-notes");
+    expect(effect.kind).toBe("mutation");
+  });
+
+  it("keeps a POST validate/simulate endpoint conservatively a mutation", () => {
+    // Unlike search/export/poll, these verbs often still have a side effect
+    // (quota, temporary hold, audit trail) in real APIs, so they stay mutations.
+    const { effect } = classifyEffect("post", "validateOrder /orders/validate");
+    expect(effect.kind).toBe("mutation");
+  });
 });
 
 describe("compile pipeline (spec only)", () => {
@@ -151,10 +179,10 @@ describe("naming pass", () => {
     const clashing = `openapi: 3.0.0
 info: { title: billing, version: 1.0.0 }
 paths:
-  /orders/{id}/cancel:
+  /orders/{id}/archive:
     post:
       responses: { "200": { description: ok } }
-  /subscriptions/{id}/cancel:
+  /subscriptions/{id}/archive:
     post:
       responses: { "200": { description: ok } }
 `;
@@ -169,6 +197,43 @@ paths:
     expect(new Set(air.operations.map((o) => o.mcp.toolName)).size).toBe(air.operations.length);
   });
 
+  it("treats a verb-shaped trailing path segment as an action, not the resource", async () => {
+    // GET /field/search searches fields; naively taking the last segment as the
+    // resource misreads this as its own resource ("search list field").
+    const searchy = `openapi: 3.0.0
+info: { title: jira, version: 1.0.0 }
+paths:
+  /field/search:
+    get:
+      operationId: getFieldsPaginated
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: searchy, serviceId: "jira" });
+    const op = air.operations[0];
+    expect(op?.effect.resource).toBe("field");
+    expect(op?.cli.command).toBe("jira field search");
+    // The CLI command and the MCP tool name must agree on what the operation is —
+    // one no longer says "search" while the other says "get_fields_paginated"
+    // with an unrelated resource token wedged in between.
+    expect(op?.mcp.toolName).toContain("get_fields_paginated");
+  });
+
+  it("keeps the CLI command and effect action in agreement for a reclassified POST search", async () => {
+    const jql = `openapi: 3.0.0
+info: { title: jira, version: 1.0.0 }
+paths:
+  /search/jql:
+    post:
+      operationId: searchAndReconsileIssuesUsingJqlPost
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: jql, serviceId: "jira" });
+    const op = air.operations[0];
+    expect(op?.effect.kind).toBe("read");
+    expect(op?.cli.command).toBe("jira jql search");
+    expect(op?.confirmation.required).toBe(false);
+  });
+
   it("flags a weak (agent-hostile) name for review", async () => {
     const weak = `openapi: 3.0.0
 info: { title: gateway, version: 1.0.0 }
@@ -178,6 +243,23 @@ paths:
       responses: { "200": { description: ok } }
 `;
     const air = await compile({ spec: weak, serviceId: "gateway" });
+    expect(air.diagnostics.some((d) => d.code === "weak_operation_name")).toBe(true);
+  });
+
+  it("flags a vague verb even from a well-declared operationId", async () => {
+    // Real-world case (Jira's POST /issue/{id}/transitions, operationId
+    // doTransition): a strong operationId signal alone must not be enough to
+    // hide an agent-hostile verb — mcp-atlassian itself renames this same
+    // operation to "transition_issue" rather than keep Atlassian's "do".
+    const vague = `openapi: 3.0.0
+info: { title: jira, version: 1.0.0 }
+paths:
+  /issue/{id}/transitions:
+    post:
+      operationId: doTransition
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: vague, serviceId: "jira" });
     expect(air.diagnostics.some((d) => d.code === "weak_operation_name")).toBe(true);
   });
 });
@@ -279,5 +361,44 @@ describe("authored workflows", () => {
 `;
     const air = await compile({ spec, manifest: badManifest, serviceId: "payments" });
     expect(air.diagnostics.some((d) => d.code === "workflow_step_unresolved")).toBe(true);
+  });
+});
+
+describe("self-referential schemas", () => {
+  it("compiles a recursive schema instead of crashing on a circular object graph", async () => {
+    // Real specs legitimately nest a type inside itself (a group of groups, a
+    // comment thread of replies). Full $ref dereferencing turns that into an
+    // actual circular JS object graph; the compiler must serialize the result,
+    // not throw "Converting circular structure to JSON".
+    const recursive = `openapi: 3.0.0
+info: { title: groups, version: 1.0.0 }
+paths:
+  /groups/{id}:
+    get:
+      operationId: getGroup
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+components:
+  schemas:
+    Group:
+      type: object
+      properties:
+        name: { type: string }
+        subgroups:
+          type: array
+          items:
+            $ref: '#/components/schemas/Group'
+`;
+    const air = await compile({ spec: recursive, serviceId: "groups" });
+    expect(air.operations).toHaveLength(1);
+    // The truncation is never silent — it is reported as a reviewable diagnostic.
+    expect(air.diagnostics.some((d) => d.code === "schema_cycle_truncated")).toBe(true);
+    // The result must actually be JSON-safe (this would throw if it weren't).
+    expect(() => JSON.stringify(air)).not.toThrow();
   });
 });
