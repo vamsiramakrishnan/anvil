@@ -36,6 +36,13 @@ export interface BundleResult<T> {
   truncatedAt: string[];
   /** Document paths where unnamed structure was cut off by the depth bound (not a cycle). */
   depthLimitedAt: string[];
+  /**
+   * Components synthesized by the bundler for large repeated ANONYMOUS
+   * structure (no vendor name to collapse to). `path` is the position whose
+   * repetition triggered the hoist; `name` is the deterministic
+   * `components.schemas` entry the repeats now `$ref`.
+   */
+  synthesized: { name: string; path: string }[];
 }
 
 /**
@@ -111,9 +118,8 @@ function namedSchemasOf(document: unknown): Record<string, unknown> {
 //    the document. Cycles force sharing in the dereferenced graph, so the
 //    distinct-node count is far below traversal count.
 // 2. Give each node a round-0 hash of its LOCAL shape only: object/array tag,
-//    sorted key names, scalar values (title included — a clone carries the
-//    same title as its source, so including every field stays consistent),
-//    with composite children as placeholders.
+//    sorted key names, scalar values (title and description included — see
+//    the match-hash nuance below), with composite children as placeholders.
 // 3. Refine: each round, a node's next hash mixes its OWN previous hash with
 //    its local shape and its children's previous-round hashes. Including the
 //    node's own previous hash makes every round a strict refinement of the
@@ -123,7 +129,22 @@ function namedSchemasOf(document: unknown): Record<string, unknown> {
 //    the cycles — hash identically in every round; distinguishable nodes
 //    split within graph-diameter rounds, hard-capped at
 //    MAX_REFINEMENT_ROUNDS. Cycles need no special casing at all.
-// 4. `buildStructuralIndex` maps each named component body's canonical hash
+// 4. After the refinement fixpoint, each node gets its MATCH hash: its own
+//    local shape MINUS its own top-level `description`, combined with its
+//    children's full refined hashes. This is the identity used for all
+//    collapse decisions, and the asymmetry is deliberate and surgical:
+//    `dereference()` merges each reference SITE's sibling `description` onto
+//    the resolved clone's TOP object — measured on GitHub's real GraphQL
+//    schema, 2,660 of 3,868 inlined component copies differed from their
+//    component body ONLY in that top-level description, which made strict
+//    hash matching miss, left the clones un-collapsed, and re-exploded the
+//    output past V8's string limit. Descriptions everywhere DEEPER still
+//    count (interior positions are cloned verbatim from the same source, so
+//    they agree between body and clone), which keeps genuinely different
+//    schemas that merely share a skeleton — e.g. two REST types whose nested
+//    fields differ only in prose — from merging: only the one field
+//    dereference actually rewrites is forgiven, nothing else.
+// 5. `buildStructuralIndex` maps each named component body's match hash
 //    to its name. Two DIFFERENT names with structurally identical bodies are
 //    genuine aliases; the collapse target is picked deterministically:
 //    prefer the alias whose name equals the shared body's own `title` (when
@@ -141,10 +162,39 @@ function namedSchemasOf(document: unknown): Record<string, unknown> {
 /** Hard cap on refinement rounds; real graphs converge in ~graph-diameter rounds. */
 const MAX_REFINEMENT_ROUNDS = 64;
 
+/**
+ * Keys ignored in a node's OWN local shape when computing its MATCH hash
+ * (never in its children's): annotations that carry no validation semantics
+ * and that dereference legitimately rewrites on the clone's top object per
+ * reference site. See point 4 of the section comment for the measured
+ * evidence.
+ */
+const IDENTITY_ANNOTATION_KEYS = new Set(["description"]);
+
+/**
+ * Minimum OUTPUT tree size (object/array node count) at which an
+ * already-emitted expansion is hoisted into a synthesized component instead
+ * of being emitted again at a second tree position. Small shared stubs are
+ * cheaper inline than as a `$ref` + definition; large ones (GraphQL
+ * connection wrappers, adapter-lowered arg objects) multiply through
+ * `JSON.stringify`'s tree expansion — GitHub's real 1,752-type schema
+ * reached >10.5M tree positions from only 23,502 distinct nodes that way.
+ * With hoisting, any expansion this large appears at most twice (its first
+ * inline emission plus the synthesized definition); every further
+ * occurrence is a pointer, so output tree size stays O(distinct input
+ * nodes × this constant) for ANY input.
+ */
+const HOIST_MIN_OUTPUT_NODES = 64;
+
 interface StructuralIndex {
-  /** Canonical structural hash of every object/array node reachable from the document. */
+  /**
+   * Canonical MATCH hash of every object/array node reachable from the
+   * document: full structural identity, except the node's own top-level
+   * annotation keys (IDENTITY_ANNOTATION_KEYS) are ignored — see point 4 of
+   * the section comment.
+   */
   nodeHash: Map<object, string>;
-  /** Hash of a named component body → all names with that structure + the canonical collapse target. */
+  /** Match hash of a named component body → all names with that structure + the canonical collapse target. */
   byHash: Map<string, { canonical: string; names: Set<string> }>;
 }
 
@@ -204,7 +254,7 @@ interface NodeTemplate {
   children: object[];
 }
 
-function buildTemplate(node: object): NodeTemplate {
+function buildTemplate(node: object, skipAnnotations: boolean): NodeTemplate {
   const statics: string[] = [];
   const children: object[] = [];
   let run: string;
@@ -224,6 +274,7 @@ function buildTemplate(node: object): NodeTemplate {
     const record = node as Record<string, unknown>;
     // Sorted keys: structural identity must not depend on insertion order.
     for (const key of Object.keys(record).sort()) {
+      if (skipAnnotations && IDENTITY_ANNOTATION_KEYS.has(key)) continue;
       run += `|${JSON.stringify(key)}:`;
       const v = record[key];
       if (v !== null && typeof v === "object") {
@@ -240,8 +291,9 @@ function buildTemplate(node: object): NodeTemplate {
 }
 
 /**
- * Canonical structural hash of every object/array node reachable from `root`,
- * by hash refinement (see the section comment above). O(distinct nodes ×
+ * Canonical MATCH hash of every object/array node reachable from `root`, by
+ * hash refinement over full structure followed by one annotation-agnostic
+ * finishing pass (see points 3–4 of the section comment). O(distinct nodes ×
  * rounds); rounds ≈ graph diameter, capped at MAX_REFINEMENT_ROUNDS.
  */
 function computeStructuralHashes(root: unknown): Map<object, string> {
@@ -256,7 +308,7 @@ function computeStructuralHashes(root: unknown): Map<object, string> {
   }
   while (stack.length > 0) {
     const node = stack.pop() as object;
-    const template = buildTemplate(node);
+    const template = buildTemplate(node, false);
     nodes.push(node);
     templates.push(template);
     for (const child of template.children) {
@@ -314,7 +366,24 @@ function computeStructuralHashes(root: unknown): Map<object, string> {
     if (classes.size === distinct) break;
     distinct = classes.size;
   }
-  return hash;
+
+  // 4. Finishing pass — the MATCH hash: each node's own local shape minus its
+  //    own top-level annotation keys, with its children's FULL refined hashes.
+  //    Only the one field dereference rewrites per reference site (the top
+  //    object's description) is forgiven; every deeper description still
+  //    participates in identity via the children's full hashes.
+  const match = new Map<object, string>();
+  for (const node of nodes) {
+    const t = buildTemplate(node, true);
+    const state = newHashState();
+    mixString(state, t.statics[0] as string);
+    for (let c = 0; c < t.children.length; c++) {
+      mixString(state, hash.get(t.children[c] as object) ?? "?");
+      mixString(state, t.statics[c + 1] as string);
+    }
+    match.set(node, digest(state));
+  }
+  return match;
 }
 
 /** True when a value is an object/array with at least one object/array child. */
@@ -328,9 +397,12 @@ function buildStructuralIndex(document: unknown, named: Record<string, unknown>)
   const compositeNames = Object.keys(named)
     .filter((name) => isComposite(named[name]))
     .sort();
-  if (compositeNames.length === 0) return { nodeHash: new Map(), byHash: new Map() };
-
+  // The node hashes are computed even when there is nothing to index by name:
+  // hoisting (see `hoistShared`) uses them to give synthesized components
+  // content-derived names and to deduplicate CLONES of a hoisted structure,
+  // and a document can need hoisting with no (composite) components at all.
   const nodeHash = computeStructuralHashes(document);
+  if (compositeNames.length === 0) return { nodeHash, byHash: new Map() };
   const byHash = new Map<string, { canonical: string; names: Set<string> }>();
   for (const name of compositeNames) {
     const h = nodeHash.get(named[name] as object);
@@ -354,6 +426,23 @@ function buildStructuralIndex(document: unknown, named: Record<string, unknown>)
   return { nodeHash, byHash };
 }
 
+/** Invariant state threaded through one `bundleDocument` walk. */
+interface WalkContext {
+  maxDepth: number;
+  truncatedAt: string[];
+  depthLimitedAt: string[];
+  resolved: Map<object, { depth: number; value: unknown }>;
+  nameOf: Map<object, string>;
+  structural: StructuralIndex;
+  /** The document's real `components.schemas` (name-collision authority for hoists). */
+  named: Record<string, unknown>;
+  /** Components synthesized for large repeated anonymous structure. */
+  synthesized: Record<string, unknown>;
+  synthesizedAt: { name: string; path: string }[];
+  /** Input node → its synthesized component name, once hoisted. */
+  hoistedNames: Map<object, string>;
+}
+
 export function bundleDocument<T>(
   document: T,
   maxDepth = DEFAULT_MAX_SCHEMA_DEPTH,
@@ -373,11 +462,18 @@ export function bundleDocument<T>(
     if (schema === null || typeof schema !== "object") continue;
     nameOf.set(schema, name);
   }
-  const structural = buildStructuralIndex(document, named);
-
-  const truncatedAt: string[] = [];
-  const depthLimitedAt: string[] = [];
-  const resolved = new Map<object, { depth: number; value: unknown }>();
+  const ctx: WalkContext = {
+    maxDepth,
+    truncatedAt: [],
+    depthLimitedAt: [],
+    resolved: new Map(),
+    nameOf,
+    structural: buildStructuralIndex(document, named),
+    named,
+    synthesized: {},
+    synthesizedAt: [],
+    hoistedNames: new Map(),
+  };
 
   // Phase 1: process each named schema's own body exactly once. `definingName`
   // suppresses the $ref-collapse for this one top-level call only — its
@@ -394,12 +490,7 @@ export function bundleDocument<T>(
       `$.components.schemas.${name}`,
       0,
       true,
-      maxDepth,
-      truncatedAt,
-      depthLimitedAt,
-      resolved,
-      nameOf,
-      structural,
+      ctx,
       name,
     );
   }
@@ -407,34 +498,94 @@ export function bundleDocument<T>(
   // Phase 2: walk the rest of the document. Every occurrence of a named
   // schema anywhere (paths, parameters, other schemas already handled above)
   // collapses to a $ref — its real content is in `bundledSchemas`.
-  const restWalked = walk(
-    document,
-    new Set(),
-    "$",
-    0,
-    false,
-    maxDepth,
-    truncatedAt,
-    depthLimitedAt,
-    resolved,
-    nameOf,
-    structural,
-    undefined,
-  );
+  const restWalked = walk(document, new Set(), "$", 0, false, ctx, undefined);
+
+  // Synthesized components are real definitions too: their `$ref`s must
+  // resolve through `components.schemas` exactly like vendor-named ones.
+  Object.assign(bundledSchemas, ctx.synthesized);
 
   // Splice the real definitions back in: components.schemas must hold full
   // bodies, not a self-referential $ref to each of its own entries (which is
   // what phase 2 alone would produce, since it has no `definingName`).
   const out = restWalked as { components?: { schemas?: unknown } } | null;
-  if (
-    out !== null &&
-    typeof out === "object" &&
-    out.components &&
-    typeof out.components === "object"
-  ) {
-    (out.components as Record<string, unknown>).schemas = bundledSchemas;
+  if (out !== null && typeof out === "object") {
+    if (!out.components || typeof out.components !== "object") {
+      // A document with no components container can still need one, when
+      // hoisting synthesized a component out of repeated anonymous structure.
+      if (Object.keys(bundledSchemas).length > 0) out.components = {};
+    }
+    if (out.components && typeof out.components === "object") {
+      (out.components as Record<string, unknown>).schemas = bundledSchemas;
+    }
   }
-  return { document: out as T, truncatedAt, depthLimitedAt };
+  return {
+    document: out as T,
+    truncatedAt: ctx.truncatedAt,
+    depthLimitedAt: ctx.depthLimitedAt,
+    synthesized: ctx.synthesizedAt,
+  };
+}
+
+/**
+ * Count object/array TREE positions (no dedupe — this is what
+ * `JSON.stringify` pays), capped so probing a huge expansion stays O(cap).
+ */
+function treeSize(value: unknown, cap: number): number {
+  let count = 0;
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const v = stack.pop();
+    if (v === null || typeof v !== "object") continue;
+    count++;
+    if (count >= cap) return count;
+    if (Array.isArray(v)) for (const c of v) stack.push(c);
+    else for (const c of Object.values(v)) stack.push(c);
+  }
+  return count;
+}
+
+/** Deterministic, human-scannable name for a hoisted structure. */
+function hoistName(node: object, path: string, ctx: WalkContext): string {
+  const title = Array.isArray(node) ? undefined : (node as Record<string, unknown>).title;
+  const raw =
+    typeof title === "string" && title.length > 0
+      ? title
+      : (path.match(/([A-Za-z0-9_-]+)[^A-Za-z0-9_-]*$/)?.[1] ?? "schema");
+  let base = raw.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "");
+  if (base.length === 0) base = "schema";
+  if (/^\d/.test(base)) base = `s${base}`;
+  const hash8 = (ctx.structural.nodeHash.get(node) ?? "anon0000").slice(0, 8);
+  let name = `${base}_${hash8}`;
+  let n = 2;
+  while (name in ctx.named || name in ctx.synthesized) name = `${base}_${hash8}_${n++}`;
+  return name;
+}
+
+/**
+ * Hoist a large, already-emitted expansion into a synthesized component so
+ * every occurrence past the first becomes a `$ref` — the guarantee that the
+ * output's TREE size (what serialization pays) stays proportional to unique
+ * structure even for large repeated ANONYMOUS schemas that have no vendor
+ * name to collapse to (GraphQL/Discovery adapter output is full of them).
+ * The synthesized body is re-walked from depth 0 as a defining walk, so it
+ * gets full fidelity rather than baking in whatever depth-truncation the
+ * first emission position happened to impose.
+ */
+function hoistShared(node: object, path: string, ctx: WalkContext): string {
+  const existing = ctx.hoistedNames.get(node);
+  if (existing !== undefined) return existing;
+  const name = hoistName(node, path, ctx);
+  ctx.hoistedNames.set(node, name);
+  ctx.synthesized[name] = {}; // reserve the key while the defining walk runs
+  // Register structurally too, so clones of this structure (not just this
+  // exact object) collapse to the same synthesized component.
+  const hash = ctx.structural.nodeHash.get(node);
+  if (hash !== undefined && !ctx.structural.byHash.has(hash)) {
+    ctx.structural.byHash.set(hash, { canonical: name, names: new Set([name]) });
+  }
+  ctx.synthesizedAt.push({ name, path });
+  ctx.synthesized[name] = walk(node, new Set(), `$.components.schemas.${name}`, 0, true, ctx, name);
+  return name;
 }
 
 function walk(
@@ -443,15 +594,11 @@ function walk(
   path: string,
   depth: number,
   inSchema: boolean,
-  maxDepth: number,
-  truncatedAt: string[],
-  depthLimitedAt: string[],
-  resolved: Map<object, { depth: number; value: unknown }>,
-  nameOf: Map<object, string>,
-  structural: StructuralIndex,
+  ctx: WalkContext,
   definingName: string | undefined,
 ): unknown {
   if (node === null || typeof node !== "object") return node;
+  const { nameOf, structural, resolved, maxDepth, truncatedAt, depthLimitedAt } = ctx;
 
   // Named-schema reference collapse — checked before anything else, so a
   // reference to a named schema NEVER gets inlined or re-walked, regardless
@@ -487,6 +634,26 @@ function walk(
     return truncate(node as Record<string, unknown> | unknown[]);
   }
   const cached = resolved.get(node);
+  if (cached !== undefined && inSchema) {
+    // Already hoisted (this exact object) — every further occurrence is a pointer.
+    const hoisted = ctx.hoistedNames.get(node);
+    if (hoisted !== undefined && hoisted !== definingName) {
+      return { $ref: `#/components/schemas/${hoisted}` };
+    }
+    // Hard law: never emit a LARGE already-emitted expansion at a second
+    // tree position. The memo below returns the SAME output object for every
+    // further occurrence — compact as a DAG in memory, but `JSON.stringify`
+    // expands it into a full copy per position, which is exactly how
+    // GitHub's 23,502-distinct-node bundle exploded past 10.5M tree
+    // positions. Large repeats are hoisted into a synthesized component and
+    // referenced; small stubs stay inline (cheaper than a $ref + definition).
+    if (
+      definingName === undefined &&
+      treeSize(cached.value, HOIST_MIN_OUTPUT_NODES) >= HOIST_MIN_OUTPUT_NODES
+    ) {
+      return { $ref: `#/components/schemas/${hoistShared(node, path, ctx)}` };
+    }
+  }
   // A cached expansion is only reusable if it was resolved at a depth at
   // least as deep as this visit's budget allows (see bounds discussion in
   // the module doc) — recomputing from a deeper prior visit is always safe.
@@ -523,12 +690,7 @@ function walk(
         `${path}[${i}]`,
         inSchema ? depth + 1 : depth,
         inSchema,
-        maxDepth,
-        truncatedAt,
-        depthLimitedAt,
-        resolved,
-        nameOf,
-        structural,
+        ctx,
         undefined,
       ),
     );
@@ -543,20 +705,7 @@ function walk(
       const entersSchema = k === "schema" || isSchemasContainer;
       const childInSchema = inSchema || entersSchema;
       const childDepth = entersSchema ? 0 : inSchema ? depth + 1 : depth;
-      obj[k] = walk(
-        v,
-        nextAncestors,
-        `${path}.${k}`,
-        childDepth,
-        childInSchema,
-        maxDepth,
-        truncatedAt,
-        depthLimitedAt,
-        resolved,
-        nameOf,
-        structural,
-        undefined,
-      );
+      obj[k] = walk(v, nextAncestors, `${path}.${k}`, childDepth, childInSchema, ctx, undefined);
     }
     out = obj;
   }

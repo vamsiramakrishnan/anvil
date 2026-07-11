@@ -409,7 +409,12 @@ describe("bundleDocument", () => {
       const bodies: Record<string, unknown>[] = [];
       const props: Record<string, unknown>[] = [];
       for (let i = 0; i < N; i++) {
-        const p: Record<string, unknown> = {};
+        // Each type carries a distinguishing FIELD (like real types do):
+        // `description` is an annotation and deliberately excluded from
+        // structural identity (reference sites override it), so a fixture
+        // distinguished ONLY by description would be a mesh of genuine
+        // structural aliases — realistic types differ by field names.
+        const p: Record<string, unknown> = { [`id_${i}`]: { type: "string" } };
         props.push(p);
         bodies.push({ type: "object", description: `component ${i}`, properties: p });
       }
@@ -465,6 +470,174 @@ describe("bundleDocument", () => {
       expect(out.paths["/root"].get.responses["200"].content["application/json"].schema).toEqual({
         $ref: "#/components/schemas/C000",
       });
+    });
+
+    it("collapses clones that diverge from their component ONLY by description (dereference site-merge)", () => {
+      // The verified real-world miss (GitHub's 1.5MB GraphQL SDL): dereference
+      // merges each reference SITE's description onto the resolved clone, so
+      // 2,660 of 3,868 inlined component copies differed from their component
+      // body only in `description`. Identity must ignore that annotation.
+      const body = () => ({
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          node: { type: "object", properties: { total: { type: "integer" } } },
+        },
+      });
+      const site = (description: string) => ({ ...body(), description });
+      const doc = {
+        components: { schemas: { Connection: { ...body(), description: "A paginated list." } } },
+        paths: {
+          "/a": {
+            get: {
+              responses: {
+                "200": {
+                  content: {
+                    "application/json": {
+                      schema: site("A list of repositories the user is watching."),
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "/b": {
+            get: {
+              responses: {
+                "200": { content: { "application/json": { schema: site("A list of users.") } } },
+              },
+            },
+          },
+        },
+      };
+      const { document } = bundleDocument(doc);
+      const out = document as {
+        paths: Record<
+          string,
+          {
+            get: { responses: { "200": { content: { "application/json": { schema: unknown } } } } };
+          }
+        >;
+      };
+      const ref = { $ref: "#/components/schemas/Connection" };
+      expect(out.paths["/a"]?.get.responses["200"].content["application/json"].schema).toEqual(ref);
+      expect(out.paths["/b"]?.get.responses["200"].content["application/json"].schema).toEqual(ref);
+    });
+
+    it("hoists a LARGE repeated anonymous structure so output TREE size stays proportional to unique structure", () => {
+      // The second real failure shape from adapter-lowered documents: a large
+      // ANONYMOUS structure (no component to collapse to — e.g. GraphQL args/
+      // request-body schemas emitted inline per operation) shared in memory at
+      // many positions. The walk memo used to return the SAME output object at
+      // each position — a compact DAG that JSON.stringify expands into a full
+      // copy per position (GitHub: 23,502 distinct nodes → >10.5M tree
+      // positions, "Invalid string length"). Hard law: bundled output TREE
+      // size (counted WITHOUT dedupe) stays bounded.
+      const big: Record<string, unknown> = { type: "object", properties: {} };
+      for (let i = 0; i < 40; i++) {
+        (big.properties as Record<string, unknown>)[`field${i}`] = {
+          type: "object",
+          properties: { value: { type: "string" }, count: { type: "integer" } },
+        };
+      }
+      const SITES = 30;
+      const paths: Record<string, unknown> = {};
+      for (let i = 0; i < SITES; i++) {
+        // The SAME object at every site (in-memory sharing, as dereference
+        // produces for cyclic/adapter-lowered graphs). No components at all.
+        paths[`/op${i}`] = {
+          post: {
+            requestBody: { content: { "application/json": { schema: big } } },
+            responses: {},
+          },
+        };
+      }
+      const build = () => ({ paths });
+      const first = bundleDocument(build());
+      // Tree-size count without dedupe — what serialization actually pays.
+      const treeCount = (v: unknown, cap: number): number => {
+        let n = 0;
+        const stack: unknown[] = [v];
+        while (stack.length > 0) {
+          const x = stack.pop();
+          if (x === null || typeof x !== "object") continue;
+          n++;
+          if (n >= cap) return n;
+          const kids = Array.isArray(x) ? x : Object.values(x);
+          for (const k of kids) stack.push(k);
+        }
+        return n;
+      };
+      const oneCopy = treeCount(big, 100_000);
+      const total = treeCount(first.document, 1_000_000);
+      // Without hoisting this would be ≈ SITES × oneCopy (≈3,700+); with it,
+      // the structure is defined once (plus its first inline emission) and
+      // every other site is a $ref pointer.
+      expect(total).toBeLessThan(3 * oneCopy + 20 * SITES);
+      expect(() => JSON.stringify(first.document)).not.toThrow();
+      // The hoist is visible and deterministic: a synthesized component with
+      // a `<nearest-title-or-key>_<hash8>` name now holds the definition.
+      expect(first.synthesized.length).toBeGreaterThan(0);
+      const synthName = first.synthesized[0]?.name as string;
+      expect(synthName).toMatch(/^[A-Za-z][A-Za-z0-9_.-]*_[0-9a-f]{8}$/);
+      const out = first.document as {
+        components: { schemas: Record<string, { properties?: unknown }> };
+        paths: Record<
+          string,
+          { post: { requestBody: { content: { "application/json": { schema: unknown } } } } }
+        >;
+      };
+      expect(out.components.schemas[synthName]?.properties).toBeDefined();
+      // Later sites reference it; the first site keeps its inline emission.
+      expect(out.paths["/op29"]?.post.requestBody.content["application/json"].schema).toEqual({
+        $ref: `#/components/schemas/${synthName}`,
+      });
+      // Determinism: same input shape → identical output, including synth names.
+      const second = bundleDocument(build());
+      expect(second.document).toEqual(first.document);
+      expect(second.synthesized).toEqual(first.synthesized);
+    });
+
+    it("hoists repeats whose clones diverge only by depth-truncation position (identity from INPUT, not output)", () => {
+      // Two positions reach the same shared structure at different depths, so
+      // their EMITTED expansions differ (one is closer to the depth budget and
+      // truncates earlier). Identity is computed on the INPUT graph before any
+      // truncation, so the repeat still deduplicates to one definition.
+      const big: Record<string, unknown> = { type: "object", properties: {} };
+      for (let i = 0; i < 30; i++) {
+        (big.properties as Record<string, unknown>)[`f${i}`] = {
+          type: "object",
+          properties: { deep: { type: "object", properties: { leaf: { type: "string" } } } },
+        };
+      }
+      // Site A: at schema root. Site B: nested several anonymous levels down.
+      let nested: Record<string, unknown> = big;
+      for (let i = 0; i < 4; i++) nested = { type: "object", properties: { [`wrap${i}`]: nested } };
+      const doc = {
+        paths: {
+          "/direct": {
+            get: { responses: { "200": { content: { "application/json": { schema: big } } } } },
+          },
+          "/nested": {
+            get: { responses: { "200": { content: { "application/json": { schema: nested } } } } },
+          },
+          "/again": {
+            get: { responses: { "200": { content: { "application/json": { schema: big } } } } },
+          },
+        },
+      };
+      const { document, synthesized } = bundleDocument(doc);
+      expect(() => JSON.stringify(document)).not.toThrow();
+      expect(synthesized.length).toBeGreaterThan(0);
+      const synthName = synthesized[0]?.name as string;
+      const out = document as {
+        components: { schemas: Record<string, { properties?: Record<string, unknown> }> };
+      };
+      // The synthesized definition is walked fresh from depth 0 — full
+      // fidelity, not whatever truncation the triggering position had.
+      const definition = out.components.schemas[synthName];
+      expect(definition?.properties?.f0).toBeDefined();
+      expect(definition?.properties?.f29).toBeDefined();
     });
 
     it("bundling the same cyclic input twice produces deep-equal output (determinism)", () => {
