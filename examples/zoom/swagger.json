@@ -1,0 +1,1674 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Zoom API (curated subset)",
+    "description": "Curated subset of the real, published Zoom API spec, trimmed for Anvil backtesting.",
+    "contact": {
+      "name": "Zoom Developers",
+      "url": "https://developer.zoom.us/",
+      "email": "developer@zoom.us"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    },
+    "version": "2.0.0"
+  },
+  "host": "api.zoom.us",
+  "basePath": "/v2",
+  "schemes": [
+    "https"
+  ],
+  "consumes": [
+    "application/json",
+    "multipart/form-data"
+  ],
+  "produces": [
+    "application/json",
+    "application/xml"
+  ],
+  "securityDefinitions": {
+    "global": {
+      "type": "apiKey",
+      "name": "access_token",
+      "in": "query"
+    }
+  },
+  "paths": {
+    "/users/{userId}/meetings": {
+      "get": {
+        "summary": "List meetings",
+        "description": "List meetings for a user",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetings",
+        "parameters": [
+          {
+            "$ref": "#/parameters/UserId"
+          },
+          {
+            "$ref": "#/parameters/MeetingType"
+          },
+          {
+            "$ref": "#/parameters/PageSize"
+          },
+          {
+            "$ref": "#/parameters/PageNumber"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of Meeting objects returned",
+            "schema": {
+              "$ref": "#/definitions/MeetingList"
+            }
+          },
+          "404": {
+            "description": "User not found"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a meeting",
+        "description": "Create a meeting for a user <aside>The expiration time of start_url is two hours. But for API users, the expiration time is 90 days.</aside>",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetingCreate",
+        "parameters": [
+          {
+            "$ref": "#/parameters/UserId"
+          },
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "description": "Meeting object",
+            "schema": {
+              "allOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "schedule_for": {
+                      "type": "string",
+                      "description": "Email or userId if you want to schedule meeting for another user."
+                    }
+                  }
+                },
+                {
+                  "$ref": "#/definitions/Meeting"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Meeting Created",
+            "headers": {
+              "Content-Location": {
+                "description": "Location of created Meeting",
+                "type": "string"
+              }
+            },
+            "schema": {
+              "allOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "uuid": {
+                      "type": "string",
+                      "description": "Meeting unique ID"
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "Meeting ID, also known as meeting number"
+                    },
+                    "host_id": {
+                      "type": "string",
+                      "description": "ID of the user set as host of meeting"
+                    }
+                  }
+                },
+                {
+                  "$ref": "#/definitions/MeetingInfo"
+                }
+              ]
+            }
+          },
+          "404": {
+            "description": "User not found"
+          }
+        }
+      }
+    },
+    "/meetings/{meetingId}": {
+      "get": {
+        "summary": "Retrieve a meeting",
+        "description": "Retrieve a meeting's details",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meeting",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meeting object returned",
+            "schema": {
+              "allOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "uuid": {
+                      "type": "string",
+                      "description": "Meeting unique ID"
+                    },
+                    "id": {
+                      "type": "string",
+                      "description": "Meeting ID, also know as meeting number"
+                    },
+                    "host_id": {
+                      "type": "string",
+                      "description": "ID of the user set as host of meeting"
+                    }
+                  }
+                },
+                {
+                  "$ref": "#/definitions/MeetingInfo"
+                }
+              ]
+            }
+          },
+          "404": {
+            "description": "Meeting not found"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update a meeting",
+        "description": "Update a meeting's details",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetingUpdate",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingId"
+          },
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "description": "Meeting",
+            "schema": {
+              "allOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "schedule_for": {
+                      "type": "string",
+                      "description": "Email or userId if you want to schedule meeting for another user."
+                    }
+                  }
+                },
+                {
+                  "$ref": "#/definitions/MeetingUpdate"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Meeting Updated"
+          },
+          "404": {
+            "description": "Meeting not found"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete a meeting",
+        "description": "Delete a meeting",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetingDelete",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingId"
+          },
+          {
+            "$ref": "#/parameters/OccurrenceId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Meeting deleted"
+          },
+          "404": {
+            "description": "Meeting not found"
+          }
+        }
+      }
+    },
+    "/meetings/{meetingId}/status": {
+      "put": {
+        "summary": "Update a meeting's status",
+        "description": "Update a meeting's status",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetingStatus",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingId"
+          },
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "schema": {
+              "properties": {
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "end"
+                  ],
+                  "x-enum-descriptions": [
+                    "end a meeting"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Meeting updated"
+          },
+          "404": {
+            "description": "Meeting not found"
+          }
+        }
+      }
+    },
+    "/meetings/{meetingId}/invitation": {
+      "get": {
+        "summary": "Retrieve meeting invitation",
+        "description": "Retrieve a meeting invitation",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetingInvitation",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meeting invitation Returned",
+            "schema": {
+              "$ref": "#/definitions/MeetingInvitation"
+            }
+          }
+        }
+      }
+    },
+    "/meetings/{meetingId}/registrants": {
+      "get": {
+        "summary": "List a meeting's registrants",
+        "description": "List registrants of a meeting",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetingRegistrants",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingId"
+          },
+          {
+            "$ref": "#/parameters/OccurrenceId"
+          },
+          {
+            "$ref": "#/parameters/RegistrantStatus"
+          },
+          {
+            "$ref": "#/parameters/PageSize"
+          },
+          {
+            "$ref": "#/parameters/PageNumber"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "schema": {
+              "$ref": "#/definitions/MeetingRegistrantList"
+            }
+          },
+          "404": {
+            "description": "Meeting not found"
+          }
+        }
+      },
+      "post": {
+        "summary": "Add a meeting registrant",
+        "description": "Register a participant for a meeting",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetingRegistrantCreate",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingId"
+          },
+          {
+            "in": "query",
+            "name": "occurrence_ids",
+            "type": "string",
+            "description": "Occurrence IDs. You can find these with the meeting get API. Multiple values separated by comma."
+          },
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/MeetingRegistrant"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Registration created",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "registrant_id": {
+                  "type": "string",
+                  "description": "Registrant ID"
+                },
+                "id": {
+                  "type": "string",
+                  "description": "Registrant ID"
+                },
+                "topic": {
+                  "type": "string",
+                  "description": "Topic"
+                },
+                "start_time": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Start time"
+                },
+                "join_url": {
+                  "type": "string",
+                  "description": "Join URL for this registrant"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Meeting not found"
+          }
+        }
+      }
+    },
+    "/meetings/{meetingId}/registrants/status": {
+      "put": {
+        "summary": "Update a meeting registrant's status",
+        "description": "Update a meeting registrant's status",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetingRegistrantStatus",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingId"
+          },
+          {
+            "$ref": "#/parameters/OccurrenceId"
+          },
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/RegistrantStatus"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Registrant status updated"
+          },
+          "404": {
+            "description": "Meeting or Registrant not found"
+          }
+        }
+      }
+    },
+    "/meetings/{meetingId}/livestream": {
+      "patch": {
+        "summary": "Update a meeting live stream",
+        "description": "Update a meeting's live stream",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetingLiveStreamUpdate",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingId"
+          },
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "description": "Meeting",
+            "schema": {
+              "$ref": "#/definitions/MeetingLiveStream"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Meeting live stream Updated"
+          },
+          "404": {
+            "description": "Meeting not found"
+          }
+        }
+      }
+    },
+    "/meetings/{meetingId}/livestream/status": {
+      "patch": {
+        "summary": "Update a meeting live stream status",
+        "description": "Update a meeting's live stream status",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "meetingLiveStreamStatusUpdate",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingId"
+          },
+          {
+            "in": "body",
+            "name": "body",
+            "required": true,
+            "description": "Meeting",
+            "schema": {
+              "$ref": "#/definitions/MeetingLiveStreamStatus"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Meeting live stream Updated"
+          },
+          "404": {
+            "description": "Meeting not found"
+          }
+        }
+      }
+    },
+    "/past_meetings/{meetingUUID}": {
+      "get": {
+        "summary": "Retrieve past meeting details",
+        "description": "Retrieve ended meeting details",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "pastMeetingDetails",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingUUID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meeting detail Returned",
+            "schema": {
+              "properties": {
+                "uuid": {
+                  "type": "string",
+                  "format": "uuid",
+                  "description": "Meeting UUID"
+                },
+                "id": {
+                  "type": "integer",
+                  "description": "Meeting ID"
+                },
+                "host_id": {
+                  "type": "integer",
+                  "description": "Host ID"
+                },
+                "type": {
+                  "type": "integer",
+                  "description": "Meeting type"
+                },
+                "topic": {
+                  "type": "string",
+                  "description": "Meeting topic"
+                },
+                "user_name": {
+                  "type": "string",
+                  "description": "User display name"
+                },
+                "user_email": {
+                  "type": "string",
+                  "description": "User email"
+                },
+                "start_time": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Meeting start time"
+                },
+                "end_time": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Meeting end time"
+                },
+                "duration": {
+                  "type": "integer",
+                  "description": "Meeting duration"
+                },
+                "total_minutes": {
+                  "type": "integer",
+                  "description": "Number of meeting minutes"
+                },
+                "participants_count": {
+                  "type": "integer",
+                  "description": "Number of meeting participants"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Meeting not found"
+          }
+        }
+      }
+    },
+    "/past_meetings/{meetingUUID}/participants": {
+      "get": {
+        "summary": "Retrieve past meeting participants",
+        "description": "Retrieve ended meeting participants",
+        "tags": [
+          "Meetings"
+        ],
+        "operationId": "pastMeetingParticipants",
+        "parameters": [
+          {
+            "$ref": "#/parameters/MeetingUUID"
+          },
+          {
+            "$ref": "#/parameters/PageSize"
+          },
+          {
+            "$ref": "#/parameters/NextPageToken"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meeting Participants Report Returned",
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/PaginationToken"
+                },
+                {
+                  "properties": {
+                    "participants": {
+                      "type": "array",
+                      "description": "Array of meeting participant objects",
+                      "items": {
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "description": "Participant UUID"
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Participant display name"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "404": {
+            "description": "Meeting not found"
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "MeetingList": {
+      "type": "object",
+      "title": "Group List",
+      "description": "List of Meetings",
+      "allOf": [
+        {
+          "$ref": "#/definitions/Pagination"
+        },
+        {
+          "properties": {
+            "meetings": {
+              "type": "array",
+              "description": "List of Meeting objects",
+              "items": {
+                "allOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "uuid": {
+                        "type": "string",
+                        "description": "Meeting unique ID"
+                      },
+                      "id": {
+                        "type": "string",
+                        "description": "Meeting ID, also know as meeting number"
+                      },
+                      "host_id": {
+                        "type": "string",
+                        "description": "ID of the user set as host of meeting"
+                      },
+                      "topic": {
+                        "type": "string",
+                        "description": "Meeting topic"
+                      },
+                      "type": {
+                        "type": "integer",
+                        "description": "Meeting Type",
+                        "enum": [
+                          1,
+                          2,
+                          3,
+                          8
+                        ],
+                        "x-enum-descriptions": [
+                          "Instant Meeting",
+                          "Scheduled Meeting",
+                          "Recurring Meeting with no fixed time",
+                          "Recurring Meeting with fixed time"
+                        ]
+                      },
+                      "start_time": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Meeting start time"
+                      },
+                      "duration": {
+                        "type": "integer",
+                        "description": "Meeting duration"
+                      },
+                      "timezone": {
+                        "type": "string",
+                        "description": "Timezone to format start_time"
+                      },
+                      "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Create time"
+                      },
+                      "join_url": {
+                        "type": "string",
+                        "description": "Join url"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Meeting": {
+      "type": "object",
+      "description": "Meeting object",
+      "allOf": [
+        {
+          "$ref": "#/definitions/Session"
+        }
+      ]
+    },
+    "MeetingInfo": {
+      "type": "object",
+      "description": "Meeting object",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "Meeting topic"
+        },
+        "type": {
+          "type": "integer",
+          "description": "Meeting Type",
+          "default": 2,
+          "enum": [
+            1,
+            2,
+            3,
+            8
+          ],
+          "x-enum-descriptions": [
+            "Instant Meeting",
+            "Scheduled Meeting",
+            "Recurring Meeting with no fixed time",
+            "Recurring Meeting with fixed time"
+          ]
+        },
+        "start_time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Meeting start time"
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Meeting duration"
+        },
+        "timezone": {
+          "type": "string",
+          "description": "Timezone to format start_time"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Create time"
+        },
+        "agenda": {
+          "type": "string",
+          "description": "Agenda"
+        },
+        "start_url": {
+          "type": "string",
+          "description": "Start url"
+        },
+        "join_url": {
+          "type": "string",
+          "description": "Join url"
+        },
+        "password": {
+          "type": "string",
+          "description": "Meeting password"
+        },
+        "h323_password": {
+          "type": "string",
+          "description": "H.323/SIP room system password"
+        },
+        "tracking_fields": {
+          "type": "array",
+          "description": "Tracking fields",
+          "items": {
+            "properties": {
+              "field": {
+                "type": "string",
+                "description": "Tracking fields type"
+              },
+              "value": {
+                "type": "string",
+                "description": "Tracking fields value"
+              }
+            }
+          }
+        },
+        "occurrences": {
+          "$ref": "#/definitions/Occurrences"
+        },
+        "settings": {
+          "$ref": "#/definitions/MeetingSettings"
+        }
+      }
+    },
+    "MeetingUpdate": {
+      "type": "object",
+      "description": "Meeting object",
+      "allOf": [
+        {
+          "$ref": "#/definitions/SessionUpdate"
+        }
+      ]
+    },
+    "MeetingInvitation": {
+      "type": "object",
+      "title": "Meeting Invitation",
+      "description": "Meeting invitation details",
+      "properties": {
+        "invitation": {
+          "type": "string",
+          "description": "Meeting invitation"
+        }
+      }
+    },
+    "MeetingRegistrantList": {
+      "type": "object",
+      "title": "Registration List",
+      "description": "List of Users",
+      "allOf": [
+        {
+          "$ref": "#/definitions/RegistrantList"
+        }
+      ]
+    },
+    "MeetingRegistrant": {
+      "type": "object",
+      "description": "Meeting registrant",
+      "allOf": [
+        {
+          "$ref": "#/definitions/Registrant"
+        }
+      ]
+    },
+    "RegistrantStatus": {
+      "type": "object",
+      "description": "Registrant Status",
+      "required": [
+        "action"
+      ],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "approve",
+            "cancel",
+            "deny"
+          ],
+          "x-enum-descriptions": [
+            "Approve registrant",
+            "Cancel registrant",
+            "Deny registrant"
+          ]
+        },
+        "registrants": {
+          "type": "array",
+          "description": "List of registrants",
+          "maximum": 30,
+          "items": {
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "MeetingLiveStream": {
+      "type": "object",
+      "description": "Meeting Live Stream",
+      "required": [
+        "stream_url",
+        "stream_key"
+      ],
+      "properties": {
+        "stream_url": {
+          "type": "string",
+          "maxLength": 1024,
+          "description": "Server URL."
+        },
+        "stream_key": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Stream name/key."
+        },
+        "page_url": {
+          "type": "string",
+          "maxLength": 1024,
+          "description": "View URL."
+        }
+      }
+    },
+    "MeetingLiveStreamStatus": {
+      "type": "object",
+      "description": "Meeting Live Stream Status",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "Action",
+          "enum": [
+            "start",
+            "stop"
+          ],
+          "x-enum-descriptions": [
+            "Start a meeting live stream.",
+            "Stop a meeting live stream."
+          ]
+        },
+        "settings": {
+          "type": "object",
+          "properties": {
+            "active_speaker_name": {
+              "type": "boolean",
+              "description": "Live stream active speaker name."
+            },
+            "display_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 50,
+              "description": "Live stream display name."
+            }
+          }
+        }
+      }
+    },
+    "PaginationToken": {
+      "type": "object",
+      "description": "Pagination Object",
+      "properties": {
+        "page_count": {
+          "type": "integer",
+          "description": "The number of items returned on this page"
+        },
+        "page_size": {
+          "type": "integer",
+          "description": "The number of records returned within a single API call.",
+          "default": 30,
+          "maximum": 300
+        },
+        "total_records": {
+          "type": "integer",
+          "description": "The number of all records available across pages"
+        },
+        "next_page_token": {
+          "description": "Next page token is used to paginate through large result sets. A next page token will be returned whenever the set of available results exceed the current page size. The expiration period for this token is 15 minutes.",
+          "type": "string"
+        }
+      }
+    },
+    "Pagination": {
+      "type": "object",
+      "description": "Pagination Object",
+      "properties": {
+        "page_count": {
+          "type": "integer",
+          "description": "The number of items returned on this page"
+        },
+        "page_number": {
+          "type": "integer",
+          "description": "The page number of current results",
+          "default": 1
+        },
+        "page_size": {
+          "type": "integer",
+          "description": "The number of records returned within a single API call",
+          "default": 30,
+          "maximum": 300
+        },
+        "total_records": {
+          "type": "integer",
+          "description": "The number of all records available across pages"
+        }
+      }
+    },
+    "Session": {
+      "type": "object",
+      "description": "Base object for sessions",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "Meeting topic"
+        },
+        "type": {
+          "type": "integer",
+          "description": "Meeting Type",
+          "default": 2,
+          "enum": [
+            1,
+            2,
+            3,
+            8
+          ],
+          "x-enum-descriptions": [
+            "Instant Meeting",
+            "Scheduled Meeting",
+            "Recurring Meeting with no fixed time",
+            "Recurring Meeting with fixed time"
+          ]
+        },
+        "start_time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Meeting start time. When using a format like \"yyyy-MM-dd'T'HH:mm:ss'Z'\", always use GMT time. When using a format like \"yyyy-MM-dd'T'HH:mm:ss\", you should use local time and you will need to specify the time zone. Only used for scheduled meetings and recurring meetings with fixed time."
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Meeting duration (minutes). Used for scheduled meetings only"
+        },
+        "timezone": {
+          "type": "string",
+          "description": "Timezone to format start_time. For example, \"America/Los_Angeles\". For scheduled meetings only. Please reference our [timezone](#timezones) list for supported timezones and their formats."
+        },
+        "password": {
+          "type": "string",
+          "description": "Password to join the meeting. Password may only contain the following characters: [a-z A-Z 0-9 @ - _ *]. Max of 10 characters."
+        },
+        "agenda": {
+          "type": "string",
+          "description": "Meeting description"
+        },
+        "tracking_fields": {
+          "type": "array",
+          "description": "Tracking fields",
+          "items": {
+            "properties": {
+              "field": {
+                "type": "string",
+                "description": "Tracking fields type"
+              },
+              "value": {
+                "type": "string",
+                "description": "Tracking fields value"
+              }
+            }
+          }
+        },
+        "recurrence": {
+          "$ref": "#/definitions/Recurrence"
+        },
+        "settings": {
+          "$ref": "#/definitions/MeetingSettings"
+        }
+      }
+    },
+    "Occurrences": {
+      "type": "array",
+      "description": "Array of occurrence objects",
+      "items": {
+        "$ref": "#/definitions/Occurrence"
+      }
+    },
+    "MeetingSettings": {
+      "type": "object",
+      "description": "Meeting Settings",
+      "properties": {
+        "host_video": {
+          "type": "boolean",
+          "description": "Start video when host joins meeting"
+        },
+        "participant_video": {
+          "type": "boolean",
+          "description": "Start video when participants join meeting"
+        },
+        "cn_meeting": {
+          "type": "boolean",
+          "description": "Host meeting in China",
+          "default": false
+        },
+        "in_meeting": {
+          "type": "boolean",
+          "description": "Host meeting in India",
+          "default": false
+        },
+        "join_before_host": {
+          "type": "boolean",
+          "description": "Allow participants to join the meeting before the host starts the meeting. Only used for scheduled or recurring meetings.",
+          "default": false
+        },
+        "mute_upon_entry": {
+          "type": "boolean",
+          "description": "Mute participants upon entry",
+          "default": false
+        },
+        "watermark": {
+          "type": "boolean",
+          "description": "Add watermark when viewing shared screen",
+          "default": false
+        },
+        "use_pmi": {
+          "type": "boolean",
+          "description": "Use Personal Meeting ID. Only used for scheduled meetings and recurring meetings with no fixed time.",
+          "default": false
+        },
+        "approval_type": {
+          "type": "integer",
+          "default": 2,
+          "enum": [
+            0,
+            1,
+            2
+          ],
+          "x-enum-descriptions": [
+            "Automatically Approve",
+            "Manually Approve",
+            "No Registration Required"
+          ]
+        },
+        "registration_type": {
+          "type": "integer",
+          "description": "Registration type. Used for recurring meeting with fixed time only.",
+          "default": 1,
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "x-enum-descriptions": [
+            "Attendees register once and can attend any of the occurrences",
+            "Attendees need to register for each occurrence to attend",
+            "Attendees register once and can choose one or more occurrences to attend"
+          ]
+        },
+        "audio": {
+          "type": "string",
+          "description": "Determine how participants can join the audio portion of the meeting",
+          "default": "both",
+          "enum": [
+            "both",
+            "telephony",
+            "voip"
+          ],
+          "x-enum-descriptions": [
+            "Both Telephony and VoIP",
+            "Telephony only",
+            "VoIP only"
+          ]
+        },
+        "auto_recording": {
+          "type": "string",
+          "default": "none",
+          "enum": [
+            "local",
+            "cloud",
+            "none"
+          ],
+          "x-enum-descriptions": [
+            "Record to local device",
+            "Record to cloud",
+            "No Recording"
+          ]
+        },
+        "enforce_login": {
+          "type": "boolean",
+          "description": "Only signed-in users can join this meeting"
+        },
+        "enforce_login_domains": {
+          "type": "string",
+          "description": "Only signed-in users with specified domains can join meetings"
+        },
+        "alternative_hosts": {
+          "type": "string",
+          "description": "Alternative hosts emails or IDs. Multiple value separated by comma."
+        },
+        "close_registration": {
+          "type": "boolean",
+          "description": "Close registration after event date",
+          "default": false
+        },
+        "waiting_room": {
+          "type": "boolean",
+          "description": "Enable waiting room",
+          "default": false
+        }
+      }
+    },
+    "SessionUpdate": {
+      "type": "object",
+      "description": "Base object for sessions",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "Meeting topic"
+        },
+        "type": {
+          "type": "integer",
+          "description": "Meeting Type",
+          "default": 2,
+          "enum": [
+            1,
+            2,
+            3,
+            8
+          ],
+          "x-enum-descriptions": [
+            "Instant Meeting",
+            "Scheduled Meeting",
+            "Recurring Meeting with no fixed time",
+            "Recurring Meeting with fixed time"
+          ]
+        },
+        "start_time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Meeting start time. When using a format like \"yyyy-MM-dd'T'HH:mm:ss'Z'\", always use GMT time. When using a format like \"yyyy-MM-dd'T'HH:mm:ss\", you should use local time and you will need to specify the time zone. Only used for scheduled meetings and recurring meetings with fixed time."
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Meeting duration (minutes). Used for scheduled meetings only"
+        },
+        "timezone": {
+          "type": "string",
+          "description": "Timezone to format start_time. For example, \"America/Los_Angeles\". For scheduled meetings only. Please reference our [timezone](#timezones) list for supported timezones and their formats."
+        },
+        "password": {
+          "type": "string",
+          "description": "Password to join the meeting. Password may only contain the following characters: [a-z A-Z 0-9 @ - _ *]. Max of 10 characters."
+        },
+        "agenda": {
+          "type": "string",
+          "description": "Meeting description"
+        },
+        "tracking_fields": {
+          "type": "array",
+          "description": "Tracking fields",
+          "items": {
+            "properties": {
+              "field": {
+                "type": "string",
+                "description": "Tracking fields type"
+              },
+              "value": {
+                "type": "string",
+                "description": "Tracking fields value"
+              }
+            }
+          }
+        },
+        "recurrence": {
+          "$ref": "#/definitions/Recurrence"
+        },
+        "settings": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MeetingSettings"
+            },
+            {
+              "properties": {
+                "registrants_confirmation_email": {
+                  "type": "boolean",
+                  "description": "Send confirmation Email to Registrants"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "RegistrantList": {
+      "type": "object",
+      "title": "Registration List",
+      "description": "List of Users",
+      "allOf": [
+        {
+          "$ref": "#/definitions/Pagination"
+        },
+        {
+          "properties": {
+            "registrants": {
+              "type": "array",
+              "description": "List of Registrant objects",
+              "items": {
+                "allOf": [
+                  {
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "$ref": "#/definitions/MeetingRegistrant"
+                  },
+                  {
+                    "properties": {
+                      "status": {
+                        "type": "string"
+                      },
+                      "create_time": {
+                        "type": "string",
+                        "format": "date-time"
+                      },
+                      "join_url": {
+                        "type": "string",
+                        "format": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Registrant": {
+      "type": "object",
+      "description": "Registrant base object",
+      "required": [
+        "email",
+        "first_name",
+        "last_name"
+      ],
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "A valid email address"
+        },
+        "first_name": {
+          "type": "string",
+          "description": "User’s first name"
+        },
+        "last_name": {
+          "type": "string",
+          "description": "User’s last name"
+        },
+        "address": {
+          "type": "string",
+          "description": "Address"
+        },
+        "city": {
+          "type": "string",
+          "description": "City"
+        },
+        "country": {
+          "type": "string",
+          "description": "Country"
+        },
+        "zip": {
+          "type": "string",
+          "description": "Zip/Postal Code"
+        },
+        "state": {
+          "type": "string",
+          "description": "State/Province"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Phone"
+        },
+        "industry": {
+          "type": "string",
+          "description": "Industry"
+        },
+        "org": {
+          "type": "string",
+          "description": "Organization"
+        },
+        "job_title": {
+          "type": "string",
+          "description": "Job Title"
+        },
+        "purchasing_time_frame": {
+          "type": "string",
+          "description": "Purchasing Time Frame",
+          "enum": [
+            "Within a month",
+            "1-3 months",
+            "4-6 months",
+            "More than 6 months",
+            "No timeframe"
+          ]
+        },
+        "role_in_purchase_process": {
+          "type": "string",
+          "description": "Role in Purchase Process",
+          "enum": [
+            "Decision Maker",
+            "Evaluator/Recommender",
+            "Influencer",
+            "Not involved"
+          ]
+        },
+        "no_of_employees": {
+          "type": "string",
+          "description": "Number of Employees",
+          "enum": [
+            "1-20",
+            "21-50",
+            "51-100",
+            "101-500",
+            "500-1,000",
+            "1,001-5,000",
+            "5,001-10,000",
+            "More than 10,000"
+          ]
+        },
+        "comments": {
+          "type": "string",
+          "description": "Questions & Comments"
+        },
+        "custom_questions": {
+          "type": "array",
+          "description": "Custom Questions",
+          "items": {
+            "$ref": "#/definitions/CustomQuestion"
+          }
+        }
+      }
+    },
+    "Recurrence": {
+      "type": "object",
+      "description": "Recurrence object",
+      "properties": {
+        "type": {
+          "type": "integer",
+          "description": "Recurrence meeting type",
+          "enum": [
+            1,
+            2,
+            3
+          ],
+          "x-enum-descriptions": [
+            "Daily",
+            "Weekly",
+            "Monthly"
+          ]
+        },
+        "repeat_interval": {
+          "type": "integer",
+          "description": "At which interval should the meeting repeat? For a daily meeting, max of 90 days. For a weekly meeting, max of 12 weeks. For a monthly meeting, max of 3 months."
+        },
+        "weekly_days": {
+          "type": "integer",
+          "description": "Days of the week the meeting should repeat, multiple values separated by comma",
+          "enum": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "x-enum-descriptions": [
+            "Sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday"
+          ]
+        },
+        "monthly_day": {
+          "type": "integer",
+          "description": "Day of the month for the meeting to be scheduled. The value range is from 1 to 31."
+        },
+        "monthly_week": {
+          "type": "integer",
+          "description": "Week for which the meeting should recur each month,",
+          "enum": [
+            -1,
+            1,
+            2,
+            3,
+            4
+          ],
+          "x-enum-descriptions": [
+            "Last week",
+            "First week",
+            "Second week",
+            "Third week",
+            "Fourth week"
+          ]
+        },
+        "monthly_week_day": {
+          "type": "integer",
+          "description": "Day for which the meeting should recur each month",
+          "enum": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ],
+          "x-enum-descriptions": [
+            "Sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday"
+          ]
+        },
+        "end_times": {
+          "type": "integer",
+          "description": "Select how many times the meeting will occur before it is canceled. (Cannot be used with \"end_date_time\".)",
+          "default": 1,
+          "maximum": 50
+        },
+        "end_date_time": {
+          "type": "string",
+          "description": "Select a date the meeting will occur before it is canceled.. Should be UTC time, such as 2017-11-25T12:00:00Z. (Cannot be used with \"end_times\".)",
+          "format": "date-time"
+        }
+      }
+    },
+    "Occurrence": {
+      "type": "object",
+      "description": "Occurence object",
+      "properties": {
+        "occurrence_id": {
+          "type": "integer",
+          "description": "Occurrence Id"
+        },
+        "start_time": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Start time"
+        },
+        "duration": {
+          "type": "integer",
+          "description": "Duration"
+        },
+        "status": {
+          "type": "string",
+          "description": "Occurrence status"
+        }
+      }
+    },
+    "CustomQuestion": {
+      "type": "object",
+      "description": "Custom Question",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "parameters": {
+    "UserId": {
+      "in": "path",
+      "name": "userId",
+      "description": "The user ID or email address",
+      "type": "string",
+      "required": true
+    },
+    "MeetingType": {
+      "in": "query",
+      "name": "type",
+      "description": "The meeting type",
+      "type": "string",
+      "default": "live",
+      "enum": [
+        "scheduled",
+        "live",
+        "upcoming"
+      ],
+      "x-enum-descriptions": [
+        "all the scheduled meetings",
+        "all the live meetings",
+        "all the upcoming meetings"
+      ]
+    },
+    "PageSize": {
+      "in": "query",
+      "name": "page_size",
+      "description": "The number of records returned within a single API call",
+      "type": "integer",
+      "default": 30,
+      "maximum": 300
+    },
+    "PageNumber": {
+      "in": "query",
+      "name": "page_number",
+      "description": "Current page number of returned records",
+      "type": "integer",
+      "default": 1
+    },
+    "MeetingId": {
+      "in": "path",
+      "name": "meetingId",
+      "description": "The meeting ID",
+      "type": "integer",
+      "required": true
+    },
+    "OccurrenceId": {
+      "in": "query",
+      "name": "occurrence_id",
+      "description": "The meeting occurrence ID",
+      "type": "string"
+    },
+    "RegistrantStatus": {
+      "in": "query",
+      "name": "status",
+      "description": "The registrant status",
+      "type": "string",
+      "default": "approved",
+      "enum": [
+        "pending",
+        "approved",
+        "denied"
+      ],
+      "x-enum-descriptions": [
+        "registrants status is pending",
+        "registrants status is approved",
+        "registrants status is denied"
+      ]
+    },
+    "MeetingUUID": {
+      "in": "path",
+      "name": "meetingUUID",
+      "description": "The meeting UUID.",
+      "type": "string",
+      "required": true
+    },
+    "NextPageToken": {
+      "in": "query",
+      "name": "next_page_token",
+      "description": "Next page token is used to paginate through large result sets. A next page token will be returned whenever the set of available results exceed the current page size. The expiration period for this token is 15 minutes.",
+      "type": "string"
+    }
+  }
+}

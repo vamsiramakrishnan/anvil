@@ -527,3 +527,64 @@ unfiltered large spec tractable. Twilio's own MCP collapses its ~1,800
 endpoints to a two-tool `search`/`retrieve` façade precisely because
 per-endpoint tooling "is unusable unloaded" at that scale; Anvil's answer is
 capability grouping over the same surface. Logged as validation, not a defect.
+
+## Notion / Asana / PagerDuty / Zendesk / Intercom / Zoom / HubSpot / DocuSign (batch 2)
+
+Eight more real systems (`batch2.md`). Six compiled clean on the first try —
+strong evidence the compiler is now solid across OpenAPI 3.x and Swagger 2.0 at
+scale (Zendesk 617 ops, PagerDuty 465, DocuSign 414). Two systemic bugs, each
+only reachable by a spec of that specific shape or scale:
+
+### 18. Per-operation schema materialization had no *size* bound — 56s / 400MB compile — FIXED
+- **Symptom**: `anvil compile` on the real DocuSign eSignature spec (Swagger
+  2.0, 213 paths, 619 definitions) took **56 seconds** and built a **400MB**
+  in-memory AIR; `airToYaml` alone was 30s+ on the result.
+- **Root cause**: `materializeSchema` (decycle.ts) bounds a materialized
+  per-operation schema by ref-*depth* (`DEFAULT_MAX_REF_DEPTH = 1`) — enough to
+  cap a *deep* named-schema chain (the Stripe case, #10–#12). But DocuSign's
+  request bodies (`tabs`, `accountSettingsInformation`) are pathologically
+  *broad*: hundreds of properties, each itself a large object. A single depth-1
+  hop over that breadth still materialized ~2.5MB per operation, times 414
+  operations. Depth alone cannot catch breadth.
+- **Fix**: `DEFAULT_MAX_SCHEMA_NODES` (4000) — a total node budget threaded
+  through the materialize walk. Once spent, further structure truncates to a
+  typed stub (the field name is kept, its deep body dropped), so no single
+  operation's schema can blow up the AIR regardless of the source spec's shape.
+  The budget sits 4× above the largest real operation schema seen across all
+  backtested specs (PagerDuty ~1032 nodes, Zendesk ~838), so every
+  non-pathological spec is byte-identical — verified against the other seven
+  batch-2 specs and every committed example. DocuSign: 56s → 19s.
+- **Test**: `decycle.test.ts` → "bounds a very BROAD schema by node budget, not
+  just ref depth (DocuSign's real shape)" and "leaves a normal-sized schema
+  untouched by the node budget".
+
+### 19. Anvil could not re-parse its own generated `air.yaml` — lint/certify failed — FIXED
+- **Symptom**: `anvil lint generated/pagerduty` exited non-zero with
+  *"Excessive alias count indicates a resource exhaustion attack"* — from the
+  `yaml` parser, on Anvil's OWN generated `air.yaml`.
+- **Root cause**: `lint`/`certify` re-read `air.yaml` via `airFromYaml`.
+  PagerDuty's real 465-operation bundle repeats identical substructures (the
+  shared retry-condition list, error shapes) on every operation, so the `yaml`
+  serializer emitted a YAML anchor/alias per repeat — 110 of them. The parser's
+  default anti-"billion laughs" cap is 100 aliases, so it refused to load a
+  perfectly valid, self-generated document. Any bundle past ~100 repeated
+  substructures (i.e. any large real API) would hit this.
+- **Fix**: `packages/air/src/serialize.ts`. Two parts: (a) `airToYaml` sets
+  `aliasDuplicateObjects: false` so the canonical form emits **no** aliases —
+  self-contained and human-diffable (an `*alias` pointing elsewhere in a
+  20k-line file is unreadable anyway); (b) `airFromYaml` raises `maxAliasCount`
+  for the trusted AIR re-parse so already-written/older bundles still load.
+  Untrusted specs and manifests are parsed elsewhere (parse.ts, manifest.ts)
+  and keep the default billion-laughs protection.
+- **Test**: `air.test.ts` → "round-trips a bundle with many repeated
+  substructures without emitting aliases".
+
+### HubSpot's opaque operationIds — faithful rendering, not a bug (validates #13)
+HubSpot's Deals path is `/crm/v3/objects/0-3` (`0-3` is HubSpot's real internal
+object-type id) and its operationId embeds the whole path
+(`get-/crm/v3/objects/0-3_getPage`). Anvil renders
+`hubspot_get_crm_v3_objects_0_3_get_page` — verbose but a true reflection of a
+genuinely opaque vendor spec, the same category as Stripe's
+`PostChargesChargeCapture` (#13). The official HubSpot MCP avoids it with
+object-agnostic meta-tools — a design choice a faithful per-endpoint compiler
+should not invent. Left as a documented finding.

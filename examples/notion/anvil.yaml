@@ -1,0 +1,46 @@
+# Supplemental Anvil manifest (spec §4) for the Notion API backtest.
+# Generated against the real compiled AIR: reads and already-'generated'
+# mutations are approved as the compiler classified them; non-idempotent
+# creates are declared idempotency:none (no client dedupe key exists) and
+# confirmation-required. See docs/backtesting/batch2.md.
+service:
+  name: notion
+  display_name: Notion API
+  owner: backtesting
+  environment: prod
+auth:
+  type: jwt_bearer
+  scopes: []
+operations:
+  get-user: { state: approved }
+  get-users: { state: approved }
+  get-self: { state: approved }
+  post-search: { state: approved }
+  get-block-children: { state: approved }
+  patch-block-children: { state: approved }
+  retrieve-a-block: { state: approved }
+  delete-a-block: { state: approved }
+  update-a-block: { state: approved }
+  retrieve-a-page: { state: approved }
+  patch-page: { state: approved }
+  post-page:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  retrieve-a-page-property: { state: approved }
+  retrieve-a-comment: { state: approved }
+  create-a-comment:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  query-data-source: { state: approved }
+  retrieve-a-data-source: { state: approved }
+  update-a-data-source: { state: approved }
+  create-a-data-source: { state: approved }
+  list-data-source-templates: { state: approved }
+  retrieve-a-database: { state: approved }
+  move-page: { state: approved }
+  retrieve-page-markdown: { state: approved }
+  update-page-markdown: { state: approved }

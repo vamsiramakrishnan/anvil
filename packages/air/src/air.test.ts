@@ -76,6 +76,36 @@ describe("AirDocument", () => {
     expect(json.operations[0].mcp.toolName).toBe("payments_create_refund");
   });
 
+  it("round-trips a bundle with many repeated substructures without emitting aliases", () => {
+    // A large real bundle (PagerDuty's 465-op AIR) repeats identical
+    // substructures — the same retry-condition list, error shapes, etc. — on
+    // every operation. The `yaml` serializer's default would emit a YAML
+    // anchor/alias per repeat, and on re-read the parser's anti-"billion
+    // laughs" cap of 100 aliases threw "Excessive alias count", so `anvil
+    // lint`/`certify` failed on Anvil's own output. Fabricate that shape:
+    // 120 operations that all share a byte-identical retry policy object —
+    // past the parser's default 100-alias cap.
+    const base = loadAirDocument(doc);
+    const proto = base.operations[0] as Operation;
+    const many = {
+      ...base,
+      operations: Array.from({ length: 120 }, (_, i) => ({
+        ...structuredClone(proto),
+        id: `payments.refund.create_${i}`,
+        canonicalName: `create_refund_${i}`,
+      })),
+    };
+    const air = loadAirDocument(many);
+    const yaml = airToYaml(air);
+    // No YAML anchors are emitted — the canonical form is self-contained.
+    expect(yaml).not.toMatch(/: &/);
+    expect(yaml).not.toMatch(/ \*[A-Za-z0-9_]/);
+    // And it re-parses (this threw before the fix — 120 shared substructures
+    // is past the parser's default 100-alias cap).
+    const back = airFromYaml(yaml);
+    expect(back.operations).toHaveLength(120);
+  }, 20_000);
+
   it("rejects unknown enum values", () => {
     const bad = structuredClone(doc) as { operations: { effect: { kind: string } }[] };
     bad.operations[0].effect.kind = "teleport";
