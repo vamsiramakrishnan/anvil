@@ -10,10 +10,25 @@
  * A `CertificationRecord` binds to the exact digests it certified, so it cannot be
  * silently reused for a different pack/contract/surface.
  */
+import type { CertificationRef } from "@anvil/system-pack";
 import { z } from "zod";
 
-export const CertificationStatus = z.enum(["failed", "static_passed", "certified", "expired"]);
+export const CertificationStatus = z.enum([
+  "failed",
+  "static_passed",
+  "simulator_exercised",
+  "certified",
+  "expired",
+]);
 export type CertificationStatus = z.infer<typeof CertificationStatus>;
+
+// Compile-time guard: a certified record must be embeddable in a system pack's
+// `CertificationRef` unchanged. `@anvil/system-pack` mirrors these status strings
+// (it cannot import them without a dependency cycle); this assignment fails
+// typecheck the moment the two drift, so the mirror can never silently rot.
+type _StatusMirror = CertificationStatus extends CertificationRef["status"] ? true : never;
+const _statusMirror: _StatusMirror = true;
+void _statusMirror;
 
 /** One check's outcome — data, never a throw. */
 export const CertificationCheck = z.object({
