@@ -73,7 +73,7 @@ Zendesk, Intercom, Zoom, HubSpot, DocuSign) plus two **real non-REST schemas** �
 **GitHub's 1,752-type GraphQL** (vs `github-mcp-server`) and **Temporal's
 121-rpc gRPC proto** (vs `temporal-mcp`), with **Linear** GraphQL and **etcd**
 multi-file proto alongside. They span OpenAPI 3.x, Swagger 2.0, Google
-Discovery, RPC-over-HTTP, GraphQL SDL, and gRPC/proto3. **22 real, systemic
+Discovery, RPC-over-HTTP, GraphQL SDL, and gRPC/proto3. **27 real, systemic
 compiler bugs found and fixed**, each with a regression test:
 
 1. Compiler crash on any self-referential schema (Jira's `LinkGroup`)
@@ -98,6 +98,11 @@ compiler bugs found and fixed**, each with a regression test:
 20. Real GraphQL schemas hung the compile (gigabytes on serialize) — the protocol adapters emitted named schemas with no `title`, so `bundleDocument` couldn't re-collapse a deeply recursive dereferenced GraphQL graph; fixed by stamping `title` on every adapter schema (GitHub's 1,752 types: hung → 54ms)
 21. Synthetic-namespace paths (`/graphql/Mutation/<field>`) doubled the tool names — the trailing-verb rule fired on any field *containing* a verb; scoped to bare single-word verb segments only, so GraphQL tool names land exactly on `github-mcp-server`'s
 22. gRPC message types imported from another `.proto` file didn't resolve (opaque body stub) — added multi-file proto import resolution from the snapshot, parity with OpenAPI multi-file `$ref`s; proven on etcd's real 4-file proto
+23. Same-named GraphQL Query + Mutation fields (Linear's `initiativeUpdate`) produced identical MCP tool names the command-keyed collision resolver couldn't see — repair now enforces uniqueness across both projected surfaces to a fixpoint (found by the corpus harness's first run)
+24. `airToYaml` corrupted strings containing whitespace-only lines (lgtm.com) — the round-trip law is now self-verifying with a fully-quoted lossless fallback
+25. Every PUT/POST whose path ended in `status`/`progress`/`state` was silently flipped to a read — the write-method read exception is now search-on-POST only (external review, PR #13)
+26. Discovery server URL dropped `servicePath` — Drive-shaped documents would call `/files` instead of `/drive/v3/files` (external review)
+27. Discovery per-method OAuth scopes were parsed but never emitted, so every Google operation lost its real scopes in the AIR (external review)
 
 See `deficiencies.md` for the full writeup of each (symptom → root cause →
 fix → test), and the per-product / per-batch detail in `jira.md`,
