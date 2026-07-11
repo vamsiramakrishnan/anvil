@@ -652,3 +652,48 @@ Running them against real published schemas (GitHub's 1,752-type GraphQL, a
   message resolves its fields.
 - **Tests**: `protocols.test.ts` → "resolves message types imported from another
   proto file" and "degrades gracefully when an import cannot be resolved".
+
+## The mechanisms round (corpus harness, structural identity, naming dialect)
+
+After 22 hand-found bugs, the fix families were converted into standing
+mechanisms (see `../mechanisms.md`): a corpus-differential CI harness
+(`tools/corpus/`), structural hash-consed schema identity (decycle.ts), and
+whole-spec naming-dialect inference + multi-surface collision repair
+(dialect.ts / naming.ts). The harness found two shipped bugs on its FIRST run
+— and then caught a third, unshipped regression during integration itself.
+
+### 23. Same-named GraphQL Query+Mutation fields could not compile — FIXED
+- **Symptom** (found by the harness's quick mode on Linear's real schema):
+  `Query.initiativeUpdate` and `Mutation.initiativeUpdate` both derive
+  canonicalName `initiative_update` → identical `mcp.toolName` → validate.ts
+  hard-errors `duplicate_tool_name`; the whole 611-operation spec refuses to
+  compile.
+- **Root cause**: `resolveNameCollisions` grouped ONLY by `cli.command`. The
+  two operations' CLI commands differ (`... list` vs `... create` action
+  tokens), so the resolver never saw a group — while the tool name, which
+  omits the action distinction, collided invisibly.
+- **Fix**: collision repair now enforces uniqueness across BOTH projected
+  surfaces — the identical shortest-distinguisher repair runs keyed by
+  `cli.command` and then by `mcp.toolName`, re-deriving groups to a fixpoint,
+  renaming canonicalName/id/command/toolName together, never a silent `_2`.
+  Linear compiles: `linear_initiative_update_query` / `..._mutation`.
+- **Test**: compiler.test.ts → "resolves toolName collisions across
+  read/write surfaces (Linear's Query+Mutation same-name fields)".
+
+### 24. `airToYaml` silently corrupted YAML-hostile whitespace — FIXED
+- **Symptom** (found by the harness's sweep round-trip oracle on the real
+  lgtm.com spec): a description containing a whitespace-only line plus
+  trailing-space lines gained an extra `\n` through the pretty block-scalar
+  emission — `contractHash` drifted between the compile and what
+  `lint`/`certify` re-read from air.yaml. Silent, and invisible to every
+  hand-run backtest because none of the 17 curated systems happened to carry
+  that whitespace shape.
+- **Root cause**: YAML block scalars cannot represent trailing whitespace on
+  a line; the emitter's style chooser picked one anyway.
+- **Fix**: `airToYaml` scans for risky whitespace (cheap regex, common case
+  pays nothing), verifies its own output re-parses to deep equality when
+  flagged, falls back to fully-quoted lossless emission on drift, and throws
+  rather than emit a canonical artifact that will not round-trip.
+- **Test**: air.test.ts → "round-trips descriptions with YAML-hostile
+  whitespace" (the exact lgtm shape) + "keeps pretty block scalars for
+  ordinary multi-line descriptions".
