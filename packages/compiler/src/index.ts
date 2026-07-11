@@ -10,6 +10,7 @@ export * from "./classify.js";
 export * from "./compile.js";
 export * from "./contract/index.js";
 export * from "./drift.js";
+export * from "./gateway/index.js";
 export * from "./manifest.js";
 export * from "./naming.js";
 export * from "./normalize.js";
