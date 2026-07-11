@@ -86,6 +86,11 @@ function isLoosening(predicate: SemanticPredicate, base: unknown, candidate: unk
       return base === "none" && candidate === "safe";
     case "effect.kind":
       return base === "mutation" && candidate === "read";
+    case "idempotency.mode":
+      // "none" is the safe posture: never auto-retry, always confirm a mutation.
+      // Any move away from "none" makes the operation retry-eligible and can drop
+      // the non-idempotent confirmation trigger — a loosening that needs authority.
+      return base === "none" && candidate !== "none";
     default:
       return false;
   }
@@ -285,12 +290,34 @@ function resolveScopes(
 ): { scopes: string[]; diagnostics: Diagnostic[] } {
   const diagnostics: Diagnostic[] = [];
   const required = new Set<string>(op.auth.scopes);
-  // set replaces the baseline required set (authoritative intent).
+
+  // A `set` only replaces the baseline when it comes from an authoritative origin
+  // — replacing is a potential loosening (it can drop required scopes), so an
+  // inferred overlay setting `[]` must never silently strip OAuth scopes. Its
+  // scopes are unioned in instead (it can tighten, never weaken).
   const sets = tagged.filter((t) => t.assertion.operation === "set");
-  if (sets.length > 0) {
+  const authoritativeSets = sets.filter((t) => AUTHORITATIVE_ORIGINS.has(t.origin));
+  if (authoritativeSets.length > 0) {
     required.clear();
-    for (const s of sets) for (const scope of asStringArray(s.assertion.value)) required.add(scope);
+    for (const s of authoritativeSets) {
+      for (const scope of asStringArray(s.assertion.value)) required.add(scope);
+    }
   }
+  for (const s of sets) {
+    if (AUTHORITATIVE_ORIGINS.has(s.origin)) continue;
+    const proposed = new Set(asStringArray(s.assertion.value));
+    const dropped = [...required].filter((scope) => !proposed.has(scope));
+    if (dropped.length > 0) {
+      diagnostics.push({
+        level: "warning",
+        code: "overlay/loosen_refused",
+        operationId: op.id,
+        message: `Refused to drop required scope(s) ${canon(dropped)} on ${op.id}: a non-authoritative ${s.origin} 'set' may only add scopes.`,
+      });
+    }
+    for (const scope of proposed) required.add(scope);
+  }
+
   // restrict combines: every restricted scope becomes required (tightening).
   for (const t of tagged.filter((t) => t.assertion.operation === "restrict")) {
     for (const scope of asStringArray(t.assertion.value)) required.add(scope);
