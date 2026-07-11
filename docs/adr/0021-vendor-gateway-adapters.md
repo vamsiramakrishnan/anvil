@@ -32,14 +32,31 @@ A **differential fixture** proves the abstraction is not Kong-shaped: the same
 logical API expressed differently (YAML vs JSON, reordered plugins) yields the
 same effective auth scope on the same operation.
 
-Later vendor adapters (WSO2, Apigee, MuleSoft, IBM API Connect) follow the same
-shape and reuse the shared source-synthesis helper; each lands with its own
-differential fixture asserting equivalent policies produce equivalent effective
-contracts.
+**WSO2, MuleSoft, IBM API Connect, and Apigee** follow the same shape and reuse a
+shared `synth.ts` helper (`synthesizeOpenApiFromOperations` +
+`buildGatewayApiImport`), so no adapter re-implements spec synthesis, source
+binding, or overlay assembly:
+- **WSO2** — API definition operations/scopes/security scheme; throttling → quota;
+  mediation → opaque.
+- **MuleSoft** — asset resources/scopes; auth/SLA policies; DataWeave and flow
+  logic classified **opaque** (never claimed as understood).
+- **IBM API Connect** — products/plans (rate limits → quota), OAuth providers, and
+  `map`/`gatewayscript`/`xslt` assembly actions classified **opaque**.
+- **Apigee** — proxies/revisions/environments; product scopes → `auth.scopes`;
+  `Quota`/`SpikeArrest` noted; `AssignMessage`/`JavaScript` classified **opaque**.
+
+A **cross-vendor differential** proves the abstraction is not vendor-shaped: the
+same logical API (POST /refunds requiring `refunds:write`) expressed in each
+vendor's format yields the *same* effective auth scope on the same operation
+through `compileContract`.
 
 ## Consequences
-- A real gateway estate (Kong) now compiles into certified agent capabilities via
-  the one pipeline; no Kong type escapes the adapter package.
-- Transformation and unknown-plugin honesty (opaque + evidenced) is enforced.
-- **Deferred:** Kong consumers/credentials and workspace scoping beyond the auth
-  summary; live Kong Admin API (the offline path is proven first).
+- Kong, WSO2, MuleSoft, IBM API Connect, and Apigee estates all compile into
+  certified agent capabilities via the one pipeline; **no vendor type escapes** its
+  adapter package, and all five share one source-synthesis + overlay path.
+- Transformation and unknown-policy honesty (opaque + evidenced, never dropped) is
+  enforced uniformly, and each adapter passes `gatewayAdapterConformance`.
+- **Deferred:** per-vendor depth — Kong consumers/credentials/workspaces, WSO2
+  mediation sequences, MuleSoft Exchange metadata + client apps, API Connect
+  spaces/catalogs, Apigee shared flows and target servers; live management APIs
+  (the offline path is proven first for every vendor).
