@@ -1,6 +1,6 @@
 import type { AirDocument } from "@anvil/air";
 import { applyPatches, type SemanticChange } from "./apply.js";
-import type { Deficiency, Severity } from "./deficiency.js";
+import type { Severity } from "./deficiency.js";
 import { severityRank } from "./deficiency.js";
 import type { Refinement } from "./model.js";
 import { buildRefinementPlan, type RefinementPlan } from "./plan.js";

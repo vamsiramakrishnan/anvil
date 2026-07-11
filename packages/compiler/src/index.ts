@@ -4,11 +4,15 @@
  * result for safety. Build-time only; never on the runtime hot path.
  */
 
+export * from "./adopt/index.js";
 export * from "./capabilities.js";
+export * from "./capability/index.js";
 export * from "./capability-review.js";
 export * from "./classify.js";
 export * from "./compile.js";
+export * from "./contract/index.js";
 export * from "./drift.js";
+export * from "./gateway/index.js";
 export * from "./manifest.js";
 export * from "./naming.js";
 export * from "./normalize.js";

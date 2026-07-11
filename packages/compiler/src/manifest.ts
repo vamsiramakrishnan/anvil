@@ -154,91 +154,110 @@ function normalizeCondition(entry: string): RetryCondition | null {
   return null;
 }
 
-/** Which manifest keys match an operation. */
-function matches(op: Operation, key: string): boolean {
+/**
+ * Which manifest keys match an operation: its AIR id, canonical name, or the
+ * source's own operationId. Exported so the overlay layer resolves an operation
+ * target with exactly the same rule the manifest uses (one matcher, no drift).
+ */
+export function operationMatchesKey(op: Operation, key: string): boolean {
   return op.id === key || op.canonicalName === key || op.sourceRef.operationId === key;
+}
+const matches = operationMatchesKey;
+
+/**
+ * Apply one operation's manifest entry, returning a new enriched operation.
+ * Manifest values win over inference; anything left unset is recomputed so the
+ * result stays internally consistent (idempotency/retry/confirmation coherent).
+ *
+ * This is the single semantic-override *application* path. The overlay layer
+ * (`contract/`) resolves any number of policy overlays into one effective
+ * `OperationManifest` per operation and applies it through exactly this
+ * function, so a manifest override and a gateway/investigation overlay never
+ * diverge in how they mutate an operation.
+ */
+export function applyOperationManifest(original: Operation, m: OperationManifest): Operation {
+  const op: Operation = structuredClone(original);
+
+  if (m.side_effect) op.effect.kind = m.side_effect;
+  if (m.risk) op.effect.risk = m.risk;
+  if (m.reversible !== undefined) op.effect.reversible = m.reversible;
+  if (m.action) op.effect.action = m.action;
+  if (m.display_name) op.displayName = m.display_name;
+  if (m.description) op.description = m.description;
+
+  if (m.auth) {
+    if (m.auth.principal) op.auth.principal = m.auth.principal;
+    if (m.auth.audience) op.auth.audience = m.auth.audience;
+    if (m.auth.secret_source) op.auth.secretSource = m.auth.secret_source;
+    if (m.auth.tenant) op.auth.tenant = m.auth.tenant;
+    if (m.auth.actor || m.auth.subject) {
+      op.auth.delegation = { actor: m.auth.actor, subject: m.auth.subject };
+    }
+  }
+
+  if (m.idempotency?.strategy) {
+    op.idempotency.mode = STRATEGY_TO_MODE[m.idempotency.strategy];
+    if (m.idempotency.key_location) op.idempotency.mechanism = m.idempotency.key_location;
+    if (m.idempotency.header) op.idempotency.key = m.idempotency.header;
+    if (op.idempotency.mode === "required" || op.idempotency.mode === "key_supported") {
+      op.idempotency.keyDerivation = "request_fingerprint";
+    }
+  }
+
+  // Recompute derived policy so idempotency/retry/confirmation stay coherent,
+  // then let explicit manifest values override.
+  op.retries = classifyRetry(op.effect, op.idempotency);
+  op.confirmation = classifyConfirmation(op.effect, op.idempotency);
+
+  if (m.retries) {
+    if (m.retries.enabled === false) {
+      op.retries = { ...op.retries, mode: "none", maxAttempts: 1, backoff: "none", retryOn: [] };
+    } else if (m.retries.enabled === true) {
+      op.retries.mode = "safe";
+      if (op.retries.backoff === "none") op.retries.backoff = "exponential_jitter";
+    }
+    if (m.retries.only_on) {
+      const conds = m.retries.only_on
+        .map(normalizeCondition)
+        .filter((c): c is RetryCondition => c !== null);
+      if (conds.length) op.retries.retryOn = conds;
+    }
+    if (m.retries.max_attempts) op.retries.maxAttempts = m.retries.max_attempts;
+  }
+
+  if (m.confirmation) {
+    if (m.confirmation.required !== undefined) op.confirmation.required = m.confirmation.required;
+    if (m.confirmation.risk) op.confirmation.risk = m.confirmation.risk;
+    if (m.confirmation.reason) op.confirmation.reason = m.confirmation.reason;
+  }
+
+  if (m.state) op.state = m.state;
+
+  op.evidence.claims.push({
+    subject: op.id,
+    predicate: "enriched",
+    value: true,
+    source: "spec",
+    sourceRef: "anvil-manifest",
+    method: "manifest",
+    note: "enriched by supplemental Anvil manifest",
+    confidence: 0.95,
+    review: "accepted",
+  });
+
+  return op;
 }
 
 /**
  * Apply a manifest to a set of operations, returning the enriched operations.
- * Manifest values win over inference; anything the manifest leaves unset is
- * recomputed so the result stays internally consistent.
+ * Thin wrapper over {@link applyOperationManifest}: the first manifest entry that
+ * matches an operation wins, and non-matching operations pass through untouched.
  */
 export function enrich(operations: Operation[], manifest: AnvilManifest): Operation[] {
   return operations.map((original) => {
     const entry = Object.entries(manifest.operations).find(([key]) => matches(original, key));
     if (!entry) return original;
-    const m = entry[1];
-    const op: Operation = structuredClone(original);
-
-    if (m.side_effect) op.effect.kind = m.side_effect;
-    if (m.risk) op.effect.risk = m.risk;
-    if (m.reversible !== undefined) op.effect.reversible = m.reversible;
-    if (m.action) op.effect.action = m.action;
-    if (m.display_name) op.displayName = m.display_name;
-    if (m.description) op.description = m.description;
-
-    if (m.auth) {
-      if (m.auth.principal) op.auth.principal = m.auth.principal;
-      if (m.auth.audience) op.auth.audience = m.auth.audience;
-      if (m.auth.secret_source) op.auth.secretSource = m.auth.secret_source;
-      if (m.auth.tenant) op.auth.tenant = m.auth.tenant;
-      if (m.auth.actor || m.auth.subject) {
-        op.auth.delegation = { actor: m.auth.actor, subject: m.auth.subject };
-      }
-    }
-
-    if (m.idempotency?.strategy) {
-      op.idempotency.mode = STRATEGY_TO_MODE[m.idempotency.strategy];
-      if (m.idempotency.key_location) op.idempotency.mechanism = m.idempotency.key_location;
-      if (m.idempotency.header) op.idempotency.key = m.idempotency.header;
-      if (op.idempotency.mode === "required" || op.idempotency.mode === "key_supported") {
-        op.idempotency.keyDerivation = "request_fingerprint";
-      }
-    }
-
-    // Recompute derived policy so idempotency/retry/confirmation stay coherent,
-    // then let explicit manifest values override.
-    op.retries = classifyRetry(op.effect, op.idempotency);
-    op.confirmation = classifyConfirmation(op.effect, op.idempotency);
-
-    if (m.retries) {
-      if (m.retries.enabled === false) {
-        op.retries = { ...op.retries, mode: "none", maxAttempts: 1, backoff: "none", retryOn: [] };
-      } else if (m.retries.enabled === true) {
-        op.retries.mode = "safe";
-        if (op.retries.backoff === "none") op.retries.backoff = "exponential_jitter";
-      }
-      if (m.retries.only_on) {
-        const conds = m.retries.only_on
-          .map(normalizeCondition)
-          .filter((c): c is RetryCondition => c !== null);
-        if (conds.length) op.retries.retryOn = conds;
-      }
-      if (m.retries.max_attempts) op.retries.maxAttempts = m.retries.max_attempts;
-    }
-
-    if (m.confirmation) {
-      if (m.confirmation.required !== undefined) op.confirmation.required = m.confirmation.required;
-      if (m.confirmation.risk) op.confirmation.risk = m.confirmation.risk;
-      if (m.confirmation.reason) op.confirmation.reason = m.confirmation.reason;
-    }
-
-    if (m.state) op.state = m.state;
-
-    op.evidence.claims.push({
-      subject: op.id,
-      predicate: "enriched",
-      value: true,
-      source: "spec",
-      sourceRef: "anvil-manifest",
-      method: "manifest",
-      note: "enriched by supplemental Anvil manifest",
-      confidence: 0.95,
-      review: "accepted",
-    });
-
-    return op;
+    return applyOperationManifest(original, entry[1]);
   });
 }
 

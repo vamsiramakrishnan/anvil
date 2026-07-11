@@ -19,6 +19,8 @@ export const SourceOriginKind = z.enum([
   "kong",
   "api_connect",
   "wso2",
+  // The in-repo fake gateway used to prove the adapter pipeline without a vendor.
+  "fixture",
 ]);
 export type SourceOriginKind = z.infer<typeof SourceOriginKind>;
 
