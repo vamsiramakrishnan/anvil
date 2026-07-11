@@ -65,9 +65,14 @@ export type CapabilityContractRef = z.infer<typeof CapabilityContractRef>;
 export const SurfaceSignatureRef = z.object({ digest: z.string() });
 export type SurfaceSignatureRef = z.infer<typeof SurfaceSignatureRef>;
 
-/** A reference to the certification record (Increment 8). Optional until then. */
+/**
+ * A reference to the certification record (Increment 8). Optional until then.
+ * `@anvil/certification` depends on this package, so the status values are
+ * mirrored here rather than imported — they must stay in sync with
+ * `CertificationStatus` in `@anvil/certification`.
+ */
 export const CertificationRef = z.object({
-  status: z.enum(["failed", "static_passed", "certified", "expired"]),
+  status: z.enum(["failed", "static_passed", "simulator_exercised", "certified", "expired"]),
   digest: z.string(),
 });
 export type CertificationRef = z.infer<typeof CertificationRef>;

@@ -50,7 +50,8 @@ export function certify(air: AirDocument, options: CertifyOptions = {}): Certifi
     status = staticOk ? "static_passed" : "failed";
   } else {
     checks.push(...executableChecks(air, options.seed ?? 1));
-    for (const m of runMutationBattery(air)) {
+    const mutants = runMutationBattery(air);
+    for (const m of mutants) {
       checks.push({
         id: `mutation/${m.name}`,
         phase: "mutation",
@@ -58,7 +59,18 @@ export function certify(air: AirDocument, options: CertifyOptions = {}): Certifi
         detail: m.applicable ? m.classification : "inapplicable",
       });
     }
-    status = checks.every((c) => c.ok) ? "certified" : "failed";
+    if (!checks.every((c) => c.ok)) {
+      status = "failed";
+    } else {
+      // `certified` requires the attestation to *demonstrably* catch a safety
+      // regression: at least one safety mutant was applicable and killed. When the
+      // contract exposes no safety-sensitive surface to mutate (nothing to confirm,
+      // no scopes, no non-idempotent mutation), the surface was still booted and
+      // exercised, but we cannot make that claim — so it is `simulator_exercised`,
+      // not `certified`.
+      const safetyProven = mutants.some((m) => m.safety && m.applicable && m.killed);
+      status = safetyProven ? "certified" : "simulator_exercised";
+    }
   }
 
   const attestation = attestationFor(air, options);
@@ -68,14 +80,22 @@ export function certify(air: AirDocument, options: CertifyOptions = {}): Certifi
 
 /**
  * Whether a prior certification still holds for a contract, or has expired because
- * a bound digest changed. Recompute the attestation and compare.
+ * *any* bound input changed. The attestation binds six things — pack, contract,
+ * capability, and surface digests, the target-profile version, and the
+ * certification-implementation version — so all six must be recomputed and
+ * compared, not just the contract and surface. Comparing a subset would let a
+ * repacked artifact, a regrouped capability, or a newer certification engine reuse
+ * a stale record. The pack must be supplied to recompute `packDigest` faithfully;
+ * omit it only when the original certification bound no pack.
  */
-export function isExpired(record: CertificationRecord, air: AirDocument): boolean {
+export function isExpired(
+  record: CertificationRecord,
+  air: AirDocument,
+  options: { pack?: CertifyOptions["pack"] } = {},
+): boolean {
   const current = attestationFor(air, {
+    pack: options.pack,
     targetProfileVersion: record.attestation.targetProfileVersion,
   });
-  return (
-    record.attestation.contractDigest !== current.contractDigest ||
-    record.attestation.surfaceSignatureDigest !== current.surfaceSignatureDigest
-  );
+  return hashCanonical(current) !== hashCanonical(record.attestation);
 }

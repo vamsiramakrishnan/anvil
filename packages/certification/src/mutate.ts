@@ -85,6 +85,8 @@ export const STANDARD_MUTANTS: Mutant[] = [
 
 export interface MutantResult {
   name: string;
+  /** Whether the weakening was safety-sensitive (mirrors the mutant's own flag). */
+  safety: boolean;
   applicable: boolean;
   killed: boolean;
   classification?: string;
@@ -98,12 +100,19 @@ export function runMutationBattery(
   const baseline = surfaceSignatureFor(air);
   return mutants.map((mutant) => {
     const mutated = mutant.apply(air);
-    if (!mutated) return { name: mutant.name, applicable: false, killed: true };
+    if (!mutated)
+      return { name: mutant.name, safety: mutant.safety, applicable: false, killed: true };
     const report = diffSurfaceSignature(baseline, surfaceSignatureFor(mutated));
     // Any detected change kills the mutant (the attestation cannot carry over);
     // a safety mutant must be detected specifically as safety-sensitive.
     const detected = report.classification !== "compatible";
     const killed = mutant.safety ? report.classification === "safety-sensitive" : detected;
-    return { name: mutant.name, applicable: true, killed, classification: report.classification };
+    return {
+      name: mutant.name,
+      safety: mutant.safety,
+      applicable: true,
+      killed,
+      classification: report.classification,
+    };
   });
 }

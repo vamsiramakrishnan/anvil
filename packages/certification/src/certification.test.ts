@@ -80,6 +80,76 @@ describe("the gate kills safety mutants", () => {
   });
 });
 
+describe("review fixes — honest grading and complete expiry", () => {
+  it("a surface with no safety-sensitive controls is simulator_exercised, not certified (#20)", async () => {
+    // A read-only service: nothing to confirm, no scopes, no non-idempotent
+    // mutation — no safety mutant is applicable, so the battery proves nothing.
+    const roSpec = `openapi: "3.0.3"
+info: { title: Catalog, version: "1.0.0" }
+paths:
+  /items:
+    get:
+      operationId: listItems
+      tags: [catalog]
+      responses: { "200": { description: ok } }
+`;
+    const compiled = await compile({ spec: roSpec, serviceId: "catalog" });
+    const ro = approveOperations(
+      compiled,
+      compiled.operations.map((o) => o.id),
+    );
+    const record = certify(ro, { executable: true });
+    expect(record.checks.filter((c) => !c.ok)).toEqual([]);
+    expect(record.status).toBe("simulator_exercised");
+  });
+
+  it("expires when the pack digest changes even if the contract is unchanged (#23)", () => {
+    const built = assembleSystemPack({
+      version: "1.0.0",
+      contractRef: { id: "c", digest: "d" },
+      artifacts: [
+        {
+          id: "skill",
+          kind: "skill",
+          path: "skill/SKILL.md",
+          bytes: new TextEncoder().encode("# Refunds\n"),
+          build: {
+            inputDigests: ["c"],
+            implementationVersion: "gen-1",
+            configurationDigest: "cfg",
+          },
+        },
+      ],
+    });
+    const prior = certify(air, { pack: { pack: built.pack, contents: built.contents } });
+    // Same contract, but re-certified against a different pack digest → expired.
+    const other = assembleSystemPack({
+      version: "2.0.0",
+      contractRef: { id: "c", digest: "d" },
+      artifacts: [
+        {
+          id: "skill",
+          kind: "skill",
+          path: "skill/SKILL.md",
+          bytes: new TextEncoder().encode("# Refunds v2\n"),
+          build: {
+            inputDigests: ["c"],
+            implementationVersion: "gen-1",
+            configurationDigest: "cfg",
+          },
+        },
+      ],
+    });
+    expect(isExpired(prior, air, { pack: { pack: other.pack, contents: other.contents } })).toBe(
+      true,
+    );
+    // Unchanged contract + same pack → still valid.
+    expect(isExpired(prior, air, { pack: { pack: built.pack, contents: built.contents } })).toBe(
+      false,
+    );
+  });
+});
+
 describe("static pack verification", () => {
   it("fails certification when a packed artifact is tampered", () => {
     const built = assembleSystemPack({
