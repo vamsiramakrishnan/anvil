@@ -6,8 +6,9 @@
  * It compiles the immutable source to AIR, applies the overlays at the compiler's
  * refinement slot (so validation and capability discovery see the effective
  * operations), and wraps the result in a content-addressed `ContractSnapshot`.
- * When a safety-sensitive semantic is contested, the result is `conflicted` and
- * the partial contract carries the safer value so nothing is silently loosened.
+ * When a safety-sensitive semantic is contested, the result is `conflicted`, the
+ * affected operations are blocked, and the snapshot itself records
+ * `status: "conflicted"` + the conflicts so the fact survives serialization.
  */
 import { type CompileSourceOptions, compileSourceEffective } from "../compile.js";
 import type { CompilerSource } from "../source/compiler-source.js";
@@ -34,13 +35,17 @@ function toContractSnapshot(
     air: result.air,
     appliedOverlays: result.appliedOverlays,
   });
+  const conflicted = result.conflicts.length > 0;
   return {
     schemaVersion: 1,
     id: `contract_${digest.slice(0, 12)}`,
     digest,
+    status: conflicted ? "conflicted" : "resolved",
     source: src,
     air: result.air,
     appliedOverlays: result.appliedOverlays,
+    conflicts: result.conflicts,
+    blockedOperationIds: result.blockedOperationIds,
     diagnostics: result.air.diagnostics,
   };
 }
@@ -55,10 +60,13 @@ export async function compileContract(
   overlays: readonly PolicyOverlay[] = [],
   options: ContractCompileOptions = {},
 ): Promise<EffectiveContractResult> {
-  const compileOptions: CompileSourceOptions = { serviceId: options.serviceId, overlays };
+  const compileOptions: CompileSourceOptions & { overlays: readonly PolicyOverlay[] } = {
+    serviceId: options.serviceId,
+    overlays,
+  };
   const result = await compileSourceEffective(source, compileOptions);
   const contract = toContractSnapshot(source, result);
-  if (result.conflicts.length > 0) {
+  if (contract.status === "conflicted") {
     return { status: "conflicted", partialContract: contract, conflicts: result.conflicts };
   }
   return { status: "resolved", contract };

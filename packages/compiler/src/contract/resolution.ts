@@ -27,14 +27,12 @@ import type {
   SemanticPredicate,
 } from "./model.js";
 import {
-  AUTHORITATIVE_ORIGINS,
+  authorityFor,
   CONTRACT_SAFETY_PREDICATES,
+  canLoosen,
   ORIGIN_AUTHORITY,
   projectOperationManifest,
 } from "./overlay.js";
-
-/** Evidence bar an inferred overlay must clear to loosen a safety predicate. */
-export const LOOSEN_THRESHOLD = 0.85;
 
 /** One assertion tagged with the origin of the overlay it came from. */
 interface Tagged {
@@ -49,14 +47,18 @@ export interface ResolvedOperation {
   values: Map<SemanticPredicate, unknown>;
   /** Effective required scopes when `auth.scopes` was touched. */
   scopes?: string[];
-  /** A contested retry posture on a mutation blocks the operation. */
+  /** Any unresolved safety-sensitive conflict blocks the operation. */
   blocked: boolean;
+  /** The predicates whose contested safety semantics blocked this operation. */
+  blockedByConflicts: string[];
 }
 
 export interface ResolveOutcome {
   perOperation: Map<string, ResolvedOperation>;
   conflicts: SemanticConflict[];
   diagnostics: Diagnostic[];
+  /** Operation ids blocked because a safety-sensitive semantic is contested. */
+  blockedOperationIds: string[];
 }
 
 /** The safer pole of a safety boolean/enum, when the predicate has one. */
@@ -265,16 +267,17 @@ function resolveScalar(
   // explicit override that momentarily matches the base can still be the decisive
   // value once idempotency/effect change around it — exactly the manifest's job.
 
-  // Safety asymmetry: a set/assert that loosens needs an authoritative origin or
-  // evidence ≥ threshold; otherwise the safer base wins.
+  // Safety asymmetry: a set/assert that loosens is allowed only when a
+  // contributing origin is authoritative *for that predicate* (see #2). Caller-
+  // authored `reliability` is advisory and never authorizes a loosening — a
+  // source can only loosen what it can prove.
   if (safety && isLoosening(predicate, base, candidate.value)) {
-    const authoritative = candidate.origins.some((o) => AUTHORITATIVE_ORIGINS.has(o));
-    if (!authoritative && candidate.reliability < LOOSEN_THRESHOLD) {
+    if (!canLoosen(candidate.origins, predicate)) {
       diagnostics.push({
         level: "warning",
         code: "overlay/loosen_refused",
         operationId: op.id,
-        message: `Refused to loosen ${predicate} on ${op.id} from ${canon(base)} to ${canon(candidate.value)}: no authoritative origin and evidence ${candidate.reliability.toFixed(2)} < ${LOOSEN_THRESHOLD}.`,
+        message: `Refused to loosen ${predicate} on ${op.id} from ${canon(base)} to ${canon(candidate.value)}: no origin is authoritative for this predicate (${candidate.origins.join("/")}).`,
       });
       return { diagnostics };
     }
@@ -296,7 +299,9 @@ function resolveScopes(
   // inferred overlay setting `[]` must never silently strip OAuth scopes. Its
   // scopes are unioned in instead (it can tighten, never weaken).
   const sets = tagged.filter((t) => t.assertion.operation === "set");
-  const authoritativeSets = sets.filter((t) => AUTHORITATIVE_ORIGINS.has(t.origin));
+  const authoritativeSets = sets.filter(
+    (t) => authorityFor(t.origin, "auth.scopes") === "authoritative",
+  );
   if (authoritativeSets.length > 0) {
     required.clear();
     for (const s of authoritativeSets) {
@@ -304,7 +309,7 @@ function resolveScopes(
     }
   }
   for (const s of sets) {
-    if (AUTHORITATIVE_ORIGINS.has(s.origin)) continue;
+    if (authorityFor(s.origin, "auth.scopes") === "authoritative") continue;
     const proposed = new Set(asStringArray(s.assertion.value));
     const dropped = [...required].filter((scope) => !proposed.has(scope));
     if (dropped.length > 0) {
@@ -324,7 +329,7 @@ function resolveScopes(
   }
   // remove drops a required scope — a loosening, allowed only from an authoritative origin.
   for (const t of tagged.filter((t) => t.assertion.operation === "remove")) {
-    if (!AUTHORITATIVE_ORIGINS.has(t.origin)) {
+    if (authorityFor(t.origin, "auth.scopes") !== "authoritative") {
       diagnostics.push({
         level: "warning",
         code: "overlay/loosen_refused",
@@ -380,7 +385,7 @@ export function resolveOverlays(
 
     const values = new Map<SemanticPredicate, unknown>();
     let scopes: string[] | undefined;
-    let blocked = false;
+    const blockedByConflicts: string[] = [];
 
     for (const [predicate, group] of byPredicate) {
       if (predicate === "auth.scopes") {
@@ -392,17 +397,30 @@ export function resolveOverlays(
       const r = resolveScalar(op, predicate, group);
       diagnostics.push(...r.diagnostics);
       if (r.conflict) {
+        // Every conflict resolveScalar raises is safety-sensitive (it only raises
+        // one for a safety predicate). An unresolved safety conflict must block the
+        // operation from public exposure — not just a contested retry posture (#4).
         conflicts.push(r.conflict);
-        if (predicate === "retries.mode" && op.effect.kind === "mutation") blocked = true;
+        blockedByConflicts.push(predicate);
         continue;
       }
       if (r.value !== undefined) values.set(predicate, r.value);
     }
 
-    perOperation.set(op.id, { operationId: op.id, values, scopes, blocked });
+    perOperation.set(op.id, {
+      operationId: op.id,
+      values,
+      scopes,
+      blocked: blockedByConflicts.length > 0,
+      blockedByConflicts,
+    });
   }
 
-  return { perOperation, conflicts, diagnostics };
+  const blockedOperationIds = [...perOperation.values()]
+    .filter((r) => r.blocked)
+    .map((r) => r.operationId)
+    .sort();
+  return { perOperation, conflicts, diagnostics, blockedOperationIds };
 }
 
 /** Apply a resolved outcome to operations, producing the effective operations. */

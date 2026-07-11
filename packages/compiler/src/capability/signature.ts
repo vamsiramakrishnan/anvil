@@ -72,6 +72,34 @@ export function surfaceSignatureFor(
   };
 }
 
+/**
+ * The surface signature for a *capability contract's* membership (#8). Once a
+ * `CapabilityContract` is canonical, generated surfaces must not rediscover
+ * membership from `air.capabilities` — an edited contract that moved an operation
+ * in must have that operation in its signature. Pack/simulator/projections use
+ * this, not `surfaceSignatureFor(air, capabilityId)`.
+ */
+export function surfaceSignatureForContract(
+  air: AirDocument,
+  contract: { id: string; version: string; operationIds: readonly string[] },
+): SurfaceSignature {
+  const memberIds = new Set(contract.operationIds);
+  const byId = new Map(air.operations.map((o) => [o.id, o]));
+  const operations = [...memberIds]
+    .map((id) => byId.get(id))
+    .filter((op): op is NonNullable<typeof op> => op !== undefined && op.state === "approved")
+    .map(operationSignature)
+    .sort((a, b) => a.id.localeCompare(b.id));
+  const digest = hashCanonical({ capabilityId: contract.id, operations });
+  return {
+    schemaVersion: 1,
+    capabilityId: contract.id,
+    version: contract.version,
+    operations,
+    digest,
+  };
+}
+
 const RANK: Record<CompatibilityClass, number> = {
   compatible: 0,
   additive: 1,
@@ -85,8 +113,9 @@ function worst(a: CompatibilityClass, b: CompatibilityClass): CompatibilityClass
 
 /**
  * Classify a change between two versions of one operation's signature. Auth or
- * effect (safety-posture) changes are **safety-sensitive**; an input-schema or
- * public-name change is **breaking**; output/error widening is **additive**.
+ * effect (safety-posture) changes are **safety-sensitive**; input-schema,
+ * public-name, and (conservatively) output/error changes are **breaking** until a
+ * structural analysis can prove a change additive.
  */
 function classifyChanged(
   prev: SurfaceOperationSignature,
@@ -110,13 +139,16 @@ function classifyChanged(
     fields.push("input");
     cls = worst(cls, "breaking");
   }
+  // A digest can detect that output/error schemas differ but not whether the
+  // change widens or narrows (#10). Classify conservatively as breaking until a
+  // structural JSON Schema compatibility check can prove a change is additive.
   if (prev.outputSchemaDigest !== next.outputSchemaDigest) {
     fields.push("output");
-    cls = worst(cls, "additive");
+    cls = worst(cls, "breaking");
   }
   if (prev.errorSchemaDigest !== next.errorSchemaDigest) {
     fields.push("errors");
-    cls = worst(cls, "additive");
+    cls = worst(cls, "breaking");
   }
   return { fields, classification: cls };
 }

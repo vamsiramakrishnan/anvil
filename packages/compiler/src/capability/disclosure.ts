@@ -77,6 +77,22 @@ export function disclosurePlanFor(air: AirDocument, capabilityId: string): Discl
   const members = air.operations
     .filter((op) => op.state === "approved" && memberIds.has(op.id))
     .sort((a, b) => a.id.localeCompare(b.id));
+  return disclosurePlanForMembers(air, capabilityId, members);
+}
+
+/**
+ * Build a disclosure plan for an *explicit* member set (#7). An edited capability
+ * — one that moved an operation in — must disclose that operation, so membership
+ * comes from the caller, never re-derived from the AIR capability grouping. Hard
+ * invariant: `keys(plan.operations) === member ids`.
+ */
+export function disclosurePlanForMembers(
+  air: AirDocument,
+  capabilityId: string,
+  members: readonly Operation[],
+): DisclosurePlan {
+  const capability = air.capabilities.find((c) => c.id === capabilityId);
+  const sortedMembers = [...members].sort((a, b) => a.id.localeCompare(b.id));
 
   const summary: DisclosureNode[] = [
     {
@@ -99,6 +115,6 @@ export function disclosurePlanFor(air: AirDocument, capabilityId: string): Discl
   }
 
   const operations: Record<string, DisclosureNode[]> = {};
-  for (const op of members) operations[op.id] = operationNodes(op);
+  for (const op of sortedMembers) operations[op.id] = operationNodes(op);
   return { summary, operations };
 }

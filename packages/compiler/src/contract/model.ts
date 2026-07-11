@@ -17,7 +17,7 @@
  * JSON Schema. Digests are content-derived (see `digest.ts`) and never include
  * timestamps or render-only metadata.
  */
-import { AirDocument, Diagnostic, type EvidenceKind } from "@anvil/air";
+import { AirDocument, Diagnostic, EvidenceKind } from "@anvil/air";
 import { z } from "zod";
 import type { SourceEntrypoint } from "../source/model.js";
 
@@ -108,10 +108,15 @@ export const JsonValue: z.ZodType<unknown> = z.unknown();
  */
 export const EvidenceArtifact = z.object({
   id: z.string(),
-  kind: z.custom<EvidenceKind>(),
+  /** A real `EvidenceKind` (validated), not an arbitrary string. */
+  kind: EvidenceKind,
   ref: z.string().optional(),
   note: z.string().optional(),
-  /** Source reliability 0..1; falls back to the per-kind default when unset. */
+  /**
+   * Advisory source reliability 0..1 for *display and tightening only*. It is
+   * caller-authored and therefore NEVER authorizes a safety loosening — loosening
+   * is gated on predicate-specific authority (`authorityFor`), not this number.
+   */
   reliability: z.number().min(0).max(1).optional(),
 });
 export type EvidenceArtifact = z.infer<typeof EvidenceArtifact>;
@@ -159,6 +164,12 @@ export const ContractSnapshot = z.object({
   schemaVersion: z.literal(1),
   id: z.string(),
   digest: z.string(),
+  /**
+   * Whether overlay resolution was clean or left a safety-sensitive semantic
+   * contested. Carried *on the snapshot itself* (#3) so a serialized partial
+   * contract never loses the fact that it was conflicted.
+   */
+  status: z.enum(["resolved", "conflicted"]),
   source: z.object({
     snapshotId: z.string(),
     sourceHash: z.string(),
@@ -166,6 +177,10 @@ export const ContractSnapshot = z.object({
   }),
   air: AirDocument,
   appliedOverlays: z.array(AppliedOverlay).default([]),
+  /** The unresolved safety conflicts; non-empty iff `status === "conflicted"`. */
+  conflicts: z.array(z.custom<SemanticConflict>()).default([]),
+  /** Operations blocked from exposure because a safety semantic is contested. */
+  blockedOperationIds: z.array(z.string()).default([]),
   diagnostics: z.array(Diagnostic).default([]),
 });
 export type ContractSnapshot = z.infer<typeof ContractSnapshot>;

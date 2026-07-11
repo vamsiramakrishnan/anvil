@@ -4,7 +4,11 @@ import { approveOperations, compile } from "../compile.js";
 import { capabilityContractFor, capabilityContractsFor } from "./contract.js";
 import { disclosurePlanFor } from "./disclosure.js";
 import { editCapabilityContract, moveOperation } from "./edit.js";
-import { diffSurfaceSignature, surfaceSignatureFor } from "./signature.js";
+import {
+  diffSurfaceSignature,
+  surfaceSignatureFor,
+  surfaceSignatureForContract,
+} from "./signature.js";
 
 const SPEC = `openapi: "3.0.3"
 info: { title: Payments, version: "3.2.0" }
@@ -134,5 +138,34 @@ describe("declarative capability editing", () => {
     expect(edited.intents).toEqual(["issue a refund"]);
     expect(edited.counterIntents).toEqual(["cancel a subscription"]);
     expect(edited.owner?.id).toBe("payments-team");
+  });
+});
+
+describe("review fixes — capability contract integrity", () => {
+  it("a moved-in operation appears in disclosure and the contract signature (#7/#8)", () => {
+    const contracts = capabilityContractsFor(air);
+    const [a, b] = contracts;
+    if (!a || !b) throw new Error("need two capabilities");
+    const movedOp = a.operationIds[0] as string;
+    const { to } = moveOperation(air, a, b, movedOp);
+
+    // #7: disclosure keys exactly match membership — the moved op is disclosed.
+    expect(Object.keys(to.disclosure.operations).sort()).toEqual([...to.operationIds].sort());
+    expect(to.disclosure.operations[movedOp]?.some((n) => n.kind === "operation")).toBe(true);
+
+    // #8: the signature derived from the contract includes the moved op, even
+    // though air.capabilities still groups it elsewhere.
+    const sig = surfaceSignatureForContract(air, to);
+    expect(sig.operations.some((o) => o.id === movedOp)).toBe(true);
+  });
+
+  it("a safety-profile override changes the digest (#6)", () => {
+    const [c] = capabilityContractsFor(air);
+    if (!c) throw new Error("need a capability");
+    const edited = editCapabilityContract(air, c, {
+      safetyProfile: { highestRisk: "destructive" },
+    });
+    expect(edited.safetyProfile.highestRisk).toBe("destructive");
+    expect(edited.digest).not.toBe(c.digest); // digest tracks the override
   });
 });

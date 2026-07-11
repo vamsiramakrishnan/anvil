@@ -10,8 +10,9 @@ import {
 import { discoverCapabilities } from "./capabilities.js";
 import { overlayDigest } from "./contract/digest.js";
 import type { AppliedOverlay, PolicyOverlay, SemanticConflict } from "./contract/model.js";
+import { manifestToOverlay } from "./contract/overlay.js";
 import { applyResolved, resolveOverlays } from "./contract/resolution.js";
-import { type AnvilManifest, buildWorkflows, enrich, parseManifest } from "./manifest.js";
+import { type AnvilManifest, buildWorkflows, parseManifest } from "./manifest.js";
 import { critiqueNames, resolveNameCollisions } from "./naming.js";
 import { normalize } from "./normalize.js";
 import { type ParsedSpec, parseSource } from "./parse.js";
@@ -34,25 +35,28 @@ export interface CompileSourceOptions {
   manifest?: string;
   /** Override the derived service id. */
   serviceId?: string;
-  /**
-   * Policy overlays applied at the compiler's override slot instead of the
-   * manifest. This is the canonical refinement channel (see `contract/`); when
-   * present, `manifest` operation overrides are ignored (convert a manifest with
-   * `manifestToOverlay` to combine them). Manifest service/workflow authoring is
-   * unaffected.
-   */
+}
+
+/**
+ * Options for the overlay-aware compile. Separate from `CompileSourceOptions` so
+ * the AIR-only `compileSource` *cannot* accept overlays and therefore can never
+ * silently discard a semantic conflict (#1) — the only overlay path is
+ * `compileContract`, which returns a typed `EffectiveContractResult`.
+ */
+export interface EffectiveCompileOptions extends CompileSourceOptions {
   overlays?: readonly PolicyOverlay[];
 }
 
 /**
  * The full result of compiling a source with overlays: the effective AIR, any
- * safety-sensitive conflicts overlay resolution refused to decide, and the
- * applied overlay identities. `compileSource` returns just the AIR; the contract
- * layer (`compileContract`) consumes the whole result.
+ * safety-sensitive conflicts overlay resolution refused to decide, the operations
+ * blocked by those conflicts, and the applied overlay identities. Internal to the
+ * contract layer; callers use `compileContract`.
  */
 export interface EffectiveCompileResult {
   air: AirDocument;
   conflicts: SemanticConflict[];
+  blockedOperationIds: string[];
   appliedOverlays: AppliedOverlay[];
 }
 
@@ -61,7 +65,8 @@ export interface EffectiveCompileResult {
  * immutable source snapshot. Everything the compiler reads — the spec and every
  * local $ref — comes from `source.files`, and the resulting AIR is bound back
  * to the snapshot's identity via `service.source`. This is the real Layer 0 →
- * Layer 1 join.
+ * Layer 1 join. It accepts no overlays; use `compileContract` for the overlay
+ * path so conflicts are surfaced as data.
  */
 export async function compileSource(
   source: CompilerSource,
@@ -71,13 +76,13 @@ export async function compileSource(
 }
 
 /**
- * Compile a source and return the whole effective result — AIR plus overlay
- * conflicts and applied overlay identities. The contract layer builds a
- * `ContractSnapshot`/`EffectiveContractResult` from this.
+ * Compile a source (optionally with overlays) and return the whole effective
+ * result. The contract layer builds a `ContractSnapshot`/`EffectiveContractResult`
+ * from this; it is not a general public API (see `compileContract`).
  */
 export async function compileSourceEffective(
   source: CompilerSource,
-  options: CompileSourceOptions = {},
+  options: EffectiveCompileOptions = {},
 ): Promise<EffectiveCompileResult> {
   const parsed = await parseSource(source);
   return buildAir(parsed, { ...options, provenance: source });
@@ -93,7 +98,7 @@ export async function compile(input: CompileInput): Promise<AirDocument> {
   return compileSource(source, { manifest: input.manifest, serviceId: input.serviceId });
 }
 
-interface BuildAirOptions extends CompileSourceOptions {
+interface BuildAirOptions extends EffectiveCompileOptions {
   provenance: CompilerSource;
 }
 
@@ -121,24 +126,31 @@ async function buildAir(
   // meaningful tokens (never a silent `_2`) before enrichment or validation.
   const namingDiagnostics = resolveNameCollisions(operations);
 
-  // The override slot. Overlays are the canonical refinement channel; when none
-  // is supplied the manifest's operation overrides drive the same application.
-  const overlays = options.overlays ?? [];
+  // The override slot — a single resolution path (#5). The manifest's *operation*
+  // overrides are converted to an `origin:"manifest"` overlay and resolved
+  // alongside any supplied overlays, so the manifest is authoring syntax over the
+  // one overlay mechanism and can never be a silently-ignored second channel.
+  // (Manifest service metadata + authored workflows stay separate, below.)
+  const manifestOverlay = manifestToOverlay(manifest);
+  const overlays: PolicyOverlay[] = [
+    ...(manifestOverlay.assertions.length > 0 ? [manifestOverlay] : []),
+    ...(options.overlays ?? []),
+  ];
   let conflicts: SemanticConflict[] = [];
+  let blockedOperationIds: string[] = [];
   const overlayDiagnostics: Diagnostic[] = [];
   let appliedOverlays: AppliedOverlay[] = [];
   if (overlays.length > 0) {
     const outcome = resolveOverlays(operations, overlays);
     operations = applyResolved(operations, outcome);
     conflicts = outcome.conflicts;
+    blockedOperationIds = outcome.blockedOperationIds;
     overlayDiagnostics.push(...outcome.diagnostics);
     appliedOverlays = overlays.map((o) => ({
       id: o.id,
       digest: o.digest || overlayDigest(o),
       origin: o.origin,
     }));
-  } else {
-    operations = enrich(operations, manifest);
   }
 
   // Attach the assembled input JSON Schema to each operation.
@@ -207,7 +219,7 @@ async function buildAir(
     ],
   };
 
-  return { air: loadAirDocument(air), conflicts, appliedOverlays };
+  return { air: loadAirDocument(air), conflicts, blockedOperationIds, appliedOverlays };
 }
 
 /** Approve operations by id (spec §17 approval workflow). */
