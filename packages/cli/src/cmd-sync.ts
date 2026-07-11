@@ -1,23 +1,24 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import {
   affectedCapabilities,
   type CertificationRef,
   compile,
-  computeSourceHash,
-  createSnapshot,
   DRIFT_SEVERITY_ORDER,
   DriftRecord,
   type DriftSeverity,
   diffContracts,
   driftRecordId,
+  FileSystemSourceSnapshotStore,
+  FilesystemSourceImporter,
   invalidatedCertifications,
-  parseSourceSnapshot,
-  type SnapshotFileInput,
   type SourceSnapshot,
+  type SourceSnapshotStore,
+  snapshotFromImport,
 } from "@anvil/compiler";
 import { Certification, readBundleDir } from "@anvil/generators";
 import { loadBundleAir, resolveBundleDir } from "./cmd-certify.js";
+import { printDiagnostics } from "./cmd-source.js";
 import type { CliIO } from "./io.js";
 
 /**
@@ -48,23 +49,27 @@ export async function cmdSync(
   const root = typeof flags.root === "string" ? flags.root : ".";
   const now = deps.now ?? (() => new Date());
 
-  // Layer 0 first: hash what the spec says NOW and compare against the locked
-  // snapshots for this source. Unchanged content is the fast path — same hash,
-  // no compile, no drift.
-  const inputs = collectSpecFiles(specPath);
-  const sourceHash = inputs.length > 0 ? computeSourceHash(inputs) : undefined;
-  const previous = latestSnapshotFor(root, specPath);
-  if (sourceHash !== undefined && previous && previous.sourceHash === sourceHash) {
+  // Layer 0 first: re-import what the spec says NOW (a pure read — nothing is
+  // written yet) and compare against the locked snapshots for this source.
+  // Unchanged content is the fast path — same hash, no compile, no drift.
+  const store = new FileSystemSourceSnapshotStore(join(root, ".anvil", "sources"));
+  const imported = await new FilesystemSourceImporter().import([specPath]);
+  const previous = await latestSnapshotFor(store, specPath);
+  if (
+    imported.sourceHash !== undefined &&
+    previous &&
+    previous.sourceHash === imported.sourceHash
+  ) {
     const outstanding = loadDriftRecords(root).filter(
-      (r) => r.sourceHash === sourceHash && r.reviewedAt === undefined,
+      (r) => r.sourceHash === imported.sourceHash && r.reviewedAt === undefined,
     );
     if (flags.json === true) {
       io.out(
         JSON.stringify(
           {
             changed: false,
-            sourceHash,
-            snapshotId: previous.id,
+            sourceHash: imported.sourceHash,
+            snapshotId: previous.snapshotId,
             outstandingDrift: outstanding.map((r) => r.id),
           },
           null,
@@ -72,7 +77,9 @@ export async function cmdSync(
         ),
       );
     } else {
-      io.out(`Source unchanged since snapshot '${previous.id}' (${sourceHash}). No drift.`);
+      io.out(
+        `Source unchanged since snapshot '${previous.snapshotId}' (${imported.sourceHash}). No drift.`,
+      );
       for (const r of outstanding) {
         io.out(`  note: unreviewed drift record '${r.id}' already covers this content.`);
       }
@@ -82,25 +89,35 @@ export async function cmdSync(
 
   // Content changed (or was never locked): lock a new snapshot before anything
   // else, so provenance exists even if the compile below fails.
-  const { snapshot, diagnostics } = createSnapshot({ files: inputs, sourceUri: specPath, now });
+  const snapshot = snapshotFromImport(imported, { originUri: specPath, clock: now });
   if (!snapshot) {
-    for (const d of diagnostics)
-      io.err(`${d.level.toUpperCase().padEnd(8)} ${d.code}  ${d.message}`);
+    printDiagnostics(io, imported.diagnostics);
     return 1;
   }
-  lockSnapshot(root, snapshot, inputs);
+  const locked = await store.create(snapshot, imported.files);
+  if (!locked.ok) {
+    printDiagnostics(io, locked.diagnostics);
+    return 1;
+  }
+  // Only a valid snapshot may be compiled; an invalid or unclassified one is
+  // still locked above, with its diagnostics inside it.
+  if (snapshot.status !== "valid") {
+    printDiagnostics(io, snapshot.diagnostics);
+    io.err(`Snapshot ${snapshot.snapshotId} is ${snapshot.status}; refusing to compile it.`);
+    return 1;
+  }
 
-  // Recompile in memory. The spec text is the snapshot's single detected spec
-  // document; a directory with several primary specs is ambiguous.
-  const detected = snapshot.files.filter((f) => f.detected);
-  if (detected.length > 1) {
+  // Recompile in memory. The spec text is the snapshot's single entrypoint;
+  // a directory with several primary specs is ambiguous.
+  if (snapshot.entrypoints.length > 1) {
     io.err(
-      `Ambiguous source: ${detected.length} spec documents detected (${detected.map((f) => f.path).join(", ")}). Pass the primary spec file.`,
+      `Ambiguous source: ${snapshot.entrypoints.length} spec documents detected (${snapshot.entrypoints.map((e) => e.path).join(", ")}). Pass the primary spec file.`,
     );
     return 1;
   }
-  const specFile = detected[0]?.path;
-  const spec = inputs.find((f) => f.path === specFile)?.content ?? "";
+  const specFile = snapshot.entrypoints[0]?.path;
+  const specBytes = imported.files.find((f) => f.path === specFile)?.bytes;
+  const spec = specBytes ? new TextDecoder("utf-8").decode(specBytes) : "";
   const manifestPath = typeof flags.manifest === "string" ? flags.manifest : undefined;
   const fresh = await compile({
     spec,
@@ -123,7 +140,7 @@ export async function cmdSync(
         JSON.stringify({ changed: true, sourceHash: snapshot.sourceHash, items: [] }, null, 2),
       );
     } else {
-      io.out(sourceHashLine(previous?.sourceHash, snapshot.sourceHash, snapshot.id));
+      io.out(sourceHashLine(previous?.sourceHash, snapshot.sourceHash, snapshot.snapshotId));
       io.out("No semantic drift: the recompiled contract matches the stored AIR.");
     }
     return 0;
@@ -139,7 +156,7 @@ export async function cmdSync(
     }),
     serviceId: stored.service.id,
     sourceUri: specPath,
-    snapshotId: snapshot.id,
+    snapshotId: snapshot.snapshotId,
     previousSourceHash: previous?.sourceHash,
     sourceHash: snapshot.sourceHash,
     bundleDir: dir,
@@ -155,7 +172,7 @@ export async function cmdSync(
   if (flags.json === true) {
     io.out(JSON.stringify({ changed: true, record, recordPath }, null, 2));
   } else {
-    io.out(sourceHashLine(previous?.sourceHash, snapshot.sourceHash, snapshot.id));
+    io.out(sourceHashLine(previous?.sourceHash, snapshot.sourceHash, snapshot.snapshotId));
     io.out("");
     io.out(renderDriftReport(record));
     io.out("");
@@ -229,65 +246,18 @@ export function loadDriftRecords(root: string): DriftRecord[] {
 
 /* ------------------------------ snapshot shell ------------------------------ */
 
-/**
- * Gather the spec file set exactly like `anvil source add` does: a single file,
- * or every .yaml/.yml/.json under a directory. Kept local (not shared with
- * cmd-source) so the two commands stay independently mergeable; the hashing and
- * model live in @anvil/compiler either way.
- */
-const SPEC_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
-
-function collectSpecFiles(target: string): SnapshotFileInput[] {
-  if (statSync(target).isFile()) {
-    return [{ path: basename(target), content: readFileSync(target, "utf8") }];
-  }
-  const out: SnapshotFileInput[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name.startsWith(".")) continue;
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (SPEC_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-        out.push({
-          path: relative(target, full).replaceAll("\\", "/"),
-          content: readFileSync(full, "utf8"),
-        });
-      }
-    }
-  };
-  walk(target);
-  return out;
-}
-
 /** The most recently imported locked snapshot for this source path, if any. */
-function latestSnapshotFor(root: string, specPath: string): SourceSnapshot | undefined {
-  const sourcesDir = join(root, ".anvil", "sources");
-  if (!existsSync(sourcesDir)) return undefined;
+async function latestSnapshotFor(
+  store: SourceSnapshotStore,
+  specPath: string,
+): Promise<SourceSnapshot | undefined> {
   const wanted = resolve(specPath);
   let latest: SourceSnapshot | undefined;
-  for (const entry of readdirSync(sourcesDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const path = join(sourcesDir, entry.name, "source.json");
-    if (!existsSync(path)) continue;
-    const { snapshot } = parseSourceSnapshot(readFileSync(path, "utf8"));
-    if (!snapshot || resolve(snapshot.sourceUri) !== wanted) continue;
+  for (const snapshot of (await store.list()).snapshots) {
+    if (resolve(snapshot.origin.uri) !== wanted) continue;
     if (!latest || snapshot.importedAt > latest.importedAt) latest = snapshot;
   }
   return latest;
-}
-
-/** Lock the snapshot the way `anvil source add` does: source.json + raw/. */
-function lockSnapshot(root: string, snapshot: SourceSnapshot, inputs: SnapshotFileInput[]): void {
-  const dir = join(root, ".anvil", "sources", snapshot.id);
-  const write = (path: string, contents: string) => {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, contents, "utf8");
-  };
-  write(join(dir, "source.json"), `${JSON.stringify(snapshot, null, 2)}\n`);
-  const byPath = new Map(inputs.map((f) => [f.path, f.content]));
-  for (const file of snapshot.files) {
-    write(join(dir, "raw", file.path), byPath.get(file.path) ?? "");
-  }
 }
 
 /* --------------------------- certification refs ---------------------------- */
