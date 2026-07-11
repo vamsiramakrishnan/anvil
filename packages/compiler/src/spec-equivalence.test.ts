@@ -18,6 +18,8 @@ const fixture = (rel: string) =>
 
 const swagger2 = fixture("payments-swagger2.yaml");
 const openapi3 = fixture("payments-openapi3.yaml");
+const docstoreSwagger2 = fixture("docstore-swagger2.yaml");
+const docstoreOpenapi3 = fixture("docstore-openapi3.yaml");
 
 /** Everything semantically meaningful about one operation, provenance stripped. */
 function operationView(op: Operation) {
@@ -111,11 +113,12 @@ describe("Swagger 2.0 / OpenAPI 3.0 equivalence", () => {
     expect(refund?.input.params.every((p) => p.in !== "body")).toBe(true);
   });
 
-  it("converts required formData into a required urlencoded body (upgrade gap closed)", async () => {
+  it("converts required formData into a required urlencoded body", async () => {
     const air = await compile({ spec: swagger2, serviceId: "payments" });
     const receipt = air.operations.find((o) => o.canonicalName === "email_receipt");
     expect(receipt?.input.body?.contentType).toBe("application/x-www-form-urlencoded");
-    // The upgrader drops body-level requiredness for formData; parseSpec restores it.
+    // The dedicated converter carries body-level requiredness for formData —
+    // no hand-written compensation exists in Anvil.
     expect(receipt?.input.body?.required).toBe(true);
     expect(receipt?.input.body?.fields.find((f) => f.name === "email")?.required).toBe(true);
     expect(receipt?.input.body?.fields.find((f) => f.name === "note")?.required).toBe(false);
@@ -161,6 +164,97 @@ describe("Swagger 2.0 / OpenAPI 3.0 equivalence", () => {
         "payments.reports",
       ]);
     }
+  });
+});
+
+describe("Swagger 2.0 long-tail conversion (docstore pair)", () => {
+  it("compiles equivalent specs to semantically equivalent AIR", async () => {
+    const fromSwagger = await compile({ spec: docstoreSwagger2, serviceId: "docstore" });
+    const fromOpenapi = await compile({ spec: docstoreOpenapi3, serviceId: "docstore" });
+    expect(fromSwagger.service.source.kind).toBe("swagger");
+    expect(fromOpenapi.service.source.kind).toBe("openapi");
+    expect(semanticView(fromSwagger)).toEqual(semanticView(fromOpenapi));
+  });
+
+  it("converts a multipart file upload into a required multipart body", async () => {
+    const air = await compile({ spec: docstoreSwagger2, serviceId: "docstore" });
+    const upload = air.operations.find((o) => o.sourceRef.operationId === "uploadContent");
+    expect(upload?.input.body?.contentType).toBe("multipart/form-data");
+    expect(upload?.input.body?.required).toBe(true);
+    const file = upload?.input.body?.fields.find((f) => f.name === "file");
+    // 2.0 `type: file` becomes the 3.x binary string idiom.
+    expect(file?.required).toBe(true);
+    expect(file?.schema).toEqual({ type: "string", format: "binary" });
+    expect(upload?.input.body?.fields.find((f) => f.name === "checksum")?.required).toBe(false);
+  });
+
+  it("dereferences shared 2.0 `parameters` into every referencing operation", async () => {
+    const air = await compile({ spec: docstoreSwagger2, serviceId: "docstore" });
+    for (const opId of ["listDocuments", "createDocument", "uploadContent"]) {
+      const op = air.operations.find((o) => o.sourceRef.operationId === opId);
+      const folder = op?.input.params.find((p) => p.name === "folder_id");
+      expect(folder, `${opId} should carry the shared folder_id parameter`).toBeDefined();
+      expect(folder?.in).toBe("path");
+      expect(folder?.required).toBe(true);
+    }
+  });
+
+  it("honors root oauth2 security and a per-operation apiKey override", async () => {
+    const air = await compile({ spec: docstoreSwagger2, serviceId: "docstore" });
+    const list = air.operations.find((o) => o.sourceRef.operationId === "listDocuments");
+    expect(list?.auth.type).toBe("oauth2_client_credentials");
+    expect(list?.auth.scopes).toEqual(["docs.read"]);
+    const usage = air.operations.find((o) => o.sourceRef.operationId === "getUsage");
+    expect(usage?.auth.type).toBe("api_key");
+    expect(usage?.auth.scopes).toEqual([]);
+  });
+
+  it("maps collectionFormat csv to style form / explode false", async () => {
+    // AIR does not model serialization style, so assert on the converted
+    // document itself: the converter, not Anvil, owns this mapping.
+    const parsed = await parseSpec(docstoreSwagger2);
+    const get = parsed.document.paths?.["/folders/{folder_id}/documents"]?.get as {
+      parameters?: Array<Record<string, unknown>>;
+    };
+    const label = get.parameters?.find((p) => p.name === "label");
+    expect(label?.style).toBe("form");
+    expect(label?.explode).toBe(false);
+    expect(label?.schema).toEqual({ type: "array", items: { type: "string" } });
+  });
+
+  it("preserves vendor extensions through conversion (x-* at info and op level)", async () => {
+    // x-idempotent handling in normalize depends on extensions surviving the
+    // 2.0→3.x conversion; prove they do at both levels.
+    const parsed = await parseSpec(docstoreSwagger2);
+    expect(parsed.document.info?.["x-api-owner"]).toBe("docs-platform");
+    const put = parsed.document.paths?.["/folders/{folder_id}/documents/{document_id}/content"]
+      ?.put as Record<string, unknown>;
+    expect(put["x-rate-limit-tier"]).toBe("gold");
+  });
+
+  it("converts shared definitions to components.schemas verbatim", async () => {
+    const parsed = await parseSpec(docstoreSwagger2);
+    expect(Object.keys(parsed.document.components?.schemas ?? {}).sort()).toEqual([
+      "Document",
+      "DocumentCreate",
+      "Usage",
+    ]);
+  });
+
+  it("rejects a Swagger 2.0 document the converter cannot repair", async () => {
+    // A dangling $ref is a genuine authoring error — it must surface as a
+    // structured parse failure, never a silent rewrite.
+    const broken = `swagger: "2.0"
+info: { title: broken, version: "1" }
+paths:
+  /a:
+    get:
+      parameters:
+        - $ref: "#/parameters/Missing"
+      responses:
+        "200": { description: ok }
+`;
+    await expect(parseSpec(broken)).rejects.toThrow(/Failed to convert Swagger 2.0 document/);
   });
 });
 
