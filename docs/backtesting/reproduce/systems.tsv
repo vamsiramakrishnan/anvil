@@ -17,3 +17,4 @@ docusign	swagger2	https://raw.githubusercontent.com/docusign/OpenAPI-Specificati
 github_gql	graphql	https://docs.github.com/public/fpt/schema.docs.graphql	(whole)	none
 linear	graphql	https://raw.githubusercontent.com/linear/linear/master/packages/sdk/src/schema.graphql	(whole)	none
 temporal	protobuf	https://raw.githubusercontent.com/temporalio/api/master/temporal/api/workflowservice/v1/service.proto	(whole)	none
+amadeus	swagger2	https://raw.githubusercontent.com/amadeus4dev/amadeus-open-api-specification/main/spec/json/FlightOffersSearch_v2_swagger_specification.json	(whole)	none

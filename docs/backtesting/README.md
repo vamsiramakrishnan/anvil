@@ -50,7 +50,7 @@ fetch before being marked fetchable.
 | 14 | Notion | ✅ makenotion/notion-mcp-server's own openapi json (~20 paths) | ✅ makenotion/notion-mcp-server (official, 4.5k★, 22 tools) | **BACKTESTED** (cleanest operationId→tool) |
 | 15 | Asana | ✅ Asana/openapi asana_oas.yaml (249 ops) | ⚠️ roychri/mcp-server-asana (community, 41 tools) | **BACKTESTED** |
 | 16 | Microsoft Graph / SharePoint | ✅ microsoftgraph/msgraph-metadata (huge, ~1377 paths) | ⚠️ fragmented, no dominant reference server | SPEC-ONLY |
-| 17 | Linear | ❌ GraphQL-only, no OpenAPI spec exists | ✅ mcp.linear.app (official) | NOT BACKTESTABLE (format mismatch) |
+| 17 | Linear | ✅ GraphQL SDL in linear/linear (no OpenAPI) | ✅ mcp.linear.app (official) | **BACKTESTED** (via the GraphQL adapter; found collision bug #23) |
 | 18 | Salesforce | ❌ spec generator requires an authenticated org (tenant-specific output) | ✅ salesforcecli/mcp (official, requires org auth to run) | GATED |
 | 19 | ServiceNow | ❌ spec only exportable from a live logged-in instance | ⚠️ echelon-ai-labs/servicenow-mcp (community, 75+ tools) | GATED |
 | 20 | SAP (S/4HANA etc.) | ⚠️ catalog browsable; spec download requires free-account login | ⚠️ dev-tooling MCPs only, no business-API reference server | SPEC-ONLY / GATED |
@@ -59,6 +59,13 @@ fetch before being marked fetchable.
 | 23 | Workday | ❌ Community docs gated behind tenant login | ❌ only a demo repo (`Workday/ai-conversation-bridge`) + generic DB connector | **GATED** — see `workday.md` |
 | 24 | Icertis | ❌ APIs Knowledge Center gated behind ICI license | ❌ none found | **GATED** |
 | 25 | BlackLine | ⚠️ developer portal HTTP-reachable but real content OAuth-gated | ❌ none found | **GATED** |
+| 26 | Oracle FLEXCUBE | ⚠️ docs.oracle.com ships a 49MB ServiceXML zip (10,216 XSDs) but no WSDL/OpenAPI; REST swagger is generated per installed instance | ❌ none | **GATED** — see `banking.md` |
+| 27 | Temenos Transact | ❌ api.temenos.com catalog behind community login | ❌ none | **GATED** — see `banking.md` |
+| 28 | Nucleus FinnOne | ❌ no public developer portal or spec at all | ❌ none | **GATED** — see `banking.md` |
+| 29 | Murex MX.3 | ❌ client-only documentation (mxplus API under NDA) | ❌ none | **GATED** — see `banking.md` |
+| 30 | Amadeus Self-Service | ✅ amadeus4dev/amadeus-open-api-specification (Swagger 2.0 per product) | ⚠️ community (donghyun-chae/mcp-amadeus etc.) | **BACKTESTED** — see `gds.md` |
+| 31 | Travelport uAPI | ✅ official Travelport GitHub, 158 WSDLs (SOAP, v26–v51) | ❌ none found | SPEC-ONLY (drove the multi-file WSDL mechanism) — see `gds.md` |
+| 32 | Sabre | ✅ SabreDevStudio WSDLs (30 real SOAP services) | ⚠️ official Sabre MCP exists but partner-gated | SPEC-ONLY — see `gds.md` |
 
 Full per-system research detail (URLs, tool counts, caveats) is in the task
 transcript; this table is the actionable summary.
