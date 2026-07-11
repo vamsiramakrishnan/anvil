@@ -1,0 +1,44 @@
+# Supplemental Anvil manifest for the Retail Banking SOAP service. Enriches the
+# effect, risk, and idempotency semantics WSDL cannot express, and approves ops.
+service:
+  name: banking
+  display_name: Retail Banking SOAP Service
+  owner: core-banking
+
+operations:
+  # Reads — safe and retryable.
+  GetAccountBalance:
+    state: approved
+  ListTransactions:
+    state: approved
+
+  # TransferFunds moves money — an irreversible financial mutation made
+  # idempotent by a caller-supplied key.
+  TransferFunds:
+    side_effect: mutation
+    risk: financial
+    reversible: false
+    idempotency:
+      strategy: required_request_key
+      key_location: body
+      field: idempotencyKey
+    confirmation:
+      required: true
+      risk: financial
+      reason: TransferFunds moves money between accounts and cannot be reversed.
+    retries:
+      enabled: true
+      only_on:
+        - timeout
+        - soap_transport_fault
+      max_attempts: 3
+    state: approved
+
+  # CloseAccount permanently closes an account — destructive.
+  CloseAccount:
+    side_effect: mutation
+    risk: destructive
+    confirmation:
+      required: true
+      risk: destructive
+    state: approved
