@@ -10,12 +10,13 @@
  * The heavy lifting happens in `adaptProtocol`, called from `parse.ts`.
  */
 import type { OpenApiDocument } from "../parse.js";
+import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
 import { adaptProto } from "./grpc.js";
 import { adaptWsdl } from "./wsdl.js";
 
 /** The non-REST source formats Anvil can lower. Aligns with AIR's SourceKind. */
-export type ProtocolFormat = "graphql" | "protobuf" | "wsdl";
+export type ProtocolFormat = "graphql" | "protobuf" | "wsdl" | "discovery";
 
 export interface DetectedProtocol {
   format: ProtocolFormat;
@@ -28,6 +29,7 @@ const EXT_FORMAT: Record<string, ProtocolFormat> = {
   graphqls: "graphql",
   proto: "protobuf",
   wsdl: "wsdl",
+  // Google Discovery docs have no canonical extension; detected by content.
 };
 
 function extensionOf(path: string): string {
@@ -62,6 +64,8 @@ function versionFor(format: ProtocolFormat, text: string): string {
 /** Content-only detection for sources that arrive without a filename. */
 function sniffContent(text: string): DetectedProtocol | undefined {
   const head = text.slice(0, 4000);
+  // Google API Discovery document: identified by its `kind` discriminator.
+  if (isDiscoveryDocument(text)) return { format: "discovery", version: "v1" };
   // proto3: a syntax pragma, or a service/message with an rpc.
   if (/^\s*syntax\s*=\s*["']proto[23]["']/m.test(head)) {
     return { format: "protobuf", version: /proto3/.test(head) ? "proto3" : "proto2" };
@@ -97,7 +101,9 @@ export function adaptProtocol(
       return adaptProto(text, title);
     case "wsdl":
       return adaptWsdl(text);
+    case "discovery":
+      return adaptDiscovery(text);
   }
 }
 
-export { adaptGraphql, adaptProto, adaptWsdl };
+export { adaptDiscovery, adaptGraphql, adaptProto, adaptWsdl };

@@ -1,0 +1,61 @@
+# Supplemental Anvil manifest (spec §4). Gmail is compiled from Google's real
+# Discovery document (NOT OpenAPI — Anvil's Discovery adapter lowers it; see
+# docs/backtesting/gws.md). Sending mail is a non-idempotent comms action with
+# no client idempotency key, so it stays confirmed and non-retried — matching
+# how the mature reference (taylorwilsdon/google_workspace_mcp) treats sends,
+# and its read-only mode (Anvil's equivalent: deliberate per-op approval).
+service:
+  name: gmail
+  display_name: Gmail API
+  owner: backtesting
+  environment: prod
+
+auth:
+  type: oauth2
+  scopes:
+    - https://www.googleapis.com/auth/gmail.modify
+    - https://www.googleapis.com/auth/gmail.send
+
+operations:
+  # Sending mail is irreversible and non-idempotent — a retry sends a second copy.
+  gmail.users.messages.send:
+    side_effect: mutation
+    risk: high
+    idempotency: { strategy: none }
+    confirmation:
+      required: true
+      risk: high
+      reason: Sends an email; retrying after a failure may send it twice.
+    retries: { enabled: false }
+    state: approved
+
+  # Sending a draft is the same irreversible send.
+  gmail.users.drafts.send:
+    side_effect: mutation
+    risk: high
+    idempotency: { strategy: none }
+    confirmation:
+      required: true
+      risk: high
+      reason: Sends a draft as an email; retrying after a failure may send it twice.
+    retries: { enabled: false }
+    state: approved
+
+  # Creating a draft is non-idempotent (a retry makes a second draft) but not a
+  # send — no irreversible external effect, so no forced confirmation.
+  gmail.users.drafts.create:
+    side_effect: mutation
+    risk: medium
+    idempotency: { strategy: none }
+    retries: { enabled: false }
+    state: approved
+
+  # Everything else keeps the compiler's classification; only exposure declared.
+  gmail.users.messages.trash: { state: approved }
+  gmail.users.messages.delete: { state: approved }
+  gmail.users.labels.create: { state: approved }
+  gmail.users.getProfile: { state: approved }
+  gmail.users.messages.list: { state: approved }
+  gmail.users.messages.get: { state: approved }
+  gmail.users.labels.list: { state: approved }
+  gmail.users.drafts.list: { state: approved }

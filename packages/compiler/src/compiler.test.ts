@@ -234,6 +234,88 @@ paths:
     expect(op?.confirmation.required).toBe(false);
   });
 
+  it("strips a REST format suffix from the resource name (Twilio's .json)", async () => {
+    // Twilio's list/create paths carry `.json` (Messages.json) while fetch/delete
+    // carry it on the id segment (Messages/{Sid}.json) — leaving the suffix in
+    // renders the SAME resource two ways and leaks a wire-format detail into the
+    // agent-facing name. `sourceRef.path` (the wire path) keeps `.json`.
+    const twilioish = `openapi: 3.0.0
+info: { title: twilio, version: 1.0.0 }
+paths:
+  /Accounts/{AccountSid}/Messages.json:
+    post: { operationId: CreateMessage, responses: { "200": { description: ok } } }
+    get:  { operationId: ListMessage, responses: { "200": { description: ok } } }
+  /Accounts/{AccountSid}/Messages/{Sid}.json:
+    get: { operationId: FetchMessage, responses: { "200": { description: ok } } }
+`;
+    const air = await compile({ spec: twilioish, serviceId: "twilio" });
+    const list = air.operations.find((o) => o.sourceRef.operationId === "ListMessage");
+    const fetch = air.operations.find((o) => o.sourceRef.operationId === "FetchMessage");
+    expect(list?.cli.command).toBe("twilio Messages list");
+    expect(fetch?.cli.command).toBe("twilio Messages get"); // same resource token, no `.json`
+    expect(list?.sourceRef.path).toContain(".json"); // wire path untouched
+  });
+
+  it("decomposes an RPC-style dotted path into resource + action (Slack's chat.postMessage)", async () => {
+    // Slack's Web API is RPC-over-HTTP: `/chat.postMessage` is one path segment
+    // `namespace.method`. Taking it whole makes the CLI `slack chat.postMessage
+    // send` (dotted, redundant verb) and drift from the tool name.
+    const slackish = `openapi: 3.0.0
+info: { title: slack, version: 1.0.0 }
+paths:
+  /chat.postMessage:
+    post: { operationId: chat_postMessage, responses: { "200": { description: ok } } }
+  /conversations.history:
+    get: { operationId: conversations_history, responses: { "200": { description: ok } } }
+`;
+    const air = await compile({ spec: slackish, serviceId: "slack" });
+    const post = air.operations.find((o) => o.sourceRef.operationId === "chat_postMessage");
+    const hist = air.operations.find((o) => o.sourceRef.operationId === "conversations_history");
+    expect(post?.cli.command).toBe("slack chat post_message");
+    expect(post?.mcp.toolName).toBe("slack_chat_post_message"); // CLI and tool agree
+    expect(hist?.cli.command).toBe("slack conversations history");
+  });
+
+  it("keeps namespaced RPC methods distinct instead of colliding (Slack admin.* vs bare)", async () => {
+    // Slack ships both `conversations.archive` and `admin.conversations.archive`
+    // — collapsing the namespace would make them collide onto one name.
+    const slackish = `openapi: 3.0.0
+info: { title: slack, version: 1.0.0 }
+paths:
+  /conversations.archive:
+    post: { operationId: conversations_archive, responses: { "200": { description: ok } } }
+  /admin.conversations.archive:
+    post: { operationId: admin_conversations_archive, responses: { "200": { description: ok } } }
+`;
+    const air = await compile({ spec: slackish, serviceId: "slack" });
+    const commands = air.operations.map((o) => o.cli.command);
+    expect(new Set(commands).size).toBe(2); // distinct, no collision
+    expect(commands).toContain("slack conversations archive");
+    expect(commands).toContain("slack admin_conversations archive");
+    // No disambiguation suffix was needed — the names were distinct on their own.
+    expect(air.diagnostics.some((d) => d.code === "naming_collision_resolved")).toBe(false);
+  });
+
+  it("uses the operationId verb for a POST reused as update/delete (Twilio POST-for-update)", async () => {
+    // Twilio (and others) reuse POST for update, not just create; HTTP method
+    // alone maps both to "create" and collides them. The operationId carries
+    // the real verb.
+    const twilioish = `openapi: 3.0.0
+info: { title: twilio, version: 1.0.0 }
+paths:
+  /Accounts/{AccountSid}/Messages.json:
+    post: { operationId: CreateMessage, responses: { "200": { description: ok } } }
+  /Accounts/{AccountSid}/Messages/{Sid}.json:
+    post: { operationId: UpdateMessage, responses: { "200": { description: ok } } }
+`;
+    const air = await compile({ spec: twilioish, serviceId: "twilio" });
+    const create = air.operations.find((o) => o.sourceRef.operationId === "CreateMessage");
+    const update = air.operations.find((o) => o.sourceRef.operationId === "UpdateMessage");
+    expect(create?.cli.command).toBe("twilio Messages create");
+    expect(update?.cli.command).toBe("twilio Messages update"); // not "create" → no collision
+    expect(new Set(air.operations.map((o) => o.cli.command)).size).toBe(2);
+  });
+
   it("flags a weak (agent-hostile) name for review", async () => {
     const weak = `openapi: 3.0.0
 info: { title: gateway, version: 1.0.0 }

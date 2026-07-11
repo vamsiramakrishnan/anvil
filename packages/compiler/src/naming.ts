@@ -61,6 +61,71 @@ export function actionFor(method: HttpMethod, endsWithParam: boolean): string {
   }
 }
 
+// A REST format-selector suffix on a path segment (Twilio's `.json`, some
+// APIs' `.xml`) is not part of the resource name — it selects a wire format.
+// It must not leak into the agent-facing resource/CLI/tool names, and leaving
+// it in also makes the *same* resource render two ways depending on whether a
+// given operation's path carries the suffix (Twilio `Messages.json` for
+// list/create vs `Messages` for fetch/delete, whose suffix sits on the id
+// segment). Only the derived NAME is cleaned; the wire path (`sourceRef.path`)
+// the runtime calls is untouched.
+const FORMAT_SUFFIX = /\.(json|xml|csv|ya?ml|txt|html?|proto)$/i;
+
+/**
+ * The true action verb from an operationId when the HTTP method genuinely
+ * can't express it: a POST reused for update/delete (Twilio's `UpdateMessage`,
+ * `DeleteX` are all `POST`, since Twilio — like several REST APIs — reuses
+ * POST for mutation-that-isn't-create). Scoped deliberately to POST and to
+ * update/delete only: POST already defaults to "create", and this is exactly
+ * the ambiguity the method drops. It does NOT trust a leading verb in general
+ * — Stripe's `GetCustomers` is really a *list*, so honoring "get" there would
+ * be worse than the method+path inference — so only these two method-defeating
+ * cases are overridden, keeping the CLI action aligned with the
+ * operationId-derived tool name (`twilio_update_message`, not a `_post`
+ * disambiguation suffix) and preventing the create/update collision.
+ */
+function postVerbFromOperationId(operationId: string | undefined): string | undefined {
+  if (!operationId) return undefined;
+  const s = snakeCase(operationId);
+  if (/^(update|edit|modify|patch)(_|$)/.test(s)) return "update";
+  if (/^(delete|remove|destroy)(_|$)/.test(s)) return "delete";
+  return undefined;
+}
+
+/**
+ * Decompose a concrete path segment into a resource token and, when the
+ * segment is an RPC-style dotted method (Slack's `chat.postMessage`,
+ * `users.profile.set`), the method name that should drive the action. A plain
+ * REST segment (no dot after stripping any format suffix) yields the segment
+ * itself as the resource and no rpc action.
+ *
+ * This is the general form of the same principle behind the verb-trailing-
+ * segment handling below: the agent-facing name must reflect what the
+ * operation *is*, not the literal shape of one URL segment — and it keeps the
+ * CLI command aligned with the operationId-derived MCP tool name (Slack's
+ * `chat.postMessage` → CLI `slack chat post_message`, tool
+ * `slack_chat_post_message`) instead of drifting to `chat.postMessage send`.
+ */
+function decomposeSegment(segment: string): { resource: string; rpcAction?: string } {
+  const noSuffix = segment.replace(FORMAT_SUFFIX, "");
+  if (noSuffix.includes(".")) {
+    const parts = noSuffix.split(".").filter(Boolean);
+    if (parts.length >= 2) {
+      // Last component is the method (drives the action); EVERYTHING before it
+      // is the resource namespace, joined — not just the immediate parent.
+      // Slack has both `conversations.archive` and `admin.conversations.archive`;
+      // keeping only `conversations` would collapse them onto one name (a
+      // spurious collision), so the resource is `conversations` vs
+      // `admin_conversations` — distinct, and each still reads as what it is.
+      return {
+        resource: parts.slice(0, -1).join("_"),
+        rpcAction: parts[parts.length - 1],
+      };
+    }
+  }
+  return { resource: noSuffix || segment };
+}
+
 interface RawForNaming {
   operationId?: string;
   summary?: string;
@@ -80,6 +145,12 @@ export function deriveNames(
   const segments = path.split("/").filter(Boolean);
   const concrete = segments.filter((s) => !s.startsWith("{"));
   const hasResource = concrete.length > 0;
+  // Clean the trailing segment before reading anything off it: strip a REST
+  // format suffix (`Messages.json` → `Messages`) and split an RPC-style dotted
+  // method (`chat.postMessage` → resource `chat`, method `postMessage`). Both
+  // otherwise leak the literal URL shape into the agent-facing names.
+  const lastRaw = concrete[concrete.length - 1];
+  const decomposed = lastRaw !== undefined ? decomposeSegment(lastRaw) : undefined;
   // A static trailing path segment that names a verb from the shared action
   // vocabulary (classify.ts) is a verb over the resource before it, not a
   // sub-resource itself — e.g. `GET /field/search` searches fields, it does not
@@ -87,13 +158,16 @@ export function deriveNames(
   // resource misreads these ("search list field" instead of "field search").
   // Reusing classify.ts's table (rather than a second, parallel keyword list)
   // is what keeps this verb and `effect.action` from ever disagreeing.
-  const lastConcrete = concrete[concrete.length - 1];
-  const trailingVerb = lastConcrete !== undefined ? actionVerbFor(lastConcrete) : undefined;
+  const lastConcrete = decomposed?.resource;
+  const trailingVerb =
+    decomposed?.rpcAction === undefined && lastConcrete !== undefined
+      ? actionVerbFor(lastConcrete)
+      : undefined;
   const resource =
     trailingVerb && concrete.length > 1
-      ? (concrete[concrete.length - 2] as string)
+      ? decomposeSegment(concrete[concrete.length - 2] as string).resource
       : hasResource
-        ? (concrete[concrete.length - 1] as string)
+        ? (lastConcrete as string)
         : serviceId;
   const endsWithParam =
     segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
@@ -101,11 +175,19 @@ export function deriveNames(
   // reclassified to a read; the action verb must agree, or the CLI/MCP surface
   // would call a read "create" while its own safety posture says otherwise.
   const readIntentSignal = `${raw.operationId ?? ""} ${raw.summary ?? ""}`;
-  const action = trailingVerb
-    ? trailingVerb
-    : isReadIntentWriteMethod(method, readIntentSignal)
-      ? (actionVerbFor(readIntentSignal) as string)
-      : actionFor(method, endsWithParam);
+  // Priority: an RPC method name (Slack `postMessage`) names the action
+  // directly; then a verb-trailing segment; then a read-intent write; then the
+  // HTTP-method default. An RPC action is snake_cased so it reads as one CLI
+  // token (`post_message`) that matches the operationId-derived tool name.
+  const action = decomposed?.rpcAction
+    ? snakeCase(decomposed.rpcAction)
+    : trailingVerb
+      ? trailingVerb
+      : isReadIntentWriteMethod(method, readIntentSignal)
+        ? (actionVerbFor(readIntentSignal) as string)
+        : method === "post"
+          ? (postVerbFromOperationId(raw.operationId) ?? actionFor(method, endsWithParam))
+          : actionFor(method, endsWithParam);
 
   const fromOperationId = Boolean(raw.operationId);
   const canonicalName = raw.operationId
@@ -204,14 +286,23 @@ export function resolveNameCollisions(operations: Operation[]): Diagnostic[] {
   return diagnostics;
 }
 
-/** A path segment that distinguishes `op` from the rest of its collision group. */
+/** Concrete path segments as cleaned word-tokens: format suffix stripped, RPC
+ * dotted segments split into their parts. So a distinguishing token is always
+ * a real word (`admin`, `local`), never a raw `Messages.json` or a whole
+ * dotted method — the same cleaning the derived names already got. */
+function cleanPathTokens(path: string | undefined): string[] {
+  return (path ?? "")
+    .split("/")
+    .filter((s) => s && !s.startsWith("{"))
+    .flatMap((s) => s.replace(FORMAT_SUFFIX, "").split(".").filter(Boolean));
+}
+
+/** A cleaned path token that distinguishes `op` from the rest of its collision group. */
 function distinguishingToken(op: Operation, group: Operation[]): string | undefined {
-  const mine = (op.sourceRef.path ?? "").split("/").filter((s) => s && !s.startsWith("{"));
+  const mine = cleanPathTokens(op.sourceRef.path);
   const others = group
     .filter((o) => o !== op)
-    .map(
-      (o) => new Set((o.sourceRef.path ?? "").split("/").filter((s) => s && !s.startsWith("{"))),
-    );
+    .map((o) => new Set(cleanPathTokens(o.sourceRef.path)));
   for (const seg of mine) {
     if (others.every((set) => !set.has(seg))) return seg;
   }
