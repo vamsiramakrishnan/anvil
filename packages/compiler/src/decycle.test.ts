@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { bundleDocument, DEFAULT_MAX_SCHEMA_DEPTH, materializeSchema } from "./decycle.js";
+import {
+  bundleDocument,
+  DEFAULT_MAX_REF_DEPTH,
+  DEFAULT_MAX_SCHEMA_DEPTH,
+  DEFAULT_MAX_SCHEMA_NODES,
+  materializeSchema,
+} from "./decycle.js";
 
 describe("bundleDocument", () => {
   it("leaves an acyclic, shallow document untouched", () => {
@@ -266,5 +272,45 @@ describe("materializeSchema", () => {
     const plain = { type: "string", description: "just a string" };
     const { schema } = materializeSchema(plain, {});
     expect(schema).toEqual(plain);
+  });
+
+  it("bounds a very BROAD schema by node budget, not just ref depth (DocuSign's real shape)", () => {
+    // The ref-depth bound caps a deep chain, but a single hop into a schema with
+    // hundreds of properties — each itself a large object — still explodes:
+    // DocuSign's `tabs`/`accountSettingsInformation` materialized to ~2.5MB PER
+    // operation, and 414 of those made a 400MB AIR that took airToYaml 30s+.
+    // Build one such broad schema: 500 properties, each a 20-field object.
+    const wide: Record<string, unknown> = {};
+    for (let i = 0; i < 500; i++) {
+      const fields: Record<string, unknown> = {};
+      for (let j = 0; j < 20; j++) fields[`f${j}`] = { type: "string" };
+      wide[`prop${i}`] = { type: "object", properties: fields };
+    }
+    const broad = { type: "object", properties: wide };
+    const small = materializeSchema(broad, {}, DEFAULT_MAX_REF_DEPTH, 200);
+    // Truncation is reported, not silent, and the output is a fraction of the input.
+    expect(small.nodeBudgetLimitedAt.length).toBeGreaterThan(0);
+    expect(JSON.stringify(small.schema).length).toBeLessThan(JSON.stringify(broad).length / 3);
+    // A property reached AFTER the budget was spent keeps its name but its value
+    // is a shallow stub — the deep 20-field body is gone, not re-expanded.
+    const out = small.schema as { properties: Record<string, { properties?: unknown }> };
+    expect(out.properties.prop499).toBeDefined(); // name preserved
+    expect(out.properties.prop499.properties).toBeUndefined(); // body truncated
+    // Still valid JSON (no cycles, no dangling structure).
+    expect(() => JSON.stringify(small.schema)).not.toThrow();
+  });
+
+  it("leaves a normal-sized schema untouched by the node budget (real specs top out ~1000 nodes)", () => {
+    // A realistic operation schema (PagerDuty's largest is ~1000 nodes) must be
+    // byte-identical with or without the budget — the budget only fires on
+    // pathological breadth, never on legitimate schemas.
+    const namedSchemas = {
+      item: { type: "object", properties: { a: { type: "string" }, b: { type: "integer" } } },
+    };
+    const ref = { $ref: "#/components/schemas/item" };
+    const withBudget = materializeSchema(ref, namedSchemas, 1, DEFAULT_MAX_SCHEMA_NODES);
+    const noBudget = materializeSchema(ref, namedSchemas, 1, Number.MAX_SAFE_INTEGER);
+    expect(withBudget.schema).toEqual(noBudget.schema);
+    expect(withBudget.nodeBudgetLimitedAt).toEqual([]);
   });
 });
