@@ -4,7 +4,7 @@
  * a malformed tool schema, duplicate tool names, or a tool count over policy are
  * refusals, not silent acceptance.
  */
-import { hashCanonical } from "@anvil/air";
+import { hashCanonical, snakeCase } from "@anvil/air";
 import type { McpCapture, McpSurfaceSnapshot, McpTool } from "./model.js";
 
 export interface SnapshotDiagnostic {
@@ -12,6 +12,7 @@ export interface SnapshotDiagnostic {
   code:
     | "mcp/malformed_tool_schema"
     | "mcp/duplicate_tool"
+    | "mcp/tool_name_collision"
     | "mcp/tool_budget_exceeded"
     | "mcp/no_tools";
   message: string;
@@ -46,6 +47,10 @@ export function buildMcpSurfaceSnapshot(
   }
 
   const seen = new Set<string>();
+  // Distinct tool names that collapse to the same snake_case token would produce
+  // colliding AIR operation ids and CLI commands downstream, silently dropping a
+  // tool from the adopted surface. Group by canonical name to catch it here.
+  const byCanonical = new Map<string, Set<string>>();
   for (const tool of capture.tools) {
     if (!isPlainObject(tool.inputSchema)) {
       diagnostics.push({
@@ -62,6 +67,24 @@ export function buildMcpSurfaceSnapshot(
       });
     }
     seen.add(tool.name);
+    const canonical = snakeCase(tool.name);
+    const group = byCanonical.get(canonical) ?? new Set<string>();
+    group.add(tool.name);
+    byCanonical.set(canonical, group);
+  }
+  for (const [canonical, names] of byCanonical) {
+    if (names.size > 1) {
+      diagnostics.push({
+        level: "error",
+        code: "mcp/tool_name_collision",
+        message: `Tools ${[...names]
+          .map((n) => `'${n}'`)
+          .sort()
+          .join(
+            ", ",
+          )} all map to the canonical name '${canonical}'; adopt them under distinct names.`,
+      });
+    }
   }
 
   if (options.maxTools !== undefined && capture.tools.length > options.maxTools) {

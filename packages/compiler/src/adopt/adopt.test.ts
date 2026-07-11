@@ -62,6 +62,22 @@ describe("MCP adoption — capture and validation", () => {
     expect(built.diagnostics.map((d) => d.code)).toContain("mcp/duplicate_tool");
   });
 
+  it("rejects distinct tool names that collide on a canonical name (#28)", () => {
+    const built = buildMcpSurfaceSnapshot({
+      endpoint: ENDPOINT,
+      protocolVersion: "1",
+      server: { name: "X", version: "1" },
+      transport: "stdio",
+      tools: [
+        { name: "createRefund", inputSchema: { type: "object" } },
+        { name: "create_refund", inputSchema: { type: "object" } },
+      ],
+    });
+    expect(built.ok).toBe(false);
+    if (built.ok) return;
+    expect(built.diagnostics.map((d) => d.code)).toContain("mcp/tool_name_collision");
+  });
+
   it("enforces a tool-count budget", () => {
     const built = buildMcpSurfaceSnapshot(sampleRefundServer(ENDPOINT).capture, { maxTools: 1 });
     expect(built.ok).toBe(false);

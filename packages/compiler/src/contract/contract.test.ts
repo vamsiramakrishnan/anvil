@@ -4,6 +4,7 @@ import { parseManifest } from "../manifest.js";
 import { ephemeralCompilerSource } from "../source/compiler-source.js";
 import { overlayDigest } from "./digest.js";
 import type { PolicyOverlay, SemanticOverlayAssertion } from "./model.js";
+import { SemanticOverlayAssertion as SemanticOverlayAssertionSchema } from "./model.js";
 import { makeOverlay, manifestToOverlay } from "./overlay.js";
 import { compileContract } from "./snapshot.js";
 
@@ -42,6 +43,32 @@ function contractOf(result: Awaited<ReturnType<typeof compileContract>>) {
 function op(result: Awaited<ReturnType<typeof compileContract>>, opId: string) {
   return contractOf(result).air.operations.find((o) => o.sourceRef.operationId === opId);
 }
+
+describe("overlay assertion values are real JSON (#3)", () => {
+  it("accepts nested JSON values and rejects non-JSON ones", () => {
+    const base = {
+      target: { scope: "operation", ref: "x" },
+      predicate: "auth.scopes",
+      operation: "set",
+    };
+    // A finite, serializable value parses.
+    expect(
+      SemanticOverlayAssertionSchema.safeParse({ ...base, value: { a: [1, "two", null, true] } })
+        .success,
+    ).toBe(true);
+    // NaN / undefined-bearing / function values are not JSON — rejected at the boundary.
+    expect(SemanticOverlayAssertionSchema.safeParse({ ...base, value: Number.NaN }).success).toBe(
+      false,
+    );
+    expect(SemanticOverlayAssertionSchema.safeParse({ ...base, value: () => 1 }).success).toBe(
+      false,
+    );
+    // A value-less operation (e.g. remove) is still valid.
+    expect(SemanticOverlayAssertionSchema.safeParse({ ...base, operation: "remove" }).success).toBe(
+      true,
+    );
+  });
+});
 
 describe("compileContract — snapshot identity and determinism", () => {
   it("binds the contract to the source and stamps a content digest", async () => {
