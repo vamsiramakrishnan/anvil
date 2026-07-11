@@ -48,12 +48,16 @@ export function operationSignature(op: Operation): SurfaceOperationSignature {
  * op is not on any public surface, so it must not be in the signature. Operations
  * are sorted by id for a stable, order-independent digest.
  */
-export function surfaceSignatureFor(air: AirDocument, capabilityId?: string): SurfaceSignature {
+export function surfaceSignatureFor(
+  air: AirDocument,
+  capabilityId?: string,
+  options: { includeAllStates?: boolean } = {},
+): SurfaceSignature {
   const memberIds = capabilityId
     ? new Set(air.capabilities.find((c) => c.id === capabilityId)?.operationIds ?? [])
     : undefined;
   const operations = air.operations
-    .filter((op) => op.state === "approved")
+    .filter((op) => options.includeAllStates || op.state === "approved")
     .filter((op) => !memberIds || memberIds.has(op.id))
     .map(operationSignature)
     .sort((a, b) => a.id.localeCompare(b.id));

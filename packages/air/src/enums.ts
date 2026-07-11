@@ -220,8 +220,9 @@ export type HttpMethod = z.infer<typeof HttpMethod>;
 export const ParamLocation = z.enum(["path", "query", "header", "cookie", "body"]);
 export type ParamLocation = z.infer<typeof ParamLocation>;
 
-/** Source spec kinds Anvil can parse (only `openapi` is wired in the MVP). */
-export const SourceKind = z.enum(["openapi", "swagger", "wsdl", "protobuf", "graphql"]);
+/** Source spec kinds Anvil can parse (only `openapi` is wired in the MVP).
+ *  `mcp` is a captured MCP server surface adopted as a source (Increment 6). */
+export const SourceKind = z.enum(["openapi", "swagger", "wsdl", "protobuf", "graphql", "mcp"]);
 export type SourceKind = z.infer<typeof SourceKind>;
 
 /** Diagnostic severity emitted by the validator. */
