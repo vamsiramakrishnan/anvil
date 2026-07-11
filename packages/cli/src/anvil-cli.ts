@@ -35,8 +35,10 @@ import { parseArgs } from "./args.js";
 import { cmdBuild } from "./cmd-build.js";
 import { cmdCapability } from "./cmd-capability.js";
 import { cmdCertify } from "./cmd-certify.js";
+import { cmdDrift } from "./cmd-drift.js";
 import { cmdPublish } from "./cmd-publish.js";
 import { cmdSource } from "./cmd-source.js";
+import { cmdSync } from "./cmd-sync.js";
 import { ANVIL_COMMANDS } from "./commands.js";
 import { type CliIO, processIO } from "./io.js";
 import { generateAnvilSkill } from "./self-skill.js";
@@ -87,6 +89,10 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
         return cmdDeploy(positionals.slice(1), flags, io);
       case "source":
         return await cmdSource(positionals.slice(1), flags, io);
+      case "sync":
+        return await cmdSync(positionals.slice(1), flags, io);
+      case "drift":
+        return cmdDrift(positionals.slice(1), flags, io);
       case "certify":
         return cmdCertify(positionals.slice(1), flags, io);
       case "publish":
