@@ -1,12 +1,16 @@
 import {
   type AirDocument,
   type AuthRequirement,
+  type Diagnostic,
   type JsonSchema,
   loadAirDocument,
   operationInputSchema,
   snakeCase,
 } from "@anvil/air";
 import { discoverCapabilities } from "./capabilities.js";
+import { overlayDigest } from "./contract/digest.js";
+import type { AppliedOverlay, PolicyOverlay, SemanticConflict } from "./contract/model.js";
+import { applyResolved, resolveOverlays } from "./contract/resolution.js";
 import { type AnvilManifest, buildWorkflows, enrich, parseManifest } from "./manifest.js";
 import { critiqueNames, resolveNameCollisions } from "./naming.js";
 import { normalize } from "./normalize.js";
@@ -30,6 +34,26 @@ export interface CompileSourceOptions {
   manifest?: string;
   /** Override the derived service id. */
   serviceId?: string;
+  /**
+   * Policy overlays applied at the compiler's override slot instead of the
+   * manifest. This is the canonical refinement channel (see `contract/`); when
+   * present, `manifest` operation overrides are ignored (convert a manifest with
+   * `manifestToOverlay` to combine them). Manifest service/workflow authoring is
+   * unaffected.
+   */
+  overlays?: readonly PolicyOverlay[];
+}
+
+/**
+ * The full result of compiling a source with overlays: the effective AIR, any
+ * safety-sensitive conflicts overlay resolution refused to decide, and the
+ * applied overlay identities. `compileSource` returns just the AIR; the contract
+ * layer (`compileContract`) consumes the whole result.
+ */
+export interface EffectiveCompileResult {
+  air: AirDocument;
+  conflicts: SemanticConflict[];
+  appliedOverlays: AppliedOverlay[];
 }
 
 /**
@@ -43,6 +67,18 @@ export async function compileSource(
   source: CompilerSource,
   options: CompileSourceOptions = {},
 ): Promise<AirDocument> {
+  return (await compileSourceEffective(source, options)).air;
+}
+
+/**
+ * Compile a source and return the whole effective result — AIR plus overlay
+ * conflicts and applied overlay identities. The contract layer builds a
+ * `ContractSnapshot`/`EffectiveContractResult` from this.
+ */
+export async function compileSourceEffective(
+  source: CompilerSource,
+  options: CompileSourceOptions = {},
+): Promise<EffectiveCompileResult> {
   const parsed = await parseSource(source);
   return buildAir(parsed, { ...options, provenance: source });
 }
@@ -62,10 +98,15 @@ interface BuildAirOptions extends CompileSourceOptions {
 }
 
 /**
- * The compiler loop (spec §5): parse → normalize → enrich → validate → AIR.
- * This is the single canonical model every artifact is generated from.
+ * The compiler loop (spec §5): parse → normalize → refine → validate → AIR.
+ * This is the single canonical model every artifact is generated from. The
+ * "refine" slot applies policy overlays (the canonical channel) or, in the
+ * legacy convenience path, the manifest — both through one application function.
  */
-async function buildAir(parsed: ParsedSpec, options: BuildAirOptions): Promise<AirDocument> {
+async function buildAir(
+  parsed: ParsedSpec,
+  options: BuildAirOptions,
+): Promise<EffectiveCompileResult> {
   const provenance = options.provenance;
   const doc = parsed.document;
   const manifest: AnvilManifest = options.manifest
@@ -79,7 +120,26 @@ async function buildAir(parsed: ParsedSpec, options: BuildAirOptions): Promise<A
   // Naming pass: resolve any name collisions coherently across id/CLI/tool with
   // meaningful tokens (never a silent `_2`) before enrichment or validation.
   const namingDiagnostics = resolveNameCollisions(operations);
-  operations = enrich(operations, manifest);
+
+  // The override slot. Overlays are the canonical refinement channel; when none
+  // is supplied the manifest's operation overrides drive the same application.
+  const overlays = options.overlays ?? [];
+  let conflicts: SemanticConflict[] = [];
+  const overlayDiagnostics: Diagnostic[] = [];
+  let appliedOverlays: AppliedOverlay[] = [];
+  if (overlays.length > 0) {
+    const outcome = resolveOverlays(operations, overlays);
+    operations = applyResolved(operations, outcome);
+    conflicts = outcome.conflicts;
+    overlayDiagnostics.push(...outcome.diagnostics);
+    appliedOverlays = overlays.map((o) => ({
+      id: o.id,
+      digest: o.digest || overlayDigest(o),
+      origin: o.origin,
+    }));
+  } else {
+    operations = enrich(operations, manifest);
+  }
 
   // Attach the assembled input JSON Schema to each operation.
   for (const op of operations) {
@@ -139,10 +199,15 @@ async function buildAir(parsed: ParsedSpec, options: BuildAirOptions): Promise<A
     capabilities,
     workflows,
     schemas: (doc.components?.schemas as Record<string, JsonSchema> | undefined) ?? {},
-    diagnostics: [...diagnostics, ...namingDiagnostics, ...workflowDiagnostics],
+    diagnostics: [
+      ...diagnostics,
+      ...namingDiagnostics,
+      ...workflowDiagnostics,
+      ...overlayDiagnostics,
+    ],
   };
 
-  return loadAirDocument(air);
+  return { air: loadAirDocument(air), conflicts, appliedOverlays };
 }
 
 /** Approve operations by id (spec §17 approval workflow). */
