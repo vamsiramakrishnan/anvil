@@ -169,4 +169,20 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
       "Convenience orchestration of the discovery flow — the same library calls as running `anvil source add` (locks a content-addressed snapshot under .anvil/sources), `anvil compile` (writes the bundle, default generated/<service-id>), `anvil assess` (the readiness triage; blocked operations are surfaced prominently but do not stop the flow), and `anvil capability propose` (read-only re-discovery over the stored groupings) individually, so the compiled AIR is byte-identical to the four-command path. It then STOPS for human review. It deliberately does NOT approve any capability or operation (every grouping stays `proposed`, every unproven mutation stays `review_required`), does NOT certify, and does NOT publish — no certification.json or publication.json is ever written. A broken spec stops at the snapshot layer with structured diagnostics and exit 1; nothing downstream runs.",
     mutates: true,
   },
+  {
+    name: "sync",
+    usage: "anvil sync <spec-path> <dir|air.yaml> [--manifest f] [--root ws] [--json]",
+    summary: "Detect semantic drift between the current spec and a stored AIR contract.",
+    detail:
+      'Layer 6 — drift and recertification. Re-imports the spec through the Layer 0 snapshot layer (unchanged content is a fast path: same sourceHash, no drift), recompiles it in memory, and diffs the fresh contract against the stored AIR: operations added/removed, field type and requiredness changes, auth scope/type changes, retry/idempotency/confirmation semantics, pagination, and documentation-only edits (info). Safety-loosening drift (a dropped confirmation, new retries, an idempotency claim crossing "none", auth vanishing) is blocking; other safety-semantic drift is high. Reports which capabilities are affected and which certifications must be re-earned even though their bundle bytes are untouched, then writes a drift record to .anvil/drift/<id>.json. Never mutates AIR, never applies spec changes, never touches capability lifecycles. Exits non-zero on high/blocking drift so it can gate a pipeline.',
+    mutates: true,
+  },
+  {
+    name: "drift",
+    usage: "anvil drift <list|show|accept> [id] [--note ..] [--root ws] [--json]",
+    summary: "List, inspect, and mark reviewed the drift records `anvil sync` stored.",
+    detail:
+      "`list` shows every stored drift record with its severity mix and review status; `show <id>` prints one record in full (items grouped by severity, affected capabilities, invalidated certifications). `accept <id> [--note ..]` stamps reviewedAt on the record — bookkeeping only: accepting drift never edits AIR, never restores a certification, and never changes capability lifecycles. Act on drift deliberately with `anvil compile`, `anvil certify`, and the capability review commands.",
+    mutates: true,
+  },
 ];
