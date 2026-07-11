@@ -16,6 +16,7 @@ export default defineConfig({
       "@anvil/harness": pkg("harness"),
       "@anvil/refinement": pkg("refinement"),
       "@anvil/system-pack": pkg("system-pack"),
+      "@anvil/simulator": pkg("simulator"),
     },
   },
   test: {
