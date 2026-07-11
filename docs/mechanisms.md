@@ -1,7 +1,9 @@
 # Mechanisms — how 22 hand-found bugs became standing machinery
 
 Backtesting real vendor specs against mature reference MCP servers found 22
-systemic compiler bugs (`backtesting/deficiencies.md`). Their distribution was
+systemic compiler bugs (`backtesting/deficiencies.md`; the count is 27 now —
+#23–#24 were found by the harness below on its first run, #25–#27 by external
+review). Their distribution was
 the design signal: 9 were schema-graph explosions, 9 were naming heuristics —
 two families, each fixed one instance at a time. This round converted the
 families into mechanisms that make the *class* impossible (or self-detecting),
@@ -54,6 +56,24 @@ rounds), rounds ≈ graph diameter). Named component bodies index by canonical
 hash; any structurally identical occurrence collapses to a deterministic
 canonical name (title-matching alias preferred, else lexicographic). Object
 identity remains as an exact fast path. Titles are now cosmetic metadata.
+
+The first integration attempt regressed adapter-lowered formats (GraphQL,
+Discovery) — caught by the corpus harness, root-caused with probes, and fixed
+with two additions that are now part of the mechanism:
+
+- **Annotation-agnostic match hashing.** `dereference()` merges each reference
+  *site's* sibling `description` onto the resolved clone, so 2,660 of GitHub's
+  3,868 inlined component copies differed from their component body by exactly
+  one top-level `description` — and exact hashing refused to collapse them.
+  Refinement still hashes every field; the *match* hash forgives only the
+  node's own top-level `description` (the one field dereference rewrites),
+  keeping description-only-distinguished schemas distinct at any depth.
+- **Bounded hoisting.** Any already-emitted expansion of ≥64 output nodes that
+  would be emitted at a second tree position is hoisted into a synthesized,
+  deterministically named `components.schemas` entry and `$ref`'d everywhere —
+  so output tree size is O(distinct nodes), never O(tree positions). GitHub's
+  bundled doc went from >10.5M tree positions (`JSON.stringify` overflow) to
+  17,925. This is the hard law; the match-hash fix just makes hoists rare.
 
 ## 3. Whole-spec naming dialect + multi-surface collision repair —
 `packages/compiler/src/dialect.ts`, `naming.ts`

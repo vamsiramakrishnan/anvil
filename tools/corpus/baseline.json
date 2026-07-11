@@ -1,91 +1,96 @@
 {
-  "updatedAt": "2026-07-11T22:18:46.385Z",
+  "updatedAt": "2026-07-11T23:06:19.824Z",
   "note": "Per-system quick-mode metrics. Regenerate with: node tools/corpus/run.mjs quick --update-baseline",
   "systems": {
     "jira": {
-      "compileMs": 814,
-      "airBytes": 1051622,
+      "compileMs": 917,
+      "airBytes": 482676,
       "opCount": 26
     },
     "confluence": {
-      "compileMs": 854,
-      "airBytes": 499719,
+      "compileMs": 871,
+      "airBytes": 375259,
       "opCount": 18
     },
     "github": {
-      "compileMs": 1101,
-      "airBytes": 2176586,
+      "compileMs": 1219,
+      "airBytes": 795972,
       "opCount": 25
     },
     "stripe": {
-      "compileMs": 1195,
-      "airBytes": 2795174,
+      "compileMs": 2195,
+      "airBytes": 2781275,
       "opCount": 22
     },
     "twilio": {
-      "compileMs": 627,
-      "airBytes": 396338,
+      "compileMs": 846,
+      "airBytes": 391066,
       "opCount": 15
     },
     "slack": {
-      "compileMs": 720,
-      "airBytes": 370693,
+      "compileMs": 756,
+      "airBytes": 321855,
       "opCount": 14
     },
     "gmail": {
-      "compileMs": 651,
-      "airBytes": 132885,
+      "compileMs": 682,
+      "airBytes": 135368,
       "opCount": 11
     },
     "notion": {
-      "compileMs": 981,
-      "airBytes": 217678,
+      "compileMs": 631,
+      "airBytes": 200135,
       "opCount": 24
     },
     "pagerduty": {
-      "compileMs": 743,
-      "airBytes": 620753,
+      "compileMs": 688,
+      "airBytes": 422113,
       "opCount": 12
     },
     "zoom": {
-      "compileMs": 698,
-      "airBytes": 217839,
+      "compileMs": 668,
+      "airBytes": 122580,
       "opCount": 14
     },
     "hubspot": {
-      "compileMs": 661,
-      "airBytes": 276156,
+      "compileMs": 745,
+      "airBytes": 163112,
       "opCount": 12
     },
     "docusign": {
-      "compileMs": 9111,
-      "airBytes": 40388109,
+      "compileMs": 1907,
+      "airBytes": 1843400,
       "opCount": 15
     },
     "github_gql": {
-      "compileMs": 1645,
-      "airBytes": 4177508,
+      "compileMs": 2170,
+      "airBytes": 4182097,
       "opCount": 299
     },
     "temporal": {
-      "compileMs": 735,
-      "airBytes": 543131,
+      "compileMs": 732,
+      "airBytes": 552157,
       "opCount": 121
     },
     "asana": {
-      "compileMs": 669,
-      "airBytes": 678700,
+      "compileMs": 690,
+      "airBytes": 452313,
       "opCount": 12
     },
     "zendesk": {
-      "compileMs": 816,
-      "airBytes": 947491,
+      "compileMs": 652,
+      "airBytes": 163940,
       "opCount": 9
     },
     "intercom": {
-      "compileMs": 1163,
-      "airBytes": 265156,
+      "compileMs": 675,
+      "airBytes": 276388,
       "opCount": 9
+    },
+    "linear": {
+      "compileMs": 2946,
+      "airBytes": 7613901,
+      "opCount": 611
     }
   }
 }
