@@ -117,14 +117,15 @@ const PROTOCOL_FORMATS: Record<string, { format: ProtocolFormat; kind: SourceKin
 };
 
 /**
- * Resolve a proto `import "a/b/c.proto"` to another file *in the same
- * snapshot* — never the network or an ambient host path, matching the OpenAPI
- * multi-file contract. Tries the import path verbatim, then its basename, so a
- * snapshot that preserves the import's directory structure OR just carries the
- * sibling `.proto` files flat both resolve. A missing import returns undefined
- * and the proto adapter degrades that type gracefully.
+ * Resolve a proto `import "a/b/c.proto"` — or a WSDL/XSD import location the
+ * adapter has already joined against the importing file's directory — to
+ * another file *in the same snapshot*: never the network or an ambient host
+ * path, matching the OpenAPI multi-file contract. Tries the import path
+ * verbatim, then its basename, so a snapshot that preserves the import's
+ * directory structure OR just carries the sibling files flat both resolve. A
+ * missing import returns undefined and the adapter degrades gracefully.
  */
-function protoImportResolver(source: CompilerSource): ProtoImportResolver {
+function snapshotImportResolver(source: CompilerSource): ProtoImportResolver {
   const decoder = new TextDecoder("utf-8");
   const byBasename = new Map<string, Uint8Array>();
   for (const [path, bytes] of source.files) {
@@ -191,7 +192,12 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
     const text = new TextDecoder("utf-8").decode(bytes);
     let lowered: OpenApiDocument;
     try {
-      lowered = adaptProtocol(protocol.format, text, undefined, protoImportResolver(source));
+      const resolveImport = snapshotImportResolver(source);
+      lowered = adaptProtocol(protocol.format, text, undefined, {
+        proto: resolveImport,
+        wsdl: resolveImport,
+        sourcePath: source.entrypoint.path,
+      });
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to parse ${protocol.format} source: ${detail}`);
