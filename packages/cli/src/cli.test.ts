@@ -262,16 +262,22 @@ describe("anvil CLI: end-to-end compile → inspect → lint", () => {
       expect(lintCode).toBe(0); // no errors, only warnings/info
       expect(io3.text().length).toBeGreaterThan(0);
 
-      // `anvil assess` triages the same bundle into per-operation readiness.
+      // `anvil assess` reports the same bundle as per-operation readiness. A
+      // report that completed exits 0 — blockers gate only under --check.
       const ioA = bufferIO();
-      await runAnvilCli(["assess", dir], { io: ioA });
+      const reportCode = await runAnvilCli(["assess", dir], { io: ioA });
+      expect(reportCode).toBe(0);
       expect(ioA.text()).toContain("Readiness — payments");
-      expect(ioA.text()).toMatch(/score \d+\/100/);
+      expect(ioA.text()).toContain("Contract hash");
+      expect(ioA.text()).toMatch(/Ready percent\s+\d+%/);
+      expect(ioA.text()).toMatch(/Overall disposition\s+\w/);
 
       const ioJ = bufferIO();
       await runAnvilCli(["assess", dir, "--json"], { io: ioJ });
       const report = JSON.parse(ioJ.text());
-      expect(typeof report.score).toBe("number");
+      expect(report.schemaVersion).toBe(1);
+      expect(report.contractHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(typeof report.readyPercent).toBe("number");
       // Every operation in the bundle receives a disposition.
       expect(report.operations).toHaveLength(
         report.summary.ready +
@@ -280,6 +286,27 @@ describe("anvil CLI: end-to-end compile → inspect → lint", () => {
           report.summary.blocked +
           report.summary.excluded,
       );
+
+      // A filtered --json emits the view: complete artifact + matching rows.
+      const ioV = bufferIO();
+      await runAnvilCli(["assess", dir, "--severity", "high", "--json"], { io: ioV });
+      const view = JSON.parse(ioV.text());
+      expect(view.assessment.summary).toEqual(report.summary);
+      expect(view.filter).toEqual({ minimumSeverity: "high" });
+      expect(Array.isArray(view.matchingOperations)).toBe(true);
+
+      // --check gates: the payments example certainly has refinable gaps, so
+      // the strictest threshold fails while the report path above stayed 0.
+      const ioC = bufferIO();
+      const checkCode = await runAnvilCli(
+        ["assess", dir, "--check", "--fail-on", "refinement-required"],
+        { io: ioC },
+      );
+      expect(checkCode).toBe(1);
+      // --fail-on without --check is a usage error, not a silent gate.
+      const ioBad = bufferIO();
+      expect(await runAnvilCli(["assess", dir, "--fail-on", "blocked"], { io: ioBad })).toBe(1);
+      expect(ioBad.text()).toContain("--fail-on only applies with --check");
 
       // Drill into one operation by an unambiguous CLI command tail.
       const ioO = bufferIO();

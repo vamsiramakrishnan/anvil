@@ -139,7 +139,7 @@ function printReport(io: CliIO, r: ReportInput): void {
   io.out(
     `Readiness: ${s.ready} ready · ${s.refinementRequired} refinement required · ` +
       `${s.humanDecisionRequired} human decision · ${s.blocked} blocked   ` +
-      `(score ${r.assessment.score}/100)`,
+      `(${r.assessment.readyPercent}% ready)`,
   );
   if (s.blocked > 0) {
     // Blocked operations never stop discovery, but they must not hide either.
