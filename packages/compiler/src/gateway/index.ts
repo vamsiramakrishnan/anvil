@@ -12,5 +12,6 @@ export * from "./capability-matrix.js";
 export * from "./conformance.js";
 export * from "./fixture.js";
 export * from "./inventory.js";
+export * from "./kong/index.js";
 export * from "./model.js";
 export * from "./overlay.js";
