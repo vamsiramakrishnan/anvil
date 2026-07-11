@@ -1,0 +1,91 @@
+{
+  "updatedAt": "2026-07-11T22:18:46.385Z",
+  "note": "Per-system quick-mode metrics. Regenerate with: node tools/corpus/run.mjs quick --update-baseline",
+  "systems": {
+    "jira": {
+      "compileMs": 814,
+      "airBytes": 1051622,
+      "opCount": 26
+    },
+    "confluence": {
+      "compileMs": 854,
+      "airBytes": 499719,
+      "opCount": 18
+    },
+    "github": {
+      "compileMs": 1101,
+      "airBytes": 2176586,
+      "opCount": 25
+    },
+    "stripe": {
+      "compileMs": 1195,
+      "airBytes": 2795174,
+      "opCount": 22
+    },
+    "twilio": {
+      "compileMs": 627,
+      "airBytes": 396338,
+      "opCount": 15
+    },
+    "slack": {
+      "compileMs": 720,
+      "airBytes": 370693,
+      "opCount": 14
+    },
+    "gmail": {
+      "compileMs": 651,
+      "airBytes": 132885,
+      "opCount": 11
+    },
+    "notion": {
+      "compileMs": 981,
+      "airBytes": 217678,
+      "opCount": 24
+    },
+    "pagerduty": {
+      "compileMs": 743,
+      "airBytes": 620753,
+      "opCount": 12
+    },
+    "zoom": {
+      "compileMs": 698,
+      "airBytes": 217839,
+      "opCount": 14
+    },
+    "hubspot": {
+      "compileMs": 661,
+      "airBytes": 276156,
+      "opCount": 12
+    },
+    "docusign": {
+      "compileMs": 9111,
+      "airBytes": 40388109,
+      "opCount": 15
+    },
+    "github_gql": {
+      "compileMs": 1645,
+      "airBytes": 4177508,
+      "opCount": 299
+    },
+    "temporal": {
+      "compileMs": 735,
+      "airBytes": 543131,
+      "opCount": 121
+    },
+    "asana": {
+      "compileMs": 669,
+      "airBytes": 678700,
+      "opCount": 12
+    },
+    "zendesk": {
+      "compileMs": 816,
+      "airBytes": 947491,
+      "opCount": 9
+    },
+    "intercom": {
+      "compileMs": 1163,
+      "airBytes": 265156,
+      "opCount": 9
+    }
+  }
+}

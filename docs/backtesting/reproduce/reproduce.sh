@@ -12,6 +12,14 @@
 #   docs/backtesting/reproduce/reproduce.sh <system>     # one system
 #   docs/backtesting/reproduce/reproduce.sh all          # every system
 #
+# Env:
+#   WORK=<dir>       work directory (default: mktemp -d)
+#   PREPARE_ONLY=1   fetch + trim only; skip `anvil source add` / `anvil compile`.
+#                    Leaves the prepared input at $WORK/<system>.spec.json (REST)
+#                    or $WORK/<system>.graphql / $WORK/<system>.proto. Used by the
+#                    corpus harness (tools/corpus) to time compilation separately
+#                    from network fetch.
+#
 # Requires: a built repo (`pnpm build`) and network access.
 set -euo pipefail
 
@@ -23,17 +31,19 @@ mkdir -p "$WORK"
 TSV="$HERE/systems.tsv"
 
 # YAML → JSON (the openapi3 trimmer takes JSON); uses the compiler's own parser.
+# Dispatch on *content*, not filename — fetched specs land as <system>.raw
+# regardless of whether the vendor publishes JSON or YAML.
 to_json () {
   local in="$1" out="$2"
-  case "$in" in
-    *.yaml|*.yml)
-      node --input-type=module -e "
-        import { readFileSync, writeFileSync } from 'node:fs';
-        const C = await import('$ROOT/packages/compiler/dist/index.js');
-        writeFileSync('$out', JSON.stringify(C.parseSourceText(readFileSync('$in','utf8')).doc));
-      " ;;
-    *) cp "$in" "$out" ;;
-  esac
+  if [ "$(head -c 1024 "$in" | tr -d '[:space:]' | cut -c1)" = "{" ]; then
+    cp "$in" "$out"
+  else
+    node --input-type=module -e "
+      import { readFileSync, writeFileSync } from 'node:fs';
+      const C = await import('$ROOT/packages/compiler/dist/index.js');
+      writeFileSync('$out', JSON.stringify(C.parseSourceText(readFileSync('$in','utf8')).doc));
+    "
+  fi
 }
 
 reproduce_one () {
@@ -51,6 +61,7 @@ reproduce_one () {
     local raw="$WORK/$sys.$ext"
     echo "→ $sys ($fmt): fetching $url"
     curl -fsSL "$url" -o "$raw"
+    if [ "${PREPARE_ONLY:-0}" = "1" ]; then echo "   prepared → $raw"; return 0; fi
     local sid; sid="$($ANVIL source add "$raw" --root "$WORK" 2>&1 | grep -oE 'src-[0-9a-f]+' | head -1)"
     local manifest="$HERE/manifests/$sys.anvil.yaml"
     local margs=(); [ -f "$manifest" ] && margs=(--manifest "$manifest")
@@ -72,6 +83,8 @@ reproduce_one () {
   else # openapi3
     to_json "$raw" "$spec.tmp"; node "$HERE/trim/openapi3.mjs" "$spec.tmp" "$HERE/$list" "$spec" "$sys (curated)"
   fi
+
+  if [ "${PREPARE_ONLY:-0}" = "1" ]; then echo "   prepared → $spec"; return 0; fi
 
   local sid; sid="$($ANVIL source add "$spec" --root "$WORK" 2>&1 | grep -oE 'src-[0-9a-f]+' | head -1)"
   local manifest="$HERE/manifests/$sys.anvil.yaml"
