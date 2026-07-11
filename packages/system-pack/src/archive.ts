@@ -7,6 +7,7 @@
  */
 import { contentDigest } from "./digest.js";
 import type { AgentSystemPack } from "./model.js";
+import { AgentSystemPack as AgentSystemPackSchema } from "./model.js";
 
 /** Pack-relative path → verbatim artifact bytes. */
 export type PackContents = ReadonlyMap<string, Uint8Array>;
@@ -45,20 +46,38 @@ export function archivePack(pack: AgentSystemPack, contents: PackContents): Pack
   return { bytes, digest: contentDigest(bytes) };
 }
 
-/** Read the pack + contents back out of an archive's bytes. */
+/**
+ * Read the pack + contents back out of an archive's bytes. This is a trust
+ * boundary: the envelope is validated through the pack schema, and every entry's
+ * bytes are re-hashed against the `contentDigest` the envelope claims — a tampered
+ * base64 blob or a malformed pack fails closed with a clear error rather than
+ * flowing on as a typed-but-corrupt pack. (The manifest/pack digests are then
+ * checked by `verifyPack`; this guards the envelope layer beneath it.)
+ */
 export function readArchive(bytes: Uint8Array): {
   pack: AgentSystemPack;
   contents: Map<string, Uint8Array>;
 } {
-  const envelope = JSON.parse(new TextDecoder().decode(bytes)) as {
-    pack: AgentSystemPack;
+  const raw = JSON.parse(new TextDecoder().decode(bytes)) as {
+    pack: unknown;
     entries: ArchiveEntry[];
   };
+  const pack = AgentSystemPackSchema.parse(raw.pack);
   const contents = new Map<string, Uint8Array>();
-  for (const entry of envelope.entries) {
-    contents.set(entry.path, new Uint8Array(Buffer.from(entry.base64, "base64")));
+  for (const entry of raw.entries) {
+    const entryBytes = new Uint8Array(Buffer.from(entry.base64, "base64"));
+    const actual = contentDigest(entryBytes);
+    if (actual !== entry.contentDigest) {
+      throw new Error(
+        `archive entry ${JSON.stringify(entry.path)} is corrupt: bytes hash to ${actual.slice(
+          0,
+          12,
+        )}… but the envelope claims ${entry.contentDigest.slice(0, 12)}….`,
+      );
+    }
+    contents.set(entry.path, entryBytes);
   }
-  return { pack: envelope.pack, contents };
+  return { pack, contents };
 }
 
 /** Recursively key-sort so the serialized envelope is canonical. */

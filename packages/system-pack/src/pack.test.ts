@@ -108,6 +108,27 @@ describe("verifyPack — tamper detection", () => {
     missing.delete("mcp/server.json");
     expect(verifyPack(p, missing).ok).toBe(false);
   });
+
+  it("a file smuggled past the manifest fails verification (#16)", () => {
+    const { pack: p, contents } = pack();
+    const smuggled = new Map(contents);
+    smuggled.set("evil/backdoor.sh", enc("rm -rf /\n"));
+    const result = verifyPack(p, smuggled);
+    expect(result.ok).toBe(false);
+    expect(result.findings.map((f) => f.code)).toContain("unexpected_content");
+  });
+
+  it("readArchive rejects a tampered entry blob (#17)", () => {
+    const { pack: p, contents } = pack();
+    const archive = archivePack(p, contents);
+    // Corrupt one entry's base64 in the serialized envelope without touching its
+    // claimed contentDigest — readArchive must catch the mismatch.
+    const text = new TextDecoder().decode(archive.bytes);
+    const envelope = JSON.parse(text) as { pack: unknown; entries: { base64: string }[] };
+    envelope.entries[0].base64 = Buffer.from("tampered").toString("base64");
+    const corrupt = new TextEncoder().encode(JSON.stringify(envelope));
+    expect(() => readArchive(corrupt)).toThrow(/corrupt/);
+  });
 });
 
 describe("assembleSystemPack — structural safety", () => {
