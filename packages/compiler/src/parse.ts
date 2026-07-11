@@ -127,18 +127,14 @@ function protoImportResolver(source: CompilerSource): ProtoImportResolver {
 
 /**
  * Stamp each adapter-produced named schema with `title: <componentKey>` when it
- * has none. This is what lets `bundleDocument` (decycle.ts) re-collapse a schema
- * back to a `$ref` after `dereference()` has inlined it: dereference clones a
- * fresh copy at every reference site (object identity is not preserved — the
- * Stripe finding), so bundleDocument recognizes an inlined copy by its `title`.
- *
- * Real OpenAPI specs set `title` themselves; the protocol adapters
- * (GraphQL/gRPC/WSDL/Discovery) did not, so on a *large recursive* source the
- * dereferenced document was a massively-shared graph that bundleDocument could
- * not collapse — compact in memory but exploding to gigabytes on
- * serialization. GitHub's real 1,752-type GraphQL schema turned a single
- * `Connection` type into a 2M+-node blob and hung the compile. Stamping the
- * titles here, once, fixes every lowered format at the seam they share.
+ * has none. Titles are good display metadata for downstream artifacts (docs,
+ * skills, examples) — but they are NOT load-bearing for schema identity:
+ * `bundleDocument` (decycle.ts) re-collapses an inlined copy back to a `$ref`
+ * by structural canonical hashing, which never depends on vendor-supplied
+ * names. (Historically this stamp was what let title-based matching collapse
+ * GitHub's real 1,752-type GraphQL schema instead of hanging the compile;
+ * structural identity now handles untitled schemas by construction, and this
+ * stamp remains purely cosmetic.)
  */
 function stampSchemaTitles(doc: OpenApiDocument): void {
   const schemas = doc.components?.schemas;
