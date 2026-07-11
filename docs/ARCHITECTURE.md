@@ -45,8 +45,10 @@ capabilities, not URLs.
 parse ── normalize ── classify ── enrich ── validate ── discover-capabilities ── AIR ── generate
 ```
 
-- **parse** (`@anvil/compiler/parse`): delegates to `@scalar/openapi-parser`
-  (deref + Swagger 2.0 → 3.1 upgrade). Today there is exactly **one** parser
+- **parse** (`@anvil/compiler/parse`): delegates format conversion and
+  dereferencing to mature libraries — `swagger2openapi` converts Swagger 2.0 to
+  OpenAPI 3.x, `@scalar/openapi-parser` dereferences OpenAPI 3.x. Today there is
+  exactly **one** parser
   (OpenAPI/Swagger); a second format (GraphQL/gRPC/WSDL) is added by writing a
   parser that emits AIR — the downstream passes (classify/validate/generate) are
   format-agnostic over AIR and do not change. That boundary is *tested*, not just

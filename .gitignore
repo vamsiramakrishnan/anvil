@@ -6,3 +6,6 @@ generated/
 coverage/
 .DS_Store
 *.log
+
+# Claude Code session worktrees (parallel agent sandboxes; never project content)
+.claude/worktrees/

@@ -133,7 +133,7 @@ describe("tool CLI: invocation", () => {
     expect(io.text()).toContain("/payments/pay_1/refunds");
   });
 
-  it("refuses an unsafe mutation without --confirm (structured error, exit 1)", async () => {
+  it("refuses an unsafe mutation without --confirm (structured error, exit 3)", async () => {
     const transport = new MockTransport(() => ok({}));
     const io = bufferIO();
     const code = await runToolCli(
@@ -152,7 +152,8 @@ describe("tool CLI: invocation", () => {
       ],
       { ...baseDeps(transport), io },
     );
-    expect(code).toBe(1);
+    // Safety refusals map to the stable exit code 3 (see EXIT_CODES).
+    expect(code).toBe(3);
     expect(io.text()).toContain("confirmation_required");
     expect(transport.requests).toHaveLength(0);
   });
@@ -260,6 +261,67 @@ describe("anvil CLI: end-to-end compile → inspect → lint", () => {
       const lintCode = await runAnvilCli(["lint", dir], { io: io3 });
       expect(lintCode).toBe(0); // no errors, only warnings/info
       expect(io3.text().length).toBeGreaterThan(0);
+
+      // `anvil assess` reports the same bundle as per-operation readiness. A
+      // report that completed exits 0 — blockers gate only under --check.
+      const ioA = bufferIO();
+      const reportCode = await runAnvilCli(["assess", dir], { io: ioA });
+      expect(reportCode).toBe(0);
+      expect(ioA.text()).toContain("Readiness — payments");
+      expect(ioA.text()).toContain("Contract hash");
+      expect(ioA.text()).toMatch(/Ready percent\s+\d+%/);
+      expect(ioA.text()).toMatch(/Overall disposition\s+\w/);
+
+      const ioJ = bufferIO();
+      await runAnvilCli(["assess", dir, "--json"], { io: ioJ });
+      const report = JSON.parse(ioJ.text());
+      expect(report.schemaVersion).toBe(1);
+      expect(report.contractHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(typeof report.readyPercent).toBe("number");
+      // Every operation in the bundle receives a disposition.
+      expect(report.operations).toHaveLength(
+        report.summary.ready +
+          report.summary.refinementRequired +
+          report.summary.humanDecisionRequired +
+          report.summary.blocked +
+          report.summary.excluded,
+      );
+
+      // A filtered --json emits the view: complete artifact + matching rows.
+      const ioV = bufferIO();
+      await runAnvilCli(["assess", dir, "--severity", "high", "--json"], { io: ioV });
+      const view = JSON.parse(ioV.text());
+      expect(view.assessment.summary).toEqual(report.summary);
+      expect(view.filter).toEqual({ minimumSeverity: "high" });
+      expect(Array.isArray(view.matchingOperations)).toBe(true);
+
+      // --check gates: the payments example certainly has refinable gaps, so
+      // the strictest threshold fails while the report path above stayed 0.
+      const ioC = bufferIO();
+      const checkCode = await runAnvilCli(
+        ["assess", dir, "--check", "--fail-on", "refinement-required"],
+        { io: ioC },
+      );
+      expect(checkCode).toBe(1);
+      // --fail-on without --check is a usage error, not a silent gate.
+      const ioBad = bufferIO();
+      expect(await runAnvilCli(["assess", dir, "--fail-on", "blocked"], { io: ioBad })).toBe(1);
+      expect(ioBad.text()).toContain("--fail-on only applies with --check");
+
+      // Drill into one operation by an unambiguous CLI command tail.
+      const ioO = bufferIO();
+      const drillCode = await runAnvilCli(["assess", dir, "refunds create"], { io: ioO });
+      expect(drillCode).toBe(0);
+      expect(ioO.text()).toContain("disposition");
+
+      // A tail matching several operations (refunds create + capture create)
+      // must refuse and list the candidates, not silently pick one.
+      const ioAmb = bufferIO();
+      const ambCode = await runAnvilCli(["assess", dir, "create"], { io: ioAmb });
+      expect(ambCode).toBe(1);
+      expect(ioAmb.text()).toContain("ambiguous");
+      expect(ioAmb.text()).toContain("payments.refunds.create");
+      expect(ioAmb.text()).toContain("payments.capture.create");
 
       // `anvil run` must forward flags to the tool engine (regression).
       const transport = new MockTransport(() => ok({}));

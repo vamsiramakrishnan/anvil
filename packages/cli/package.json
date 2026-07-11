@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "The anvil CLI and the shared engine that drives every generated tool CLI.",
   "type": "module",
+  "engines": {
+    "node": ">=22.17"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -32,6 +35,7 @@
     "@anvil/refinement": "workspace:*",
     "@anvil/runtime": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.22.0",
+    "commander": "^14.0.3",
     "yaml": "^2.8.1"
   },
   "devDependencies": {

@@ -1,0 +1,178 @@
+# The Swagger 2.0 half of the spec-equivalence fixture pair. It must describe
+# the SAME payments-like API as payments-openapi3.yaml using 2.0 idioms
+# (host/basePath/schemes, definitions, securityDefinitions, body + formData
+# parameters, consumes/produces) so the compiler can prove both normalize to
+# semantically equivalent AIR.
+swagger: "2.0"
+info:
+  title: Payments API
+  version: 1.0.0
+host: payments.example.com
+basePath: /v1
+schemes: [https]
+consumes: [application/json]
+produces: [application/json]
+securityDefinitions:
+  oauth2:
+    type: oauth2
+    flow: application
+    tokenUrl: https://auth.example.com/token
+    scopes:
+      payments.read: Read payments
+      payments.write: Write payments
+security:
+  - oauth2: [payments.read]
+paths:
+  /customers/{customer_id}:
+    get:
+      operationId: getCustomer
+      summary: Get a customer
+      tags: [customers]
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          type: string
+      responses:
+        "200":
+          description: The customer.
+          schema:
+            $ref: "#/definitions/Customer"
+        "404":
+          description: No such customer.
+  /payments:
+    # Deliberately has no operationId: its identity must derive from
+    # service + method + path, not source ordering.
+    get:
+      summary: List payments
+      tags: [payments]
+      parameters:
+        - name: status
+          in: query
+          type: string
+      responses:
+        "200":
+          description: Payments.
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/Payment"
+  /payments/{payment_id}:
+    get:
+      operationId: getPayment
+      summary: Get a payment
+      tags: [payments]
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          type: string
+      responses:
+        "200":
+          description: The payment.
+          schema:
+            $ref: "#/definitions/Payment"
+        "404":
+          description: No such payment.
+  /payments/{payment_id}/refunds:
+    post:
+      operationId: createRefund
+      summary: Create a refund
+      description: Creates a refund for a captured payment. Irreversible.
+      tags: [refunds]
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          type: string
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/RefundRequest"
+      responses:
+        "201":
+          description: The created refund.
+          schema:
+            $ref: "#/definitions/Refund"
+        "409":
+          description: A refund already exists.
+        "429":
+          description: Rate limited.
+  /receipts/{payment_id}:
+    post:
+      operationId: emailReceipt
+      summary: Email a receipt
+      tags: [receipts]
+      x-idempotent: true
+      consumes: [application/x-www-form-urlencoded]
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          type: string
+        - name: email
+          in: formData
+          required: true
+          type: string
+        - name: note
+          in: formData
+          type: string
+      responses:
+        "202":
+          description: Receipt queued.
+  /reports:
+    get:
+      operationId: exportReports
+      summary: Export reports
+      tags: [reports]
+      deprecated: true
+      responses:
+        "200":
+          description: The report.
+          schema:
+            type: object
+            properties:
+              url:
+                type: string
+definitions:
+  Customer:
+    type: object
+    properties:
+      id:
+        type: string
+      email:
+        type: string
+  Payment:
+    type: object
+    properties:
+      id:
+        type: string
+      amount:
+        type: integer
+      currency:
+        type: string
+      status:
+        type: string
+  RefundRequest:
+    type: object
+    required: [amount, currency]
+    properties:
+      amount:
+        type: integer
+        minimum: 1
+      currency:
+        type: string
+      reason:
+        type: string
+  Refund:
+    type: object
+    properties:
+      id:
+        type: string
+      payment_id:
+        type: string
+      amount:
+        type: integer
+      status:
+        type: string

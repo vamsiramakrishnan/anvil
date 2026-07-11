@@ -1,0 +1,145 @@
+# The Swagger 2.0 half of the second equivalence pair. Where the payments pair
+# exercises the common 2.0 idioms, this one covers the long tail: shared
+# `parameters`, a multipart file upload via formData, an apiKey security
+# definition beside oauth2 (accessCode flow), a per-operation security
+# override, collectionFormat on an array query parameter, and vendor
+# extensions at the info and operation level. The dedicated converter must
+# carry all of it — no hand-written Swagger field mapping exists in Anvil.
+swagger: "2.0"
+info:
+  title: Document Store API
+  version: 2.3.0
+  x-api-owner: docs-platform
+host: docs.example.com
+basePath: /api/v2
+schemes: [https]
+consumes: [application/json]
+produces: [application/json]
+securityDefinitions:
+  oauth2:
+    type: oauth2
+    flow: accessCode
+    authorizationUrl: https://auth.example.com/authorize
+    tokenUrl: https://auth.example.com/token
+    scopes:
+      docs.read: Read documents
+      docs.write: Write documents
+  apiKeyHeader:
+    type: apiKey
+    name: X-Api-Key
+    in: header
+security:
+  - oauth2: [docs.read]
+parameters:
+  FolderId:
+    name: folder_id
+    in: path
+    required: true
+    type: string
+paths:
+  /folders/{folder_id}/documents:
+    get:
+      operationId: listDocuments
+      summary: List documents
+      tags: [documents]
+      parameters:
+        - $ref: "#/parameters/FolderId"
+        - name: label
+          in: query
+          type: array
+          items:
+            type: string
+          collectionFormat: csv
+      responses:
+        "200":
+          description: Documents in the folder.
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/Document"
+    post:
+      operationId: createDocument
+      summary: Create a document
+      tags: [documents]
+      parameters:
+        - $ref: "#/parameters/FolderId"
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: "#/definitions/DocumentCreate"
+      responses:
+        "201":
+          description: The created document.
+          schema:
+            $ref: "#/definitions/Document"
+        "422":
+          description: Invalid document.
+  /folders/{folder_id}/documents/{document_id}/content:
+    put:
+      operationId: uploadContent
+      summary: Upload document content
+      tags: [documents]
+      x-rate-limit-tier: gold
+      consumes: [multipart/form-data]
+      parameters:
+        - $ref: "#/parameters/FolderId"
+        - name: document_id
+          in: path
+          required: true
+          type: string
+        - name: file
+          in: formData
+          required: true
+          type: file
+        - name: checksum
+          in: formData
+          type: string
+      responses:
+        "204":
+          description: Content stored.
+  /usage:
+    get:
+      operationId: getUsage
+      summary: Get usage
+      tags: [admin]
+      security:
+        - apiKeyHeader: []
+      responses:
+        "200":
+          description: Account usage.
+          schema:
+            $ref: "#/definitions/Usage"
+definitions:
+  Document:
+    type: object
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      mime_type:
+        type: string
+      labels:
+        type: array
+        items:
+          type: string
+  DocumentCreate:
+    type: object
+    required: [name]
+    properties:
+      name:
+        type: string
+      mime_type:
+        type: string
+      labels:
+        type: array
+        items:
+          type: string
+  Usage:
+    type: object
+    properties:
+      bytes_used:
+        type: integer
+      document_count:
+        type: integer

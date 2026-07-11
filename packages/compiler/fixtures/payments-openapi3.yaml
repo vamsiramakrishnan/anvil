@@ -1,0 +1,196 @@
+# The OpenAPI 3.0 half of the spec-equivalence fixture pair — the same
+# payments-like API as payments-swagger2.yaml, expressed in 3.0 idioms
+# (servers, components, requestBody with per-media-type content). Compiling
+# both must yield semantically equivalent AIR.
+openapi: 3.0.3
+info:
+  title: Payments API
+  version: 1.0.0
+servers:
+  - url: https://payments.example.com/v1
+security:
+  - oauth2: [payments.read]
+paths:
+  /customers/{customer_id}:
+    get:
+      operationId: getCustomer
+      summary: Get a customer
+      tags: [customers]
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "404":
+          description: No such customer.
+  /payments:
+    # Deliberately has no operationId: its identity must derive from
+    # service + method + path, not source ordering.
+    get:
+      summary: List payments
+      tags: [payments]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Payments.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Payment"
+  /payments/{payment_id}:
+    get:
+      operationId: getPayment
+      summary: Get a payment
+      tags: [payments]
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The payment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "404":
+          description: No such payment.
+  /payments/{payment_id}/refunds:
+    post:
+      operationId: createRefund
+      summary: Create a refund
+      description: Creates a refund for a captured payment. Irreversible.
+      tags: [refunds]
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefundRequest"
+      responses:
+        "201":
+          description: The created refund.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refund"
+        "409":
+          description: A refund already exists.
+        "429":
+          description: Rate limited.
+  /receipts/{payment_id}:
+    post:
+      operationId: emailReceipt
+      summary: Email a receipt
+      tags: [receipts]
+      x-idempotent: true
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                note:
+                  type: string
+      responses:
+        "202":
+          description: Receipt queued.
+  /reports:
+    get:
+      operationId: exportReports
+      summary: Export reports
+      tags: [reports]
+      deprecated: true
+      responses:
+        "200":
+          description: The report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.example.com/token
+          scopes:
+            payments.read: Read payments
+            payments.write: Write payments
+  schemas:
+    Customer:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+    RefundRequest:
+      type: object
+      required: [amount, currency]
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+        currency:
+          type: string
+        reason:
+          type: string
+    Refund:
+      type: object
+      properties:
+        id:
+          type: string
+        payment_id:
+          type: string
+        amount:
+          type: integer
+        status:
+          type: string

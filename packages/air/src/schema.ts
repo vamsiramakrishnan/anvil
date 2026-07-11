@@ -3,6 +3,7 @@ import {
   AuthPrincipal,
   AuthType,
   BackoffStrategy,
+  CapabilityLifecycle,
   DiagnosticLevel,
   EffectKind,
   ErrorCode,
@@ -542,7 +543,16 @@ export const Capability = z.object({
   workflowIds: z.array(z.string()).default([]),
   /** Intent phrases an agent might use to find this capability. */
   intentExamples: z.array(z.string()).default([]),
+  /** Derived summary of the member operations' states (never a review decision). */
   state: OperationState.default("generated"),
+  /**
+   * The explicit review decision about the *grouping* (proposed → approved /
+   * rejected / deprecated). Defaults to `proposed` so pre-lifecycle AIR files
+   * load unchanged. Only an approved capability may be built into a bundle.
+   */
+  lifecycle: CapabilityLifecycle.default("proposed"),
+  /** Reviewer note explaining the decision (reject reason, approval caveats). */
+  reviewNote: z.string().optional(),
   evidence: Evidence.default({ claims: [] }),
 });
 export type Capability = z.infer<typeof Capability>;
@@ -621,6 +631,8 @@ export const Diagnostic = z.object({
   code: z.string(),
   message: z.string(),
   operationId: z.string().optional(),
+  /** The capability a capability-scoped diagnostic (e.g. tool budget) refers to. */
+  capabilityId: z.string().optional(),
   path: z.string().optional(),
 });
 export type Diagnostic = z.infer<typeof Diagnostic>;

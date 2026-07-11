@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { runAnvilCli } from "./anvil-cli.js";
+import { installEpipeExit } from "./io.js";
 
+installEpipeExit();
 runAnvilCli(process.argv.slice(2)).then(
   (code) => {
     process.exitCode = code;
