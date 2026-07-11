@@ -244,33 +244,87 @@ export function deriveNames(
   };
 }
 
+/** Globally-minimal candidate order: shortest first, ties lexicographic. */
+const byShortestThenLex = (a: string, b: string): number =>
+  a.length - b.length || (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * The canonical processing order inside a collision group. Every step of the
+ * repair (token choice, `usedTokens` dedupe, index fallback) iterates the group
+ * in this order, so the final assignment is a pure function of the group's
+ * MEMBERSHIP — never of the order operations arrived from the source file.
+ */
+const byStableIdentity = (a: Operation, b: Operation): number =>
+  (a.sourceRef.path ?? "").localeCompare(b.sourceRef.path ?? "") ||
+  (a.sourceRef.method ?? "").localeCompare(b.sourceRef.method ?? "") ||
+  (a.sourceRef.operationId ?? "").localeCompare(b.sourceRef.operationId ?? "");
+
+/**
+ * The projected surfaces on which every operation name must be unique. The CLI
+ * command and the MCP tool name can collide INDEPENDENTLY: Linear's GraphQL
+ * schema has both `Query.initiativeUpdate` and `Mutation.initiativeUpdate`,
+ * whose commands differ (`... list` vs `... create`) while both derive the same
+ * canonicalName and hence the same tool name — grouping by command alone never
+ * sees them and the whole spec fails validation on `duplicate_tool_name`.
+ */
+const SURFACES: ReadonlyArray<{ label: string; keyOf: (op: Operation) => string }> = [
+  { label: "CLI command", keyOf: (op) => op.cli.command },
+  { label: "MCP tool name", keyOf: (op) => op.mcp.toolName },
+];
+
 /**
  * Resolve name collisions across the whole operation set, coherently across id,
- * CLI command, and MCP tool name (they must not drift apart). Disambiguation is
- * deterministic and meaningful: prefer a path segment that distinguishes the
- * clashing operations, then the HTTP method, then a stable index. Every rename
- * is surfaced as a diagnostic — never silent.
+ * CLI command, and MCP tool name (they must not drift apart). Uniqueness is
+ * enforced on EVERY projected surface (command and tool name), not just the CLI
+ * command. Disambiguation is deterministic, input-order-independent, and
+ * meaningful: the globally-minimal path token that distinguishes the clashing
+ * operations (shortest, ties lexicographic), then the shortest distinguishing
+ * token pair, then the HTTP method, then a stable index. Every rename is
+ * surfaced as a diagnostic — never silent.
  */
 export function resolveNameCollisions(operations: Operation[]): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
-  const byCommand = new Map<string, Operation[]>();
+  // A rename triggered by one surface updates all three names, which the next
+  // surface's grouping must see — so re-derive groups and repeat to a fixpoint.
+  // Termination: a pass only acts on a colliding group and leaves that group's
+  // keys unique, and suffixed names only ever grow; in practice this settles in
+  // one or two sweeps. The bound is a safety net — validate() still hard-errors
+  // on any duplicate that could somehow survive it.
+  for (let sweep = 0; sweep < 10; sweep++) {
+    let changed = false;
+    for (const surface of SURFACES) {
+      changed = resolveSurfaceCollisions(operations, surface, diagnostics) || changed;
+    }
+    if (!changed) break;
+  }
+  return diagnostics;
+}
+
+/** One repair pass over one surface. Returns whether any group was renamed. */
+function resolveSurfaceCollisions(
+  operations: Operation[],
+  surface: { label: string; keyOf: (op: Operation) => string },
+  diagnostics: Diagnostic[],
+): boolean {
+  const groups = new Map<string, Operation[]>();
   for (const op of operations) {
-    const list = byCommand.get(op.cli.command) ?? [];
+    const key = surface.keyOf(op);
+    const list = groups.get(key) ?? [];
     list.push(op);
-    byCommand.set(op.cli.command, list);
+    groups.set(key, list);
   }
 
-  for (const [command, group] of byCommand) {
+  // Order-independence: group membership is a set (keyed by the surface name,
+  // which cannot depend on input order), groups are processed in sorted-key
+  // order, and members in `byStableIdentity` order. Shuffling the input spec
+  // therefore yields byte-identical assignments.
+  let changed = false;
+  const keys = [...groups.keys()].sort();
+  for (const key of keys) {
+    const group = groups.get(key) as Operation[];
     if (group.length < 2) continue;
-    // Identity must not depend on source-file ordering: when the token falls
-    // back to the HTTP method or an index, whoever comes first in the group
-    // decides who gets the bare token. Order the group by (path, method) so a
-    // reshuffled spec still derives the same ids.
-    group.sort(
-      (a, b) =>
-        (a.sourceRef.path ?? "").localeCompare(b.sourceRef.path ?? "") ||
-        (a.sourceRef.method ?? "").localeCompare(b.sourceRef.method ?? ""),
-    );
+    changed = true;
+    group.sort(byStableIdentity);
     const usedTokens = new Set<string>();
     for (const [index, op] of group.entries()) {
       let token = distinguishingToken(op, group) ?? op.sourceRef.method ?? String(index + 1);
@@ -289,12 +343,12 @@ export function resolveNameCollisions(operations: Operation[]): Diagnostic[] {
       diagnostics.push({
         level: "info",
         code: "naming_collision_resolved",
-        message: `CLI command "${command}" was shared; disambiguated "${before}" with "${suffix}".`,
+        message: `${surface.label} "${key}" was shared; disambiguated "${before}" with "${suffix}".`,
         operationId: op.id,
       });
     }
   }
-  return diagnostics;
+  return changed;
 }
 
 /** Concrete path segments as cleaned word-tokens: format suffix stripped, RPC
@@ -308,15 +362,37 @@ function cleanPathTokens(path: string | undefined): string[] {
     .flatMap((s) => s.replace(FORMAT_SUFFIX, "").split(".").filter(Boolean));
 }
 
-/** A cleaned path token that distinguishes `op` from the rest of its collision group. */
+/**
+ * The globally-minimal token that distinguishes `op` from the rest of its
+ * collision group: among ALL of the operation's own cleaned path tokens that no
+ * other group member's path contains, pick the shortest (ties break
+ * lexicographically) — not the first-in-path-order one, which on real specs
+ * drags in long prefix segments (`administrative_gateway`) when a short unique
+ * token (`v2`) exists further along. If no single token distinguishes, the
+ * shortest distinguishing PAIR of own tokens (joined `_`, kept in path order)
+ * is tried before the caller falls back to the HTTP method / stable index.
+ */
 function distinguishingToken(op: Operation, group: Operation[]): string | undefined {
   const mine = cleanPathTokens(op.sourceRef.path);
   const others = group
     .filter((o) => o !== op)
     .map((o) => new Set(cleanPathTokens(o.sourceRef.path)));
-  for (const seg of mine) {
-    if (others.every((set) => !set.has(seg))) return seg;
+
+  const unique = [...new Set(mine.filter((seg) => others.every((set) => !set.has(seg))))];
+  if (unique.length > 0) return unique.sort(byShortestThenLex)[0];
+
+  // No single token distinguishes: try pairs of own tokens (in path order) that
+  // no other member's path contains in full.
+  const pairs: string[] = [];
+  for (let i = 0; i < mine.length; i++) {
+    for (let j = i + 1; j < mine.length; j++) {
+      const a = mine[i] as string;
+      const b = mine[j] as string;
+      if (a === b) continue;
+      if (others.every((set) => !(set.has(a) && set.has(b)))) pairs.push(`${a}_${b}`);
+    }
   }
+  if (pairs.length > 0) return [...new Set(pairs)].sort(byShortestThenLex)[0];
   return undefined;
 }
 

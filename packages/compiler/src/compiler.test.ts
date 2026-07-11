@@ -386,6 +386,131 @@ paths:
     const air = await compile({ spec: vague, serviceId: "jira" });
     expect(air.diagnostics.some((d) => d.code === "weak_operation_name")).toBe(true);
   });
+
+  it("picks the globally-minimal distinguishing token, not the first in path order", async () => {
+    // The old first-in-path rule would suffix the long "administrative-gateway"
+    // prefix; "v2" is an equally distinguishing but minimal token further along.
+    const clashing = `openapi: 3.0.0
+info: { title: reports, version: 1.0.0 }
+paths:
+  /administrative-gateway/v2/reports/summary:
+    get:
+      responses: { "200": { description: ok } }
+  /ops/reports/summary:
+    get:
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: clashing, serviceId: "reports" });
+    const commands = air.operations.map((o) => o.cli.command).sort();
+    expect(commands).toContain("reports summary list v2");
+    expect(commands).toContain("reports summary list ops");
+    expect(commands.some((c) => c.includes("administrative"))).toBe(false);
+  });
+
+  it("falls back to the shortest distinguishing token PAIR when no single token works", async () => {
+    // Every single token of each path also appears in another group member —
+    // only a pair pins each operation down.
+    const clashing = `openapi: 3.0.0
+info: { title: hub, version: 1.0.0 }
+paths:
+  /alpha/beta/items/sync:
+    post:
+      responses: { "200": { description: ok } }
+  /alpha/gamma/items/sync:
+    post:
+      responses: { "200": { description: ok } }
+  /beta/gamma/items/sync:
+    post:
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: clashing, serviceId: "hub" });
+    const commands = air.operations.map((o) => o.cli.command).sort();
+    expect(commands).toEqual([
+      "hub sync create alpha_beta",
+      "hub sync create alpha_gamma",
+      "hub sync create beta_gamma",
+    ]);
+    expect(air.diagnostics.filter((d) => d.code === "naming_collision_resolved")).toHaveLength(3);
+  });
+
+  it("assigns identical names regardless of input operation order (property)", async () => {
+    // A multi-collision fixture exercising every disambiguation tier: unique
+    // token, token pair, and the HTTP-method/index worst case.
+    const blocks = [
+      `  /orders/{id}/archive:
+    post:
+      responses: { "200": { description: ok } }`,
+      `  /subscriptions/{id}/archive:
+    post:
+      responses: { "200": { description: ok } }`,
+      `  /alpha/beta/items/sync:
+    post:
+      responses: { "200": { description: ok } }`,
+      `  /alpha/gamma/items/sync:
+    post:
+      responses: { "200": { description: ok } }`,
+      `  /beta/gamma/items/sync:
+    post:
+      responses: { "200": { description: ok } }`,
+      `  /things/{a}:
+    delete:
+      responses: { "204": { description: gone } }`,
+      `  /things/{a}/{b}:
+    delete:
+      responses: { "204": { description: gone } }`,
+    ];
+    const specFor = (order: number[]) => `openapi: 3.0.0
+info: { title: multi, version: 1.0.0 }
+paths:
+${order.map((i) => blocks[i]).join("\n")}
+`;
+    const orders = [
+      [0, 1, 2, 3, 4, 5, 6],
+      [6, 5, 4, 3, 2, 1, 0],
+      [3, 6, 0, 4, 1, 5, 2],
+    ];
+    const nameSets = await Promise.all(
+      orders.map(async (order) => {
+        const air = await compile({ spec: specFor(order), serviceId: "multi" });
+        return air.operations
+          .map((o) => ({
+            source: `${o.sourceRef.method} ${o.sourceRef.path}`,
+            id: o.id,
+            canonicalName: o.canonicalName,
+            command: o.cli.command,
+            toolName: o.mcp.toolName,
+          }))
+          .sort((a, b) => a.source.localeCompare(b.source));
+      }),
+    );
+    expect(nameSets[1]).toEqual(nameSets[0]);
+    expect(nameSets[2]).toEqual(nameSets[0]);
+    // And every assignment is unique — the repair actually resolved.
+    const commands = (nameSets[0] ?? []).map((o) => o.command);
+    expect(new Set(commands).size).toBe(commands.length);
+  });
+
+  it("resolves toolName collisions across read/write surfaces (Linear's Query+Mutation same-name fields)", async () => {
+    // Linear's real GraphQL schema has both Query.initiativeUpdate and
+    // Mutation.initiativeUpdate. Their CLI commands differ (list vs create
+    // action tokens), but both derive the same canonicalName and therefore the
+    // same MCP tool name — grouping by cli.command alone never sees the clash
+    // and the compile fails validation with duplicate_tool_name.
+    const sdl = `type Query { initiativeUpdate: String }
+type Mutation { initiativeUpdate(id: String): String }
+schema { query: Query mutation: Mutation }`;
+    const air = await compile({ spec: sdl, serviceId: "linear", sourceUri: "schema.graphql" });
+    expect(air.diagnostics.filter((d) => d.code === "duplicate_tool_name")).toEqual([]);
+    const tools = air.operations.map((o) => o.mcp.toolName);
+    expect(new Set(tools).size).toBe(tools.length);
+    // The disambiguation is meaningful (distinguishing path tokens, never a
+    // silent `_2`) and surfaced as a diagnostic.
+    expect(tools.every((t) => !/_2$/.test(t))).toBe(true);
+    expect(air.diagnostics.some((d) => d.code === "naming_collision_resolved")).toBe(true);
+    // Commands stay unique too — all three surfaces move together.
+    const commands = air.operations.map((o) => o.cli.command);
+    expect(new Set(commands).size).toBe(commands.length);
+  });
 });
 
 describe("request body handling", () => {
