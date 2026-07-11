@@ -7,8 +7,12 @@ import {
   readBundleDir,
   verifyCertification,
 } from "@anvil/generators";
-import { loadBundleAir, resolveBundleDir } from "./cmd-certify.js";
-import type { CliIO } from "./io.js";
+import { type Command, Option } from "commander";
+import type { CliIO } from "../io.js";
+import { loadBundleAir, resolveBundleDir } from "./certify.js";
+import type { CommandContext } from "./context.js";
+import { printCloudRunPlan } from "./deploy.js";
+import { annotate } from "./meta.js";
 
 /**
  * `anvil publish <dir> --target cloud-run [--env ENV] [--allow-uncertified]` —
@@ -21,21 +25,53 @@ import type { CliIO } from "./io.js";
  * `--allow-uncertified` waiver applies to non-prod envs only — prod FAILS
  * CLOSED, always, so no flag combination can push unverified artifacts to prod.
  */
-export function cmdPublish(
-  args: string[],
-  flags: Record<string, string | boolean>,
+export function registerPublish(parent: Command, ctx: CommandContext): void {
+  annotate(
+    parent
+      .command("publish")
+      .summary("Gated publish: verify the certification, then emit the deployment plan.")
+      .description(
+        "Publication requires a PASSING certification whose bundle hash matches the current bundle content — a stale certificate fails. On success it prints the Cloud Run deployment plan (same as `anvil deploy cloud-run`) and writes publication.json into the bundle. `--allow-uncertified` waives the gate for non-prod environments only; publishing to prod (via --env prod or ANVIL_ENV=prod) fails closed without a valid certification, flag or no flag. No cloud credentials are held and no API calls are made.",
+      )
+      .argument("<dir>", "bundle directory")
+      .addOption(
+        new Option("--target <target>", "publish target")
+          .choices(["cloud-run"])
+          .makeOptionMandatory(),
+      )
+      .addOption(
+        new Option("--env <env>", "target environment (default from ANVIL_ENV, else dev)").choices([
+          "dev",
+          "staging",
+          "prod",
+        ]),
+      )
+      .option("--allow-uncertified", "waive the certification gate (non-prod only)")
+      .option("--json", "emit the publication record as JSON")
+      .action((dir: string, opts: PublishOptions) => {
+        ctx.code = runPublish(dir, opts, ctx.io);
+      }),
+    { mutates: true },
+  );
+}
+
+export interface PublishOptions {
+  target: "cloud-run";
+  env?: string;
+  allowUncertified?: boolean;
+  json?: boolean;
+}
+
+/** The publish action, exported with injectable clock/env so tests can pin both. */
+export function runPublish(
+  path: string,
+  opts: PublishOptions,
   io: CliIO,
   deps: { now?: () => string; env?: NodeJS.ProcessEnv } = {},
 ): number {
-  const path = args[0];
-  const target = flags.target as string | undefined;
-  if (!path || target !== "cloud-run") {
-    io.err("Usage: anvil publish <dir> --target cloud-run [--env ENV] [--allow-uncertified]");
-    return 1;
-  }
   const processEnv = deps.env ?? process.env;
-  const env = typeof flags.env === "string" ? flags.env : (processEnv.ANVIL_ENV ?? "dev");
-  const allowUncertified = flags["allow-uncertified"] === true;
+  const env = opts.env ?? processEnv.ANVIL_ENV ?? "dev";
+  const allowUncertified = opts.allowUncertified === true;
 
   const dir = resolveBundleDir(path);
   const files = readBundleDir(dir);
@@ -95,7 +131,7 @@ export function cmdPublish(
   };
   writeFileSync(join(dir, PUBLICATION_FILE), `${JSON.stringify(record, null, 2)}\n`, "utf8");
 
-  if (flags.json === true) {
+  if (opts.json === true) {
     io.out(JSON.stringify(record, null, 2));
     return 0;
   }
@@ -120,22 +156,3 @@ const DEPLOY_ARTIFACTS = [
   "deploy/secrets.required.yaml",
   "deploy/README.md",
 ] as const;
-
-/**
- * The Cloud Run deployment plan — the same steps `anvil deploy cloud-run`
- * prints (Terraform owns infra+config, Cloud Build owns the pipeline).
- */
-function printCloudRunPlan(dir: string, env: string, io: CliIO): void {
-  const deployDir = join(dir, "deploy");
-  io.out(`Deployment plan for '${env}' (artifacts in ${deployDir}):`);
-  io.out("Prereqs (shared, once per project): Artifact Registry repo, Terraform");
-  io.out("  state bucket, and — when a durable ledger is needed — the Firestore");
-  io.out("  (default) database. See deploy/README.md.");
-  io.out("  1. gcloud builds submit --config deploy/cloudbuild.yaml \\");
-  io.out(`       --substitutions _ANVIL_ENV=${env},_TF_STATE_BUCKET=<bucket>`);
-  io.out("     → builds + pushes the image, then runs `terraform plan` (no auto-apply).");
-  io.out("  2. Review the published plan; secrets are declared in");
-  io.out("     deploy/secrets.required.yaml (Secret Manager, provisioned by Terraform).");
-  io.out("  3. terraform apply tfplan   (promoted, behind review; dev may auto-apply)");
-  io.out("Anvil generates the artifacts; it does not hold your cloud credentials.");
-}

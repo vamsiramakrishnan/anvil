@@ -8,9 +8,12 @@ import {
 } from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
 import { assessReadiness, type ReadinessAssessment } from "@anvil/refinement";
-import { loadAirDoc } from "./cmd-capability.js";
-import { printDiagnostics, sourceService } from "./cmd-source.js";
-import type { CliIO } from "./io.js";
+import type { Command } from "commander";
+import type { CliIO } from "../io.js";
+import type { CommandContext } from "./context.js";
+import { annotate } from "./meta.js";
+import { loadAir } from "./shared.js";
+import { printDiagnostics, sourceService } from "./source.js";
 
 /**
  * `anvil agentify <spec>` — the one-shot discovery flow. Orchestration, not a
@@ -27,25 +30,46 @@ import type { CliIO } from "./io.js";
  * Blocked operations are surfaced prominently but do not stop the flow —
  * discovery is exactly when a customer wants to see them.
  */
-export async function cmdAgentify(
-  args: string[],
-  flags: Record<string, string | boolean>,
-  io: CliIO,
-): Promise<number> {
-  const specPath = args[0];
-  if (!specPath) {
-    io.err(
-      "Usage: anvil agentify <spec> [--manifest <file>] [--service <id>] [--out <dir>] [--root <ws>] [--json]",
-    );
-    return 1;
-  }
+export function registerAgentify(parent: Command, ctx: CommandContext): void {
+  annotate(
+    parent
+      .command("agentify")
+      .summary(
+        "One-shot discovery: lock the source, compile, assess readiness, and propose capabilities — then stop for review.",
+      )
+      .description(
+        "Convenience orchestration of the discovery flow — the same library calls as running `anvil source add` (locks a content-addressed snapshot under .anvil/sources), `anvil compile` (writes the bundle, default generated/<service-id>), `anvil assess` (the readiness triage; blocked operations are surfaced prominently but do not stop the flow), and `anvil capability propose` (read-only re-discovery over the stored groupings) individually, so the compiled AIR is byte-identical to the four-command path. " +
+          "It then STOPS for human review. It deliberately does NOT approve any capability or operation (every grouping stays `proposed`, every unproven mutation stays `review_required`), does NOT certify, and does NOT publish — no certification.json or publication.json is ever written. " +
+          "A broken spec stops at the snapshot layer with structured diagnostics and exit 1; nothing downstream runs.",
+      )
+      .argument("<spec>", "OpenAPI/Swagger spec file")
+      .option("--manifest <file>", "Anvil manifest with semantic overrides")
+      .option("--service <id>", "override the derived service id")
+      .option("--out <dir>", "bundle output directory (default generated/<service-id>)")
+      .option("--root <ws>", "workspace root for .anvil/sources", ".")
+      .option("--json", "emit one machine-readable object with all four stages")
+      .action(async (spec: string, opts: AgentifyOptions) => {
+        ctx.code = await runAgentify(spec, opts, ctx.io);
+      }),
+    { mutates: true },
+  );
+}
 
+interface AgentifyOptions {
+  manifest?: string;
+  service?: string;
+  out?: string;
+  root?: string;
+  json?: boolean;
+}
+
+async function runAgentify(specPath: string, opts: AgentifyOptions, io: CliIO): Promise<number> {
   // 1. source add — lock what was actually supplied before compiling anything.
   //    A broken spec still locks its (invalid) snapshot for forensics, then
   //    stops here: only a valid snapshot may be compiled.
-  const source = await sourceService(flags).add([specPath]);
+  const source = await sourceService(opts).add([specPath]);
   if (source.snapshot?.status !== "valid") {
-    if (flags.json === true) {
+    if (opts.json === true) {
       io.out(JSON.stringify({ source: sourceStage(source) }, null, 2));
     } else {
       printDiagnostics(io, source.diagnostics);
@@ -59,20 +83,19 @@ export async function cmdAgentify(
   }
 
   // 2. compile — identical inputs and defaults to `anvil compile`.
-  const manifestPath = str(flags.manifest);
   const air = await compile({
     spec: readFileSync(specPath, "utf8"),
-    manifest: manifestPath ? readFileSync(manifestPath, "utf8") : undefined,
-    serviceId: str(flags.service),
+    manifest: opts.manifest ? readFileSync(opts.manifest, "utf8") : undefined,
+    serviceId: opts.service,
     sourceUri: specPath,
   });
-  const outDir = str(flags.out) ?? join("generated", air.service.id);
+  const outDir = opts.out ?? join("generated", air.service.id);
   const written = writeBundle(outDir, generateBundle(air));
   const compileErrors = air.diagnostics.filter((d) => d.level === "error");
   if (compileErrors.length > 0) {
     // Mirror `anvil compile`: the bundle exists for forensics, but a step
     // errored, so the flow stops before assessment and exits non-zero.
-    if (flags.json === true) {
+    if (opts.json === true) {
       io.out(
         JSON.stringify(
           { source: sourceStage(source), compile: { outDir, diagnostics: air.diagnostics } },
@@ -93,7 +116,7 @@ export async function cmdAgentify(
 
   // 3. assess — over the bundle just written, exactly what `anvil assess <dir>`
   //    reads. Blocked operations are reported, not fatal: this is discovery.
-  const compiled = loadAirDoc(outDir);
+  const compiled = loadAir(outDir);
   const assessment = assessReadiness(compiled);
 
   // 4. capability propose — read-only, same as `anvil capability propose`.
@@ -101,7 +124,7 @@ export async function cmdAgentify(
   //    compile time; nothing here (or anywhere in agentify) approves one.
   const proposals = proposeCapabilities(compiled);
 
-  if (flags.json === true) {
+  if (opts.json === true) {
     io.out(
       JSON.stringify(
         {
@@ -164,8 +187,4 @@ function printReport(io: CliIO, r: ReportInput): void {
   const first = r.proposals[0];
   if (first) io.out(`  anvil capability show ${r.outDir} ${first.capability.id}`);
   io.out(`  anvil capability approve ${r.outDir} <id>`);
-}
-
-function str(v: string | boolean | undefined): string | undefined {
-  return typeof v === "string" ? v : undefined;
 }
