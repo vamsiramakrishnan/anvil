@@ -7,6 +7,8 @@
  * vendor-specific type escapes this package. See ADR-0013.
  */
 export * from "./adapter.js";
+export * from "./apiconnect/index.js";
+export * from "./apigee/index.js";
 export * from "./archive/index.js";
 export * from "./capability-matrix.js";
 export * from "./conformance.js";
@@ -14,4 +16,7 @@ export * from "./fixture.js";
 export * from "./inventory.js";
 export * from "./kong/index.js";
 export * from "./model.js";
+export * from "./mulesoft/index.js";
 export * from "./overlay.js";
+export * from "./synth.js";
+export * from "./wso2/index.js";
