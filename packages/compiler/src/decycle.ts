@@ -65,6 +65,22 @@ export const DEFAULT_MAX_SCHEMA_DEPTH = 6;
  */
 export const DEFAULT_MAX_REF_DEPTH = 1;
 
+/**
+ * The maximum number of nodes one operation's materialized schema may contain
+ * before further expansion truncates to stubs. The ref-*depth* bound above
+ * caps a *deep* chain, but a single hop into a very *broad* schema can still
+ * explode: DocuSign's `tabs`/`accountSettingsInformation` request bodies have
+ * hundreds of properties, each itself a large object, so depth-1 materializes
+ * to ~2.5MB *per operation* — 414 of those made a 400MB AIR that took `airTo
+ * YAML` 30s+ to serialize. Depth alone can't catch breadth; this does. The
+ * budget is generous — a real Stripe `charge` (the densest normal case)
+ * materializes to well under it, so every non-pathological spec is untouched —
+ * and it counts nodes in the OUTPUT, so it bounds input, output, and body
+ * schemas alike. An agent cannot use a 2.5MB field list anyway; a bounded,
+ * honestly-stubbed schema is strictly more usable.
+ */
+export const DEFAULT_MAX_SCHEMA_NODES = 4000;
+
 type Ref = { $ref: string };
 const isRef = (v: unknown): v is Ref =>
   typeof v === "object" && v !== null && typeof (v as Record<string, unknown>).$ref === "string";
@@ -330,23 +346,36 @@ export interface MaterializeResult {
   schema: unknown;
   /** Named-schema chains cut off by the ref-depth bound (real cycles or very deep chains). */
   refDepthLimitedAt: string[];
+  /** Document paths where expansion stopped because the node budget was hit (breadth blowup). */
+  nodeBudgetLimitedAt: string[];
+}
+
+/** Shared mutable expansion budget threaded through one materialization walk. */
+interface Budget {
+  count: number;
+  max: number;
+  /** True once the budget is exhausted — further structure truncates to stubs. */
+  spent: boolean;
 }
 
 /**
  * Resolve a (possibly `$ref`-bearing) schema — as produced by `bundleDocument`
  * — back into a small, fully self-contained, `$ref`-free schema, scoped to
- * one operation. Bounded by how many *named-schema* hops it follows
- * (`maxRefDepth`), not by total node count: each hop inlines one already-
- * bundled (and already depth-bounded) schema body, so this stays cheap
- * regardless of how densely the source spec's types cross-reference each
- * other — the expensive part already happened once, in `bundleDocument`.
+ * one operation. Bounded on two independent axes, because a schema can be
+ * pathological in either: `maxRefDepth` caps a *deep* named-schema chain, and
+ * `maxNodes` caps a *broad* one (DocuSign's `tabs`/`accountSettingsInformation`
+ * fan out to megabytes in a single hop). Once the node budget is spent every
+ * further object/ref becomes a typed stub, so no single operation's schema can
+ * blow up the AIR regardless of the source spec's shape.
  */
 export function materializeSchema(
   schema: unknown,
   namedSchemas: Record<string, unknown>,
   maxRefDepth = DEFAULT_MAX_REF_DEPTH,
+  maxNodes = DEFAULT_MAX_SCHEMA_NODES,
 ): MaterializeResult {
   const refDepthLimitedAt: string[] = [];
+  const nodeBudgetLimitedAt: string[] = [];
   // Memoized by name, not just cycle-guarded by ancestor chain: an
   // operation's response commonly reaches the same named type from several
   // unrelated branches (e.g. a Stripe `charge` references `customer`
@@ -357,8 +386,20 @@ export function materializeSchema(
   // was enough to produce a 400MB+ document even though `bundleDocument`
   // (the whole-spec pass) had already deduplicated everything once.
   const resolved = new Map<string, { refDepth: number; value: unknown }>();
-  const result = resolveRefs(schema, namedSchemas, new Set(), 0, maxRefDepth, "$", refDepthLimitedAt, resolved);
-  return { schema: result, refDepthLimitedAt };
+  const budget: Budget = { count: 0, max: maxNodes, spent: false };
+  const result = resolveRefs(
+    schema,
+    namedSchemas,
+    new Set(),
+    0,
+    maxRefDepth,
+    "$",
+    refDepthLimitedAt,
+    nodeBudgetLimitedAt,
+    resolved,
+    budget,
+  );
+  return { schema: result, refDepthLimitedAt, nodeBudgetLimitedAt };
 }
 
 function resolveRefs(
@@ -369,9 +410,23 @@ function resolveRefs(
   maxRefDepth: number,
   path: string,
   refDepthLimitedAt: string[],
+  nodeBudgetLimitedAt: string[],
   resolved: Map<string, { refDepth: number; value: unknown }>,
+  budget: Budget,
 ): unknown {
   if (node === null || typeof node !== "object") return node;
+
+  // Node budget: once spent, every further composite node collapses to a stub,
+  // so a very *broad* schema (many properties, each a large object) can't blow
+  // up the AIR even within the ref-depth bound. Scalars still pass through.
+  if (budget.count >= budget.max) {
+    if (!budget.spent) {
+      budget.spent = true;
+      nodeBudgetLimitedAt.push(path);
+    }
+    return truncate(node as Record<string, unknown> | unknown[]);
+  }
+  budget.count += 1;
 
   if (isRef(node)) {
     const name = refName(node);
@@ -398,20 +453,24 @@ function resolveRefs(
       maxRefDepth,
       `${path}(${name})`,
       refDepthLimitedAt,
+      nodeBudgetLimitedAt,
       resolved,
+      budget,
     );
-    resolved.set(name, { refDepth, value });
+    // Only memoize a fully-expanded value: one truncated by an exhausted budget
+    // is not the type's real body and must not be served to another reference.
+    if (!budget.spent) resolved.set(name, { refDepth, value });
     return value;
   }
 
   if (Array.isArray(node)) {
     return node.map((v, i) =>
-      resolveRefs(v, namedSchemas, ancestors, refDepth, maxRefDepth, `${path}[${i}]`, refDepthLimitedAt, resolved),
+      resolveRefs(v, namedSchemas, ancestors, refDepth, maxRefDepth, `${path}[${i}]`, refDepthLimitedAt, nodeBudgetLimitedAt, resolved, budget),
     );
   }
   const obj: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-    obj[k] = resolveRefs(v, namedSchemas, ancestors, refDepth, maxRefDepth, `${path}.${k}`, refDepthLimitedAt, resolved);
+    obj[k] = resolveRefs(v, namedSchemas, ancestors, refDepth, maxRefDepth, `${path}.${k}`, refDepthLimitedAt, nodeBudgetLimitedAt, resolved, budget);
   }
   return obj;
 }
