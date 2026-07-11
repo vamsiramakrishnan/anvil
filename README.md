@@ -159,10 +159,20 @@ and Antigravity (`.agent/skills/anvil/SKILL.md`). Regenerate with `anvil skill <
 
 ## Status
 
-MVP focus (spec §19): OpenAPI 3.x / Swagger 2.0 REST JSON. The parser layer is an
-adapter interface, so gRPC / GraphQL / WSDL are additive. `pnpm test` runs the
-full suite (560+ tests). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
-roadmap and what is implemented vs. staged.
+The parser layer is an adapter interface: alongside OpenAPI 3.x / Swagger 2.0
+REST JSON, Anvil now lowers **GraphQL SDL**, **gRPC / Protocol Buffers (proto3)**,
+and **SOAP / WSDL 1.1** into the same canonical model. Each protocol is *lowered*
+into a pre-dereference OpenAPI 3.0 document and then runs through the identical
+normalize → classify → validate → generate pipeline — so effect/idempotency
+classification, the safety runtime, and every generated artifact (CLI, MCP,
+skill, mocks) work uniformly across protocols. Effect is inferred conservatively:
+GraphQL `Query`/`Mutation`, gRPC/SOAP read-verb method names lower to reads;
+everything else lowers to a mutation that stays `review_required` until enriched.
+See [`examples/README.md`](examples/README.md) for a runnable end-to-end walkthrough
+across all four formats, and their specs under `examples/graphql`, `examples/grpc`,
+and `examples/soap`. `pnpm test` runs the full suite (690+ tests). See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the roadmap and what is
+implemented vs. staged.
 
 Two current semantics worth stating plainly:
 

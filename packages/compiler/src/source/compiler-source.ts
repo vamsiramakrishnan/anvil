@@ -11,6 +11,7 @@
  * compile.
  */
 import { basename } from "node:path";
+import { detectProtocolFormat } from "../protocols/index.js";
 import { detectDeclaredFormat, parseSourceText } from "./detect.js";
 import { computeSourceHash, deriveSnapshotId, type SourceInputFile } from "./hash.js";
 import type { SourceDiagnostic, SourceEntrypoint, SourceOrigin, SourceSnapshot } from "./model.js";
@@ -135,7 +136,7 @@ export function ephemeralCompilerSource(spec: string, sourceUri?: string): Compi
   const bytes = new TextEncoder().encode(spec);
   const inputs: SourceInputFile[] = [{ path, bytes }];
   const sourceHash = computeSourceHash(inputs);
-  const detected = detectEphemeralFormat(spec);
+  const detected = detectEphemeralFormat(spec, sourceUri);
   return {
     snapshotId: deriveSnapshotId(sourceHash),
     sourceHash,
@@ -157,10 +158,17 @@ function ephemeralEntrypointName(sourceUri?: string): string {
  * spec that declares nothing falls back to openapi/unknown; the real parse in
  * `compileSource` still produces the meaningful error.
  */
-function detectEphemeralFormat(spec: string): {
+function detectEphemeralFormat(
+  spec: string,
+  sourceUri?: string,
+): {
   format: SourceEntrypoint["format"];
   version: string;
 } {
+  // A non-REST protocol (GraphQL/proto/WSDL) is detected from the filename (if
+  // any) and content before attempting a YAML parse it would never satisfy.
+  const protocol = detectProtocolFormat(sourceUri ?? "", spec);
+  if (protocol) return protocol;
   const parsed = parseSourceText(spec);
   const detected = parsed.doc === undefined ? undefined : detectDeclaredFormat(parsed.doc);
   return detected ?? { format: "openapi", version: "unknown" };

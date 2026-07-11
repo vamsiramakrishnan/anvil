@@ -1,0 +1,98 @@
+// Orders gRPC service — a diverse example exercising Anvil's proto3 adapter.
+//
+// rpc names drive effect inference: Get*/List*/Watch* lower to read operations
+// (safe, retryable); everything else lowers to write operations (conservative —
+// unsafe until enriched/approved). CancelOrder is destructive and PlaceOrder is
+// a financial mutation; the manifest (anvil.yaml) enriches their posture.
+
+syntax = "proto3";
+
+package acme.orders.v1;
+
+import "google/protobuf/timestamp.proto";
+
+enum OrderState {
+  ORDER_STATE_UNSPECIFIED = 0;
+  ORDER_STATE_PENDING = 1;
+  ORDER_STATE_PAID = 2;
+  ORDER_STATE_SHIPPED = 3;
+  ORDER_STATE_CANCELLED = 4;
+}
+
+message Money {
+  string currency_code = 1;
+  int64 units = 2;
+  int32 nanos = 3;
+}
+
+message LineItem {
+  string sku = 1;
+  int32 quantity = 2;
+  Money unit_price = 3;
+}
+
+message Order {
+  string id = 1;
+  string customer_id = 2;
+  OrderState state = 3;
+  repeated LineItem line_items = 4;
+  Money total = 5;
+  map<string, string> metadata = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+message GetOrderRequest {
+  string id = 1;
+}
+
+message ListOrdersRequest {
+  string customer_id = 1;
+  OrderState state = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListOrdersResponse {
+  repeated Order orders = 1;
+  string next_page_token = 2;
+}
+
+message PlaceOrderRequest {
+  string customer_id = 1;
+  repeated LineItem line_items = 2;
+  string payment_token = 3;
+  string idempotency_key = 4;
+}
+
+message CancelOrderRequest {
+  string id = 1;
+  string reason = 2;
+}
+
+message ReserveStockRequest {
+  string sku = 1;
+  int32 quantity = 2;
+}
+
+message ReserveStockResponse {
+  string reservation_id = 1;
+  bool reserved = 2;
+}
+
+message Empty {}
+
+// The Orders service.
+service OrderService {
+  // Reads — safe and retryable.
+  rpc GetOrder(GetOrderRequest) returns (Order);
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse);
+
+  // PlaceOrder charges the payment token — a financial mutation.
+  rpc PlaceOrder(PlaceOrderRequest) returns (Order);
+
+  // ReserveStock holds inventory — a reservation mutation.
+  rpc ReserveStock(ReserveStockRequest) returns (ReserveStockResponse);
+
+  // CancelOrder is destructive — voids the order and refunds.
+  rpc CancelOrder(CancelOrderRequest) returns (Empty);
+}

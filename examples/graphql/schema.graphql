@@ -1,0 +1,92 @@
+# Storefront GraphQL API — a diverse example exercising Anvil's GraphQL adapter.
+#
+# Queries lower to read operations (safe, retryable); mutations lower to write
+# operations (conservative — unsafe until enriched/approved). The `checkout`
+# mutation is a financial action and `cancelOrder` is destructive; the manifest
+# (anvil.yaml) enriches their idempotency/confirmation posture.
+
+"An ISO-4217 currency amount in minor units."
+scalar Money
+
+"A product available in the storefront catalog."
+type Product {
+  id: ID!
+  name: String!
+  description: String
+  priceCents: Int!
+  currency: String!
+  inStock: Boolean!
+  tags: [String!]
+}
+
+"A line item within a shopping cart."
+type CartLine {
+  product: Product!
+  quantity: Int!
+  subtotalCents: Int!
+}
+
+"A customer's shopping cart."
+type Cart {
+  id: ID!
+  lines: [CartLine!]!
+  totalCents: Int!
+  currency: String!
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+"A placed order."
+type Order {
+  id: ID!
+  status: OrderStatus!
+  totalCents: Int!
+  currency: String!
+  placedAt: String!
+  lines: [CartLine!]!
+}
+
+"Filter criteria for a product search."
+input ProductFilter {
+  query: String
+  tag: String
+  maxPriceCents: Int
+  inStockOnly: Boolean
+}
+
+input CheckoutInput {
+  cartId: ID!
+  paymentToken: String!
+  shippingAddress: String!
+  idempotencyKey: String
+}
+
+type Query {
+  "Fetch a single product by id."
+  product(id: ID!): Product
+  "Search the catalog with optional filters."
+  products(filter: ProductFilter, limit: Int): [Product!]!
+  "Fetch a cart by id."
+  cart(id: ID!): Cart
+  "List a customer's orders."
+  orders(customerId: ID!, status: OrderStatus): [Order!]!
+  "Fetch a single order by id."
+  order(id: ID!): Order
+}
+
+type Mutation {
+  "Add a product to a cart, creating the cart if needed."
+  addToCart(cartId: ID, productId: ID!, quantity: Int!): Cart!
+  "Remove a line from a cart."
+  removeFromCart(cartId: ID!, productId: ID!): Cart!
+  "Check out a cart and charge the payment token. Irreversible financial action."
+  checkout(input: CheckoutInput!): Order!
+  "Cancel an order. Destructive — refunds and voids the shipment."
+  cancelOrder(orderId: ID!, reason: String): Order!
+}

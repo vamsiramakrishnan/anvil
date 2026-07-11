@@ -25,6 +25,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { detectProtocolFormat } from "../protocols/index.js";
 import {
   decodeUtf8,
   detectDeclaredFormat,
@@ -33,7 +34,13 @@ import {
   unparseableDiagnostic,
 } from "./detect.js";
 import { computeSourceHash, type SourceInputFile, sortByPath } from "./hash.js";
-import type { SourceDiagnostic, SourceEntrypoint, SourceFileRole, SpecSyntax } from "./model.js";
+import type {
+  EntrypointFormat,
+  SourceDiagnostic,
+  SourceEntrypoint,
+  SourceFileRole,
+  SpecSyntax,
+} from "./model.js";
 
 /** A captured file: verbatim bytes plus its place in the source graph. */
 export interface ImportedFile extends SourceInputFile {
@@ -58,7 +65,17 @@ export interface SourceImporter {
 }
 
 /** Extensions a directory import probes; explicit entrypoints may be anything. */
-const SPEC_EXTENSIONS = ["yaml", "yml", "json"];
+const SPEC_EXTENSIONS = [
+  "yaml",
+  "yml",
+  "json",
+  "graphql",
+  "gql",
+  "graphqls",
+  "proto",
+  "wsdl",
+  "xml",
+];
 
 /** Directory segments a directory import never descends into or captures. */
 function skippedSegment(segment: string): boolean {
@@ -143,6 +160,8 @@ interface Probe {
   bytes: Uint8Array;
   syntax?: SpecSyntax;
   doc?: unknown;
+  /** A non-REST protocol format detected from the file's path/content. */
+  protocol?: { format: EntrypointFormat; version: string };
   diagnostics: SourceDiagnostic[];
 }
 
@@ -156,6 +175,13 @@ function probeFile(root: string, path: string): Probe {
       bytes,
       diagnostics: [{ level: "error", code: "source/invalid_utf8", path, message: decoded.error }],
     };
+  }
+  // Non-REST protocols (GraphQL/proto/WSDL) are not YAML/JSON documents, so
+  // detect them from path+content and capture them verbatim without a YAML
+  // parse — a `.proto` or `.graphql` file must not be reported as broken YAML.
+  const protocol = detectProtocolFormat(path, decoded.text);
+  if (protocol) {
+    return { path, bytes, protocol, diagnostics: [] };
   }
   const syntax = syntaxForPath(path);
   const parsed = parseSourceText(decoded.text);
@@ -186,11 +212,13 @@ function importEntrypoints(state: ImportState, targets: string[]): void {
   for (const abs of real) {
     const path = toPosix(relative(state.root, abs));
     const probe = probeFile(state.root, path);
-    const detected = probe.doc === undefined ? undefined : detectDeclaredFormat(probe.doc);
+    const detected =
+      probe.protocol ?? (probe.doc === undefined ? undefined : detectDeclaredFormat(probe.doc));
     if (detected) {
       state.entrypoints.push({ path, format: detected.format, version: detected.version });
       capture(state, probe, "entrypoint");
-      walkRefs(state, path, probe.doc);
+      // Protocol sources are single-document; only OpenAPI/Swagger have $refs.
+      if (probe.doc !== undefined) walkRefs(state, path, probe.doc);
     } else {
       if (probe.diagnostics.length === 0) {
         state.diagnostics.push({
@@ -244,7 +272,7 @@ async function importDirectory(state: ImportState, root: string): Promise<void> 
   }
 
   const detected = [...probes.values()]
-    .map((probe) => ({ probe, format: detectDeclaredFormat(probe.doc) }))
+    .map((probe) => ({ probe, format: probe.protocol ?? detectDeclaredFormat(probe.doc) }))
     .filter((c) => c.format !== undefined)
     .sort((a, b) => (a.probe.path < b.probe.path ? -1 : 1));
 
