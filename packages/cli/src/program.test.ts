@@ -22,7 +22,16 @@ let bundle: string;
 beforeAll(async () => {
   bundle = mkdtempSync(join(tmpdir(), "anvil-program-"));
   const code = await runAnvilCli(
-    ["compile", join(examples, "openapi.yaml"), "--service", "payments", "--out", bundle],
+    [
+      "compile",
+      join(examples, "openapi.yaml"),
+      "--service",
+      "payments",
+      "--out",
+      bundle,
+      "--root",
+      bundle,
+    ],
     { io: bufferIO() },
   );
   expect(code).toBe(0);

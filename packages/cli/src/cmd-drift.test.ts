@@ -22,7 +22,9 @@ beforeEach(async () => {
   const bundle = join(root, "bundle");
   writeFileSync(spec, paymentsSpec, "utf8");
   mkdirSync(bundle, { recursive: true });
-  expect(await runAnvilCli(["compile", spec, "--out", bundle], { io: bufferIO() })).toBe(0);
+  expect(
+    await runAnvilCli(["compile", spec, "--out", bundle, "--root", root], { io: bufferIO() }),
+  ).toBe(0);
   const doc = parseYaml(paymentsSpec) as { paths: Record<string, unknown> };
   delete doc.paths["/customers/{customer_id}"];
   writeFileSync(spec, toYaml(doc), "utf8");

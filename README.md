@@ -17,9 +17,13 @@ that luxury. Anvil compiles a raw API surface into something an agent can use
 
 ```
 spec (OpenAPI / Swagger)
+        │  source import  →  immutable content-addressed snapshot (Layer 0)
+        ▼
+  SourceSnapshot  (verbatim bytes + provenance — the compiler's only input)
         │  parse → normalize → classify → enrich → validate
         ▼
-      AIR  (the Anvil Intermediate Representation — one source of truth)
+      AIR  (the Anvil Intermediate Representation — one source of truth,
+             cryptographically bound to the snapshot it was compiled from)
         │  generate
         ├─ type-safe CLI            (discovery, --dry-run, --explain, --schema)
         ├─ MCP server               (one tool per approved op, risk in metadata)
@@ -36,25 +40,47 @@ non-idempotent writes are never retried automatically, and require confirmation.
 
 ## Quickstart
 
+The lifecycle is: **agentify → assess → capability approve → build → certify →
+publish**. `agentify` is the one-shot front door — it locks the source snapshot,
+compiles from it, assesses readiness, and proposes capabilities, then stops for
+human review.
+
 ```bash
 pnpm install && pnpm build
+alias anvil='node packages/cli/dist/bin-anvil.js'
 
-# Compile the reference payments API into a full tool bundle.
-node packages/cli/dist/bin-anvil.js compile \
-  examples/payments/openapi.yaml \
-  --manifest examples/payments/anvil.yaml \
-  --service payments --out generated/payments
+# 1. Discover: lock an immutable source snapshot, compile from it, assess, and
+#    propose capabilities — nothing is approved, certified, or published.
+anvil agentify examples/payments/openapi.yaml \
+  --manifest examples/payments/anvil.yaml --service payments --out generated/payments
 
-node packages/cli/dist/bin-anvil.js inspect generated/payments
+# 2. Assess: which operations are agent-ready, and why the rest are not.
+anvil assess generated/payments
+anvil assess generated/payments --check --fail-on blocked   # gate a pipeline explicitly
 
-# Report which operations are agent-ready, and why the rest are not (exit 0 even with blockers).
-node packages/cli/dist/bin-anvil.js assess generated/payments
-node packages/cli/dist/bin-anvil.js assess generated/payments payments.refunds.create   # drill into one operation
-node packages/cli/dist/bin-anvil.js assess generated/payments --check --fail-on blocked # gate a pipeline explicitly
+# 3. Review + approve a business capability (enforces the tool budget).
+anvil capability list generated/payments
+anvil capability approve generated/payments payments.refunds
 
+# 4. Build the capability's own aligned bundle, then certify it.
+anvil build generated/payments payments.refunds --out generated/refunds
+anvil certify generated/refunds
+
+# 5. Publish: verify the certification and emit the Cloud Run deploy plan
+#    (see "publish" below — this writes a plan + publication.json, it does not
+#    call any cloud API).
+anvil publish generated/refunds
+```
+
+The compiler only ever reads a locked snapshot. To go step by step instead of
+`agentify`, `anvil source add <spec>` locks the snapshot and `anvil compile
+--source <snapshot-id>` compiles it (a bare `anvil compile <spec>` imports and
+locks first, then compiles that snapshot).
+
+```bash
 # Dry-run an unsafe mutation — no side effects, secrets redacted.
 ANVIL_ENV=prod ANVIL_ALLOWED_HOSTS=payments.internal.example.com \
-node packages/cli/dist/bin-anvil.js run generated/payments \
+anvil run generated/payments \
   refunds create --payment-id pay_123 --amount 2500 --currency USD \
   --idempotency-key k1 --confirm --dry-run
 ```
@@ -135,8 +161,23 @@ and Antigravity (`.agent/skills/anvil/SKILL.md`). Regenerate with `anvil skill <
 
 MVP focus (spec §19): OpenAPI 3.x / Swagger 2.0 REST JSON. The parser layer is an
 adapter interface, so gRPC / GraphQL / WSDL are additive. `pnpm test` runs the
-full suite (78 tests). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
+full suite (560+ tests). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the
 roadmap and what is implemented vs. staged.
+
+Two current semantics worth stating plainly:
+
+- **`publish` is plan-first, not a deployment.** It verifies that a *passing*
+  certification matches the current bundle, prints the Cloud Run deployment plan,
+  and writes `publication.json` into the bundle. It makes **no cloud API calls** —
+  `anvil deploy cloud-run` owns actual rollout. Publishing to prod fails closed
+  without a valid certification.
+- **Certification is static (bundle-integrity) today, not executable.** The four
+  gates (CONTRACT, SAFETY, SEMANTIC, RUNTIME) re-validate AIR, prove the CLI / MCP
+  / runtime surfaces expose exactly the approved operations, and confirm the
+  generated mock, eval, conformance, and deploy artifacts are present and
+  parseable. It does **not yet** boot the mock/MCP servers and execute those
+  suites; executable certification (start the servers, run the evals live) is
+  staged.
 
 ## License
 

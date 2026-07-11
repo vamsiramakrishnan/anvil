@@ -1,0 +1,44 @@
+openapi: 3.0.3
+info:
+  title: Ledger API
+  version: 2026-07-11
+  description: A multi-file OpenAPI spec whose schemas live in sibling files.
+servers:
+  - url: https://ledger.internal.example.com
+paths:
+  /entries/{entry_id}:
+    get:
+      operationId: getEntry
+      summary: Get a ledger entry
+      tags: [entries]
+      parameters:
+        - name: entry_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The entry.
+          content:
+            application/json:
+              schema:
+                $ref: "./schemas/entry.yaml#/Entry"
+  /entries:
+    post:
+      operationId: createEntry
+      summary: Post a ledger entry
+      tags: [entries]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas/entry.yaml#/EntryCreate"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "./schemas/entry.yaml#/Entry"

@@ -46,11 +46,20 @@ export interface SnapshotListing {
   corrupt: { snapshotId: string; diagnostics: SourceDiagnostic[] }[];
 }
 
+export interface ReadFilesResult {
+  snapshot?: SourceSnapshot;
+  /** The verbatim raw/ bytes; absent when the snapshot does not resolve. */
+  files?: SourceInputFile[];
+  diagnostics: SourceDiagnostic[];
+}
+
 /** The storage contract Layer 0 services depend on. */
 export interface SourceSnapshotStore {
   /** Atomically persist a snapshot and its verbatim files. */
   create(snapshot: SourceSnapshot, files: SourceInputFile[]): Promise<CreateSnapshotResult>;
   load(snapshotId: string): Promise<LoadSnapshotResult>;
+  /** The verbatim raw/ bytes of a snapshot — what the compiler reads from. */
+  readFiles(snapshotId: string): Promise<ReadFilesResult>;
   list(): Promise<SnapshotListing>;
   /** Re-hash raw/ against the locked record: added/missing/changed files. */
   verify(snapshotId: string): Promise<{ ok: boolean; diagnostics: SourceDiagnostic[] }>;
@@ -122,6 +131,14 @@ export class FileSystemSourceSnapshotStore implements SourceSnapshotStore {
     }
     const { snapshot, diagnostics } = parseSourceSnapshot(readFileSync(path, "utf8"));
     return { snapshot, dir, diagnostics };
+  }
+
+  async readFiles(snapshotId: string): Promise<ReadFilesResult> {
+    const { snapshot, dir, diagnostics } = await this.load(snapshotId);
+    if (!snapshot || !dir) return { diagnostics };
+    const rawDir = join(dir, "raw");
+    const files = existsSync(rawDir) ? readTree(rawDir) : [];
+    return { snapshot, files, diagnostics };
   }
 
   async list(): Promise<SnapshotListing> {
