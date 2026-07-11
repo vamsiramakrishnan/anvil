@@ -98,8 +98,39 @@ export type SemanticPredicate = z.infer<typeof SemanticPredicate>;
 export const OverlayOperationKind = z.enum(["set", "restrict", "remove", "assert"]);
 export type OverlayOperationKind = z.infer<typeof OverlayOperationKind>;
 
-/** Any JSON value an assertion may carry. */
-export const JsonValue: z.ZodType<unknown> = z.unknown();
+/**
+ * Whether a value is genuinely JSON-serializable: null, finite number, boolean,
+ * string, an array of the same, or a *plain* object of the same. Rejects
+ * `undefined`, functions, symbols, `bigint`, `NaN`/`Infinity`, and non-plain
+ * objects (`Date`, `Map`, class instances) — anything that would not survive
+ * `JSON.stringify`/parse and could silently corrupt a canonical digest.
+ */
+export function isJsonValue(v: unknown): boolean {
+  if (v === null) return true;
+  const t = typeof v;
+  if (t === "string" || t === "boolean") return true;
+  if (t === "number") return Number.isFinite(v);
+  if (Array.isArray(v)) return v.every(isJsonValue);
+  if (t === "object") {
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null) return false;
+    return Object.values(v as Record<string, unknown>).every(isJsonValue);
+  }
+  return false;
+}
+
+/**
+ * Any JSON value an assertion may carry. The static type stays `unknown` (so
+ * internal builders can pass through already-typed values without ceremony), but
+ * the runtime *validates* JSON-ness — an overlay is content-addressed and its
+ * assertion values feed a canonical hash, so a non-JSON value is rejected at the
+ * boundary rather than silently corrupting a digest or a round-trip.
+ */
+export const JsonValue: z.ZodType<unknown> = z.unknown().superRefine((v, ctx) => {
+  if (v !== undefined && !isJsonValue(v)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "value must be a JSON value" });
+  }
+});
 
 /**
  * A piece of evidence an overlay carries, referenced by assertions via id. Kept
@@ -126,7 +157,9 @@ export const SemanticOverlayAssertion = z.object({
   target: SemanticTarget,
   predicate: SemanticPredicate,
   operation: OverlayOperationKind,
-  value: JsonValue,
+  // Optional: a `remove` operation may carry no value. When present it must be
+  // real JSON (see `JsonValue`) so the overlay digest stays stable.
+  value: JsonValue.optional(),
   evidenceRefs: z.array(z.string()).default([]),
 });
 export type SemanticOverlayAssertion = z.infer<typeof SemanticOverlayAssertion>;

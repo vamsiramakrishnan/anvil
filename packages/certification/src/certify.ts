@@ -6,7 +6,11 @@
  * `static_passed`, never `certified`.
  */
 import { type AirDocument, contractHash, hashCanonical } from "@anvil/air";
-import { capabilityContractsFor, surfaceSignatureFor } from "@anvil/compiler";
+import {
+  type ContractSnapshot,
+  capabilityContractsFor,
+  surfaceSignatureFor,
+} from "@anvil/compiler";
 import type { AgentSystemPack, PackContents } from "@anvil/system-pack";
 import { executableChecks, staticChecks } from "./checks.js";
 import {
@@ -76,6 +80,40 @@ export function certify(air: AirDocument, options: CertifyOptions = {}): Certifi
   const attestation = attestationFor(air, options);
   const withoutDigest = { schemaVersion: 1 as const, status, attestation, checks };
   return { ...withoutDigest, digest: hashCanonical(withoutDigest) };
+}
+
+/**
+ * Certify a *resolved* contract snapshot. Certification attests to a coherent
+ * surface, so a conflicted contract — one where the resolver could not decide a
+ * safety-sensitive predicate and blocked operations — is not a certifiable input:
+ * it fails closed with a single `failed` check rather than certifying a partial,
+ * ambiguous surface. A resolved snapshot delegates to `certify` over its AIR. This
+ * is the entry point callers should prefer over passing raw `AirDocument`, so the
+ * "one compiler path" produces the exact contract that gets certified.
+ */
+export function certifyContract(
+  contract: ContractSnapshot,
+  options: CertifyOptions = {},
+): CertificationRecord {
+  if (contract.status !== "resolved") {
+    const checks: CertificationCheck[] = [
+      {
+        id: "static/contract_resolved",
+        phase: "static",
+        ok: false,
+        detail: `contract is ${contract.status}; ${contract.blockedOperationIds.length} operation(s) blocked by unresolved conflicts`,
+      },
+    ];
+    const attestation = attestationFor(contract.air, options);
+    const withoutDigest = {
+      schemaVersion: 1 as const,
+      status: "failed" as const,
+      attestation,
+      checks,
+    };
+    return { ...withoutDigest, digest: hashCanonical(withoutDigest) };
+  }
+  return certify(contract.air, options);
 }
 
 /**

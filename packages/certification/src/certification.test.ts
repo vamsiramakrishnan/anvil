@@ -1,8 +1,9 @@
 import type { AirDocument } from "@anvil/air";
+import type { ContractSnapshot } from "@anvil/compiler";
 import { approveOperations, compile } from "@anvil/compiler";
 import { assembleSystemPack } from "@anvil/system-pack";
 import { beforeEach, describe, expect, it } from "vitest";
-import { certify, isExpired } from "./certify.js";
+import { certify, certifyContract, isExpired } from "./certify.js";
 import { runMutationBattery } from "./mutate.js";
 
 const SPEC = `openapi: "3.0.3"
@@ -147,6 +148,31 @@ paths:
     expect(isExpired(prior, air, { pack: { pack: built.pack, contents: built.contents } })).toBe(
       false,
     );
+  });
+});
+
+describe("certifyContract — only resolved contracts are certifiable (#4)", () => {
+  it("refuses a conflicted contract, failing closed", () => {
+    const conflicted = {
+      status: "conflicted",
+      air,
+      blockedOperationIds: ["refunds.create_refund"],
+    } as unknown as ContractSnapshot;
+    const record = certifyContract(conflicted, { executable: true });
+    expect(record.status).toBe("failed");
+    expect(record.checks.map((c) => c.id)).toContain("static/contract_resolved");
+  });
+
+  it("certifies a resolved contract by delegating to certify", () => {
+    const resolved = {
+      status: "resolved",
+      air,
+      blockedOperationIds: [],
+    } as unknown as ContractSnapshot;
+    const viaContract = certifyContract(resolved, { executable: true });
+    const viaAir = certify(air, { executable: true });
+    expect(viaContract.status).toBe("certified");
+    expect(viaContract.digest).toBe(viaAir.digest);
   });
 });
 
