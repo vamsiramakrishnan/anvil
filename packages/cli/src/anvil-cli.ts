@@ -32,6 +32,7 @@ import {
 } from "@anvil/refinement";
 import { stringify as toYaml } from "yaml";
 import { parseArgs } from "./args.js";
+import { cmdAgentify } from "./cmd-agentify.js";
 import { cmdBuild } from "./cmd-build.js";
 import { cmdCapability } from "./cmd-capability.js";
 import { cmdCertify } from "./cmd-certify.js";
@@ -69,6 +70,8 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
     switch (cmd) {
       case "compile":
         return await cmdCompile(positionals.slice(1), flags, io);
+      case "agentify":
+        return await cmdAgentify(positionals.slice(1), flags, io);
       case "inspect":
         return cmdInspect(positionals[1], flags, io);
       case "assess":
