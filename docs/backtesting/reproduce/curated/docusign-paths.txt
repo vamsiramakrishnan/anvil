@@ -1,0 +1,10 @@
+/v2.1/accounts/{accountId}/billing_plan/purchased_envelopes
+/v2.1/accounts/{accountId}/bulk_send_batch/{bulkSendBatchId}/envelopes
+/v2.1/accounts/{accountId}/connect/envelopes/{envelopeId}/retry_queue
+/v2.1/accounts/{accountId}/connect/envelopes/publish/historical
+/v2.1/accounts/{accountId}/connect/envelopes/retry_queue
+/v2.1/accounts/{accountId}/envelopes
+/v2.1/accounts/{accountId}/envelopes/{envelopeId}
+/v2.1/accounts/{accountId}/envelopes/{envelopeId}/attachments
+/v2.1/accounts/{accountId}/envelopes/{envelopeId}/attachments/{attachmentId}
+/v2.1/accounts/{accountId}/envelopes/{envelopeId}/audit_events

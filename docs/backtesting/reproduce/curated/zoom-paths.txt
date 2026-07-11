@@ -1,0 +1,10 @@
+/users/{userId}/meetings
+/meetings/{meetingId}
+/meetings/{meetingId}/status
+/meetings/{meetingId}/invitation
+/meetings/{meetingId}/registrants
+/meetings/{meetingId}/registrants/status
+/meetings/{meetingId}/livestream
+/meetings/{meetingId}/livestream/status
+/past_meetings/{meetingUUID}
+/past_meetings/{meetingUUID}/participants

@@ -1,18 +1,18 @@
 # Confluence Cloud v2 backtest
 
-- **Spec**: `examples/confluence/openapi.json` — 18 operations trimmed
+- **Spec**: the real confluence spec (fetched by `reproduce.sh confluence`) — 18 operations trimmed
   verbatim from
   `https://dac-static.atlassian.com/cloud/confluence/openapi-v2.v3.json`
   (pages, spaces, comments, labels, attachments, versions), chosen to overlap
   mcp-atlassian's real Confluence toolset.
 - **Reference MCP**: sooperset/mcp-atlassian (`confluence_*` tools).
-- **Manifest**: `examples/confluence/anvil.yaml` — same honest,
+- **Manifest**: `docs/backtesting/reproduce/manifests/confluence.anvil.yaml` — same honest,
   no-idempotency-key-exists stance as Jira for every create.
 
 ## Compile → inspect → lint → package, run for real
 
 ```
-$ anvil compile --source <id> --manifest examples/confluence/anvil.yaml --service confluence --out generated/confluence
+$ anvil compile --source <id> --manifest docs/backtesting/reproduce/manifests/confluence.anvil.yaml --service confluence --out generated/confluence
 Compiled 18 operations ... approved: 18  review_required: 0
 $ anvil lint generated/confluence      # exit 0 — 4 unproven_idempotency + 4 no_declared_scopes, all expected
 ```

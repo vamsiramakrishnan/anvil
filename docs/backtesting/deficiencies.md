@@ -130,7 +130,7 @@ documented finding instead of a code change), and the test that pins it.
   the CLI should offer a whole-bundle "regenerate every capability" command.
 - **No per-operation OAuth scopes declared.** Jira's real OpenAPI spec has
   precise per-operation scopes (`write:issue:jira`, `delete:comment:jira`,
-  etc. — captured verbatim in `examples/jira/openapi.json`'s trimmed security
+  etc. — captured verbatim in the real jira spec (fetched by `reproduce.sh jira`)'s trimmed security
   scheme). The manifest here only declares broad service-level scopes, so
   `anvil lint` correctly emits `no_declared_scopes` info diagnostics for every
   mutation. Left as a documented gap (not a compiler bug — the manifest simply
@@ -179,7 +179,7 @@ bare camelCase) without further changes.
   server-enforced uniqueness constraint: creating a duplicate-name label
   (422, no duplicate), opening a second PR for the same head→base branch pair
   ("A pull request already exists…"), and PATCH updates that set absolute
-  field values rather than deltas. `examples/github/anvil.yaml` declares
+  field values rather than deltas. `docs/backtesting/reproduce/manifests/github.anvil.yaml` declares
   these as `strategy: natural` with the concrete GitHub behavior cited as the
   evidence — a genuinely different (and more favorable) idempotency story
   than Atlassian's, decided per-operation on real API semantics rather than a

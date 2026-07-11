@@ -24,11 +24,12 @@ this shape/scale hit them.
 | DocuSign | docusign/OpenAPI-Specifications eSignature v2.1 | 414 (full) | **broad-schema blowup** | 56s→19s | **bug #18** |
 
 Full specs were compiled as-is (no pre-trimming) as the scale check; the
-committed `examples/<system>/` dirs carry a curated subset that overlaps each
-reference MCP for an apples-to-apples naming comparison. DocuSign is the one
-exception — its `envelopeDefinition` is so large that even a 10-path trimmed
-spec is 1.8MB, so it is documented here and pinned by a synthetic regression
-test rather than shipped as a heavy example fixture.
+`reproduce/` recipe carries a curated subset per system that overlaps each
+reference MCP for an apples-to-apples naming comparison (`reproduce.sh
+<system>` regenerates it). DocuSign is the one exception — its
+`envelopeDefinition` is so large that even a 10-path trimmed spec is 1.8MB, so
+it is documented here and pinned by a synthetic regression test rather than
+shipped as a fixture.
 
 ## The two systemic bugs (full writeups in `deficiencies.md`)
 
