@@ -4,6 +4,7 @@
  * structured parse + format claims), import (source graph discovery),
  * store (immutable atomic persistence), service (the composed entry point).
  */
+export * from "./compiler-source.js";
 export * from "./detect.js";
 export * from "./hash.js";
 export * from "./import.js";

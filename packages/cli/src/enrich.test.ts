@@ -43,7 +43,16 @@ describe("anvil enrich", () => {
     try {
       // Compile spec-only so the refund is unproven (review_required).
       await runAnvilCli(
-        ["compile", join(examples, "openapi.yaml"), "--service", "payments", "--out", dir],
+        [
+          "compile",
+          join(examples, "openapi.yaml"),
+          "--service",
+          "payments",
+          "--out",
+          dir,
+          "--root",
+          dir,
+        ],
         { io: bufferIO() },
       );
 
@@ -72,7 +81,16 @@ describe("anvil enrich", () => {
     const dir = mkdtempSync(join(tmpdir(), "anvil-enrich-"));
     try {
       await runAnvilCli(
-        ["compile", join(examples, "openapi.yaml"), "--service", "payments", "--out", dir],
+        [
+          "compile",
+          join(examples, "openapi.yaml"),
+          "--service",
+          "payments",
+          "--out",
+          dir,
+          "--root",
+          dir,
+        ],
         { io: bufferIO() },
       );
       const sources = join(dir, "sources.yaml");
