@@ -1,5 +1,6 @@
 import type { Diagnostic, HttpMethod, Operation } from "@anvil/air";
 import { snakeCase } from "@anvil/air";
+import { actionVerbFor, isReadIntentWriteMethod } from "./classify.js";
 
 /**
  * The naming pass. Operation names are the agent-facing surface — a CLI that
@@ -79,10 +80,32 @@ export function deriveNames(
   const segments = path.split("/").filter(Boolean);
   const concrete = segments.filter((s) => !s.startsWith("{"));
   const hasResource = concrete.length > 0;
-  const resource = hasResource ? (concrete[concrete.length - 1] as string) : serviceId;
+  // A static trailing path segment that names a verb from the shared action
+  // vocabulary (classify.ts) is a verb over the resource before it, not a
+  // sub-resource itself — e.g. `GET /field/search` searches fields, it does not
+  // read a resource called "search". Naively taking the last segment as the
+  // resource misreads these ("search list field" instead of "field search").
+  // Reusing classify.ts's table (rather than a second, parallel keyword list)
+  // is what keeps this verb and `effect.action` from ever disagreeing.
+  const lastConcrete = concrete[concrete.length - 1];
+  const trailingVerb = lastConcrete !== undefined ? actionVerbFor(lastConcrete) : undefined;
+  const resource =
+    trailingVerb && concrete.length > 1
+      ? (concrete[concrete.length - 2] as string)
+      : hasResource
+        ? (concrete[concrete.length - 1] as string)
+        : serviceId;
   const endsWithParam =
     segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
-  const action = actionFor(method, endsWithParam);
+  // A write-method endpoint with a readIntent verb (see classify.ts) is
+  // reclassified to a read; the action verb must agree, or the CLI/MCP surface
+  // would call a read "create" while its own safety posture says otherwise.
+  const readIntentSignal = `${raw.operationId ?? ""} ${raw.summary ?? ""}`;
+  const action = trailingVerb
+    ? trailingVerb
+    : isReadIntentWriteMethod(method, readIntentSignal)
+      ? (actionVerbFor(readIntentSignal) as string)
+      : actionFor(method, endsWithParam);
 
   const fromOperationId = Boolean(raw.operationId);
   const canonicalName = raw.operationId
@@ -106,7 +129,12 @@ export function deriveNames(
   }
   const verb = canonicalName.split("_")[0] ?? "";
   if (VAGUE_ACTIONS.has(verb)) {
-    confidence -= 0.2;
+    // Large enough to pull even a strong operationId signal (0.9) below the
+    // review threshold: a real spec's operationId can be well-declared and
+    // still name nothing an agent can route on. Jira's own `doTransition` is
+    // exactly this case — Atlassian's community MCP server renames it to
+    // `transition_issue` for the same reason this must not stay confident.
+    confidence -= 0.45;
     signals.push(`vague verb "${verb}" — hard for an agent to route on`);
   }
 

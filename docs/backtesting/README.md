@@ -1,0 +1,94 @@
+# Backtesting Anvil against real APIs and mature MCP servers
+
+## Method
+
+For each SaaS product below:
+
+1. Pull the vendor's real, published OpenAPI/Swagger spec (never hand-written) —
+   verbatim bytes, verified by direct fetch.
+2. Trim to a curated, representative subset of operations that overlaps what
+   the product's mature reference MCP server exposes (so the comparison is
+   apples-to-apples), keeping every schema/parameter/response component those
+   operations transitively reference, verbatim, from the real spec. See
+   `<system>/openapi.json` in each `examples/<system>/` directory and the trim
+   script's provenance comment.
+3. Run the real `anvil` CLI end to end: `source add` → `compile` → `inspect` →
+   enrich with a manifest (only where the compiler's own classification is
+   wrong or the spec cannot express real-world safety semantics, e.g.
+   idempotency) → `lint` → approve → `package skill`.
+4. Compare the generated CLI/MCP/skill surface against the mature reference
+   MCP server's real tool list, naming convention, and safety behavior
+   (research-sourced, cited).
+5. Log every deficiency found as a concrete failure scenario. Fix the ones
+   that are systemic (compiler/generator bugs, not one-off manifest tweaks),
+   with tests, before moving to the next product.
+
+## Feasibility triage (25 systems)
+
+A system is only actually backtestable if it has BOTH (a) a real spec
+fetchable without a tenant login and (b) a mature reference MCP server to
+compare against. Researched via web search, every URL verified by a live
+fetch before being marked fetchable.
+
+| # | System | Public spec (no login) | Mature reference MCP | Verdict |
+| - | --- | --- | --- | --- |
+| 1 | Jira Cloud | ✅ developer.atlassian.com swagger.v3.json | ✅ sooperset/mcp-atlassian + official Atlassian remote MCP | **BACKTESTED** |
+| 2 | Confluence Cloud v2 | ✅ dac-static.atlassian.com openapi-v2.v3.json | ✅ sooperset/mcp-atlassian | **BACKTESTED** |
+| 3 | GitHub | ✅ github/rest-api-description (790 paths) | ✅ github/github-mcp-server (official, 60+ tools) | **BACKTESTED** |
+| 4 | Stripe | ✅ stripe/openapi spec3.json (414 paths) | ✅ stripe/agent-toolkit, mcp.stripe.com (official) | **BACKTESTED** |
+| 5 | Slack | ⚠️ slackapi/slack-api-specs (archived/stale since Mar 2024) | ✅ korotovsky/slack-mcp-server (community, 18 tools) | BACKTESTABLE (stale spec) |
+| 6 | Zoom | ✅ zoom/api openapi.v2.json (103 paths) | ✅ official Zoom MCP + community | BACKTESTABLE |
+| 7 | DocuSign | ✅ docusign/OpenAPI-Specifications (213 paths, eSignature) | ✅ official mcp-d.docusign.com (beta) + community | BACKTESTABLE |
+| 8 | Twilio | ✅ twilio/twilio-oai (80+ files, ~1800 endpoints) | ✅ twilio-labs/mcp (official, hosted) | BACKTESTABLE |
+| 9 | PagerDuty | ✅ PagerDuty/api-schema openapiv3.json (273 paths) | ✅ PagerDuty/pagerduty-mcp-server (official, 71 tools) | BACKTESTABLE |
+| 10 | Intercom | ✅ intercom/Intercom-OpenAPI (2.15) | ✅ intercom/intercom-mcp-server (official, hosted) | BACKTESTABLE |
+| 11 | Google Workspace | ✅ Discovery-doc format, not native OpenAPI (Gmail/Calendar/Drive) | ✅ taylorwilsdon/google_workspace_mcp (community) | BACKTESTABLE (needs Discovery→OpenAPI conversion) |
+| 12 | Zendesk | ✅ developer.zendesk.com/zendesk/oas.yaml (429 paths) | ⚠️ reminia/zendesk-mcp-server (community only, 7 tools) | BACKTESTABLE |
+| 13 | HubSpot | ⚠️ HubSpot-public-api-spec-collection (fragmented, many files) | ✅ mcp.hubspot.com / @hubspot/mcp-server (official) | BACKTESTABLE |
+| 14 | Notion | ✅ makenotion/notion-mcp-server's own openapi json (~20 paths) | ✅ makenotion/notion-mcp-server (official, 4.5k★, 22 tools) | BACKTESTABLE (cleanest case) |
+| 15 | Asana | ✅ Asana/openapi asana_oas.yaml (175 paths) | ⚠️ roychri/mcp-server-asana (community, 41 tools) | BACKTESTABLE |
+| 16 | Microsoft Graph / SharePoint | ✅ microsoftgraph/msgraph-metadata (huge, ~1377 paths) | ⚠️ fragmented, no dominant reference server | SPEC-ONLY |
+| 17 | Linear | ❌ GraphQL-only, no OpenAPI spec exists | ✅ mcp.linear.app (official) | NOT BACKTESTABLE (format mismatch) |
+| 18 | Salesforce | ❌ spec generator requires an authenticated org (tenant-specific output) | ✅ salesforcecli/mcp (official, requires org auth to run) | GATED |
+| 19 | ServiceNow | ❌ spec only exportable from a live logged-in instance | ⚠️ echelon-ai-labs/servicenow-mcp (community, 75+ tools) | GATED |
+| 20 | SAP (S/4HANA etc.) | ⚠️ catalog browsable; spec download requires free-account login | ⚠️ dev-tooling MCPs only, no business-API reference server | SPEC-ONLY / GATED |
+| 21 | Shopify | ❌ REST deprecated, no vendor OpenAPI spec (GraphQL-first) | ✅ Shopify/dev-mcp (official, but docs/storefront-scoped) | GATED |
+| 22 | Coupa | ⚠️ Open Buy/CSO specs plausibly public, no single canonical spec | ❌ no mature MCP | SPEC-ONLY |
+| 23 | Workday | ❌ Community docs gated behind tenant login | ❌ only a demo repo (`Workday/ai-conversation-bridge`) + generic DB connector | **GATED** — see `workday.md` |
+| 24 | Icertis | ❌ APIs Knowledge Center gated behind ICI license | ❌ none found | **GATED** |
+| 25 | BlackLine | ⚠️ developer portal HTTP-reachable but real content OAuth-gated | ❌ none found | **GATED** |
+
+Full per-system research detail (URLs, tool counts, caveats) is in the task
+transcript; this table is the actionable summary.
+
+## Status
+
+Four products fully backtested (Jira, Confluence, GitHub, Stripe) — real
+spec, real compile → inspect → lint → approve → package loop, compared
+against each product's actual mature reference MCP. **13 real, systemic
+compiler bugs found and fixed**, each with a regression test:
+
+1. Compiler crash on any self-referential schema (Jira's `LinkGroup`)
+2. `POST /search` misclassified as an unsafe mutation (Jira's JQL search)
+3. CLI command and MCP tool name disagreeing about the same operation
+4. Two independent, drifting "what is a verb" keyword lists → unified into one
+5. Naming-confidence threshold too weak to flag a genuinely bad operationId
+6. Compiler hangs indefinitely on a richly cross-referential schema graph (Stripe)
+7. Fixing the hang's speed didn't fix the still-too-large output
+8. Root-caused #7 to Stripe's own `x-expansionResources` marker; collapsed it correctly instead of just truncating
+9. A depth-bound fix regression: array-typed fields silently turned into objects
+10. The depth bound itself was a patch, not the fix — redesigned to bundle named schemas once and `$ref` everywhere else (the same representation Stripe's own spec and real SDK generators use), instead of truncating a naively inlined tree
+11. The redesign's first version silently did nothing: `@scalar/openapi-parser`'s `dereference()` doesn't share object references across repeated `$ref`s, so identity-based matching never fired — fixed via structural (`title`-based) matching
+12. Per-operation `$ref` re-inlining reintroduced the same blowup one level down (50MB for a single operation) — fixed by measuring the real cost per hop and bounding it correctly
+13. Auto-generated, semantically-empty operationIds (Stripe's `PostChargesChargeCapture`) correctly scored low-confidence by the same fix that started with Jira's `doTransition` — validation, not a new bug
+
+See `deficiencies.md` for the full writeup of each (symptom → root cause →
+fix → test), and `jira.md` / `confluence.md` / `github.md` / `stripe.md` for
+the per-product detail. `workday.md` explains why the three fully gated
+enterprise systems (Workday, Icertis, BlackLine) can't be backtested the
+same way, and what would unblock them.
+
+The remaining BACKTESTABLE-tier systems from the triage (Slack, Zoom,
+DocuSign, Twilio, PagerDuty, Intercom, Google Workspace, Zendesk, HubSpot,
+Notion, Asana) are mechanically the same loop against a proven-solid
+compiler — a good next batch, not required to validate the approach further.

@@ -11,6 +11,7 @@ export * from "./capability-review.js";
 export * from "./classify.js";
 export * from "./compile.js";
 export * from "./contract/index.js";
+export * from "./decycle.js";
 export * from "./drift.js";
 export * from "./gateway/index.js";
 export * from "./manifest.js";

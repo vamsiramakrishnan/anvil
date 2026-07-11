@@ -10,6 +10,7 @@ import type {
   RequestBody,
 } from "@anvil/air";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import { materializeSchema } from "./decycle.js";
 import { deriveNames, singularize } from "./naming.js";
 import type { OpenApiDocument, ParsedSpec, SecurityScheme } from "./parse.js";
 
@@ -44,14 +45,17 @@ interface RawOperation {
   "x-idempotent"?: unknown;
 }
 
-function toParam(raw: RawParam): Param | null {
+function toParam(raw: RawParam, namedSchemas: Record<string, unknown>): Param | null {
   const loc = raw.in as ParamLocation;
   if (!["path", "query", "header", "cookie"].includes(loc)) return null;
+  const schema = raw.schema
+    ? (materializeSchema(raw.schema, namedSchemas).schema as JsonSchema)
+    : { type: "string" };
   return {
     name: raw.name,
     in: loc,
     required: raw.in === "path" ? true : Boolean(raw.required),
-    schema: raw.schema ?? { type: "string" },
+    schema,
     description: raw.description,
     example: raw.example,
     inferred: false,
@@ -80,13 +84,20 @@ function isScalarField(schema: JsonSchema): boolean {
 function buildRequestBody(
   content: Record<string, { schema?: JsonSchema }> | undefined,
   required: boolean,
+  namedSchemas: Record<string, unknown>,
 ): RequestBody | undefined {
   if (!content) return undefined;
   const contentType = content["application/json"]
     ? "application/json"
     : (Object.keys(content)[0] ?? "application/json");
-  const schema = content["application/json"]?.schema ?? Object.values(content)[0]?.schema;
-  if (!schema) return undefined;
+  const rawSchema = content["application/json"]?.schema ?? Object.values(content)[0]?.schema;
+  if (!rawSchema) return undefined;
+  // `bundleDocument` (decycle.ts) left named-schema references as `$ref`
+  // pointers so the whole spec's schema graph is only ever walked once; this
+  // is the one place a body needs its own fields directly inspectable
+  // (`.properties`, `.type`), so resolve back to a small, self-contained
+  // schema scoped to just this operation before doing anything else with it.
+  const schema = materializeSchema(rawSchema, namedSchemas).schema as JsonSchema;
 
   const props = schema.properties as Record<string, JsonSchema> | undefined;
   const requiredList = (schema.required as string[] | undefined) ?? [];
@@ -115,9 +126,14 @@ function buildRequestBody(
   return { contentType, required, schema, projection: "whole", fields: [] };
 }
 
-function jsonSchemaOf(content?: Record<string, { schema?: JsonSchema }>): JsonSchema | undefined {
+function jsonSchemaOf(
+  content: Record<string, { schema?: JsonSchema }> | undefined,
+  namedSchemas: Record<string, unknown>,
+): JsonSchema | undefined {
   if (!content) return undefined;
-  return content["application/json"]?.schema ?? Object.values(content)[0]?.schema;
+  const raw = content["application/json"]?.schema ?? Object.values(content)[0]?.schema;
+  if (!raw) return undefined;
+  return materializeSchema(raw, namedSchemas).schema as JsonSchema;
 }
 
 const STATUS_TO_CODE: Record<string, ErrorSpec["code"]> = {
@@ -176,6 +192,12 @@ function resolveAuth(
 export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
   const doc = parsed.document;
   const paths = doc.paths ?? {};
+  // `bundleDocument` (decycle.ts) left named-schema references as `$ref`
+  // pointers into `components.schemas` so the whole spec's schema graph is
+  // only ever walked once; everything below that needs a schema's own fields
+  // directly (`.properties`, `.type`) resolves back through this bag,
+  // per-operation, via `materializeSchema`.
+  const namedSchemas = doc.components?.schemas ?? {};
   const operations: Operation[] = [];
 
   for (const [path, pathItem] of Object.entries(paths)) {
@@ -206,10 +228,14 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
 
       const params: Param[] = [];
       for (const rp of raw.parameters ?? []) {
-        const p = toParam(rp);
+        const p = toParam(rp, namedSchemas);
         if (p) params.push(p);
       }
-      const body = buildRequestBody(raw.requestBody?.content, raw.requestBody?.required ?? false);
+      const body = buildRequestBody(
+        raw.requestBody?.content,
+        raw.requestBody?.required ?? false,
+        namedSchemas,
+      );
 
       const successRes =
         raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;
@@ -223,7 +249,10 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
         sourceRef: { kind: parsed.kind, path, method, operationId: raw.operationId },
         effect,
         input: { params, body },
-        output: { schema: jsonSchemaOf(successRes?.content), description: successRes?.description },
+        output: {
+          schema: jsonSchemaOf(successRes?.content, namedSchemas),
+          description: successRes?.description,
+        },
         errors: errorSpecs(raw.responses),
         idempotency,
         retries,

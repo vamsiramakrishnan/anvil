@@ -58,12 +58,34 @@ export function exampleInput(op: Operation): Record<string, unknown> {
   return out;
 }
 
-/** Best-effort example value from a JSON schema. */
-export function exampleFromSchema(schema: JsonSchema | undefined): unknown {
+/** Cap on nested object/array depth for a synthesized example (defense in depth —
+ * memoization below already makes a shared subschema O(1) on repeat visits, but a
+ * long *unshared* chain should still terminate quickly rather than build a huge
+ * example nobody reads). */
+const MAX_EXAMPLE_DEPTH = 8;
+
+/**
+ * Best-effort example value from a JSON schema. Memoized by schema object
+ * identity: a heavily cross-referential real spec (Stripe's ~860 schemas, each
+ * commonly reachable from dozens of operations) reaches the same nested schema
+ * object from many call sites, and without this cache each occurrence
+ * recomputed its whole example subtree from scratch — bundle generation for
+ * such a spec effectively hung. `parse.ts`'s `decycleDocument` already gives
+ * repeated references to the same subschema a stable, shared object identity,
+ * which is exactly what this cache keys off.
+ */
+export function exampleFromSchema(
+  schema: JsonSchema | undefined,
+  cache: Map<JsonSchema, unknown> = new Map(),
+  depth = 0,
+): unknown {
   if (!schema) return null;
+  const cached = cache.get(schema);
+  if (cached !== undefined) return cached;
   if (schema.example !== undefined) return schema.example;
   if (Array.isArray(schema.examples) && schema.examples.length) return schema.examples[0];
   if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum[0];
+  if (depth >= MAX_EXAMPLE_DEPTH) return schema.type === "array" ? [] : {};
   switch (schema.type) {
     case "string":
       return typeof schema.format === "string" && schema.format.includes("date")
@@ -76,11 +98,12 @@ export function exampleFromSchema(schema: JsonSchema | undefined): unknown {
     case "boolean":
       return true;
     case "array":
-      return [exampleFromSchema(schema.items as JsonSchema | undefined)];
+      return [exampleFromSchema(schema.items as JsonSchema | undefined, cache, depth + 1)];
     case "object": {
       const props = (schema.properties as Record<string, JsonSchema>) ?? {};
       const obj: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(props)) obj[k] = exampleFromSchema(v);
+      cache.set(schema, obj); // set before recursing so a cycle in unshared data still terminates
+      for (const [k, v] of Object.entries(props)) obj[k] = exampleFromSchema(v, cache, depth + 1);
       return obj;
     }
     default:

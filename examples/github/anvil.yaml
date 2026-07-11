@@ -1,0 +1,144 @@
+# Supplemental Anvil manifest (spec §4). Unlike Jira/Confluence, several of
+# GitHub's real mutations ARE naturally idempotent — not via a client-supplied
+# key, but because GitHub itself enforces a uniqueness constraint server-side,
+# so retrying the exact same request either no-ops or fails cleanly instead of
+# duplicating. That is a genuinely different, real signal from Atlassian's
+# APIs, and it's why this manifest doesn't just copy Jira/Confluence's blanket
+# "no idempotency key ⇒ non-idempotent" stance onto every create.
+service:
+  name: github
+  display_name: GitHub REST API
+  owner: backtesting
+  environment: prod
+
+auth:
+  type: oauth2
+  scopes:
+    - repo
+    - read:org
+
+operations:
+  # Not idempotent: no uniqueness constraint on issue title/body, so a retried
+  # create after a timeout risks a duplicate issue.
+  issues/create:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Creates a new issue; retrying after a failure may create a duplicate.
+    retries:
+      enabled: false
+    state: approved
+
+  # Natural idempotency: PATCH here sets absolute field values (title, body,
+  # state, …), not a delta — repeating the same call is a no-op.
+  issues/update:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    state: approved
+
+  # Not idempotent: no uniqueness constraint on a comment body.
+  issues/create-comment:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Adds a comment; retrying after a failure may post it twice.
+    retries:
+      enabled: false
+    state: approved
+
+  # Natural idempotency: adding a label an issue already carries is a no-op in
+  # GitHub's own semantics (the label set is not duplicated) — the same
+  # reasoning as Jira's addWatcher.
+  issues/add-labels:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    state: approved
+
+  # Natural idempotency: GitHub rejects a second PR for the same head→base
+  # branch pair ("A pull request already exists for owner:branch") — a
+  # retried create either succeeds once or fails cleanly, it does not open a
+  # second PR for the same branches.
+  pulls/create:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    state: approved
+
+  # Natural idempotency: same reasoning as issues/update — PATCH sets absolute
+  # field values.
+  pulls/update:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    state: approved
+
+  # Not idempotent: a repo allows multiple review comments on the same line,
+  # so there is no uniqueness constraint to make a retry safe.
+  pulls/create-review-comment:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Adds a review comment; retrying after a failure may post it twice.
+    retries:
+      enabled: false
+    state: approved
+
+  # Not idempotent: a PR can carry multiple reviews from the same reviewer
+  # (e.g. repeated "request changes" rounds), so there is no uniqueness
+  # constraint to make a retry safe, and merging on a duplicate APPROVE could
+  # matter to branch-protection review counts.
+  pulls/create-review:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Creates a PR review; retrying after a failure may submit it twice.
+    retries:
+      enabled: false
+    state: approved
+
+  # Destructive/financial-adjacent by the compiler's own classification
+  # (merging is irreversible in practice) — PUT is naturally idempotent by
+  # HTTP semantics (GitHub itself rejects merging an already-merged PR), kept
+  # as the compiler classified it, only exposure is declared.
+  repos/create-or-update-file-contents: { state: approved }
+  pulls/merge: { state: approved }
+
+  # Everything else keeps the compiler's own classification; only exposure is
+  # declared here.
+  repos/get: { state: approved }
+  repos/list-branches: { state: approved }
+  repos/get-branch: { state: approved }
+  repos/list-commits: { state: approved }
+  repos/get-content: { state: approved }
+  issues/list-for-repo: { state: approved }
+  issues/get: { state: approved }
+  issues/list-comments: { state: approved }
+  pulls/list: { state: approved }
+  pulls/get: { state: approved }
+  pulls/list-files: { state: approved }
+  pulls/list-reviews: { state: approved }
+  search/code: { state: approved }
+  search/issues-and-pull-requests: { state: approved }
+  search/repos: { state: approved }

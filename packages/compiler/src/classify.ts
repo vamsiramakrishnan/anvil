@@ -36,10 +36,6 @@ export const TRANSIENT_CONDITIONS: RetryCondition[] = [
 
 const READ_METHODS: HttpMethod[] = ["get", "head", "options", "trace"];
 
-export function classifyEffectKind(method: HttpMethod): EffectKind {
-  return READ_METHODS.includes(method) ? "read" : "mutation";
-}
-
 // Matched against the snake_cased signal so camelCase operationIds ("createRefund")
 // and plurals ("refunds") both hit.
 const FINANCIAL = /(refund|charge|payment|payout|transfer|invoice|capture|debit|credit)/;
@@ -77,20 +73,108 @@ export function classifyIdempotency(method: HttpMethod): Idempotency {
   }
 }
 
-const SEARCH = /(search|query|find|lookup|filter)/;
-const EXPORT = /(export|download|report|dump)/;
-const POLL = /(status|poll|wait|progress|health)/;
-const APPROVE = /(approve|authorize|accept|confirm|grant)/;
-const RESERVE = /(reserve|hold|lock|allocate)/;
-const SIMULATE = /(simulate|preview|dry_run|estimate|quote)/;
-const VALIDATE = /(validate|verify|check)/;
-const EXECUTE = /(execute|run|trigger|invoke|start|launch)/;
+/**
+ * The one action-verb vocabulary (spec §10 richer vocabulary), shared by every
+ * consumer that needs to recognize a verb in an operation's naming signal:
+ * `classifyAction` (the semantic action), `classifyEffectKind` (a write-method
+ * verb with `readIntent` overrides the HTTP-method default), and naming.ts (a
+ * verb-shaped trailing path segment names an action, not a sub-resource — see
+ * `deriveNames`). One table means these three call sites can never disagree
+ * about what a given verb means, which is exactly the failure mode a Jira
+ * `POST /search/jql` backtest surfaced: the effect said "read" while the CLI
+ * command still said "create".
+ *
+ * `readIntent` verbs are the ones the codebase already treated as read-family
+ * (see the read branch below): export/search/poll. They are the only verbs
+ * that can promote a POST/PUT to a read effect — the rest (simulate, validate,
+ * approve, cancel, send, reserve, execute) stay mutation-family, unchanged
+ * from the original classification, because their real-world implementations
+ * often do have a side effect (quota consumption, temporary holds, audit
+ * trail) even when the name reads like an inspection.
+ */
+interface ActionVerb {
+  action: OperationAction;
+  pattern: RegExp;
+  readIntent: boolean;
+}
 
 /**
- * The descriptive action verb (spec §10 richer vocabulary). It refines
- * discovery/naming/metadata but NEVER the safety core — `kind` still decides
- * retry/confirmation. Read methods map to read-family verbs; write methods map
- * to mutation-family verbs, with naming/path keywords sharpening the choice.
+ * Build a word-boundary-anchored alternation over the snake_cased signal: a
+ * word must sit between `_`/start and `_`/end, so "research" can never match
+ * "search" (a bare substring test would — "re" + "search"). This matters most
+ * for `readIntent` verbs, since they can flip a mutation's effect kind to a
+ * read; a substring false positive there would be a real safety regression,
+ * not just a cosmetic mislabel.
+ */
+function wordBoundary(words: string[]): RegExp {
+  return new RegExp(`(^|_)(${words.join("|")})(_|$)`);
+}
+
+const ACTION_VERBS: readonly ActionVerb[] = [
+  { action: "export", pattern: wordBoundary(["export", "download", "report", "dump"]), readIntent: true },
+  { action: "search", pattern: wordBoundary(["search", "query", "find", "lookup", "filter"]), readIntent: true },
+  { action: "poll", pattern: wordBoundary(["status", "poll", "wait", "progress", "health"]), readIntent: true },
+  {
+    action: "simulate",
+    pattern: wordBoundary(["simulate", "preview", "dry_run", "estimate", "quote"]),
+    readIntent: false,
+  },
+  { action: "validate", pattern: wordBoundary(["validate", "verify", "check"]), readIntent: false },
+  {
+    action: "approve",
+    pattern: wordBoundary(["approve", "authorize", "accept", "confirm", "grant"]),
+    readIntent: false,
+  },
+  { action: "cancel", pattern: wordBoundary(["cancel", "revoke", "terminate"]), readIntent: false },
+  { action: "send", pattern: wordBoundary(["send", "email", "notify", "message", "dispatch", "publish", "sms"]), readIntent: false },
+  { action: "reserve", pattern: wordBoundary(["reserve", "hold", "lock", "allocate"]), readIntent: false },
+  {
+    action: "execute",
+    pattern: wordBoundary(["execute", "run", "trigger", "invoke", "start", "launch"]),
+    readIntent: false,
+  },
+];
+
+/** The first vocabulary verb (in table order) whose pattern matches the signal. */
+function matchActionVerb(signal: string, wantReadIntent?: boolean): ActionVerb | undefined {
+  const s = snakeCase(signal);
+  return ACTION_VERBS.find(
+    (v) => (wantReadIntent === undefined || v.readIntent === wantReadIntent) && v.pattern.test(s),
+  );
+}
+
+/** A verb-shaped path segment or naming signal, regardless of read/mutation family (naming.ts). */
+export function actionVerbFor(signal: string): OperationAction | undefined {
+  return matchActionVerb(signal)?.action;
+}
+
+/**
+ * True when a POST/PUT's naming signal carries a `readIntent` verb (search,
+ * export, poll) — the one documented exception where the verb overrides the
+ * HTTP-method default. Never loosens safety: it corrects a false positive that
+ * would otherwise gate a pure read behind `review_required` and confirmation.
+ */
+export function isReadIntentWriteMethod(method: HttpMethod, signal: string): boolean {
+  return (method === "post" || method === "put") && matchActionVerb(signal, true) !== undefined;
+}
+
+/**
+ * Effect kind from the HTTP method, sharpened by the naming signal for the one
+ * documented exception: a write-method endpoint with a `readIntent` verb is
+ * still a read. This never loosens safety — it corrects a false positive that
+ * would otherwise gate a pure read behind `review_required` and confirmation.
+ */
+export function classifyEffectKind(method: HttpMethod, signal = ""): EffectKind {
+  if (READ_METHODS.includes(method)) return "read";
+  if (isReadIntentWriteMethod(method, signal)) return "read";
+  return "mutation";
+}
+
+/**
+ * The descriptive action verb. It refines discovery/naming/metadata but NEVER
+ * the safety core — `kind` still decides retry/confirmation. Read methods map
+ * to read-family verbs; write methods map to mutation-family verbs, with
+ * naming/path keywords sharpening the choice.
  */
 export function classifyAction(
   method: HttpMethod,
@@ -98,21 +182,9 @@ export function classifyAction(
   endsWithParam: boolean,
   signal: string,
 ): OperationAction {
-  const s = snakeCase(signal);
-  if (kind === "read") {
-    if (EXPORT.test(s)) return "export";
-    if (SEARCH.test(s)) return "search";
-    if (POLL.test(s)) return "poll";
-    return endsWithParam ? "get" : "list";
-  }
-  // Mutation family — keyword intent first, then HTTP method.
-  if (SIMULATE.test(s)) return "simulate";
-  if (VALIDATE.test(s)) return "validate";
-  if (APPROVE.test(s)) return "approve";
-  if (DESTRUCTIVE.test(s) && /(cancel|revoke|terminate)/.test(s)) return "cancel";
-  if (COMMS.test(s)) return "send";
-  if (RESERVE.test(s)) return "reserve";
-  if (EXECUTE.test(s)) return "execute";
+  const verb = matchActionVerb(signal, kind === "read");
+  if (verb) return verb.action;
+  if (kind === "read") return endsWithParam ? "get" : "list";
   switch (method) {
     case "post":
       return "create";
@@ -154,10 +226,14 @@ export function classifyEffect(
   signal: string,
   endsWithParam = false,
 ): { effect: Effect; idempotency: Idempotency } {
-  const kind = classifyEffectKind(method);
+  const kind = classifyEffectKind(method, signal);
   const risk = classifyRisk(method, kind, signal);
   const reversible = !(risk === "financial" || risk === "destructive");
-  const idempotency = classifyIdempotency(method);
+  // A write-method search endpoint reclassified to `read` above is inherently
+  // repeatable — its idempotency posture follows the effect, not the raw verb.
+  const idempotency = kind === "read"
+    ? { mode: "natural" as const, mechanism: "none" as const, keyDerivation: "none" as const }
+    : classifyIdempotency(method);
   const action = classifyAction(method, kind, endsWithParam, signal);
   return { effect: { kind, action, resource: undefined, risk, reversible }, idempotency };
 }

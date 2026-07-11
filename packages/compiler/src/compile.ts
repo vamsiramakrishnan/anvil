@@ -212,6 +212,7 @@ async function buildAir(
     workflows,
     schemas: (doc.components?.schemas as Record<string, JsonSchema> | undefined) ?? {},
     diagnostics: [
+      ...parsed.diagnostics,
       ...diagnostics,
       ...namingDiagnostics,
       ...workflowDiagnostics,
