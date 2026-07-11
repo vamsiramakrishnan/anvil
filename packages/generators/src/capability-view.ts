@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
 import type { AirDocument, JsonSchema, Operation } from "@anvil/air";
-import { loadAirDocument } from "@anvil/air";
+import { hashCanonical, loadAirDocument } from "@anvil/air";
 import { type GeneratedBundle, generateBundle } from "./bundle.js";
 import type { ResourceOptions } from "./resources.js";
 
@@ -161,26 +160,6 @@ export interface CapabilityBundleManifest {
   /** Hash of the full narrowed contract every surface is generated from. */
   contractHash: string;
   surfaces: { cli: CapabilitySurface; mcp: CapabilitySurface; skill: CapabilitySurface };
-}
-
-/** Recursively sort object keys so hashing is independent of insertion order. */
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      out[key] = canonicalize((value as Record<string, unknown>)[key]);
-    }
-    return out;
-  }
-  return value;
-}
-
-/** sha256 of the canonical (key-sorted) JSON of a value. */
-export function hashCanonical(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(canonicalize(value)))
-    .digest("hex");
 }
 
 export interface CapabilityBundle {

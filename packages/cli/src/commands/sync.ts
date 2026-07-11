@@ -32,7 +32,8 @@ import { printDiagnostics } from "./source.js";
  * never applies spec changes, and never touches capability lifecycles — the
  * only writes are the locked snapshot and the drift record under
  * `.anvil/drift/`. Exits non-zero when safety-semantic (high/blocking) drift is
- * found, so it gates a pipeline the same way `anvil assess` does.
+ * found, so it gates a pipeline (like `anvil assess --check`, sync's exit code
+ * is the gate — drift severe enough to demand recertification must stop a line).
  */
 export function registerSync(parent: Command, ctx: CommandContext): void {
   annotate(
