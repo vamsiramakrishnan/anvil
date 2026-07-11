@@ -49,11 +49,30 @@ like, and single-file WSDL support empirically fails on it:
   (`source/unparseable` — the importer YAML-probed them).
 
 This is the exact WSDL analogue of proto finding #22 (multi-file `.proto`
-imports), and it gets the same mechanism: snapshot-hermetic supporting-file
-capture plus an injectable import resolver threaded through the adapter —
-no filesystem access inside `protocols/`. The acceptance bar is this real
-Travelport tree compiling from the `Air.wsdl` entry point with real request
-schemas. (Results recorded here once the mechanism lands.)
+imports), and it got the same mechanism (findings #28–#29 in
+`deficiencies.md`): snapshot-hermetic capture of the whole referenced tree
+(`.xsd` files bypass the YAML probe like `.proto` does; an XML import walker
+preserves relative directory structure) plus an injectable import resolver
+threaded through `adaptWsdl` — `wsdl:import`, `xsd:include`, `xsd:import`,
+transitive, cycle-safe, degrading gracefully on missing targets, with
+`complexContent/extension` lowered to `allOf` and `element ref=` promoted to
+component `$ref`s. No filesystem access inside `protocols/`.
+
+**Result**: `anvil source add specs/tp && anvil compile --entrypoint
+airSearch/Air.wsdl` → **29 operations** (was 0), real request schemas
+assembled across three XSD files (AirLowFareSearch's body carries
+`SearchPassenger`, `AirPricingModifiers`, `FlexExploreModifiers`, …), and the
+safety layer reads the domain correctly with no manifest at all: all five
+`*Search` operations classify as reads, ticketing/exchange/void as
+review-required mutations, and `AirRefundQuote`/`AirRefundTicket` as
+**financial-risk** mutations. The portType-name pollution is gone
+(`air_service_air_low_fare_search`, not `…flight_details_port_type`), and the
+synthetic `examples/soap/bank.wsdl` output stayed byte-identical.
+
+Travelport stays SPEC-ONLY in the triage (no reference MCP exists to diff
+tool surfaces against), and it is not in the quick corpus because the
+reproduce recipe is one-URL-per-system — multi-file fetch support is the
+natural extension if a second WSDL corpus system (Sabre) is added.
 
 Sabre's 30 WSDLs are the natural second corpus datapoint for the same
 mechanism; its official MCP being partner-gated keeps it SPEC-ONLY for
