@@ -588,3 +588,67 @@ genuinely opaque vendor spec, the same category as Stripe's
 `PostChargesChargeCapture` (#13). The official HubSpot MCP avoids it with
 object-agnostic meta-tools — a design choice a faithful per-endpoint compiler
 should not invent. Left as a documented finding.
+
+## Real GraphQL & gRPC (GitHub, Linear, Temporal, etcd)
+
+The non-REST adapters had only been exercised on small synthetic fixtures.
+Running them against real published schemas (GitHub's 1,752-type GraphQL, a
+121-rpc Temporal proto) surfaced three systemic bugs — see `protocols-real.md`.
+
+### 20. Real GraphQL schemas hung the compile — gigabytes on serialize — FIXED
+- **Symptom**: `anvil compile` on GitHub's real 1.5MB / 1,752-type GraphQL SDL
+  timed out at 3 minutes. `adaptGraphql`, `parseSource`, and `compileSource`
+  were each fast (<2s); `airToJson`/`airToYaml` hung.
+- **Root cause**: `parseSource` fully `dereference()`s the adapter output.
+  GraphQL is deeply recursive (`User → Repository → … → User`), so dereference
+  produced a massively-shared object graph — compact in memory but exploding to
+  gigabytes when `JSON.stringify` expands the sharing. `bundleDocument` should
+  re-collapse each named type to a `$ref`, but it re-identifies inlined copies
+  **by `title`** (dereference clones fresh objects, so identity can't be used —
+  the Stripe finding, #11). The protocol adapters (GraphQL/gRPC/WSDL/Discovery)
+  emitted named schemas with no `title`, so bundleDocument couldn't collapse
+  them and the depth bound alone left millions of nodes.
+- **Fix**: `stampSchemaTitles` in parse.ts — stamp `title: <componentKey>` on
+  every adapter-produced named schema (where absent) before dereference, at the
+  one seam all four lowered formats share. `airToJson` went from *hung* to
+  54ms / 4.2MB. Real OpenAPI specs already set `title`, so the REST path is
+  unchanged.
+- **Test**: `compiler.test.ts` → "compiles a large recursive schema without
+  exploding (adapter title stamping)".
+
+### 21. Synthetic-namespace paths doubled the tool names — FIXED
+- **Symptom**: GitHub GraphQL produced tool names like
+  `github_gql_accept_enterprise_administrator_invitation_accept_enterprise_administrator_invitation`
+  (field name repeated) and CLI `github_gql Mutation approve <field>`.
+- **Root cause**: GraphQL/gRPC lower every operation under a synthetic namespace
+  (`/graphql/Mutation/<field>`, `/<pkg.Service>/<Method>`). The naming pass
+  treated the wrapper (`Mutation`) as the resource and a field that merely
+  *contains* a vocab verb (`acceptEnterpriseAdministratorInvitation` → "accept",
+  `issueFigmaFileKeySearch` → "search") as a trailing verb. Every field then
+  collapsed onto the wrapper, collided, and disambiguation re-appended the
+  already-unique field name — doubling the tool name.
+- **Fix**: `naming.ts` — the trailing-verb rule fires only on a **bare** verb
+  segment (a single-word segment that IS the verb, `/field/search`), not a
+  multi-word operation name. The field name then stays the resource (unique →
+  no collision). Tool names became `github_gql_create_issue`,
+  `github_gql_merge_pull_request` — matching github-mcp-server exactly.
+- **Test**: `compiler.test.ts` → "keeps a synthetic-namespace operation name
+  from doubling (GraphQL Query/Mutation wrapper)".
+
+### 22. gRPC message types imported from another file didn't resolve — FIXED
+- **Symptom**: Temporal's `StartWorkflowExecution` compiled with an opaque
+  `body: string` stub instead of the request's real fields.
+- **Root cause**: real gRPC services split a method's request/response messages
+  into sibling protos (`import "…/request_response.proto"`). The adapter parsed
+  only the entrypoint file via `protobuf.parse(source)`, so imported message
+  types stayed unresolved and the body degraded to a stub.
+- **Fix**: `adaptProto` gained an optional `resolveImport` callback;
+  `parse.ts`'s `protoImportResolver` resolves an `import "path"` from the
+  snapshot's other files (verbatim path, then basename), loading them into the
+  same protobuf root transitively — the exact multi-file contract Anvil already
+  honours for OpenAPI `$ref`s (same-snapshot bytes only, never the network). An
+  unresolvable import still degrades gracefully. Proven on etcd's real 4-file
+  proto: `Put` resolves `key,value,lease,prev_kv,…`; the imported `KeyValue`
+  message resolves its fields.
+- **Tests**: `protocols.test.ts` → "resolves message types imported from another
+  proto file" and "degrades gracefully when an import cannot be resolved".

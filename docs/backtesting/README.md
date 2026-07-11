@@ -65,13 +65,16 @@ transcript; this table is the actionable summary.
 
 ## Status
 
-**Fifteen products fully backtested** — real spec, real compile → inspect →
+**Seventeen products fully backtested** — real spec, real compile → inspect →
 lint → approve → package loop, compared against each product's actual mature
-reference MCP: Jira, Confluence, GitHub, Stripe, Slack, Twilio, Google
-Workspace, Notion, Asana, PagerDuty, Zendesk, Intercom, Zoom, HubSpot, and
-DocuSign. They span OpenAPI 3.x, Swagger 2.0, Google Discovery, and
-RPC-over-HTTP, from 12-operation slices to 617-operation full specs. **19
-real, systemic compiler bugs found and fixed**, each with a regression test:
+reference MCP: the fifteen REST/RPC-over-HTTP systems (Jira, Confluence,
+GitHub, Stripe, Slack, Twilio, Google Workspace, Notion, Asana, PagerDuty,
+Zendesk, Intercom, Zoom, HubSpot, DocuSign) plus two **real non-REST schemas** —
+**GitHub's 1,752-type GraphQL** (vs `github-mcp-server`) and **Temporal's
+121-rpc gRPC proto** (vs `temporal-mcp`), with **Linear** GraphQL and **etcd**
+multi-file proto alongside. They span OpenAPI 3.x, Swagger 2.0, Google
+Discovery, RPC-over-HTTP, GraphQL SDL, and gRPC/proto3. **22 real, systemic
+compiler bugs found and fixed**, each with a regression test:
 
 1. Compiler crash on any self-referential schema (Jira's `LinkGroup`)
 2. `POST /search` misclassified as an unsafe mutation (Jira's JQL search)
@@ -92,13 +95,17 @@ real, systemic compiler bugs found and fixed**, each with a regression test:
 17. Google Discovery Document format was entirely unsupported — built a new protocol adapter (`discovery.ts`) that lowers it to OpenAPI 3.0, unlocking *all* Google APIs
 18. Per-operation schema materialization had no *size* bound — DocuSign's pathologically broad request bodies made a 400MB AIR and a 56s compile; a node-count budget bounds breadth the way the depth bound bounds depth (→19s), every other spec byte-identical
 19. Anvil couldn't re-parse its own generated `air.yaml` — PagerDuty's 465-op bundle emitted 110 YAML aliases and tripped the parser's billion-laughs cap of 100; fixed by not emitting aliases and raising the cap on the trusted AIR re-parse
+20. Real GraphQL schemas hung the compile (gigabytes on serialize) — the protocol adapters emitted named schemas with no `title`, so `bundleDocument` couldn't re-collapse a deeply recursive dereferenced GraphQL graph; fixed by stamping `title` on every adapter schema (GitHub's 1,752 types: hung → 54ms)
+21. Synthetic-namespace paths (`/graphql/Mutation/<field>`) doubled the tool names — the trailing-verb rule fired on any field *containing* a verb; scoped to bare single-word verb segments only, so GraphQL tool names land exactly on `github-mcp-server`'s
+22. gRPC message types imported from another `.proto` file didn't resolve (opaque body stub) — added multi-file proto import resolution from the snapshot, parity with OpenAPI multi-file `$ref`s; proven on etcd's real 4-file proto
 
 See `deficiencies.md` for the full writeup of each (symptom → root cause →
 fix → test), and the per-product / per-batch detail in `jira.md`,
 `confluence.md`, `github.md`, `stripe.md`, `gws.md`, `twilio.md`, `slack.md`,
-and `batch2.md` (Notion, Asana, PagerDuty, Zendesk, Intercom, Zoom, HubSpot,
-DocuSign). `workday.md` explains why the fully gated enterprise systems
-(Workday, Icertis, BlackLine) can't be backtested the same way.
+`batch2.md` (Notion, Asana, PagerDuty, Zendesk, Intercom, Zoom, HubSpot,
+DocuSign), and `protocols-real.md` (GitHub GraphQL, Linear, Temporal, etcd).
+`workday.md` explains why the fully gated enterprise systems (Workday, Icertis,
+BlackLine) can't be backtested the same way.
 
 The bug-discovery curve is the real story: findings #1–#13 came from the first
 four OpenAPI/Swagger products; #14–#17 needed the deliberately-different third

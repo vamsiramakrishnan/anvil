@@ -12,7 +12,7 @@
 import type { OpenApiDocument } from "../parse.js";
 import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
-import { adaptProto } from "./grpc.js";
+import { adaptProto, type ProtoImportResolver } from "./grpc.js";
 import { adaptWsdl } from "./wsdl.js";
 
 /** The non-REST source formats Anvil can lower. Aligns with AIR's SourceKind. */
@@ -88,17 +88,20 @@ function sniffContent(text: string): DetectedProtocol | undefined {
 /**
  * Lower a protocol source's text into a pre-dereference OpenAPI 3.0 document.
  * `parse.ts` then runs it through the same dereferencer as the OpenAPI path.
+ * `resolveImport` (protobuf only) resolves `import`ed proto files from the
+ * snapshot so cross-file message types expand to their real fields.
  */
 export function adaptProtocol(
   format: ProtocolFormat,
   text: string,
   title?: string,
+  resolveImport?: ProtoImportResolver,
 ): OpenApiDocument {
   switch (format) {
     case "graphql":
       return adaptGraphql(text, title);
     case "protobuf":
-      return adaptProto(text, title);
+      return adaptProto(text, title, resolveImport);
     case "wsdl":
       return adaptWsdl(text);
     case "discovery":
@@ -106,4 +109,5 @@ export function adaptProtocol(
   }
 }
 
+export type { ProtoImportResolver } from "./grpc.js";
 export { adaptDiscovery, adaptGraphql, adaptProto, adaptWsdl };

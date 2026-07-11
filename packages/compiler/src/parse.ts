@@ -3,7 +3,7 @@ import type { Diagnostic, SourceKind } from "@anvil/air";
 import { dereference, load } from "@scalar/openapi-parser";
 import { convertObj } from "swagger2openapi";
 import { bundleDocument, DEFAULT_MAX_SCHEMA_DEPTH } from "./decycle.js";
-import { adaptProtocol, type ProtocolFormat } from "./protocols/index.js";
+import { adaptProtocol, type ProtocolFormat, type ProtoImportResolver } from "./protocols/index.js";
 import { type CompilerSource, ephemeralCompilerSource } from "./source/compiler-source.js";
 
 /**
@@ -102,6 +102,56 @@ const PROTOCOL_FORMATS: Record<string, { format: ProtocolFormat; kind: SourceKin
 };
 
 /**
+ * Resolve a proto `import "a/b/c.proto"` to another file *in the same
+ * snapshot* — never the network or an ambient host path, matching the OpenAPI
+ * multi-file contract. Tries the import path verbatim, then its basename, so a
+ * snapshot that preserves the import's directory structure OR just carries the
+ * sibling `.proto` files flat both resolve. A missing import returns undefined
+ * and the proto adapter degrades that type gracefully.
+ */
+function protoImportResolver(source: CompilerSource): ProtoImportResolver {
+  const decoder = new TextDecoder("utf-8");
+  const byBasename = new Map<string, Uint8Array>();
+  for (const [path, bytes] of source.files) {
+    const base = path.split("/").pop();
+    if (base && !byBasename.has(base)) byBasename.set(base, bytes);
+  }
+  return (importPath: string): string | undefined => {
+    const direct = source.files.get(importPath) ?? source.files.get(posix.normalize(importPath));
+    if (direct) return decoder.decode(direct);
+    const base = importPath.split("/").pop();
+    const byBase = base ? byBasename.get(base) : undefined;
+    return byBase ? decoder.decode(byBase) : undefined;
+  };
+}
+
+/**
+ * Stamp each adapter-produced named schema with `title: <componentKey>` when it
+ * has none. This is what lets `bundleDocument` (decycle.ts) re-collapse a schema
+ * back to a `$ref` after `dereference()` has inlined it: dereference clones a
+ * fresh copy at every reference site (object identity is not preserved — the
+ * Stripe finding), so bundleDocument recognizes an inlined copy by its `title`.
+ *
+ * Real OpenAPI specs set `title` themselves; the protocol adapters
+ * (GraphQL/gRPC/WSDL/Discovery) did not, so on a *large recursive* source the
+ * dereferenced document was a massively-shared graph that bundleDocument could
+ * not collapse — compact in memory but exploding to gigabytes on
+ * serialization. GitHub's real 1,752-type GraphQL schema turned a single
+ * `Connection` type into a 2M+-node blob and hung the compile. Stamping the
+ * titles here, once, fixes every lowered format at the seam they share.
+ */
+function stampSchemaTitles(doc: OpenApiDocument): void {
+  const schemas = doc.components?.schemas;
+  if (!schemas) return;
+  for (const [name, schema] of Object.entries(schemas)) {
+    if (schema !== null && typeof schema === "object" && !Array.isArray(schema)) {
+      const s = schema as Record<string, unknown>;
+      if (typeof s.title !== "string") s.title = name;
+    }
+  }
+}
+
+/**
  * Parse the entrypoint of a CompilerSource into an OpenAPI 3.x document,
  * resolving every LOCAL $ref against the snapshot's virtual filesystem — never
  * an ambient host path. A reference that points at bytes not represented in the
@@ -130,11 +180,12 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
     const text = new TextDecoder("utf-8").decode(bytes);
     let lowered: OpenApiDocument;
     try {
-      lowered = adaptProtocol(protocol.format, text);
+      lowered = adaptProtocol(protocol.format, text, undefined, protoImportResolver(source));
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to parse ${protocol.format} source: ${detail}`);
     }
+    stampSchemaTitles(lowered);
     const { schema, errors } = await dereference(lowered as Record<string, unknown>);
     if (!schema) throw failure(errors);
     const decycled = decycle(schema as OpenApiDocument);

@@ -14,3 +14,6 @@ intercom	openapi3	https://raw.githubusercontent.com/intercom/Intercom-OpenAPI/ma
 zoom	swagger2	https://raw.githubusercontent.com/zoom/api/master/openapi.v2.json	curated/zoom-paths.txt	swagger2
 hubspot	openapi3	https://raw.githubusercontent.com/HubSpot/HubSpot-public-api-spec-collection/main/PublicApiSpecs/CRM/Deals/Rollouts/424/v3/deals.json	(whole)	none
 docusign	swagger2	https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/esignature.rest.swagger-v2.1.json	curated/docusign-paths.txt	swagger2
+github_gql	graphql	https://docs.github.com/public/fpt/schema.docs.graphql	(whole)	none
+linear	graphql	https://raw.githubusercontent.com/linear/linear/master/packages/sdk/src/schema.graphql	(whole)	none
+temporal	protobuf	https://raw.githubusercontent.com/temporalio/api/master/temporal/api/workflowservice/v1/service.proto	(whole)	none
