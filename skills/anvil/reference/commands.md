@@ -14,6 +14,13 @@ Show the operation catalog and each operation's safety posture.
 
 Read-only. Use before approving to see effect, risk, idempotency, retry-safety, and state.
 
+### `anvil assess`
+`anvil assess <dir|air.yaml> [<operation>] [--severity S] [--explain] [--json]`
+
+Triage which operations are agent-ready, and explain every blocking gap.
+
+Read-only. Runs Anvil's deterministic detectors and gives every operation a readiness disposition — ready, refinement_required, human_decision_required, blocked, or excluded — with a service-level score and summary. Reuses the same detectors as `anvil refine plan`, so the per-operation triage never disagrees with the deficiency list. Drill into one operation, filter by minimum severity, or `--explain` why each gap matters to an agent. Exits non-zero when any operation is blocked.
+
 ### `anvil lint`
 `anvil lint <dir|air.yaml>`
 
@@ -56,6 +63,20 @@ Run a bounded investigation for one deficiency as an isolated case.
 
 The investigation framework. `anvil case list <dir>` shows the deficiencies a case can be opened for; `anvil case open <dir> <target-key>` materializes an isolated case workspace (CASE.md + task/target/evidence-policy/allowed-tools/expected-output.schema + workspace/ + output/) that gives a coding agent a *case, not a prompt*. Inside a case, the agent works only with rails that enforce Anvil semantics — repository search and language tooling are the agent's own job, not Anvil's: `inspect`, `add-evidence` (enforces the source AND predicate policy), `validate-claims` (strength + contradictions + predicate policy), `synthesize` (composes the proposal from gathered claims), `validate-proposal` (deterministic validation), and `finalize` (records an honest status — proposal_generated / conflicted / insufficient_evidence / …). `anvil case investigate <case>` drives the live coding agent; `anvil case close <case> <air>` re-enters Anvil's rails — validating and reconciling the proposal into a refinement, bound to the case identity. The agent owns investigation and synthesis; Anvil owns admissibility, safety, validation, and application. AIR is never edited by a case.
 
+### `anvil capability`  *(mutates)*
+`anvil capability <propose|list|show|approve|reject|diff> <dir|air.yaml> [id] [flags]`
+
+Review capability groupings: propose, inspect, approve, reject, or diff.
+
+The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. `approve`/`reject` persist the review decision to the AIR file. Approval enforces the tool budget: a capability disclosing more than 20 tools is blocked without --allow-large (more than 15 warns). Only an approved capability can be built with `anvil build`.
+
+### `anvil build`  *(mutates)*
+`anvil build <dir|air.yaml> <capability-id> [--out dir]`
+
+Compile one approved capability into an aligned CLI + MCP + skill bundle.
+
+Narrows the AIR document to the capability's approved operations and reachable schemas, then reuses the whole-service generator, so the capability bundle is the same aligned projection of a smaller model. Refuses (with a structured error) a capability that is missing, not lifecycle-approved, or would build empty. Stamps a content-addressed bundle.json (capabilityHash + contractHash shared by every surface); rebuilding unchanged input reproduces identical hashes.
+
 ### `anvil run`  *(mutates)*
 `anvil run <dir|air.yaml> <resource> <action> [flags]`
 
@@ -83,3 +104,24 @@ The skill is also served over MCP as anvil://skill/<service>/... resources.
 Print the Cloud Run deployment plan for a bundle.
 
 Anvil generates the deploy artifacts (Dockerfile, service YAML, env/secret contracts); it does not hold cloud credentials.
+
+### `anvil source`  *(mutates)*
+`anvil source <add|list|show|validate> [args] [--json]`
+
+Import and lock API source specs as content-addressed snapshots.
+
+Layer 0 — capture what the customer actually supplied, before any compilation. `anvil source add <path|dir>` detects the spec format (OpenAPI 3.0/3.1 or Swagger 2.0, YAML or JSON) without compiling, hashes the file set deterministically, and locks a snapshot under .anvil/sources/<id>/ (source.json plus verbatim raw/ copies). A directory of specs becomes one snapshot with many files. `list` and `show` are read-only; `validate <id>` re-hashes raw/ and confirms it still matches the locked source.json, so tampering or drift is caught before it can contaminate a compile. The sourceHash is content-derived only — re-importing unchanged content yields the same hash — and broken input produces structured diagnostics, never a crash.
+
+### `anvil certify`  *(mutates)*
+`anvil certify <dir|air.yaml> [--json]`
+
+Run the certification gates over a bundle and write certification.json.
+
+Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates and the MCP tool list, CLI catalog, and runtime manifest expose exactly the same approved operations), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.
+
+### `anvil publish`  *(mutates)*
+`anvil publish <dir> --target cloud-run [--env ENV] [--allow-uncertified]`
+
+Gated publish: verify the certification, then emit the deployment plan.
+
+Publication requires a PASSING certification whose bundle hash matches the current bundle content — a stale certificate fails. On success it prints the Cloud Run deployment plan (same as `anvil deploy cloud-run`) and writes publication.json into the bundle. `--allow-uncertified` waives the gate for non-prod environments only; publishing to prod (via --env prod or ANVIL_ENV=prod) fails closed without a valid certification, flag or no flag. No cloud credentials are held and no API calls are made.
