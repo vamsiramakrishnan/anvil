@@ -52,17 +52,69 @@ function sourcesRoot(flags: Record<string, string | boolean>): string {
   return join(root, ".anvil", "sources");
 }
 
+/** What locking a source produced: the record, or the diagnostics that stopped it. */
+export interface LockedSource {
+  /** Absent when any error-level diagnostic was produced (nothing was written). */
+  snapshot?: SourceSnapshot;
+  diagnostics: SourceDiagnostic[];
+  /** The locked snapshot directory, present only on success. */
+  dir?: string;
+}
+
+/**
+ * Import, detect, hash, and lock a source under `<root>/.anvil/sources/<id>/`
+ * (source.json + verbatim raw/ copies). This is the single write path behind
+ * `anvil source add`, exported so `anvil agentify` locks sources through the
+ * identical layout instead of a second implementation. Broken input yields
+ * structured diagnostics and writes nothing.
+ */
+export function lockSource(
+  target: string,
+  options: {
+    /** Workspace root; snapshots land under its .anvil/sources. Default ".". */
+    root?: string;
+    id?: string;
+    kind?: SourceSnapshotKind;
+    metadata?: SourceSnapshot["metadata"];
+  } = {},
+): LockedSource {
+  if (!existsSync(target)) {
+    return {
+      diagnostics: [
+        {
+          level: "error",
+          code: "source/not_found",
+          message: `No such file or directory: ${target}`,
+        },
+      ],
+    };
+  }
+  const inputs = collectFiles(target);
+  const { snapshot, diagnostics } = createSnapshot({
+    files: inputs,
+    sourceUri: target,
+    id: options.id,
+    kind: options.kind,
+    metadata: options.metadata,
+  });
+  if (!snapshot) return { diagnostics };
+
+  // Lock it: source.json is the record, raw/ is the verbatim evidence.
+  const dir = join(options.root ?? ".", ".anvil", "sources", snapshot.id);
+  writeFile(join(dir, "source.json"), `${JSON.stringify(snapshot, null, 2)}\n`);
+  const byPath = new Map(inputs.map((f) => [f.path, f.content]));
+  for (const file of snapshot.files) {
+    writeFile(join(dir, "raw", file.path), byPath.get(file.path) ?? "");
+  }
+  return { snapshot, diagnostics, dir };
+}
+
 /** `anvil source add <path|dir>` — import, detect, hash, and lock. */
 function cmdSourceAdd(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
   const target = args[0];
   if (!target) {
     io.err("Usage: anvil source add <path|dir> [--id <id>] [--kind <kind>] [--json]");
     return 1;
-  }
-  if (!existsSync(target)) {
-    return emitDiagnostics(io, flags, [
-      { level: "error", code: "source/not_found", message: `No such file or directory: ${target}` },
-    ]);
   }
   let kind: SourceSnapshotKind | undefined;
   if (typeof flags.kind === "string") {
@@ -79,11 +131,9 @@ function cmdSourceAdd(args: string[], flags: Record<string, string | boolean>, i
     kind = parsed.data;
   }
 
-  const inputs = collectFiles(target);
-  const { snapshot, diagnostics } = createSnapshot({
-    files: inputs,
-    sourceUri: target,
-    id: typeof flags.id === "string" ? flags.id : undefined,
+  const { snapshot, diagnostics, dir } = lockSource(target, {
+    root: str(flags.root),
+    id: str(flags.id),
     kind,
     metadata: {
       environment: str(flags.environment),
@@ -93,14 +143,6 @@ function cmdSourceAdd(args: string[], flags: Record<string, string | boolean>, i
     },
   });
   if (!snapshot) return emitDiagnostics(io, flags, diagnostics);
-
-  // Lock it: source.json is the record, raw/ is the verbatim evidence.
-  const dir = join(sourcesRoot(flags), snapshot.id);
-  writeFile(join(dir, "source.json"), `${JSON.stringify(snapshot, null, 2)}\n`);
-  const byPath = new Map(inputs.map((f) => [f.path, f.content]));
-  for (const file of snapshot.files) {
-    writeFile(join(dir, "raw", file.path), byPath.get(file.path) ?? "");
-  }
 
   if (flags.json === true) {
     io.out(JSON.stringify({ snapshot, diagnostics }, null, 2));
