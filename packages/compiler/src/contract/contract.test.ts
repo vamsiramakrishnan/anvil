@@ -224,4 +224,36 @@ describe("resolution policy", () => {
     expect(op(result, "refundPayment")?.confirmation.required).toBe(true);
     expect(op(investigationOnly, "refundPayment")?.confirmation.required).toBe(true);
   });
+
+  it("an inferred overlay may not upgrade idempotency without evidence", async () => {
+    // A non-idempotent POST refund confirms and never auto-retries. An
+    // investigation claiming it is naturally idempotent — with no evidence —
+    // must be refused, or it would unlock retries and drop the confirmation.
+    const loosen = makeOverlay({
+      origin: "investigation",
+      assertions: [assertion("refundPayment", "idempotency.mode", "set", "natural")],
+    });
+    const result = await compileContract(source(), [loosen]);
+    const o = op(result, "refundPayment");
+    expect(o?.idempotency.mode).toBe("none");
+    expect(o?.retries.mode).toBe("none");
+    expect(o?.confirmation.required).toBe(true);
+  });
+
+  it("a non-authoritative set may not drop required scopes", async () => {
+    // The operator establishes two required scopes; an investigation `set` that
+    // omits one cannot strip it — a non-authoritative set may only add.
+    const establish = makeOverlay({
+      origin: "operator",
+      assertions: [
+        assertion("refundPayment", "auth.scopes", "set", ["payments.write", "refunds.write"]),
+      ],
+    });
+    const drop = makeOverlay({
+      origin: "investigation",
+      assertions: [assertion("refundPayment", "auth.scopes", "set", ["payments.write"])],
+    });
+    const result = await compileContract(source(), [establish, drop]);
+    expect(op(result, "refundPayment")?.auth.scopes).toEqual(["payments.write", "refunds.write"]);
+  });
 });
