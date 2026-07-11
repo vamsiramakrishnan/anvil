@@ -233,6 +233,153 @@ describe("SOAP/WSDL adapter", () => {
   });
 });
 
+describe("SOAP/WSDL multi-file resolution", () => {
+  // A Travelport-shaped tree: the entry WSDL holds only bindings/services and
+  // wsdl:imports the abstract WSDL, which carries the messages/portTypes and
+  // includes the schema files — transitively, across sibling directories.
+  const entryWsdl = `<?xml version="1.0"?>
+<definitions name="AirService" xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:tns="urn:air">
+  <import namespace="urn:air" location="AirAbstract.wsdl"/>
+  <binding name="FlightDetailsBinding" type="tns:FlightDetailsPortType"><operation name="service"/></binding>
+  <service name="AirService"><port name="FlightDetailsPort" binding="tns:FlightDetailsBinding"/></service>
+</definitions>`;
+  const abstractWsdl = `<?xml version="1.0"?>
+<definitions name="AirService" xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:tns="urn:air" xmlns:ns1="urn:air:schema">
+  <types>
+    <schema xmlns="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:air:schema">
+      <include schemaLocation="AirReqRsp.xsd"/>
+    </schema>
+  </types>
+  <message name="FlightDetailsReq"><part name="parameters" element="ns1:FlightDetailsReq"/></message>
+  <message name="FlightDetailsRsp"><part name="result" element="ns1:FlightDetailsRsp"/></message>
+  <message name="PriceReq"><part name="parameters" element="ns1:PriceReq"/></message>
+  <message name="PriceRsp"><part name="result" element="ns1:PriceRsp"/></message>
+  <portType name="FlightDetailsPortType">
+    <operation name="service"><input message="tns:FlightDetailsReq"/><output message="tns:FlightDetailsRsp"/></operation>
+  </portType>
+  <portType name="AirPricePortType">
+    <operation name="service"><input message="tns:PriceReq"/><output message="tns:PriceRsp"/></operation>
+  </portType>
+</definitions>`;
+  const reqRspXsd = `<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:common="urn:common" targetNamespace="urn:air:schema">
+  <xs:import namespace="urn:common" schemaLocation="../common/Common.xsd"/>
+  <xs:element name="FlightDetailsReq">
+    <xs:complexType><xs:sequence>
+      <xs:element name="Carrier" type="xs:string"/>
+      <xs:element name="Origin" type="common:typeAirport"/>
+    </xs:sequence></xs:complexType>
+  </xs:element>
+  <xs:element name="FlightDetailsRsp"><xs:complexType/></xs:element>
+  <xs:element name="PriceReq">
+    <xs:complexType><xs:complexContent><xs:extension base="common:BaseReq">
+      <xs:sequence><xs:element name="FareBasis" type="xs:string"/></xs:sequence>
+    </xs:extension></xs:complexContent></xs:complexType>
+  </xs:element>
+  <xs:element name="PriceRsp"><xs:complexType/></xs:element>
+</xs:schema>`;
+  const commonXsd = `<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:common">
+  <xs:include schemaLocation="CommonTypes.xsd"/>
+  <xs:complexType name="BaseReq">
+    <xs:sequence><xs:element name="TraceId" type="xs:string"/></xs:sequence>
+  </xs:complexType>
+</xs:schema>`;
+  const commonTypesXsd = `<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:common">
+  <xs:simpleType name="typeAirport"><xs:restriction base="xs:string"/></xs:simpleType>
+</xs:schema>`;
+  const files: Record<string, string> = {
+    "svc/AirAbstract.wsdl": abstractWsdl,
+    "svc/AirReqRsp.xsd": reqRspXsd,
+    "common/Common.xsd": commonXsd,
+    "common/CommonTypes.xsd": commonTypesXsd,
+  };
+  const resolve = (p: string) => files[p];
+  const doc = adaptWsdl(entryWsdl, resolve, "svc/Air.wsdl");
+
+  type Op = { requestBody?: { content: Record<string, { schema: Record<string, unknown> }> } };
+  const bodySchema = (path: string): Record<string, unknown> => {
+    const item = doc.paths?.[path] as Record<string, Op>;
+    const op = item.get ?? item.post;
+    return (op as Op).requestBody?.content["application/json"]?.schema as Record<string, unknown>;
+  };
+
+  it("pulls operations from a wsdl:import'ed abstract WSDL (entry alone has none)", () => {
+    expect(Object.keys(adaptWsdl(entryWsdl).paths ?? {})).toEqual([]);
+    expect(Object.keys(doc.paths ?? {}).sort()).toEqual(["/AirPrice", "/FlightDetails"]);
+  });
+
+  it("names repeated generic operation names after the portType, minus its suffix", () => {
+    const item = doc.paths?.["/FlightDetails"] as Record<string, Record<string, unknown>>;
+    const op = item.post;
+    expect(op).toMatchObject({
+      operationId: "FlightDetails",
+      "x-soap-operation": "service",
+      "x-soap-port-type": "FlightDetailsPortType",
+    });
+  });
+
+  it("resolves a transitive xsd:include/import chain across relative directories", () => {
+    const schema = bodySchema("/FlightDetails") as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+    expect(schema.properties.Carrier).toMatchObject({ type: "string" });
+    // typeAirport lives two hops away: ../common/Common.xsd → CommonTypes.xsd.
+    expect(schema.properties.Origin).toMatchObject({
+      $ref: "#/components/schemas/typeAirport",
+    });
+    expect(doc.components?.schemas?.typeAirport).toMatchObject({ type: "string" });
+  });
+
+  it("lowers a complexContent extension to allOf over its cross-file base", () => {
+    const schema = bodySchema("/AirPrice") as { allOf: Record<string, unknown>[] };
+    expect(schema.allOf[0]).toEqual({ $ref: "#/components/schemas/BaseReq" });
+    expect(schema.allOf[1]).toMatchObject({
+      type: "object",
+      properties: { FareBasis: { type: "string" } },
+    });
+  });
+
+  it("degrades gracefully when an import is missing (single-file contract)", () => {
+    const partial = adaptWsdl(
+      entryWsdl,
+      (p) => (p === "svc/AirAbstract.wsdl" ? abstractWsdl : undefined),
+      "svc/Air.wsdl",
+    );
+    // Operations still lower; the unresolved schema degrades permissively.
+    expect(Object.keys(partial.paths ?? {})).toHaveLength(2);
+  });
+
+  it("survives wsdl:import and xsd:include cycles", () => {
+    const selfImporting = `<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:tns="urn:x">
+  <import namespace="urn:x" location="self.wsdl"/>
+  <message name="M"><part name="p" type="xs:string"/></message>
+  <portType name="P"><operation name="Ping"><input message="tns:M"/></operation></portType>
+</definitions>`;
+    expect(() => adaptWsdl(selfImporting, () => selfImporting, "self.wsdl")).not.toThrow();
+
+    const cyclic = {
+      "a.xsd": `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:include schemaLocation="b.xsd"/>
+  <xs:element name="Ping" type="xs:string"/>
+</xs:schema>`,
+      "b.xsd": `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:include schemaLocation="a.xsd"/>
+</xs:schema>`,
+    } as Record<string, string>;
+    const wsdl = `<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:tns="urn:x">
+  <types><schema xmlns="http://www.w3.org/2001/XMLSchema"><include schemaLocation="a.xsd"/></schema></types>
+  <message name="M"><part name="p" element="tns:Ping"/></message>
+  <portType name="P"><operation name="Ping"><input message="tns:M"/></operation></portType>
+</definitions>`;
+    const cycled = adaptWsdl(wsdl, (p) => cyclic[p], "svc.wsdl");
+    const item = cycled.paths?.["/P/Ping"] as Record<string, Op>;
+    const op = item.post as Op;
+    expect(op.requestBody?.content["application/json"]?.schema).toMatchObject({ type: "string" });
+  });
+});
+
 describe("Google Discovery adapter", () => {
   const doc = adaptDiscovery(discoverySpec);
 
