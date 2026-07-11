@@ -44,6 +44,21 @@ reproduce_one () {
   fmt="$(echo "$line" | cut -f2)"; url="$(echo "$line" | cut -f3)"
   list="$(echo "$line" | cut -f4)"; trimmer="$(echo "$line" | cut -f5)"
 
+  # Non-REST protocols (GraphQL SDL, proto) are compiled as-is: no JSON
+  # conversion, no path trim — the adapter lowers the raw schema directly.
+  if [ "$fmt" = "graphql" ] || [ "$fmt" = "protobuf" ]; then
+    local ext="graphql"; [ "$fmt" = "protobuf" ] && ext="proto"
+    local raw="$WORK/$sys.$ext"
+    echo "→ $sys ($fmt): fetching $url"
+    curl -fsSL "$url" -o "$raw"
+    local sid; sid="$($ANVIL source add "$raw" --root "$WORK" 2>&1 | grep -oE 'src-[0-9a-f]+' | head -1)"
+    local manifest="$HERE/manifests/$sys.anvil.yaml"
+    local margs=(); [ -f "$manifest" ] && margs=(--manifest "$manifest")
+    $ANVIL compile --source "$sid" --root "$WORK" "${margs[@]}" --service "$sys" --out "$WORK/generated/$sys" | sed 's/^/   /'
+    echo "   bundle → $WORK/generated/$sys"
+    return 0
+  fi
+
   local raw="$WORK/$sys.raw" spec="$WORK/$sys.spec.json"
   echo "→ $sys: fetching $url"
   curl -fsSL "$url" -o "$raw"

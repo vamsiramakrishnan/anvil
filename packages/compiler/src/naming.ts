@@ -159,8 +159,19 @@ export function deriveNames(
   // Reusing classify.ts's table (rather than a second, parallel keyword list)
   // is what keeps this verb and `effect.action` from ever disagreeing.
   const lastConcrete = decomposed?.resource;
+  // Only a *bare* trailing verb (a single-word segment that IS the verb, like
+  // `/field/search`) names an action over the resource before it. A multi-word
+  // segment that merely *contains* a vocab verb is a full operation name, not a
+  // verb: GraphQL/gRPC lower every operation to `/graphql/Mutation/<field>` or
+  // `/<pkg.Service>/<Method>`, and a field like `acceptEnterpriseAdminInvitation`
+  // (contains "accept") or `issueFigmaFileKeySearch` (ends "search") must stay
+  // the resource, or every field collapses onto the synthetic `Mutation`/`Query`
+  // wrapper as its resource and collides — then disambiguation re-appends the
+  // field name and the tool name doubles.
   const trailingVerb =
-    decomposed?.rpcAction === undefined && lastConcrete !== undefined
+    decomposed?.rpcAction === undefined &&
+    lastConcrete !== undefined &&
+    !snakeCase(lastConcrete).includes("_")
       ? actionVerbFor(lastConcrete)
       : undefined;
   const resource =

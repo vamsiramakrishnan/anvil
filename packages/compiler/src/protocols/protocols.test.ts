@@ -18,7 +18,9 @@ const discoverySpec = JSON.stringify({
   version: "v1",
   title: "Gmail API",
   rootUrl: "https://gmail.googleapis.com/",
-  auth: { oauth2: { scopes: { "https://www.googleapis.com/auth/gmail.send": { description: "Send" } } } },
+  auth: {
+    oauth2: { scopes: { "https://www.googleapis.com/auth/gmail.send": { description: "Send" } } },
+  },
   resources: {
     users: {
       resources: {
@@ -165,6 +167,43 @@ describe("gRPC/proto adapter", () => {
     // google.protobuf.Timestamp → date-time string.
     expect(order.properties.created_at).toMatchObject({ type: "string", format: "date-time" });
   });
+
+  it("resolves message types imported from another proto file (real services split them)", () => {
+    // Temporal/etcd/most real gRPC services put a method's request/response
+    // messages in a sibling file. Without cross-file resolution the body
+    // compiles to an opaque stub; the `resolveImport` callback loads the
+    // imported file into the same protobuf root so the fields resolve.
+    const service = `syntax = "proto3";
+package demo.v1;
+import "messages.proto";
+service OrderService { rpc CreateOrder(CreateOrderRequest) returns (Order); }`;
+    const messages = `syntax = "proto3";
+package demo.v1;
+message CreateOrderRequest { string customer_id = 1; int64 total_cents = 2; }
+message Order { string id = 1; }`;
+    const resolve = (p: string) => (p.endsWith("messages.proto") ? messages : undefined);
+    const multi = adaptProto(service, "demo", resolve);
+    const schemas = multi.components?.schemas as Record<string, Record<string, unknown>>;
+    // The imported request message resolved with its real fields.
+    expect(schemas.CreateOrderRequest).toBeDefined();
+    const req = schemas.CreateOrderRequest as { properties: Record<string, unknown> };
+    expect(Object.keys(req.properties)).toEqual(
+      expect.arrayContaining(["customer_id", "total_cents"]),
+    );
+    const op = multi.paths?.["/demo.v1.OrderService/CreateOrder"]?.post as Record<string, unknown>;
+    const body = op.requestBody as { content: Record<string, { schema: { $ref: string } }> };
+    expect(body.content["application/json"].schema.$ref).toContain("CreateOrderRequest");
+  });
+
+  it("degrades gracefully when an import cannot be resolved (unchanged single-file contract)", () => {
+    const service = `syntax = "proto3";
+package demo.v1;
+import "missing.proto";
+service S { rpc Do(Req) returns (Res); }
+message Res { string ok = 1; }`;
+    // Resolver that never finds the import — must not throw.
+    expect(() => adaptProto(service, "demo", () => undefined)).not.toThrow();
+  });
 });
 
 describe("SOAP/WSDL adapter", () => {
@@ -214,9 +253,7 @@ describe("Google Discovery adapter", () => {
     const schemas = doc.components?.schemas as Record<string, Record<string, unknown>>;
     expect(schemas.Message).toMatchObject({ type: "object" });
     // The bare `$ref: "Message"` inside ListMessagesResponse became a real pointer.
-    expect(JSON.stringify(schemas.ListMessagesResponse)).toContain(
-      "#/components/schemas/Message",
-    );
+    expect(JSON.stringify(schemas.ListMessagesResponse)).toContain("#/components/schemas/Message");
     expect(JSON.stringify(doc)).not.toContain('"$ref":"Message"'); // no dangling bare refs
   });
 
@@ -313,14 +350,18 @@ describe("end-to-end compile through the protocol adapters", () => {
       sourceUri: "gmail.json",
     });
     expect(air.service.source.kind).toBe("discovery");
-    const send = air.operations.find((o) => o.sourceRef.operationId === "gmail.users.messages.send");
+    const send = air.operations.find(
+      (o) => o.sourceRef.operationId === "gmail.users.messages.send",
+    );
     expect(send?.effect.kind).toBe("mutation");
     expect(send?.effect.risk).toBe("high"); // COMMS: sending a message
     // The request body schema resolved from the bare `$ref: "Message"`.
     expect(Object.keys(send?.input.schema?.properties ?? {})).toEqual(
       expect.arrayContaining(["id", "thread_id"]),
     );
-    const list = air.operations.find((o) => o.sourceRef.operationId === "gmail.users.messages.list");
+    const list = air.operations.find(
+      (o) => o.sourceRef.operationId === "gmail.users.messages.list",
+    );
     expect(list?.effect.kind).toBe("read");
     expect(list?.retries.mode).toBe("safe");
   });

@@ -256,6 +256,48 @@ paths:
     expect(list?.sourceRef.path).toContain(".json"); // wire path untouched
   });
 
+  it("keeps a synthetic-namespace operation name from doubling (GraphQL Query/Mutation wrapper)", async () => {
+    // GraphQL lowers every field to `/graphql/Mutation/<field>`. A field whose
+    // name merely CONTAINS a vocab verb (`acceptInvitation` contains "accept",
+    // `issueSearch` ends "search") must stay the resource — otherwise every
+    // field collapses onto the `Mutation` wrapper as its resource, they all
+    // collide, and disambiguation re-appends the field name, doubling the tool
+    // name (`..._accept_invitation_accept_invitation`).
+    const sdl = `type Query { issueSearch: String }
+type Mutation { acceptInvitation: Boolean createIssue: String }
+schema { query: Query mutation: Mutation }`;
+    const air = await compile({ spec: sdl, serviceId: "gql", sourceUri: "schema.graphql" });
+    const accept = air.operations.find((o) => o.sourceRef.operationId === "acceptInvitation");
+    const create = air.operations.find((o) => o.sourceRef.operationId === "createIssue");
+    const search = air.operations.find((o) => o.sourceRef.operationId === "issueSearch");
+    // Tool names are the clean field name, exactly once — no doubling.
+    expect(accept?.mcp.toolName).toBe("gql_accept_invitation");
+    expect(create?.mcp.toolName).toBe("gql_create_issue");
+    expect(search?.mcp.toolName).toBe("gql_issue_search");
+    // Every operation name is unique — no spurious collisions on the wrapper.
+    const tools = air.operations.map((o) => o.mcp.toolName);
+    expect(new Set(tools).size).toBe(tools.length);
+  });
+
+  it("compiles a large recursive schema without exploding (adapter title stamping)", async () => {
+    // A GraphQL-style recursive type: A → B → A. After dereference() inlines it
+    // into a massively-shared graph, `bundleDocument` must re-collapse each
+    // named type to a `$ref` — which it can only do if the adapter stamped a
+    // `title` on each named schema. Without the stamp, GitHub's real 1,752-type
+    // schema hung the compile (gigabytes on serialize). Here: the compiled AIR
+    // must be small and JSON-serializable.
+    const sdl = `type Query { a: A b: B }
+type A { name: String b: B }
+type B { name: String a: A }
+schema { query: Query }`;
+    const air = await compile({ spec: sdl, serviceId: "rec", sourceUri: "schema.graphql" });
+    expect(() => JSON.stringify(air)).not.toThrow();
+    // A/B collapsed to $ref pointers, so the whole document stays tiny.
+    expect(JSON.stringify(air).length).toBeLessThan(200_000);
+    expect(air.schemas.A).toBeDefined();
+    expect(air.schemas.B).toBeDefined();
+  });
+
   it("decomposes an RPC-style dotted path into resource + action (Slack's chat.postMessage)", async () => {
     // Slack's Web API is RPC-over-HTTP: `/chat.postMessage` is one path segment
     // `namespace.method`. Taking it whole makes the CLI `slack chat.postMessage

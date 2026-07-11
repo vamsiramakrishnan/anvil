@@ -131,11 +131,55 @@ function messageSchema(message: protobuf.Type, c: Collected): JsonSchemaLike {
 }
 
 /**
- * Lower a proto3 source string into an OpenAPI 3.0 document (with `$ref`s), to
- * be dereferenced by the caller.
+ * Resolve a proto `import "path"` to the imported file's text, or undefined if
+ * it isn't available (a well-known type, or simply not provided). Real services
+ * split their request/response messages across files — Temporal's
+ * `WorkflowService` methods take `StartWorkflowExecutionRequest` etc. from a
+ * sibling `request_response.proto` — so without this the bodies compile to an
+ * opaque stub. Mirrors how the OpenAPI path resolves multi-file `$ref`s from the
+ * snapshot: same-snapshot bytes only, never an ambient host path or the network.
  */
-export function adaptProto(source: string, title?: string): OpenApiDocument {
-  const { root, package: pkg } = protobuf.parse(source, { keepCase: true });
+export type ProtoImportResolver = (importPath: string) => string | undefined;
+
+/**
+ * Lower a proto3 source into an OpenAPI 3.0 document (with `$ref`s), to be
+ * dereferenced by the caller. When `resolveImport` is given, `import`ed files
+ * are loaded into the same protobuf root (transitively) so cross-file message
+ * types resolve to their real fields; an import that can't be resolved degrades
+ * gracefully (its types stay unresolved) exactly as a missing well-known type
+ * does. Single-file callers pass no resolver and get the original behaviour.
+ */
+export function adaptProto(
+  source: string,
+  title?: string,
+  resolveImport?: ProtoImportResolver,
+): OpenApiDocument {
+  let root: protobuf.Root;
+  let pkg: string | undefined;
+  if (resolveImport) {
+    root = new protobuf.Root();
+    const seen = new Set<string>();
+    const load = (text: string): void => {
+      const parsed = protobuf.parse(text, root, { keepCase: true });
+      pkg = pkg ?? parsed.package ?? undefined;
+      for (const imp of [...(parsed.imports ?? []), ...(parsed.weakImports ?? [])]) {
+        if (seen.has(imp)) continue;
+        seen.add(imp);
+        const importedText = resolveImport(imp);
+        if (importedText !== undefined) load(importedText);
+      }
+    };
+    load(source);
+    // Best-effort: a remaining unresolved import (a well-known type, or one not
+    // provided) must degrade, not throw — same contract as the single-file path.
+    try {
+      root.resolveAll();
+    } catch {
+      /* leave unresolved types as-is; typeToSchema handles them */
+    }
+  } else {
+    ({ root, package: pkg } = protobuf.parse(source, { keepCase: true }));
+  }
   const c = collect(root);
 
   const schemas: Record<string, JsonSchemaLike> = {};

@@ -30,8 +30,33 @@ byte-for-byte, and nothing else:
 ```bash
 pnpm build                                   # once
 docs/backtesting/reproduce/reproduce.sh notion     # one system
-docs/backtesting/reproduce/reproduce.sh all        # all fifteen
+docs/backtesting/reproduce/reproduce.sh all        # every system
 ```
+
+GraphQL (`github_gql`, `linear`) and single-file gRPC (`temporal`) are compiled
+from the raw schema as-is — no trim — since the adapters lower the whole schema.
+
+### Multi-file gRPC (etcd) — proving cross-file message resolution
+
+A real gRPC service splits its request/response messages across imported
+`.proto` files. `anvil source add` all of them (entrypoint + imports, with their
+import-relative paths preserved) and the proto adapter resolves them into one
+root (finding #22):
+
+```bash
+cd "$(mktemp -d)" && B=https://raw.githubusercontent.com/etcd-io/etcd/main/api
+mkdir -p etcd/api/{mvccpb,authpb,versionpb}
+curl -fsSLO "$B/etcdserverpb/rpc.proto"
+curl -fsSL "$B/mvccpb/kv.proto"        -o etcd/api/mvccpb/kv.proto
+curl -fsSL "$B/authpb/auth.proto"      -o etcd/api/authpb/auth.proto
+curl -fsSL "$B/versionpb/version.proto" -o etcd/api/versionpb/version.proto
+anvil source add rpc.proto etcd/api/mvccpb/kv.proto etcd/api/authpb/auth.proto etcd/api/versionpb/version.proto
+anvil compile --source <id> --entrypoint rpc.proto --service etcd --out generated/etcd
+# `Put` now resolves key,value,lease,prev_kv,…; the imported KeyValue message resolves too.
+```
+
+etcd has no mature MCP, so it is the adapter/multi-file specimen, not an
+MCP-comparison target (see `../protocols-real.md`).
 
 Each run fetches the live spec, trims it, and compiles a full bundle into a
 temp dir — the same loop the backtests documented in `../*.md` used. If a
