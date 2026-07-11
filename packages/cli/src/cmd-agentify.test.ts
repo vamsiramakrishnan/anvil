@@ -131,7 +131,7 @@ describe("anvil agentify", () => {
     expect(result.source.dir).toContain(".anvil");
     expect(result.compile.outDir).toBe(out);
     expect(result.compile.operations).toBeGreaterThan(0);
-    expect(result.assess.score).toBeGreaterThanOrEqual(0);
+    expect(result.assess.readyPercent).toBeGreaterThanOrEqual(0);
     expect(result.assess.summary).toHaveProperty("blocked");
     expect(result.capabilities.proposals.length).toBeGreaterThan(0);
     for (const p of result.capabilities.proposals) {
@@ -152,7 +152,7 @@ describe("anvil agentify", () => {
   });
 
   it("surfaces blocked operations prominently without blocking the flow", async () => {
-    // A reviewer-blocked operation would make `anvil assess` exit 1; agentify is
+    // A reviewer-blocked operation would fail `anvil assess --check`; agentify is
     // a discovery flow, so it reports the count loudly and still exits 0.
     const blocking = join(root, "blocking.yaml");
     writeFileSync(

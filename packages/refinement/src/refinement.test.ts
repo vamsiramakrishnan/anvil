@@ -1,9 +1,10 @@
 import { type AirDocument, loadAirDocument } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import type { DeficiencyCode } from "./deficiency.js";
-import { DEFICIENCY_CATALOG } from "./deficiency.js";
+import { DEFICIENCY_CATALOG, READINESS_CONSTRAINTS } from "./deficiency.js";
 import { runDetectors } from "./detect.js";
 import { buildRefinementPlan, summarizeRefinementPlan } from "./plan.js";
+import { discoverSkills, skillFor } from "./skills/registry.js";
 import { targetKey } from "./target.js";
 
 /**
@@ -169,6 +170,32 @@ describe("deficiency catalog", () => {
       expect(def.code).toBe(key);
       expect(def.suggestedSkill.length).toBeGreaterThan(0);
       expect(def.title.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("every code declares its readiness policy and agent impact", () => {
+    for (const def of Object.values(DEFICIENCY_CATALOG)) {
+      expect(def.agentImpact.trim().length, def.code).toBeGreaterThan(0);
+      expect(READINESS_CONSTRAINTS, def.code).toContain(def.readinessDisposition);
+    }
+  });
+
+  it("is explicit about which suggested skills are implemented", () => {
+    // The catalog may *name* a skill before it ships, but the distinction must
+    // stay deliberate: adding or removing a skill implementation has to update
+    // this list, so rendering honesty (WS16) can never silently drift.
+    const implemented = new Set(discoverSkills().map((s) => s.name));
+    const expectedImplemented = new Set([
+      "describe-field",
+      "describe-operation",
+      "generate-examples",
+      "enrich-errors",
+    ]);
+    expect(implemented).toEqual(expectedImplemented);
+    for (const def of Object.values(DEFICIENCY_CATALOG)) {
+      expect(Boolean(skillFor(def.code)), `${def.code} → ${def.suggestedSkill}`).toBe(
+        implemented.has(def.suggestedSkill),
+      );
     }
   });
 });
