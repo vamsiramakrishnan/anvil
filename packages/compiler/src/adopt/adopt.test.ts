@@ -92,6 +92,29 @@ describe("MCP adoption — bridge to the pipeline", () => {
     expect(get?.effect.kind).toBe("read");
     expect(get?.confirmation.required).toBe(false);
   });
+
+  it("records adoption honestly — inferred provenance, unreviewed, safety basis (#26/#27)", async () => {
+    const out = await adoptMcp(ENDPOINT, probeFor(sampleRefundServer(ENDPOINT)), {
+      mode: "adopt",
+      serviceId: "refunds",
+    });
+    if (!out.ok) throw new Error("expected ok");
+    for (const op of out.result.air.operations) {
+      const adopted = op.evidence.claims.find((c) => c.predicate === "adopted");
+      // An MCP capture is an inference, not a spec, and it is not pre-accepted.
+      expect(adopted?.source).toBe("inferred");
+      expect(adopted?.review).toBeUndefined();
+      // Every adopted op declares how its safety posture was determined.
+      const basis = op.evidence.claims.find((c) => c.predicate === "safety.basis");
+      expect(basis?.source).toBe("inferred");
+      expect(["annotations", "conservative_default"]).toContain(basis?.value);
+    }
+    // The sample server's tools carry annotations, so basis is "annotations".
+    const create = out.result.air.operations.find((o) => o.mcp.toolName === "create_refund");
+    expect(create?.evidence.claims.find((c) => c.predicate === "safety.basis")?.value).toBe(
+      "annotations",
+    );
+  });
 });
 
 describe("MCP adoption — explicit modes", () => {

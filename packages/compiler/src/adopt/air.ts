@@ -20,12 +20,23 @@ import {
 import { classifyConfirmation, classifyRetry } from "../classify.js";
 import type { McpSurfaceSnapshot, McpTool } from "./model.js";
 
-function inferEffect(tool: McpTool): { effect: Effect; idempotency: Idempotency } {
+function inferEffect(tool: McpTool): {
+  effect: Effect;
+  idempotency: Idempotency;
+  /** Whether the classification was driven by tool annotations or a conservative default. */
+  basis: "annotations" | "conservative_default";
+} {
   const a = tool.annotations ?? {};
+  const hasHint =
+    a.readOnlyHint !== undefined ||
+    a.destructiveHint !== undefined ||
+    a.idempotentHint !== undefined;
+  const basis = hasHint ? "annotations" : "conservative_default";
   if (a.readOnlyHint) {
     return {
       effect: { kind: "read", action: "get", risk: "none", reversible: true },
       idempotency: { mode: "natural", mechanism: "none", keyDerivation: "none" },
+      basis,
     };
   }
   const risk = a.destructiveHint ? "destructive" : "medium";
@@ -34,6 +45,7 @@ function inferEffect(tool: McpTool): { effect: Effect; idempotency: Idempotency 
     idempotency: a.idempotentHint
       ? { mode: "key_supported", mechanism: "none", keyDerivation: "request_fingerprint" }
       : { mode: "none", mechanism: "none", keyDerivation: "none" },
+    basis,
   };
 }
 
@@ -46,7 +58,8 @@ const UNKNOWN_AUTH: AuthRequirement = {
 
 function operationFromTool(serviceId: string, capabilityId: string, tool: McpTool): Operation {
   const canonicalName = snakeCase(tool.name);
-  const { effect, idempotency } = inferEffect(tool);
+  const subject = `${serviceId}.${canonicalName}`;
+  const { effect, idempotency, basis } = inferEffect(tool);
   return {
     id: `${serviceId}.${canonicalName}`,
     canonicalName,
@@ -71,18 +84,37 @@ function operationFromTool(serviceId: string, capabilityId: string, tool: McpToo
     reviewNotes: [],
     state: "generated",
     capabilityId,
+    // Honest provenance: an adopted MCP surface is an *inference* from a live
+    // capture, not a spec, and it is unreviewed until an operator approves it.
+    // We record (a) that the tool was captured, and (b) how its safety posture
+    // was determined — from annotations, or a conservative default when the
+    // provider advertised no hints — so nothing downstream mistakes an inferred
+    // classification for a verified one.
     evidence: {
       claims: [
         {
-          subject: `${serviceId}.${canonicalName}`,
+          subject,
           predicate: "adopted",
           value: true,
-          source: "spec",
+          source: "inferred",
           sourceRef: "mcp-adopt",
           method: "mcp_adopt",
-          note: "adopted from an upstream MCP server surface",
+          note: "captured from an upstream MCP server surface",
           confidence: 0.9,
-          review: "accepted",
+        },
+        {
+          subject,
+          predicate: "safety.basis",
+          value: basis,
+          source: "inferred",
+          sourceRef: "mcp-adopt",
+          method: "mcp_annotation_inference",
+          note:
+            basis === "annotations"
+              ? "effect/idempotency inferred from MCP tool annotations"
+              : "no MCP annotations advertised — classified as a non-idempotent mutation by default",
+          // A conservative default is a guess, not a reading; weight it accordingly.
+          confidence: basis === "annotations" ? 0.6 : 0.3,
         },
       ],
     },
