@@ -3,7 +3,7 @@ import { basename, join } from "node:path";
 import {
   type AddSourceResult,
   type CapabilityProposal,
-  compile,
+  compileSource,
   proposeCapabilities,
 } from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
@@ -67,7 +67,8 @@ async function runAgentify(specPath: string, opts: AgentifyOptions, io: CliIO): 
   // 1. source add — lock what was actually supplied before compiling anything.
   //    A broken spec still locks its (invalid) snapshot for forensics, then
   //    stops here: only a valid snapshot may be compiled.
-  const source = await sourceService(opts).add([specPath]);
+  const service = sourceService(opts);
+  const source = await service.add([specPath]);
   if (source.snapshot?.status !== "valid") {
     if (opts.json === true) {
       io.out(JSON.stringify({ source: sourceStage(source) }, null, 2));
@@ -82,12 +83,27 @@ async function runAgentify(specPath: string, opts: AgentifyOptions, io: CliIO): 
     return 1;
   }
 
-  // 2. compile — identical inputs and defaults to `anvil compile`.
-  const air = await compile({
-    spec: readFileSync(specPath, "utf8"),
+  // 2. compile — from the locked snapshot, never the original path. Identical
+  //    inputs and defaults to `anvil compile`; the AIR is bound to the snapshot.
+  const bound = await service.compilerSource(source.snapshot.snapshotId);
+  if (!bound.source) {
+    if (opts.json === true) {
+      io.out(
+        JSON.stringify(
+          { source: sourceStage(source), compile: { diagnostics: bound.diagnostics } },
+          null,
+          2,
+        ),
+      );
+    } else {
+      printDiagnostics(io, bound.diagnostics);
+      io.err("agentify stopped: the locked snapshot could not be prepared for compilation.");
+    }
+    return 1;
+  }
+  const air = await compileSource(bound.source, {
     manifest: opts.manifest ? readFileSync(opts.manifest, "utf8") : undefined,
     serviceId: opts.service,
-    sourceUri: specPath,
   });
   const outDir = opts.out ?? join("generated", air.service.id);
   const written = writeBundle(outDir, generateBundle(air));

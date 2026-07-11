@@ -76,7 +76,10 @@ describe("anvil agentify", () => {
       0,
     );
     expect(
-      await runAnvilCli(["compile", spec, "--manifest", manifest, "--out", manualOut], { io }),
+      await runAnvilCli(
+        ["compile", spec, "--manifest", manifest, "--out", manualOut, "--root", manualRoot],
+        { io },
+      ),
     ).toBe(0);
 
     // Same content-addressed snapshot id and hash, so the same lock.

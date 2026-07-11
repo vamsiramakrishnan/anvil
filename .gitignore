@@ -1,6 +1,7 @@
 node_modules/
 dist/
 generated/
+.anvil/
 *.tsbuildinfo
 .turbo/
 coverage/

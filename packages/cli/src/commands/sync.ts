@@ -3,7 +3,8 @@ import { dirname, join, resolve } from "node:path";
 import {
   affectedCapabilities,
   type CertificationRef,
-  compile,
+  compilerSourceFromSnapshot,
+  compileSource,
   DRIFT_SEVERITY_ORDER,
   DriftRecord,
   type DriftSeverity,
@@ -134,21 +135,16 @@ export async function runSync(
     return 1;
   }
 
-  // Recompile in memory. The spec text is the snapshot's single entrypoint;
-  // a directory with several primary specs is ambiguous.
-  if (snapshot.entrypoints.length > 1) {
-    io.err(
-      `Ambiguous source: ${snapshot.entrypoints.length} spec documents detected (${snapshot.entrypoints.map((e) => e.path).join(", ")}). Pass the primary spec file.`,
-    );
+  // Recompile in memory from the freshly locked snapshot — the same compiler
+  // input the rest of the pipeline uses, reading only the locked bytes. A
+  // directory with several primary specs surfaces as a diagnostic here.
+  const bound = compilerSourceFromSnapshot(snapshot, imported.files);
+  if (!bound.source) {
+    printDiagnostics(io, bound.diagnostics);
     return 1;
   }
-  const specFile = snapshot.entrypoints[0]?.path;
-  const specBytes = imported.files.find((f) => f.path === specFile)?.bytes;
-  const spec = specBytes ? new TextDecoder("utf-8").decode(specBytes) : "";
-  const fresh = await compile({
-    spec,
+  const fresh = await compileSource(bound.source, {
     manifest: opts.manifest ? readFileSync(opts.manifest, "utf8") : undefined,
-    sourceUri: specPath,
   });
 
   // The stored contract: AIR plus any certifications living in the bundle.
