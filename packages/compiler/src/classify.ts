@@ -84,13 +84,15 @@ export function classifyIdempotency(method: HttpMethod): Idempotency {
  * `POST /search/jql` backtest surfaced: the effect said "read" while the CLI
  * command still said "create".
  *
- * `readIntent` verbs are the ones the codebase already treated as read-family
- * (see the read branch below): export/search/poll. They are the only verbs
- * that can promote a POST/PUT to a read effect — the rest (simulate, validate,
- * approve, cancel, send, reserve, execute) stay mutation-family, unchanged
- * from the original classification, because their real-world implementations
- * often do have a side effect (quota consumption, temporary holds, audit
- * trail) even when the name reads like an inspection.
+ * `readIntent` marks the read-family verbs (export/search/poll) used by the
+ * read branch of `classifyAction` for action naming. Effect-kind promotion is
+ * far narrower than the flag: only the SEARCH family on POST may flip a write
+ * method to a read (see `isReadIntentWriteMethod` — finding #25). Poll verbs
+ * on a write method are state CHANGES (`PUT /tickets/{id}/status`), export on
+ * POST creates a job/artifact, and simulate/validate/approve/cancel/send/
+ * reserve/execute stay mutation-family because their real-world
+ * implementations often have side effects (quota consumption, temporary
+ * holds, audit trail) even when the name reads like an inspection.
  */
 interface ActionVerb {
   action: OperationAction;
@@ -157,13 +159,24 @@ export function actionVerbFor(signal: string): OperationAction | undefined {
 }
 
 /**
- * True when a POST/PUT's naming signal carries a `readIntent` verb (search,
- * export, poll) — the one documented exception where the verb overrides the
- * HTTP-method default. Never loosens safety: it corrects a false positive that
- * would otherwise gate a pure read behind `review_required` and confirmation.
+ * True when a POST's naming signal carries a SEARCH-family verb — the one
+ * documented exception where the verb overrides the HTTP-method default
+ * (Elasticsearch `_search`, Jira `POST /search/jql`: the query rides a POST
+ * body because it is too large for a query string, with no persisted side
+ * effect).
+ *
+ * Deliberately narrow (finding #25, external review): search-family on POST
+ * ONLY. Poll-family verbs must never flip a write method — a write-method
+ * "status"/"progress" endpoint SETS state (`PUT /tickets/{id}/status`), it
+ * doesn't check it — and export-family stays a mutation too (a POST export
+ * typically creates a job/artifact). PUT never flips: real PUT-search
+ * endpoints are practically nonexistent, and a wrong flip here erases the
+ * mutation confirmation posture entirely. A genuinely read-only write-method
+ * endpoint outside this rule is what the manifest's `side_effect: read`
+ * override is for — explicit, reviewable evidence instead of a verb guess.
  */
 export function isReadIntentWriteMethod(method: HttpMethod, signal: string): boolean {
-  return (method === "post" || method === "put") && matchActionVerb(signal, true) !== undefined;
+  return method === "post" && matchActionVerb(signal, true)?.action === "search";
 }
 
 /**

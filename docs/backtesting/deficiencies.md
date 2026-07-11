@@ -697,3 +697,35 @@ whole-spec naming-dialect inference + multi-surface collision repair
 - **Test**: air.test.ts → "round-trips descriptions with YAML-hostile
   whitespace" (the exact lgtm shape) + "keeps pretty block scalars for
   ordinary multi-line descriptions".
+
+### 25. Write-method poll/export endpoints misclassified as reads — FIXED (external review)
+- **Found by**: Codex automated review on PR #13 (P1) — the first finding from
+  a reviewer outside this pipeline; credited accordingly.
+- **Symptom**: `PUT /tickets/{id}/status` (and even `POST .../status`)
+  compiled as `read`/`risk: none` — a state CHANGE bypassing the entire
+  mutation review/confirmation posture, because the write-method read
+  exception accepted any readIntent verb (search/export/poll families) on
+  POST *or* PUT.
+- **Fix**: the exception is now search-family on POST only — the original,
+  Jira-validated case. Poll verbs never flip a write method (a write-method
+  "status" endpoint sets status); POST export stays a mutation (creates a
+  job/artifact); PUT never flips. Strictly tightening; a genuinely read-only
+  outlier is what the manifest's `side_effect: read` override is for.
+- **Tests**: compiler.test.ts → "never flips a write-method status/progress
+  endpoint to a read" + "keeps PUT-search and POST-export conservatively
+  mutations". Verified against the live corpus: jira/github/twilio/slack/
+  zendesk/zoom/temporal all green, naming fixtures intact.
+
+### 26. Discovery adapter dropped `servicePath` from the server URL — FIXED (external review)
+- Gmail worked by luck (empty servicePath); Drive-shaped documents (rootUrl
+  `googleapis.com/` + servicePath `drive/v3/` + relative method paths) would
+  compile to runtime calls against `/files` instead of `/drive/v3/files`.
+  Server is now `baseUrl ?? rootUrl+servicePath`. Test: "builds the server
+  from baseUrl/servicePath, not bare rootUrl".
+
+### 27. Discovery adapter lost per-method OAuth scopes — FIXED (external review)
+- `method.scopes` was modeled but never emitted, so every Google operation
+  inherited the document-level `oauth2: []` and lost its real scopes (Gmail
+  send vs readonly) in the generated AIR. Methods with scopes now emit
+  `security: [{oauth2: [...scopes]}]`, which normalize already consumes.
+  Test: "emits per-operation security from method scopes".
