@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Anvil compiler loop — parse, normalize, enrich, and validate specs into AIR.",
   "type": "module",
+  "engines": {
+    "node": ">=22.17"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

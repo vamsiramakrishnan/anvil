@@ -1,22 +1,20 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, extname, join, relative } from "node:path";
+import { join } from "node:path";
 import {
-  createSnapshot,
-  parseSourceSnapshot,
-  type SnapshotFileInput,
+  FileSystemSourceSnapshotStore,
+  FilesystemSourceImporter,
   type SourceDiagnostic,
+  SourceOriginKind,
+  SourceService,
   type SourceSnapshot,
-  SourceSnapshotKind,
-  verifySnapshot,
 } from "@anvil/compiler";
 import type { CliIO } from "./io.js";
 
 /**
- * `anvil source <subcommand>` — Layer 0, source import and locking. `add`
- * captures what the customer supplied (verbatim raw/ copies + a locked
- * source.json) before any compilation; `validate` proves the capture is still
- * intact. The model, detection, and hashing live in @anvil/compiler and are
- * pure; this file is the filesystem shell around them.
+ * `anvil source <subcommand>` — Layer 0, the immutable source snapshot. This
+ * file is deliberately thin: parse options → call SourceService → render →
+ * exit code. Discovery, hashing, status, and storage all live in
+ * @anvil/compiler's source subsystem, so `anvil agentify` and `anvil sync`
+ * lock sources through the identical path.
  */
 export async function cmdSource(
   args: string[],
@@ -35,106 +33,56 @@ export async function cmdSource(
       return cmdSourceValidate(args.slice(1), flags, io);
     default:
       if (sub && sub !== "help") io.err(`Unknown source subcommand: '${sub}'.`);
-      io.err("Usage: anvil source add      <path|dir> [--id <id>] [--kind <kind>] [--json]");
+      io.err(
+        "Usage: anvil source add      <dir | file...> [--name <label>] [--origin <kind>] [--json]",
+      );
       io.err("       anvil source list     [--json]");
-      io.err("       anvil source show     <id> [--json]");
-      io.err("       anvil source validate <id> [--json]");
-      io.err("Snapshots are locked under .anvil/sources/<id>/ (--root <dir> to relocate).");
+      io.err("       anvil source show     <snapshot-id> [--json]");
+      io.err("       anvil source validate <snapshot-id> [--json]");
+      io.err(
+        "Snapshots are locked under .anvil/sources/<snapshot-id>/ (--root <dir> to relocate).",
+      );
       return sub && sub !== "help" ? 1 : 0;
   }
 }
 
-/** Extensions considered part of an import; other files are ignored. */
-const SPEC_EXTENSIONS = new Set([".yaml", ".yml", ".json"]);
-
-function sourcesRoot(flags: Record<string, string | boolean>): string {
+/** Build the service against the workspace the --root flag points at. */
+export function sourceService(flags: Record<string, string | boolean>): SourceService {
   const root = typeof flags.root === "string" ? flags.root : ".";
-  return join(root, ".anvil", "sources");
-}
-
-/** What locking a source produced: the record, or the diagnostics that stopped it. */
-export interface LockedSource {
-  /** Absent when any error-level diagnostic was produced (nothing was written). */
-  snapshot?: SourceSnapshot;
-  diagnostics: SourceDiagnostic[];
-  /** The locked snapshot directory, present only on success. */
-  dir?: string;
-}
-
-/**
- * Import, detect, hash, and lock a source under `<root>/.anvil/sources/<id>/`
- * (source.json + verbatim raw/ copies). This is the single write path behind
- * `anvil source add`, exported so `anvil agentify` locks sources through the
- * identical layout instead of a second implementation. Broken input yields
- * structured diagnostics and writes nothing.
- */
-export function lockSource(
-  target: string,
-  options: {
-    /** Workspace root; snapshots land under its .anvil/sources. Default ".". */
-    root?: string;
-    id?: string;
-    kind?: SourceSnapshotKind;
-    metadata?: SourceSnapshot["metadata"];
-  } = {},
-): LockedSource {
-  if (!existsSync(target)) {
-    return {
-      diagnostics: [
-        {
-          level: "error",
-          code: "source/not_found",
-          message: `No such file or directory: ${target}`,
-        },
-      ],
-    };
-  }
-  const inputs = collectFiles(target);
-  const { snapshot, diagnostics } = createSnapshot({
-    files: inputs,
-    sourceUri: target,
-    id: options.id,
-    kind: options.kind,
-    metadata: options.metadata,
+  return new SourceService({
+    importer: new FilesystemSourceImporter(),
+    store: new FileSystemSourceSnapshotStore(join(root, ".anvil", "sources")),
   });
-  if (!snapshot) return { diagnostics };
-
-  // Lock it: source.json is the record, raw/ is the verbatim evidence.
-  const dir = join(options.root ?? ".", ".anvil", "sources", snapshot.id);
-  writeFile(join(dir, "source.json"), `${JSON.stringify(snapshot, null, 2)}\n`);
-  const byPath = new Map(inputs.map((f) => [f.path, f.content]));
-  for (const file of snapshot.files) {
-    writeFile(join(dir, "raw", file.path), byPath.get(file.path) ?? "");
-  }
-  return { snapshot, diagnostics, dir };
 }
 
-/** `anvil source add <path|dir>` — import, detect, hash, and lock. */
-function cmdSourceAdd(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
-  const target = args[0];
-  if (!target) {
-    io.err("Usage: anvil source add <path|dir> [--id <id>] [--kind <kind>] [--json]");
+/** `anvil source add <dir | file...>` — import, discover, freeze, and lock. */
+async function cmdSourceAdd(
+  targets: string[],
+  flags: Record<string, string | boolean>,
+  io: CliIO,
+): Promise<number> {
+  if (targets.length === 0) {
+    io.err("Usage: anvil source add <dir | file...> [--name <label>] [--origin <kind>] [--json]");
     return 1;
   }
-  let kind: SourceSnapshotKind | undefined;
-  if (typeof flags.kind === "string") {
-    const parsed = SourceSnapshotKind.safeParse(flags.kind);
+  let originKind: SourceOriginKind | undefined;
+  if (typeof flags.origin === "string") {
+    const parsed = SourceOriginKind.safeParse(flags.origin);
     if (!parsed.success) {
       return emitDiagnostics(io, flags, [
         {
           level: "error",
-          code: "source/unknown_kind",
-          message: `Unknown kind '${flags.kind}'. Expected one of: ${SourceSnapshotKind.options.join(", ")}.`,
+          code: "source/unknown_origin",
+          message: `Unknown origin '${flags.origin}'. Expected one of: ${SourceOriginKind.options.join(", ")}.`,
         },
       ]);
     }
-    kind = parsed.data;
+    originKind = parsed.data;
   }
 
-  const { snapshot, diagnostics, dir } = lockSource(target, {
-    root: str(flags.root),
-    id: str(flags.id),
-    kind,
+  const { snapshot, dir, created, diagnostics } = await sourceService(flags).add(targets, {
+    name: str(flags.name),
+    originKind,
     metadata: {
       environment: str(flags.environment),
       gatewayProduct: str(flags["gateway-product"]),
@@ -142,164 +90,129 @@ function cmdSourceAdd(args: string[], flags: Record<string, string | boolean>, i
       workspace: str(flags.workspace),
     },
   });
+  // No snapshot means nothing was readable at all; otherwise even an invalid
+  // capture is locked, and the exit code reports whether it can be compiled.
   if (!snapshot) return emitDiagnostics(io, flags, diagnostics);
 
   if (flags.json === true) {
-    io.out(JSON.stringify({ snapshot, diagnostics }, null, 2));
-    return 0;
+    io.out(JSON.stringify({ snapshot, dir, created, diagnostics }, null, 2));
+    return snapshot.status === "valid" ? 0 : 1;
   }
   printDiagnostics(io, diagnostics);
+  const label = snapshot.name ? ` '${snapshot.name}'` : "";
   io.out(
-    `Locked source '${snapshot.id}' (${snapshot.kind}, ${snapshot.files.length} file(s)) → ${dir}`,
+    `Locked source ${snapshot.snapshotId}${label} (${snapshot.status}, ${snapshot.files.length} file(s)) → ${dir}`,
   );
-  for (const f of snapshot.files) io.out(`  ${f.path.padEnd(34)} ${describeFile(f)}`);
+  for (const f of snapshot.files) io.out(`  ${f.path.padEnd(34)} ${describeFile(snapshot, f)}`);
   io.out(`  sourceHash: ${snapshot.sourceHash}`);
+  if (snapshot.status !== "valid") {
+    io.err(`Snapshot is ${snapshot.status}; it will be refused by compilation.`);
+    return 1;
+  }
   return 0;
 }
 
-/** `anvil source list` — every locked snapshot in this workspace. */
-function cmdSourceList(flags: Record<string, string | boolean>, io: CliIO): number {
-  const snapshots = loadAllSnapshots(sourcesRoot(flags));
+/** `anvil source list` — every locked snapshot, and every corrupt slot. */
+async function cmdSourceList(flags: Record<string, string | boolean>, io: CliIO): Promise<number> {
+  const listing = await sourceService(flags).list();
   if (flags.json === true) {
-    io.out(JSON.stringify(snapshots, null, 2));
+    io.out(JSON.stringify(listing, null, 2));
     return 0;
   }
-  if (snapshots.length === 0) {
-    io.out("No sources locked. Import one with `anvil source add <path|dir>`.");
+  if (listing.snapshots.length === 0 && listing.corrupt.length === 0) {
+    io.out("No sources locked. Import one with `anvil source add <dir | file...>`.");
     return 0;
   }
-  for (const s of snapshots) {
+  for (const s of listing.snapshots) {
     io.out(
-      `  ${s.id.padEnd(34)} ${s.kind.padEnd(9)} ${String(s.files.length).padStart(2)} file(s)  ${s.importedAt}`,
+      `  ${s.snapshotId.padEnd(22)} ${s.status.padEnd(12)} ${String(s.files.length).padStart(2)} file(s)  ${s.importedAt}  ${s.name ?? s.origin.uri}`,
     );
   }
+  // A corrupt slot is a finding, not a formatting problem — never skip it.
+  for (const c of listing.corrupt) {
+    io.err(`  ${c.snapshotId.padEnd(22)} CORRUPT      ${c.diagnostics[0]?.message ?? ""}`);
+  }
   return 0;
 }
 
-/** `anvil source show <id>` — one snapshot in full. */
-function cmdSourceShow(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
-  const loaded = loadSnapshot(args[0], flags, io);
+/** `anvil source show <snapshot-id>` — one snapshot in full. */
+async function cmdSourceShow(
+  args: string[],
+  flags: Record<string, string | boolean>,
+  io: CliIO,
+): Promise<number> {
+  const loaded = await loadSnapshot(args[0], flags, io);
   if (typeof loaded === "number") return loaded;
   const { snapshot } = loaded;
   if (flags.json === true) {
     io.out(JSON.stringify(snapshot, null, 2));
     return 0;
   }
-  io.out(`${snapshot.id} (${snapshot.kind})`);
-  io.out(`  sourceUri:  ${snapshot.sourceUri}`);
+  io.out(
+    `${snapshot.snapshotId}${snapshot.name ? ` '${snapshot.name}'` : ""} (${snapshot.status})`,
+  );
+  io.out(`  origin:     ${snapshot.origin.kind} ${snapshot.origin.uri}`);
   io.out(`  importedAt: ${snapshot.importedAt}`);
   io.out(`  sourceHash: ${snapshot.sourceHash}`);
   for (const f of snapshot.files) {
     io.out(
-      `  ${f.path.padEnd(34)} ${describeFile(f)}  ${f.bytes} bytes  ${f.sha256.slice(0, 12)}…`,
+      `  ${f.path.padEnd(34)} ${describeFile(snapshot, f)}  ${f.bytes} bytes  ${f.sha256.slice(0, 12)}…`,
     );
   }
+  printDiagnostics(io, snapshot.diagnostics);
   const meta = Object.entries(snapshot.metadata).filter(([, v]) => v !== undefined);
   if (meta.length > 0) io.out(`  metadata: ${meta.map(([k, v]) => `${k}=${v}`).join(" ")}`);
   return 0;
 }
 
-/** `anvil source validate <id>` — re-hash raw/ against the locked record. */
-function cmdSourceValidate(
+/** `anvil source validate <snapshot-id>` — re-hash raw/ against the record. */
+async function cmdSourceValidate(
   args: string[],
   flags: Record<string, string | boolean>,
   io: CliIO,
-): number {
-  const loaded = loadSnapshot(args[0], flags, io);
-  if (typeof loaded === "number") return loaded;
-  const { snapshot, dir } = loaded;
-  const rawDir = join(dir, "raw");
-  const files = existsSync(rawDir) ? collectFiles(rawDir) : [];
-  const { ok, diagnostics } = verifySnapshot(snapshot, files);
+): Promise<number> {
+  const id = args[0];
+  if (!id) {
+    io.err("Usage: anvil source <show|validate> <snapshot-id> [--json]");
+    return 1;
+  }
+  const { ok, diagnostics } = await sourceService(flags).validate(id);
   if (flags.json === true) {
-    io.out(JSON.stringify({ id: snapshot.id, ok, diagnostics }, null, 2));
+    io.out(JSON.stringify({ snapshotId: id, ok, diagnostics }, null, 2));
     return ok ? 0 : 1;
   }
   if (ok) {
-    io.out(
-      `Source '${snapshot.id}' is intact: ${snapshot.files.length} file(s) match ${snapshot.sourceHash}.`,
-    );
+    io.out(`Source '${id}' is intact: raw/ matches the locked source.json.`);
     return 0;
   }
   printDiagnostics(io, diagnostics);
   io.err(
-    `Source '${snapshot.id}' does NOT match its locked snapshot. Re-import it with \`anvil source add\`.`,
+    `Source '${id}' does NOT match its locked snapshot. Re-import it with \`anvil source add\`.`,
   );
   return 1;
 }
 
 /* --------------------------------- helpers -------------------------------- */
 
-/**
- * Gather the import file set: a single file, or every .yaml/.yml/.json under a
- * directory (hidden directories skipped). Paths are relative + posix so the
- * snapshot — and therefore the hash — is location- and OS-independent.
- */
-function collectFiles(target: string): SnapshotFileInput[] {
-  if (statSync(target).isFile()) {
-    return [{ path: basename(target), content: readFileSync(target, "utf8") }];
-  }
-  const out: SnapshotFileInput[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name.startsWith(".")) continue;
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (SPEC_EXTENSIONS.has(extname(entry.name).toLowerCase())) {
-        out.push({
-          path: relative(target, full).replaceAll("\\", "/"),
-          content: readFileSync(full, "utf8"),
-        });
-      }
-    }
-  };
-  walk(target);
-  return out;
-}
-
 /** Load one snapshot by id, or print why not and return an exit code. */
-function loadSnapshot(
+async function loadSnapshot(
   id: string | undefined,
   flags: Record<string, string | boolean>,
   io: CliIO,
-): { snapshot: SourceSnapshot; dir: string } | number {
+): Promise<{ snapshot: SourceSnapshot } | number> {
   if (!id) {
-    io.err("Usage: anvil source <show|validate> <id> [--json]");
+    io.err("Usage: anvil source <show|validate> <snapshot-id> [--json]");
     return 1;
   }
-  const dir = join(sourcesRoot(flags), id);
-  const path = join(dir, "source.json");
-  if (!existsSync(path)) {
-    return emitDiagnostics(io, flags, [
-      {
-        level: "error",
-        code: "source/not_found",
-        message: `No locked source '${id}'. Run \`anvil source list\`.`,
-      },
-    ]);
-  }
-  const { snapshot, diagnostics } = parseSourceSnapshot(readFileSync(path, "utf8"));
+  const { snapshot, diagnostics } = await sourceService(flags).show(id);
   if (!snapshot) return emitDiagnostics(io, flags, diagnostics);
-  return { snapshot, dir };
+  return { snapshot };
 }
 
-function loadAllSnapshots(root: string): SourceSnapshot[] {
-  if (!existsSync(root)) return [];
-  const out: SourceSnapshot[] = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const path = join(root, entry.name, "source.json");
-    if (!existsSync(path)) continue;
-    const { snapshot } = parseSourceSnapshot(readFileSync(path, "utf8"));
-    if (snapshot) out.push(snapshot);
-  }
-  return out.sort((a, b) => (a.id < b.id ? -1 : 1));
-}
-
-function describeFile(f: SourceSnapshot["files"][number]): string {
-  return f.detected
-    ? `${f.detected.kind} ${f.detected.version} (${f.syntax})`
-    : `supporting (${f.syntax})`;
+function describeFile(snapshot: SourceSnapshot, f: SourceSnapshot["files"][number]): string {
+  const entry = snapshot.entrypoints.find((e) => e.path === f.path);
+  const syntax = f.syntax ?? "binary";
+  return entry ? `${entry.format} ${entry.version} (${syntax})` : `${f.role} (${syntax})`;
 }
 
 /** Print diagnostics (or --json them) and exit non-zero on any error. */
@@ -313,16 +226,12 @@ function emitDiagnostics(
   return diagnostics.some((d) => d.level === "error") ? 1 : 0;
 }
 
-function printDiagnostics(io: CliIO, diagnostics: SourceDiagnostic[]): void {
+export function printDiagnostics(io: CliIO, diagnostics: SourceDiagnostic[]): void {
   for (const d of diagnostics) {
-    const line = `${d.level.toUpperCase().padEnd(8)} ${d.code.padEnd(26)} ${d.path ?? ""}  ${d.message}`;
+    const at = d.path ? `${d.path}${d.line ? `:${d.line}:${d.column ?? 1}` : ""}` : "";
+    const line = `${d.level.toUpperCase().padEnd(8)} ${d.code.padEnd(26)} ${at}  ${d.message}`;
     (d.level === "error" ? io.err : io.out)(line);
   }
-}
-
-function writeFile(path: string, contents: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, contents, "utf8");
 }
 
 function str(v: string | boolean | undefined): string | undefined {
