@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import {
   type AirDocument,
   cliFlag,
+  type ErrorCode,
   evidenceConfidence,
   type JsonSchema,
   type Operation,
@@ -18,9 +19,108 @@ import {
   resolveLedger,
   type Transport,
 } from "@anvil/runtime";
-import { parseArgs } from "./args.js";
 import { discover, explain, riskSummary } from "./explain.js";
 import { type CliIO, processIO } from "./io.js";
+
+/*
+ * The generated tool CLI keeps its own tiny, dependency-free grammar: --flag
+ * value, --flag=value, and boolean --flag. It is deliberately NOT the
+ * Commander tree that parses the `anvil` builder commands — a generated CLI's
+ * flags come from the AIR operation contract, and `anvil run` forwards them
+ * here verbatim.
+ */
+interface ParsedArgs {
+  positionals: string[];
+  flags: Record<string, string | boolean>;
+}
+
+const BOOLEAN_FLAGS = new Set([
+  "confirm",
+  "dry-run",
+  "json",
+  "trace",
+  "help",
+  "no-retries",
+  "all",
+  "quiet",
+  "allow-degraded-native",
+  "allow-uncertified",
+  "allow-large",
+  // Capability show sections and progressive-disclosure views: always boolean
+  // so they never swallow a value.
+  "operations",
+  "auth",
+  "evidence",
+  "schema",
+  "examples",
+  "errors",
+  "policy",
+  "explain",
+]);
+
+function parseArgs(argv: string[]): ParsedArgs {
+  const positionals: string[] = [];
+  const flags: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i] as string;
+    if (token.startsWith("--")) {
+      const body = token.slice(2);
+      const eq = body.indexOf("=");
+      if (eq >= 0) {
+        flags[body.slice(0, eq)] = body.slice(eq + 1);
+      } else if (
+        BOOLEAN_FLAGS.has(body) ||
+        i + 1 >= argv.length ||
+        (argv[i + 1] as string).startsWith("--")
+      ) {
+        flags[body] = true;
+      } else {
+        flags[body] = argv[++i] as string;
+      }
+    } else {
+      positionals.push(token);
+    }
+  }
+  return { positionals, flags };
+}
+
+/**
+ * The stable exit-code contract for generated CLIs. Scripts and agents branch
+ * on these, so the mapping is versioned behavior — extend it, never reshuffle.
+ *   0 — success (including --dry-run previews and disclosure views)
+ *   1 — usage error: unknown command / operation / capability / workflow
+ *   2 — invalid input (validation_error, schema_mismatch)
+ *   3 — safety refusal the caller can satisfy with flags
+ *       (confirmation_required, idempotency_required; see error.required_flags)
+ *   4 — auth failure (auth_required, permission_denied)
+ *   5 — policy refusal (policy_denied, unsafe_retry_blocked,
+ *       idempotency_ledger_unavailable, unsupported_operation)
+ *   6 — upstream state disagrees (not_found, conflict)
+ *   7 — upstream availability (rate_limited, upstream_timeout,
+ *       upstream_unavailable, unknown_upstream_error)
+ */
+export const EXIT_CODES: Record<ErrorCode, number> = {
+  validation_error: 2,
+  schema_mismatch: 2,
+  confirmation_required: 3,
+  idempotency_required: 3,
+  auth_required: 4,
+  permission_denied: 4,
+  policy_denied: 5,
+  unsafe_retry_blocked: 5,
+  idempotency_ledger_unavailable: 5,
+  unsupported_operation: 5,
+  not_found: 6,
+  conflict: 6,
+  rate_limited: 7,
+  upstream_timeout: 7,
+  upstream_unavailable: 7,
+  unknown_upstream_error: 7,
+};
+
+export function exitCodeFor(code: ErrorCode): number {
+  return EXIT_CODES[code] ?? 1;
+}
 
 export interface ToolCliDeps {
   transport?: Transport;
@@ -130,14 +230,23 @@ export async function runToolCli(
   // Operation invocation: match the longest command tail against positionals.
   const op = matchOperation(air, positionals);
   if (!op) {
+    // The middle of the help hierarchy: a resource group. A partial command
+    // lists the group's operations, so `--help` alone walks root → group →
+    // operation without ever needing the catalog.
+    const group = groupOperations(air, positionals);
+    if (group.length > 0) {
+      io.out(groupHelp(air, positionals, group));
+      return flags.help === true ? 0 : 1;
+    }
     io.err(
       `Unknown command: ${positionals.join(" ")}\nTry \`${svc} --help\` or \`${svc} discover "<intent>"\`.`,
     );
     return 1;
   }
 
-  // Progressive disclosure short-circuits (spec §7).
-  if (flags.help === true) {
+  // Progressive disclosure short-circuits (spec §7). Each view answers one
+  // question; the full schema/policy/error detail never prints unrequested.
+  if (flags.help === true || flags.explain === true) {
     io.out(explain(op));
     return 0;
   }
@@ -149,8 +258,12 @@ export async function runToolCli(
     io.out(JSON.stringify(exampleInvocation(op), null, 2));
     return 0;
   }
-  if (flags.explain === true) {
-    io.out(explain(op));
+  if (flags.errors === true) {
+    io.out(JSON.stringify(errorsView(op), null, 2));
+    return 0;
+  }
+  if (flags.policy === true) {
+    io.out(JSON.stringify(policyView(op), null, 2));
     return 0;
   }
 
@@ -213,7 +326,7 @@ async function invoke(
     return 0;
   }
   io.err(JSON.stringify(result.envelope, null, 2));
-  return 1;
+  return exitCodeFor(result.envelope.error.code);
 }
 
 /* --------------------------------- helpers -------------------------------- */
@@ -340,6 +453,76 @@ function sample(schema: JsonSchema): unknown {
     default:
       return "example";
   }
+}
+
+/** Operations whose command tail begins with the given positionals (a resource group). */
+function groupOperations(air: AirDocument, positionals: string[]): Operation[] {
+  if (positionals.length === 0) return [];
+  return air.operations.filter((op) => {
+    const tail = op.cli.command.split(" ").slice(1);
+    return positionals.length < tail.length && positionals.every((p, i) => tail[i] === p);
+  });
+}
+
+function groupHelp(air: AirDocument, prefix: string[], ops: Operation[]): string {
+  const svc = air.service.id;
+  const lines = ops.map((op) => {
+    const tag = op.effect.kind === "mutation" ? `mutation/${op.effect.risk}` : "read";
+    const confirm = op.confirmation.required ? "  (requires --confirm)" : "";
+    return `  ${op.cli.command.padEnd(34)} ${tag.padEnd(18)} ${op.displayName}${confirm}`;
+  });
+  return [
+    `${svc} ${prefix.join(" ")} — operations`,
+    "",
+    ...lines,
+    "",
+    `Run \`${svc} <resource> <action> --help\` for one operation's contract.`,
+  ].join("\n");
+}
+
+/**
+ * The `--errors` view: the operation's declared failure taxonomy plus the full
+ * stable exit-code table, so a caller can branch on outcomes without any
+ * out-of-band documentation.
+ */
+function errorsView(op: Operation) {
+  return {
+    operation: op.id,
+    errors: op.errors.map((e) => ({
+      code: e.code,
+      upstream_status: e.upstream?.httpStatus,
+      message: e.message,
+      exit_code: exitCodeFor(e.code),
+    })),
+    exit_codes: EXIT_CODES,
+  };
+}
+
+/** The `--policy` view: the safety posture an agent must respect before invoking. */
+function policyView(op: Operation) {
+  const requiredFlags: string[] = [];
+  if (op.confirmation.required) requiredFlags.push("--confirm");
+  if (op.idempotency.mode === "required") requiredFlags.push("--idempotency-key");
+  return {
+    operation: op.id,
+    state: op.state,
+    deprecated: op.deprecated,
+    effect: {
+      kind: op.effect.kind,
+      action: op.effect.action,
+      risk: op.effect.risk,
+      reversible: op.effect.reversible,
+    },
+    idempotency: { mode: op.idempotency.mode, key: op.idempotency.key },
+    retries: {
+      mode: op.retries.mode,
+      basis: op.retries.basis,
+      max_attempts: op.retries.maxAttempts,
+    },
+    confirmation: { required: op.confirmation.required, reason: op.confirmation.reason },
+    auth: { type: op.auth.type, scopes: op.auth.scopes, principal: op.auth.principal },
+    required_flags: requiredFlags,
+  };
 }
 
 function hostOf(url: string): string | undefined {
@@ -479,13 +662,14 @@ function serviceHelp(air: AirDocument): string {
     `\nDiscovery:`,
     `  ${svc} capabilities            List business capabilities (start here)`,
     `  ${svc} capabilities <name>     Show a capability's operations + workflows`,
+    `  ${svc} <resource> --help       List one resource group's operations`,
     `  ${svc} workflows [<name>]      List workflows, or show one's steps`,
     `  ${svc} catalog                 List all operations`,
     `  ${svc} discover "<intent>"     Find the right operation`,
     `  ${svc} explain <operation>     Show an operation's full contract`,
     `  ${svc} inspect-risk <op>       Show risk/idempotency/retry posture`,
     `\nPer-operation flags:`,
-    `  --help --schema --examples --explain --dry-run --json --trace`,
+    `  --help --schema --examples --errors --policy --explain --dry-run --json --trace`,
     `  --confirm --idempotency-key <k> --auth-profile <p> --timeout <ms> --no-retries`,
     `  --body '<json>'  (for operations whose body is not a flat object)`,
     `\nCapabilities:`,

@@ -47,6 +47,9 @@ export function discoverCapabilities(serviceId: string, operations: Operation[])
       workflowIds: [],
       intentExamples: intentExamples(group.label, group.ops),
       state: capabilityState(group.ops),
+      // Discovery only ever *proposes* a grouping; approval is a human decision
+      // recorded through the review lifecycle (`anvil capability approve/reject`).
+      lifecycle: "proposed",
       evidence: {
         claims: [
           {

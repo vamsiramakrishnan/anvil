@@ -1,15 +1,17 @@
-import { ANVIL_COMMANDS } from "./commands.js";
+import type { Command, Help } from "commander";
+import { metaOf } from "./commands/meta.js";
 
 /**
  * Generate the skill that lets a coding-agent harness (Claude Code, Codex,
  * Antigravity) operate the `anvil` CLI itself. This is how the harness loop
  * drives Anvil: infer semantics, enrich manifests, approve operations,
- * regenerate. Derived from ANVIL_COMMANDS so it never drifts.
+ * regenerate. The command reference is derived by WALKING the Commander tree —
+ * the same tree that parses every invocation — so it never drifts from the CLI.
  */
-export function generateAnvilSkill(): Record<string, string> {
+export function generateAnvilSkill(program: Command): Record<string, string> {
   return {
     "SKILL.md": skillMd(),
-    "reference/commands.md": commandsRef(),
+    "reference/commands.md": commandsRef(program),
     "reference/workflow.md": workflowRef(),
     "evals/operate_anvil.yaml": evals(),
   };
@@ -50,16 +52,74 @@ Run \`anvil --help\` before guessing.
 `;
 }
 
-function commandsRef(): string {
-  const rows = ANVIL_COMMANDS.map(
-    (c) => `### \`anvil ${c.name}\`${c.mutates ? "  *(mutates)*" : ""}
-\`${c.usage}\`
+/* ------------------------- walking the command tree ------------------------ */
 
-${c.summary}
+/** The full `anvil ...` command path for one command in the tree. */
+export function commandPath(command: Command): string {
+  const path: string[] = [];
+  for (let c: Command | null = command; c; c = c.parent) path.unshift(c.name());
+  return path.join(" ");
+}
 
-${c.detail}`,
-  );
-  return `# anvil commands\n\n${rows.join("\n\n")}\n`;
+/** The full `anvil ...` usage line for one command in the tree. */
+export function commandUsage(command: Command): string {
+  return `${commandPath(command)} ${command.usage()}`.trim();
+}
+
+/** The visible (non-hidden) subcommands, excluding the implicit help command. */
+export function visibleSubcommands(command: Command): Command[] {
+  return helpFor(command)
+    .visibleCommands(command)
+    .filter((c) => c.name() !== "help");
+}
+
+/** The command's own options, minus the ubiquitous -h/--help. */
+function documentedOptions(command: Command): { flags: string; description: string }[] {
+  return helpFor(command)
+    .visibleOptions(command)
+    .filter((o) => o.long !== "--help" && o.long !== "--version")
+    .map((o) => ({ flags: o.flags, description: o.description }));
+}
+
+function helpFor(command: Command): Help {
+  return command.createHelp();
+}
+
+/** One reference section per command, recursing into subcommands. */
+function commandSection(command: Command, depth: number): string {
+  const meta = metaOf(command);
+  const heading = "#".repeat(depth);
+  const marker = meta?.mutates ? "  *(mutates)*" : "";
+  const lines: string[] = [`${heading} \`${commandPath(command)}\`${marker}`];
+  lines.push(`\`${commandUsage(command)}\``);
+  lines.push("");
+  const summary = command.summary();
+  if (summary) {
+    lines.push(summary);
+    lines.push("");
+  }
+  const description = command.description();
+  if (description && description !== summary) {
+    lines.push(description);
+    lines.push("");
+  }
+  const options = documentedOptions(command);
+  if (options.length > 0) {
+    lines.push("Options:");
+    for (const o of options) lines.push(`- \`${o.flags}\` — ${o.description}`);
+    lines.push("");
+  }
+  for (const sub of visibleSubcommands(command)) {
+    lines.push(commandSection(sub, depth + 1));
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
+}
+
+/** reference/commands.md — every command, derived from the live Commander tree. */
+function commandsRef(program: Command): string {
+  const sections = visibleSubcommands(program).map((c) => commandSection(c, 3));
+  return `# anvil commands\n\n${sections.join("\n\n")}\n`;
 }
 
 function workflowRef(): string {
