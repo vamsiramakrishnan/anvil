@@ -39,5 +39,5 @@ export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
     "An external gateway in front of the server is not assumed; controls travel in the pack.",
   ],
   verifiedAgainst:
-    "TODO: verify against https://cloud.google.com Gemini Enterprise custom MCP docs at build time",
+    "unverified — re-check against current Google Cloud Gemini Enterprise custom-MCP docs before registration",
 };

@@ -3,9 +3,9 @@
  * config and emits only the common artifacts: a `GatewayInventorySnapshot` and,
  * per service, a `GatewayApiImport { source, overlay }`. No Kong type escapes this
  * package; the compiler pipeline consumes the result exactly as it would any other
- * source + overlay.
+ * source + overlay. Source synthesis is the shared `synth` helper — one path for
+ * every vendor.
  */
-import { ephemeralCompilerSource } from "../../source/compiler-source.js";
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
 import { finalizeInventory } from "../inventory.js";
 import type {
@@ -18,11 +18,10 @@ import type {
   GatewayProbeResult,
   GatewayRoute,
 } from "../model.js";
-import { buildGatewayOverlay } from "../overlay.js";
+import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
 import type { KongService } from "./model.js";
 import { parseKongConfig } from "./parse.js";
 import { normalizeServicePlugins } from "./plugins.js";
-import { serviceOperations, synthesizeOpenApi } from "./spec.js";
 
 /** A read-only connection to a Kong declarative config. */
 export interface KongConnection extends GatewayConnection {
@@ -47,6 +46,22 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
   drift: false,
   publish: false,
 };
+
+/** The (path, method) operations a service exposes, deduped and sorted. */
+function serviceOps(service: KongService): SynthOp[] {
+  const ops = new Map<string, SynthOp>();
+  for (const route of service.routes ?? []) {
+    const paths = route.paths?.length ? route.paths : ["/"];
+    const methods = route.methods?.length ? route.methods : ["GET"];
+    for (const path of paths) {
+      for (const method of methods) {
+        const operationId = synthOperationId(service.name, method, path);
+        ops.set(operationId, { operationId, method, path: normalizePath(path) });
+      }
+    }
+  }
+  return [...ops.values()].sort((a, b) => a.operationId.localeCompare(b.operationId));
+}
 
 function routesOf(service: KongService): GatewayRoute[] {
   return (service.routes ?? []).map((r, i) => ({
@@ -91,7 +106,7 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
     const services = parsed.config.services ?? [];
     const diagnostics: GatewayDiagnostic[] = [];
     const apis: GatewayApiSummary[] = services.map((service, svcIndex) => {
-      const operationIds = serviceOperations(service).map((o) => o.operationId);
+      const operationIds = serviceOps(service).map((o) => o.operationId);
       const norm = normalizeServicePlugins(service, svcIndex, operationIds, origin);
       diagnostics.push(...norm.diagnostics);
       return {
@@ -125,42 +140,41 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
   ): Promise<GatewayApiImport> {
     const origin = connection.origin ?? "kong.yaml";
     const parsed = parseKongConfig(connection.config, origin);
-    if (!parsed.ok) {
-      return {
-        source: emptySource(api.id),
-        overlay: buildGatewayOverlay([]),
-        diagnostics: parsed.diagnostics,
-      };
-    }
+    const empty = () =>
+      buildGatewayApiImport({
+        originKind: "kong",
+        apiName: api.id,
+        ops: [],
+        facts: [],
+        diagnostics: [],
+      });
+    if (!parsed.ok) return { ...empty(), diagnostics: parsed.diagnostics };
+
     const services = parsed.config.services ?? [];
     const svcIndex = services.findIndex((s) => s.name === api.id);
     const service = services[svcIndex];
     if (!service) {
       return {
-        source: emptySource(api.id),
-        overlay: buildGatewayOverlay([]),
+        ...empty(),
         diagnostics: [
           { level: "error", code: "kong/unknown_service", message: `No Kong service '${api.id}'.` },
         ],
       };
     }
 
-    const specText = synthesizeOpenApi(service);
-    const base = ephemeralCompilerSource(specText, `${service.name}.openapi.yaml`);
-    const source = { ...base, origin: { kind: "kong" as const, uri: `kong://${service.name}` } };
-
-    const operationIds = serviceOperations(service).map((o) => o.operationId);
-    const norm = normalizeServicePlugins(service, svcIndex, operationIds, origin);
-    const overlay = buildGatewayOverlay(norm.facts, `overlay_kong_${service.name}`);
-    return { source, overlay, diagnostics: norm.diagnostics };
+    const ops = serviceOps(service);
+    const norm = normalizeServicePlugins(
+      service,
+      svcIndex,
+      ops.map((o) => o.operationId),
+      origin,
+    );
+    return buildGatewayApiImport({
+      originKind: "kong",
+      apiName: service.name,
+      ops,
+      facts: norm.facts,
+      diagnostics: norm.diagnostics,
+    });
   }
-}
-
-/** A trivial valid source for the error paths (keeps the return type honest). */
-function emptySource(id: string) {
-  const base = ephemeralCompilerSource(
-    'openapi: "3.0.3"\ninfo: { title: empty, version: "0.0.0" }\npaths: {}\n',
-    `${id}.openapi.yaml`,
-  );
-  return { ...base, origin: { kind: "kong" as const, uri: `kong://${id}` } };
 }

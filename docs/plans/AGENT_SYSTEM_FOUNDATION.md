@@ -24,10 +24,17 @@ the model.
 
 ## 1. Current state (as reconciled against `main`)
 
-Anvil today is a working spec-to-agent-tool compiler. What exists, mapped to the
-programme's canonical objects:
+> This table captures the **starting** state at programme kick-off — what existed
+> before increments 1–11 landed. It is preserved as the reconciliation baseline;
+> the live completion status is the increments table in §3. Every "No"/"Partial"
+> below has since been delivered by the increment of the same name (`PolicyOverlay`
+> → Inc 2, `SurfaceSignature` → Inc 5, `AgentSystemPack` → Inc 4, executable
+> `Certification` → Inc 8, gateway adapters → Inc 3/10/11, simulator → Inc 7).
 
-| Programme object | Exists today? | Where |
+Anvil at programme start was a working spec-to-agent-tool compiler. What existed,
+mapped to the programme's canonical objects:
+
+| Programme object | Existed at start? | Where |
 | --- | --- | --- |
 | `SourceSnapshot` (immutable, content-addressed source) | **Yes** | `@anvil/compiler/source` (`model.ts`, `store.ts`, `service.ts`, `import.ts`) |
 | `CompilerSource` + `compileSource()` (one compiler input) | **Yes** | `@anvil/compiler/source/compiler-source.ts`, `compile.ts` |
@@ -130,20 +137,26 @@ Invariants enforced by architecture tests (added incrementally):
 Each increment is independently mergeable, keeps `main` green, deletes any
 superseded mechanism, adds architecture tests, and leaves a clean seam.
 
-| # | Increment | Depends on | New canonical object | Deletes / subsumes |
+Status legend: **done** — landed, tested, green; **open** — not yet started.
+Increments 1–11 are done (each with its own ADR, 0012–0021); Increment 12 and the
+parallel hardening lane remain open. Throughout, the *library* layer is complete
+and tested; the impure composition shell (CLI verbs, live/containerized backends)
+is the recurring deferred item called out per increment.
+
+| # | Increment | Status | New canonical object | Deletes / subsumes |
 | --- | --- | --- | --- | --- |
-| 1 | SourceSnapshot = only compiler input | — | (done) `CompilerSource` | ambient path reads |
-| 2 | ContractSnapshot + PolicyOverlay + EffectiveContract | 1 | `ContractSnapshot`, `PolicyOverlay`, `EffectiveContract` | manifest as an *independent* override channel |
-| 3 | Gateway-neutral foundation (no vendor adapter) | 2 | `GatewayAdapter`, `GatewayApiImport`, `GatewayInventorySnapshot`, conformance | — |
-| 4 | System pack + artifact graph | 2 | `AgentSystemPack` | ad-hoc directory identity |
-| 5 | CapabilityContract + projection API + `DisclosurePlan` + `SurfaceSignature` | 2,4 | `CapabilityContract`, `DisclosurePlan`, `SurfaceSignature` | per-surface disclosure duplication |
-| 6 | BYO MCP adoption | 2,5 | `McpSurfaceSnapshot` | — |
-| 7 | Contract-faithful simulator (`@anvil/simulator`) | 5 | `SimulatorDefinition` | — |
-| 8 | Executable certification (`@anvil/certification`) | 4,5,7 | `CertificationRecord` levels | "files exist ⇒ certified" |
-| 9 | Gemini Enterprise target profile | 4,5,8 | `AgentPlatformTargetProfile` | scattered target checks |
-| 10 | Offline gateway-adapter harness | 3 | `ArchiveReader`, evidence coordinates | — |
-| 11 | Gateway adapters (Kong → WSO2/Apigee → MuleSoft → API Connect) | 3,10 | per-vendor adapters (thin) | — |
-| 12 | Estate assessment + live drift | 3,11 | inventory/assess/drift | — |
+| 1 | SourceSnapshot = only compiler input | done | `CompilerSource` | ambient path reads |
+| 2 | ContractSnapshot + PolicyOverlay + EffectiveContract | done | `ContractSnapshot`, `PolicyOverlay`, `EffectiveContract` | manifest as an *independent* override channel |
+| 3 | Gateway-neutral foundation (no vendor adapter) | done | `GatewayAdapter`, `GatewayApiImport`, `GatewayInventorySnapshot`, conformance | — |
+| 4 | System pack + artifact graph | done | `AgentSystemPack` | ad-hoc directory identity |
+| 5 | CapabilityContract + `DisclosurePlan` + `SurfaceSignature` | done | `CapabilityContract`, `DisclosurePlan`, `SurfaceSignature` | per-surface disclosure duplication |
+| 6 | BYO MCP adoption | done | `McpSurfaceSnapshot` | — |
+| 7 | Contract-faithful simulator (`@anvil/simulator`) | done | `SimulatorDefinition` | — |
+| 8 | Executable certification (`@anvil/certification`) | done | `CertificationRecord` levels | "files exist ⇒ certified" |
+| 9 | Gemini Enterprise target profile (`@anvil/targets`) | done | `AgentPlatformTargetProfile` | scattered target checks |
+| 10 | Offline gateway-adapter harness | done | archive reader, evidence coordinates | — |
+| 11 | Gateway adapters (Kong, WSO2, Apigee, MuleSoft, API Connect) | done | per-vendor adapters (thin) + shared `synth` | — |
+| 12 | Estate assessment + live drift | open | inventory/assess/drift | — |
 
 Parallel hardening lane (may begin after Increment 2): sandboxed execution
 backend + real investigator battery. It must not redesign the compiler or pack.

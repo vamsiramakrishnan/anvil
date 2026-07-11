@@ -184,21 +184,15 @@ export class Wso2GatewayAdapter implements GatewayAdapter<Wso2Connection> {
     const apiIndex = apis.findIndex((a) => a.name === api.id);
     const found = apis[apiIndex];
     if (!found) {
+      const empty = buildGatewayApiImport({
+        originKind: "wso2",
+        apiName: api.id,
+        ops: [],
+        facts: [],
+        diagnostics: [],
+      });
       return {
-        source: buildGatewayApiImport({
-          originKind: "wso2",
-          apiName: api.id,
-          ops: [],
-          facts: [],
-          diagnostics: [],
-        }).source,
-        overlay: buildGatewayApiImport({
-          originKind: "wso2",
-          apiName: api.id,
-          ops: [],
-          facts: [],
-          diagnostics: [],
-        }).overlay,
+        ...empty,
         diagnostics: [
           { level: "error", code: "wso2/unknown_api", message: `No WSO2 API '${api.id}'.` },
         ],
