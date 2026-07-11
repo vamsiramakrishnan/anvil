@@ -1,10 +1,15 @@
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { type CapabilityProposal, compile, proposeCapabilities } from "@anvil/compiler";
+import {
+  type AddSourceResult,
+  type CapabilityProposal,
+  compile,
+  proposeCapabilities,
+} from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
 import { assessReadiness, type ReadinessAssessment } from "@anvil/refinement";
 import { loadAirDoc } from "./cmd-capability.js";
-import { lockSource } from "./cmd-source.js";
+import { printDiagnostics, sourceService } from "./cmd-source.js";
 import type { CliIO } from "./io.js";
 
 /**
@@ -17,7 +22,8 @@ import type { CliIO } from "./io.js";
  * What it deliberately does NOT do: approve any capability (every grouping
  * stays `proposed`), change any operation state (unproven mutations stay
  * `review_required`), certify, or publish. A broken spec stops at the snapshot
- * layer with structured diagnostics (exit 1) and nothing downstream runs.
+ * layer with structured diagnostics (exit 1): the invalid snapshot is still
+ * locked for forensics, but nothing downstream runs.
  * Blocked operations are surfaced prominently but do not stop the flow —
  * discovery is exactly when a customer wants to see them.
  */
@@ -35,14 +41,19 @@ export async function cmdAgentify(
   }
 
   // 1. source add — lock what was actually supplied before compiling anything.
-  //    A broken spec stops here with the snapshot layer's structured diagnostics.
-  const source = lockSource(specPath, { root: str(flags.root) });
-  if (!source.snapshot) {
+  //    A broken spec still locks its (invalid) snapshot for forensics, then
+  //    stops here: only a valid snapshot may be compiled.
+  const source = await sourceService(flags).add([specPath]);
+  if (source.snapshot?.status !== "valid") {
     if (flags.json === true) {
-      io.out(JSON.stringify({ source: { diagnostics: source.diagnostics } }, null, 2));
+      io.out(JSON.stringify({ source: sourceStage(source) }, null, 2));
     } else {
-      printSourceDiagnostics(io, source.diagnostics);
-      io.err(`agentify stopped: '${specPath}' could not be locked. Nothing was compiled.`);
+      printDiagnostics(io, source.diagnostics);
+      io.err(
+        source.snapshot
+          ? `agentify stopped: snapshot ${source.snapshot.snapshotId} is ${source.snapshot.status}. Nothing was compiled.`
+          : `agentify stopped: '${specPath}' could not be read. Nothing was locked or compiled.`,
+      );
     }
     return 1;
   }
@@ -113,13 +124,13 @@ export async function cmdAgentify(
 /* --------------------------------- helpers -------------------------------- */
 
 /** The `source` stage of the --json object (snapshot + where it was locked). */
-function sourceStage(source: ReturnType<typeof lockSource>) {
+function sourceStage(source: AddSourceResult) {
   return { snapshot: source.snapshot, dir: source.dir, diagnostics: source.diagnostics };
 }
 
 interface ReportInput {
   specPath: string;
-  source: ReturnType<typeof lockSource>;
+  source: AddSourceResult;
   outDir: string;
   files: number;
   assessment: ReadinessAssessment;
@@ -153,17 +164,6 @@ function printReport(io: CliIO, r: ReportInput): void {
   const first = r.proposals[0];
   if (first) io.out(`  anvil capability show ${r.outDir} ${first.capability.id}`);
   io.out(`  anvil capability approve ${r.outDir} <id>`);
-}
-
-/** Print snapshot diagnostics the same way `anvil source add` does. */
-function printSourceDiagnostics(
-  io: CliIO,
-  diagnostics: ReturnType<typeof lockSource>["diagnostics"],
-): void {
-  for (const d of diagnostics) {
-    const line = `${d.level.toUpperCase().padEnd(8)} ${d.code.padEnd(26)} ${d.path ?? ""}  ${d.message}`;
-    (d.level === "error" ? io.err : io.out)(line);
-  }
 }
 
 function str(v: string | boolean | undefined): string | undefined {
