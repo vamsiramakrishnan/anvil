@@ -615,7 +615,18 @@ export const Service = z.object({
   displayName: z.string().optional(),
   owner: z.string().optional(),
   environment: z.string().optional(),
-  source: z.object({ kind: SourceKind, uri: z.string().optional() }),
+  source: z.object({
+    kind: SourceKind,
+    uri: z.string().optional(),
+    /** The immutable source snapshot this AIR was compiled from (Layer 0). */
+    snapshotId: z.string().optional(),
+    /** sha256 over the snapshot's whole file set — the AIR's binding to it. */
+    sourceHash: z.string().optional(),
+    /** The system of origin (filesystem, apigee, …) and the imported target. */
+    origin: z.object({ kind: z.string(), uri: z.string() }).optional(),
+    /** The snapshot-relative path of the compiled entrypoint. */
+    entrypoint: z.string().optional(),
+  }),
   auth: AuthRequirement.default({
     type: "none",
     scopes: [],

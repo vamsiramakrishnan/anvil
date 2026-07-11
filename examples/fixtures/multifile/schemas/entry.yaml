@@ -1,0 +1,21 @@
+Entry:
+  type: object
+  required: [id, amount]
+  properties:
+    id:
+      type: string
+      description: Opaque ledger entry id.
+    amount:
+      type: integer
+      description: Amount in minor units.
+    memo:
+      type: string
+EntryCreate:
+  type: object
+  required: [amount]
+  properties:
+    amount:
+      type: integer
+      description: Amount in minor units.
+    memo:
+      type: string

@@ -5,6 +5,7 @@
  * lives here or below. Constructed with { importer, store, clock } so every
  * piece is injectable in tests.
  */
+import { type CompilerSourceResult, compilerSourceFromSnapshot } from "./compiler-source.js";
 import { deriveSnapshotId, sha256Hex } from "./hash.js";
 import type { SourceImporter, SourceImportResult } from "./import.js";
 import type { SourceDiagnostic, SourceOriginKind, SourceSnapshot, SourceStatus } from "./model.js";
@@ -80,6 +81,17 @@ export class SourceService {
 
   async show(snapshotId: string): Promise<LoadSnapshotResult> {
     return this.store.load(snapshotId);
+  }
+
+  /**
+   * Bind a locked snapshot to a compiler input: load its verbatim bytes and
+   * choose the entrypoint. This is how `anvil compile --source` and `agentify`
+   * hand the immutable snapshot to the compiler instead of re-reading a path.
+   */
+  async compilerSource(snapshotId: string, entrypointPath?: string): Promise<CompilerSourceResult> {
+    const { snapshot, files, diagnostics } = await this.store.readFiles(snapshotId);
+    if (!snapshot || !files) return { diagnostics };
+    return compilerSourceFromSnapshot(snapshot, files, entrypointPath);
   }
 
   async validate(snapshotId: string): Promise<{ ok: boolean; diagnostics: SourceDiagnostic[] }> {

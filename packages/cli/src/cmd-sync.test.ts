@@ -21,9 +21,14 @@ beforeEach(async () => {
   bundle = join(root, "bundle");
   mkdirSync(join(root, "spec"), { recursive: true });
   writeFileSync(spec, paymentsSpec, "utf8");
-  // The stored contract every sync diffs against.
+  // The stored contract every sync diffs against. Lock into a separate
+  // workspace so the snapshot store `sync` manages starts empty.
   const io = bufferIO();
-  expect(await runAnvilCli(["compile", spec, "--out", bundle], { io })).toBe(0);
+  expect(
+    await runAnvilCli(["compile", spec, "--out", bundle, "--root", join(root, "compile-ws")], {
+      io,
+    }),
+  ).toBe(0);
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 

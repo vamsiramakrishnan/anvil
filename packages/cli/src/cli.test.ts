@@ -247,6 +247,8 @@ describe("anvil CLI: end-to-end compile → inspect → lint", () => {
           "payments",
           "--out",
           dir,
+          "--root",
+          dir,
         ],
         { io: io1 },
       );

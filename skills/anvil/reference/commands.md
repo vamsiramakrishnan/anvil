@@ -64,17 +64,20 @@ Options:
 - `--json` — emit one machine-readable object with all four stages
 
 ### `anvil compile`  *(mutates)*
-`anvil compile [options] <spec>`
+`anvil compile [options] [spec]`
 
-Compile a spec into a full tool bundle (CLI + MCP + skill + deploy).
+Compile a locked source snapshot into a full tool bundle (CLI + MCP + skill + deploy).
 
-Parses OpenAPI/Swagger, classifies effects and idempotency, applies the manifest, validates safety, and writes the bundle. Non-idempotent mutations are escalated to review_required — they are not exposed until approved.
+Compiles from an immutable Layer 0 source snapshot: everything the compiler reads — the spec and every local $ref — comes from the locked bytes, and the AIR is bound back to the snapshot's identity. Pass `--source <snapshot-id>` to compile an already-locked snapshot (add `--entrypoint <path>` to disambiguate a multi-entrypoint source), or pass a spec path to import-and-lock it first, then compile that snapshot. Parses OpenAPI/Swagger, classifies effects and idempotency, applies the manifest, validates safety, and writes the bundle. Non-idempotent mutations are escalated to review_required — they are not exposed until approved.
 
 Options:
+- `--source <snapshot-id>` — compile an already-locked snapshot instead of a spec file
+- `--entrypoint <path>` — snapshot-relative entrypoint when a source has several
 - `--manifest <file>` — Anvil manifest with semantic overrides
 - `--service <id>` — override the derived service id
 - `--out <dir>` — bundle output directory (default generated/<service-id>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
+- `--root <ws>` — workspace root for .anvil/sources
 
 ### `anvil inspect`
 `anvil inspect [options] <path>`
