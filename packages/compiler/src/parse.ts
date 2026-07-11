@@ -48,7 +48,7 @@ function decycle(document: OpenApiDocument): {
   document: OpenApiDocument;
   diagnostics: Diagnostic[];
 } {
-  const { document: bundled, truncatedAt, depthLimitedAt } = bundleDocument(document);
+  const { document: bundled, truncatedAt, depthLimitedAt, synthesized } = bundleDocument(document);
   const diagnostics: Diagnostic[] = truncatedAt.map((path) => ({
     level: "warning",
     code: "schema_cycle_truncated",
@@ -65,6 +65,21 @@ function decycle(document: OpenApiDocument): {
         `expansion bound were truncated to a shallow stub (e.g. ${sample}${depthLimitedAt.length > 5 ? ", …" : ""}). ` +
         `Named component schemas are unaffected by this bound — they are referenced by $ref, not inlined. This does ` +
         `not affect any operation's classified safety, only how deep an unnamed/inline payload shape nests.`,
+    });
+  }
+  if (synthesized.length > 0) {
+    const sample = synthesized
+      .slice(0, 5)
+      .map((s) => s.name)
+      .join(", ");
+    diagnostics.push({
+      level: "info",
+      code: "schema_structure_hoisted",
+      message:
+        `${synthesized.length} large repeated anonymous structure(s) were hoisted into synthesized ` +
+        `components.schemas entries (e.g. ${sample}${synthesized.length > 5 ? ", …" : ""}) so repeats become ` +
+        `$ref pointers and the compiled bundle stays proportional to unique structure. Content is unchanged — ` +
+        `only where it is defined.`,
     });
   }
   return { document: bundled, diagnostics };
