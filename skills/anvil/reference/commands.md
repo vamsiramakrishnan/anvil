@@ -29,11 +29,11 @@ Show the operation catalog and each operation's safety posture.
 Read-only. Use before approving to see effect, risk, idempotency, retry-safety, and state.
 
 ### `anvil assess`
-`anvil assess <dir|air.yaml> [<operation>] [--severity S] [--explain] [--json]`
+`anvil assess <dir|air.yaml> [<operation>] [--severity S] [--check [--fail-on D]] [--json]`
 
-Triage which operations are agent-ready, and explain every blocking gap.
+Report which operations are agent-ready; gate a pipeline with --check.
 
-Read-only. Runs Anvil's deterministic detectors and gives every operation a readiness disposition — ready, refinement_required, human_decision_required, blocked, or excluded — with a service-level score and summary. Reuses the same detectors as `anvil refine plan`, so the per-operation triage never disagrees with the deficiency list. Drill into one operation, filter by minimum severity, or `--explain` why each gap matters to an agent. Exits non-zero when any operation is blocked.
+Read-only. Runs Anvil's deterministic detectors and projects every operation's readiness disposition — ready, refinementRequired, humanDecisionRequired, blocked, or excluded — from the deficiency catalog's per-code policy plus the lifecycle state, with each gap's agent impact and an honest remediation (a suggested skill that is not implemented says so). The result is a versioned artifact (schemaVersion, contractHash of the assessed AIR, overallDisposition, readyPercent); `--json` emits it whole, and `--severity` narrows the detail into a view without touching the totals. A report that completed exits 0 even with blockers; gating is explicit: `--check [--fail-on blocked|human-decision|refinement-required]` (default blocked) exits non-zero when the overall or any operation disposition meets the threshold. Reuses the same detectors as `anvil refine plan`, so the per-operation triage never disagrees with the deficiency list.
 
 ### `anvil capability`  *(mutates)*
 `anvil capability <propose|list|show|approve|reject|diff> <dir|air.yaml> [id] [flags]`
