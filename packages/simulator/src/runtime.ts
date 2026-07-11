@@ -14,6 +14,11 @@ import { Rng } from "./rng.js";
 
 export interface InvokeContext {
   principalId?: string;
+  /**
+   * The tenant this call belongs to. Idempotent replay is scoped to
+   * (principal, tenant) so one caller's key can never replay another's result.
+   */
+  tenantId?: string;
   confirm?: boolean;
   idempotencyKey?: string;
   /** Activate a named fault scenario for this call. */
@@ -46,11 +51,18 @@ export class Simulator {
     private readonly air: AirDocument,
     private readonly def: SimulatorDefinition,
   ) {
-    const memberIds = new Set(
-      air.capabilities.find((c) => c.id === def.capabilityId)?.operationIds ?? [],
-    );
-    const inCapability = (op: Operation) =>
-      memberIds.size === 0 || memberIds.has(op.id) || def.capabilityId === air.service.id;
+    // The simulator serves exactly one surface: the whole service, or one
+    // discovered capability. An unknown capability id is a definition error —
+    // reject it rather than silently falling back to serving everything (#25).
+    const isService = def.capabilityId === air.service.id;
+    const capability = air.capabilities.find((c) => c.id === def.capabilityId);
+    if (!isService && !capability) {
+      throw new Error(
+        `Unknown capability '${def.capabilityId}': not the service id '${air.service.id}' and not a discovered capability.`,
+      );
+    }
+    const memberIds = new Set(capability?.operationIds ?? []);
+    const inCapability = (op: Operation) => isService || memberIds.has(op.id);
     this.ops = air.operations.filter((op) => op.state === "approved" && inCapability(op));
     this.rng = new Rng(def.seed);
     this.reset();
@@ -151,7 +163,15 @@ export class Simulator {
     // Required idempotency + idempotent replay (only for key-supporting mutations).
     const keyed =
       op.effect.kind === "mutation" && op.idempotency.mode !== "none" && !!ctx.idempotencyKey;
-    const fingerprint = hashCanonical([toolName, input, ctx.idempotencyKey ?? null]);
+    // Scope the replay fingerprint to the caller (principal + tenant) so one
+    // caller's idempotency key can never replay another's cached result (#24).
+    const fingerprint = hashCanonical([
+      toolName,
+      input,
+      ctx.principalId ?? null,
+      ctx.tenantId ?? null,
+      ctx.idempotencyKey ?? null,
+    ]);
     if (op.effect.kind === "mutation") {
       if (op.idempotency.mode === "required" && !ctx.idempotencyKey) {
         return {

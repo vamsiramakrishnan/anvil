@@ -129,3 +129,41 @@ describe("contract-faithful behaviour", () => {
     if (page2.ok) expect((page2.output as { items: unknown[] }).items.length).toBe(1);
   });
 });
+
+describe("review fixes — surface scoping and replay isolation", () => {
+  it("rejects an unknown capability id instead of serving everything (#25)", () => {
+    const def = simulatorDefinitionFor(air, { seed: 42 });
+    expect(() => new Simulator(air, { ...def, capabilityId: "no-such-capability" })).toThrow(
+      /Unknown capability/,
+    );
+  });
+
+  it("does not replay one principal's idempotency key for another (#24)", () => {
+    const def = simulatorDefinitionFor(air, { seed: 42 });
+    // A second privileged principal — same scopes, so only the caller differs.
+    const admin1 = def.authProfiles.find((p) => p.id === "admin");
+    const sim = new Simulator(air, {
+      ...def,
+      authProfiles: [...def.authProfiles, { ...admin1!, id: "admin2" }],
+    });
+    const tool = toolName("createRefund");
+    const admin = { principalId: "admin", confirm: true, idempotencyKey: "shared-key" };
+    const other = { principalId: "admin2", confirm: true, idempotencyKey: "shared-key" };
+    const first = sim.invoke(tool, { amount: 5 }, admin);
+    const second = sim.invoke(tool, { amount: 5 }, other);
+    expect(first.ok && second.ok).toBe(true);
+    // The other principal must get a *fresh* effect, not admin's replayed result.
+    if (second.ok) expect(second.replayed).toBeUndefined();
+    if (first.ok && second.ok) expect(second.output).not.toEqual(first.output);
+  });
+
+  it("still replays for the same principal + tenant (#24)", () => {
+    const { sim } = build();
+    const tool = toolName("createRefund");
+    const ctx = { principalId: "admin", tenantId: "t1", confirm: true, idempotencyKey: "k" };
+    const first = sim.invoke(tool, { amount: 5 }, ctx);
+    const second = sim.invoke(tool, { amount: 5 }, ctx);
+    expect(second.ok && second.replayed).toBe(true);
+    if (first.ok && second.ok) expect(second.output).toEqual(first.output);
+  });
+});
