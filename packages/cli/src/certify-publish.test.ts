@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 import { compile } from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { cmdCertify } from "./cmd-certify.js";
-import { cmdPublish } from "./cmd-publish.js";
+import { runCertify } from "./commands/certify.js";
+import { runPublish } from "./commands/publish.js";
 import { bufferIO } from "./io.js";
 
 const examples = fileURLToPath(new URL("../../../examples/payments/", import.meta.url));
@@ -30,7 +30,7 @@ const clock = (iso: string) => () => iso;
 const noEnv = {} as NodeJS.ProcessEnv;
 
 const certify = (io = bufferIO(), now = clock("2026-07-10T00:00:00Z")) => ({
-  code: cmdCertify([dir], {}, io, { now }),
+  code: runCertify(dir, {}, io, { now }),
   io,
 });
 
@@ -68,7 +68,7 @@ describe("anvil certify", () => {
     writeFileSync(catalogPath, JSON.stringify(catalog, null, 2), "utf8");
 
     const io = bufferIO();
-    expect(cmdCertify([dir], {}, io)).toBe(1);
+    expect(runCertify(dir, {}, io)).toBe(1);
     expect(io.text()).toMatch(/contract\s+FAIL/);
     expect(io.text()).toContain("contract.surfaces-agree");
   });
@@ -83,14 +83,14 @@ describe("anvil certify", () => {
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
 
     const io = bufferIO();
-    expect(cmdCertify([dir], {}, io)).toBe(1);
+    expect(runCertify(dir, {}, io)).toBe(1);
     expect(io.text()).toMatch(/safety\s+FAIL/);
     expect(io.text()).toContain("safety.confirmation-required");
   });
 
   it("accepts the air.yaml path as the bundle coordinate and supports --json", () => {
     const io = bufferIO();
-    expect(cmdCertify([join(dir, "air.yaml")], { json: true }, io)).toBe(0);
+    expect(runCertify(join(dir, "air.yaml"), { json: true }, io)).toBe(0);
     const cert = JSON.parse(io.stdout.join("\n"));
     expect(cert.checks.length).toBeGreaterThan(0);
   });
@@ -99,7 +99,7 @@ describe("anvil certify", () => {
 describe("anvil publish (gated)", () => {
   it("refuses an uncertified bundle", () => {
     const io = bufferIO();
-    const code = cmdPublish([dir], { target: "cloud-run", env: "dev" }, io, { env: noEnv });
+    const code = runPublish(dir, { target: "cloud-run", env: "dev" }, io, { env: noEnv });
     expect(code).toBe(1);
     expect(io.text()).toMatch(/anvil certify/);
   });
@@ -107,7 +107,7 @@ describe("anvil publish (gated)", () => {
   it("publishes a certified bundle and writes a publication record", () => {
     certify();
     const io = bufferIO();
-    const code = cmdPublish([dir], { target: "cloud-run", env: "prod" }, io, {
+    const code = runPublish(dir, { target: "cloud-run", env: "prod" }, io, {
       env: noEnv,
       now: clock("2026-07-10T01:00:00Z"),
     });
@@ -121,12 +121,10 @@ describe("anvil publish (gated)", () => {
 
   it("--allow-uncertified waives the gate for dev, recording the waiver", () => {
     const io = bufferIO();
-    const code = cmdPublish(
-      [dir],
-      { target: "cloud-run", env: "dev", "allow-uncertified": true },
-      io,
-      { env: noEnv, now: clock("2026-07-10T01:00:00Z") },
-    );
+    const code = runPublish(dir, { target: "cloud-run", env: "dev", allowUncertified: true }, io, {
+      env: noEnv,
+      now: clock("2026-07-10T01:00:00Z"),
+    });
     expect(code).toBe(0);
     expect(io.text()).toMatch(/WARNING/);
     const record = JSON.parse(readFileSync(join(dir, "publication.json"), "utf8"));
@@ -135,12 +133,9 @@ describe("anvil publish (gated)", () => {
 
   it("fails closed for prod: --allow-uncertified is refused with a structured error", () => {
     const io = bufferIO();
-    const code = cmdPublish(
-      [dir],
-      { target: "cloud-run", env: "prod", "allow-uncertified": true },
-      io,
-      { env: noEnv },
-    );
+    const code = runPublish(dir, { target: "cloud-run", env: "prod", allowUncertified: true }, io, {
+      env: noEnv,
+    });
     expect(code).toBe(1);
     const structured = io.stderr.map((l) => {
       try {
@@ -156,7 +151,7 @@ describe("anvil publish (gated)", () => {
 
   it("fails closed when ANVIL_ENV=prod even without --env", () => {
     const io = bufferIO();
-    const code = cmdPublish([dir], { target: "cloud-run", "allow-uncertified": true }, io, {
+    const code = runPublish(dir, { target: "cloud-run", allowUncertified: true }, io, {
       env: { ANVIL_ENV: "prod" } as NodeJS.ProcessEnv,
     });
     expect(code).toBe(1);
@@ -167,20 +162,20 @@ describe("anvil publish (gated)", () => {
     certify();
     writeFileSync(join(dir, "docs/README.md"), "tampered after certification", "utf8");
     const io = bufferIO();
-    const code = cmdPublish([dir], { target: "cloud-run", env: "prod" }, io, { env: noEnv });
+    const code = runPublish(dir, { target: "cloud-run", env: "prod" }, io, { env: noEnv });
     expect(code).toBe(1);
     expect(io.text()).toMatch(/stale/);
   });
 
   it("a publish record does not invalidate the certification it was gated by", () => {
     certify();
-    const first = cmdPublish([dir], { target: "cloud-run", env: "dev" }, bufferIO(), {
+    const first = runPublish(dir, { target: "cloud-run", env: "dev" }, bufferIO(), {
       env: noEnv,
     });
     expect(first).toBe(0);
     // publication.json is a record *about* the bundle, excluded from its identity,
     // so publishing again (e.g. to another env) still sees a valid certification.
-    const second = cmdPublish([dir], { target: "cloud-run", env: "prod" }, bufferIO(), {
+    const second = runPublish(dir, { target: "cloud-run", env: "prod" }, bufferIO(), {
       env: noEnv,
     });
     expect(second).toBe(0);

@@ -46,12 +46,14 @@ async function writePaymentsAir(): Promise<AirDocument> {
 const reload = (): AirDocument => airFromYaml(readFileSync(join(dir, "air.yaml"), "utf8"));
 
 describe("anvil capability", () => {
-  it("prints small usage for a bare `anvil capability`", async () => {
+  it("prints local subcommand usage for a bare `anvil capability`", async () => {
     const io = bufferIO();
     expect(await runAnvilCli(["capability"], { io })).toBe(0);
-    expect(io.text()).toContain("anvil capability propose");
-    expect(io.text()).toContain("anvil capability approve");
-    expect(io.text().split("\n").length).toBeLessThan(12); // small, not a manual
+    expect(io.text()).toContain("Usage: anvil capability");
+    expect(io.text()).toMatch(/propose <path>/);
+    expect(io.text()).toMatch(/approve \[options\] <path> <capability-id>/);
+    // Local help only: no sibling top-level commands leak in.
+    expect(io.text()).not.toContain("agentify");
   });
 
   it("propose prints groupings with provenance and stays read-only", async () => {
@@ -213,9 +215,9 @@ describe("anvil build", () => {
     expect(io.text()).toContain("anvil capability approve");
   });
 
-  it("prints usage when arguments are missing", async () => {
+  it("rejects missing arguments with a usage error", async () => {
     const io = bufferIO();
     expect(await runAnvilCli(["build"], { io })).toBe(1);
-    expect(io.text()).toContain("Usage: anvil build");
+    expect(io.text()).toContain("missing required argument 'path'");
   });
 });

@@ -17,9 +17,12 @@ import {
   snapshotFromImport,
 } from "@anvil/compiler";
 import { Certification, readBundleDir } from "@anvil/generators";
-import { loadBundleAir, resolveBundleDir } from "./cmd-certify.js";
-import { printDiagnostics } from "./cmd-source.js";
-import type { CliIO } from "./io.js";
+import type { Command } from "commander";
+import type { CliIO } from "../io.js";
+import { loadBundleAir, resolveBundleDir } from "./certify.js";
+import type { CommandContext } from "./context.js";
+import { annotate } from "./meta.js";
+import { printDiagnostics } from "./source.js";
 
 /**
  * `anvil sync <spec> <dir|air.yaml>` — Layer 6, drift detection. Re-imports the
@@ -31,22 +34,45 @@ import type { CliIO } from "./io.js";
  * `.anvil/drift/`. Exits non-zero when safety-semantic (high/blocking) drift is
  * found, so it gates a pipeline the same way `anvil assess` does.
  */
-export async function cmdSync(
-  args: string[],
-  flags: Record<string, string | boolean>,
+export function registerSync(parent: Command, ctx: CommandContext): void {
+  annotate(
+    parent
+      .command("sync")
+      .summary("Detect semantic drift between the current spec and a stored AIR contract.")
+      .description(
+        'Layer 6 — drift and recertification. Re-imports the spec through the Layer 0 snapshot layer (unchanged content is a fast path: same sourceHash, no drift), recompiles it in memory, and diffs the fresh contract against the stored AIR: operations added/removed, field type and requiredness changes, auth scope/type changes, retry/idempotency/confirmation semantics, pagination, and documentation-only edits (info). Safety-loosening drift (a dropped confirmation, new retries, an idempotency claim crossing "none", auth vanishing) is blocking; other safety-semantic drift is high. Reports which capabilities are affected and which certifications must be re-earned even though their bundle bytes are untouched, then writes a drift record to .anvil/drift/<id>.json. Never mutates AIR, never applies spec changes, never touches capability lifecycles. Exits non-zero on high/blocking drift so it can gate a pipeline.',
+      )
+      .argument("<spec-path>", "the spec file as it exists now")
+      .argument("<path>", "bundle directory or air.yaml holding the stored contract")
+      .option("--manifest <file>", "Anvil manifest applied to the in-memory recompile")
+      .option("--root <ws>", "workspace root for .anvil/sources and .anvil/drift", ".")
+      .option("--json", "emit the drift verdict (and record) as JSON")
+      .action(async (specPath: string, bundlePath: string, opts: SyncOptions) => {
+        ctx.code = await runSync(specPath, bundlePath, opts, ctx.io);
+      }),
+    { mutates: true },
+  );
+}
+
+interface SyncOptions {
+  manifest?: string;
+  root?: string;
+  json?: boolean;
+}
+
+/** The sync action, exported with an injectable clock so tests can pin time. */
+export async function runSync(
+  specPath: string,
+  bundlePath: string,
+  opts: SyncOptions,
   io: CliIO,
   deps: { now?: () => Date } = {},
 ): Promise<number> {
-  const [specPath, bundlePath] = args;
-  if (!specPath || !bundlePath) {
-    io.err("Usage: anvil sync <spec-path> <dir|air.yaml> [--manifest f] [--root ws] [--json]");
-    return 1;
-  }
   if (!existsSync(specPath)) {
     io.err(`No such spec: ${specPath}`);
     return 1;
   }
-  const root = typeof flags.root === "string" ? flags.root : ".";
+  const root = opts.root ?? ".";
   const now = deps.now ?? (() => new Date());
 
   // Layer 0 first: re-import what the spec says NOW (a pure read — nothing is
@@ -63,7 +89,7 @@ export async function cmdSync(
     const outstanding = loadDriftRecords(root).filter(
       (r) => r.sourceHash === imported.sourceHash && r.reviewedAt === undefined,
     );
-    if (flags.json === true) {
+    if (opts.json === true) {
       io.out(
         JSON.stringify(
           {
@@ -118,10 +144,9 @@ export async function cmdSync(
   const specFile = snapshot.entrypoints[0]?.path;
   const specBytes = imported.files.find((f) => f.path === specFile)?.bytes;
   const spec = specBytes ? new TextDecoder("utf-8").decode(specBytes) : "";
-  const manifestPath = typeof flags.manifest === "string" ? flags.manifest : undefined;
   const fresh = await compile({
     spec,
-    manifest: manifestPath ? readFileSync(manifestPath, "utf8") : undefined,
+    manifest: opts.manifest ? readFileSync(opts.manifest, "utf8") : undefined,
     sourceUri: specPath,
   });
 
@@ -135,7 +160,7 @@ export async function cmdSync(
   const impacts = invalidatedCertifications(items, certs);
 
   if (items.length === 0) {
-    if (flags.json === true) {
+    if (opts.json === true) {
       io.out(
         JSON.stringify({ changed: true, sourceHash: snapshot.sourceHash, items: [] }, null, 2),
       );
@@ -169,7 +194,7 @@ export async function cmdSync(
   mkdirSync(dirname(recordPath), { recursive: true });
   writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`, "utf8");
 
-  if (flags.json === true) {
+  if (opts.json === true) {
     io.out(JSON.stringify({ changed: true, record, recordPath }, null, 2));
   } else {
     io.out(sourceHashLine(previous?.sourceHash, snapshot.sourceHash, snapshot.snapshotId));
@@ -286,7 +311,7 @@ function certificationRefs(files: Record<string, string>): CertificationRef[] {
   return refs;
 }
 
-/** Exported for cmd-drift's severity summaries. */
+/** Exported for the drift command's severity summaries. */
 export function severityCounts(record: DriftRecord): Partial<Record<DriftSeverity, number>> {
   const counts: Partial<Record<DriftSeverity, number>> = {};
   for (const i of record.items) counts[i.severity] = (counts[i.severity] ?? 0) + 1;
