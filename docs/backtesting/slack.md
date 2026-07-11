@@ -1,6 +1,6 @@
 # Slack backtest (archived Swagger 2.0 + RPC-over-HTTP naming test)
 
-- **Spec**: `examples/slack/swagger.json` — 14 operations trimmed verbatim
+- **Spec**: the real slack spec (fetched by `reproduce.sh slack`) — 14 operations trimmed verbatim
   from `slackapi/slack-api-specs`'s `slack_web_openapi_v2.json` (chat,
   conversations, users, reactions). The **full** spec (174 paths) was also
   compiled directly.
@@ -15,7 +15,7 @@
 ## Compile
 
 ```
-$ anvil compile --source <id> --manifest examples/slack/anvil.yaml --service slack ...
+$ anvil compile --source <id> --manifest docs/backtesting/reproduce/manifests/slack.anvil.yaml --service slack ...
 Compiled 14 operations ... approved: 14  review_required: 0
 ```
 

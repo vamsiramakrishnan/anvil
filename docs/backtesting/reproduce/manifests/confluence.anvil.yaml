@@ -81,7 +81,7 @@ operations:
     state: approved
 
   # Everything else keeps the compiler's own classification; only exposure is
-  # declared here (see examples/jira/anvil.yaml for why the manifest form is
+  # declared here (see manifests/jira.anvil.yaml for why the manifest form is
   # used instead of the `anvil approve` + `anvil build` per-capability path).
   getPages: { state: approved }
   getPageById: { state: approved }

@@ -6,7 +6,7 @@
 # the OpenAPI spec itself (it's a cross-cutting convention documented in
 # prose, not a per-operation parameter — see docs/backtesting/stripe.md), so
 # every operation below declares it from real, documented Stripe behavior.
-# This is the same idempotency-key pattern `examples/payments/anvil.yaml`
+# This is the same idempotency-key pattern the payments example (`examples/payments/anvil.yaml`, still committed)
 # already modeled — Stripe is the real API that pattern was drawn from.
 service:
   name: stripe

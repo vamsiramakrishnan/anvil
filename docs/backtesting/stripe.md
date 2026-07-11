@@ -1,13 +1,13 @@
 # Stripe API backtest
 
-- **Spec**: `examples/stripe/openapi.json` — 22 operations trimmed verbatim
+- **Spec**: the real stripe spec (fetched by `reproduce.sh stripe`) — 22 operations trimmed verbatim
   from `stripe/openapi`'s `spec3.json` (414 real paths total; the curated
   subset covers customers, charges, payment intents, refunds, invoices,
   subscriptions), chosen to overlap Stripe's official agent toolkit.
 - **Reference**: `stripe/agent-toolkit` (official, hosted at
   `mcp.stripe.com`) — Stripe's own curated tool set covers this exact
   surface (customers, payments, refunds, invoices, subscriptions, search).
-- **Manifest**: `examples/stripe/anvil.yaml` — every mutation declares
+- **Manifest**: `docs/backtesting/reproduce/manifests/stripe.anvil.yaml` — every mutation declares
   Stripe's real, documented `Idempotency-Key` header convention (not
   expressible in the OpenAPI spec itself — see below), grounded in
   https://docs.stripe.com/api/idempotent_requests.
@@ -15,7 +15,7 @@
 ## Compile → inspect → lint → package, run for real
 
 ```
-$ anvil compile --source <id> --manifest examples/stripe/anvil.yaml --service stripe --out generated/stripe
+$ anvil compile --source <id> --manifest docs/backtesting/reproduce/manifests/stripe.anvil.yaml --service stripe --out generated/stripe
 Compiled 22 operations ... approved: 22  review_required: 0
 $ anvil lint generated/stripe          # exit 0 — depth-truncation info + naming findings, no errors
 ```

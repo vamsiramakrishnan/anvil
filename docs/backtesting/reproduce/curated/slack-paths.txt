@@ -1,0 +1,14 @@
+/chat.postMessage
+/chat.update
+/chat.delete
+/conversations.history
+/conversations.replies
+/conversations.list
+/conversations.create
+/conversations.archive
+/conversations.invite
+/reactions.add
+/reactions.remove
+/users.list
+/users.info
+/users.profile.set

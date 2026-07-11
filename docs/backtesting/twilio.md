@@ -1,6 +1,6 @@
 # Twilio backtest (scale + POST-reuse test)
 
-- **Spec**: `examples/twilio/openapi.json` — 15 operations trimmed verbatim
+- **Spec**: the real twilio spec (fetched by `reproduce.sh twilio`) — 15 operations trimmed verbatim
   from `twilio/twilio-oai`'s `twilio_api_v2010.json` (the core Api2010 REST
   API; messages, calls, incoming phone numbers). The **full** spec (121
   paths, 197 operations) was also compiled directly as a scale test.

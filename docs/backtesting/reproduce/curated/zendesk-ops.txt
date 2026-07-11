@@ -1,0 +1,9 @@
+ListTickets
+CreateTicket
+ShowTicket
+UpdateTicket
+DeleteTicket
+ListTicketComments
+ListUsers
+ShowUser
+CreateUser

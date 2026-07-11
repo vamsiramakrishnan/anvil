@@ -9,9 +9,11 @@ For each SaaS product below:
 2. Trim to a curated, representative subset of operations that overlaps what
    the product's mature reference MCP server exposes (so the comparison is
    apples-to-apples), keeping every schema/parameter/response component those
-   operations transitively reference, verbatim, from the real spec. See
-   `<system>/openapi.json` in each `examples/<system>/` directory and the trim
-   script's provenance comment.
+   operations transitively reference, verbatim, from the real spec. The vendor
+   specs are **not committed** — they are large and fully reproducible; the
+   spec URL, curated operation list, trimmers, and authored safety manifest for
+   every system live in `reproduce/`, and `reproduce/reproduce.sh <system>`
+   regenerates any bundle from scratch (fetch → trim → compile).
 3. Run the real `anvil` CLI end to end: `source add` → `compile` → `inspect` →
    enrich with a manifest (only where the compiler's own classification is
    wrong or the spec cannot express real-world safety semantics, e.g.

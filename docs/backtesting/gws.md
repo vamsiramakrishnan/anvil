@@ -1,6 +1,6 @@
 # Google Workspace backtest (Gmail) — the format-conversion test
 
-- **Spec**: `examples/gmail/discovery.json` — 11 methods trimmed verbatim
+- **Spec**: the real gmail spec (fetched by `reproduce.sh gmail`) — 11 methods trimmed verbatim
   from Google's real **Discovery Document** for Gmail (`gmail.users.messages.*`,
   `drafts.*`, `labels.*`, `getProfile`). The full Gmail Discovery doc (79
   methods) was also compiled directly.
@@ -42,7 +42,7 @@ substring pre-check before any JSON parse). See `deficiencies.md` #17.
 ## Compile
 
 ```
-$ anvil compile --source <id> --manifest examples/gmail/anvil.yaml --service gmail ...
+$ anvil compile --source <id> --manifest docs/backtesting/reproduce/manifests/gmail.anvil.yaml --service gmail ...
 Compiled 11 operations from <id> (discovery) → generated/gmail (72 files).
   approved: 11  review_required: 0
 ```

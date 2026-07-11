@@ -1,12 +1,12 @@
 # Jira Cloud backtest
 
-- **Spec**: `examples/jira/openapi.json` — 26 operations trimmed verbatim from
+- **Spec**: the real jira spec (fetched by `reproduce.sh jira`) — 26 operations trimmed verbatim from
   `https://developer.atlassian.com/cloud/jira/platform/swagger.v3.json`
   (issues, comments, transitions, watchers, worklogs, links, projects,
   JQL search), chosen to overlap mcp-atlassian's real Jira toolset.
 - **Reference MCP**: sooperset/mcp-atlassian (`jira_*` tools) and the official
   Atlassian remote MCP (`*JiraIssue`/`read_jira`/`write_jira` groups).
-- **Manifest**: `examples/jira/anvil.yaml` — hand-authored from documented
+- **Manifest**: `docs/backtesting/reproduce/manifests/jira.anvil.yaml` — hand-authored from documented
   Jira semantics (no live tenant credentials in this environment; see
   `deficiencies.md` for the `anvil enrich` attempt against the real
   `mcp-atlassian` server and why it connected to zero sources here).
@@ -14,8 +14,8 @@
 ## Compile → inspect → lint → approve → package, run for real
 
 ```
-$ anvil source add examples/jira/openapi.json
-$ anvil compile --source <id> --manifest examples/jira/anvil.yaml --service jira --out generated/jira
+$ anvil source add the jira backtest (reproduce.sh jira)openapi.json
+$ anvil compile --source <id> --manifest docs/backtesting/reproduce/manifests/jira.anvil.yaml --service jira --out generated/jira
 Compiled 26 operations ... approved: 26  review_required: 0
 $ anvil lint generated/jira            # exit 0 — warnings only, all expected
 $ anvil package skill generated/jira
