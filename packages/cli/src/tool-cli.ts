@@ -19,9 +19,70 @@ import {
   resolveLedger,
   type Transport,
 } from "@anvil/runtime";
-import { parseArgs } from "./args.js";
 import { discover, explain, riskSummary } from "./explain.js";
 import { type CliIO, processIO } from "./io.js";
+
+/*
+ * The generated tool CLI keeps its own tiny, dependency-free grammar: --flag
+ * value, --flag=value, and boolean --flag. It is deliberately NOT the
+ * Commander tree that parses the `anvil` builder commands — a generated CLI's
+ * flags come from the AIR operation contract, and `anvil run` forwards them
+ * here verbatim.
+ */
+interface ParsedArgs {
+  positionals: string[];
+  flags: Record<string, string | boolean>;
+}
+
+const BOOLEAN_FLAGS = new Set([
+  "confirm",
+  "dry-run",
+  "json",
+  "trace",
+  "help",
+  "no-retries",
+  "all",
+  "quiet",
+  "allow-degraded-native",
+  "allow-uncertified",
+  "allow-large",
+  // Capability show sections and progressive-disclosure views: always boolean
+  // so they never swallow a value.
+  "operations",
+  "auth",
+  "evidence",
+  "schema",
+  "examples",
+  "errors",
+  "policy",
+  "explain",
+]);
+
+function parseArgs(argv: string[]): ParsedArgs {
+  const positionals: string[] = [];
+  const flags: Record<string, string | boolean> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i] as string;
+    if (token.startsWith("--")) {
+      const body = token.slice(2);
+      const eq = body.indexOf("=");
+      if (eq >= 0) {
+        flags[body.slice(0, eq)] = body.slice(eq + 1);
+      } else if (
+        BOOLEAN_FLAGS.has(body) ||
+        i + 1 >= argv.length ||
+        (argv[i + 1] as string).startsWith("--")
+      ) {
+        flags[body] = true;
+      } else {
+        flags[body] = argv[++i] as string;
+      }
+    } else {
+      positionals.push(token);
+    }
+  }
+  return { positionals, flags };
+}
 
 /**
  * The stable exit-code contract for generated CLIs. Scripts and agents branch

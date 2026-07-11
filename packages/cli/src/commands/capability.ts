@@ -1,7 +1,6 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import type { AirDocument, Capability, Diagnostic } from "@anvil/air";
-import { airFromJson, airFromYaml, airToYaml, evidenceConfidence } from "@anvil/air";
+import { airToYaml, evidenceConfidence } from "@anvil/air";
 import {
   approveCapability,
   type CapabilityBudgetCheck,
@@ -11,7 +10,11 @@ import {
   proposeCapabilities,
   rejectCapability,
 } from "@anvil/compiler";
-import type { CliIO } from "./io.js";
+import { type Command, Option } from "commander";
+import type { CliIO } from "../io.js";
+import type { CommandContext } from "./context.js";
+import { annotate } from "./meta.js";
+import { loadAir, resolveAirPath } from "./shared.js";
 
 /**
  * `anvil capability <subcommand>` — the capability review lifecycle. Discovery
@@ -23,44 +26,96 @@ import type { CliIO } from "./io.js";
  * `propose`, `list`, `show`, and `diff` are read-only; `approve` and `reject`
  * persist the decision to the AIR file — the same pattern as `anvil approve`.
  */
-export function cmdCapability(
-  args: string[],
-  flags: Record<string, string | boolean>,
-  io: CliIO,
-): number {
-  const sub = args[0];
-  switch (sub) {
-    case "propose":
-      return cmdPropose(args.slice(1), io);
-    case "list":
-      return cmdList(args.slice(1), io);
-    case "show":
-      return cmdShow(args.slice(1), flags, io);
-    case "approve":
-      return cmdApprove(args.slice(1), flags, io);
-    case "reject":
-      return cmdReject(args.slice(1), flags, io);
-    case "diff":
-      return cmdDiff(args.slice(1), io);
-    default:
-      if (sub && sub !== "help") io.err(`Unknown capability subcommand: '${sub}'.`);
-      io.err("Usage: anvil capability propose <dir|air.yaml>");
-      io.err("       anvil capability list    <dir|air.yaml>");
-      io.err(
-        "       anvil capability show    <dir|air.yaml> <capability-id> [--operations] [--auth] [--evidence] [--json]",
-      );
-      io.err(
-        "       anvil capability approve <dir|air.yaml> <capability-id> [--allow-large] [--note ..]",
-      );
-      io.err("       anvil capability reject  <dir|air.yaml> <capability-id> [--reason ..]");
-      io.err("       anvil capability diff    <dir|air.yaml> <capability-id>");
-      return sub && sub !== "help" ? 1 : 0;
-  }
+export function registerCapability(parent: Command, ctx: CommandContext): void {
+  const capability = annotate(
+    parent
+      .command("capability")
+      .summary("Review capability groupings: propose, inspect, approve, reject, or diff.")
+      .description(
+        "The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. " +
+          "`approve`/`reject` persist the review decision to the AIR file. Approval enforces the tool budget: a capability disclosing more than 20 tools is blocked without --allow-large (more than 15 warns). Only an approved capability can be built with `anvil build`.",
+      ),
+    { mutates: true },
+  );
+
+  capability
+    .command("propose")
+    .summary("(Re)run discovery; print proposals with provenance and budget findings.")
+    .argument("<path>", "generated bundle directory or air.yaml")
+    .action((path: string) => {
+      ctx.code = runPropose(path, ctx.io);
+    });
+
+  capability
+    .command("list")
+    .summary("List the stored capabilities and their review lifecycle.")
+    .argument("<path>", "generated bundle directory or air.yaml")
+    .action((path: string) => {
+      ctx.code = runList(path, ctx.io);
+    });
+
+  capability
+    .command("show")
+    .summary("Show one capability: small summary by default, sections on request.")
+    .argument("<path>", "generated bundle directory or air.yaml")
+    .argument("<capability-id>", "the capability to show")
+    .option("--operations", "list the member operations")
+    .option("--auth", "summarize the members' auth requirements")
+    .option("--evidence", "list the evidence claims")
+    // --json emits everything at once; the section flags shape the human view.
+    // Mixing them is a contradiction, not a preference — refuse it.
+    .addOption(
+      new Option("--json", "emit the capability and its budget check as JSON").conflicts([
+        "operations",
+        "auth",
+        "evidence",
+      ]),
+    )
+    .action((path: string, id: string, opts: ShowOptions) => {
+      ctx.code = runShow(path, id, opts, ctx.io);
+    });
+
+  capability
+    .command("approve")
+    .summary("Record the approval decision; the tool budget gates it.")
+    .argument("<path>", "generated bundle directory or air.yaml")
+    .argument("<capability-id>", "the capability to approve")
+    .option("--allow-large", "waive the >20-tool budget block")
+    .option("--note <note>", "review note persisted with the decision")
+    .action((path: string, id: string, opts: { allowLarge?: boolean; note?: string }) => {
+      ctx.code = runApprove(path, id, opts, ctx.io);
+    });
+
+  capability
+    .command("reject")
+    .summary("Record why the grouping is not the right unit.")
+    .argument("<path>", "generated bundle directory or air.yaml")
+    .argument("<capability-id>", "the capability to reject")
+    .option("--reason <reason>", "rejection reason persisted with the decision")
+    .action((path: string, id: string, opts: { reason?: string }) => {
+      ctx.code = runReject(path, id, opts, ctx.io);
+    });
+
+  capability
+    .command("diff")
+    .summary("Report drift between a stored capability and fresh discovery.")
+    .argument("<path>", "generated bundle directory or air.yaml")
+    .argument("<capability-id>", "the capability to diff")
+    .action((path: string, id: string) => {
+      ctx.code = runDiff(path, id, ctx.io);
+    });
+}
+
+interface ShowOptions {
+  operations?: boolean;
+  auth?: boolean;
+  evidence?: boolean;
+  json?: boolean;
 }
 
 /** `anvil capability propose` — (re)run discovery; print proposals + budget findings. */
-function cmdPropose(args: string[], io: CliIO): number {
-  const air = loadAirDoc(args[0]);
+function runPropose(path: string, io: CliIO): number {
+  const air = loadAir(path);
   const proposals = proposeCapabilities(air);
   if (proposals.length === 0) {
     io.out("No capabilities discovered — the document has no operations to group.");
@@ -88,8 +143,8 @@ function cmdPropose(args: string[], io: CliIO): number {
 }
 
 /** `anvil capability list` — the stored capabilities and their review lifecycle. */
-function cmdList(args: string[], io: CliIO): number {
-  const air = loadAirDoc(args[0]);
+function runList(path: string, io: CliIO): number {
+  const air = loadAir(path);
   if (air.capabilities.length === 0) {
     io.out("No capabilities stored. Run `anvil compile` (discovery) first.");
     return 0;
@@ -108,22 +163,15 @@ function cmdList(args: string[], io: CliIO): number {
 }
 
 /** `anvil capability show` — small summary; sections only on request. */
-function cmdShow(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
-  const [path, id] = args;
-  if (!path || !id) {
-    io.err(
-      "Usage: anvil capability show <dir|air.yaml> <capability-id> [--operations] [--auth] [--evidence] [--json]",
-    );
-    return 1;
-  }
-  const air = loadAirDoc(path);
+function runShow(path: string, id: string, opts: ShowOptions, io: CliIO): number {
+  const air = loadAir(path);
   const cap = air.capabilities.find((c) => c.id === id);
   if (!cap) {
     io.err(`No capability '${id}'. Run \`anvil capability list ${path}\`.`);
     return 1;
   }
   const budget = capabilityToolBudget(cap);
-  if (flags.json === true) {
+  if (opts.json === true) {
     io.out(JSON.stringify({ capability: cap, budget }, null, 2));
     return 0;
   }
@@ -137,7 +185,7 @@ function cmdShow(args: string[], flags: Record<string, string | boolean>, io: Cl
   io.out(`  evidence confidence: ${evidenceConfidence(cap.evidence).toFixed(2)}`);
   if (cap.reviewNote) io.out(`  note: ${cap.reviewNote}`);
 
-  if (flags.operations === true) {
+  if (opts.operations === true) {
     io.out("\nOperations:");
     for (const opId of cap.operationIds) {
       const op = air.operations.find((o) => o.id === opId);
@@ -149,11 +197,11 @@ function cmdShow(args: string[], flags: Record<string, string | boolean>, io: Cl
       io.out(`  ${op.id.padEnd(36)} ${effect.padEnd(18)} ${op.state}`);
     }
   }
-  if (flags.auth === true) {
+  if (opts.auth === true) {
     io.out("\nAuth:");
     for (const line of authSummary(air, cap)) io.out(`  ${line}`);
   }
-  if (flags.evidence === true) {
+  if (opts.evidence === true) {
     io.out("\nEvidence:");
     for (const claim of cap.evidence.claims) {
       io.out(
@@ -162,28 +210,26 @@ function cmdShow(args: string[], flags: Record<string, string | boolean>, io: Cl
     }
     if (cap.evidence.claims.length === 0) io.out("  (no claims)");
   }
-  if (flags.operations !== true && flags.auth !== true && flags.evidence !== true) {
+  if (opts.operations !== true && opts.auth !== true && opts.evidence !== true) {
     io.out("\nSections: --operations --auth --evidence --json");
   }
   return 0;
 }
 
 /** `anvil capability approve` — record the decision; the tool budget gates it. */
-function cmdApprove(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
-  const [path, id] = args;
-  if (!path || !id) {
-    io.err(
-      "Usage: anvil capability approve <dir|air.yaml> <capability-id> [--allow-large] [--note ..]",
-    );
-    return 1;
-  }
-  const airPath = resolveAirFile(path);
-  const air = loadAirDoc(path);
+function runApprove(
+  path: string,
+  id: string,
+  opts: { allowLarge?: boolean; note?: string },
+  io: CliIO,
+): number {
+  const airPath = resolveAirPath(path);
+  const air = loadAir(path);
   let budget: CapabilityBudgetCheck;
   try {
     budget = approveCapability(air, id, {
-      allowLarge: flags["allow-large"] === true,
-      note: typeof flags.note === "string" ? flags.note : undefined,
+      allowLarge: opts.allowLarge === true,
+      note: opts.note,
     });
   } catch (err) {
     if (err instanceof CapabilityReviewError) {
@@ -201,16 +247,11 @@ function cmdApprove(args: string[], flags: Record<string, string | boolean>, io:
 }
 
 /** `anvil capability reject` — record why the grouping is not the right unit. */
-function cmdReject(args: string[], flags: Record<string, string | boolean>, io: CliIO): number {
-  const [path, id] = args;
-  if (!path || !id) {
-    io.err("Usage: anvil capability reject <dir|air.yaml> <capability-id> [--reason ..]");
-    return 1;
-  }
-  const airPath = resolveAirFile(path);
-  const air = loadAirDoc(path);
+function runReject(path: string, id: string, opts: { reason?: string }, io: CliIO): number {
+  const airPath = resolveAirPath(path);
+  const air = loadAir(path);
   try {
-    rejectCapability(air, id, typeof flags.reason === "string" ? flags.reason : undefined);
+    rejectCapability(air, id, opts.reason);
   } catch (err) {
     if (err instanceof CapabilityReviewError) {
       io.err(`error ${err.code}: ${err.message}`);
@@ -224,13 +265,8 @@ function cmdReject(args: string[], flags: Record<string, string | boolean>, io: 
 }
 
 /** `anvil capability diff` — stored capability vs a fresh re-discovery. */
-function cmdDiff(args: string[], io: CliIO): number {
-  const [path, id] = args;
-  if (!path || !id) {
-    io.err("Usage: anvil capability diff <dir|air.yaml> <capability-id>");
-    return 1;
-  }
-  const air = loadAirDoc(path);
+function runDiff(path: string, id: string, io: CliIO): number {
+  const air = loadAir(path);
   let diff: ReturnType<typeof diffCapability>;
   try {
     diff = diffCapability(air, id);
@@ -282,28 +318,4 @@ function authSummary(air: AirDocument, cap: Capability): string[] {
   }
   if (seen.size === 0) return ["(no member operations)"];
   return [...seen.entries()].map(([key, n]) => `${key} — ${n} op(s)`);
-}
-
-/**
- * AIR file resolution shared by the capability and build commands (mirrors the
- * private helpers in anvil-cli.ts, which this new command group must not edit
- * beyond its two dispatch lines).
- */
-export function resolveAirFile(path?: string): string {
-  if (!path) throw new Error("Provide a path to an AIR file or a generated directory.");
-  if (existsSync(path) && statSync(path).isDirectory()) {
-    for (const name of ["air.yaml", "air.json"]) {
-      const candidate = join(path, name);
-      if (existsSync(candidate)) return candidate;
-    }
-    throw new Error(`No air.yaml or air.json in ${path}.`);
-  }
-  return path;
-}
-
-/** Load and validate the AIR document at a file or generated-directory path. */
-export function loadAirDoc(path?: string): AirDocument {
-  const resolved = resolveAirFile(path);
-  const text = readFileSync(resolved, "utf8");
-  return resolved.endsWith(".json") ? airFromJson(text) : airFromYaml(text);
 }

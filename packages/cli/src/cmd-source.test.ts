@@ -205,14 +205,15 @@ describe("anvil source usage", () => {
     const io = bufferIO();
     const code = await runAnvilCli(["source"], { io });
     expect(code).toBe(0);
-    expect(io.text()).toContain("anvil source add");
-    expect(io.text()).toContain("anvil source validate");
+    expect(io.text()).toContain("Usage: anvil source");
+    expect(io.text()).toMatch(/add \[options\] <targets\.\.\.>/);
+    expect(io.text()).toMatch(/validate \[options\] <snapshot-id>/);
   });
 
   it("an unknown subcommand exits non-zero", async () => {
     const io = bufferIO();
     const code = await runAnvilCli(["source", "frobnicate"], { io });
     expect(code).toBe(1);
-    expect(io.text()).toContain("Unknown source subcommand");
+    expect(io.text()).toContain("unknown command 'frobnicate'");
   });
 });
