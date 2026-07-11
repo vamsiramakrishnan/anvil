@@ -12,6 +12,7 @@ import { overlayDigest } from "./contract/digest.js";
 import type { AppliedOverlay, PolicyOverlay, SemanticConflict } from "./contract/model.js";
 import { manifestToOverlay } from "./contract/overlay.js";
 import { applyResolved, resolveOverlays } from "./contract/resolution.js";
+import { applyDialectAdjustment, detectNamingDialect } from "./dialect.js";
 import { type AnvilManifest, buildWorkflows, parseManifest } from "./manifest.js";
 import { critiqueNames, resolveNameCollisions } from "./naming.js";
 import { normalize } from "./normalize.js";
@@ -125,6 +126,20 @@ async function buildAir(
   // Naming pass: resolve any name collisions coherently across id/CLI/tool with
   // meaningful tokens (never a silent `_2`) before enrichment or validation.
   const namingDiagnostics = resolveNameCollisions(operations);
+
+  // Whole-spec dialect inference: classify the corpus's naming house style ONCE
+  // and fold it into every `name.quality` claim's confidence. Never changes a
+  // derived name — it only tunes how much the declared ids are trusted.
+  const dialect = detectNamingDialect(operations.map((op) => op.sourceRef));
+  namingDiagnostics.push({
+    level: "info",
+    code: "naming_dialect",
+    message:
+      `Naming dialect "${dialect.dialect}" (casing: ${dialect.casing}, ` +
+      `confidence ${dialect.confidence.toFixed(2)}, ${dialect.sampled} operations sampled) — ` +
+      `${dialect.signals[0] ?? "no evidence"}.`,
+  });
+  applyDialectAdjustment(operations, dialect);
 
   // The override slot — a single resolution path (#5). The manifest's *operation*
   // overrides are converted to an `origin:"manifest"` overlay and resolved

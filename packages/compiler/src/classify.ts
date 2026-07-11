@@ -106,33 +106,41 @@ interface ActionVerb {
  * read; a substring false positive there would be a real safety regression,
  * not just a cosmetic mislabel.
  */
-function wordBoundary(words: string[]): RegExp {
+function wordBoundary(words: readonly string[]): RegExp {
   return new RegExp(`(^|_)(${words.join("|")})(_|$)`);
 }
 
+/**
+ * The plain word lists behind each vocabulary family — the exact words the
+ * `wordBoundary(...)` patterns below are built from. Exported so whole-spec
+ * dialect inference (`dialect.ts`) can recognize "a known action verb" from
+ * the SAME vocabulary instead of a second, drifting list. The ActionVerb table
+ * (patterns + readIntent) stays the classifier's own, unchanged.
+ */
+export const ACTION_VERB_WORDS = {
+  export: ["export", "download", "report", "dump"],
+  search: ["search", "query", "find", "lookup", "filter"],
+  poll: ["status", "poll", "wait", "progress", "health"],
+  simulate: ["simulate", "preview", "dry_run", "estimate", "quote"],
+  validate: ["validate", "verify", "check"],
+  approve: ["approve", "authorize", "accept", "confirm", "grant"],
+  cancel: ["cancel", "revoke", "terminate"],
+  send: ["send", "email", "notify", "message", "dispatch", "publish", "sms"],
+  reserve: ["reserve", "hold", "lock", "allocate"],
+  execute: ["execute", "run", "trigger", "invoke", "start", "launch"],
+} as const satisfies Record<string, readonly string[]>;
+
 const ACTION_VERBS: readonly ActionVerb[] = [
-  { action: "export", pattern: wordBoundary(["export", "download", "report", "dump"]), readIntent: true },
-  { action: "search", pattern: wordBoundary(["search", "query", "find", "lookup", "filter"]), readIntent: true },
-  { action: "poll", pattern: wordBoundary(["status", "poll", "wait", "progress", "health"]), readIntent: true },
-  {
-    action: "simulate",
-    pattern: wordBoundary(["simulate", "preview", "dry_run", "estimate", "quote"]),
-    readIntent: false,
-  },
-  { action: "validate", pattern: wordBoundary(["validate", "verify", "check"]), readIntent: false },
-  {
-    action: "approve",
-    pattern: wordBoundary(["approve", "authorize", "accept", "confirm", "grant"]),
-    readIntent: false,
-  },
-  { action: "cancel", pattern: wordBoundary(["cancel", "revoke", "terminate"]), readIntent: false },
-  { action: "send", pattern: wordBoundary(["send", "email", "notify", "message", "dispatch", "publish", "sms"]), readIntent: false },
-  { action: "reserve", pattern: wordBoundary(["reserve", "hold", "lock", "allocate"]), readIntent: false },
-  {
-    action: "execute",
-    pattern: wordBoundary(["execute", "run", "trigger", "invoke", "start", "launch"]),
-    readIntent: false,
-  },
+  { action: "export", pattern: wordBoundary(ACTION_VERB_WORDS.export), readIntent: true },
+  { action: "search", pattern: wordBoundary(ACTION_VERB_WORDS.search), readIntent: true },
+  { action: "poll", pattern: wordBoundary(ACTION_VERB_WORDS.poll), readIntent: true },
+  { action: "simulate", pattern: wordBoundary(ACTION_VERB_WORDS.simulate), readIntent: false },
+  { action: "validate", pattern: wordBoundary(ACTION_VERB_WORDS.validate), readIntent: false },
+  { action: "approve", pattern: wordBoundary(ACTION_VERB_WORDS.approve), readIntent: false },
+  { action: "cancel", pattern: wordBoundary(ACTION_VERB_WORDS.cancel), readIntent: false },
+  { action: "send", pattern: wordBoundary(ACTION_VERB_WORDS.send), readIntent: false },
+  { action: "reserve", pattern: wordBoundary(ACTION_VERB_WORDS.reserve), readIntent: false },
+  { action: "execute", pattern: wordBoundary(ACTION_VERB_WORDS.execute), readIntent: false },
 ];
 
 /** The first vocabulary verb (in table order) whose pattern matches the signal. */
@@ -231,9 +239,10 @@ export function classifyEffect(
   const reversible = !(risk === "financial" || risk === "destructive");
   // A write-method search endpoint reclassified to `read` above is inherently
   // repeatable — its idempotency posture follows the effect, not the raw verb.
-  const idempotency = kind === "read"
-    ? { mode: "natural" as const, mechanism: "none" as const, keyDerivation: "none" as const }
-    : classifyIdempotency(method);
+  const idempotency =
+    kind === "read"
+      ? { mode: "natural" as const, mechanism: "none" as const, keyDerivation: "none" as const }
+      : classifyIdempotency(method);
   const action = classifyAction(method, kind, endsWithParam, signal);
   return { effect: { kind, action, resource: undefined, risk, reversible }, idempotency };
 }
