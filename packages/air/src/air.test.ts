@@ -106,6 +106,34 @@ describe("AirDocument", () => {
     expect(back.operations).toHaveLength(120);
   }, 20_000);
 
+  it("round-trips descriptions with YAML-hostile whitespace (whitespace-only lines, trailing spaces)", () => {
+    // Real shape from the lgtm.com spec (found by the corpus sweep's round-trip
+    // oracle): a long description mixing indented lines, a line with a trailing
+    // space, and a whitespace-only line. The pretty block-scalar emission
+    // gained an extra newline on re-parse, silently drifting the contract
+    // hash; airToYaml now verifies and falls back to lossless quoting.
+    const hostile =
+      "Download all the alerts.\nUse the `Accept:` header, e.g. `text/csv; without-header` \n" +
+      "      would result in CSV output without a header row.\n    \n\n\n\n" +
+      "To find the analysis identifier for a commit, use the analyses endpoint.";
+    const base = loadAirDocument(doc);
+    const withHostile = structuredClone(base);
+    (withHostile.operations[0] as Operation).description = hostile;
+    const air = loadAirDocument(withHostile);
+    const back = airFromYaml(airToYaml(air));
+    expect(back.operations[0]?.description).toBe(hostile);
+  });
+
+  it("keeps pretty block scalars for ordinary multi-line descriptions", () => {
+    const base = loadAirDocument(doc);
+    const withPlain = structuredClone(base);
+    (withPlain.operations[0] as Operation).description = "line one\nline two\nline three";
+    const yaml = airToYaml(loadAirDocument(withPlain));
+    // The common case still emits a readable block scalar, not quoted strings.
+    expect(yaml).toMatch(/description: [|>]/);
+    expect(airFromYaml(yaml).operations[0]?.description).toBe("line one\nline two\nline three");
+  });
+
   it("rejects unknown enum values", () => {
     const bad = structuredClone(doc) as { operations: { effect: { kind: string } }[] };
     bad.operations[0].effect.kind = "teleport";
