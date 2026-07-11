@@ -50,6 +50,34 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.27.7)(yaml@2.9.0))
 
+  packages/certification:
+    dependencies:
+      '@anvil/air':
+        specifier: workspace:*
+        version: link:../air
+      '@anvil/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+      '@anvil/simulator':
+        specifier: workspace:*
+        version: link:../simulator
+      '@anvil/system-pack':
+        specifier: workspace:*
+        version: link:../system-pack
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.16)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.27.7)(yaml@2.9.0))
+
   packages/cli:
     dependencies:
       '@anvil/air':
@@ -235,6 +263,72 @@ importers:
       '@anvil/air':
         specifier: workspace:*
         version: link:../air
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.16)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.27.7)(yaml@2.9.0))
+
+  packages/simulator:
+    dependencies:
+      '@anvil/air':
+        specifier: workspace:*
+        version: link:../air
+      '@anvil/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.16)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.27.7)(yaml@2.9.0))
+
+  packages/system-pack:
+    dependencies:
+      '@anvil/air':
+        specifier: workspace:*
+        version: link:../air
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(postcss@8.5.16)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@22.20.1)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.27.7)(yaml@2.9.0))
+
+  packages/targets:
+    dependencies:
+      '@anvil/air':
+        specifier: workspace:*
+        version: link:../air
+      '@anvil/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+      '@anvil/system-pack':
+        specifier: workspace:*
+        version: link:../system-pack
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       tsup:
         specifier: ^8.5.0

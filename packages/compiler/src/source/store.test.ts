@@ -165,6 +165,47 @@ describe("verify", () => {
   });
 });
 
+describe("compilerSource integrity gate", () => {
+  // The P1 invariant: binding a snapshot to the compiler must re-verify raw/
+  // against the locked record first, so the AIR can never record the original
+  // sourceHash while being compiled from different bytes.
+  it("intact snapshot → compile source is produced", async () => {
+    const spec = write("openapi.yaml", OPENAPI);
+    const { snapshot } = await service.add([spec]);
+    const result = await service.compilerSource(snapshot?.snapshotId as string);
+    expect(result.diagnostics).toEqual([]);
+    expect(result.source?.snapshotId).toBe(snapshot?.snapshotId);
+    expect(result.source?.sourceHash).toBe(snapshot?.sourceHash);
+  });
+
+  it("modified raw file → compile refuses", async () => {
+    const spec = write("openapi.yaml", OPENAPI);
+    const { snapshot, dir } = await service.add([spec]);
+    writeFileSync(join(dir as string, "raw", "openapi.yaml"), `${OPENAPI}# tampered\n`, "utf8");
+    const result = await service.compilerSource(snapshot?.snapshotId as string);
+    expect(result.source).toBeUndefined();
+    expect(result.diagnostics.map((d) => d.code)).toContain("source/file_changed");
+  });
+
+  it("missing raw file → compile refuses", async () => {
+    const spec = write("openapi.yaml", OPENAPI);
+    const { snapshot, dir } = await service.add([spec]);
+    rmSync(join(dir as string, "raw", "openapi.yaml"));
+    const result = await service.compilerSource(snapshot?.snapshotId as string);
+    expect(result.source).toBeUndefined();
+    expect(result.diagnostics.map((d) => d.code)).toContain("source/file_missing");
+  });
+
+  it("added raw file → compile refuses", async () => {
+    const spec = write("openapi.yaml", OPENAPI);
+    const { snapshot, dir } = await service.add([spec]);
+    writeFileSync(join(dir as string, "raw", "extra.yaml"), "x: 1\n", "utf8");
+    const result = await service.compilerSource(snapshot?.snapshotId as string);
+    expect(result.source).toBeUndefined();
+    expect(result.diagnostics.map((d) => d.code)).toContain("source/file_added");
+  });
+});
+
 describe("service capture semantics", () => {
   it("locks an invalid snapshot too: diagnostics live inside it", async () => {
     const spec = write("broken.yaml", "openapi: [3.0.0\n  nope: {");

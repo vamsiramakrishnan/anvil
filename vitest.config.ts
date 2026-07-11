@@ -15,6 +15,10 @@ export default defineConfig({
       "@anvil/generators": pkg("generators"),
       "@anvil/harness": pkg("harness"),
       "@anvil/refinement": pkg("refinement"),
+      "@anvil/system-pack": pkg("system-pack"),
+      "@anvil/simulator": pkg("simulator"),
+      "@anvil/certification": pkg("certification"),
+      "@anvil/targets": pkg("targets"),
     },
   },
   test: {
