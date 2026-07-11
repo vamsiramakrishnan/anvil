@@ -1,0 +1,81 @@
+# Supplemental Anvil manifest for the Storefront GraphQL API. Enriches the
+# semantics the GraphQL schema cannot express: which mutations are financial or
+# destructive, how they become idempotent, and which operations are approved.
+service:
+  name: storefront
+  display_name: Storefront GraphQL API
+  owner: commerce-platform
+
+operations:
+  # Queries are reads — safe and retryable. Approve them for exposure.
+  product:
+    state: approved
+  products:
+    state: approved
+  cart:
+    state: approved
+  orders:
+    state: approved
+  order:
+    state: approved
+
+  # addToCart / removeFromCart are low-risk cart edits made idempotent by cart id.
+  addToCart:
+    side_effect: mutation
+    risk: low
+    idempotency:
+      strategy: natural
+    state: approved
+  removeFromCart:
+    side_effect: mutation
+    risk: low
+    idempotency:
+      strategy: natural
+    state: approved
+
+  # checkout charges a payment token — an irreversible financial mutation. Make
+  # it idempotent via a client-supplied key and require confirmation.
+  checkout:
+    side_effect: mutation
+    risk: financial
+    reversible: false
+    idempotency:
+      strategy: required_request_key
+      key_location: body
+      field: idempotencyKey
+    confirmation:
+      required: true
+      risk: financial
+      reason: Checkout charges the customer's payment method and cannot be undone.
+    retries:
+      enabled: true
+      only_on:
+        - timeout
+        - "503"
+      max_attempts: 3
+    state: approved
+
+  # cancelOrder voids a shipment and issues a refund — destructive.
+  cancelOrder:
+    side_effect: mutation
+    risk: destructive
+    confirmation:
+      required: true
+      risk: destructive
+    state: approved
+
+workflows:
+  place_order:
+    display_name: Place an order
+    description: Add an item to a cart, then check out and charge the customer.
+    intent_examples:
+      - buy this product
+      - place an order for a customer
+    human_approval: true
+    steps:
+      - operation: addToCart
+        description: Add the product to the cart.
+      - operation: checkout
+        description: Check out the cart with an idempotency key.
+        bindings:
+          cartId: $.steps.addToCart.id
