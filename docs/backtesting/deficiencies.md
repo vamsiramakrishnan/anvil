@@ -729,3 +729,45 @@ whole-spec naming-dialect inference + multi-surface collision repair
   send vs readonly) in the generated AIR. Methods with scopes now emit
   `security: [{oauth2: [...scopes]}]`, which normalize already consumes.
   Test: "emits per-operation security from method scopes".
+
+## GDS / SOAP (Travelport uAPI Air v45_0 — real multi-file WSDL)
+
+The first production SOAP tree (8 files: entry WSDL → wsdl:import'ed abstract
+WSDL → transitive xsd:include/xsd:import chains with `../` relative paths)
+surfaced the WSDL analogue of proto finding #22, in three connected parts.
+
+### 28. Multi-file WSDL/XSD trees could not compile at all — FIXED
+- **Symptom**: Travelport's `Air.wsdl` entry point compiled to **0
+  operations** (its portType and messages live in the `wsdl:import`ed
+  `AirAbstract.wsdl`); compiling the abstract WSDL directly yielded opaque
+  request stubs (unresolved `xsd:include`/`xsd:import`); and `anvil source
+  add` refused `.xsd` supporting files outright with `source/unparseable`
+  (the importer YAML-probed them).
+- **Fix (mechanism, mirrors #22)**: `.xsd` files get the `.proto`-style
+  verbatim capture bypass and an XML import walker captures the whole
+  referenced tree preserving relative directory structure; `adaptWsdl` takes
+  an injectable import resolver (same shape as the proto one, now a shared
+  `snapshotImportResolver`) and resolves `wsdl:import` / `xsd:include` /
+  `xsd:import` transitively with cycle protection and graceful degradation
+  for missing targets; `complexContent/extension` lowers to `allOf` and
+  `element ref=` promotes to component `$ref`s via a deferred resolution
+  pass. Adapters stay pure — no filesystem access inside `protocols/`.
+- **Proof**: the real 8-file tree compiles from `Air.wsdl` with 29
+  operations and real request schemas (AirLowFareSearch's body carries
+  SearchPassenger/AirPricingModifiers/… from three different XSD files);
+  the synthetic single-file `examples/soap/bank.wsdl` output is
+  byte-identical before/after. Tests: 6 multi-file WSDL fixtures + 3
+  importer capture tests.
+
+### 29. portType names polluted WSDL operation naming — FIXED
+- **Symptom**: operations compiled via an imported portType were named like
+  `tp_air2 service create flight_details_port_type` — the portType's own
+  name leaked in as the object noun, and the wire operation name lost out.
+- **Fix**: when an operation name repeats across portTypes the
+  portType-derived identity disambiguates the operationId/path while
+  `x-soap-operation` keeps the wire name; unique names (bank.wsdl) are
+  provably untouched. Travelport now yields `air_service_air_low_fare_search`
+  (CLI `air_service AirLowFareSearch search`), and the classifier reads the
+  real verbs: all five `*Search` operations classify as reads, ticketing/
+  exchange as review-required mutations, and both refund operations as
+  financial-risk mutations.

@@ -64,7 +64,7 @@ fetch before being marked fetchable.
 | 28 | Nucleus FinnOne | ❌ no public developer portal or spec at all | ❌ none | **GATED** — see `banking.md` |
 | 29 | Murex MX.3 | ❌ client-only documentation (mxplus API under NDA) | ❌ none | **GATED** — see `banking.md` |
 | 30 | Amadeus Self-Service | ✅ amadeus4dev/amadeus-open-api-specification (Swagger 2.0 per product) | ⚠️ community (donghyun-chae/mcp-amadeus etc.) | **BACKTESTED** — see `gds.md` |
-| 31 | Travelport uAPI | ✅ official Travelport GitHub, 158 WSDLs (SOAP, v26–v51) | ❌ none found | SPEC-ONLY (drove the multi-file WSDL mechanism) — see `gds.md` |
+| 31 | Travelport uAPI | ✅ official Travelport GitHub, 158 WSDLs (SOAP, v26–v51) | ❌ none found | SPEC-ONLY, **compiled** (29 ops from the real 8-file Air tree; drove the multi-file WSDL mechanism, findings #28–#29) — see `gds.md` |
 | 32 | Sabre | ✅ SabreDevStudio WSDLs (30 real SOAP services) | ⚠️ official Sabre MCP exists but partner-gated | SPEC-ONLY — see `gds.md` |
 
 Full per-system research detail (URLs, tool counts, caveats) is in the task
@@ -80,8 +80,8 @@ Zendesk, Intercom, Zoom, HubSpot, DocuSign) plus two **real non-REST schemas** �
 **GitHub's 1,752-type GraphQL** (vs `github-mcp-server`) and **Temporal's
 121-rpc gRPC proto** (vs `temporal-mcp`), with **Linear** GraphQL and **etcd**
 multi-file proto alongside. They span OpenAPI 3.x, Swagger 2.0, Google
-Discovery, RPC-over-HTTP, GraphQL SDL, and gRPC/proto3. **27 real, systemic
-compiler bugs found and fixed**, each with a regression test:
+Discovery, RPC-over-HTTP, GraphQL SDL, gRPC/proto3, and SOAP/WSDL. **29 real,
+systemic compiler bugs found and fixed**, each with a regression test:
 
 1. Compiler crash on any self-referential schema (Jira's `LinkGroup`)
 2. `POST /search` misclassified as an unsafe mutation (Jira's JQL search)
@@ -110,6 +110,8 @@ compiler bugs found and fixed**, each with a regression test:
 25. Every PUT/POST whose path ended in `status`/`progress`/`state` was silently flipped to a read — the write-method read exception is now search-on-POST only (external review, PR #13)
 26. Discovery server URL dropped `servicePath` — Drive-shaped documents would call `/files` instead of `/drive/v3/files` (external review)
 27. Discovery per-method OAuth scopes were parsed but never emitted, so every Google operation lost its real scopes in the AIR (external review)
+28. Multi-file WSDL/XSD trees couldn't compile at all — Travelport's entry WSDL yielded 0 operations (portType behind `wsdl:import`), XSD includes never resolved, and `.xsd` files couldn't even be locked as sources; fixed with the same snapshot-capture + injectable-resolver mechanism as #22
+29. portType names polluted WSDL operation naming (`…create flight_details_port_type`) — the wire operation name now drives identity, portTypes only disambiguate
 
 See `deficiencies.md` for the full writeup of each (symptom → root cause →
 fix → test), and the per-product / per-batch detail in `jira.md`,
