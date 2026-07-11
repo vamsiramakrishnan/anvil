@@ -1,15 +1,12 @@
 /**
- * A small, dependency-free XML parser — just enough to read WSDL 1.1 and its
- * embedded XSD. It produces a DOM-like tree of elements (tag, attributes,
- * children, text). Namespace prefixes are preserved verbatim on tags/attrs;
- * WSDL consumers match on the local name (see `localName`). It handles
- * elements, self-closing tags, attributes (single/double quoted), text nodes,
- * comments, CDATA, the XML declaration, and processing instructions.
- *
- * This is not a validating parser and does not resolve entities beyond the five
- * predefined ones; it is intentionally forgiving so a real-world WSDL parses
- * into a usable tree rather than throwing on a stray construct.
+ * A thin DOM-like view over `fast-xml-parser`, just enough to read WSDL 1.1 and
+ * its embedded XSD. The library owns tokenizing/entity-decoding/CDATA/comments;
+ * this module only reshapes its `preserveOrder` output into the small
+ * `XmlElement` tree the WSDL adapter walks (tag, attributes, children, text).
+ * Namespace prefixes are preserved verbatim on tags/attrs; consumers match on
+ * the local name (see `localName`).
  */
+import { XMLParser } from "fast-xml-parser";
 
 export interface XmlElement {
   /** Tag as written, including any namespace prefix (e.g. "wsdl:message"). */
@@ -32,161 +29,59 @@ export function prefixOf(qname: string): string {
   return idx >= 0 ? qname.slice(0, idx) : "";
 }
 
-const ENTITIES: Record<string, string> = {
-  "&lt;": "<",
-  "&gt;": ">",
-  "&amp;": "&",
-  "&quot;": '"',
-  "&apos;": "'",
-};
+const ATTRS_KEY = ":@";
+const TEXT_KEY = "#text";
 
-function decodeEntities(text: string): string {
-  return text.replace(/&(?:lt|gt|amp|quot|apos|#\d+|#x[0-9a-fA-F]+);/g, (m) => {
-    if (m.startsWith("&#x")) return String.fromCodePoint(Number.parseInt(m.slice(3, -1), 16));
-    if (m.startsWith("&#")) return String.fromCodePoint(Number.parseInt(m.slice(2, -1), 10));
-    return ENTITIES[m] ?? m;
-  });
-}
+/** One node in fast-xml-parser's preserveOrder output. */
+type OrderedNode = Record<string, unknown> & { [ATTRS_KEY]?: Record<string, unknown> };
+
+const parser = new XMLParser({
+  preserveOrder: true,
+  ignoreAttributes: false,
+  attributeNamePrefix: "",
+  // Keep every value as its authored string — WSDL/XSD reads attributes like
+  // minOccurs="0" and maxOccurs="unbounded" that must not be coerced to numbers.
+  parseTagValue: false,
+  parseAttributeValue: false,
+  trimValues: true,
+  ignoreDeclaration: true,
+  ignorePiTags: true,
+  commentPropName: undefined,
+});
 
 export function parseXml(src: string): XmlElement {
-  let i = 0;
-  const n = src.length;
-  const root: XmlElement = { tag: "#root", attrs: {}, children: [], text: "" };
-  const stack: XmlElement[] = [root];
-
-  const top = (): XmlElement => stack[stack.length - 1] as XmlElement;
-
-  while (i < n) {
-    if (src[i] !== "<") {
-      // Text node.
-      let text = "";
-      while (i < n && src[i] !== "<") {
-        text += src[i];
-        i++;
-      }
-      const trimmed = decodeEntities(text).trim();
-      if (trimmed) top().text += (top().text ? " " : "") + trimmed;
-      continue;
-    }
-    // A tag of some kind.
-    if (src.startsWith("<!--", i)) {
-      const end = src.indexOf("-->", i);
-      i = end < 0 ? n : end + 3;
-      continue;
-    }
-    if (src.startsWith("<![CDATA[", i)) {
-      const end = src.indexOf("]]>", i);
-      const content = src.slice(i + 9, end < 0 ? n : end);
-      top().text += (top().text ? " " : "") + content.trim();
-      i = end < 0 ? n : end + 3;
-      continue;
-    }
-    if (src.startsWith("<?", i)) {
-      const end = src.indexOf("?>", i);
-      i = end < 0 ? n : end + 2;
-      continue;
-    }
-    if (src.startsWith("<!", i)) {
-      // DOCTYPE or similar — skip to the matching '>'.
-      const end = src.indexOf(">", i);
-      i = end < 0 ? n : end + 1;
-      continue;
-    }
-    // Closing tag.
-    if (src.startsWith("</", i)) {
-      const end = src.indexOf(">", i);
-      i = end < 0 ? n : end + 1;
-      if (stack.length > 1) stack.pop();
-      continue;
-    }
-    // Opening (or self-closing) tag.
-    const end = findTagEnd(src, i);
-    const inner = src.slice(i + 1, end).trim();
-    i = end + 1;
-    const selfClosing = inner.endsWith("/");
-    const body = selfClosing ? inner.slice(0, -1).trim() : inner;
-    const { tag, attrs } = parseTag(body);
-    const element: XmlElement = { tag, attrs, children: [], text: "" };
-    top().children.push(element);
-    if (!selfClosing) stack.push(element);
-  }
-
-  // The document element is the first real child of the synthetic root.
-  return (root.children[0] as XmlElement | undefined) ?? root;
+  const nodes = parser.parse(src) as OrderedNode[];
+  const documentNode = nodes.find((node) => elementKey(node) !== undefined);
+  if (!documentNode) return { tag: "#root", attrs: {}, children: [], text: "" };
+  const tag = elementKey(documentNode) as string;
+  return toElement(tag, documentNode, documentNode[ATTRS_KEY]);
 }
 
-/** Find the index of the '>' that closes a tag, respecting quoted attributes. */
-function findTagEnd(src: string, start: number): number {
-  let i = start + 1;
-  const n = src.length;
-  let quote: string | null = null;
-  while (i < n) {
-    const c = src[i];
-    if (quote) {
-      if (c === quote) quote = null;
-    } else if (c === '"' || c === "'") {
-      quote = c;
-    } else if (c === ">") {
-      return i;
-    }
-    i++;
-  }
-  return n;
+/** The single element tag key of a node, ignoring attributes/text markers. */
+function elementKey(node: OrderedNode): string | undefined {
+  return Object.keys(node).find((k) => k !== ATTRS_KEY && k !== TEXT_KEY);
 }
 
-function parseTag(body: string): { tag: string; attrs: Record<string, string> } {
-  let i = 0;
-  const n = body.length;
-  const readName = (): string => {
-    let name = "";
-    while (i < n && !/[\s=/>]/.test(body[i] as string)) {
-      name += body[i];
-      i++;
-    }
-    return name;
-  };
-  const skipWs = () => {
-    while (i < n && /\s/.test(body[i] as string)) i++;
-  };
-  const tag = readName();
+function toElement(tag: string, node: OrderedNode, rawAttrs: unknown): XmlElement {
   const attrs: Record<string, string> = {};
-  skipWs();
-  while (i < n) {
-    skipWs();
-    if (i >= n) break;
-    const attrName = readName();
-    if (!attrName) {
-      i++;
+  if (rawAttrs && typeof rawAttrs === "object") {
+    for (const [k, v] of Object.entries(rawAttrs)) attrs[k] = String(v);
+  }
+  const children: XmlElement[] = [];
+  let text = "";
+  const body = node[tag];
+  const items = Array.isArray(body) ? (body as OrderedNode[]) : [];
+  for (const item of items) {
+    if (TEXT_KEY in item) {
+      const chunk = String(item[TEXT_KEY]).trim();
+      if (chunk) text += (text ? " " : "") + chunk;
       continue;
     }
-    skipWs();
-    if (body[i] === "=") {
-      i++;
-      skipWs();
-      const quote = body[i];
-      if (quote === '"' || quote === "'") {
-        i++;
-        let val = "";
-        while (i < n && body[i] !== quote) {
-          val += body[i];
-          i++;
-        }
-        i++;
-        attrs[attrName] = decodeEntities(val);
-      } else {
-        // Unquoted value.
-        let val = "";
-        while (i < n && !/[\s>]/.test(body[i] as string)) {
-          val += body[i];
-          i++;
-        }
-        attrs[attrName] = decodeEntities(val);
-      }
-    } else {
-      attrs[attrName] = "";
-    }
+    const childTag = elementKey(item);
+    if (childTag === undefined) continue;
+    children.push(toElement(childTag, item, item[ATTRS_KEY]));
   }
-  return { tag, attrs };
+  return { tag, attrs, children, text };
 }
 
 /** All descendant elements (depth-first) whose local name matches. */
