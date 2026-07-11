@@ -44,6 +44,7 @@ const discoverySpec = JSON.stringify({
               parameters: { userId: { type: "string", location: "path", required: true } },
               request: { $ref: "Message" },
               response: { $ref: "Message" },
+              scopes: ["https://www.googleapis.com/auth/gmail.send"],
             },
           },
         },
@@ -260,6 +261,58 @@ describe("Google Discovery adapter", () => {
   it("carries the OAuth2 scopes into a security scheme", () => {
     const schemes = doc.components?.securitySchemes as Record<string, { type: string }>;
     expect(schemes.oauth2?.type).toBe("oauth2");
+  });
+
+  it("emits per-operation security from method scopes (finding #27)", () => {
+    // Gmail's send needs gmail.send while list needs only readonly — without a
+    // per-operation security requirement every method inherited the document's
+    // bare `oauth2: []` and lost its real scopes in the generated AIR.
+    const send = doc.paths?.["/gmail/v1/users/{userId}/messages/send"]?.post as Record<
+      string,
+      unknown
+    >;
+    expect(send.security).toEqual([{ oauth2: ["https://www.googleapis.com/auth/gmail.send"] }]);
+    // A method without declared scopes emits none (falls back to the document default).
+    const list = doc.paths?.["/gmail/v1/users/{userId}/messages"]?.get as Record<string, unknown>;
+    expect(list.security).toBeUndefined();
+  });
+
+  it("builds the server from baseUrl/servicePath, not bare rootUrl (finding #26)", () => {
+    // Gmail's servicePath is "" so rootUrl alone worked by luck; Drive-shaped
+    // documents put the API prefix in servicePath and their method paths are
+    // relative to it — dropping it would call /files instead of /drive/v3/files.
+    const drive = JSON.stringify({
+      kind: "discovery#restDescription",
+      name: "drive",
+      version: "v3",
+      title: "Drive API",
+      rootUrl: "https://www.googleapis.com/",
+      servicePath: "drive/v3/",
+      resources: {
+        files: {
+          methods: {
+            list: { id: "drive.files.list", path: "files", httpMethod: "GET" },
+          },
+        },
+      },
+      schemas: {},
+    });
+    const lowered = adaptDiscovery(drive);
+    expect(lowered.servers?.[0]?.url).toBe("https://www.googleapis.com/drive/v3");
+    // A document that precomputes baseUrl wins outright.
+    const withBase = adaptDiscovery(
+      JSON.stringify({
+        kind: "discovery#restDescription",
+        name: "x",
+        version: "v1",
+        baseUrl: "https://x.googleapis.com/api/v1/",
+        rootUrl: "https://x.googleapis.com/",
+        servicePath: "api/v1/",
+        resources: { r: { methods: { get: { id: "x.r.get", path: "r", httpMethod: "GET" } } } },
+        schemas: {},
+      }),
+    );
+    expect(withBase.servers?.[0]?.url).toBe("https://x.googleapis.com/api/v1");
   });
 });
 

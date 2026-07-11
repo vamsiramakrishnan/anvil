@@ -165,6 +165,14 @@ export function adaptDiscovery(text: string): OpenApiDocument {
         },
       };
     }
+    // Per-method OAuth scopes → a per-operation security requirement, so the
+    // pipeline's auth resolution sees each method's REAL scopes (Gmail's send
+    // needs gmail.send; its list needs only readonly). Without this every
+    // operation inherited the document-level `oauth2: []` and lost its scopes
+    // in the generated AIR (finding #27, external review).
+    if (method.scopes && method.scopes.length > 0) {
+      operation.security = [{ oauth2: method.scopes }];
+    }
 
     const pathItem = paths[path] ?? {};
     pathItem[verb] = operation;
@@ -179,7 +187,15 @@ export function adaptDiscovery(text: string): OpenApiDocument {
   const oauthScopes: Record<string, string> = {};
   for (const [scope, meta] of Object.entries(scopeMap)) oauthScopes[scope] = meta.description ?? "";
 
-  const server = (doc.rootUrl ?? doc.baseUrl ?? "https://www.googleapis.com/").replace(/\/$/, "");
+  // Method paths are relative to rootUrl + servicePath (= baseUrl), NOT bare
+  // rootUrl. Gmail's servicePath is "" so either works there, but Drive-shaped
+  // documents (rootUrl "https://www.googleapis.com/", servicePath "drive/v3/",
+  // method path "files") would compile to calls against "/files" instead of
+  // "/drive/v3/files" (finding #26, external review). Prefer the document's
+  // own precomputed baseUrl; reconstruct it from the parts when absent.
+  const server = (
+    doc.baseUrl ?? `${doc.rootUrl ?? "https://www.googleapis.com/"}${doc.servicePath ?? ""}`
+  ).replace(/\/$/, "");
 
   return {
     openapi: "3.0.0",

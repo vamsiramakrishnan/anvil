@@ -59,10 +59,35 @@ describe("classifier", () => {
   });
 
   it("keeps a POST validate/simulate endpoint conservatively a mutation", () => {
-    // Unlike search/export/poll, these verbs often still have a side effect
+    // Unlike search, these verbs often still have a side effect
     // (quota, temporary hold, audit trail) in real APIs, so they stay mutations.
     const { effect } = classifyEffect("post", "validateOrder /orders/validate");
     expect(effect.kind).toBe("mutation");
+  });
+
+  it("never flips a write-method status/progress endpoint to a read (finding #25)", () => {
+    // A write-method endpoint named with a poll-family verb SETS state, it
+    // doesn't check it. Treating `PUT /tickets/{id}/status` as a risk-free
+    // read would bypass the whole mutation review/confirmation posture.
+    for (const [m, sig] of [
+      ["put", "updateTicketStatus /tickets/{id}/status"],
+      ["post", "setStatus /tickets/{id}/status"],
+      ["put", "updateProgress /jobs/{id}/progress"],
+    ] as const) {
+      const { effect } = classifyEffect(m, sig);
+      expect(effect.kind, `${m} ${sig}`).toBe("mutation");
+    }
+  });
+
+  it("keeps PUT-search and POST-export conservatively mutations (finding #25)", () => {
+    // The write-method read exception is search-family on POST ONLY: real
+    // PUT-search endpoints are practically nonexistent, and a POST export
+    // typically creates a job/artifact. A genuinely read-only endpoint outside
+    // the rule is what the manifest's `side_effect: read` override is for.
+    expect(classifyEffect("put", "search /things/search").effect.kind).toBe("mutation");
+    expect(classifyEffect("post", "exportReport /reports/export").effect.kind).toBe("mutation");
+    // The validated Jira case is untouched.
+    expect(classifyEffect("post", "searchIssues /search").effect.kind).toBe("read");
   });
 });
 
