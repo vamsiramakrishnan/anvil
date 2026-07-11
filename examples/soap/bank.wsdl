@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Retail Banking SOAP service — a diverse example exercising Anvil's WSDL/XSD
+  adapter. Operation names drive effect inference: Get*/List* lower to read
+  operations (safe, retryable); everything else lowers to write operations
+  (conservative — unsafe until enriched/approved). TransferFunds is financial
+  and CloseAccount is destructive; the manifest (anvil.yaml) enriches them.
+-->
+<wsdl:definitions
+    name="RetailBanking"
+    targetNamespace="http://example.com/banking"
+    xmlns:tns="http://example.com/banking"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+    xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/">
+
+  <wsdl:documentation>Retail Banking core operations over SOAP 1.1.</wsdl:documentation>
+
+  <wsdl:types>
+    <xsd:schema targetNamespace="http://example.com/banking"
+                xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+
+      <xsd:simpleType name="Currency">
+        <xsd:restriction base="xsd:string">
+          <xsd:enumeration value="USD"/>
+          <xsd:enumeration value="EUR"/>
+          <xsd:enumeration value="GBP"/>
+        </xsd:restriction>
+      </xsd:simpleType>
+
+      <xsd:complexType name="Money">
+        <xsd:sequence>
+          <xsd:element name="amount" type="xsd:decimal"/>
+          <xsd:element name="currency" type="tns:Currency"/>
+        </xsd:sequence>
+      </xsd:complexType>
+
+      <xsd:complexType name="Transaction">
+        <xsd:sequence>
+          <xsd:element name="id" type="xsd:string"/>
+          <xsd:element name="postedAt" type="xsd:dateTime"/>
+          <xsd:element name="description" type="xsd:string"/>
+          <xsd:element name="amount" type="tns:Money"/>
+        </xsd:sequence>
+      </xsd:complexType>
+
+      <!-- GetAccountBalance -->
+      <xsd:element name="GetAccountBalanceRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="accountId" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="GetAccountBalanceResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="accountId" type="xsd:string"/>
+            <xsd:element name="balance" type="tns:Money"/>
+            <xsd:element name="available" type="tns:Money"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <!-- ListTransactions -->
+      <xsd:element name="ListTransactionsRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="accountId" type="xsd:string"/>
+            <xsd:element name="fromDate" type="xsd:date" minOccurs="0"/>
+            <xsd:element name="toDate" type="xsd:date" minOccurs="0"/>
+            <xsd:element name="limit" type="xsd:int" minOccurs="0"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="ListTransactionsResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="transactions" type="tns:Transaction" minOccurs="0" maxOccurs="unbounded"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <!-- TransferFunds -->
+      <xsd:element name="TransferFundsRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="fromAccountId" type="xsd:string"/>
+            <xsd:element name="toAccountId" type="xsd:string"/>
+            <xsd:element name="amount" type="tns:Money"/>
+            <xsd:element name="memo" type="xsd:string" minOccurs="0"/>
+            <xsd:element name="idempotencyKey" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="TransferFundsResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="transferId" type="xsd:string"/>
+            <xsd:element name="status" type="xsd:string"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+
+      <!-- CloseAccount -->
+      <xsd:element name="CloseAccountRequest">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="accountId" type="xsd:string"/>
+            <xsd:element name="reason" type="xsd:string" minOccurs="0"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+      <xsd:element name="CloseAccountResponse">
+        <xsd:complexType>
+          <xsd:sequence>
+            <xsd:element name="accountId" type="xsd:string"/>
+            <xsd:element name="closed" type="xsd:boolean"/>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+    </xsd:schema>
+  </wsdl:types>
+
+  <wsdl:message name="GetAccountBalanceInput">
+    <wsdl:part name="parameters" element="tns:GetAccountBalanceRequest"/>
+  </wsdl:message>
+  <wsdl:message name="GetAccountBalanceOutput">
+    <wsdl:part name="parameters" element="tns:GetAccountBalanceResponse"/>
+  </wsdl:message>
+  <wsdl:message name="ListTransactionsInput">
+    <wsdl:part name="parameters" element="tns:ListTransactionsRequest"/>
+  </wsdl:message>
+  <wsdl:message name="ListTransactionsOutput">
+    <wsdl:part name="parameters" element="tns:ListTransactionsResponse"/>
+  </wsdl:message>
+  <wsdl:message name="TransferFundsInput">
+    <wsdl:part name="parameters" element="tns:TransferFundsRequest"/>
+  </wsdl:message>
+  <wsdl:message name="TransferFundsOutput">
+    <wsdl:part name="parameters" element="tns:TransferFundsResponse"/>
+  </wsdl:message>
+  <wsdl:message name="CloseAccountInput">
+    <wsdl:part name="parameters" element="tns:CloseAccountRequest"/>
+  </wsdl:message>
+  <wsdl:message name="CloseAccountOutput">
+    <wsdl:part name="parameters" element="tns:CloseAccountResponse"/>
+  </wsdl:message>
+
+  <wsdl:portType name="BankingPort">
+    <wsdl:operation name="GetAccountBalance">
+      <wsdl:documentation>Return the current and available balance for an account.</wsdl:documentation>
+      <wsdl:input message="tns:GetAccountBalanceInput"/>
+      <wsdl:output message="tns:GetAccountBalanceOutput"/>
+    </wsdl:operation>
+    <wsdl:operation name="ListTransactions">
+      <wsdl:documentation>List posted transactions for an account.</wsdl:documentation>
+      <wsdl:input message="tns:ListTransactionsInput"/>
+      <wsdl:output message="tns:ListTransactionsOutput"/>
+    </wsdl:operation>
+    <wsdl:operation name="TransferFunds">
+      <wsdl:documentation>Move money between two accounts. Irreversible financial mutation.</wsdl:documentation>
+      <wsdl:input message="tns:TransferFundsInput"/>
+      <wsdl:output message="tns:TransferFundsOutput"/>
+    </wsdl:operation>
+    <wsdl:operation name="CloseAccount">
+      <wsdl:documentation>Permanently close an account. Destructive.</wsdl:documentation>
+      <wsdl:input message="tns:CloseAccountInput"/>
+      <wsdl:output message="tns:CloseAccountOutput"/>
+    </wsdl:operation>
+  </wsdl:portType>
+
+  <wsdl:binding name="BankingBinding" type="tns:BankingPort">
+    <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <wsdl:operation name="GetAccountBalance">
+      <soap:operation soapAction="http://example.com/banking/GetAccountBalance"/>
+      <wsdl:input><soap:body use="literal"/></wsdl:input>
+      <wsdl:output><soap:body use="literal"/></wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="ListTransactions">
+      <soap:operation soapAction="http://example.com/banking/ListTransactions"/>
+      <wsdl:input><soap:body use="literal"/></wsdl:input>
+      <wsdl:output><soap:body use="literal"/></wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="TransferFunds">
+      <soap:operation soapAction="http://example.com/banking/TransferFunds"/>
+      <wsdl:input><soap:body use="literal"/></wsdl:input>
+      <wsdl:output><soap:body use="literal"/></wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="CloseAccount">
+      <soap:operation soapAction="http://example.com/banking/CloseAccount"/>
+      <wsdl:input><soap:body use="literal"/></wsdl:input>
+      <wsdl:output><soap:body use="literal"/></wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+
+  <wsdl:service name="RetailBanking">
+    <wsdl:documentation>Retail Banking SOAP endpoint.</wsdl:documentation>
+    <wsdl:port name="BankingPort" binding="tns:BankingBinding">
+      <soap:address location="https://banking.example.com/soap"/>
+    </wsdl:port>
+  </wsdl:service>
+</wsdl:definitions>

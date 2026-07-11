@@ -1,0 +1,53 @@
+# Supplemental Anvil manifest for the Orders gRPC service. Enriches the effect,
+# risk, and idempotency semantics proto cannot express, and approves operations.
+service:
+  name: orders
+  display_name: Orders gRPC Service
+  owner: fulfillment-platform
+
+operations:
+  # Reads — safe and retryable.
+  GetOrder:
+    state: approved
+  ListOrders:
+    state: approved
+
+  # PlaceOrder charges a payment token — an irreversible financial mutation made
+  # idempotent by a client-supplied key.
+  PlaceOrder:
+    side_effect: mutation
+    risk: financial
+    reversible: false
+    idempotency:
+      strategy: required_request_key
+      key_location: body
+      field: idempotency_key
+    confirmation:
+      required: true
+      risk: financial
+      reason: PlaceOrder charges the customer's payment method.
+    retries:
+      enabled: true
+      only_on:
+        - timeout
+        - grpc_unavailable
+        - grpc_deadline_exceeded
+      max_attempts: 3
+    state: approved
+
+  # ReserveStock holds inventory — idempotent by (sku, quantity) reservation.
+  ReserveStock:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    state: approved
+
+  # CancelOrder is destructive.
+  CancelOrder:
+    side_effect: mutation
+    risk: destructive
+    confirmation:
+      required: true
+      risk: destructive
+    state: approved

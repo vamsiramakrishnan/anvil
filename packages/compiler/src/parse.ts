@@ -2,6 +2,7 @@ import { posix } from "node:path";
 import type { SourceKind } from "@anvil/air";
 import { dereference, load } from "@scalar/openapi-parser";
 import { convertObj } from "swagger2openapi";
+import { adaptProtocol, type ProtocolFormat } from "./protocols/index.js";
 import { type CompilerSource, ephemeralCompilerSource } from "./source/compiler-source.js";
 
 /**
@@ -46,6 +47,13 @@ export interface SecurityScheme {
   flows?: Record<string, { scopes?: Record<string, string> }>;
 }
 
+/** EntrypointFormat values that are non-REST protocols lowered by an adapter. */
+const PROTOCOL_FORMATS: Record<string, { format: ProtocolFormat; kind: SourceKind }> = {
+  graphql: { format: "graphql", kind: "graphql" },
+  protobuf: { format: "protobuf", kind: "protobuf" },
+  wsdl: { format: "wsdl", kind: "wsdl" },
+};
+
 /**
  * Parse the entrypoint of a CompilerSource into an OpenAPI 3.x document,
  * resolving every LOCAL $ref against the snapshot's virtual filesystem — never
@@ -55,11 +63,36 @@ export interface SecurityScheme {
  *
  * Format ownership is unchanged (spec: library-maximal): Swagger 2.0 goes
  * through swagger2openapi's converter, and $ref resolution flows through
- * @scalar/openapi-parser. Multi-file external $refs are supported for
- * OpenAPI 3.x; a Swagger 2.0 entrypoint that spans files is rejected rather
- * than silently dropping the references the converter cannot see.
+ * @scalar/openapi-parser. Non-REST protocols (GraphQL/gRPC/SOAP) are lowered by
+ * an adapter into a pre-dereference OpenAPI 3.0 document first. Multi-file
+ * external $refs are supported for OpenAPI 3.x; a Swagger 2.0 entrypoint that
+ * spans files is rejected rather than silently dropping references.
  */
 export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
+  // Non-REST protocols (GraphQL, gRPC/proto, SOAP/WSDL) are lowered into a
+  // pre-dereference OpenAPI 3.0 document, then run through the identical
+  // dereference + normalize path — so one internal model serves every format.
+  const protocol = PROTOCOL_FORMATS[source.entrypoint.format];
+  if (protocol) {
+    const bytes = source.files.get(source.entrypoint.path);
+    if (bytes === undefined) {
+      throw new Error(
+        `Entrypoint bytes are not represented in the snapshot: ${source.entrypoint.path}`,
+      );
+    }
+    const text = new TextDecoder("utf-8").decode(bytes);
+    let lowered: OpenApiDocument;
+    try {
+      lowered = adaptProtocol(protocol.format, text);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to parse ${protocol.format} source: ${detail}`);
+    }
+    const { schema, errors } = await dereference(lowered as Record<string, unknown>);
+    if (!schema) throw failure(errors);
+    return { kind: protocol.kind, document: schema as OpenApiDocument };
+  }
+
   const entry = source.entrypoint.path;
   // Load the entrypoint and every reachable external file into one filesystem,
   // reading exclusively from the snapshot's bytes via the virtual plugin.
