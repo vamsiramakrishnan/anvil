@@ -33,15 +33,47 @@ export const ORIGIN_AUTHORITY: Record<OverlayOrigin, number> = {
 };
 
 /**
- * Origins whose `set` is authoritative enough to *loosen* a safety-sensitive
- * predicate without clearing the evidence bar. Deliberate operator/manifest
- * intent and control-plane gateway facts qualify; inferred sources do not.
+ * How much a source can *prove* about a predicate — not a total ordering of
+ * source names (see review finding #2). Authority is predicate-specific: a
+ * gateway is authoritative for the scopes it enforces and the route it exposes,
+ * but it cannot prove backend idempotency, business reversibility, or that a
+ * confirmation is semantically unnecessary. Only an `authoritative` source may
+ * *loosen* a safety-sensitive predicate.
  */
-export const AUTHORITATIVE_ORIGINS: ReadonlySet<OverlayOrigin> = new Set<OverlayOrigin>([
-  "operator",
-  "manifest",
-  "gateway",
-]);
+export type SafetyAuthority = "authoritative" | "corroborating" | "insufficient";
+
+export function authorityFor(origin: OverlayOrigin, predicate: SemanticPredicate): SafetyAuthority {
+  // Operator and manifest are deliberate human configuration — authoritative for
+  // any predicate (an operator may knowingly override any control).
+  if (origin === "operator" || origin === "manifest") return "authoritative";
+
+  if (origin === "gateway") {
+    switch (predicate) {
+      // Control-plane facts the gateway actually enforces.
+      case "auth.scopes":
+        return "authoritative";
+      // The gateway observes requests but cannot prove backend duplicate-safety.
+      case "idempotency.mode":
+        return "corroborating";
+      // Backend/business semantics a gateway cannot prove.
+      default:
+        return "insufficient";
+    }
+  }
+
+  // investigation / observed_traffic: an observation, not a proof of safety.
+  // Loosening a safety control from these requires verified evidence, which the
+  // overlay evidence model does not yet carry — so they are insufficient here.
+  return "insufficient";
+}
+
+/** True when at least one contributing origin can authoritatively loosen `predicate`. */
+export function canLoosen(
+  origins: readonly OverlayOrigin[],
+  predicate: SemanticPredicate,
+): boolean {
+  return origins.some((o) => authorityFor(o, predicate) === "authoritative");
+}
 
 /**
  * Predicates where a contradiction must not be silently decided. Mirrors AIR's

@@ -13,7 +13,7 @@ import {
   type Operation,
   type RiskLevel,
 } from "@anvil/air";
-import { disclosurePlanFor } from "./disclosure.js";
+import { disclosurePlanForMembers } from "./disclosure.js";
 import type { AuthProfile, CapabilityContract, OwnerRef, SafetyProfile } from "./model.js";
 
 const RISK_ORDER: RiskLevel[] = ["none", "low", "medium", "high", "financial", "destructive"];
@@ -31,6 +31,12 @@ export interface CapabilitySpec {
   lifecycle?: CapabilityContract["lifecycle"];
   owner?: OwnerRef;
   evidence?: Evidence;
+  /**
+   * A reviewer-supplied tightening of the derived safety profile. It is an *input*
+   * to the build (so it participates in the digest, #6) — never applied after the
+   * digest is computed.
+   */
+  safetyProfileOverride?: Partial<SafetyProfile>;
 }
 
 function aggregateAuth(members: Operation[]): AuthProfile {
@@ -62,9 +68,18 @@ function aggregateSafety(members: Operation[]): SafetyProfile {
   };
 }
 
-/** The digest of a contract: everything but the digest field itself. */
+/**
+ * The digest of a contract. It covers the semantic content *and* a deterministic
+ * evidence digest (#9), so a change in the evidence supporting the grouping —
+ * provenance, a claim becoming conflicted, verification — changes contract
+ * identity. Claim timestamps are excluded so identity stays deterministic.
+ */
 function contractDigest(contract: Omit<CapabilityContract, "digest">): string {
-  return hashCanonical({ ...contract, evidence: undefined });
+  const semanticDigest = hashCanonical({ ...contract, evidence: undefined });
+  const evidenceDigest = hashCanonical(
+    contract.evidence.claims.map((c) => ({ ...c, timestamp: undefined })),
+  );
+  return hashCanonical({ semanticDigest, evidenceDigest });
 }
 
 /** Map a discovered capability's lifecycle onto the contract lifecycle. */
@@ -95,29 +110,13 @@ export function buildCapabilityContract(
     operationIds: members.map((op) => op.id),
     procedureRefs: spec.procedureRefs ?? [],
     authProfile: aggregateAuth(members),
-    safetyProfile: aggregateSafety(members),
-    disclosure: disclosurePlanForSpec(air, spec, members),
+    safetyProfile: { ...aggregateSafety(members), ...spec.safetyProfileOverride },
+    disclosure: disclosurePlanForMembers(air, spec.id, members),
     lifecycle: spec.lifecycle ?? "proposed",
     owner: spec.owner,
     evidence: spec.evidence ?? { claims: [] },
   };
   return { ...withoutDigest, digest: contractDigest(withoutDigest) };
-}
-
-/**
- * Disclosure for an explicit spec: if the members are exactly a discovered
- * capability's, reuse the whole-capability plan; otherwise project only the
- * member operations (an edited membership still discloses coherently).
- */
-function disclosurePlanForSpec(air: AirDocument, spec: CapabilitySpec, members: Operation[]) {
-  const plan = disclosurePlanFor(air, spec.id);
-  const memberIds = new Set(members.map((op) => op.id));
-  return {
-    summary: plan.summary,
-    operations: Object.fromEntries(
-      Object.entries(plan.operations).filter(([id]) => memberIds.has(id)),
-    ),
-  };
 }
 
 /** Build the contract for one discovered capability. */

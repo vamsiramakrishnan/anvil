@@ -257,3 +257,46 @@ describe("resolution policy", () => {
     expect(op(result, "refundPayment")?.auth.scopes).toEqual(["payments.write", "refunds.write"]);
   });
 });
+
+describe("review fixes — authority, blocking, conflict surfacing", () => {
+  it("a gateway may not loosen confirmation (not authoritative for it) but may tighten scopes", async () => {
+    // Base refund confirms (financial mutation). A gateway 'set false' is refused.
+    const loosen = makeOverlay({
+      origin: "gateway",
+      assertions: [assertion("refundPayment", "confirmation.required", "set", false)],
+    });
+    const result = await compileContract(source(), [loosen]);
+    expect(op(result, "refundPayment")?.confirmation.required).toBe(true);
+
+    // But the gateway IS authoritative for the scopes it enforces.
+    const scoped = makeOverlay({
+      origin: "gateway",
+      assertions: [assertion("refundPayment", "auth.scopes", "restrict", ["refunds:write"])],
+    });
+    const ok = await compileContract(source(), [scoped]);
+    expect(op(ok, "refundPayment")?.auth.scopes).toContain("refunds:write");
+  });
+
+  it("every safety-sensitive conflict blocks the operation and is carried on the snapshot", async () => {
+    const a = makeOverlay({
+      origin: "operator",
+      assertions: [assertion("refundPayment", "confirmation.required", "set", true)],
+    });
+    const b = makeOverlay({
+      origin: "operator",
+      assertions: [assertion("refundPayment", "confirmation.required", "set", false)],
+    });
+    const result = await compileContract(source(), [a, b]);
+    expect(result.status).toBe("conflicted");
+    if (result.status !== "conflicted") throw new Error("expected conflict");
+    // #4: the operation is blocked, not just retry conflicts.
+    expect(op(result, "refundPayment")?.state).toBe("blocked");
+    // #3: the snapshot itself records the conflict, surviving serialization.
+    expect(result.partialContract.status).toBe("conflicted");
+    expect(result.partialContract.conflicts.length).toBeGreaterThan(0);
+    const air = result.partialContract.air;
+    expect(result.partialContract.blockedOperationIds).toContain(
+      air.operations.find((o) => o.sourceRef.operationId === "refundPayment")?.id,
+    );
+  });
+});

@@ -34,7 +34,9 @@ export function editCapabilityContract(
   for (const id of edit.include ?? []) members.add(id);
   for (const id of edit.exclude ?? []) members.delete(id);
 
-  const rebuilt = buildCapabilityContract(air, {
+  // The safety-profile override is an *input* to the build, so it participates in
+  // the digest — never applied after (#6). Membership drives everything else.
+  return buildCapabilityContract(air, {
     id: contract.id,
     version: contract.version,
     displayName: edit.displayName ?? contract.displayName,
@@ -46,13 +48,8 @@ export function editCapabilityContract(
     lifecycle: edit.lifecycle ?? contract.lifecycle,
     owner: edit.owner ?? contract.owner,
     evidence: contract.evidence,
+    safetyProfileOverride: edit.safetyProfile,
   });
-
-  if (edit.safetyProfile) {
-    const safetyProfile = { ...rebuilt.safetyProfile, ...edit.safetyProfile };
-    return { ...rebuilt, safetyProfile };
-  }
-  return rebuilt;
 }
 
 /**
