@@ -17,6 +17,7 @@ export default defineConfig({
       "@anvil/refinement": pkg("refinement"),
       "@anvil/system-pack": pkg("system-pack"),
       "@anvil/simulator": pkg("simulator"),
+      "@anvil/certification": pkg("certification"),
     },
   },
   test: {

@@ -1,0 +1,36 @@
+{
+  "name": "@anvil/certification",
+  "version": "0.1.0",
+  "description": "Static and executable certification for Anvil agent system packs.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../..",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@anvil/air": "workspace:*",
+    "@anvil/compiler": "workspace:*",
+    "@anvil/simulator": "workspace:*",
+    "@anvil/system-pack": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}
