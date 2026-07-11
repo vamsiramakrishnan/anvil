@@ -8,6 +8,7 @@ export * from "./capabilities.js";
 export * from "./capability-review.js";
 export * from "./classify.js";
 export * from "./compile.js";
+export * from "./drift.js";
 export * from "./manifest.js";
 export * from "./naming.js";
 export * from "./normalize.js";
