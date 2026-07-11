@@ -48,7 +48,11 @@ describe("bundleDocument", () => {
     // Depth only counts once inside real schema content (the `schema` key) —
     // see the wrapper-structure test below for why that matters.
     const { document, depthLimitedAt, truncatedAt } = bundleDocument({
-      paths: { "/x": { get: { responses: { "200": { content: { "application/json": { schema: node } } } } } } },
+      paths: {
+        "/x": {
+          get: { responses: { "200": { content: { "application/json": { schema: node } } } } },
+        },
+      },
     });
     expect(truncatedAt).toEqual([]); // not a cycle
     expect(depthLimitedAt.length).toBeGreaterThan(0);
@@ -59,7 +63,10 @@ describe("bundleDocument", () => {
     // paths -> /entries -> post -> requestBody -> content -> media-type -> schema
     // is 6 keys of pure document structure before any schema content begins —
     // a tiny 2-property schema at the end of that chain must not be truncated.
-    const schema = { type: "object", properties: { amount: { type: "integer" }, memo: { type: "string" } } };
+    const schema = {
+      type: "object",
+      properties: { amount: { type: "integer" }, memo: { type: "string" } },
+    };
     const doc = {
       paths: {
         "/entries": {
@@ -71,9 +78,11 @@ describe("bundleDocument", () => {
     expect(truncatedAt).toEqual([]);
     expect(depthLimitedAt).toEqual([]);
     const out = document as typeof doc;
-    expect(Object.keys(out.paths["/entries"].post.requestBody.content["application/json"].schema.properties)).toEqual(
-      ["amount", "memo"],
-    );
+    expect(
+      Object.keys(
+        out.paths["/entries"].post.requestBody.content["application/json"].schema.properties,
+      ),
+    ).toEqual(["amount", "memo"]);
   });
 
   it("stays fast on a heavily cross-referential (diamond-rich) ANONYMOUS graph", () => {
@@ -100,22 +109,39 @@ describe("bundleDocument", () => {
       const doc = {
         components: { schemas: { customer } },
         paths: {
-          "/charges": { get: { responses: { "200": { content: { "application/json": { schema: customer } } } } } },
-          "/invoices": { get: { responses: { "200": { content: { "application/json": { schema: customer } } } } } },
+          "/charges": {
+            get: {
+              responses: { "200": { content: { "application/json": { schema: customer } } } },
+            },
+          },
+          "/invoices": {
+            get: {
+              responses: { "200": { content: { "application/json": { schema: customer } } } },
+            },
+          },
         },
       };
       const { document } = bundleDocument(doc);
       const out = document as {
         components: { schemas: { customer: Record<string, unknown> } };
-        paths: Record<string, { get: { responses: { "200": { content: { "application/json": { schema: unknown } } } } } }>;
+        paths: Record<
+          string,
+          {
+            get: { responses: { "200": { content: { "application/json": { schema: unknown } } } } };
+          }
+        >;
       };
       // The one real definition still has its properties.
       expect(out.components.schemas.customer.properties).toEqual(customer.properties);
       // Every other use is a lightweight pointer, not a duplicated inline copy.
-      expect(out.paths["/charges"].get.responses["200"].content["application/json"].schema).toEqual({
-        $ref: "#/components/schemas/customer",
-      });
-      expect(out.paths["/invoices"].get.responses["200"].content["application/json"].schema).toEqual({
+      expect(out.paths["/charges"].get.responses["200"].content["application/json"].schema).toEqual(
+        {
+          $ref: "#/components/schemas/customer",
+        },
+      );
+      expect(
+        out.paths["/invoices"].get.responses["200"].content["application/json"].schema,
+      ).toEqual({
         $ref: "#/components/schemas/customer",
       });
     });
@@ -127,7 +153,9 @@ describe("bundleDocument", () => {
       const { document, truncatedAt, depthLimitedAt } = bundleDocument(doc);
       expect(truncatedAt).toEqual([]);
       expect(depthLimitedAt).toEqual([]);
-      const out = document as { components: { schemas: { Group: { properties: { subgroups: { items: unknown } } } } } };
+      const out = document as {
+        components: { schemas: { Group: { properties: { subgroups: { items: unknown } } } } };
+      };
       expect(out.components.schemas.Group.properties.subgroups.items).toEqual({
         $ref: "#/components/schemas/Group",
       });
@@ -141,7 +169,9 @@ describe("bundleDocument", () => {
       const { document, truncatedAt } = bundleDocument(doc);
       expect(truncatedAt).toEqual([]);
       const out = document as {
-        components: { schemas: { A: { properties: { b: unknown } }; B: { properties: { a: unknown } } } };
+        components: {
+          schemas: { A: { properties: { b: unknown } }; B: { properties: { a: unknown } } };
+        };
       };
       expect(out.components.schemas.A.properties.b).toEqual({ $ref: "#/components/schemas/B" });
       expect(out.components.schemas.B.properties.a).toEqual({ $ref: "#/components/schemas/A" });
@@ -159,7 +189,9 @@ describe("bundleDocument", () => {
         for (const other of names) props[other] = schemas[other];
       }
       const { document } = bundleDocument({ components: { schemas } });
-      const out = document as { components: { schemas: Record<string, { properties: Record<string, unknown> }> } };
+      const out = document as {
+        components: { schemas: Record<string, { properties: Record<string, unknown> }> };
+      };
       // The correctness signal (not a brittle wall-clock threshold, which is
       // flaky under parallel CI load): every reference is a genuine `$ref`
       // POINTER, never an inlined copy. If the old full-inline behavior
@@ -173,6 +205,292 @@ describe("bundleDocument", () => {
       // A whole-document sanity bound: 200×200 tiny `$ref` pointers, not
       // 200 fully-inlined copies of every other type (which would be MBs each).
       expect(JSON.stringify(document).length).toBeLessThan(4_000_000);
+    });
+  });
+
+  describe("structural identity — collapse never depends on vendor-supplied names", () => {
+    // These tests deliberately use components with NO titles anywhere, and
+    // build the input the way `dereference()` shapes it: a fresh top-level
+    // copy per acyclic reference site, in-memory sharing wherever a cycle
+    // forces it. They must pass without `stampSchemaTitles` (parse.ts) — that
+    // stamp is display metadata only.
+
+    it("collapses UNTITLED mutually recursive components referenced from several paths", () => {
+      const a: Record<string, unknown> = { type: "object", properties: {} };
+      const b: Record<string, unknown> = { type: "object", properties: { a } };
+      (a.properties as Record<string, unknown>).b = b;
+      // dereference-shaped use sites: fresh top-level object per site, cyclic
+      // interior shared with the component's real body.
+      const use = () => ({ ...a });
+      const build = () => ({
+        components: { schemas: { A: a, B: b } },
+        paths: {
+          "/one": {
+            get: { responses: { "200": { content: { "application/json": { schema: use() } } } } },
+          },
+          "/two": {
+            get: { responses: { "200": { content: { "application/json": { schema: use() } } } } },
+          },
+          "/three": {
+            post: {
+              requestBody: { content: { "application/json": { schema: use() } } },
+              responses: {},
+            },
+          },
+        },
+      });
+      const { document, truncatedAt } = bundleDocument(build());
+      expect(truncatedAt).toEqual([]);
+      expect(() => JSON.stringify(document)).not.toThrow();
+      const out = document as {
+        components: {
+          schemas: { A: { properties: { b: unknown } }; B: { properties: { a: unknown } } };
+        };
+        paths: Record<
+          string,
+          Record<
+            string,
+            {
+              responses?: Record<string, { content: Record<string, { schema: unknown }> }>;
+              requestBody?: { content: Record<string, { schema: unknown }> };
+            }
+          >
+        >;
+      };
+      const aRef = { $ref: "#/components/schemas/A" };
+      expect(
+        out.paths["/one"]?.get?.responses?.["200"]?.content["application/json"]?.schema,
+      ).toEqual(aRef);
+      expect(
+        out.paths["/two"]?.get?.responses?.["200"]?.content["application/json"]?.schema,
+      ).toEqual(aRef);
+      expect(out.paths["/three"]?.post?.requestBody?.content["application/json"]?.schema).toEqual(
+        aRef,
+      );
+      // The recursion itself is ordinary $refs, so the whole document is tiny.
+      expect(out.components.schemas.A.properties.b).toEqual({ $ref: "#/components/schemas/B" });
+      expect(out.components.schemas.B.properties.a).toEqual(aRef);
+      expect(JSON.stringify(document).length).toBeLessThan(2_000);
+      // Determinism: bundling an identically-built input twice is deep-equal.
+      expect(bundleDocument(build()).document).toEqual(document);
+    });
+
+    it("collapses the same UNTITLED body deep-CLONED (fresh identity) at 3 sites into one $ref", () => {
+      const node = {
+        type: "object",
+        properties: { id: { type: "string" }, tags: { type: "array", items: { type: "string" } } },
+      };
+      const doc = {
+        components: { schemas: { Node: node } },
+        paths: {
+          "/a": {
+            get: {
+              responses: {
+                "200": { content: { "application/json": { schema: structuredClone(node) } } },
+              },
+            },
+          },
+          "/b": {
+            get: {
+              responses: {
+                "200": { content: { "application/json": { schema: structuredClone(node) } } },
+              },
+            },
+          },
+          // A clone nested inside an anonymous wrapper schema collapses too.
+          "/c": {
+            post: {
+              requestBody: {
+                content: {
+                  "application/json": {
+                    schema: { type: "object", properties: { child: structuredClone(node) } },
+                  },
+                },
+              },
+              responses: {},
+            },
+          },
+        },
+      };
+      const { document } = bundleDocument(doc);
+      const out = document as {
+        paths: Record<
+          string,
+          Record<
+            string,
+            {
+              responses?: Record<string, { content: Record<string, { schema: unknown }> }>;
+              requestBody?: {
+                content: Record<string, { schema: { properties: { child: unknown } } }>;
+              };
+            }
+          >
+        >;
+      };
+      const ref = { $ref: "#/components/schemas/Node" };
+      expect(out.paths["/a"]?.get?.responses?.["200"]?.content["application/json"]?.schema).toEqual(
+        ref,
+      );
+      expect(out.paths["/b"]?.get?.responses?.["200"]?.content["application/json"]?.schema).toEqual(
+        ref,
+      );
+      expect(
+        out.paths["/c"]?.post?.requestBody?.content["application/json"]?.schema.properties.child,
+      ).toEqual(ref);
+    });
+
+    it("resolves structurally identical ALIASES to the lexicographically smallest name, deterministically", () => {
+      const body = () => ({ type: "object", properties: { id: { type: "string" } } });
+      const build = () => ({
+        components: { schemas: { Beta: body(), Alpha: body() } },
+        paths: {
+          "/x": {
+            get: { responses: { "200": { content: { "application/json": { schema: body() } } } } },
+          },
+        },
+      });
+      const first = bundleDocument(build());
+      const second = bundleDocument(build());
+      expect(second.document).toEqual(first.document);
+      const out = first.document as {
+        components: {
+          schemas: { Alpha: { properties?: unknown }; Beta: { properties?: unknown } };
+        };
+        paths: {
+          "/x": {
+            get: { responses: { "200": { content: { "application/json": { schema: unknown } } } } };
+          };
+        };
+      };
+      // Documented alias policy: no title matches a candidate name, so the
+      // lexicographically smallest name wins.
+      expect(out.paths["/x"].get.responses["200"].content["application/json"].schema).toEqual({
+        $ref: "#/components/schemas/Alpha",
+      });
+      // Neither alias definition is hollowed out into a bare self/alias $ref.
+      expect(out.components.schemas.Alpha.properties).toBeDefined();
+      expect(out.components.schemas.Beta.properties).toBeDefined();
+    });
+
+    it("prefers the alias whose name equals the shared body's own title", () => {
+      const body = () => ({ title: "Zed", type: "object", properties: { id: { type: "string" } } });
+      const doc = {
+        components: { schemas: { Alpha: body(), Zed: body() } },
+        paths: {
+          "/x": {
+            get: { responses: { "200": { content: { "application/json": { schema: body() } } } } },
+          },
+        },
+      };
+      const { document } = bundleDocument(doc);
+      const out = document as {
+        paths: {
+          "/x": {
+            get: { responses: { "200": { content: { "application/json": { schema: unknown } } } } };
+          };
+        };
+      };
+      // "Alpha" sorts first, but the body says it IS "Zed" — the title-named
+      // alias is the deterministic pick when it matches a candidate name.
+      expect(out.paths["/x"].get.responses["200"].content["application/json"].schema).toEqual({
+        $ref: "#/components/schemas/Zed",
+      });
+    });
+
+    it("scale guard: ~400 UNTITLED components, ~15 cross-refs each incl. back-edge cycles, no title stamp", () => {
+      // The GitHub-GraphQL-shape regression test: a big, connection-style
+      // cyclic graph whose components carry no titles at all. Before
+      // structural identity this was a live bomb (the compile hung until
+      // parse.ts band-aided titles on); it must now bundle fast and stay
+      // proportional to unique structure.
+      const N = 400;
+      const FAN = 15;
+      const nameAt = (i: number) => `C${String(i).padStart(3, "0")}`;
+      const bodies: Record<string, unknown>[] = [];
+      const props: Record<string, unknown>[] = [];
+      for (let i = 0; i < N; i++) {
+        const p: Record<string, unknown> = {};
+        props.push(p);
+        bodies.push({ type: "object", description: `component ${i}`, properties: p });
+      }
+      for (let i = 0; i < N; i++) {
+        const p = props[i] as Record<string, unknown>;
+        for (let j = 1; j <= FAN; j++) {
+          // Wraps around N, so the graph is one dense mesh of long cycles.
+          // dereference-shaped: fresh top-level copy per reference site,
+          // cyclic interior shared with the target component's real body.
+          p[`f${j}`] = { ...(bodies[(i + j * 7) % N] as Record<string, unknown>) };
+        }
+      }
+      const schemas: Record<string, unknown> = {};
+      for (let i = 0; i < N; i++) schemas[nameAt(i)] = bodies[i];
+      const doc = {
+        components: { schemas },
+        paths: {
+          "/root": {
+            get: {
+              responses: {
+                "200": {
+                  content: {
+                    "application/json": { schema: { ...(bodies[0] as Record<string, unknown>) } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+      const start = Date.now();
+      const { document } = bundleDocument(doc);
+      const elapsed = Date.now() - start;
+      expect(elapsed).toBeLessThan(5_000);
+      const json = JSON.stringify(document);
+      // Proportional to unique structure: N bodies × FAN tiny $ref pointers,
+      // never an inlined (let alone re-inlined) subtree.
+      expect(json.length).toBeLessThan(1_000_000);
+      const out = document as {
+        components: { schemas: Record<string, { properties: Record<string, unknown> }> };
+        paths: {
+          "/root": {
+            get: { responses: { "200": { content: { "application/json": { schema: unknown } } } } };
+          };
+        };
+      };
+      expect(out.components.schemas.C000?.properties.f1).toEqual({
+        $ref: `#/components/schemas/${nameAt(7)}`,
+      });
+      expect(out.components.schemas.C399?.properties.f15).toEqual({
+        $ref: `#/components/schemas/${nameAt((399 + 15 * 7) % N)}`,
+      });
+      expect(out.paths["/root"].get.responses["200"].content["application/json"].schema).toEqual({
+        $ref: "#/components/schemas/C000",
+      });
+    });
+
+    it("bundling the same cyclic input twice produces deep-equal output (determinism)", () => {
+      const build = () => {
+        const item: Record<string, unknown> = { type: "object", properties: {} };
+        const page: Record<string, unknown> = {
+          type: "object",
+          properties: { items: { type: "array", items: item } },
+        };
+        (item.properties as Record<string, unknown>).parent = page; // cycle, shared
+        return {
+          components: { schemas: { Item: item, Page: page } },
+          paths: {
+            "/pages": {
+              get: {
+                responses: { "200": { content: { "application/json": { schema: { ...page } } } } },
+              },
+            },
+          },
+        };
+      };
+      const first = bundleDocument(build());
+      const second = bundleDocument(build());
+      expect(second.document).toEqual(first.document);
+      expect(second.truncatedAt).toEqual(first.truncatedAt);
+      expect(second.depthLimitedAt).toEqual(first.depthLimitedAt);
     });
   });
 
@@ -220,14 +538,20 @@ describe("bundleDocument", () => {
 describe("materializeSchema", () => {
   it("resolves a $ref back into a full, self-contained schema", () => {
     const namedSchemas = { customer: { type: "object", properties: { id: { type: "string" } } } };
-    const { schema, refDepthLimitedAt } = materializeSchema({ $ref: "#/components/schemas/customer" }, namedSchemas);
+    const { schema, refDepthLimitedAt } = materializeSchema(
+      { $ref: "#/components/schemas/customer" },
+      namedSchemas,
+    );
     expect(schema).toEqual(namedSchemas.customer);
     expect(refDepthLimitedAt).toEqual([]);
   });
 
   it("resolves nested $refs inside properties, transitively, when given room", () => {
     const namedSchemas = {
-      charge: { type: "object", properties: { customer: { $ref: "#/components/schemas/customer" } } },
+      charge: {
+        type: "object",
+        properties: { customer: { $ref: "#/components/schemas/customer" } },
+      },
       customer: { type: "object", properties: { id: { type: "string" } } },
     };
     // Explicit depth 2: hop 1 resolves `charge`, hop 2 resolves its `customer` ref.
@@ -244,11 +568,19 @@ describe("materializeSchema", () => {
     // itself another named type gets an honest "this is a Customer object"
     // stub instead of continuing to expand.
     const namedSchemas = {
-      charge: { type: "object", properties: { customer: { $ref: "#/components/schemas/customer" } } },
+      charge: {
+        type: "object",
+        properties: { customer: { $ref: "#/components/schemas/customer" } },
+      },
       customer: { type: "object", properties: { id: { type: "string" } } },
     };
-    const { schema, refDepthLimitedAt } = materializeSchema({ $ref: "#/components/schemas/charge" }, namedSchemas);
-    const out = schema as { properties: { customer: { properties?: unknown; type?: string; description?: string } } };
+    const { schema, refDepthLimitedAt } = materializeSchema(
+      { $ref: "#/components/schemas/charge" },
+      namedSchemas,
+    );
+    const out = schema as {
+      properties: { customer: { properties?: unknown; type?: string; description?: string } };
+    };
     expect(out.properties.customer.properties).toBeUndefined();
     expect(out.properties.customer.description).toContain("customer");
     expect(refDepthLimitedAt.length).toBe(1);
@@ -256,9 +588,15 @@ describe("materializeSchema", () => {
 
   it("truncates a genuine cycle among named schemas instead of infinitely recursing", () => {
     const namedSchemas = {
-      Group: { type: "object", properties: { subgroups: { type: "array", items: { $ref: "#/components/schemas/Group" } } } },
+      Group: {
+        type: "object",
+        properties: { subgroups: { type: "array", items: { $ref: "#/components/schemas/Group" } } },
+      },
     };
-    const { schema, refDepthLimitedAt } = materializeSchema({ $ref: "#/components/schemas/Group" }, namedSchemas);
+    const { schema, refDepthLimitedAt } = materializeSchema(
+      { $ref: "#/components/schemas/Group" },
+      namedSchemas,
+    );
     expect(() => JSON.stringify(schema)).not.toThrow();
     expect(refDepthLimitedAt.length).toBeGreaterThan(0);
   });
