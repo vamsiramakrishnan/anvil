@@ -14,6 +14,7 @@ export interface VerifyFinding {
   code:
     | "unsafe_path"
     | "missing_content"
+    | "unexpected_content"
     | "content_digest_mismatch"
     | "manifest_digest_mismatch"
     | "pack_digest_mismatch"
@@ -36,7 +37,7 @@ export interface VerifyResult {
  */
 export function verifyPack(pack: AgentSystemPack, contents: PackContents): VerifyResult {
   const findings: VerifyFinding[] = [];
-  const artifactDigests = new Set<string>();
+  const declaredPaths = new Set(pack.artifacts.artifacts.map((a) => a.path));
 
   for (const artifact of pack.artifacts.artifacts) {
     if (!PackPath.safeParse(artifact.path).success) {
@@ -58,13 +59,25 @@ export function verifyPack(pack: AgentSystemPack, contents: PackContents): Verif
       continue;
     }
     const actual = contentDigest(bytes);
-    artifactDigests.add(actual);
     if (actual !== artifact.contentDigest) {
       findings.push({
         code: "content_digest_mismatch",
         artifactId: artifact.id,
         path: artifact.path,
         message: `Content hash ${actual.slice(0, 12)}… ≠ recorded ${artifact.contentDigest.slice(0, 12)}….`,
+      });
+    }
+  }
+
+  // No bytes may ride along that the manifest does not declare. Without this a
+  // tampered archive could smuggle an extra file past a verify that only checked
+  // the artifacts it already knew about.
+  for (const path of contents.keys()) {
+    if (!declaredPaths.has(path)) {
+      findings.push({
+        code: "unexpected_content",
+        path,
+        message: `Content ${JSON.stringify(path)} is not declared by any artifact in the manifest.`,
       });
     }
   }
