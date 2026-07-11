@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "The anvil CLI and the shared engine that drives every generated tool CLI.",
   "type": "module",
+  "engines": {
+    "node": ">=22.17"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

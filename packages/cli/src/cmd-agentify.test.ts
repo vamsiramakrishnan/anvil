@@ -146,8 +146,14 @@ describe("anvil agentify", () => {
     const { code, io } = await agentify(broken, "--out", out);
     expect(code).toBe(1);
     expect(io.text()).toContain("source/unparseable");
-    // Nothing downstream ran: no lock, no bundle.
-    expect(existsSync(join(root, ".anvil", "sources"))).toBe(false);
+    // The invalid snapshot IS locked (readable input is always captured), but
+    // nothing downstream ran: an invalid snapshot is refused by compilation.
+    const sources = readdirSync(join(root, ".anvil", "sources"));
+    expect(sources).toHaveLength(1);
+    const stored = JSON.parse(
+      readFileSync(join(root, ".anvil", "sources", sources[0] as string, "source.json"), "utf8"),
+    ) as SourceSnapshot;
+    expect(stored.status).toBe("invalid");
     expect(existsSync(out)).toBe(false);
   });
 

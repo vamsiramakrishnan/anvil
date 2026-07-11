@@ -13,5 +13,5 @@ export * from "./manifest.js";
 export * from "./naming.js";
 export * from "./normalize.js";
 export * from "./parse.js";
-export * from "./snapshot.js";
+export * from "./source/index.js";
 export * from "./validate.js";

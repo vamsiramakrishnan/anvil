@@ -18,9 +18,9 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
   {
     name: "source",
     usage: "anvil source <add|list|show|validate> [args] [--json]",
-    summary: "Import and lock API source specs as content-addressed snapshots.",
+    summary: "Import and lock API source graphs as immutable content-addressed snapshots.",
     detail:
-      "Layer 0 — capture what the customer actually supplied, before any compilation. `anvil source add <path|dir>` detects the spec format (OpenAPI 3.0/3.1 or Swagger 2.0, YAML or JSON) without compiling, hashes the file set deterministically, and locks a snapshot under .anvil/sources/<id>/ (source.json plus verbatim raw/ copies). A directory of specs becomes one snapshot with many files. `list` and `show` are read-only; `validate <id>` re-hashes raw/ and confirms it still matches the locked source.json, so tampering or drift is caught before it can contaminate a compile. The sourceHash is content-derived only — re-importing unchanged content yields the same hash — and broken input produces structured diagnostics, never a crash.",
+      "Layer 0 — capture what the customer actually supplied, before any compilation. `anvil source add <dir | file...>` imports explicit entrypoint files (plus every local $ref reachable from them) or a whole directory (files declaring `openapi:`/`swagger:` become entrypoints; unrelated YAML/JSON is excluded), records each entrypoint's own format and version, hashes the verbatim bytes deterministically, and atomically locks a snapshot under .anvil/sources/<snapshot-id>/ (source.json plus byte-identical raw/ copies). The snapshot-id is content-derived; `--name` attaches a human label that never controls identity or a path, and `--origin` declares a gateway origin (apigee, mulesoft, kong, api_connect, wso2) independent of the spec format. References escaping the import root are rejected; remote refs are recorded as external, never fetched. Anything readable is snapshotted — broken input locks an `invalid` (or `unclassified`) snapshot with its diagnostics inside and exits non-zero, and only `valid` snapshots may be compiled. `list` and `show` are read-only (list reports corrupt slots explicitly); `validate <snapshot-id>` re-hashes raw/ against the locked source.json, so tampering is caught before it can contaminate a compile.",
     mutates: true,
   },
   {
