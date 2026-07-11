@@ -1,0 +1,8 @@
+{
+  "operations": {
+    "createIssue": { "toolName": "github_gql_create_issue", "effect": "mutation" },
+    "addComment": { "toolName": "github_gql_add_comment", "effect": "mutation" },
+    "mergePullRequest": { "toolName": "github_gql_merge_pull_request", "effect": "mutation" },
+    "deleteRef": { "toolName": "github_gql_delete_ref", "effect": "mutation", "risk": "destructive" }
+  }
+}

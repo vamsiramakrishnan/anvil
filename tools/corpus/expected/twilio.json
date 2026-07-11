@@ -1,0 +1,9 @@
+{
+  "operations": {
+    "CreateMessage": { "toolName": "twilio_create_message", "effect": "mutation", "risk": "high" },
+    "ListMessage": { "toolName": "twilio_list_message", "effect": "read", "risk": "none" },
+    "FetchMessage": { "toolName": "twilio_fetch_message", "effect": "read", "risk": "none" },
+    "UpdateMessage": { "toolName": "twilio_update_message", "effect": "mutation", "risk": "destructive" },
+    "DeleteMessage": { "toolName": "twilio_delete_message", "effect": "mutation", "risk": "destructive" }
+  }
+}
