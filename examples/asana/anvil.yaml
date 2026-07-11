@@ -1,0 +1,34 @@
+# Supplemental Anvil manifest (spec §4) for the Asana API backtest.
+# Generated against the real compiled AIR: reads and already-'generated'
+# mutations are approved as the compiler classified them; non-idempotent
+# creates are declared idempotency:none (no client dedupe key exists) and
+# confirmation-required. See docs/backtesting/batch2.md.
+service:
+  name: asana
+  display_name: Asana API
+  owner: backtesting
+  environment: prod
+auth:
+  type: oauth2
+  scopes: ["default"]
+operations:
+  getProjects: { state: approved }
+  createProject:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  getProject: { state: approved }
+  getSectionsForProject: { state: approved }
+  createSectionForProject: { state: approved }
+  getTasks: { state: approved }
+  createTask:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  getTask: { state: approved }
+  updateTask: { state: approved }
+  deleteTask: { state: approved }
+  addFollowersForTask: { state: approved }
+  getWorkspaces: { state: approved }

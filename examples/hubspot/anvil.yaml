@@ -1,0 +1,34 @@
+# Supplemental Anvil manifest (spec §4) for the HubSpot CRM API backtest.
+# Generated against the real compiled AIR: reads and already-'generated'
+# mutations are approved as the compiler classified them; non-idempotent
+# creates are declared idempotency:none (no client dedupe key exists) and
+# confirmation-required. See docs/backtesting/batch2.md.
+service:
+  name: hubspot
+  display_name: HubSpot CRM API
+  owner: backtesting
+  environment: prod
+auth:
+  type: oauth2
+  scopes: ["crm.objects.deals.read", "crm.objects.deals.write"]
+operations:
+  "get-/crm/v3/objects/0-3_getPage": { state: approved }
+  "post-/crm/v3/objects/0-3_create":
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  "post-/crm/v3/objects/0-3/batch/archive_archive": { state: approved }
+  "post-/crm/v3/objects/0-3/batch/create_create":
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  "post-/crm/v3/objects/0-3/batch/read_read": { state: approved }
+  "post-/crm/v3/objects/0-3/batch/update_update": { state: approved }
+  "post-/crm/v3/objects/0-3/batch/upsert_upsert": { state: approved }
+  "post-/crm/v3/objects/0-3/merge_merge": { state: approved }
+  "post-/crm/v3/objects/0-3/search_doSearch": { state: approved }
+  "get-/crm/v3/objects/0-3/{dealId}_getById": { state: approved }
+  "delete-/crm/v3/objects/0-3/{dealId}_archive": { state: approved }
+  "patch-/crm/v3/objects/0-3/{dealId}_update": { state: approved }

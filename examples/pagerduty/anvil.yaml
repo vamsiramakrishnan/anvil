@@ -1,0 +1,30 @@
+# Supplemental Anvil manifest (spec §4) for the PagerDuty REST API backtest.
+# Generated against the real compiled AIR: reads and already-'generated'
+# mutations are approved as the compiler classified them; non-idempotent
+# creates are declared idempotency:none (no client dedupe key exists) and
+# confirmation-required. See docs/backtesting/batch2.md.
+service:
+  name: pagerduty
+  display_name: PagerDuty REST API
+  owner: backtesting
+  environment: prod
+auth:
+  type: api_key
+  scopes: []
+operations:
+  listEscalationPolicies: { state: approved }
+  getEscalationPolicy: { state: approved }
+  listIncidents: { state: approved }
+  createIncident:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  getIncident: { state: approved }
+  updateIncident: { state: approved }
+  listOnCalls: { state: approved }
+  listSchedules: { state: approved }
+  getSchedule: { state: approved }
+  listServices: { state: approved }
+  getService: { state: approved }
+  listUsers: { state: approved }

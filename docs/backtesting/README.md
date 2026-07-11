@@ -37,16 +37,16 @@ fetch before being marked fetchable.
 | 3 | GitHub | ✅ github/rest-api-description (790 paths) | ✅ github/github-mcp-server (official, 60+ tools) | **BACKTESTED** |
 | 4 | Stripe | ✅ stripe/openapi spec3.json (414 paths) | ✅ stripe/agent-toolkit, mcp.stripe.com (official) | **BACKTESTED** |
 | 5 | Slack | ⚠️ slackapi/slack-api-specs (archived/stale since Mar 2024) | ✅ korotovsky/slack-mcp-server (community, 18 tools) | **BACKTESTED** (Swagger 2.0 + RPC-over-HTTP) |
-| 6 | Zoom | ✅ zoom/api openapi.v2.json (103 paths) | ✅ official Zoom MCP + community | BACKTESTABLE |
-| 7 | DocuSign | ✅ docusign/OpenAPI-Specifications (213 paths, eSignature) | ✅ official mcp-d.docusign.com (beta) + community | BACKTESTABLE |
+| 6 | Zoom | ✅ zoom/api openapi.v2.json (103 paths) | ✅ official Zoom MCP + community | **BACKTESTED** (Swagger 2.0) |
+| 7 | DocuSign | ✅ docusign/OpenAPI-Specifications (213 paths, eSignature) | ✅ official mcp-d.docusign.com (beta) + community | **BACKTESTED** (found perf bug #18) |
 | 8 | Twilio | ✅ twilio/twilio-oai (80+ files, ~1800 endpoints) | ✅ twilio-labs/mcp (official, hosted) | **BACKTESTED** (scale + POST-reuse) |
-| 9 | PagerDuty | ✅ PagerDuty/api-schema openapiv3.json (273 paths) | ✅ PagerDuty/pagerduty-mcp-server (official, 71 tools) | BACKTESTABLE |
-| 10 | Intercom | ✅ intercom/Intercom-OpenAPI (2.15) | ✅ intercom/intercom-mcp-server (official, hosted) | BACKTESTABLE |
+| 9 | PagerDuty | ✅ PagerDuty/api-schema openapiv3.json (273 paths) | ✅ PagerDuty/pagerduty-mcp-server (official, 71 tools) | **BACKTESTED** (found alias bug #19) |
+| 10 | Intercom | ✅ intercom/Intercom-OpenAPI (2.11) | ✅ intercom/intercom-mcp-server (official, read-only) | **BACKTESTED** |
 | 11 | Google Workspace | ✅ Discovery-doc format, not native OpenAPI (Gmail/Calendar/Drive) | ✅ taylorwilsdon/google_workspace_mcp (community) | **BACKTESTED** (built a Discovery→OpenAPI adapter) |
-| 12 | Zendesk | ✅ developer.zendesk.com/zendesk/oas.yaml (429 paths) | ⚠️ reminia/zendesk-mcp-server (community only, 7 tools) | BACKTESTABLE |
-| 13 | HubSpot | ⚠️ HubSpot-public-api-spec-collection (fragmented, many files) | ✅ mcp.hubspot.com / @hubspot/mcp-server (official) | BACKTESTABLE |
-| 14 | Notion | ✅ makenotion/notion-mcp-server's own openapi json (~20 paths) | ✅ makenotion/notion-mcp-server (official, 4.5k★, 22 tools) | BACKTESTABLE (cleanest case) |
-| 15 | Asana | ✅ Asana/openapi asana_oas.yaml (175 paths) | ⚠️ roychri/mcp-server-asana (community, 41 tools) | BACKTESTABLE |
+| 12 | Zendesk | ✅ developer.zendesk.com/zendesk/oas.yaml (429 paths) | ⚠️ reminia/zendesk-mcp-server (community, 6 tools) | **BACKTESTED** (617 ops, most of any) |
+| 13 | HubSpot | ⚠️ HubSpot-public-api-spec-collection (fragmented, many files) | ✅ mcp.hubspot.com / @hubspot/mcp-server (official) | **BACKTESTED** (Deals slice; naming note) |
+| 14 | Notion | ✅ makenotion/notion-mcp-server's own openapi json (~20 paths) | ✅ makenotion/notion-mcp-server (official, 4.5k★, 22 tools) | **BACKTESTED** (cleanest operationId→tool) |
+| 15 | Asana | ✅ Asana/openapi asana_oas.yaml (249 ops) | ⚠️ roychri/mcp-server-asana (community, 41 tools) | **BACKTESTED** |
 | 16 | Microsoft Graph / SharePoint | ✅ microsoftgraph/msgraph-metadata (huge, ~1377 paths) | ⚠️ fragmented, no dominant reference server | SPEC-ONLY |
 | 17 | Linear | ❌ GraphQL-only, no OpenAPI spec exists | ✅ mcp.linear.app (official) | NOT BACKTESTABLE (format mismatch) |
 | 18 | Salesforce | ❌ spec generator requires an authenticated org (tenant-specific output) | ✅ salesforcecli/mcp (official, requires org auth to run) | GATED |
@@ -63,14 +63,13 @@ transcript; this table is the actionable summary.
 
 ## Status
 
-Seven products fully backtested — real spec, real compile → inspect → lint →
-approve → package loop, compared against each product's actual mature
-reference MCP. The first four (Jira, Confluence, GitHub, Stripe) are OpenAPI/
-Swagger; the next three were chosen because each stresses a code path the
-first four never touched — **Google Workspace** (a non-OpenAPI *format*),
-**Twilio** (a *scale* test, ~1,800 endpoints), and **Slack** (*RPC-over-HTTP*
-naming on an archived Swagger 2.0 spec). **17 real, systemic compiler bugs
-found and fixed**, each with a regression test:
+**Fifteen products fully backtested** — real spec, real compile → inspect →
+lint → approve → package loop, compared against each product's actual mature
+reference MCP: Jira, Confluence, GitHub, Stripe, Slack, Twilio, Google
+Workspace, Notion, Asana, PagerDuty, Zendesk, Intercom, Zoom, HubSpot, and
+DocuSign. They span OpenAPI 3.x, Swagger 2.0, Google Discovery, and
+RPC-over-HTTP, from 12-operation slices to 617-operation full specs. **19
+real, systemic compiler bugs found and fixed**, each with a regression test:
 
 1. Compiler crash on any self-referential schema (Jira's `LinkGroup`)
 2. `POST /search` misclassified as an unsafe mutation (Jira's JQL search)
@@ -89,16 +88,20 @@ found and fixed**, each with a regression test:
 15. POST reused for update (Twilio's `UpdateMessage`) collided create+update onto one name — fixed by honoring the operationId verb for the one case HTTP method can't express, without regressing Stripe's `Get`-that-is-a-list
 16. RPC-over-HTTP dotted paths (Slack's `/chat.postMessage`) produced a broken CLI command (`chat.postMessage send`) and, once split naively, a spurious `admin.*` collision
 17. Google Discovery Document format was entirely unsupported — built a new protocol adapter (`discovery.ts`) that lowers it to OpenAPI 3.0, unlocking *all* Google APIs
+18. Per-operation schema materialization had no *size* bound — DocuSign's pathologically broad request bodies made a 400MB AIR and a 56s compile; a node-count budget bounds breadth the way the depth bound bounds depth (→19s), every other spec byte-identical
+19. Anvil couldn't re-parse its own generated `air.yaml` — PagerDuty's 465-op bundle emitted 110 YAML aliases and tripped the parser's billion-laughs cap of 100; fixed by not emitting aliases and raising the cap on the trusted AIR re-parse
 
 See `deficiencies.md` for the full writeup of each (symptom → root cause →
-fix → test), and `jira.md` / `confluence.md` / `github.md` / `stripe.md` /
-`gws.md` / `twilio.md` / `slack.md` for the per-product detail. `workday.md`
-explains why the three fully gated enterprise systems (Workday, Icertis,
-BlackLine) can't be backtested the same way, and what would unblock them.
+fix → test), and the per-product / per-batch detail in `jira.md`,
+`confluence.md`, `github.md`, `stripe.md`, `gws.md`, `twilio.md`, `slack.md`,
+and `batch2.md` (Notion, Asana, PagerDuty, Zendesk, Intercom, Zoom, HubSpot,
+DocuSign). `workday.md` explains why the fully gated enterprise systems
+(Workday, Icertis, BlackLine) can't be backtested the same way.
 
-Findings #1–#13 came from the first four (OpenAPI/Swagger) products; #14–#17
-came only from the deliberately-different second batch — evidence that
-*format* and *convention* diversity (not just more of the same shape) is what
-surfaces new compiler bugs. The remaining BACKTESTABLE-tier systems (Zoom,
-DocuSign, PagerDuty, Intercom, Zendesk, HubSpot, Notion, Asana) are
-mechanically the same loop against a proven-solid compiler.
+The bug-discovery curve is the real story: findings #1–#13 came from the first
+four OpenAPI/Swagger products; #14–#17 needed the deliberately-different third
+batch (a new format, RPC naming, raw scale); #18–#19 needed a genuinely huge
+(DocuSign) and a genuinely repetitive (PagerDuty) real spec. Each *kind* of
+diversity — format, convention, scale, breadth — surfaced bugs the others
+could not. All fifteen now compile clean end-to-end; every remaining
+BACKTESTABLE and GATED system is documented in the triage table above.

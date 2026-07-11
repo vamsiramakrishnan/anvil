@@ -1,0 +1,31 @@
+# Supplemental Anvil manifest (spec §4) for the Zendesk Support API backtest.
+# Generated against the real compiled AIR: reads and already-'generated'
+# mutations are approved as the compiler classified them; non-idempotent
+# creates are declared idempotency:none (no client dedupe key exists) and
+# confirmation-required. See docs/backtesting/batch2.md.
+service:
+  name: zendesk
+  display_name: Zendesk Support API
+  owner: backtesting
+  environment: prod
+auth:
+  type: basic
+  scopes: []
+operations:
+  ListTickets: { state: approved }
+  CreateTicket:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  ShowTicket: { state: approved }
+  UpdateTicket: { state: approved }
+  DeleteTicket: { state: approved }
+  ListTicketComments: { state: approved }
+  ListUsers: { state: approved }
+  CreateUser:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  ShowUser: { state: approved }
