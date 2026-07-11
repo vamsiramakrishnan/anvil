@@ -7,6 +7,7 @@
  * vendor-specific type escapes this package. See ADR-0013.
  */
 export * from "./adapter.js";
+export * from "./archive/index.js";
 export * from "./capability-matrix.js";
 export * from "./conformance.js";
 export * from "./fixture.js";
