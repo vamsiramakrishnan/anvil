@@ -2,11 +2,65 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { compile } from "../compile.js";
+import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
 import { adaptProto } from "./grpc.js";
 import { detectProtocolFormat } from "./index.js";
 import { adaptWsdl } from "./wsdl.js";
 import { findAll, localName, parseXml } from "./xml.js";
+
+// A minimal but real-shaped Google Discovery document (Gmail's structure):
+// nested resources.methods, bare `$ref: "Name"`, a `send` mutation and a
+// `list` read, and an OAuth2 scope map.
+const discoverySpec = JSON.stringify({
+  kind: "discovery#restDescription",
+  name: "gmail",
+  version: "v1",
+  title: "Gmail API",
+  rootUrl: "https://gmail.googleapis.com/",
+  auth: { oauth2: { scopes: { "https://www.googleapis.com/auth/gmail.send": { description: "Send" } } } },
+  resources: {
+    users: {
+      resources: {
+        messages: {
+          methods: {
+            list: {
+              id: "gmail.users.messages.list",
+              path: "gmail/v1/users/{userId}/messages",
+              httpMethod: "GET",
+              parameters: {
+                userId: { type: "string", location: "path", required: true },
+                labelIds: { type: "string", location: "query", repeated: true },
+              },
+              response: { $ref: "ListMessagesResponse" },
+            },
+            send: {
+              id: "gmail.users.messages.send",
+              path: "gmail/v1/users/{userId}/messages/send",
+              httpMethod: "POST",
+              description: "Sends the specified message.",
+              parameters: { userId: { type: "string", location: "path", required: true } },
+              request: { $ref: "Message" },
+              response: { $ref: "Message" },
+            },
+          },
+        },
+      },
+    },
+  },
+  schemas: {
+    Message: {
+      id: "Message",
+      type: "object",
+      properties: { id: { type: "string" }, threadId: { type: "string" }, raw: { type: "string" } },
+    },
+    ListMessagesResponse: {
+      id: "ListMessagesResponse",
+      type: "object",
+      properties: { messages: { type: "array", items: { $ref: "Message" } } },
+    },
+  },
+});
 
 const example = (rel: string) =>
   readFileSync(fileURLToPath(new URL(`../../../../examples/${rel}`, import.meta.url)), "utf8");
@@ -36,6 +90,15 @@ describe("protocol format detection", () => {
       "openapi: 3.0.0\ninfo:\n  title: X\n  version: '1'\npaths:\n  /a:\n    get:\n      responses: {}\n";
     expect(detectProtocolFormat("openapi.yaml", openapi)).toBeUndefined();
     expect(detectProtocolFormat("", openapi)).toBeUndefined();
+  });
+
+  it("detects a Google Discovery document by its kind discriminator", () => {
+    expect(isDiscoveryDocument(discoverySpec)).toBe(true);
+    // A `.json` filename doesn't match an extension, so it falls to content sniff.
+    expect(detectProtocolFormat("gmail.json", discoverySpec)?.format).toBe("discovery");
+    expect(detectProtocolFormat("", discoverySpec)?.format).toBe("discovery");
+    // A plain JSON object that merely mentions the string but isn't Discovery.
+    expect(isDiscoveryDocument('{"note":"discovery#restDescription is a format"}')).toBe(false);
   });
 
   it("records a version alongside the format", () => {
@@ -130,6 +193,39 @@ describe("SOAP/WSDL adapter", () => {
   });
 });
 
+describe("Google Discovery adapter", () => {
+  const doc = adaptDiscovery(discoverySpec);
+
+  it("lowers the nested resources.methods tree into flat paths + verbs", () => {
+    expect(doc.paths?.["/gmail/v1/users/{userId}/messages"]?.get).toBeDefined();
+    expect(doc.paths?.["/gmail/v1/users/{userId}/messages/send"]?.post).toBeDefined();
+  });
+
+  it("maps Discovery parameters (location → in, repeated → array)", () => {
+    const list = doc.paths?.["/gmail/v1/users/{userId}/messages"]?.get as Record<string, unknown>;
+    const params = list.parameters as Array<Record<string, unknown>>;
+    const userId = params.find((p) => p.name === "userId");
+    const labelIds = params.find((p) => p.name === "labelIds");
+    expect(userId).toMatchObject({ in: "path", required: true });
+    expect(labelIds).toMatchObject({ in: "query", schema: { type: "array" } });
+  });
+
+  it("rewrites bare $refs to component pointers and registers schemas", () => {
+    const schemas = doc.components?.schemas as Record<string, Record<string, unknown>>;
+    expect(schemas.Message).toMatchObject({ type: "object" });
+    // The bare `$ref: "Message"` inside ListMessagesResponse became a real pointer.
+    expect(JSON.stringify(schemas.ListMessagesResponse)).toContain(
+      "#/components/schemas/Message",
+    );
+    expect(JSON.stringify(doc)).not.toContain('"$ref":"Message"'); // no dangling bare refs
+  });
+
+  it("carries the OAuth2 scopes into a security scheme", () => {
+    const schemes = doc.components?.securitySchemes as Record<string, { type: string }>;
+    expect(schemes.oauth2?.type).toBe("oauth2");
+  });
+});
+
 describe("mini XML parser", () => {
   it("parses elements, attributes, and nesting", () => {
     const root = parseXml('<a x="1"><b>text</b><c/></a>');
@@ -208,5 +304,24 @@ describe("end-to-end compile through the protocol adapters", () => {
     const place = air.operations.find((o) => o.sourceRef.operationId === "PlaceOrder");
     expect(place?.state).toBe("review_required");
     expect(place?.retries.mode).toBe("none");
+  });
+
+  it("compiles Google Discovery: send is a comms mutation, list is a safe read", async () => {
+    const air = await compile({
+      spec: discoverySpec,
+      serviceId: "gmail",
+      sourceUri: "gmail.json",
+    });
+    expect(air.service.source.kind).toBe("discovery");
+    const send = air.operations.find((o) => o.sourceRef.operationId === "gmail.users.messages.send");
+    expect(send?.effect.kind).toBe("mutation");
+    expect(send?.effect.risk).toBe("high"); // COMMS: sending a message
+    // The request body schema resolved from the bare `$ref: "Message"`.
+    expect(Object.keys(send?.input.schema?.properties ?? {})).toEqual(
+      expect.arrayContaining(["id", "thread_id"]),
+    );
+    const list = air.operations.find((o) => o.sourceRef.operationId === "gmail.users.messages.list");
+    expect(list?.effect.kind).toBe("read");
+    expect(list?.retries.mode).toBe("safe");
   });
 });

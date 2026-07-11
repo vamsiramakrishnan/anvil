@@ -437,3 +437,93 @@ any of its `confluence_create_*` tools either.
   Anvil can only compile what the vendor documents; this is a real capability
   gap in Confluence's own API evolution, not something the compiler can paper
   over.
+
+## Google Workspace / Twilio / Slack (format + scale + RPC batch)
+
+Second batch, chosen because each stresses a code path the first four never
+touched: Google Discovery is a non-OpenAPI *format*, Twilio is a *scale* test
+(~1,800 endpoints), and Slack is *RPC-over-HTTP* naming on an archived Swagger
+2.0 spec. Per-product write-ups: `gws.md`, `twilio.md`, `slack.md`.
+
+### 14. `.json` REST format suffix leaked into the resource/CLI name — FIXED
+- **Symptom**: Twilio's real Api2010 spec produced `twilio Messages.json list`
+  / `twilio Messages.json create` for the list/create endpoints, but `twilio
+  Messages get` / `twilio Messages delete` for fetch/delete — the *same*
+  resource rendered two ways, with a wire-format detail (`.json`) leaking into
+  the agent-facing CLI command and MCP tool name.
+- **Root cause**: Twilio's collection paths end `/Messages.json` while
+  item paths end `/Messages/{Sid}.json` (suffix on the id segment). The naming
+  pass took the last concrete segment verbatim as the resource, so `.json` came
+  along only for the former.
+- **Fix**: `packages/compiler/src/naming.ts` — `decomposeSegment` strips a REST
+  format suffix (`\.(json|xml|csv|…)$`) from the segment before it becomes a
+  resource token; the wire path (`sourceRef.path`) is untouched, so the runtime
+  still calls `/Messages.json`. `distinguishingToken`/`cleanPathTokens` strip
+  it too, so a legitimate collision suffix is never `messages_json`.
+- **Test**: `compiler.test.ts` → "strips a REST format suffix from the resource
+  name (Twilio's .json)".
+
+### 15. POST reused for update collided create+update onto one name — FIXED
+- **Symptom**: Twilio's `CreateMessage` and `UpdateMessage` (both `POST`, on
+  `/Messages.json` and `/Messages/{Sid}.json`) both derived the action "create"
+  → CLI `twilio Messages create` for both → a forced `_post` disambiguation
+  suffix (`twilio_create_message_post`) and the update mislabeled as a create.
+- **Root cause**: `actionFor(POST)` always returns "create"; Twilio (like many
+  REST APIs) reuses POST for update, carrying the real verb only in the
+  operationId.
+- **Fix**: `naming.ts` — `postVerbFromOperationId` honors the operationId's
+  leading verb for the one case the HTTP method genuinely can't express: a POST
+  named `Update*`/`Delete*`. Deliberately scoped to POST + update/delete only —
+  it does NOT trust a leading verb in general, because Stripe's `GetCustomers`
+  is really a *list* (finding #13's territory), so a blanket "trust the verb"
+  would regress that. Now `twilio Messages create` vs `twilio Messages update`,
+  aligned with the operationId-derived tool names, no collision.
+- **Test**: `compiler.test.ts` → "uses the operationId verb for a POST reused
+  as update/delete (Twilio POST-for-update)".
+
+### 16. RPC-over-HTTP dotted paths broke the CLI command — FIXED
+- **Symptom**: Slack's `/chat.postMessage` produced CLI `slack chat.postMessage
+  send` — a literal dot in the command, a redundant appended verb, and drift
+  from the clean MCP tool name `slack_chat_post_message`. Naively splitting the
+  namespace then *collided* `conversations.archive` with
+  `admin.conversations.archive` (Slack ships both).
+- **Root cause**: Slack's Web API is RPC-over-HTTP — `/chat.postMessage` is a
+  single path segment `namespace.method`, not a REST resource path. The naming
+  pass treated the whole dotted string as the resource.
+- **Fix**: `naming.ts` — `decomposeSegment` splits an RPC dotted segment into
+  resource + action, keeping the *full* namespace as the resource
+  (`admin_conversations` vs `conversations`, so no spurious collision) and
+  snake-casing the trailing method as the action. CLI `slack chat post_message`
+  now matches the tool `slack_chat_post_message`; this is exactly the `.`→`_`
+  transform korotovsky/slack-mcp-server does by hand.
+- **Tests**: `compiler.test.ts` → "decomposes an RPC-style dotted path…" and
+  "keeps namespaced RPC methods distinct instead of colliding (Slack admin.*
+  vs bare)".
+
+### 17. Google Discovery format was unsupported — FIXED (new protocol adapter)
+- **Symptom**: feeding Anvil the real Gmail Discovery document produced a clean
+  `source/no_declared_format` diagnostic and an `unclassified` snapshot (no
+  crash — good defensive behavior), but the API could not be compiled at all.
+- **Root cause**: Google publishes every Workspace/Cloud API as a **Discovery
+  Document** (`discovery#restDescription`), not OpenAPI: a nested
+  `resources.<r>.methods.<m>` tree with bare `$ref: "TypeName"` references.
+  Anvil supported OpenAPI/Swagger/GraphQL/proto/WSDL, but not this.
+- **Fix**: `packages/compiler/src/protocols/discovery.ts` — a new protocol
+  adapter (the architecture already lowers non-REST formats to OpenAPI 3.0).
+  It walks the resource tree into flat paths, maps Discovery parameters
+  (`location` → `in`, `repeated` → array), lowers `request`/`response` refs to
+  a JSON body/response, moves `schemas` to `components.schemas`, and rewrites
+  every bare `$ref: "Name"` to `#/components/schemas/Name`. Detected by the
+  `kind` discriminator. Unlocks *all* Google APIs at once, not just Gmail.
+- **Tests**: `protocols/protocols.test.ts` → "Google Discovery adapter" (4
+  cases) + "compiles Google Discovery: send is a comms mutation, list is a
+  safe read".
+
+### Scale (Twilio, no code change needed)
+The **full** Twilio Api2010 spec (121 paths → 197 operations, 148 schemas)
+compiles in ~1.7s, and the full Slack spec (174 operations) in ~1.9s — the
+bundle/materialize schema design from findings #10–#12 is what makes an
+unfiltered large spec tractable. Twilio's own MCP collapses its ~1,800
+endpoints to a two-tool `search`/`retrieve` façade precisely because
+per-endpoint tooling "is unusable unloaded" at that scale; Anvil's answer is
+capability grouping over the same surface. Logged as validation, not a defect.

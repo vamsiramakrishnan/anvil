@@ -40,7 +40,14 @@ export type SpecSyntax = z.infer<typeof SpecSyntax>;
  * REST/JSON; `graphql`, `protobuf` (gRPC), and `wsdl` (SOAP) are non-REST
  * protocols lowered into the same internal model by the protocol adapters.
  */
-export const EntrypointFormat = z.enum(["openapi", "swagger", "graphql", "protobuf", "wsdl"]);
+export const EntrypointFormat = z.enum([
+  "openapi",
+  "swagger",
+  "graphql",
+  "protobuf",
+  "wsdl",
+  "discovery",
+]);
 export type EntrypointFormat = z.infer<typeof EntrypointFormat>;
 
 /**

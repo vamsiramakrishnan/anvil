@@ -44,7 +44,10 @@ export interface ParsedSpec {
  * occurrence (structurally significant), and one aggregate
  * `schema_depth_truncated` diagnostic if the backstop fires at all.
  */
-function decycle(document: OpenApiDocument): { document: OpenApiDocument; diagnostics: Diagnostic[] } {
+function decycle(document: OpenApiDocument): {
+  document: OpenApiDocument;
+  diagnostics: Diagnostic[];
+} {
   const { document: bundled, truncatedAt, depthLimitedAt } = bundleDocument(document);
   const diagnostics: Diagnostic[] = truncatedAt.map((path) => ({
     level: "warning",
@@ -95,6 +98,7 @@ const PROTOCOL_FORMATS: Record<string, { format: ProtocolFormat; kind: SourceKin
   graphql: { format: "graphql", kind: "graphql" },
   protobuf: { format: "protobuf", kind: "protobuf" },
   wsdl: { format: "wsdl", kind: "wsdl" },
+  discovery: { format: "discovery", kind: "discovery" },
 };
 
 /**
