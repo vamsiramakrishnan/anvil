@@ -84,7 +84,8 @@ export const DEFAULT_MAX_SCHEMA_NODES = 4000;
 type Ref = { $ref: string };
 const isRef = (v: unknown): v is Ref =>
   typeof v === "object" && v !== null && typeof (v as Record<string, unknown>).$ref === "string";
-const refName = (ref: Ref): string | undefined => ref.$ref.match(/^#\/components\/schemas\/(.+)$/)?.[1];
+const refName = (ref: Ref): string | undefined =>
+  ref.$ref.match(/^#\/components\/schemas\/(.+)$/)?.[1];
 
 /** Collect `components.schemas` from a parsed OpenAPI document, defensively. */
 function namedSchemasOf(document: unknown): Record<string, unknown> {
@@ -92,32 +93,287 @@ function namedSchemasOf(document: unknown): Record<string, unknown> {
   return doc?.components?.schemas ?? {};
 }
 
-export function bundleDocument<T>(document: T, maxDepth = DEFAULT_MAX_SCHEMA_DEPTH): BundleResult<T> {
+// ---------------------------------------------------------------------------
+// Structural identity (canonical hashing by hash refinement)
+//
+// `bundleDocument` must recognize "this node IS component X, inlined here" so
+// it can collapse the occurrence back to `{$ref}`. Object identity alone is
+// not enough — `@scalar/openapi-parser`'s `dereference()` clones a fresh copy
+// per reference site for acyclic refs (verified against the real Stripe spec),
+// only sharing objects where a cycle forces it. Identity used to be patched
+// over with vendor-supplied `title` matching, which silently failed on every
+// spec whose components carry no titles (or duplicate ones) — GitHub's real
+// 1,752-type GraphQL schema hung the compile that way. The mechanism below
+// derives identity purely from STRUCTURE, so it never depends on what a
+// vendor chose to call anything:
+//
+// 1. Collect every distinct object/array node (by JS identity) reachable from
+//    the document. Cycles force sharing in the dereferenced graph, so the
+//    distinct-node count is far below traversal count.
+// 2. Give each node a round-0 hash of its LOCAL shape only: object/array tag,
+//    sorted key names, scalar values (title included — a clone carries the
+//    same title as its source, so including every field stays consistent),
+//    with composite children as placeholders.
+// 3. Refine: each round, a node's next hash mixes its OWN previous hash with
+//    its local shape and its children's previous-round hashes. Including the
+//    node's own previous hash makes every round a strict refinement of the
+//    last (hash classes only ever split, never merge), so the fixpoint test
+//    is simply "the number of distinct hashes stopped growing". Isomorphic
+//    (bisimilar) nodes — a component body and any clone of it, however deep
+//    the cycles — hash identically in every round; distinguishable nodes
+//    split within graph-diameter rounds, hard-capped at
+//    MAX_REFINEMENT_ROUNDS. Cycles need no special casing at all.
+// 4. `buildStructuralIndex` maps each named component body's canonical hash
+//    to its name. Two DIFFERENT names with structurally identical bodies are
+//    genuine aliases; the collapse target is picked deterministically:
+//    prefer the alias whose name equals the shared body's own `title` (when
+//    a title exists and matches one of the names), else the
+//    lexicographically smallest name. Every alias keeps its own full body in
+//    `components.schemas`; only *uses* collapse to the canonical pick.
+//
+// Only COMPOSITE component bodies (those with at least one object/array
+// child) are indexed: collapsing every bare `{type: "string"}` in a document
+// to a `$ref` because some component happens to be exactly that would be
+// semantically sound but pure noise — the explosion bug family this kills is
+// about composite/recursive structure.
+// ---------------------------------------------------------------------------
+
+/** Hard cap on refinement rounds; real graphs converge in ~graph-diameter rounds. */
+const MAX_REFINEMENT_ROUNDS = 64;
+
+interface StructuralIndex {
+  /** Canonical structural hash of every object/array node reachable from the document. */
+  nodeHash: Map<object, string>;
+  /** Hash of a named component body → all names with that structure + the canonical collapse target. */
+  byHash: Map<string, { canonical: string; names: Set<string> }>;
+}
+
+/**
+ * Deterministic 64-bit string hash (two independent 32-bit imul lanes, cyrb53
+ * finalization). Pure arithmetic on char codes — identical across runs and
+ * platforms, and fast enough to re-hash every node once per refinement round.
+ */
+interface HashState {
+  h1: number;
+  h2: number;
+}
+const newHashState = (): HashState => ({ h1: 0xdeadbeef, h2: 0x41c6ce57 });
+function mixString(state: HashState, str: string): void {
+  let { h1, h2 } = state;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  state.h1 = h1;
+  state.h2 = h2;
+}
+function digest(state: HashState): string {
+  let { h1, h2 } = state;
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, "0") + (h1 >>> 0).toString(16).padStart(8, "0");
+}
+
+/** Injective-enough scalar encoding: type-tagged, JSON-escaped where it matters. */
+function encodeScalar(v: unknown): string {
+  if (v === null) return "z";
+  switch (typeof v) {
+    case "string":
+      return `s${JSON.stringify(v)}`;
+    case "number":
+      return `n${v}`;
+    case "boolean":
+      return v ? "b1" : "b0";
+    case "undefined":
+      return "u";
+    default:
+      return `x${String(v)}`;
+  }
+}
+
+/**
+ * One node's local shape, precomputed once: literal text chunks interleaved
+ * with composite-child slots. The hash input of a round is
+ * `statics[0] · h(children[0]) · statics[1] · … · statics[n]`.
+ */
+interface NodeTemplate {
+  statics: string[];
+  children: object[];
+}
+
+function buildTemplate(node: object): NodeTemplate {
+  const statics: string[] = [];
+  const children: object[] = [];
+  let run: string;
+  if (Array.isArray(node)) {
+    run = `A${node.length}`;
+    for (const v of node) {
+      if (v !== null && typeof v === "object") {
+        statics.push(`${run}|`);
+        children.push(v);
+        run = "";
+      } else {
+        run += `|${encodeScalar(v)}`;
+      }
+    }
+  } else {
+    run = "O";
+    const record = node as Record<string, unknown>;
+    // Sorted keys: structural identity must not depend on insertion order.
+    for (const key of Object.keys(record).sort()) {
+      run += `|${JSON.stringify(key)}:`;
+      const v = record[key];
+      if (v !== null && typeof v === "object") {
+        statics.push(run);
+        children.push(v);
+        run = "";
+      } else {
+        run += encodeScalar(v);
+      }
+    }
+  }
+  statics.push(run);
+  return { statics, children };
+}
+
+/**
+ * Canonical structural hash of every object/array node reachable from `root`,
+ * by hash refinement (see the section comment above). O(distinct nodes ×
+ * rounds); rounds ≈ graph diameter, capped at MAX_REFINEMENT_ROUNDS.
+ */
+function computeStructuralHashes(root: unknown): Map<object, string> {
+  // 1. Collect distinct nodes (iterative — the graph can be deep and cyclic).
+  const nodes: object[] = [];
+  const templates: NodeTemplate[] = [];
+  const stack: object[] = [];
+  const seen = new Set<object>();
+  if (root !== null && typeof root === "object") {
+    seen.add(root);
+    stack.push(root);
+  }
+  while (stack.length > 0) {
+    const node = stack.pop() as object;
+    const template = buildTemplate(node);
+    nodes.push(node);
+    templates.push(template);
+    for (const child of template.children) {
+      if (!seen.has(child)) {
+        seen.add(child);
+        stack.push(child);
+      }
+    }
+  }
+
+  // 2. Round 0: local shape only, children as placeholders. Leaf nodes (no
+  //    composite children) never change after this round, so only composite
+  //    ("dynamic") nodes are re-hashed in the refinement loop.
+  const hash = new Map<object, string>();
+  const dynamic: number[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const t = templates[i] as NodeTemplate;
+    const state = newHashState();
+    mixString(state, t.statics[0] as string);
+    for (let c = 0; c < t.children.length; c++) {
+      mixString(state, "?");
+      mixString(state, t.statics[c + 1] as string);
+    }
+    hash.set(nodes[i] as object, digest(state));
+    if (t.children.length > 0) dynamic.push(i);
+  }
+
+  // 3. Refine to fixpoint. Each round mixes a node's own previous hash first,
+  //    so the partition only ever splits — "distinct count stopped growing"
+  //    is therefore a genuine fixpoint, not a coincidence of counts.
+  let distinct = 0;
+  {
+    const initial = new Set<string>();
+    for (const i of dynamic) initial.add(hash.get(nodes[i] as object) as string);
+    distinct = initial.size;
+  }
+  for (let round = 0; round < MAX_REFINEMENT_ROUNDS && dynamic.length > 0; round++) {
+    const next = new Map<object, string>();
+    const classes = new Set<string>();
+    for (const i of dynamic) {
+      const node = nodes[i] as object;
+      const t = templates[i] as NodeTemplate;
+      const state = newHashState();
+      mixString(state, hash.get(node) as string);
+      mixString(state, t.statics[0] as string);
+      for (let c = 0; c < t.children.length; c++) {
+        mixString(state, hash.get(t.children[c] as object) as string);
+        mixString(state, t.statics[c + 1] as string);
+      }
+      const h = digest(state);
+      next.set(node, h);
+      classes.add(h);
+    }
+    for (const [node, h] of next) hash.set(node, h);
+    if (classes.size === distinct) break;
+    distinct = classes.size;
+  }
+  return hash;
+}
+
+/** True when a value is an object/array with at least one object/array child. */
+function isComposite(value: unknown): value is object {
+  if (value === null || typeof value !== "object") return false;
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return children.some((v) => v !== null && typeof v === "object");
+}
+
+function buildStructuralIndex(document: unknown, named: Record<string, unknown>): StructuralIndex {
+  const compositeNames = Object.keys(named)
+    .filter((name) => isComposite(named[name]))
+    .sort();
+  if (compositeNames.length === 0) return { nodeHash: new Map(), byHash: new Map() };
+
+  const nodeHash = computeStructuralHashes(document);
+  const byHash = new Map<string, { canonical: string; names: Set<string> }>();
+  for (const name of compositeNames) {
+    const h = nodeHash.get(named[name] as object);
+    if (h === undefined) continue; // defensive: body not reachable from the document root
+    const entry = byHash.get(h);
+    if (entry === undefined) byHash.set(h, { canonical: name, names: new Set([name]) });
+    else entry.names.add(name);
+  }
+  // Alias policy (documented above): prefer the name matching the shared
+  // body's own title, else the lexicographically smallest name. Identical
+  // hash ⇒ identical structure ⇒ every aliased body carries the same title,
+  // so reading it off any one candidate body is representative.
+  for (const entry of byHash.values()) {
+    if (entry.names.size === 1) continue;
+    const sorted = [...entry.names].sort();
+    const body = named[sorted[0] as string] as Record<string, unknown> | unknown[];
+    const title = Array.isArray(body) ? undefined : body.title;
+    entry.canonical =
+      typeof title === "string" && entry.names.has(title) ? title : (sorted[0] as string);
+  }
+  return { nodeHash, byHash };
+}
+
+export function bundleDocument<T>(
+  document: T,
+  maxDepth = DEFAULT_MAX_SCHEMA_DEPTH,
+): BundleResult<T> {
   const named = namedSchemasOf(document);
   // Object identity is NOT a reliable way to recognize "this is a reference to
   // named schema X": `@scalar/openapi-parser`'s `dereference()` clones a fresh
   // copy for every `$ref` occurrence rather than sharing one object per
   // target (verified against the real Stripe spec — even the simplest direct
-  // `$ref` to a named schema is a distinct object every time). Kept as a
-  // fast-path fallback (harmless — it just means one less title lookup on the
-  // rare source where identity *is* preserved), but the real signal is each
-  // schema's own `title`, which OpenAPI tooling (and Stripe's spec
-  // specifically, verified) sets to the type's name wherever it's used —
-  // `Customer`, `BalanceTransaction`, etc. — regardless of which cloned copy
-  // you're looking at.
+  // `$ref` to a named schema is a distinct object every time). Kept as an
+  // exact fast path (when the graph really does share a component's body
+  // object, that IS the vendor's intended name — cycles force this sharing);
+  // the authoritative signal for everything else is the structural canonical
+  // hash built below, which never depends on vendor-supplied names or titles.
   const nameOf = new Map<object, string>();
-  const titleToName = new Map<string, string>();
-  const ambiguousTitles = new Set<string>();
   for (const [name, schema] of Object.entries(named)) {
     if (schema === null || typeof schema !== "object") continue;
     nameOf.set(schema, name);
-    const title = (schema as Record<string, unknown>).title;
-    if (typeof title !== "string" || title.length === 0) continue;
-    const existing = titleToName.get(title);
-    if (existing !== undefined && existing !== name) ambiguousTitles.add(title);
-    else titleToName.set(title, name);
   }
-  for (const title of ambiguousTitles) titleToName.delete(title);
+  const structural = buildStructuralIndex(document, named);
 
   const truncatedAt: string[] = [];
   const depthLimitedAt: string[] = [];
@@ -143,7 +399,7 @@ export function bundleDocument<T>(document: T, maxDepth = DEFAULT_MAX_SCHEMA_DEP
       depthLimitedAt,
       resolved,
       nameOf,
-      titleToName,
+      structural,
       name,
     );
   }
@@ -162,7 +418,7 @@ export function bundleDocument<T>(document: T, maxDepth = DEFAULT_MAX_SCHEMA_DEP
     depthLimitedAt,
     resolved,
     nameOf,
-    titleToName,
+    structural,
     undefined,
   );
 
@@ -170,7 +426,12 @@ export function bundleDocument<T>(document: T, maxDepth = DEFAULT_MAX_SCHEMA_DEP
   // bodies, not a self-referential $ref to each of its own entries (which is
   // what phase 2 alone would produce, since it has no `definingName`).
   const out = restWalked as { components?: { schemas?: unknown } } | null;
-  if (out !== null && typeof out === "object" && out.components && typeof out.components === "object") {
+  if (
+    out !== null &&
+    typeof out === "object" &&
+    out.components &&
+    typeof out.components === "object"
+  ) {
     (out.components as Record<string, unknown>).schemas = bundledSchemas;
   }
   return { document: out as T, truncatedAt, depthLimitedAt };
@@ -187,7 +448,7 @@ function walk(
   depthLimitedAt: string[],
   resolved: Map<object, { depth: number; value: unknown }>,
   nameOf: Map<object, string>,
-  titleToName: Map<string, string>,
+  structural: StructuralIndex,
   definingName: string | undefined,
 ): unknown {
   if (node === null || typeof node !== "object") return node;
@@ -198,11 +459,25 @@ function walk(
   // itself). This is what makes the whole pass O(unique named schemas): a
   // node identified as named is either "the one call site defining it"
   // (processed normally, once) or "a use of it" (an O(1) pointer, no
-  // recursion at all). Identity first (cheap, and correct on the rare source
-  // that preserves it), title second (the reliable signal — see the note on
-  // `titleToName` above).
-  const title = !Array.isArray(node) ? (node as Record<string, unknown>).title : undefined;
-  const name = nameOf.get(node) ?? (typeof title === "string" ? titleToName.get(title) : undefined);
+  // recursion at all). Identity first (exact — the graph literally shares
+  // the component's body object), structural canonical hash second (the
+  // authoritative, vendor-name-independent signal — dereference clones a
+  // fresh copy per reference site, so identity rarely fires; see the
+  // structural-identity section above). Structural collapse only applies
+  // inside schema content (`inSchema`): a non-schema document node (a
+  // response object, an example value) that happens to be shaped like a
+  // component body must not become a schema $ref.
+  let name = nameOf.get(node);
+  if (name === undefined && inSchema) {
+    const hash = structural.nodeHash.get(node);
+    const entry = hash === undefined ? undefined : structural.byHash.get(hash);
+    // A component's own defining walk must not collapse — neither to itself
+    // nor to a structurally identical alias (which would hollow out its body
+    // into a bare $ref); every alias keeps its own full definition.
+    if (entry !== undefined && !(definingName !== undefined && entry.names.has(definingName))) {
+      name = entry.canonical;
+    }
+  }
   if (name !== undefined && name !== definingName) {
     return { $ref: `#/components/schemas/${name}` };
   }
@@ -253,7 +528,7 @@ function walk(
         depthLimitedAt,
         resolved,
         nameOf,
-        titleToName,
+        structural,
         undefined,
       ),
     );
@@ -279,7 +554,7 @@ function walk(
         depthLimitedAt,
         resolved,
         nameOf,
-        titleToName,
+        structural,
         undefined,
       );
     }
@@ -465,12 +740,34 @@ function resolveRefs(
 
   if (Array.isArray(node)) {
     return node.map((v, i) =>
-      resolveRefs(v, namedSchemas, ancestors, refDepth, maxRefDepth, `${path}[${i}]`, refDepthLimitedAt, nodeBudgetLimitedAt, resolved, budget),
+      resolveRefs(
+        v,
+        namedSchemas,
+        ancestors,
+        refDepth,
+        maxRefDepth,
+        `${path}[${i}]`,
+        refDepthLimitedAt,
+        nodeBudgetLimitedAt,
+        resolved,
+        budget,
+      ),
     );
   }
   const obj: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-    obj[k] = resolveRefs(v, namedSchemas, ancestors, refDepth, maxRefDepth, `${path}.${k}`, refDepthLimitedAt, nodeBudgetLimitedAt, resolved, budget);
+    obj[k] = resolveRefs(
+      v,
+      namedSchemas,
+      ancestors,
+      refDepth,
+      maxRefDepth,
+      `${path}.${k}`,
+      refDepthLimitedAt,
+      nodeBudgetLimitedAt,
+      resolved,
+      budget,
+    );
   }
   return obj;
 }

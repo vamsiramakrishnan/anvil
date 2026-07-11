@@ -520,8 +520,13 @@ components:
 `;
     const air = await compile({ spec: recursive, serviceId: "groups" });
     expect(air.operations).toHaveLength(1);
-    // The truncation is never silent — it is reported as a reviewable diagnostic.
-    expect(air.diagnostics.some((d) => d.code === "schema_cycle_truncated")).toBe(true);
+    // Structural identity recognizes the inlined recursive copy as `Group`
+    // even though it carries no title, so the recursion is represented as an
+    // ordinary `$ref` — real structure preserved, nothing truncated. (Before
+    // structural hashing, an UNTITLED recursive component could not be
+    // re-identified, so this compile had to cycle-truncate and report a
+    // `schema_cycle_truncated` diagnostic; that failure mode is gone.)
+    expect(air.diagnostics.some((d) => d.code === "schema_cycle_truncated")).toBe(false);
     // The result must actually be JSON-safe (this would throw if it weren't).
     expect(() => JSON.stringify(air)).not.toThrow();
   });
