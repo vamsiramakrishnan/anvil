@@ -16,6 +16,23 @@ export interface AnvilCommandSpec {
 
 export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
   {
+    name: "source",
+    usage: "anvil source <add|list|show|validate> [args] [--json]",
+    summary: "Import and lock API source specs as content-addressed snapshots.",
+    detail:
+      "Layer 0 — capture what the customer actually supplied, before any compilation. `anvil source add <path|dir>` detects the spec format (OpenAPI 3.0/3.1 or Swagger 2.0, YAML or JSON) without compiling, hashes the file set deterministically, and locks a snapshot under .anvil/sources/<id>/ (source.json plus verbatim raw/ copies). A directory of specs becomes one snapshot with many files. `list` and `show` are read-only; `validate <id>` re-hashes raw/ and confirms it still matches the locked source.json, so tampering or drift is caught before it can contaminate a compile. The sourceHash is content-derived only — re-importing unchanged content yields the same hash — and broken input produces structured diagnostics, never a crash.",
+    mutates: true,
+  },
+  {
+    name: "agentify",
+    usage: "anvil agentify <spec> [--manifest f] [--service id] [--out dir] [--root ws] [--json]",
+    summary:
+      "One-shot discovery: lock the source, compile, assess readiness, and propose capabilities — then stop for review.",
+    detail:
+      "Convenience orchestration of the discovery flow — the same library calls as running `anvil source add` (locks a content-addressed snapshot under .anvil/sources), `anvil compile` (writes the bundle, default generated/<service-id>), `anvil assess` (the readiness triage; blocked operations are surfaced prominently but do not stop the flow), and `anvil capability propose` (read-only re-discovery over the stored groupings) individually, so the compiled AIR is byte-identical to the four-command path. It then STOPS for human review. It deliberately does NOT approve any capability or operation (every grouping stays `proposed`, every unproven mutation stays `review_required`), does NOT certify, and does NOT publish — no certification.json or publication.json is ever written. A broken spec stops at the snapshot layer with structured diagnostics and exit 1; nothing downstream runs.",
+    mutates: true,
+  },
+  {
     name: "compile",
     usage: "anvil compile <spec> [--manifest f] [--service id] [--out dir] [--endpoint url]",
     summary: "Compile a spec into a full tool bundle (CLI + MCP + skill + deploy).",
@@ -40,19 +57,28 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     mutates: false,
   },
   {
-    name: "lint",
-    usage: "anvil lint <dir|air.yaml>",
-    summary: "Show safety diagnostics; exit non-zero if there are errors.",
+    name: "capability",
+    usage: "anvil capability <propose|list|show|approve|reject|diff> <dir|air.yaml> [id] [flags]",
+    summary: "Review capability groupings: propose, inspect, approve, reject, or diff.",
     detail:
-      "Surfaces unproven idempotency, missing confirmation, duplicate names, and incoherent retry policy.",
-    mutates: false,
+      "The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. `approve`/`reject` persist the review decision to the AIR file. Approval enforces the tool budget: a capability disclosing more than 20 tools is blocked without --allow-large (more than 15 warns). Only an approved capability can be built with `anvil build`.",
+    mutates: true,
   },
   {
-    name: "approve",
-    usage: "anvil approve <dir|air.yaml> <operation-id...>",
-    summary: "Approve operations so they are exposed by the generated artifacts.",
+    name: "refine",
+    usage: "anvil refine <plan|skills|skill|run|review|apply> <dir|air.yaml> [flags]",
+    summary: "Detect, propose, measure, and apply refinements to AIR (the quality flywheel).",
     detail:
-      "Only approved operations appear in the MCP server, CLI catalog, and compiled runtime manifest. Approve deliberately, after inspecting risk.",
+      "`anvil refine plan` runs Anvil's deterministic detectors and reports a refinement plan — documentation gaps, weak naming/routing, unproven safety semantics, and mock/eval coverage holes — grouped by severity, category, and the narrow skill that owns each fix. `anvil refine skills` lists those skills as typed contracts (trigger, evidence policy, output boundary, validation), whose executor is kept separate from their semantics. `anvil refine run` routes each in-scope deficiency to its skill, proposes an evidence-backed semantic patch, validates it, then MEASURES only the eval families it affects — with a safety guard that must never regress — and reconciles the result through an auto-approval policy into a reviewable refinement pack (--severity/--skill/--safe-only/--out). `anvil refine review <pack-dir>` prints the human review. `anvil refine apply` applies only the auto-approved refinements to AIR (the sole mutating step; --dry-run to preview), which `anvil compile` then reprojects across the CLI, MCP, and skill at once.",
+    mutates: true,
+  },
+  {
+    name: "case",
+    usage:
+      "anvil case <open|list|inspect|add-evidence|validate-claims|synthesize|validate-proposal|investigate|finalize|close> ...",
+    summary: "Run a bounded investigation for one deficiency as an isolated case.",
+    detail:
+      "The investigation framework. `anvil case list <dir>` shows the deficiencies a case can be opened for; `anvil case open <dir> <target-key>` materializes an isolated case workspace (CASE.md + task/target/evidence-policy/allowed-tools/expected-output.schema + workspace/ + output/) that gives a coding agent a *case, not a prompt*. Inside a case, the agent works only with rails that enforce Anvil semantics — repository search and language tooling are the agent's own job, not Anvil's: `inspect`, `add-evidence` (enforces the source AND predicate policy), `validate-claims` (strength + contradictions + predicate policy), `synthesize` (composes the proposal from gathered claims), `validate-proposal` (deterministic validation), and `finalize` (records an honest status — proposal_generated / conflicted / insufficient_evidence / …). `anvil case investigate <case>` drives the live coding agent; `anvil case close <case> <air>` re-enters Anvil's rails — validating and reconciling the proposal into a refinement, bound to the case identity. The agent owns investigation and synthesis; Anvil owns admissibility, safety, validation, and application. AIR is never edited by a case.",
     mutates: true,
   },
   {
@@ -73,29 +99,20 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     mutates: false,
   },
   {
-    name: "refine",
-    usage: "anvil refine <plan|skills|skill|run|review|apply> <dir|air.yaml> [flags]",
-    summary: "Detect, propose, measure, and apply refinements to AIR (the quality flywheel).",
+    name: "approve",
+    usage: "anvil approve <dir|air.yaml> <operation-id...>",
+    summary: "Approve operations so they are exposed by the generated artifacts.",
     detail:
-      "`anvil refine plan` runs Anvil's deterministic detectors and reports a refinement plan — documentation gaps, weak naming/routing, unproven safety semantics, and mock/eval coverage holes — grouped by severity, category, and the narrow skill that owns each fix. `anvil refine skills` lists those skills as typed contracts (trigger, evidence policy, output boundary, validation), whose executor is kept separate from their semantics. `anvil refine run` routes each in-scope deficiency to its skill, proposes an evidence-backed semantic patch, validates it, then MEASURES only the eval families it affects — with a safety guard that must never regress — and reconciles the result through an auto-approval policy into a reviewable refinement pack (--severity/--skill/--safe-only/--out). `anvil refine review <pack-dir>` prints the human review. `anvil refine apply` applies only the auto-approved refinements to AIR (the sole mutating step; --dry-run to preview), which `anvil compile` then reprojects across the CLI, MCP, and skill at once.",
+      "Only approved operations appear in the MCP server, CLI catalog, and compiled runtime manifest. Approve deliberately, after inspecting risk.",
     mutates: true,
   },
   {
-    name: "case",
-    usage:
-      "anvil case <open|list|inspect|add-evidence|validate-claims|synthesize|validate-proposal|investigate|finalize|close> ...",
-    summary: "Run a bounded investigation for one deficiency as an isolated case.",
+    name: "lint",
+    usage: "anvil lint <dir|air.yaml>",
+    summary: "Show safety diagnostics; exit non-zero if there are errors.",
     detail:
-      "The investigation framework. `anvil case list <dir>` shows the deficiencies a case can be opened for; `anvil case open <dir> <target-key>` materializes an isolated case workspace (CASE.md + task/target/evidence-policy/allowed-tools/expected-output.schema + workspace/ + output/) that gives a coding agent a *case, not a prompt*. Inside a case, the agent works only with rails that enforce Anvil semantics — repository search and language tooling are the agent's own job, not Anvil's: `inspect`, `add-evidence` (enforces the source AND predicate policy), `validate-claims` (strength + contradictions + predicate policy), `synthesize` (composes the proposal from gathered claims), `validate-proposal` (deterministic validation), and `finalize` (records an honest status — proposal_generated / conflicted / insufficient_evidence / …). `anvil case investigate <case>` drives the live coding agent; `anvil case close <case> <air>` re-enters Anvil's rails — validating and reconciling the proposal into a refinement, bound to the case identity. The agent owns investigation and synthesis; Anvil owns admissibility, safety, validation, and application. AIR is never edited by a case.",
-    mutates: true,
-  },
-  {
-    name: "capability",
-    usage: "anvil capability <propose|list|show|approve|reject|diff> <dir|air.yaml> [id] [flags]",
-    summary: "Review capability groupings: propose, inspect, approve, reject, or diff.",
-    detail:
-      "The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. `approve`/`reject` persist the review decision to the AIR file. Approval enforces the tool budget: a capability disclosing more than 20 tools is blocked without --allow-large (more than 15 warns). Only an approved capability can be built with `anvil build`.",
-    mutates: true,
+      "Surfaces unproven idempotency, missing confirmation, duplicate names, and incoherent retry policy.",
+    mutates: false,
   },
   {
     name: "build",
@@ -103,6 +120,46 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     summary: "Compile one approved capability into an aligned CLI + MCP + skill bundle.",
     detail:
       "Narrows the AIR document to the capability's approved operations and reachable schemas, then reuses the whole-service generator, so the capability bundle is the same aligned projection of a smaller model. Refuses (with a structured error) a capability that is missing, not lifecycle-approved, or would build empty. Stamps a content-addressed bundle.json (capabilityHash + contractHash shared by every surface); rebuilding unchanged input reproduces identical hashes.",
+    mutates: true,
+  },
+  {
+    name: "certify",
+    usage: "anvil certify <dir|air.yaml> [--json]",
+    summary: "Run the certification gates over a bundle and write certification.json.",
+    detail:
+      "Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates and the MCP tool list, CLI catalog, and runtime manifest expose exactly the same approved operations), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.",
+    mutates: true,
+  },
+  {
+    name: "publish",
+    usage: "anvil publish <dir> --target cloud-run [--env ENV] [--allow-uncertified]",
+    summary: "Gated publish: verify the certification, then emit the deployment plan.",
+    detail:
+      "Publication requires a PASSING certification whose bundle hash matches the current bundle content — a stale certificate fails. On success it prints the Cloud Run deployment plan (same as `anvil deploy cloud-run`) and writes publication.json into the bundle. `--allow-uncertified` waives the gate for non-prod environments only; publishing to prod (via --env prod or ANVIL_ENV=prod) fails closed without a valid certification, flag or no flag. No cloud credentials are held and no API calls are made.",
+    mutates: true,
+  },
+  {
+    name: "deploy",
+    usage: "anvil deploy cloud-run <dir> [--env prod]",
+    summary: "Print the Cloud Run deployment plan for a bundle.",
+    detail:
+      "Anvil generates the deploy artifacts (Dockerfile, service YAML, env/secret contracts); it does not hold cloud credentials.",
+    mutates: false,
+  },
+  {
+    name: "sync",
+    usage: "anvil sync <spec-path> <dir|air.yaml> [--manifest f] [--root ws] [--json]",
+    summary: "Detect semantic drift between the current spec and a stored AIR contract.",
+    detail:
+      'Layer 6 — drift and recertification. Re-imports the spec through the Layer 0 snapshot layer (unchanged content is a fast path: same sourceHash, no drift), recompiles it in memory, and diffs the fresh contract against the stored AIR: operations added/removed, field type and requiredness changes, auth scope/type changes, retry/idempotency/confirmation semantics, pagination, and documentation-only edits (info). Safety-loosening drift (a dropped confirmation, new retries, an idempotency claim crossing "none", auth vanishing) is blocking; other safety-semantic drift is high. Reports which capabilities are affected and which certifications must be re-earned even though their bundle bytes are untouched, then writes a drift record to .anvil/drift/<id>.json. Never mutates AIR, never applies spec changes, never touches capability lifecycles. Exits non-zero on high/blocking drift so it can gate a pipeline.',
+    mutates: true,
+  },
+  {
+    name: "drift",
+    usage: "anvil drift <list|show|accept> [id] [--note ..] [--root ws] [--json]",
+    summary: "List, inspect, and mark reviewed the drift records `anvil sync` stored.",
+    detail:
+      "`list` shows every stored drift record with its severity mix and review status; `show <id>` prints one record in full (items grouped by severity, affected capabilities, invalidated certifications). `accept <id> [--note ..]` stamps reviewedAt on the record — bookkeeping only: accepting drift never edits AIR, never restores a certification, and never changes capability lifecycles. Act on drift deliberately with `anvil compile`, `anvil certify`, and the capability review commands.",
     mutates: true,
   },
   {
@@ -127,62 +184,5 @@ export const ANVIL_COMMANDS: AnvilCommandSpec[] = [
     summary: "Locate and verify the portable skill package.",
     detail: "The skill is also served over MCP as anvil://skill/<service>/... resources.",
     mutates: false,
-  },
-  {
-    name: "deploy",
-    usage: "anvil deploy cloud-run <dir> [--env prod]",
-    summary: "Print the Cloud Run deployment plan for a bundle.",
-    detail:
-      "Anvil generates the deploy artifacts (Dockerfile, service YAML, env/secret contracts); it does not hold cloud credentials.",
-    mutates: false,
-  },
-  {
-    name: "source",
-    usage: "anvil source <add|list|show|validate> [args] [--json]",
-    summary: "Import and lock API source specs as content-addressed snapshots.",
-    detail:
-      "Layer 0 — capture what the customer actually supplied, before any compilation. `anvil source add <path|dir>` detects the spec format (OpenAPI 3.0/3.1 or Swagger 2.0, YAML or JSON) without compiling, hashes the file set deterministically, and locks a snapshot under .anvil/sources/<id>/ (source.json plus verbatim raw/ copies). A directory of specs becomes one snapshot with many files. `list` and `show` are read-only; `validate <id>` re-hashes raw/ and confirms it still matches the locked source.json, so tampering or drift is caught before it can contaminate a compile. The sourceHash is content-derived only — re-importing unchanged content yields the same hash — and broken input produces structured diagnostics, never a crash.",
-    mutates: true,
-  },
-  {
-    name: "certify",
-    usage: "anvil certify <dir|air.yaml> [--json]",
-    summary: "Run the certification gates over a bundle and write certification.json.",
-    detail:
-      "Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates and the MCP tool list, CLI catalog, and runtime manifest expose exactly the same approved operations), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.",
-    mutates: true,
-  },
-  {
-    name: "publish",
-    usage: "anvil publish <dir> --target cloud-run [--env ENV] [--allow-uncertified]",
-    summary: "Gated publish: verify the certification, then emit the deployment plan.",
-    detail:
-      "Publication requires a PASSING certification whose bundle hash matches the current bundle content — a stale certificate fails. On success it prints the Cloud Run deployment plan (same as `anvil deploy cloud-run`) and writes publication.json into the bundle. `--allow-uncertified` waives the gate for non-prod environments only; publishing to prod (via --env prod or ANVIL_ENV=prod) fails closed without a valid certification, flag or no flag. No cloud credentials are held and no API calls are made.",
-    mutates: true,
-  },
-  {
-    name: "agentify",
-    usage: "anvil agentify <spec> [--manifest f] [--service id] [--out dir] [--root ws] [--json]",
-    summary:
-      "One-shot discovery: lock the source, compile, assess readiness, and propose capabilities — then stop for review.",
-    detail:
-      "Convenience orchestration of the discovery flow — the same library calls as running `anvil source add` (locks a content-addressed snapshot under .anvil/sources), `anvil compile` (writes the bundle, default generated/<service-id>), `anvil assess` (the readiness triage; blocked operations are surfaced prominently but do not stop the flow), and `anvil capability propose` (read-only re-discovery over the stored groupings) individually, so the compiled AIR is byte-identical to the four-command path. It then STOPS for human review. It deliberately does NOT approve any capability or operation (every grouping stays `proposed`, every unproven mutation stays `review_required`), does NOT certify, and does NOT publish — no certification.json or publication.json is ever written. A broken spec stops at the snapshot layer with structured diagnostics and exit 1; nothing downstream runs.",
-    mutates: true,
-  },
-  {
-    name: "sync",
-    usage: "anvil sync <spec-path> <dir|air.yaml> [--manifest f] [--root ws] [--json]",
-    summary: "Detect semantic drift between the current spec and a stored AIR contract.",
-    detail:
-      'Layer 6 — drift and recertification. Re-imports the spec through the Layer 0 snapshot layer (unchanged content is a fast path: same sourceHash, no drift), recompiles it in memory, and diffs the fresh contract against the stored AIR: operations added/removed, field type and requiredness changes, auth scope/type changes, retry/idempotency/confirmation semantics, pagination, and documentation-only edits (info). Safety-loosening drift (a dropped confirmation, new retries, an idempotency claim crossing "none", auth vanishing) is blocking; other safety-semantic drift is high. Reports which capabilities are affected and which certifications must be re-earned even though their bundle bytes are untouched, then writes a drift record to .anvil/drift/<id>.json. Never mutates AIR, never applies spec changes, never touches capability lifecycles. Exits non-zero on high/blocking drift so it can gate a pipeline.',
-    mutates: true,
-  },
-  {
-    name: "drift",
-    usage: "anvil drift <list|show|accept> [id] [--note ..] [--root ws] [--json]",
-    summary: "List, inspect, and mark reviewed the drift records `anvil sync` stored.",
-    detail:
-      "`list` shows every stored drift record with its severity mix and review status; `show <id>` prints one record in full (items grouped by severity, affected capabilities, invalidated certifications). `accept <id> [--note ..]` stamps reviewedAt on the record — bookkeeping only: accepting drift never edits AIR, never restores a certification, and never changes capability lifecycles. Act on drift deliberately with `anvil compile`, `anvil certify`, and the capability review commands.",
-    mutates: true,
   },
 ];
