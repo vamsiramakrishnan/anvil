@@ -38,6 +38,7 @@ export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
     "The platform does not confirm irreversible actions for you — confirmation must be in the contract.",
     "An external gateway in front of the server is not assumed; controls travel in the pack.",
   ],
+  verificationStatus: "unverified",
   verifiedAgainst:
-    "unverified — re-check against current Google Cloud Gemini Enterprise custom-MCP docs before registration",
+    "re-check against current Google Cloud Gemini Enterprise custom-MCP docs before registration",
 };

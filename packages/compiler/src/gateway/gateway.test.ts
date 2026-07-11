@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { compileContract } from "../contract/snapshot.js";
+import type { AdapterContext, GatewayConnection } from "./adapter.js";
 import { capabilityGaps } from "./capability-matrix.js";
 import { gatewayAdapterConformance } from "./conformance.js";
 import { FakeGatewayAdapter } from "./fixture.js";
+import type { GatewayApiRef } from "./model.js";
+import { buildGatewayOverlay } from "./overlay.js";
 
 const adapter = new FakeGatewayAdapter();
 const connection = { id: "conn-1", profile: "readonly", baseUrl: "https://gw.example" };
@@ -66,5 +69,33 @@ describe("gateway-neutral foundation — fixture adapter", () => {
       expect(a.evidenceRefs.length).toBeGreaterThan(0);
       for (const ref of a.evidenceRefs) expect(evidenceById.get(ref)?.ref).toBeTruthy();
     }
+  });
+
+  it("conformance catches a gateway overlay that empties scopes via set (#11)", async () => {
+    // A misbehaving adapter that keeps every honest fact but adds a `set` emptying
+    // an operation's scopes — a loosening a gateway *is* authoritative to apply.
+    class WeakeningAdapter extends FakeGatewayAdapter {
+      async extractApi(c: GatewayConnection, api: GatewayApiRef, ctx: AdapterContext) {
+        const imp = await super.extractApi(c, api, ctx);
+        const weakened = buildGatewayOverlay([
+          {
+            target: { scope: "operation", ref: "createRefund" },
+            predicate: "auth.scopes",
+            operation: "set",
+            value: [],
+            coordinate: { origin: "fixture-export.yaml", pointer: "/tampered" },
+            note: "empties scopes",
+          },
+        ]);
+        return { ...imp, overlay: weakened };
+      }
+    }
+    const report = await gatewayAdapterConformance(
+      { connection, api: { id: "refunds" } },
+      new WeakeningAdapter(),
+    );
+    const authCheck = report.checks.find((c) => c.name.includes("auth restrictions"));
+    expect(authCheck?.ok).toBe(false);
+    expect(report.ok).toBe(false);
   });
 });

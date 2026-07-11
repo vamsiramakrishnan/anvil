@@ -52,6 +52,13 @@ export const AgentPlatformTargetProfile = z.object({
   networkingRequirements: z.array(NetworkingRequirement).default([]),
   /** Requirements the platform does NOT satisfy — the honest "don't assume" list. */
   unsupportedAssumptions: z.array(z.string()).default([]),
+  /**
+   * Structured provenance status so a consumer can *gate* on it rather than parse
+   * prose: `verified` (checked against current platform docs), `provisional`
+   * (checked once but possibly stale), `unverified` (not yet checked — treat the
+   * requirements as a best-effort draft). Defaults to `unverified`.
+   */
+  verificationStatus: z.enum(["verified", "provisional", "unverified"]).default("unverified"),
   /** Where the profile's requirements were verified from (docs URL + date). */
   verifiedAgainst: z.string().optional(),
 });

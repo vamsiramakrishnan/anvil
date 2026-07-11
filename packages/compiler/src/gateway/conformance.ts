@@ -80,10 +80,16 @@ export async function gatewayAdapterConformance<TConnection extends GatewayConne
   );
   record("every overlay assertion cites evidence with a coordinate", everyAssertionEvidenced);
 
-  // Auth is never weakened: no scope removal, no principal downgrade to anonymous.
+  // Auth is never weakened. A gateway is *authoritative* for `auth.scopes`, so a
+  // `set`/`remove` that empties or subtracts scopes would actually be applied — the
+  // invariant must catch every shape that loosens auth, not just an explicit
+  // `remove`: scope removal, a `set` to an empty/absent scope set, and a principal
+  // downgraded to anonymous.
+  const emptyScopeSet = (v: unknown) => !Array.isArray(v) || v.length === 0;
   const weakensAuth = imp1.overlay.assertions.some(
     (a) =>
       (a.predicate === "auth.scopes" && a.operation === "remove") ||
+      (a.predicate === "auth.scopes" && a.operation === "set" && emptyScopeSet(a.value)) ||
       (a.predicate === "auth.principal" && a.operation === "set" && a.value === "anonymous"),
   );
   record(AUTH_LOOSENING, !weakensAuth);

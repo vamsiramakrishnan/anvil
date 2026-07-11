@@ -24,6 +24,19 @@ export function validateTarget(
   const findings: TargetValidationFinding[] = [];
   const served = air.operations.filter((o) => o.state === "approved");
 
+  // Profile provenance: a profile whose requirements were never verified against
+  // current platform docs is a draft. Surface that as a structured warning so a
+  // green validation can never be mistaken for "checked against the real platform".
+  if (profile.verificationStatus !== "verified") {
+    findings.push({
+      level: "warning",
+      code: "target/unverified_profile",
+      message: `${profile.displayName} profile is ${profile.verificationStatus}${
+        profile.verifiedAgainst ? ` (${profile.verifiedAgainst})` : ""
+      }; re-verify its requirements against current platform docs before registration.`,
+    });
+  }
+
   // Transport / HTTPS.
   const needsHttps = profile.transportRequirements.some((t) => t.requiresHttps);
   if (options.endpoint && needsHttps && !options.endpoint.startsWith("https://")) {
