@@ -80,7 +80,7 @@ Zendesk, Intercom, Zoom, HubSpot, DocuSign) plus two **real non-REST schemas** �
 **GitHub's 1,752-type GraphQL** (vs `github-mcp-server`) and **Temporal's
 121-rpc gRPC proto** (vs `temporal-mcp`), with **Linear** GraphQL and **etcd**
 multi-file proto alongside. They span OpenAPI 3.x, Swagger 2.0, Google
-Discovery, RPC-over-HTTP, GraphQL SDL, gRPC/proto3, and SOAP/WSDL. **31 real,
+Discovery, RPC-over-HTTP, GraphQL SDL, gRPC/proto3, and SOAP/WSDL. **36 real,
 systemic compiler bugs found and fixed**, each with a regression test:
 
 1. Compiler crash on any self-referential schema (Jira's `LinkGroup`)
@@ -114,6 +114,11 @@ systemic compiler bugs found and fixed**, each with a regression test:
 29. portType names polluted WSDL operation naming (`…create flight_details_port_type`) — the wire operation name now drives identity, portTypes only disambiguate
 30. Every adapter-lowered read (WSDL, GraphQL, gRPC) was un-executable on the wire — lowered to GET while keeping a required body, so the HTTP client refused the request; found by the loopback self-test's first run, fixed with truthful POST methods + explicit `x-anvil-effect` adapter assertions (names byte-identical, proven differentially)
 31. Example synthesis produced no request body for materialized `allOf`/truncation-stub schemas, leaving deep operations undrivable and skill examples hollow
+32. Path-item-level parameters (Asana/Zendesk) never entered the input contract — every surface agreed on a contract missing the URL's own params
+33. Spec-mandated ignoring of Accept/Content-Type/Authorization header parameters wasn't enforced (PagerDuty) — values comma-joined on the wire
+34. The generated mock's router couldn't match segment-embedded params (Twilio's `{Sid}.json`)
+35. Example synthesis, the MCP tool's zod shape, and mock validation disagreed on records, `anyOf` refinements, null examples, and optional inputs (HubSpot/Intercom)
+36. Bare-string bodies (Jira addWatcher) and unresolved proto messages (Temporal) failed type validation — bodies now validate by JSON type, unresolved RPC messages degrade to objects
 
 See `deficiencies.md` for the full writeup of each (symptom → root cause →
 fix → test), and the per-product / per-batch detail in `jira.md`,
