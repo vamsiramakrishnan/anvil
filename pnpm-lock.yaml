@@ -203,6 +203,15 @@ importers:
       '@anvil/compiler':
         specifier: workspace:*
         version: link:../compiler
+      '@anvil/generators':
+        specifier: workspace:*
+        version: link:../generators
+      '@anvil/mcp-runtime':
+        specifier: workspace:*
+        version: link:../mcp-runtime
+      '@anvil/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@modelcontextprotocol/sdk':
         specifier: ^1.22.0
         version: 1.29.0(zod@4.4.3)

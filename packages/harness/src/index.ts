@@ -9,6 +9,7 @@
 export * from "./agent.js";
 export * from "./enrich.js";
 export * from "./evidence.js";
+export * from "./loopback.js";
 export * from "./mcp-source.js";
 export * from "./profiles.js";
 export * from "./reconcile.js";
