@@ -69,6 +69,33 @@ export function loadRuntimeConfig(
   };
 }
 
+/** The hostname of a URL, or undefined when it does not parse as one. */
+export function hostOf(url: string): string | undefined {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The base-URL courtesy shared by every serving entrypoint: when the operator
+ * supplied an explicit base URL (`--base-url` / `ANVIL_BASE_URL`) but no
+ * allowlist, pin egress to that URL's host rather than leaving the allowlist
+ * empty (which would deny everything outside dev). An explicit
+ * `ANVIL_ALLOWED_HOSTS` always wins — the override never widens a configured
+ * allowlist.
+ */
+export function allowedHostsFor(
+  configured: string[],
+  baseUrl: string,
+  overridden: boolean,
+): string[] {
+  if (configured.length > 0 || !overridden) return configured;
+  const host = hostOf(baseUrl);
+  return host ? [host] : configured;
+}
+
 /**
  * Enforce the host allowlist (spec §18: pin allowed hosts, prevent
  * prompt-controlled base URL changes). An empty allowlist permits any host
