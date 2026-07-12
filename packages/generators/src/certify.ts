@@ -57,6 +57,8 @@ export type Certification = z.infer<typeof Certification>;
 export const CERTIFICATION_FILE = "certification.json";
 /** Where the publication record is written inside a bundle (PR 8). */
 export const PUBLICATION_FILE = "publication.json";
+/** Where `anvil selftest` writes its loopback report inside a bundle. */
+export const SELFTEST_REPORT_FILE = "selftest.report.json";
 
 /** Injectable clock so certification/publication records are testable. */
 export type Clock = () => string;
@@ -71,7 +73,11 @@ const systemClock: Clock = () => new Date().toISOString();
  * They are excluded from the hash so writing a certification (or publication)
  * into the bundle does not invalidate the very identity it attests to.
  */
-const RECORD_FILES: ReadonlySet<string> = new Set([CERTIFICATION_FILE, PUBLICATION_FILE]);
+const RECORD_FILES: ReadonlySet<string> = new Set([
+  CERTIFICATION_FILE,
+  PUBLICATION_FILE,
+  SELFTEST_REPORT_FILE,
+]);
 
 /**
  * Content-derived identity of a bundle: sha256 over the sorted relative paths
@@ -635,11 +641,15 @@ export function verifyCertification(files: Record<string, string>): Certificatio
 /**
  * Read a bundle directory into the pure core's input shape: relative POSIX
  * paths → file contents. The only filesystem-touching entry to certification.
+ * Install artifacts are not bundle content: `node_modules` (created by an
+ * install, or linked in by `anvil selftest`) and symlinks are skipped so the
+ * certification binds to the generated files only.
  */
 export function readBundleDir(dir: string): Record<string, string> {
   const files: Record<string, string> = {};
   const walk = (rel: string): void => {
     for (const entry of readdirSync(join(dir, rel), { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.isSymbolicLink()) continue;
       const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
       if (entry.isDirectory()) walk(childRel);
       else files[childRel] = readFileSync(join(dir, childRel), "utf8");
