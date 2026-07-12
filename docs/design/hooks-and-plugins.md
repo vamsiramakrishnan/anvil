@@ -293,19 +293,41 @@ Remaining native gaps, in value order:
 
 ## 6. Staged plan
 
-- **S1 — MCP-native completion** (small; `packages/mcp-runtime/src/server.ts`).
-  `openWorldHint: false`; `outputSchema` where AIR has one;
-  elicitation-backed confirmation with capability-negotiated fallback to the
-  `confirmation_required` envelope. Benefits every MCP client, no packaging.
-- **S2 — Claude Code plugin emission** (medium; new
-  `packages/generators/src/plugins.ts` + `bundle.ts` wiring). `hookcore.mjs`,
-  Claude shim, `.claude-plugin/plugin.json`, plugin-scoped matcher, and the
-  hook↔executor agreement addition to the generated conformance test. This is
-  the reference implementation of the outer ring.
-- **S3 — Codex shim** (small, after S2). Same `hooks.json` schema modulo
-  field drift; `plugin/codex/` + README covering the trust flow.
-- **S4 — ADK plugin** (medium). `anvil_guard_plugin.py` + a pytest-style
+- **S1 — MCP-native completion** (`packages/mcp-runtime/src/server.ts`).
+  - *Done:* `openWorldHint: false` — Anvil is closed-domain (one pinned upstream
+    host behind `ANVIL_ALLOWED_HOSTS`), so the informative value is `false`, not
+    the spec default `true`.
+  - *Deferred — needs a schema rework, not a bolt-on:* elicitation-backed
+    confirmation. AIR synthesizes `confirm` as a **required `const: true`** in the
+    operation input schema (`packages/air/src/jsonschema.ts:57`), so the MCP SDK
+    rejects any call without `confirm: true` at input validation — *before* a
+    server handler could elicit. Reaching the human via `elicitation/create`
+    therefore requires decoupling the confirm *gate* from the *served input
+    schema* (present `confirm` as optional at the MCP layer and let elicitation
+    or the runtime gate supply it), which touches the canonical JSON-Schema
+    synthesis shared with the CLI and the refusal/conformance tests. Real work;
+    tracked separately so we don't ship unreachable code.
+  - *Deferred:* `outputSchema`. The SDK enforces that a tool declaring
+    `outputSchema` returns conforming `structuredContent`, so attaching it on the
+    runtime hot path would convert a non-conforming-but-successful upstream
+    response into a server error — a regression on the safety path. Only worth it
+    behind a conformance guarantee we don't have per-upstream.
+- **S2 — Claude Code plugin emission** — *done.*
+  `packages/generators/src/plugins.ts` (`generateHarnessPlugins`) wired into
+  `bundle.ts`: `plugin/hookcore.mjs` (shared decision core, reads
+  `catalog.json`), the Claude shim, `.claude-plugin/plugin.json`, `mcp.json`,
+  the plugin-scoped PreToolUse matcher, and the hook↔executor agreement block
+  added to the generated conformance test. An in-repo test
+  (`plugins.test.ts`) writes a bundle, imports the emitted `hookcore.mjs`, and
+  asserts `decide()` agrees with AIR (ask on confirmation, deny on missing key,
+  deny on unknown/revoked tool, allow on a clean read). This is the reference
+  implementation of the outer ring.
+- **S3 — Codex shim** — *done.* `plugin/codex/{hooks.json, hook.mjs, README.md}`
+  share `hookcore.mjs`; `ask` degrades to `deny` (Codex documents deny/allow
+  only) and the README covers the trust flow and the field-name caveat.
+- **S4 — ADK plugin** (not started). `anvil_guard_plugin.py` + a pytest-style
   agreement check run in CI against a pinned ADK version.
-- **S5 — Antigravity** (blocked on verification). Emit `.agent/rules/`
-  guidance now (safe, prompt-shaping only); emit `.agents/hooks.json` behind
-  a generator flag once the format is confirmed on a real install.
+- **S5 — Antigravity** — *partial.* `.agent/rules/anvil-safety.md` guidance is
+  emitted now (safe, prompt-shaping only, generated from the catalog). Emitting
+  `.agents/hooks.json` stays blocked behind format verification against a real
+  install.
