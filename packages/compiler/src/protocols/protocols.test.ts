@@ -6,6 +6,7 @@ import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
 import { adaptProto } from "./grpc.js";
 import { detectProtocolFormat } from "./index.js";
+import { adaptPostman, isPostmanCollection, postmanSchemaVersion } from "./postman.js";
 import { adaptWsdl } from "./wsdl.js";
 import { findAll, localName, parseXml } from "./xml.js";
 
@@ -65,6 +66,133 @@ const discoverySpec = JSON.stringify({
   },
 });
 
+// A minimal but real-shaped Postman Collection v2.1.0 (Auth0/Twilio-style):
+// nested folders, `{{baseUrl}}` host resolved from collection variables, `:id`
+// path params with url.variable metadata, query/header params, a raw-JSON body,
+// urlencoded credentials, collection- AND request-level auth carrying REAL
+// secret values (which must never leak into the lowered document), a saved
+// example response, and pre-request/test scripts.
+const postmanSpec = JSON.stringify({
+  info: {
+    name: "CRM API",
+    description: "Customer records for the CRM.",
+    schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+  },
+  variable: [{ key: "baseUrl", value: "https://api.example.com/v1" }],
+  auth: {
+    type: "apikey",
+    apikey: [
+      { key: "key", value: "X-API-Key", type: "string" },
+      { key: "value", value: "TOP-SECRET-API-KEY-VALUE", type: "string" },
+      { key: "in", value: "header", type: "string" },
+    ],
+  },
+  event: [{ listen: "prerequest", script: { exec: ["pm.environment.set('ts', '1');"] } }],
+  item: [
+    {
+      name: "Users",
+      item: [
+        {
+          name: "List Users",
+          event: [{ listen: "test", script: { exec: ["pm.test('ok', function () {});"] } }],
+          request: {
+            method: "GET",
+            header: [
+              { key: "Authorization", value: "Bearer {{token}}" },
+              { key: "X-Org-Id", value: "org_123", description: "Tenant to query" },
+            ],
+            url: {
+              raw: "{{baseUrl}}/users?limit=20&verbose=false",
+              host: ["{{baseUrl}}"],
+              path: ["users"],
+              query: [
+                { key: "limit", value: "20", description: "Page size" },
+                { key: "verbose", value: "false", disabled: true },
+              ],
+            },
+          },
+          response: [],
+        },
+        {
+          name: "Get User",
+          request: {
+            method: "GET",
+            url: {
+              raw: "{{baseUrl}}/users/:id",
+              host: ["{{baseUrl}}"],
+              path: ["users", ":id"],
+              variable: [{ key: "id", description: "User id" }],
+            },
+          },
+          response: [
+            {
+              name: "A user",
+              code: 200,
+              body: '{"id":"u_1","name":"Ada","age":36,"tags":["admin"],"active":true,"nickname":null}',
+            },
+          ],
+        },
+        {
+          name: "Create User",
+          request: {
+            method: "POST",
+            description: { content: "Creates a user record." },
+            body: {
+              mode: "raw",
+              raw: '{"name":"Ada Lovelace","age":36,"tags":["admin"],"active":true}',
+              options: { raw: { language: "json" } },
+            },
+            url: { raw: "{{baseUrl}}/users", host: ["{{baseUrl}}"], path: ["users"] },
+          },
+        },
+      ],
+    },
+    {
+      name: "Auth",
+      item: [
+        {
+          name: "Login",
+          request: {
+            method: "POST",
+            auth: {
+              type: "bearer",
+              bearer: [{ key: "token", value: "SECRET-BEARER-TOKEN", type: "string" }],
+            },
+            body: {
+              mode: "urlencoded",
+              urlencoded: [
+                { key: "username", value: "ada" },
+                { key: "password", value: "hunter2-secret" },
+              ],
+            },
+            url: { raw: "{{baseUrl}}/login", host: ["{{baseUrl}}"], path: ["login"] },
+          },
+        },
+      ],
+    },
+  ],
+});
+
+// The same shape a v2.0.0 export uses: string URLs, object-encoded auth.
+const postmanV20Spec = JSON.stringify({
+  info: {
+    name: "Echo",
+    schema: "https://schema.getpostman.com/json/collection/v2.0.0/collection.json",
+  },
+  item: [
+    { name: "Simple GET", request: { method: "GET", url: "https://postman-echo.com/get?foo=bar" } },
+    {
+      name: "Basic-auth POST",
+      request: {
+        method: "POST",
+        auth: { type: "basic", basic: { username: "ada", password: "hunter2-basic" } },
+        url: "https://postman-echo.com/post",
+        body: { mode: "raw", raw: '{"hello":"world"}' },
+      },
+    },
+  ],
+});
+
 const example = (rel: string) =>
   readFileSync(fileURLToPath(new URL(`../../../../examples/${rel}`, import.meta.url)), "utf8");
 
@@ -107,6 +235,23 @@ describe("protocol format detection", () => {
   it("records a version alongside the format", () => {
     expect(detectProtocolFormat("orders.proto", protoSpec)?.version).toBe("proto3");
     expect(detectProtocolFormat("bank.wsdl", wsdlSpec)?.version).toBe("1.1");
+  });
+
+  it("detects a Postman collection by filename convention and by content sniff", () => {
+    expect(isPostmanCollection(postmanSpec)).toBe(true);
+    // The `.postman_collection.json` export convention, verified by content.
+    const byName = detectProtocolFormat("crm.postman_collection.json", postmanSpec);
+    expect(byName).toEqual({ format: "postman", version: "2.1" });
+    // A bare .json (or no filename at all) falls to the content sniff.
+    expect(detectProtocolFormat("crm.json", postmanSpec)?.format).toBe("postman");
+    expect(detectProtocolFormat("", postmanV20Spec)).toEqual({ format: "postman", version: "2.0" });
+    // A JSON file that merely mentions the schema URL is not a collection…
+    expect(isPostmanCollection('{"note":"getpostman.com/json/collection/v2 is a format"}')).toBe(
+      false,
+    );
+    // …and neither is a v1 export (no info.schema discriminator).
+    expect(isPostmanCollection('{"name":"old","requests":[]}')).toBe(false);
+    expect(postmanSchemaVersion(postmanSpec)).toBe("2.1");
   });
 });
 
@@ -506,6 +651,151 @@ describe("Google Discovery adapter", () => {
   });
 });
 
+describe("Postman Collection adapter", () => {
+  const doc = adaptPostman(postmanSpec);
+  type Op = Record<string, unknown>;
+  const op = (path: string, method: string): Op =>
+    (doc.paths?.[path] as Record<string, Op>)?.[method] as Op;
+
+  it("lowers folder leaves to operations with folder tags and dotted operationIds", () => {
+    const list = op("/users", "get");
+    expect(list).toBeDefined();
+    expect(list.operationId).toBe("Users.List_Users");
+    expect(list.tags).toEqual(["Users"]);
+    expect(op("/login", "post").tags).toEqual(["Auth"]);
+    // The truthful wire method is kept — GET is GET; no effect hints needed.
+    expect(list["x-anvil-effect"]).toBeUndefined();
+  });
+
+  it("resolves the {{baseUrl}} host from collection variables into servers[0]", () => {
+    expect(doc.servers?.[0]?.url).toBe("https://api.example.com/v1");
+  });
+
+  it("turns `:id` segments into required path parameters with url.variable metadata", () => {
+    const get = op("/users/{id}", "get");
+    expect(get).toBeDefined();
+    const params = get.parameters as Array<Record<string, unknown>>;
+    expect(params.find((p) => p.in === "path")).toMatchObject({
+      name: "id",
+      required: true,
+      description: "User id",
+      schema: { type: "string" },
+    });
+  });
+
+  it("lowers query and header params as optional, without copying saved values", () => {
+    const params = op("/users", "get").parameters as Array<Record<string, unknown>>;
+    const limit = params.find((p) => p.name === "limit");
+    expect(limit).toMatchObject({ in: "query", required: false, description: "Page size" });
+    // Postman has no requiredness; a disabled entry says so in its description.
+    const verbose = params.find((p) => p.name === "verbose");
+    expect(verbose).toMatchObject({ in: "query", required: false });
+    expect(String(verbose?.description)).toContain("disabled");
+    // Custom headers cross over; Authorization is the runtime's, never an input.
+    expect(params.find((p) => p.name === "X-Org-Id")).toMatchObject({ in: "header" });
+    expect(params.find((p) => String(p.name).toLowerCase() === "authorization")).toBeUndefined();
+    // Saved parameter values (often credentials) are never copied.
+    expect(JSON.stringify(params)).not.toContain("org_123");
+  });
+
+  it("infers a raw-JSON body schema from the example and attaches the example", () => {
+    const body = op("/users", "post").requestBody as {
+      content: Record<
+        string,
+        { schema: { properties: Record<string, unknown> }; example: unknown }
+      >;
+    };
+    const media = body.content["application/json"];
+    expect(media).toBeDefined();
+    expect(media?.schema.properties).toMatchObject({
+      name: { type: "string" },
+      age: { type: "number" },
+      tags: { type: "array", items: { type: "string" } },
+      active: { type: "boolean" },
+    });
+    expect(media?.example).toEqual({
+      name: "Ada Lovelace",
+      age: 36,
+      tags: ["admin"],
+      active: true,
+    });
+  });
+
+  it("lowers an urlencoded body from the key list only — values never cross", () => {
+    const body = op("/login", "post").requestBody as {
+      content: Record<string, { schema: { properties: Record<string, unknown> } }>;
+    };
+    const media = body.content["application/x-www-form-urlencoded"];
+    expect(Object.keys(media?.schema.properties ?? {})).toEqual(["username", "password"]);
+    expect(JSON.stringify(body)).not.toContain("ada");
+    expect(JSON.stringify(body)).not.toContain("hunter2-secret");
+  });
+
+  it("maps collection-level auth to the document default and request-level auth per-op", () => {
+    const schemes = doc.components?.securitySchemes as Record<string, Record<string, unknown>>;
+    expect(schemes.apiKeyAuth).toEqual({ type: "apiKey", in: "header", name: "X-API-Key" });
+    expect(schemes.bearerAuth).toEqual({ type: "http", scheme: "bearer" });
+    expect(doc.security).toEqual([{ apiKeyAuth: [] }]);
+    expect(op("/login", "post").security).toEqual([{ bearerAuth: [] }]);
+  });
+
+  it("NEVER leaks secret values embedded in the collection's auth blocks", () => {
+    // Real collections routinely carry live tokens in auth `value` fields; the
+    // adapter reads only a small non-secret allowlist, so no credential from
+    // the source may appear ANYWHERE in the lowered document.
+    const lowered = JSON.stringify(doc);
+    expect(lowered).not.toContain("TOP-SECRET-API-KEY-VALUE");
+    expect(lowered).not.toContain("SECRET-BEARER-TOKEN");
+    expect(lowered).not.toContain("hunter2-secret");
+  });
+
+  it("turns a saved example response into a typed response with the example attached", () => {
+    const responses = op("/users/{id}", "get").responses as Record<
+      string,
+      { content?: Record<string, { schema: Record<string, unknown>; example: unknown }> }
+    >;
+    const media = responses["200"]?.content?.["application/json"];
+    expect(media?.schema).toMatchObject({
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        age: { type: "number" },
+        tags: { type: "array", items: { type: "string" } },
+        active: { type: "boolean" },
+        nickname: { type: "string", nullable: true },
+      },
+    });
+    expect((media?.example as Record<string, unknown> | undefined)?.name).toBe("Ada");
+    // No saved response → the generic 200.
+    const generic = op("/users", "post").responses as Record<string, { description: string }>;
+    expect(generic["200"]?.description).toBe("Successful response.");
+  });
+
+  it("reports untranslated pre-request/test scripts instead of staying silent", () => {
+    // One collection-level prerequest + one item-level test script.
+    expect((doc as Record<string, unknown>)["x-anvil-postman-scripts"]).toBe(2);
+    expect(doc.info?.description).toContain("2 Postman script block(s)");
+    expect(doc.info?.description).toContain("Customer records for the CRM.");
+  });
+
+  it("parses the v2.0 shape too: string URLs and object-encoded auth", () => {
+    const v20 = adaptPostman(postmanV20Spec);
+    const get = (v20.paths?.["/get"] as Record<string, Op>)?.get as Op;
+    expect(get).toBeDefined();
+    expect(v20.servers?.[0]?.url).toBe("https://postman-echo.com");
+    const params = get.parameters as Array<Record<string, unknown>>;
+    expect(params.find((p) => p.name === "foo")).toMatchObject({ in: "query" });
+    // Object-encoded basic auth registers the scheme without its credentials.
+    const schemes = v20.components?.securitySchemes as Record<string, Record<string, unknown>>;
+    expect(schemes.basicAuth).toEqual({ type: "http", scheme: "basic" });
+    expect(JSON.stringify(v20)).not.toContain("hunter2-basic");
+    // An un-inferrable raw JSON body still typed from its example.
+    const post = (v20.paths?.["/post"] as Record<string, Op>)?.post as Op;
+    const body = post.requestBody as { content: Record<string, { example: unknown }> };
+    expect(body.content["application/json"]?.example).toEqual({ hello: "world" });
+  });
+});
+
 describe("mini XML parser", () => {
   it("parses elements, attributes, and nesting", () => {
     const root = parseXml('<a x="1"><b>text</b><c/></a>');
@@ -614,5 +904,28 @@ describe("end-to-end compile through the protocol adapters", () => {
     );
     expect(list?.effect.kind).toBe("read");
     expect(list?.retries.mode).toBe("safe");
+  });
+
+  it("compiles a Postman collection: GETs are safe reads, POSTs stay review_required", async () => {
+    const air = await compile({
+      spec: postmanSpec,
+      serviceId: "crm",
+      sourceUri: "crm.postman_collection.json",
+    });
+    expect(air.service.source.kind).toBe("postman");
+    const list = air.operations.find((o) => o.sourceRef.operationId === "Users.List_Users");
+    expect(list?.effect.kind).toBe("read");
+    expect(list?.retries.mode).toBe("safe");
+    expect(list?.sourceRef.method).toBe("get");
+    // A POST from a collection is not provably idempotent — never silently exposed.
+    const create = air.operations.find((o) => o.sourceRef.operationId === "Users.Create_User");
+    expect(create?.effect.kind).toBe("mutation");
+    expect(create?.state).toBe("review_required");
+    // The no-secret-leak guarantee holds through the WHOLE pipeline, not just
+    // the lowering: embedded auth values never reach the compiled AIR.
+    const compiled = JSON.stringify(air);
+    expect(compiled).not.toContain("TOP-SECRET-API-KEY-VALUE");
+    expect(compiled).not.toContain("SECRET-BEARER-TOKEN");
+    expect(compiled).not.toContain("hunter2-secret");
   });
 });

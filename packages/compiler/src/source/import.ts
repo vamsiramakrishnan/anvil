@@ -183,9 +183,12 @@ function probeFile(root: string, path: string): Probe {
       diagnostics: [{ level: "error", code: "source/invalid_utf8", path, message: decoded.error }],
     };
   }
-  // Non-REST protocols (GraphQL/proto/WSDL) are not YAML/JSON documents, so
-  // detect them from path+content and capture them verbatim without a YAML
-  // parse — a `.proto` or `.graphql` file must not be reported as broken YAML.
+  // Non-OpenAPI protocols (GraphQL/proto/WSDL — and the JSON-carried Discovery
+  // and Postman collection formats) are detected from path+content and captured
+  // verbatim without a YAML parse — a `.proto` or `.graphql` file must not be
+  // reported as broken YAML. Postman is recognized both by its
+  // `.postman_collection.json` filename convention and by content sniff for a
+  // bare `.json`.
   const protocol = detectProtocolFormat(path, decoded.text);
   if (protocol) {
     return { path, bytes, protocol, diagnostics: [] };
