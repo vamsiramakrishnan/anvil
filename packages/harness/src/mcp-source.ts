@@ -7,8 +7,12 @@ import type { SourceConfig } from "./sources.js";
 export interface McpSource {
   id: string;
   system: SourceConfig["system"];
-  listTools(): Promise<Array<{ name: string; description?: string }>>;
+  listTools(): Promise<
+    Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>
+  >;
   call(tool: string, args: Record<string, unknown>): Promise<string>;
+  /** Like `call`, but preserves the tool result's error flag (loopback checks). */
+  callRaw(tool: string, args: Record<string, unknown>): Promise<{ isError: boolean; text: string }>;
   close(): Promise<void>;
 }
 
@@ -46,20 +50,36 @@ export async function connectSource(
   const transport = await factory(config);
   await client.connect(transport);
 
+  // callTool's result is a union (structured content vs. legacy toolResult);
+  // only the text content items matter here.
+  const textOf = (res: unknown): string => {
+    const content = ((res as { content?: unknown }).content ?? []) as Array<{
+      type: string;
+      text?: string;
+    }>;
+    return content
+      .filter((c) => c.type === "text" && typeof c.text === "string")
+      .map((c) => c.text)
+      .join("\n");
+  };
+
   return {
     id: config.id,
     system: config.system,
     async listTools() {
       const { tools } = await client.listTools();
-      return tools.map((t) => ({ name: t.name, description: t.description }));
+      return tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema as Record<string, unknown> | undefined,
+      }));
     },
     async call(tool, args) {
+      return textOf(await client.callTool({ name: tool, arguments: args }));
+    },
+    async callRaw(tool, args) {
       const res = await client.callTool({ name: tool, arguments: args });
-      const content = (res.content ?? []) as Array<{ type: string; text?: string }>;
-      return content
-        .filter((c) => c.type === "text" && typeof c.text === "string")
-        .map((c) => c.text)
-        .join("\n");
+      return { isError: (res as { isError?: unknown }).isError === true, text: textOf(res) };
     },
     async close() {
       await client.close();

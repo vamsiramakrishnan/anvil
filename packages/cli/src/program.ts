@@ -17,6 +17,7 @@ import { registerPackage } from "./commands/package.js";
 import { registerPublish } from "./commands/publish.js";
 import { registerRefine } from "./commands/refine.js";
 import { registerRun } from "./commands/run.js";
+import { registerSelftest } from "./commands/selftest.js";
 import { registerServe } from "./commands/serve.js";
 import { registerSkill } from "./commands/skill.js";
 import { registerSource } from "./commands/source.js";
@@ -75,6 +76,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerLint(program, ctx);
   registerBuild(program, ctx);
   registerCertify(program, ctx);
+  registerSelftest(program, ctx);
   registerPublish(program, ctx);
   registerDeploy(program, ctx);
   registerSync(program, ctx);

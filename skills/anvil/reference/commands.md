@@ -357,6 +357,16 @@ Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates
 Options:
 - `--json` — emit the full certification as JSON
 
+### `anvil selftest`  *(mutates)*
+`anvil selftest [options] <dir>`
+
+Boot the bundle's mock + MCP servers and prove the generated surface end-to-end.
+
+Loopback self-test for bundles with no reference server to compare against: starts the generated mock upstream (mock/server.mjs) and the generated MCP server (mcp/server.js) pointed at it via ANVIL_BASE_URL, then invokes every approved tool over the real MCP transport. Checks: the tool surface equals the approved operations (surface), every argument reaches the wire faithfully and the response round-trips (fidelity), confirmation gates refuse before any side effect (confirmation-gate), documented upstream errors surface as structured envelopes (error-mapping), and non-idempotent mutations are never auto-retried (retry checks). Writes selftest.report.json into the bundle. Exit 0 only when no check fails.
+
+Options:
+- `--json` — emit the full report as JSON
+
 ### `anvil publish`  *(mutates)*
 `anvil publish [options] <dir>`
 
