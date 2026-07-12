@@ -10,6 +10,7 @@ import {
   propKey,
 } from "@anvil/air";
 import {
+  allowedHostsFor,
   type CredentialResolver,
   EnvCredentialResolver,
   type ExecuteContext,
@@ -282,11 +283,7 @@ async function invoke(
   const input = buildInput(op, flags, deps);
 
   const baseUrl = (flags["base-url"] as string) ?? air.service.servers[0]?.url ?? "";
-  const allowedHosts = config.allowedHosts.length
-    ? config.allowedHosts
-    : hostOf(baseUrl)
-      ? [hostOf(baseUrl) as string]
-      : [];
+  const allowedHosts = allowedHostsFor(config.allowedHosts, baseUrl, true);
 
   const ctx: ExecuteContext = {
     transport: deps.transport ?? new FetchTransport(),
@@ -523,14 +520,6 @@ function policyView(op: Operation) {
     auth: { type: op.auth.type, scopes: op.auth.scopes, principal: op.auth.principal },
     required_flags: requiredFlags,
   };
-}
-
-function hostOf(url: string): string | undefined {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return undefined;
-  }
 }
 
 function humanSuccess(data: unknown): string {
