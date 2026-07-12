@@ -1,6 +1,7 @@
 /**
- * Protocol adapters: lower non-REST API specifications (GraphQL, gRPC/proto3,
- * SOAP/WSDL) into the one internal shape the Anvil compiler understands — a
+ * Protocol adapters: lower non-OpenAPI API specifications (GraphQL, gRPC/proto3,
+ * SOAP/WSDL, Google Discovery, Postman Collection v2.x) into the one internal
+ * shape the Anvil compiler understands — a
  * (pre-dereference) OpenAPI 3.0 document. The rest of the pipeline
  * (normalize → classify → validate → generate) is protocol-agnostic; every
  * format meets it here.
@@ -13,10 +14,11 @@ import type { OpenApiDocument } from "../parse.js";
 import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
 import { adaptProto, type ProtoImportResolver } from "./grpc.js";
+import { adaptPostman, isPostmanCollection, postmanSchemaVersion } from "./postman.js";
 import { adaptWsdl, type WsdlImportResolver } from "./wsdl.js";
 
 /** The non-REST source formats Anvil can lower. Aligns with AIR's SourceKind. */
-export type ProtocolFormat = "graphql" | "protobuf" | "wsdl" | "discovery";
+export type ProtocolFormat = "graphql" | "protobuf" | "wsdl" | "discovery" | "postman";
 
 export interface DetectedProtocol {
   format: ProtocolFormat;
@@ -29,7 +31,8 @@ const EXT_FORMAT: Record<string, ProtocolFormat> = {
   graphqls: "graphql",
   proto: "protobuf",
   wsdl: "wsdl",
-  // Google Discovery docs have no canonical extension; detected by content.
+  // Google Discovery and Postman collections are `.json`; detected by content
+  // (Postman also honors its `.postman_collection.json` filename convention).
 };
 
 function extensionOf(path: string): string {
@@ -51,6 +54,14 @@ export function detectProtocolFormat(path: string, text: string): DetectedProtoc
       version: versionFor(EXT_FORMAT[ext] as ProtocolFormat, text),
     };
 
+  // Postman's export convention names files `*.postman_collection.json`. The
+  // convention alone is not authoritative (a v1 export shares it), so the
+  // content discriminator must still agree — but checking it here documents
+  // the convention and keeps detection cheap for the common case.
+  if (path.toLowerCase().endsWith(".postman_collection.json") && isPostmanCollection(text)) {
+    return { format: "postman", version: postmanSchemaVersion(text) };
+  }
+
   const sniff = sniffContent(text);
   return sniff;
 }
@@ -66,6 +77,8 @@ function sniffContent(text: string): DetectedProtocol | undefined {
   const head = text.slice(0, 4000);
   // Google API Discovery document: identified by its `kind` discriminator.
   if (isDiscoveryDocument(text)) return { format: "discovery", version: "v1" };
+  // Postman Collection v2.x: identified by its `info.schema` discriminator.
+  if (isPostmanCollection(text)) return { format: "postman", version: postmanSchemaVersion(text) };
   // proto3: a syntax pragma, or a service/message with an rpc.
   if (/^\s*syntax\s*=\s*["']proto[23]["']/m.test(head)) {
     return { format: "protobuf", version: /proto3/.test(head) ? "proto3" : "proto2" };
@@ -117,9 +130,11 @@ export function adaptProtocol(
       return adaptWsdl(text, imports.wsdl, imports.sourcePath);
     case "discovery":
       return adaptDiscovery(text);
+    case "postman":
+      return adaptPostman(text);
   }
 }
 
 export type { ProtoImportResolver } from "./grpc.js";
 export type { WsdlImportResolver } from "./wsdl.js";
-export { adaptDiscovery, adaptGraphql, adaptProto, adaptWsdl };
+export { adaptDiscovery, adaptGraphql, adaptPostman, adaptProto, adaptWsdl };
