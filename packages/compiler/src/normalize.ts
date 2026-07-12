@@ -43,6 +43,15 @@ interface RawOperation {
   security?: Array<Record<string, string[]>>;
   /** Vendor extension: the spec author declares a repeat call is a no-op. */
   "x-idempotent"?: unknown;
+  /**
+   * Vendor extension: a protocol adapter's explicit effect assertion. The
+   * adapters lower everything to the one truthful wire method (SOAP, GraphQL
+   * and gRPC are all POST-on-the-wire), so "this is a read" arrives as this
+   * extension instead of a fake GET that could never carry the required body.
+   */
+  "x-anvil-effect"?: unknown;
+  /** Vendor extension: which GraphQL root the operation came from (adapter). */
+  "x-graphql-operation"?: unknown;
 }
 
 function toParam(raw: RawParam, namedSchemas: Record<string, unknown>): Param | null {
@@ -205,17 +214,31 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
       const raw = pathItem[method] as RawOperation | undefined;
       if (!raw) continue;
 
+      // An adapter-asserted effect (see RawOperation) is authoritative over the
+      // HTTP-method default. Only protocol adapters set it; REST paths never do.
+      const effectHint = raw["x-anvil-effect"] === "read" ? ("read" as const) : undefined;
+      // A GraphQL query/subscription is definitionally a read; the SOAP/gRPC
+      // assertions come from an operation-name heuristic, so their evidence
+      // confidence stays at the method-heuristic grade.
+      const definitionalRead =
+        raw["x-graphql-operation"] === "query" || raw["x-graphql-operation"] === "subscription";
+
       // Naming is a first-class pass: derive names with a confidence, and let
       // the collision pass (compile) disambiguate any clashes with meaningful
       // tokens instead of a silent `_2`.
-      const names = deriveNames(serviceId, path, method, raw);
+      // Naming parity: the derivation reads GET as its "this is a read" steer
+      // (get/list default action, no create/postVerb path). An adapter-asserted
+      // read must steer identically, or truthful POST wire methods would rename
+      // every lowered read (`…list` → `…create`) — the wire method changed,
+      // the operation's meaning did not.
+      const names = deriveNames(serviceId, path, effectHint === "read" ? "get" : method, raw);
       const id = names.id;
 
       const segments = path.split("/").filter(Boolean);
       const endsWithParam =
         segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
       const signal = `${raw.operationId ?? ""} ${raw.summary ?? ""} ${path}`;
-      const { effect, idempotency } = classifyEffect(method, signal, endsWithParam);
+      const { effect, idempotency } = classifyEffect(method, signal, endsWithParam, effectHint);
       effect.resource = singularize(names.resource);
       // `x-idempotent: true` is a spec-level declaration (Swagger 2.0 and 3.x
       // alike) that repeating the call is a no-op. Honor it as natural
@@ -277,15 +300,28 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
               method: "declared",
               confidence: 0.7,
             },
-            {
-              subject: id,
-              predicate: "effect.kind",
-              value: effect.kind,
-              source: "inferred",
-              method: "http_method_heuristic",
-              note: "effect/idempotency inferred from HTTP method",
-              confidence: 0.5,
-            },
+            effectHint !== undefined
+              ? {
+                  subject: id,
+                  predicate: "effect.kind",
+                  value: effect.kind,
+                  source: "spec" as const,
+                  sourceRef: `${method.toUpperCase()} ${path} x-anvil-effect`,
+                  method: "protocol_adapter_assertion",
+                  note: definitionalRead
+                    ? "effect asserted by the protocol adapter (definitional for this operation kind)"
+                    : "effect asserted by the protocol adapter (operation-name heuristic)",
+                  confidence: definitionalRead ? 0.9 : 0.5,
+                }
+              : {
+                  subject: id,
+                  predicate: "effect.kind",
+                  value: effect.kind,
+                  source: "inferred" as const,
+                  method: "http_method_heuristic",
+                  note: "effect/idempotency inferred from HTTP method",
+                  confidence: 0.5,
+                },
             ...(declaredIdempotent
               ? [
                   {

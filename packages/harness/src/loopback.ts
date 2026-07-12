@@ -69,6 +69,8 @@ interface CaptureRecord {
   matchedCandidates: string[];
   pathParams: Record<string, string> | null;
   validation: { ok: boolean; missing: string[]; invalid: string[] };
+  /** What the mock answered — carries the NAME of the scenario it served. */
+  response: { status: number; kind: string; scenario?: string } | null;
 }
 
 /** Run the loopback self-test over a generated bundle directory. */
@@ -85,6 +87,18 @@ export async function runLoopback(
   ensureBundleNodeModules(dir);
 
   const startedAt = new Date().toISOString();
+  // An empty approved surface has nothing to prove — and the generated MCP
+  // server would answer tools/list with a raw protocol error (-32601, no tools
+  // registered). Fail plainly instead of leaking that.
+  if (approved.length === 0) {
+    return LoopbackReport.parse({
+      schemaVersion: 1,
+      bundle: dir,
+      startedAt,
+      checks: [{ id: "surface", status: "fail", detail: EMPTY_SURFACE_DETAIL }],
+      summary: { pass: 0, fail: 1, skipped: 0 },
+    });
+  }
   const timeoutMs = options.callTimeoutMs ?? 20_000;
   const checks: LoopbackCheck[] = [];
   const mock = await startMockServer(dir);
@@ -162,6 +176,10 @@ const failCheck = (id: string, operationId: string | undefined, detail: string):
     ? { id, status: "fail", detail }
     : { id, operationId, status: "fail", detail };
 
+const EMPTY_SURFACE_DETAIL =
+  "no approved operations — nothing to self-test. Approve operations via an Anvil manifest " +
+  "(operations.<name>.state: approved) and recompile the bundle.";
+
 /** A — the served tool surface equals the approved operations, exactly. */
 async function checkSurface(source: McpSource, approved: Operation[]): Promise<LoopbackCheck> {
   const id = "surface";
@@ -195,6 +213,12 @@ async function checkSurface(source: McpSource, approved: Operation[]): Promise<L
       detail: `${approved.length} tool(s), surface and required inputs match the approved operations exactly`,
     };
   } catch (err) {
+    // An MCP server with zero registered tools answers tools/list with a raw
+    // -32601 Method not found; surface that as the empty-surface failure, not
+    // a protocol error.
+    if (/-32601|Method not found/i.test(String(err))) {
+      return failCheck(id, undefined, EMPTY_SURFACE_DETAIL);
+    }
     return failCheck(id, undefined, String(err));
   }
 }
@@ -256,16 +280,22 @@ async function checkFidelity(
         detail: `mock rejected the wire request: missing [${req.validation.missing.join(", ")}] invalid [${req.validation.invalid.join(", ")}]`,
       };
     }
-    // Round-trip: the tool result must carry the mock's success payload back.
-    const success = scenarios.find((s) => s.operationId === op.id && s.name.endsWith("_success"));
-    if (success) {
+    // Round-trip: the tool result must carry back the payload of the scenario
+    // the mock ACTUALLY served (its name rides the capture record) — an op can
+    // have several success scenarios, and guessing one would diff the tool
+    // against a body the wire never carried. A null/absent scenario body has
+    // nothing to verify; skipping beats a phantom null-vs-{} loss.
+    const served = scenarios.find(
+      (s) => s.operationId === op.id && s.name === req.response?.scenario,
+    );
+    if (served && served.body !== null && served.body !== undefined) {
       let parsed: unknown;
       try {
         parsed = result.text.length > 0 ? JSON.parse(result.text) : null;
       } catch {
         parsed = result.text;
       }
-      diff(success.body ?? null, parsed, "response", losses);
+      diff(served.body, parsed, "response", losses);
     }
     if (losses.length > 0) {
       return {
@@ -475,10 +505,14 @@ async function checkRetryMutationGuard(
     const result = await call(op.mcp.toolName, argsFor(op, "retry-guard"));
     const requests = await ctl.capture();
     if (requests.length !== 1) {
+      // 0 means the call never reached the wire at all (a different failure
+      // from the one this check guards); >1 means it was auto-retried.
       return failCheck(
         id,
         op.id,
-        `${requests.length} wire request(s) after one injected 503 — a non-idempotent mutation was auto-retried`,
+        requests.length === 0
+          ? "0 wire requests after one injected 503 — the mutation never reached the wire (see its fidelity check)"
+          : `${requests.length} wire request(s) after one injected 503 — a non-idempotent mutation was auto-retried`,
       );
     }
     if (!result.isError) {
@@ -533,9 +567,10 @@ function argsFor(op: Operation, tag: string): Record<string, unknown> {
 }
 
 /**
- * GET-lowered operations that still carry a request body (some WSDL reads)
- * cannot be sent by fetch at all; probing one for error/retry behavior would
- * only re-report its fidelity failure under the wrong check id.
+ * A GET operation that still carries a request body cannot be sent by fetch at
+ * all; probing one for error/retry behavior would only re-report its fidelity
+ * failure under the wrong check id. Current adapters emit truthful POST
+ * methods, so this only guards bundles compiled before that change.
  */
 function wireable(op: Operation): boolean {
   const method = (op.sourceRef.method ?? "get").toLowerCase();
