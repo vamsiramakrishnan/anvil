@@ -232,6 +232,13 @@ service S { rpc Do(Req) returns (Res); }
 message Res { string ok = 1; }`;
     // Resolver that never finds the import — must not throw.
     expect(() => adaptProto(service, "demo", () => undefined)).not.toThrow();
+    // An unresolved RPC payload is still a *message*: it degrades to a
+    // permissive object (all fields unknown, so `{}` stays valid end to end),
+    // never to a scalar the JSON-transcoded wire could not carry.
+    const doc = adaptProto(service, "demo", () => undefined);
+    const op = doc.paths?.["/demo.v1.S/Do"]?.post as Record<string, unknown>;
+    const body = op.requestBody as { content: Record<string, { schema: { type?: string } }> };
+    expect(body.content["application/json"].schema).toEqual({ type: "object" });
   });
 });
 

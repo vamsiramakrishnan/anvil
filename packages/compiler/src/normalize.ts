@@ -1,6 +1,7 @@
 import type {
   AuthRequirement,
   AuthType,
+  Diagnostic,
   ErrorSpec,
   HttpMethod,
   JsonSchema,
@@ -52,6 +53,25 @@ interface RawOperation {
   "x-anvil-effect"?: unknown;
   /** Vendor extension: which GraphQL root the operation came from (adapter). */
   "x-graphql-operation"?: unknown;
+}
+
+/**
+ * OpenAPI 3 mandates that header parameters named Accept, Content-Type, or
+ * Authorization SHALL be ignored — those headers belong to the runtime (content
+ * negotiation, body encoding, auth binding), never to the input contract.
+ * Modeling them as inputs would make every surface (CLI flag, MCP schema, mock
+ * validation) fight the executor's own header values on the wire.
+ */
+const IGNORED_HEADER_PARAMS = new Set(["accept", "content-type", "authorization"]);
+
+/**
+ * Merge path-item-level parameters into an operation's own (OpenAPI: shared
+ * parameters on the path item apply to every method; an operation-level
+ * parameter with the same name+location overrides, never duplicates).
+ */
+function mergeParams(pathLevel: RawParam[], opLevel: RawParam[]): RawParam[] {
+  const overridden = (p: RawParam) => opLevel.some((o) => o.name === p.name && o.in === p.in);
+  return [...pathLevel.filter((p) => !overridden(p)), ...opLevel];
 }
 
 function toParam(raw: RawParam, namedSchemas: Record<string, unknown>): Param | null {
@@ -197,8 +217,13 @@ function resolveAuth(
   return { type, scopes: scopes ?? [], principal, secretSource };
 }
 
+export interface NormalizeResult {
+  operations: Operation[];
+  diagnostics: Diagnostic[];
+}
+
 /** Normalize a parsed OpenAPI document into AIR operations (classifier applied). */
-export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
+export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResult {
   const doc = parsed.document;
   const paths = doc.paths ?? {};
   // `bundleDocument` (decycle.ts) left named-schema references as `$ref`
@@ -208,8 +233,13 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
   // per-operation, via `materializeSchema`.
   const namedSchemas = doc.components?.schemas ?? {};
   const operations: Operation[] = [];
+  const diagnostics: Diagnostic[] = [];
 
   for (const [path, pathItem] of Object.entries(paths)) {
+    // Path-item-level parameters apply to every method below (this is how
+    // Asana/Zendesk declare their path params; dropping them severs the URL
+    // template from the input contract).
+    const pathParams = (pathItem.parameters as RawParam[] | undefined) ?? [];
     for (const method of HTTP_METHODS) {
       const raw = pathItem[method] as RawOperation | undefined;
       if (!raw) continue;
@@ -250,7 +280,19 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
       const confirmation = classifyConfirmation(effect, idempotency);
 
       const params: Param[] = [];
-      for (const rp of raw.parameters ?? []) {
+      for (const rp of mergeParams(pathParams, raw.parameters ?? [])) {
+        if (rp.in === "header" && IGNORED_HEADER_PARAMS.has(rp.name.toLowerCase())) {
+          diagnostics.push({
+            level: "info",
+            code: "header_param_ignored",
+            message:
+              `${method.toUpperCase()} ${path} declares header parameter "${rp.name}"; ` +
+              "OpenAPI mandates Accept/Content-Type/Authorization header parameters be ignored " +
+              "(the runtime owns those headers), so it is not part of the input contract.",
+            operationId: id,
+          });
+          continue;
+        }
         const p = toParam(rp, namedSchemas);
         if (p) params.push(p);
       }
@@ -351,5 +393,5 @@ export function normalize(serviceId: string, parsed: ParsedSpec): Operation[] {
     }
   }
 
-  return operations;
+  return { operations, diagnostics };
 }

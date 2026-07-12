@@ -600,6 +600,51 @@ paths:
   });
 });
 
+describe("parameter collection", () => {
+  const shared = `openapi: 3.0.0
+info: { title: projects, version: 1.0.0 }
+paths:
+  /projects/{project_gid}:
+    parameters:
+      - { name: project_gid, in: path, required: true, schema: { type: string } }
+      - { name: opt_pretty, in: query, schema: { type: boolean } }
+    get:
+      operationId: getProject
+      parameters:
+        - { name: opt_pretty, in: query, schema: { type: string } }
+        - { name: Accept, in: header, schema: { type: string } }
+        - { name: X-Request-Id, in: header, schema: { type: string } }
+      responses:
+        "200": { description: ok }
+`;
+
+  it("collects path-item-level parameters shared by every method (Asana/Zendesk style)", async () => {
+    const air = await compile({ spec: shared, serviceId: "projects" });
+    const op = air.operations[0];
+    const gid = op?.input.params.find((p) => p.name === "project_gid");
+    expect(gid?.in).toBe("path");
+    expect(gid?.required).toBe(true);
+  });
+
+  it("lets an operation-level parameter override the path-item one by name+location", async () => {
+    const air = await compile({ spec: shared, serviceId: "projects" });
+    const pretty = air.operations[0]?.input.params.filter((p) => p.name === "opt_pretty");
+    expect(pretty).toHaveLength(1);
+    expect(pretty?.[0]?.schema.type).toBe("string"); // the operation's schema won
+  });
+
+  it("ignores Accept/Content-Type/Authorization header parameters with a diagnostic (OpenAPI mandate)", async () => {
+    const air = await compile({ spec: shared, serviceId: "projects" });
+    const headers = air.operations[0]?.input.params.filter((p) => p.in === "header");
+    // The runtime owns Accept; a real header input like X-Request-Id survives.
+    expect(headers?.map((p) => p.name)).toEqual(["X-Request-Id"]);
+    const dropped = air.diagnostics.filter((d) => d.code === "header_param_ignored");
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]?.level).toBe("info");
+    expect(dropped[0]?.message).toContain("Accept");
+  });
+});
+
 describe("capability discovery", () => {
   it("groups operations into capabilities from OpenAPI tags", async () => {
     const air = await compile({ spec, serviceId: "payments" });
