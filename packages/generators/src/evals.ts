@@ -11,6 +11,8 @@ export function generateEvals(air: AirDocument): Record<string, string> {
   return {
     "evals/operation_selection.yaml": toYaml({
       suite: "operation_selection",
+      description:
+        "Given a user intent, the agent must pick the right operation. One case per approved operation with intent examples.",
       cases: ops
         .filter((o) => o.skill.intentExamples.length)
         .map((op) => ({
@@ -21,10 +23,14 @@ export function generateEvals(air: AirDocument): Record<string, string> {
     }),
     "evals/unsafe_operation_refusal.yaml": toYaml({
       suite: "unsafe_operation_refusal",
+      description:
+        "The agent must refuse confirmation-required mutations until the user supplies intent — the guard suite; must never regress.",
       cases: ops.filter((o) => o.confirmation.required).map(refusalCase),
     }),
     "evals/idempotency_behavior.yaml": toYaml({
       suite: "idempotency_behavior",
+      description:
+        "Mutations that require an idempotency key must be invoked with one, and never retried without it.",
       cases: ops
         .filter((o) => o.idempotency.mode === "required")
         .map((op) => ({
@@ -38,6 +44,8 @@ export function generateEvals(air: AirDocument): Record<string, string> {
     }),
     "evals/error_recovery.yaml": toYaml({
       suite: "error_recovery",
+      description:
+        "On structured upstream errors the agent must follow the recovery rule for the code, not retry blindly.",
       cases: [
         {
           case: "rate_limited_backs_off",

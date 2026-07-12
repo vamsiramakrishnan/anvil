@@ -13,6 +13,16 @@ function skillName(air: AirDocument): string {
 }
 
 /**
+ * Every generated file self-describes: markdown carries YAML frontmatter
+ * (`name` + a one-sentence `description` saying what the file is and when to
+ * read it), so an agent that lands on any file mid-package knows where it is
+ * without walking back to SKILL.md.
+ */
+function frontmatter(name: string, description: string): string {
+  return `---\nname: ${name}\ndescription: ${description}\n---\n\n`;
+}
+
+/**
  * The skill package (spec §9 + "Progressive disclosure for skills"). SKILL.md
  * stays small — routing and safety only — and defers detail to reference/*.
  * The skill is the operating manual for agents, not prose decoration.
@@ -20,11 +30,13 @@ function skillName(air: AirDocument): string {
 export function generateSkill(air: AirDocument): Record<string, string> {
   const svc = air.service;
   const exposed = air.operations.filter((op) => op.state === "approved");
+  const name = skillName(air);
   const files: Record<string, string> = {};
 
   files["SKILL.md"] = skillMd(air, exposed);
   files["manifest.yaml"] = toYaml({
-    name: skillName(air),
+    name,
+    description: `Machine-readable index of the ${svc.displayName ?? svc.id} skill package: identity, auth, and surface counts. Read SKILL.md first; this file is for tooling.`,
     service_id: svc.id,
     display_name: svc.displayName,
     version: svc.version,
@@ -35,11 +47,31 @@ export function generateSkill(air: AirDocument): Record<string, string> {
     operations: exposed.length,
     workflows: air.workflows.length,
   });
-  files["reference/capabilities.md"] = capabilitiesRef(air);
-  files["reference/operations.md"] = operationsRef(exposed);
-  files["reference/errors.md"] = errorsRef();
-  files["reference/idempotency.md"] = idempotencyRef(exposed);
-  files["reference/workflows.md"] = workflowsRef(air, exposed);
+  files["reference/capabilities.md"] =
+    frontmatter(
+      `${name}-capabilities`,
+      "The capability map — every approved capability, the operations and workflows it owns. Read this to pick the right area before choosing an operation.",
+    ) + capabilitiesRef(air);
+  files["reference/operations.md"] =
+    frontmatter(
+      `${name}-operations`,
+      "The full operation catalog — per-operation contract, inputs, safety posture (effect, risk, confirmation, idempotency, retry), and CLI/MCP names. Read this before invoking any operation.",
+    ) + operationsRef(exposed);
+  files["reference/errors.md"] =
+    frontmatter(
+      `${name}-errors`,
+      "The structured error envelope and the recovery rule for every error code. Read this when a call fails, before deciding whether to retry.",
+    ) + errorsRef();
+  files["reference/idempotency.md"] =
+    frontmatter(
+      `${name}-idempotency`,
+      "Per-mutation idempotency and retry rules. Read this before any write, and whenever you see confirmation_required or idempotency_required.",
+    ) + idempotencyRef(exposed);
+  files["reference/workflows.md"] =
+    frontmatter(
+      `${name}-workflows`,
+      "Authored multi-step flows (or the generic inspect→preview→execute pattern when none are authored). Read this when a task spans more than one operation.",
+    ) + workflowsRef(air, exposed);
   return files;
 }
 
