@@ -859,3 +859,27 @@ the project so far — nothing had ever executed the generated MCP path.
   by grammar an RPC request/response is always a message, so they degrade to
   permissive objects — an all-optional proto3 message accepts `{}` end to
   end.
+
+### 37. The generated CLI executed unapproved operations — FIXED (found by the skill/CLI audit)
+- **Symptom**: the safety contract's first line — "only approved operations
+  are exposed" — held on the MCP server (filters at registration) and in the
+  skill docs (approved-only projection), but the generated CLI matched
+  commands against ALL compiled operations. Live probe: Travelport's
+  `review_required`, financial-risk `AirRefundTicket` sent a real HTTP POST
+  through the CLI; `--dry-run` planned it too.
+- **Fix (deepest shared layer)**: `execute()` refuses `state !== "approved"`
+  at step 0 — before validation, confirmation, or dry-run — with a
+  structured `unsupported_operation` envelope naming the state and the exact
+  exposure path (`anvil inspect` → `anvil approve <op-id>`), so every
+  surface inherits the gate; the MCP registration filter remains as defense
+  in depth. The CLI's entire universe (catalog, discover, explain, matching,
+  --examples) is now the approved projection, and an explicitly-typed
+  unapproved command gets the refusal rather than "unknown command".
+- **Also in this round (audit "GPS" dead ends)**: malformed `--body` JSON →
+  structured validation_error naming flag + parse position (was a raw stack
+  trace); unknown flags/commands get did-you-mean suggestions (were silently
+  swallowed); missing inputs render as `--kebab-case` flags; `auth_required`
+  names the exact `ANVIL_<PROFILE>_TOKEN`-style env vars to set (names only,
+  never values); `discover` hedges weak matches instead of confidently
+  misdirecting; and the CLI's `--examples` now emits the same `exampleInput`
+  as the skill's worked examples — one example surface, not two.
