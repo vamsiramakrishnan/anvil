@@ -1,0 +1,8 @@
+# Linear GraphQL — approve two read-only queries for the loopback self-test.
+service:
+  name: linear
+operations:
+  viewer:
+    state: approved
+  issue:
+    state: approved

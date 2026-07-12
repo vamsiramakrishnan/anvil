@@ -177,6 +177,34 @@ export function lintPasses(bundleDir, { timeoutMs = 120_000 } = {}) {
 }
 
 /**
+ * Oracle: `anvil selftest <bundle>` — boots the bundle's generated mock and
+ * generated MCP server (loopback) and drives every approved tool over real
+ * MCP transport, asserting no-loss wire fidelity and the safety gates.
+ * A bundle with no approved operations has no loopback surface; that is a
+ * property of the reproduce manifest, not a defect, so it reports ok with a
+ * "skipped" detail rather than failing quick mode.
+ */
+export function selftestPasses(bundleDir, { timeoutMs = 180_000 } = {}) {
+  const name = "selftest";
+  try {
+    const air = JSON.parse(readFileSync(join(bundleDir, "air.json"), "utf8"));
+    const approved = (air.operations ?? []).filter((op) => op.state === "approved").length;
+    if (approved === 0) {
+      return { name, ok: true, detail: "skipped: no approved operations in the reproduce manifest" };
+    }
+  } catch (err) {
+    return { name, ok: false, detail: `air.json unreadable: ${err.message}` };
+  }
+  const res = runNode([ANVIL, "selftest", bundleDir], { timeoutMs });
+  const ok = res.status === 0;
+  return {
+    name,
+    ok,
+    detail: ok ? `exit 0 in ${res.ms}ms` : `exit ${res.status ?? res.signal}: ${firstLines(res)}`,
+  };
+}
+
+/**
  * Differential naming oracle (quick mode): assert operationId -> mcp.toolName
  * and effect kind/risk against a checked-in fixture (expected/<system>.json).
  * Fixture shape: { "operations": { "<operationId>": { "toolName": "...",

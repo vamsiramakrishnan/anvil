@@ -1,0 +1,9 @@
+# Amadeus Flight Offers Search — both operations are searches (reads). The
+# published spec omits securityDefinitions; live auth is a deploy concern.
+service:
+  name: amadeus
+operations:
+  getFlightOffers:
+    state: approved
+  searchFlightOffers:
+    state: approved

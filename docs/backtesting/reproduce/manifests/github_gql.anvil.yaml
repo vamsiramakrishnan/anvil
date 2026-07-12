@@ -1,0 +1,9 @@
+# GitHub GraphQL — approve two read-only queries so the corpus loopback
+# self-test has a surface to drive; mutations stay review_required.
+service:
+  name: github_gql
+operations:
+  viewer:
+    state: approved
+  repository:
+    state: approved
