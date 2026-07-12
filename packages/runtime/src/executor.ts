@@ -67,6 +67,25 @@ export interface ExecuteInput {
 
 const REDACT = new Set(["authorization", "x-api-key", "proxy-authorization", "cookie"]);
 
+/**
+ * The structured refusal for an operation outside the approved surface. Shared
+ * by the executor's own gate and by CLI-layer catalog gating so every surface
+ * refuses with the same code, message, and next action (spec §17).
+ */
+export function unapprovedOperationError(op: Operation, traceId: string): AnvilError {
+  return new AnvilError({
+    code: "unsupported_operation",
+    message:
+      `Operation '${op.id}' is not approved for execution (state: ${op.state}). ` +
+      `Only approved operations are exposed. Review it with \`anvil inspect <bundle>\`, ` +
+      `then expose it with \`anvil approve <bundle> ${op.id}\` and regenerate the bundle.`,
+    operation: op.id,
+    traceId,
+    retryable: false,
+    details: { state: op.state, required_action: `anvil approve <bundle> ${op.id}` },
+  });
+}
+
 function redactHeaders(headers: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(headers)) {
@@ -201,6 +220,14 @@ export async function execute(
   };
 
   try {
+    // 0. Approval gate — the safety contract's first clause: only approved
+    // operations execute, on any surface (CLI, MCP, embedders). This refuses
+    // before validation, confirmation, and dry-run so an unapproved operation
+    // can never even be planned, regardless of which caller reached us.
+    if (op.state !== "approved") {
+      return fail(unapprovedOperationError(op, traceId));
+    }
+
     await runHook(ctx.policy?.preValidate);
 
     // 1. Required inputs present (params + projected body fields / whole body).
@@ -319,16 +346,22 @@ export async function execute(
     let request = baseRequest;
     await runHook(ctx.policy?.preAuth, request);
     if (op.auth.type !== "none") {
-      const material = ctx.credentials
-        ? await ctx.credentials.resolve(ctx.authProfile ?? "default", op.auth)
-        : null;
+      const profile = ctx.authProfile ?? "default";
+      const material = ctx.credentials ? await ctx.credentials.resolve(profile, op.auth) : null;
       if (!material) {
+        // Name the credential LOCATIONS the resolver would read (env var names,
+        // secret ids) so the caller knows the next action. Names only — values
+        // are never echoed (spec §13, §18).
+        const expected = ctx.credentials?.expectedCredentials?.(profile, op.auth) ?? [];
         return fail(
           new AnvilError({
             code: "auth_required",
-            message: `Auth profile '${ctx.authProfile ?? "default"}' could not be resolved for scopes [${op.auth.scopes.join(", ")}].`,
+            message:
+              `Auth profile '${profile}' could not be resolved for scopes [${op.auth.scopes.join(", ")}].` +
+              (expected.length > 0 ? ` Set ${expected.join(" and ")} and retry.` : ""),
             operation: op.id,
             traceId,
+            details: expected.length > 0 ? { expected_env: expected } : undefined,
           }),
         );
       }
