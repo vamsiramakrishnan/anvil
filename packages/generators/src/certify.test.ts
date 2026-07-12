@@ -194,6 +194,31 @@ describe("certification: RUNTIME gate", () => {
     const cert = certifyBundle(rest, air);
     expect(failedIds(cert)).toContain("runtime.deploy-present");
   });
+
+  it("accepts a bundle whose eval suites were all omitted, given the README", () => {
+    // Suites that derive zero cases are not emitted; a bundle can legitimately
+    // have none. The README documenting the omission satisfies the gate…
+    const noSuites = Object.fromEntries(
+      Object.entries(files).filter(
+        ([rel]) => !(rel.startsWith("skill/evals/") && rel.endsWith(".yaml")),
+      ),
+    );
+    noSuites["skill/evals/README.md"] = "---\nname: x\ndescription: y\n---\n\n# Omitted\n";
+    const cert = certifyBundle(noSuites, air);
+    expect(failedIds(cert)).not.toContain("runtime.evals-present");
+    const detail = cert.checks.find((c) => c.id === "runtime.evals-present")?.detail ?? "";
+    expect(detail).toContain("README.md");
+
+    // …and without the README the same bundle fails: silence is not allowed.
+    const { "skill/evals/README.md": _readme, ...silent } = noSuites;
+    expect(failedIds(certifyBundle(silent, air))).toContain("runtime.evals-present");
+  });
+
+  it("still rejects a present-but-broken eval suite (parse check not weakened)", () => {
+    const broken = { ...files, "skill/evals/error_recovery.yaml": "cases: [no suite name]\n" };
+    const cert = certifyBundle(broken, air);
+    expect(failedIds(cert)).toContain("runtime.evals-present");
+  });
 });
 
 describe("publication gating: verifyCertification", () => {

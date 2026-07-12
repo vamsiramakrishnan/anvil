@@ -249,6 +249,81 @@ describe("bundle", () => {
   });
 });
 
+describe("skill package format", () => {
+  it("counts only capabilities with approved members in the manifest", async () => {
+    // Nothing approved → every capability is invisible; the manifest must say
+    // 0, not the raw capability count (the audit's "29 capabilities, 4 ops").
+    const unapproved = await compile({ spec: read("openapi.yaml"), serviceId: "payments" });
+    const { files } = generateBundle(unapproved);
+    expect(files["skill/manifest.yaml"]).toContain("capabilities: 0");
+    // With the manifest, every payments capability has an approved member.
+    const approved = generateBundle(air).files["skill/manifest.yaml"] as string;
+    expect(approved).toContain(`capabilities: ${air.capabilities.length}`);
+  });
+
+  it("folds capability names into the skill description for intent routing", () => {
+    const { files } = generateBundle(air);
+    const front = (files["skill/SKILL.md"] as string).match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+    const description = front.match(/^description:\s*(.+)$/m)?.[1] ?? "";
+    expect(description).toContain("Refunds");
+    expect(description.length).toBeLessThanOrEqual(1024);
+    expect(description).toContain("Use when");
+  });
+
+  it("points each operation at its schema and example, with the confirmation reason", () => {
+    const { files } = generateBundle(air);
+    const ref = files["skill/reference/operations.md"] as string;
+    expect(ref).toContain("../schemas/create_refund.schema.json");
+    expect(ref).toContain("../examples/create_refund.json");
+    // The manifest-declared reason must surface where the agent reads the contract.
+    expect(ref).toContain("Confirmation required");
+    expect(ref).toContain("This operation creates an irreversible financial mutation.");
+    const idem = files["skill/reference/idempotency.md"] as string;
+    expect(idem).toContain("This operation creates an irreversible financial mutation");
+  });
+
+  it("teaches setup (env-var NAMES only) and links it from SKILL.md and errors.md", () => {
+    const { files } = generateBundle(air);
+    const setup = files["skill/reference/setup.md"] as string;
+    for (const name of [
+      "ANVIL_DEFAULT_TOKEN",
+      "ANVIL_BASE_URL",
+      "ANVIL_ENV",
+      "ANVIL_ALLOWED_HOSTS",
+      "ANVIL_LEDGER",
+      "--auth-profile",
+    ]) {
+      expect(setup, `setup.md must name ${name}`).toContain(name);
+    }
+    expect(files["skill/SKILL.md"]).toContain("reference/setup.md");
+    const errors = files["skill/reference/errors.md"] as string;
+    expect(errors).toMatch(/auth_required[^\n]*setup\.md/);
+    expect(errors).toMatch(/policy_denied[^\n]*setup\.md/);
+  });
+
+  it("omits empty eval suites and explains the omission in a README", () => {
+    const { files } = generateBundle(air);
+    // Payments operations carry no intent examples → operation_selection would
+    // be an empty suite; it must be absent, and the README must say why.
+    expect(files["skill/evals/operation_selection.yaml"]).toBeUndefined();
+    expect(files["skill/evals/unsafe_operation_refusal.yaml"]).toBeDefined();
+    const readme = files["skill/evals/README.md"] as string;
+    expect(readme).toMatch(/^---\n/);
+    expect(readme).toContain("operation_selection");
+    expect(readme).toContain("skill.intent_examples");
+  });
+
+  it("gives every skill markdown file self-describing frontmatter", () => {
+    const { files } = generateBundle(air);
+    for (const [rel, text] of Object.entries(files)) {
+      if (!rel.startsWith("skill/") || !rel.endsWith(".md")) continue;
+      const front = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+      expect(front, `${rel} must carry frontmatter`).toMatch(/^name:\s*\S+/m);
+      expect(front, `${rel} must describe itself`).toMatch(/^description:\s*\S+/m);
+    }
+  });
+});
+
 describe("GCP-native deploy (single owner per concern)", () => {
   it("emits exactly one deploy path: Cloud Build (pipeline) + Terraform (infra)", () => {
     const { files } = generateBundle(air);

@@ -1,3 +1,8 @@
+---
+name: refinement-skill-enrich-errors
+description: Contract and investigation method for the enrich-errors skill — writes message, retryable on a error target from single evidence. Read this before working a undocumented_error or error_retryability_unclear deficiency.
+---
+
 # Skill: enrich-errors (v1)
 
 **Triggers:** `undocumented_error`, `error_retryability_unclear`

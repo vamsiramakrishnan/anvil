@@ -483,12 +483,17 @@ function runtimeChecks(files: Record<string, string>, air: AirDocument): Certifi
   }
 
   // Evals: the generated suites must exist and parse — they are the behavior
-  // contract the refinement loop measures against.
+  // contract the refinement loop measures against. Suites that derive zero
+  // cases are legitimately omitted (an empty file reads as phantom coverage),
+  // but a bundle with NO suites must carry the README documenting the omission.
   const evalFiles = Object.keys(files).filter(
     (rel) => rel.startsWith("skill/evals/") && rel.endsWith(".yaml"),
   );
   const evalFailures: string[] = [];
-  if (evalFiles.length === 0) evalFailures.push("no generated eval suites under skill/evals/");
+  if (evalFiles.length === 0 && files["skill/evals/README.md"] === undefined)
+    evalFailures.push(
+      "no generated eval suites under skill/evals/ and no skill/evals/README.md documenting their omission",
+    );
   for (const rel of evalFiles) {
     try {
       const doc = parseYaml(files[rel] ?? "") as { suite?: unknown };
@@ -517,7 +522,14 @@ function runtimeChecks(files: Record<string, string>, air: AirDocument): Certifi
       mockFailures,
       "mock server and scenarios are present and cover every approved operation",
     ),
-    check("runtime.evals-present", "runtime", evalFailures, "generated eval suites parse"),
+    check(
+      "runtime.evals-present",
+      "runtime",
+      evalFailures,
+      evalFiles.length === 0
+        ? "every eval suite derived zero cases; skill/evals/README.md documents the omission"
+        : "generated eval suites parse",
+    ),
     check(
       "runtime.conformance-present",
       "runtime",
