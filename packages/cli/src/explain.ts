@@ -68,28 +68,50 @@ function typeName(schema: Record<string, unknown>): string {
   return typeof schema.type === "string" ? schema.type : "value";
 }
 
-/** Rank operations by relevance to a free-text intent (`discover`). */
-export function discover(air: AirDocument, intent: string): Operation[] {
-  const terms = intent.toLowerCase().split(/\s+/).filter(Boolean);
-  const scored = air.operations.map((op) => {
-    const haystack = [
-      op.canonicalName,
-      op.id,
-      op.description,
-      op.cli.command,
-      ...op.skill.intentExamples,
-    ]
-      .join(" ")
-      .toLowerCase();
-    let score = 0;
-    for (const term of terms) if (haystack.includes(term)) score += 1;
-    // Boost exact resource/action word hits.
-    for (const term of terms) if (op.canonicalName.split("_").includes(term)) score += 1;
-    return { op, score };
-  });
-  return scored
+export interface DiscoverResult {
+  hits: Operation[];
+  /**
+   * False when the best match cleared only one weak signal — the caller must
+   * hedge ("no close match; nearest: …") instead of presenting a confident
+   * wrong answer. A confident hit matched at least two independent signals.
+   */
+  confident: boolean;
+}
+
+/**
+ * Rank approved operations by relevance to a free-text intent (`discover`).
+ * Only the approved surface is searchable — discovery must never point an
+ * agent at an operation the other surfaces (MCP, skill) refuse to expose.
+ */
+export function discover(air: AirDocument, intent: string): DiscoverResult {
+  // Terms under 3 chars ("a", "to") substring-match almost any haystack and
+  // manufactured false confidence; they carry no intent signal, so drop them.
+  const terms = intent
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length >= 3);
+  const scored = air.operations
+    .filter((op) => op.state === "approved")
+    .map((op) => {
+      const haystack = [
+        op.canonicalName,
+        op.id,
+        op.description,
+        op.cli.command,
+        ...op.skill.intentExamples,
+      ]
+        .join(" ")
+        .toLowerCase();
+      let score = 0;
+      for (const term of terms) if (haystack.includes(term)) score += 1;
+      // Boost exact resource/action word hits.
+      for (const term of terms) if (op.canonicalName.split("_").includes(term)) score += 1;
+      return { op, score };
+    });
+  const hits = scored
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 5)
-    .map((s) => s.op);
+    .slice(0, 5);
+  const best = hits[0]?.score ?? 0;
+  return { hits: hits.map((s) => s.op), confident: best >= 2 };
 }
