@@ -13,7 +13,12 @@ import { generateDocs } from "./docs.js";
 import { generateCliSource, generateRuntimeServer } from "./entrypoints.js";
 import { generateEvals } from "./evals.js";
 import { generateMcpServerSource } from "./mcp.js";
-import { exampleInput, generateMockServerSource, generateScenarios } from "./mock.js";
+import {
+  exampleInput,
+  generateMockRoutes,
+  generateMockServerSource,
+  generateScenarios,
+} from "./mock.js";
 import { buildToolResources, type ResourceOptions } from "./resources.js";
 import { generateSkill } from "./skill.js";
 
@@ -89,6 +94,7 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   Object.assign(files, generateDocs(air));
   Object.assign(files, generateDeploy(air));
   files["mock/scenarios.json"] = `${JSON.stringify(generateScenarios(air), null, 2)}\n`;
+  files["mock/routes.json"] = `${JSON.stringify(generateMockRoutes(air), null, 2)}\n`;
   files["mock/server.mjs"] = generateMockServerSource(air);
   files["tests/conformance.test.ts"] = generateConformanceTest(air);
 
