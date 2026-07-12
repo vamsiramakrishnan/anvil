@@ -114,6 +114,63 @@ describe("MCP server", () => {
     await client.close();
   });
 
+  it("never registers an unapproved operation as a tool (spec §17)", async () => {
+    const unapproved = structuredClone(air);
+    const refund = unapproved.operations.find((o) => o.id === "payments.refunds.create");
+    if (refund) refund.state = "review_required";
+    const server = buildMcpServer(unapproved, {
+      contextFor: () => ({
+        transport: new MockTransport(() => ({ status: 200, headers: {}, body: "{}" })),
+        baseUrl: "https://payments.internal.example.com",
+        allowedHosts: ["payments.internal.example.com"],
+        env: "prod",
+      }),
+    });
+    const client = await connect(server);
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name)).not.toContain("payments_create_refund");
+    await client.close();
+  });
+
+  it("defense in depth: even a dev server listing unapproved tools cannot execute them", async () => {
+    const unapproved = structuredClone(air);
+    const refund = unapproved.operations.find((o) => o.id === "payments.refunds.create");
+    if (refund) refund.state = "review_required";
+    const transport = new MockTransport(() => ({ status: 201, headers: {}, body: "{}" }));
+    // includeUnapproved is the dev-only escape hatch for *listing*; the
+    // executor's own approval gate still refuses execution.
+    const server = buildMcpServer(unapproved, {
+      includeUnapproved: true,
+      contextFor: () => ({
+        transport,
+        credentials: {
+          async resolve() {
+            return { headers: { Authorization: "Bearer t" } };
+          },
+        },
+        authProfile: "prod",
+        baseUrl: "https://payments.internal.example.com",
+        allowedHosts: ["payments.internal.example.com"],
+        env: "dev",
+      }),
+    });
+    const client = await connect(server);
+    const result = await client.callTool({
+      name: "payments_create_refund",
+      arguments: {
+        payment_id: "pay_1",
+        amount: 2500,
+        currency: "USD",
+        idempotency_key: "k1",
+        confirm: true,
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("unsupported_operation");
+    expect(transport.requests).toHaveLength(0);
+    await client.close();
+  });
+
   it("serves the skill and CLI install manifest as MCP resources", async () => {
     const server = buildMcpServer(air, {
       contextFor: () => ({
