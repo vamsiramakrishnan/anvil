@@ -1,3 +1,8 @@
+---
+name: refinement-investigation
+description: The case framework — how to open, drive, and honestly close a bounded investigation for one deficiency. Read this before working any case.
+---
+
 # Investigating as a case
 
 A *case* turns "run a skill" into a bounded research job with a body. Anvil

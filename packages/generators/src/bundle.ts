@@ -127,6 +127,10 @@ function bundlePackageJson(air: AirDocument): unknown {
   return {
     name: `@anvil-tools/${id}`,
     version: air.service.version,
+    // Self-describing, and honest about the install contract: `npm install`
+    // resolves only where the @anvil/* packages are reachable (a registry or
+    // packed tarballs); a linked toolchain runs the CLI directly.
+    description: `Anvil-generated tool bundle for ${air.service.displayName ?? id}: aligned CLI (bin \`${id}\`), MCP server (mcp/server.js), and skill package (skill/). Run \`node cli/${id}.mjs --help\` after \`npm install\` (or with the @anvil/* toolchain linked); see skill/SKILL.md.`,
     private: true,
     type: "module",
     bin: { [id]: `cli/${id}.mjs` },

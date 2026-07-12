@@ -1,3 +1,8 @@
+---
+name: anvil-workflow
+description: The enrich-then-approve workflow and the supplemental manifest shape for unsafe operations. Read this before approving any non-idempotent mutation.
+---
+
 # The enrich → approve workflow
 
 Specs are incomplete. When `anvil lint` reports `unproven_idempotency`, enrich

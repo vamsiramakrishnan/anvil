@@ -1,3 +1,8 @@
+---
+name: refinement-skill-generate-examples
+description: Contract and investigation method for the generate-examples skill — writes examples on a field target from single evidence. Read this before working a required_field_no_example deficiency.
+---
+
 # Skill: generate-examples (v1)
 
 **Triggers:** `required_field_no_example`

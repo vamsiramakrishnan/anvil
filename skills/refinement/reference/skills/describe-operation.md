@@ -1,3 +1,8 @@
+---
+name: refinement-skill-describe-operation
+description: Contract and investigation method for the describe-operation skill — writes description on a operation target from corroborated evidence. Read this before working a missing_operation_description deficiency.
+---
+
 # Skill: describe-operation (v1)
 
 **Triggers:** `missing_operation_description`
