@@ -122,7 +122,8 @@ async function buildAir(
   const title = (doc.info?.title as string | undefined) ?? "service";
   const serviceId = options.serviceId ?? manifest.service?.name ?? snakeCase(title) ?? "service";
 
-  let operations = normalize(serviceId, parsed);
+  const normalized = normalize(serviceId, parsed);
+  let operations = normalized.operations;
   // Naming pass: resolve any name collisions coherently across id/CLI/tool with
   // meaningful tokens (never a silent `_2`) before enrichment or validation.
   const namingDiagnostics = resolveNameCollisions(operations);
@@ -228,6 +229,7 @@ async function buildAir(
     schemas: (doc.components?.schemas as Record<string, JsonSchema> | undefined) ?? {},
     diagnostics: [
       ...parsed.diagnostics,
+      ...normalized.diagnostics,
       ...diagnostics,
       ...namingDiagnostics,
       ...workflowDiagnostics,

@@ -212,3 +212,128 @@ describe("generated mock server", () => {
     expect(req.matchedCandidates).toEqual(["payments.customers.get"]);
   });
 });
+
+/**
+ * Twilio-style templates embed the param inside a segment with a literal
+ * suffix ("/Calls/{sid}.json") and Jira's addWatcher takes a bare JSON string
+ * body. The matcher and validator must handle both without special-casing.
+ */
+describe("generated mock server (embedded path params + non-object bodies)", () => {
+  const spec = `openapi: 3.0.0
+info: { title: comms, version: 1.0.0 }
+paths:
+  /v1/calls/{sid}.json:
+    get:
+      operationId: fetchCall
+      parameters:
+        - { name: sid, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: ok }
+  /v1/calls/latest.json:
+    get:
+      operationId: fetchLatestCall
+      responses:
+        "200": { description: ok }
+  /v1/issues/{key}/watchers:
+    post:
+      operationId: addWatcher
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: string, description: account id }
+      responses:
+        "200": { description: ok }
+`;
+  const manifest = `service: { name: comms }
+operations:
+  fetchCall: { state: approved }
+  fetchLatestCall: { state: approved }
+  addWatcher: { state: approved }
+`;
+
+  let commsDir: string;
+  let commsChild: ChildProcess;
+  let commsBase: string;
+  /** Derived operation id for a path template, read from the emitted table. */
+  const opIdFor = (path: string): string => {
+    const routes = JSON.parse(readFileSync(join(commsDir, "mock", "routes.json"), "utf8")) as {
+      operationId: string;
+      path: string;
+    }[];
+    const route = routes.find((r) => r.path === path);
+    if (!route) throw new Error(`no route for ${path}`);
+    return route.operationId;
+  };
+  const commsCapture = async (): Promise<CaptureView[]> => {
+    const res = await fetch(`${commsBase}/__anvil/capture`);
+    return ((await res.json()) as { requests: CaptureView[] }).requests;
+  };
+  const commsReset = () => fetch(`${commsBase}/__anvil/reset`, { method: "POST" });
+
+  beforeAll(async () => {
+    const commsAir = await compile({ spec, manifest, serviceId: "comms" });
+    commsDir = mkdtempSync(join(tmpdir(), "anvil-mock-embedded-test-"));
+    writeBundle(commsDir, generateBundle(commsAir));
+    const started = await startMock(commsDir);
+    commsChild = started.child;
+    commsBase = `http://127.0.0.1:${started.port}`;
+  }, 60_000);
+
+  afterAll(() => {
+    commsChild?.kill("SIGKILL");
+    rmSync(commsDir, { recursive: true, force: true });
+  });
+
+  it("matches a param embedded inside a segment with a literal suffix", async () => {
+    await commsReset();
+    const res = await fetch(`${commsBase}/v1/calls/CA123.json`);
+    expect(res.status).toBe(200);
+    const [req] = await commsCapture();
+    expect(req.matchedOpId).toBe(opIdFor("/v1/calls/{sid}.json"));
+    expect(req.pathParams).toEqual({ sid: "CA123" });
+  });
+
+  it("percent-decodes the segment before matching literals and params", async () => {
+    await commsReset();
+    const res = await fetch(`${commsBase}/v1/calls/CA%20123.json`);
+    expect(res.status).toBe(200);
+    const [req] = await commsCapture();
+    expect(req.pathParams).toEqual({ sid: "CA 123" });
+  });
+
+  it("routes ambiguity most-literal-first, deterministically", async () => {
+    await commsReset();
+    // /v1/calls/latest.json matches BOTH the literal route and {sid}.json —
+    // the fully-literal template must win regardless of table order.
+    await fetch(`${commsBase}/v1/calls/latest.json`);
+    const [req] = await commsCapture();
+    const literal = opIdFor("/v1/calls/latest.json");
+    const embedded = opIdFor("/v1/calls/{sid}.json");
+    expect(req.matchedOpId).toBe(literal);
+    expect(req.matchedCandidates.sort()).toEqual([embedded, literal].sort());
+  });
+
+  it("accepts a bare JSON string body when the contract's body type is string", async () => {
+    await commsReset();
+    const res = await fetch(`${commsBase}/v1/issues/PROJ-1/watchers`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify("account-id"),
+    });
+    expect(res.status).toBe(201); // the mutation's success scenario
+  });
+
+  it("still rejects a body whose JSON type contradicts the contract", async () => {
+    const res = await fetch(`${commsBase}/v1/issues/PROJ-1/watchers`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ not: "a string" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { invalid: string[] } };
+    expect(body.error.invalid.join(" ")).toMatch(/expected a JSON string/);
+  });
+});
