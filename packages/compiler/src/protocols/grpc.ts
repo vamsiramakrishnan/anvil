@@ -1,10 +1,11 @@
 /**
  * Protocol Buffers (proto3) → OpenAPI 3.0 adapter for gRPC services.
  *
- * Each `rpc` in a `service` becomes one operation. gRPC has no read/write verb
- * of its own, so effect is inferred conservatively from the method name: the
+ * Each `rpc` in a `service` becomes one operation, lowered to POST — the
+ * truthful wire method for every gRPC call. gRPC has no read/write verb of its
+ * own, so effect is inferred conservatively from the method name: the
  * canonical read prefixes (Get/List/Watch/Search/Lookup/Query/Fetch/Read/…)
- * lower to GET (read), everything else lowers to POST (mutation → treated as
+ * assert `x-anvil-effect: read`, everything else stays a mutation (treated as
  * unsafe until enriched). The request message becomes the body, the response
  * message the output schema, and every `message`/`enum` becomes a
  * `components.schemas` entry referenced by `$ref` — recursion is resolved by
@@ -193,8 +194,10 @@ export function adaptProto(
   for (const service of c.services) {
     const serviceFqn = stripLeadingDot(service.fullName);
     for (const method of service.methodsArray) {
+      // Every gRPC call is POST on the wire (HTTP/2 POST per the gRPC spec);
+      // the read/write distinction is asserted explicitly via `x-anvil-effect`
+      // instead of a fake GET, which cannot carry the required request body.
       const read = READ_RPC.test(method.name);
-      const httpMethod = read ? "get" : "post";
       // gRPC wire path is /package.Service/Method — used verbatim as the AIR path.
       const path = `/${serviceFqn}/${method.name}`;
       const streaming =
@@ -214,12 +217,15 @@ export function adaptProto(
         "x-grpc-service": serviceFqn,
         "x-grpc-method": method.name,
         "x-grpc-streaming": streaming.trim() || undefined,
+        // The READ_RPC name test is a heuristic; classify.ts records it as an
+        // adapter assertion with heuristic-grade confidence.
+        ...(read ? { "x-anvil-effect": "read" } : {}),
       };
       op.requestBody = {
         required: true,
         content: { "application/json": { schema: typeToSchema(method.requestType, c) } },
       };
-      paths[path] = { [httpMethod]: op };
+      paths[path] = { post: op };
     }
   }
 
