@@ -80,7 +80,7 @@ Zendesk, Intercom, Zoom, HubSpot, DocuSign) plus two **real non-REST schemas** �
 **GitHub's 1,752-type GraphQL** (vs `github-mcp-server`) and **Temporal's
 121-rpc gRPC proto** (vs `temporal-mcp`), with **Linear** GraphQL and **etcd**
 multi-file proto alongside. They span OpenAPI 3.x, Swagger 2.0, Google
-Discovery, RPC-over-HTTP, GraphQL SDL, gRPC/proto3, and SOAP/WSDL. **36 real,
+Discovery, RPC-over-HTTP, GraphQL SDL, gRPC/proto3, and SOAP/WSDL. **37 real,
 systemic compiler bugs found and fixed**, each with a regression test:
 
 1. Compiler crash on any self-referential schema (Jira's `LinkGroup`)
@@ -119,6 +119,7 @@ systemic compiler bugs found and fixed**, each with a regression test:
 34. The generated mock's router couldn't match segment-embedded params (Twilio's `{Sid}.json`)
 35. Example synthesis, the MCP tool's zod shape, and mock validation disagreed on records, `anyOf` refinements, null examples, and optional inputs (HubSpot/Intercom)
 36. Bare-string bodies (Jira addWatcher) and unresolved proto messages (Temporal) failed type validation — bodies now validate by JSON type, unresolved RPC messages degrade to objects
+37. The generated CLI executed unapproved operations (live-proven on a financial-risk SOAP op) — the approval gate now lives at step 0 of the shared executor so every surface inherits it; found by the skill/CLI audit
 
 See `deficiencies.md` for the full writeup of each (symptom → root cause →
 fix → test), and the per-product / per-batch detail in `jira.md`,
