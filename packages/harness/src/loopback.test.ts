@@ -73,7 +73,7 @@ describe("loopback self-test (payments, OpenAPI)", () => {
 });
 
 describe("loopback self-test (banking, WSDL)", () => {
-  it("surfaces the GET-with-body loss on WSDL-lowered reads and proves the mutations", async () => {
+  it("proves WSDL-lowered reads and mutations end-to-end: every check passes", async () => {
     const dir = await buildBundle("soap/bank.wsdl", "soap/anvil.yaml", "banking");
     const report = await runLoopback(dir);
     expect(LoopbackReport.parse(report)).toEqual(report);
@@ -81,18 +81,17 @@ describe("loopback self-test (banking, WSDL)", () => {
     // A — the surface itself is aligned.
     expect(byId(report, "surface")[0]?.status).toBe("pass");
 
-    // B — the POST-lowered mutations are lossless end-to-end (including the
-    // whole-body projection of TransferFunds).
+    // B — the mutations are lossless end-to-end (including the whole-body
+    // projection of TransferFunds).
     expect(byId(report, "fidelity", "banking.transfer_funds.create")[0]?.status).toBe("pass");
     expect(byId(report, "fidelity", "banking.close_account.create")[0]?.status).toBe("pass");
 
-    // B — the WSDL reads lower to GET yet still carry a required body; fetch
-    // refuses to send that, so ZERO requests reach the wire. The self-test's
-    // job is to surface that loss, not hide it.
+    // B — the WSDL reads now lower to the truthful wire method (POST) with an
+    // explicit read assertion, so their bodies actually reach the wire; the
+    // names are unchanged from the GET-lowered era (naming parity).
     for (const opId of ["banking.get_account_balance.list", "banking.list_transactions.list"]) {
       const check = byId(report, "fidelity", opId)[0];
-      expect(check?.status).toBe("fail");
-      expect(check?.detail).toMatch(/0 wire request/);
+      expect(check?.status).toBe("pass");
     }
 
     // C — confirmation gates on both unsafe mutations.
@@ -106,13 +105,61 @@ describe("loopback self-test (banking, WSDL)", () => {
     // D — the documented SOAP fault (500) surfaces as a structured envelope.
     expect(byId(report, "error-mapping")[0]?.status).toBe("pass");
 
-    // E — no wire-executable read exists, so the read sub-check is skipped;
-    // CloseAccount (idempotency: none) must execute exactly once on a 503.
-    expect(byId(report, "retry-read")[0]?.status).toBe("skipped");
+    // E — the POST-reads are wire-executable, so the read sub-check runs for
+    // real; CloseAccount (idempotency: none) must execute exactly once on a 503.
+    expect(byId(report, "retry-read")[0]?.status).toBe("pass");
     const guard = byId(report, "retry-mutation-guard")[0];
     expect(guard?.status).toBe("pass");
     expect(guard?.operationId).toBe("banking.close_account.create");
 
-    expect(report.summary.fail).toBe(2);
+    expect(report.summary.fail).toBe(0);
+  }, 120_000);
+});
+
+describe("loopback self-test (empty approved surface)", () => {
+  it("fails plainly with a pointer at the approval flow instead of leaking an MCP error", async () => {
+    // No manifest — nothing is approved, so there is nothing to self-test.
+    const air = await compile({ spec: read("payments/openapi.yaml"), serviceId: "payments" });
+    const dir = mkdtempSync(join(tmpdir(), "anvil-loopback-empty-"));
+    dirs.push(dir);
+    writeBundle(dir, generateBundle(air));
+
+    const report = await runLoopback(dir);
+    expect(LoopbackReport.parse(report)).toEqual(report);
+    expect(report.checks).toHaveLength(1);
+    expect(report.checks[0]).toMatchObject({ id: "surface", status: "fail" });
+    expect(report.checks[0]?.detail).toMatch(/no approved operations/);
+    expect(report.checks[0]?.detail).toMatch(/manifest/);
+    expect(report.summary).toEqual({ pass: 0, fail: 1, skipped: 0 });
+  }, 60_000);
+});
+
+describe("loopback self-test (storefront, GraphQL)", () => {
+  it("executes an approved query as POST on the wire and passes fidelity", async () => {
+    const dir = await buildBundle("graphql/schema.graphql", "graphql/anvil.yaml", "storefront");
+
+    // The lowered query is a truthful POST-read: retry/confirmation posture
+    // follows the adapter-asserted effect, not the wire method.
+    const air = JSON.parse(readFileSync(join(dir, "air.json"), "utf8")) as {
+      operations: Array<{
+        sourceRef: { operationId?: string; method?: string };
+        effect: { kind: string };
+        retries: { mode: string };
+      }>;
+    };
+    const product = air.operations.find((o) => o.sourceRef.operationId === "product");
+    expect(product?.sourceRef.method).toBe("post");
+    expect(product?.effect.kind).toBe("read");
+    expect(product?.retries.mode).toBe("safe");
+
+    const report = await runLoopback(dir);
+    expect(LoopbackReport.parse(report)).toEqual(report);
+    expect(byId(report, "surface")[0]?.status).toBe("pass");
+    // The query's arguments ride the POST body to the wire, losslessly. A
+    // fidelity pass REQUIRES a captured wire request, so this also proves the
+    // old GET-with-body executability failure is gone.
+    expect(byId(report, "fidelity", "storefront.product.list")[0]?.status).toBe("pass");
+    // Every approved operation — queries and enriched mutations — round-trips.
+    expect(report.summary.fail).toBe(0);
   }, 120_000);
 });

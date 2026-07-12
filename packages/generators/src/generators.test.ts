@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { type AirDocument, loadAirDocument } from "@anvil/air";
+import { type AirDocument, loadAirDocument, Operation as OperationSchema } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { MockTransport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -8,6 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { generateBundle } from "./bundle.js";
 import { buildMcpServer } from "./mcp.js";
+import { exampleFromSchema, exampleInput } from "./mock.js";
 import { buildToolResources } from "./resources.js";
 
 const read = (rel: string) =>
@@ -325,6 +326,95 @@ describe("GCP-native deploy (single owner per concern)", () => {
     // that a human must hand-edit (the old knative yaml had literal PROJECT/REGION).
     expect(tf).not.toContain("PROJECT/locations/REGION");
     expect(tf).not.toContain("REGION-docker.pkg.dev/PROJECT");
+  });
+});
+
+describe("example synthesis (mock + loopback inputs)", () => {
+  it("synthesizes through a materialized allOf with a truncation stub (finding #31)", () => {
+    // The exact Travelport shape: a depth-truncation stub (no type, only a
+    // description) composed with the object carrying the real fields.
+    const schema = {
+      allOf: [
+        { description: "…nested one level deep…" },
+        {
+          type: "object",
+          required: ["TargetBranch"],
+          properties: {
+            TargetBranch: { type: "string" },
+            SearchAirLeg: { type: "array", items: { type: "object" } },
+          },
+        },
+      ],
+    };
+    expect(exampleFromSchema(schema)).toEqual({
+      TargetBranch: "example",
+      SearchAirLeg: [{}],
+    });
+  });
+
+  it("deep-merges allOf members, later members winning on key conflict", () => {
+    const schema = {
+      allOf: [
+        {
+          type: "object",
+          properties: {
+            a: { type: "integer" },
+            nested: { type: "object", properties: { x: { type: "string" } } },
+          },
+        },
+        {
+          type: "object",
+          properties: {
+            a: { type: "string" },
+            nested: { type: "object", properties: { y: { type: "boolean" } } },
+          },
+        },
+      ],
+    };
+    expect(exampleFromSchema(schema)).toEqual({
+      a: "example",
+      nested: { x: "example", y: true },
+    });
+  });
+
+  it("picks the first member of oneOf/anyOf and treats bare stubs as {}", () => {
+    expect(exampleFromSchema({ oneOf: [{ type: "integer" }, { type: "string" }] })).toBe(1);
+    expect(exampleFromSchema({ anyOf: [{ type: "boolean" }] })).toBe(true);
+    // A typeless annotation-only stub is an empty object, not null.
+    expect(exampleFromSchema({ description: "truncated" })).toEqual({});
+    // A typeless schema that still declares properties is an object in all but name.
+    expect(exampleFromSchema({ properties: { id: { type: "string" } } })).toEqual({
+      id: "example",
+    });
+  });
+
+  it("always synthesizes at least {} for a required whole-projection body", () => {
+    const op = OperationSchema.parse({
+      id: "svc.thing.create",
+      canonicalName: "create_thing",
+      displayName: "Create thing",
+      sourceRef: { kind: "wsdl", path: "/Port/CreateThing", method: "post" },
+      effect: { kind: "mutation", resource: "thing", risk: "medium", reversible: true },
+      input: {
+        params: [],
+        body: {
+          contentType: "application/json",
+          required: true,
+          // Unsynthesizable-by-type body: only an annotation stub survived.
+          schema: { description: "truncated" },
+          projection: "whole",
+          fields: [],
+        },
+      },
+      idempotency: { mode: "none", mechanism: "none", keyDerivation: "none" },
+      retries: { mode: "none", maxAttempts: 1, backoff: "none", retryOn: [] },
+      confirmation: { required: false },
+      auth: { type: "none", scopes: [] },
+      cli: { command: "svc thing create" },
+      mcp: { toolName: "svc_create_thing" },
+      skill: { intentExamples: [] },
+    });
+    expect(exampleInput(op).body).toEqual({});
   });
 });
 

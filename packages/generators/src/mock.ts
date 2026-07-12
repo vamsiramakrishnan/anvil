@@ -64,7 +64,10 @@ export function exampleInput(op: Operation): Record<string, unknown> {
   if (body?.projection === "fields") {
     for (const f of body.fields) out[propKey(f.name)] = exampleFromSchema(f.schema);
   } else if (body) {
-    out.body = exampleFromSchema(body.schema);
+    // A required body must synthesize at least {} — a null example would fail
+    // the executor's required-input check before a single wire request is made.
+    const example = exampleFromSchema(body.schema);
+    out.body = example ?? (body.required ? {} : example);
   }
   if (op.idempotency.mode === "required") out.idempotency_key = `${op.canonicalName}-example-key`;
   if (op.confirmation.required) out.confirm = true;
@@ -99,6 +102,25 @@ export function exampleFromSchema(
   if (Array.isArray(schema.examples) && schema.examples.length) return schema.examples[0];
   if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum[0];
   if (depth >= MAX_EXAMPLE_DEPTH) return schema.type === "array" ? [] : {};
+  // Materialized `allOf`: synthesize every member and deep-merge the object
+  // results (later members win on key conflict). Real lowered specs compose a
+  // depth-truncation stub with the object carrying the actual fields — the stub
+  // contributes nothing, the fields must survive.
+  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+    const parts = schema.allOf.map((m) => exampleFromSchema(m as JsonSchema, cache, depth + 1));
+    const objects = parts.filter(isRecord);
+    if (objects.length > 0) {
+      const merged = objects.reduce((acc, part) => deepMergeExamples(acc, part));
+      cache.set(schema, merged);
+      return merged;
+    }
+    return parts.find((p) => p !== null && p !== undefined) ?? {};
+  }
+  // `oneOf`/`anyOf`: any branch satisfies the contract — take the first.
+  const alternatives = (
+    Array.isArray(schema.oneOf) ? schema.oneOf : Array.isArray(schema.anyOf) ? schema.anyOf : []
+  ) as JsonSchema[];
+  if (alternatives.length > 0) return exampleFromSchema(alternatives[0], cache, depth + 1);
   switch (schema.type) {
     case "string":
       return typeof schema.format === "string" && schema.format.includes("date")
@@ -119,9 +141,54 @@ export function exampleFromSchema(
       for (const [k, v] of Object.entries(props)) obj[k] = exampleFromSchema(v, cache, depth + 1);
       return obj;
     }
-    default:
+    default: {
+      // No declared type. A schema that still carries `properties` is an
+      // object in all but name; a bare annotation stub (a depth-truncation
+      // marker holding only `description` etc.) synthesizes as {} so a
+      // composed/required body never falls to null on its account.
+      if (isRecord(schema.properties)) {
+        const obj: Record<string, unknown> = {};
+        cache.set(schema, obj);
+        for (const [k, v] of Object.entries(schema.properties as Record<string, JsonSchema>)) {
+          obj[k] = exampleFromSchema(v, cache, depth + 1);
+        }
+        return obj;
+      }
+      if (Object.keys(schema).every((k) => ANNOTATION_KEYS.has(k))) return {};
       return null;
+    }
   }
+}
+
+/** Schema keys that annotate without constraining — a schema of only these is a stub. */
+const ANNOTATION_KEYS = new Set([
+  "description",
+  "title",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+  "nullable",
+  "default",
+  "$comment",
+  "externalDocs",
+  "xml",
+]);
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Merge two synthesized object examples; `b` wins on leaf conflicts (allOf order). */
+function deepMergeExamples(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    const prev = out[k];
+    out[k] = isRecord(prev) && isRecord(v) ? deepMergeExamples(prev, v) : v;
+  }
+  return out;
 }
 
 /**

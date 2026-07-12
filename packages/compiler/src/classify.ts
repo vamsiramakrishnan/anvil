@@ -246,12 +246,20 @@ export function classifyEffect(
   method: HttpMethod,
   signal: string,
   endsWithParam = false,
+  effectHint?: EffectKind,
 ): { effect: Effect; idempotency: Idempotency } {
-  const kind = classifyEffectKind(method, signal);
+  // `effectHint` is an authoritative adapter assertion (`x-anvil-effect`): a
+  // protocol adapter that lowers everything to its one truthful wire method
+  // (SOAP/GraphQL/gRPC are all POST) states the effect explicitly instead of
+  // smuggling it through a fake GET. When present it decides the kind
+  // regardless of HTTP method; unhinted operations classify exactly as before.
+  const kind = effectHint ?? classifyEffectKind(method, signal);
   const risk = classifyRisk(method, kind, signal);
   const reversible = !(risk === "financial" || risk === "destructive");
   // A write-method search endpoint reclassified to `read` above is inherently
   // repeatable — its idempotency posture follows the effect, not the raw verb.
+  // The same holds for adapter-asserted POST-reads: retry/idempotency derive
+  // from the effect kind, never from the raw wire method.
   const idempotency =
     kind === "read"
       ? { mode: "natural" as const, mechanism: "none" as const, keyDerivation: "none" as const }
