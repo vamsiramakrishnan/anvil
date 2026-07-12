@@ -1,8 +1,8 @@
 import { Operation as OperationSchema, operationInputSchema } from "@anvil/air";
 import { exampleInput, generateMockRoutes } from "@anvil/generators";
 import { operationZodShape } from "@anvil/mcp-runtime";
-import { z } from "zod";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 /**
  * Synthesis ↔ serving agreement: `exampleInput` (what the loopback self-test
@@ -76,7 +76,10 @@ describe("synthesis ↔ zod shape agreement", () => {
       type: "object",
       required: ["inputs"],
       properties: {
-        inputs: { type: "array", items: { type: "object", properties: { id: { type: "string" } } } },
+        inputs: {
+          type: "array",
+          items: { type: "object", properties: { id: { type: "string" } } },
+        },
       },
     });
     const args = exampleInput(op) as { body: { inputs: unknown[] } };
