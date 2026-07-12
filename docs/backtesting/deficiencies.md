@@ -817,3 +817,45 @@ the project so far — nothing had ever executed the generated MCP path.
   reports having served (capture records carry the scenario name) instead
   of guessing, and an empty approved surface reports plainly instead of
   leaking an MCP protocol error.
+
+### 32. Path-item-level parameters never entered the input contract — FIXED
+- Asana and Zendesk declare path params at the **path-item** level (shared
+  across methods), which OpenAPI fully permits; `normalize()` read only
+  operation-level `parameters`, so `{project_gid}`/`{ticket_id}` never became
+  inputs — synthesis, the executor, the CLI, and the MCP tool schema all
+  agreed on a contract missing the URL's own parameters, and the wire showed
+  literal `%7Btask_gid%7D`. Path-item params now merge into every method
+  (operation-level wins on name+location, per the spec's override rule).
+
+### 33. Accept/Content-Type/Authorization header parameters forwarded — FIXED
+- PagerDuty declares `Accept`/`Content-Type` as header parameters; Anvil
+  modeled them as real inputs, so a synthesized value rode alongside the
+  runtime's own header and undici comma-joined them on the wire
+  (`accept: "application/json, example"`). The OpenAPI spec mandates those
+  three header parameters be ignored — they are now dropped at parameter
+  collection with an info `header_param_ignored` diagnostic each, so every
+  downstream surface agrees.
+
+### 34. Generated mock router missed segment-embedded params — FIXED (mock infra, not compiler)
+- Twilio's `/Calls/{Sid}.json` templates 404'd: the emitted matcher only
+  handled full-segment `{param}`s. Segments now compile to per-segment
+  regexes (escaped literals + non-empty captures) with percent-decoding and
+  deterministic most-literal-first routing.
+
+### 35. Example synthesis, zod tool shape, and mock validation disagreed — FIXED
+- Four gaps found by HubSpot/Intercom: vendor `example: null` returned
+  literally; `anyOf` refinement branches carrying only `required` collapsed
+  to `null` instead of deep-merging with the base object; record/
+  `additionalProperties` maps synthesized nothing; optional inputs were sent
+  as `null` where zod optional means *absent* (and `zodshape` stringified
+  non-string enums). All three consumers of the input contract now agree by
+  construction — pinned by a dedicated synthesis↔zodshape agreement suite.
+
+### 36. Non-object bodies and unresolved proto messages — FIXED
+- Jira's `addWatcher` takes a bare JSON **string** body; the mock validator
+  hard-required an object. Body validation is now type-general
+  (string/number/array/boolean/object/untyped). Temporal single-file proto:
+  unresolved request/response message types degraded to `{type:"string"}`;
+  by grammar an RPC request/response is always a message, so they degrade to
+  permissive objects — an all-optional proto3 message accepts `{}` end to
+  end.
