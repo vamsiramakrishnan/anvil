@@ -16,5 +16,6 @@ export * from "./entrypoints.js";
 export * from "./evals.js";
 export * from "./mcp.js";
 export * from "./mock.js";
+export * from "./plugins.js";
 export * from "./resources.js";
 export * from "./skill.js";

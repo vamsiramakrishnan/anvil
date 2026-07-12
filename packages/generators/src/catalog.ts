@@ -15,6 +15,8 @@ export interface CatalogEntry {
   idempotency: string;
   retrySafe: boolean;
   confirmationRequired: boolean;
+  /** Why confirmation is gated — carried so a harness hook can cite the reason. */
+  confirmationReason?: string;
   auth: { type: string; scopes: string[] };
   cli: string;
   mcpTool: string;
@@ -71,6 +73,7 @@ export function operationCatalog(air: AirDocument): {
       idempotency: op.idempotency.mode,
       retrySafe: op.retries.mode === "safe",
       confirmationRequired: op.confirmation.required,
+      confirmationReason: op.confirmation.reason,
       auth: { type: op.auth.type, scopes: op.auth.scopes },
       cli: op.cli.command,
       mcpTool: op.mcp.toolName,
