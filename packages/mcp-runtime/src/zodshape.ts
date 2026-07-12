@@ -26,7 +26,17 @@ export function operationZodShape(op: Operation): z.ZodRawShape {
 function jsonSchemaToZod(schema: JsonSchema): z.ZodType {
   if (schema.const !== undefined) return z.literal(schema.const as z.core.util.Literal);
   if (Array.isArray(schema.enum) && schema.enum.length > 0) {
-    return z.enum(schema.enum.map(String) as [string, ...string[]]);
+    // A JSON Schema enum is a set of literal VALUES, not names — a numeric
+    // enum member must be accepted as the number the wire carries, never its
+    // stringified spelling (which would reject every synthesized example).
+    const values = schema.enum;
+    if (values.every((v) => typeof v === "string")) {
+      return z.enum(values as [string, ...string[]]);
+    }
+    const literals: z.ZodType[] = values.map((v) => z.literal(v as z.core.util.Literal));
+    return literals.length === 1
+      ? (literals[0] as z.ZodType)
+      : z.union(literals as [z.ZodType, z.ZodType, ...z.ZodType[]]);
   }
   switch (schema.type) {
     case "string":

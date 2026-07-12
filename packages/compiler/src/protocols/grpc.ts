@@ -117,6 +117,18 @@ function typeToSchema(typeName: string, c: Collected): JsonSchemaLike {
   return { type: "string" };
 }
 
+/**
+ * Resolve an RPC's request/response message type. Unlike a field type, a
+ * method's payload is a *message* by grammar, so an unresolved import degrades
+ * to a permissive object (all fields unknown, hence all optional — JSON
+ * transcoding carries a message as a JSON object and `{}` must stay valid),
+ * never to a scalar the wire could not carry.
+ */
+function rpcMessageSchema(typeName: string, c: Collected): JsonSchemaLike {
+  const schema = typeToSchema(typeName, c);
+  return schema.$ref !== undefined || schema.type === "object" ? schema : { type: "object" };
+}
+
 function fieldSchema(field: protobuf.Field, c: Collected): JsonSchemaLike {
   if (field instanceof protobuf.MapField) {
     return { type: "object", additionalProperties: typeToSchema(field.type, c) };
@@ -211,7 +223,7 @@ export function adaptProto(
         responses: {
           "200": {
             description: `${method.name} response`,
-            content: { "application/json": { schema: typeToSchema(method.responseType, c) } },
+            content: { "application/json": { schema: rpcMessageSchema(method.responseType, c) } },
           },
         },
         "x-grpc-service": serviceFqn,
@@ -223,7 +235,7 @@ export function adaptProto(
       };
       op.requestBody = {
         required: true,
-        content: { "application/json": { schema: typeToSchema(method.requestType, c) } },
+        content: { "application/json": { schema: rpcMessageSchema(method.requestType, c) } },
       };
       paths[path] = { post: op };
     }
