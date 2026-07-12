@@ -1,3 +1,8 @@
+---
+name: refinement-reconciliation
+description: The validation checks, eval families, and approval tiers that decide a proposal's fate. Read this to understand why a proposal was approved, deferred, or rejected.
+---
+
 # Reconciliation: validation, measurement, approval
 
 A proposal is validated, then measured, then routed by policy. Only a grounded,

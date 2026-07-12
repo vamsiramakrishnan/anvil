@@ -1,0 +1,9 @@
+# Temporal gRPC — approve read-only visibility/system RPCs for the loopback
+# self-test; workflow mutations stay review_required.
+service:
+  name: temporal
+operations:
+  ListWorkflowExecutions:
+    state: approved
+  GetSystemInfo:
+    state: approved

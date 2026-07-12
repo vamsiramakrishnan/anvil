@@ -1,4 +1,5 @@
 import type { TransportFactory } from "@anvil/harness";
+import type { AgentDriver } from "@anvil/refinement";
 import type { CliIO } from "../io.js";
 import type { ToolCliDeps } from "../tool-cli.js";
 
@@ -7,6 +8,8 @@ export interface AnvilCliDeps extends ToolCliDeps {
   io?: CliIO;
   /** Injectable MCP transport factory so `enrich` can be tested without spawning servers. */
   transportFactory?: TransportFactory;
+  /** Injectable reviewer driver so `review` can be tested without a real agent CLI. */
+  reviewDriver?: AgentDriver;
 }
 
 /**

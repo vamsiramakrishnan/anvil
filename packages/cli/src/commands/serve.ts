@@ -28,15 +28,26 @@ export function registerServe(parent: Command, ctx: CommandContext): void {
 async function runServeMcp(dir: string, io: CliIO): Promise<number> {
   const air = loadAir(dir);
   const { buildMcpServer, buildToolResources } = await import("@anvil/generators");
-  const { FetchTransport, EnvCredentialResolver, loadRuntimeConfig, resolveLedger } = await import(
-    "@anvil/runtime"
-  );
+  const {
+    allowedHostsFor,
+    FetchTransport,
+    EnvCredentialResolver,
+    loadRuntimeConfig,
+    resolveLedger,
+  } = await import("@anvil/runtime");
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
   const config = loadRuntimeConfig();
   const transport = new FetchTransport();
   const credentials = new EnvCredentialResolver();
   const ledger = resolveLedger(config.ledger);
-  const baseUrl = air.service.servers[0]?.url ?? "";
+  // ANVIL_BASE_URL is a deliberate operator override (loopback self-test,
+  // staging smoke); when set without an allowlist, egress pins to its host.
+  const baseUrl = process.env.ANVIL_BASE_URL ?? air.service.servers[0]?.url ?? "";
+  const allowedHosts = allowedHostsFor(
+    config.allowedHosts,
+    baseUrl,
+    process.env.ANVIL_BASE_URL !== undefined,
+  );
   const server = buildMcpServer(air, {
     resources: buildToolResources(air),
     contextFor: () => ({
@@ -45,7 +56,7 @@ async function runServeMcp(dir: string, io: CliIO): Promise<number> {
       ledger,
       baseUrl,
       authProfile: config.authProfile,
-      allowedHosts: config.allowedHosts,
+      allowedHosts,
       env: config.env,
     }),
   });

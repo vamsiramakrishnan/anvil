@@ -26,6 +26,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { glob } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { detectProtocolFormat } from "../protocols/index.js";
+import { findAll, parseXml, type XmlElement } from "../protocols/xml.js";
 import {
   decodeUtf8,
   detectDeclaredFormat,
@@ -74,8 +75,14 @@ const SPEC_EXTENSIONS = [
   "graphqls",
   "proto",
   "wsdl",
+  "xsd",
   "xml",
 ];
+
+/** XSD schema files are XML supporting files, never YAML and never entrypoints. */
+function isXsdPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".xsd");
+}
 
 /** Directory segments a directory import never descends into or captures. */
 function skippedSegment(segment: string): boolean {
@@ -176,12 +183,22 @@ function probeFile(root: string, path: string): Probe {
       diagnostics: [{ level: "error", code: "source/invalid_utf8", path, message: decoded.error }],
     };
   }
-  // Non-REST protocols (GraphQL/proto/WSDL) are not YAML/JSON documents, so
-  // detect them from path+content and capture them verbatim without a YAML
-  // parse — a `.proto` or `.graphql` file must not be reported as broken YAML.
+  // Non-OpenAPI protocols (GraphQL/proto/WSDL — and the JSON-carried Discovery
+  // and Postman collection formats) are detected from path+content and captured
+  // verbatim without a YAML parse — a `.proto` or `.graphql` file must not be
+  // reported as broken YAML. Postman is recognized both by its
+  // `.postman_collection.json` filename convention and by content sniff for a
+  // bare `.json`.
   const protocol = detectProtocolFormat(path, decoded.text);
   if (protocol) {
     return { path, bytes, protocol, diagnostics: [] };
+  }
+  // XSD schema documents get the same verbatim bypass: they are XML the WSDL
+  // adapter parses at compile time, and a YAML probe would misreport them as
+  // broken YAML (`source/unparseable`). They are supporting files, never
+  // entrypoints, so no protocol claim is recorded.
+  if (isXsdPath(path)) {
+    return { path, bytes, diagnostics: [] };
   }
   const syntax = syntaxForPath(path);
   const parsed = parseSourceText(decoded.text);
@@ -217,8 +234,10 @@ function importEntrypoints(state: ImportState, targets: string[]): void {
     if (detected) {
       state.entrypoints.push({ path, format: detected.format, version: detected.version });
       capture(state, probe, "entrypoint");
-      // Protocol sources are single-document; only OpenAPI/Swagger have $refs.
+      // Protocol sources are single-document; only OpenAPI/Swagger have $refs —
+      // except WSDL, whose import/include locations span files the way $refs do.
       if (probe.doc !== undefined) walkRefs(state, path, probe.doc);
+      if (probe.protocol?.format === "wsdl") walkXmlImportsFromProbe(state, probe);
     } else {
       if (probe.diagnostics.length === 0) {
         state.diagnostics.push({
@@ -229,6 +248,8 @@ function importEntrypoints(state: ImportState, targets: string[]): void {
         });
       }
       capture(state, probe, "supporting");
+      // An explicitly-added schema file brings its transitive includes along.
+      if (isXsdPath(path)) walkXmlImportsFromProbe(state, probe);
     }
   }
 }
@@ -289,11 +310,19 @@ async function importDirectory(state: ImportState, root: string): Promise<void> 
     return;
   }
 
+  // Capture every entrypoint before walking any reference graph, so an
+  // entrypoint reachable from another (a WSDL tree's abstract WSDL, a shared
+  // OpenAPI document) keeps its `entrypoint` role instead of being demoted to
+  // `reference` by whichever graph reaches it first.
   for (const { probe, format } of detected) {
     if (format === undefined) continue;
     state.entrypoints.push({ path: probe.path, format: format.format, version: format.version });
     capture(state, probe, "entrypoint");
+  }
+  for (const { probe, format } of detected) {
+    if (format === undefined) continue;
     walkRefs(state, probe.path, probe.doc, probes);
+    if (probe.protocol?.format === "wsdl") walkXmlImportsFromProbe(state, probe, probes);
   }
   // Everything probed but neither an entrypoint nor $ref-reachable is not part
   // of this source graph — excluded, and the exclusion is visible.
@@ -311,6 +340,61 @@ async function importDirectory(state: ImportState, root: string): Promise<void> 
 /* --------------------------------- $ref walk ------------------------------- */
 
 /**
+ * Resolve one reference target relative to `fromPath` and capture it as a
+ * `reference` file, returning its probe — or undefined when the target was
+ * external, missing, escaping, or already captured (each with its diagnostic).
+ * The escape level differs by caller: an OpenAPI $ref that escapes the import
+ * root is an error (the compile would fail at parse time without the bytes),
+ * while a WSDL/XSD location degrades to a permissive schema at compile time,
+ * so it stays a warning and the snapshot stays compilable.
+ */
+function captureReferenceTarget(
+  state: ImportState,
+  fromPath: string,
+  ref: string,
+  escapeLevel: "error" | "warning",
+  probes?: Map<string, Probe>,
+): Probe | undefined {
+  const hash = ref.indexOf("#");
+  const target = hash >= 0 ? ref.slice(0, hash) : ref;
+  if (target === "") return undefined; // internal JSON pointer
+  if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) {
+    state.diagnostics.push({
+      level: "info",
+      code: "source/external_ref",
+      path: fromPath,
+      message: `External reference '${ref}' recorded as unresolved; remote content is never fetched.`,
+    });
+    return undefined;
+  }
+  const candidate = resolve(dirname(join(state.root, fromPath)), decodeRefPath(target));
+  if (!existsSync(candidate)) {
+    state.diagnostics.push({
+      level: "warning",
+      code: "source/ref_missing",
+      path: fromPath,
+      message: `Reference '${ref}' points at a file that does not exist.`,
+    });
+    return undefined;
+  }
+  const real = realpathSync(candidate);
+  if (!isInside(state.root, real)) {
+    state.diagnostics.push({
+      level: escapeLevel,
+      code: "source/path_escape",
+      path: fromPath,
+      message: `Reference '${ref}' escapes the import root; refusing to follow it.`,
+    });
+    return undefined;
+  }
+  const path = toPosix(relative(state.root, real));
+  if (state.has(path)) return undefined; // shared targets are captured once
+  const probe = probes?.get(path) ?? probeFile(state.root, path);
+  capture(state, probe, "reference");
+  return probe;
+}
+
+/**
  * Follow every LOCAL $ref reachable from `doc`, capturing each target once.
  * Remote refs are recorded as external and never fetched; refs escaping the
  * import root are rejected.
@@ -324,44 +408,56 @@ function walkRefs(
   const refs = new Set<string>();
   collectRefs(doc, refs, new WeakSet());
   for (const ref of [...refs].sort()) {
-    const hash = ref.indexOf("#");
-    const target = hash >= 0 ? ref.slice(0, hash) : ref;
-    if (target === "") continue; // internal JSON pointer
-    if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//")) {
-      state.diagnostics.push({
-        level: "info",
-        code: "source/external_ref",
-        path: fromPath,
-        message: `External reference '${ref}' recorded as unresolved; remote content is never fetched.`,
-      });
-      continue;
-    }
-    const candidate = resolve(dirname(join(state.root, fromPath)), decodeRefPath(target));
-    if (!existsSync(candidate)) {
-      state.diagnostics.push({
-        level: "warning",
-        code: "source/ref_missing",
-        path: fromPath,
-        message: `Reference '${ref}' points at a file that does not exist.`,
-      });
-      continue;
-    }
-    const real = realpathSync(candidate);
-    if (!isInside(state.root, real)) {
-      state.diagnostics.push({
-        level: "error",
-        code: "source/path_escape",
-        path: fromPath,
-        message: `Reference '${ref}' escapes the import root; refusing to follow it.`,
-      });
-      continue;
-    }
-    const path = toPosix(relative(state.root, real));
-    if (state.has(path)) continue; // shared targets are captured once
-    const probe = probes?.get(path) ?? probeFile(state.root, path);
-    capture(state, probe, "reference");
-    if (probe.doc !== undefined) walkRefs(state, path, probe.doc, probes);
+    const probe = captureReferenceTarget(state, fromPath, ref, "error", probes);
+    if (probe?.doc !== undefined) walkRefs(state, probe.path, probe.doc, probes);
   }
+}
+
+/**
+ * Follow every `wsdl:import` / `xsd:include` / `xsd:import` location reachable
+ * from a WSDL or XSD file, capturing each target once — the XML analogue of
+ * `walkRefs`, so a multi-file WSDL tree (entry WSDL → abstract WSDL → schema
+ * files → transitive includes like `../common_v45_0/CommonReqRsp.xsd`) is
+ * hermetic in the snapshot. The captured-once check terminates cycles.
+ */
+function walkXmlImports(
+  state: ImportState,
+  fromPath: string,
+  text: string,
+  probes?: Map<string, Probe>,
+): void {
+  for (const location of xmlImportLocations(text)) {
+    const probe = captureReferenceTarget(state, fromPath, location, "warning", probes);
+    if (!probe) continue;
+    const decoded = decodeUtf8(probe.bytes);
+    if (!("error" in decoded)) walkXmlImports(state, probe.path, decoded.text, probes);
+  }
+}
+
+/** Decode a probe's bytes and follow its WSDL/XSD import locations. */
+function walkXmlImportsFromProbe(
+  state: ImportState,
+  probe: Probe,
+  probes?: Map<string, Probe>,
+): void {
+  const decoded = decodeUtf8(probe.bytes);
+  if (!("error" in decoded)) walkXmlImports(state, probe.path, decoded.text, probes);
+}
+
+/** The import/include locations of an XML document; [] when it isn't XML. */
+function xmlImportLocations(text: string): string[] {
+  let root: XmlElement;
+  try {
+    root = parseXml(text);
+  } catch {
+    return [];
+  }
+  const locations = new Set<string>();
+  for (const el of [...findAll(root, "import"), ...findAll(root, "include")]) {
+    const location = el.attrs.location ?? el.attrs.schemaLocation;
+    if (location) locations.add(location);
+  }
+  return [...locations].sort();
 }
 
 /** Gather every `$ref: <string>` in a parsed document, cycle-safe. */

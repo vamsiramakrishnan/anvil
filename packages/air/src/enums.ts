@@ -222,7 +222,16 @@ export type ParamLocation = z.infer<typeof ParamLocation>;
 
 /** Source spec kinds Anvil can parse (only `openapi` is wired in the MVP).
  *  `mcp` is a captured MCP server surface adopted as a source (Increment 6). */
-export const SourceKind = z.enum(["openapi", "swagger", "wsdl", "protobuf", "graphql", "mcp"]);
+export const SourceKind = z.enum([
+  "openapi",
+  "swagger",
+  "wsdl",
+  "protobuf",
+  "graphql",
+  "discovery",
+  "postman",
+  "mcp",
+]);
 export type SourceKind = z.infer<typeof SourceKind>;
 
 /** Diagnostic severity emitted by the validator. */

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   type AirDocument,
@@ -9,15 +10,20 @@ import {
   operationInputSchema,
   propKey,
 } from "@anvil/air";
+import { exampleInput } from "@anvil/generators";
 import {
+  AnvilError,
+  allowedHostsFor,
   type CredentialResolver,
   EnvCredentialResolver,
+  type ErrorEnvelope,
   type ExecuteContext,
   execute,
   FetchTransport,
   loadRuntimeConfig,
   resolveLedger,
   type Transport,
+  unapprovedOperationError,
 } from "@anvil/runtime";
 import { discover, explain, riskSummary } from "./explain.js";
 import { type CliIO, processIO } from "./io.js";
@@ -145,6 +151,10 @@ export async function runToolCli(
 ): Promise<number> {
   const io = deps.io ?? processIO;
   const svc = air.service.id;
+  // The CLI's operation universe is the APPROVED surface — the same projection
+  // the MCP server registers and the skill documents (spec §17). air.json
+  // carries every compiled operation; only approved ones may be visible here.
+  const approved = air.operations.filter((op) => op.state === "approved");
   const { positionals, flags } = parseArgs(argv);
   const head = positionals[0];
 
@@ -163,32 +173,44 @@ export async function runToolCli(
       return 0;
     case "discover": {
       const intent = positionals.slice(1).join(" ");
-      const hits = discover(air, intent);
+      const { hits, confident } = discover(air, intent);
       if (hits.length === 0) {
         io.err(`No operation matches "${intent}". Try \`${svc} catalog\`.`);
         return 1;
       }
-      io.out(
-        hits.map((op) => `${op.cli.command}  —  ${op.description || op.displayName}`).join("\n"),
-      );
+      const lines = hits.map((op) => `${op.cli.command}  —  ${op.description || op.displayName}`);
+      if (!confident) {
+        // A weak best match must never read as a confident answer — hedge and
+        // exit non-zero so scripts do not act on a probably-wrong operation.
+        io.err(`No close match for "${intent}". Nearest by keyword overlap:`);
+        io.err(lines.join("\n"));
+        return 1;
+      }
+      io.out(lines.join("\n"));
       return 0;
     }
     case "explain": {
-      const op = findById(air, positionals[1]);
-      if (!op) return notFound(io, air, positionals[1]);
+      const op = findById(approved, positionals[1]);
+      if (!op) return hiddenOrNotFound(io, air, positionals[1]);
       io.out(explain(op));
       return 0;
     }
     case "inspect-risk": {
-      const op = findById(air, positionals[1]);
-      if (!op) return notFound(io, air, positionals[1]);
+      const op = findById(approved, positionals[1]);
+      if (!op) return hiddenOrNotFound(io, air, positionals[1]);
       io.out(riskSummary(op));
       return 0;
     }
     case "validate-input": {
-      const op = findById(air, positionals[1]);
-      if (!op) return notFound(io, air, positionals[1]);
-      const input = readInput(flags, deps);
+      const op = findById(approved, positionals[1]);
+      if (!op) return hiddenOrNotFound(io, air, positionals[1]);
+      let input: Record<string, unknown>;
+      try {
+        input = readInput(flags, deps);
+      } catch (err) {
+        if (err instanceof JsonFlagError) return jsonFlagRefusal(io, op, err);
+        throw err;
+      }
       const missing = requiredMissing(op, input);
       if (missing.length) {
         io.err(JSON.stringify({ valid: false, missing }, null, 2));
@@ -227,19 +249,39 @@ export async function runToolCli(
     }
   }
 
-  // Operation invocation: match the longest command tail against positionals.
-  const op = matchOperation(air, positionals);
+  // Operation invocation: match the longest command tail against positionals —
+  // against the approved surface only.
+  const op = matchOperation(approved, positionals);
   if (!op) {
+    // An explicitly-typed command for a compiled-but-unapproved operation must
+    // explain WHY it is absent and what would expose it (structured refusal,
+    // exit 5) — never a misleading "unknown command".
+    const hidden = matchOperation(air.operations, positionals);
+    if (hidden) return refuseUnapproved(hidden, io);
     // The middle of the help hierarchy: a resource group. A partial command
     // lists the group's operations, so `--help` alone walks root → group →
     // operation without ever needing the catalog.
-    const group = groupOperations(air, positionals);
+    const group = groupOperations(approved, positionals);
     if (group.length > 0) {
       io.out(groupHelp(air, positionals, group));
       return flags.help === true ? 0 : 1;
     }
+    // A group that exists only below the approval line gets the same why-absent
+    // treatment as a single hidden operation.
+    const hiddenGroup = groupOperations(air.operations, positionals);
+    if (hiddenGroup.length > 0) {
+      io.err(
+        `No approved operations under \`${positionals.join(" ")}\`. ` +
+          `${hiddenGroup.length} operation(s) exist here but are not approved; review with ` +
+          "`anvil inspect <bundle>`, then expose with `anvil approve <bundle> <op-id>`.",
+      );
+      return exitCodeFor("unsupported_operation");
+    }
+    const suggestion = nearestCommand(approved, positionals);
     io.err(
-      `Unknown command: ${positionals.join(" ")}\nTry \`${svc} --help\` or \`${svc} discover "<intent>"\`.`,
+      `Unknown command: ${positionals.join(" ")}\n` +
+        (suggestion ? `Did you mean \`${svc} ${suggestion}\`?\n` : "") +
+        `Try \`${svc} --help\` or \`${svc} discover "<intent>"\`.`,
     );
     return 1;
   }
@@ -255,7 +297,10 @@ export async function runToolCli(
     return 0;
   }
   if (flags.examples === true) {
-    io.out(JSON.stringify(exampleInvocation(op), null, 2));
+    // One example synthesizer for every surface: the skill's worked examples
+    // are built from `exampleInput` (@anvil/generators), so --examples must be
+    // the same object — two synthesizers would eventually disagree.
+    io.out(JSON.stringify(exampleInput(op), null, 2));
     return 0;
   }
   if (flags.errors === true) {
@@ -279,14 +324,35 @@ async function invoke(
 ): Promise<number> {
   const env = deps.env ?? process.env;
   const config = loadRuntimeConfig(env);
-  const input = buildInput(op, flags, deps);
+
+  // A flag outside the operation's contract is refused, never silently
+  // swallowed — a typo on an OPTIONAL flag would otherwise silently change
+  // semantics, and a typo on a required one would misreport as "missing input".
+  const known = knownFlagsFor(op);
+  const unknown = Object.keys(flags).filter((f) => !known.has(f));
+  if (unknown.length > 0) {
+    const rendered = unknown.map((f) => {
+      const hit = nearest(f, known);
+      return hit ? `--${f} (did you mean --${hit}?)` : `--${f}`;
+    });
+    return cliValidationError(
+      io,
+      op.id,
+      `Unknown flag(s): ${rendered.join(", ")}. See \`${op.cli.command} --help\` for the accepted flags.`,
+      { unknown_flags: unknown.map((f) => `--${f}`) },
+    );
+  }
+
+  let input: Record<string, unknown>;
+  try {
+    input = buildInput(op, flags, deps);
+  } catch (err) {
+    if (err instanceof JsonFlagError) return jsonFlagRefusal(io, op, err);
+    throw err;
+  }
 
   const baseUrl = (flags["base-url"] as string) ?? air.service.servers[0]?.url ?? "";
-  const allowedHosts = config.allowedHosts.length
-    ? config.allowedHosts
-    : hostOf(baseUrl)
-      ? [hostOf(baseUrl) as string]
-      : [];
+  const allowedHosts = allowedHostsFor(config.allowedHosts, baseUrl, true);
 
   const ctx: ExecuteContext = {
     transport: deps.transport ?? new FetchTransport(),
@@ -325,18 +391,35 @@ async function invoke(
     io.out(JSON.stringify(result.plan, null, 2));
     return 0;
   }
+  renderMissingFlags(result.envelope, op);
   io.err(JSON.stringify(result.envelope, null, 2));
   return exitCodeFor(result.envelope.error.code);
 }
 
+/**
+ * The executor reports missing inputs by their machine (snake_case) keys; at
+ * the CLI boundary the caller supplies FLAGS, so the human message must name
+ * `--kebab-case` flags. The machine field (`details.missing`) stays snake_case;
+ * the flag rendering rides alongside it as `details.missing_flags`.
+ */
+function renderMissingFlags(envelope: ErrorEnvelope, op: Operation): void {
+  if (envelope.error.code !== "validation_error") return;
+  const details = envelope.error.details as
+    | { missing?: unknown; missing_flags?: string[] }
+    | undefined;
+  if (!details || !Array.isArray(details.missing)) return;
+  const flagNames = details.missing.map((k) => cliFlag(String(k)));
+  details.missing_flags = flagNames;
+  envelope.error.message = `Missing required flag(s): ${flagNames.join(", ")}. See \`${op.cli.command} --examples\` for a complete invocation.`;
+}
+
 /* --------------------------------- helpers -------------------------------- */
 
-function matchOperation(air: AirDocument, positionals: string[]): Operation | undefined {
-  const svc = air.service.id;
+function matchOperation(ops: Operation[], positionals: string[]): Operation | undefined {
   // op.cli.command === "<svc> <resource> <action>"; strip the service prefix.
   let best: Operation | undefined;
   let bestLen = 0;
-  for (const op of air.operations) {
+  for (const op of ops) {
     const tail = op.cli.command.split(" ").slice(1);
     if (tail.length > positionals.length) continue;
     const matches = tail.every((t, i) => positionals[i] === t);
@@ -345,13 +428,159 @@ function matchOperation(air: AirDocument, positionals: string[]): Operation | un
       bestLen = tail.length;
     }
   }
-  void svc;
   return best;
 }
 
-function findById(air: AirDocument, id?: string): Operation | undefined {
+function findById(ops: Operation[], id?: string): Operation | undefined {
   if (!id) return undefined;
-  return air.operations.find((o) => o.id === id || o.canonicalName === id || o.mcp.toolName === id);
+  return ops.find((o) => o.id === id || o.canonicalName === id || o.mcp.toolName === id);
+}
+
+/**
+ * The structured refusal for an operation that is compiled but not approved.
+ * Mirrors the executor's own gate (same code, message, and next action) so an
+ * agent learns WHY the command is absent instead of hitting a dead end.
+ */
+function refuseUnapproved(op: Operation, io: CliIO): number {
+  const err = unapprovedOperationError(op, `trace_${randomUUID()}`);
+  io.err(JSON.stringify(err.toEnvelope(), null, 2));
+  return exitCodeFor("unsupported_operation");
+}
+
+/** Lookup miss on explain/inspect-risk/validate-input: unapproved beats unknown. */
+function hiddenOrNotFound(io: CliIO, air: AirDocument, id?: string): number {
+  const hidden = findById(air.operations, id);
+  if (hidden) return refuseUnapproved(hidden, io);
+  return notFound(io, air, id);
+}
+
+/**
+ * Malformed JSON handed to --body / --input must surface as a structured
+ * validation_error (exit 2) that names the flag and the parse failure — never
+ * a raw SyntaxError stack trace colliding with usage-error exit codes.
+ */
+class JsonFlagError extends Error {
+  constructor(
+    readonly flag: string,
+    readonly reason: string,
+  ) {
+    super(`Invalid JSON in ${flag}: ${reason}`);
+    this.name = "JsonFlagError";
+  }
+}
+
+function parseJsonFlag(text: string, flag: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    throw new JsonFlagError(flag, err instanceof Error ? err.message : String(err));
+  }
+}
+
+function jsonFlagRefusal(io: CliIO, op: Operation, err: JsonFlagError): number {
+  return cliValidationError(
+    io,
+    op.id,
+    `${err.message}. See \`${op.cli.command} --examples\` for a valid input shape.`,
+    { flag: err.flag, parse_error: err.reason },
+  );
+}
+
+/** Emit a CLI-side validation_error envelope (same shape the executor produces). */
+function cliValidationError(
+  io: CliIO,
+  operation: string,
+  message: string,
+  details: unknown,
+): number {
+  const err = new AnvilError({
+    code: "validation_error",
+    message,
+    operation,
+    traceId: `trace_${randomUUID()}`,
+    details,
+  });
+  io.err(JSON.stringify(err.toEnvelope(), null, 2));
+  return exitCodeFor("validation_error");
+}
+
+/**
+ * Engine-owned flags every operation invocation accepts. Only flags the invoke
+ * path actually consumes belong here — anything else is a probable typo and
+ * must be refused, not swallowed.
+ */
+const GLOBAL_OPERATION_FLAGS = [
+  "help",
+  "explain",
+  "schema",
+  "examples",
+  "errors",
+  "policy",
+  "json",
+  "trace",
+  "dry-run",
+  "confirm",
+  "no-retries",
+  "idempotency-key",
+  "auth-profile",
+  "base-url",
+  "timeout",
+  "input",
+] as const;
+
+function knownFlagsFor(op: Operation): Set<string> {
+  const known = new Set<string>(GLOBAL_OPERATION_FLAGS);
+  for (const p of op.input.params) known.add(cliFlag(p.name).slice(2));
+  const body = op.input.body;
+  if (body?.projection === "fields") {
+    // `fields` bodies are supplied per-field; --body would be silently ignored,
+    // so it is deliberately NOT known here and gets refused with a suggestion.
+    for (const f of body.fields) known.add(cliFlag(f.name).slice(2));
+  } else if (body) {
+    known.add("body");
+  }
+  return known;
+}
+
+/** Levenshtein distance — inputs are short flag/command names, O(n·m) is fine. */
+function editDistance(a: string, b: string): number {
+  const prev: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = prev[0] as number;
+    prev[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = prev[j] as number;
+      prev[j] = Math.min(
+        tmp + 1,
+        (prev[j - 1] as number) + 1,
+        diag + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      diag = tmp;
+    }
+  }
+  return prev[b.length] as number;
+}
+
+/** Nearest candidate within a plausible-typo distance, or undefined. */
+function nearest(typed: string, candidates: Iterable<string>): string | undefined {
+  let best: { candidate: string; distance: number } | undefined;
+  for (const candidate of candidates) {
+    const distance = editDistance(typed, candidate);
+    if (!best || distance < best.distance) best = { candidate, distance };
+  }
+  if (!best) return undefined;
+  // A "suggestion" further than ~a third of the candidate is noise, not a typo.
+  return best.distance <= Math.max(2, Math.ceil(best.candidate.length / 3))
+    ? best.candidate
+    : undefined;
+}
+
+/** Nearest approved command tail for an unknown command ("did you mean …?"). */
+function nearestCommand(ops: Operation[], positionals: string[]): string | undefined {
+  return nearest(
+    positionals.join(" "),
+    ops.map((op) => op.cli.command.split(" ").slice(1).join(" ")),
+  );
 }
 
 function coerce(value: string | boolean, schema: JsonSchema): unknown {
@@ -389,7 +618,7 @@ function buildInput(
         base[propKey(f.name)] = coerce(flags[flagName] as string, f.schema);
     }
   } else if (body && typeof flags.body === "string") {
-    base.body = JSON.parse(flags.body);
+    base.body = parseJsonFlag(flags.body, "--body");
   }
   return base;
 }
@@ -401,7 +630,7 @@ function readInput(
   const file = flags.input as string | undefined;
   if (!file) return {};
   void deps;
-  return JSON.parse(readFileSync(file, "utf8"));
+  return parseJsonFlag(readFileSync(file, "utf8"), "--input") as Record<string, unknown>;
 }
 
 function requiredMissing(op: Operation, input: Record<string, unknown>): string[] {
@@ -415,50 +644,10 @@ function requiredMissing(op: Operation, input: Record<string, unknown>): string[
   return keys.filter((k) => input[k] === undefined || input[k] === null || input[k] === "");
 }
 
-function exampleInvocation(op: Operation): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const p of op.input.params) out[propKey(p.name)] = p.example ?? sample(p.schema);
-  const body = op.input.body;
-  if (body?.projection === "fields") {
-    for (const f of body.fields) out[propKey(f.name)] = sample(f.schema);
-  } else if (body) {
-    out.body = sampleSchema(body.schema);
-  }
-  if (op.idempotency.mode === "required") out.idempotency_key = `${op.canonicalName}-key`;
-  if (op.confirmation.required) out.confirm = true;
-  return out;
-}
-
-/** A minimal example value for an arbitrary JSON Schema (used for whole bodies). */
-function sampleSchema(schema: JsonSchema): unknown {
-  if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum[0];
-  const props = schema.properties as Record<string, JsonSchema> | undefined;
-  if (schema.type === "object" && props) {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(props)) out[k] = sampleSchema(v);
-    return out;
-  }
-  if (schema.type === "array") return [sampleSchema((schema.items as JsonSchema) ?? {})];
-  return sample(schema);
-}
-
-function sample(schema: JsonSchema): unknown {
-  switch (schema.type) {
-    case "integer":
-      return typeof schema.minimum === "number" ? schema.minimum : 1;
-    case "number":
-      return 1;
-    case "boolean":
-      return true;
-    default:
-      return "example";
-  }
-}
-
 /** Operations whose command tail begins with the given positionals (a resource group). */
-function groupOperations(air: AirDocument, positionals: string[]): Operation[] {
+function groupOperations(ops: Operation[], positionals: string[]): Operation[] {
   if (positionals.length === 0) return [];
-  return air.operations.filter((op) => {
+  return ops.filter((op) => {
     const tail = op.cli.command.split(" ").slice(1);
     return positionals.length < tail.length && positionals.every((p, i) => tail[i] === p);
   });
@@ -525,14 +714,6 @@ function policyView(op: Operation) {
   };
 }
 
-function hostOf(url: string): string | undefined {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return undefined;
-  }
-}
-
 function humanSuccess(data: unknown): string {
   if (data === null || data === undefined) return "OK";
   if (typeof data === "object") return JSON.stringify(data, null, 2);
@@ -544,23 +725,31 @@ function notFound(io: CliIO, air: AirDocument, id?: string): number {
   return 1;
 }
 
+/** Operation ids on the approved surface (all listing views project onto this). */
+function approvedIds(air: AirDocument): Set<string> {
+  return new Set(air.operations.filter((op) => op.state === "approved").map((op) => op.id));
+}
+
 function catalog(air: AirDocument) {
+  const exposed = approvedIds(air);
   return {
     capabilities: air.capabilities.map((c) => ({
       id: c.id,
       displayName: c.displayName,
-      operations: c.operationIds.length,
+      operations: c.operationIds.filter((id) => exposed.has(id)).length,
       workflows: c.workflowIds.length,
       state: c.state,
     })),
-    operations: air.operations.map((op) => ({
-      command: op.cli.command,
-      id: op.id,
-      capability: op.capabilityId,
-      effect: op.effect.kind,
-      risk: op.effect.kind === "mutation" ? op.effect.risk : undefined,
-      state: op.state,
-    })),
+    operations: air.operations
+      .filter((op) => exposed.has(op.id))
+      .map((op) => ({
+        command: op.cli.command,
+        id: op.id,
+        capability: op.capabilityId,
+        effect: op.effect.kind,
+        risk: op.effect.kind === "mutation" ? op.effect.risk : undefined,
+        state: op.state,
+      })),
   };
 }
 
@@ -580,11 +769,13 @@ function findWorkflow(air: AirDocument, key: string) {
 
 function capabilitiesTable(air: AirDocument): string {
   if (air.capabilities.length === 0) return "  (no capabilities)";
+  const exposed = approvedIds(air);
   return air.capabilities
     .map((c) => {
       const name = c.id.split(".").slice(1).join(".") || c.id;
       const wf = c.workflowIds.length ? `, ${c.workflowIds.length} workflow(s)` : "";
-      return `  ${name.padEnd(20)} ${String(c.operationIds.length).padStart(2)} op(s)${wf}  —  ${c.displayName}`;
+      const count = c.operationIds.filter((id) => exposed.has(id)).length;
+      return `  ${name.padEnd(20)} ${String(count).padStart(2)} op(s)${wf}  —  ${c.displayName}`;
     })
     .join("\n");
 }
@@ -592,7 +783,7 @@ function capabilitiesTable(air: AirDocument): string {
 function capabilityDetail(air: AirDocument, cap: AirDocument["capabilities"][number]): string {
   const ops = cap.operationIds
     .map((id) => air.operations.find((o) => o.id === id))
-    .filter((o): o is Operation => Boolean(o))
+    .filter((o): o is Operation => Boolean(o) && o?.state === "approved")
     .map(
       (o) =>
         `  ${o.cli.command.padEnd(34)} ${o.effect.kind}${o.confirmation.required ? " ⚠ confirm" : ""}`,
@@ -646,6 +837,7 @@ function workflowDetail(air: AirDocument, wf: AirDocument["workflows"][number]):
 
 function catalogTable(air: AirDocument): string {
   return air.operations
+    .filter((op) => op.state === "approved")
     .map((op) => {
       const tag = op.effect.kind === "mutation" ? `mutation/${op.effect.risk}` : "read";
       const unsafe = op.confirmation.required ? " ⚠ confirm" : "";

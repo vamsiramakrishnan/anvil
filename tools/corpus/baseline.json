@@ -1,0 +1,101 @@
+{
+  "updatedAt": "2026-07-11T23:10:24.675Z",
+  "note": "Per-system quick-mode metrics. Regenerate with: node tools/corpus/run.mjs quick --update-baseline",
+  "systems": {
+    "jira": {
+      "compileMs": 917,
+      "airBytes": 482676,
+      "opCount": 26
+    },
+    "confluence": {
+      "compileMs": 871,
+      "airBytes": 375259,
+      "opCount": 18
+    },
+    "github": {
+      "compileMs": 1219,
+      "airBytes": 795972,
+      "opCount": 25
+    },
+    "stripe": {
+      "compileMs": 2195,
+      "airBytes": 2781275,
+      "opCount": 22
+    },
+    "twilio": {
+      "compileMs": 846,
+      "airBytes": 391066,
+      "opCount": 15
+    },
+    "slack": {
+      "compileMs": 756,
+      "airBytes": 321855,
+      "opCount": 14
+    },
+    "gmail": {
+      "compileMs": 682,
+      "airBytes": 135368,
+      "opCount": 11
+    },
+    "notion": {
+      "compileMs": 631,
+      "airBytes": 200135,
+      "opCount": 24
+    },
+    "pagerduty": {
+      "compileMs": 688,
+      "airBytes": 422113,
+      "opCount": 12
+    },
+    "zoom": {
+      "compileMs": 668,
+      "airBytes": 122580,
+      "opCount": 14
+    },
+    "hubspot": {
+      "compileMs": 745,
+      "airBytes": 163112,
+      "opCount": 12
+    },
+    "docusign": {
+      "compileMs": 1907,
+      "airBytes": 1843400,
+      "opCount": 15
+    },
+    "github_gql": {
+      "compileMs": 2170,
+      "airBytes": 4182097,
+      "opCount": 299
+    },
+    "temporal": {
+      "compileMs": 732,
+      "airBytes": 552157,
+      "opCount": 121
+    },
+    "asana": {
+      "compileMs": 690,
+      "airBytes": 452313,
+      "opCount": 12
+    },
+    "zendesk": {
+      "compileMs": 652,
+      "airBytes": 163940,
+      "opCount": 9
+    },
+    "intercom": {
+      "compileMs": 675,
+      "airBytes": 276388,
+      "opCount": 9
+    },
+    "linear": {
+      "compileMs": 2946,
+      "airBytes": 7613901,
+      "opCount": 611
+    },
+    "amadeus": {
+      "compileMs": 722,
+      "airBytes": 118664,
+      "opCount": 2
+    }
+  }
+}

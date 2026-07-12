@@ -1,0 +1,62 @@
+name: Corpus
+
+on:
+  schedule:
+    # Nightly, 03:17 UTC (off the top of the hour to be a polite cron citizen).
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: corpus-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable Corepack (pnpm from packageManager field)
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      # Gate: the 18 known systems must stay green against baseline.json.
+      - name: Quick (differential, gates)
+        run: node tools/corpus/run.mjs quick
+
+      - name: Save quick report
+        if: always()
+        run: |
+          mkdir -p corpus-reports/quick
+          cp tools/corpus/report/report.jsonl tools/corpus/report/summary.md corpus-reports/quick/ 2>/dev/null || true
+
+      # Informational: seeded random sample of the apis.guru universe, raw
+      # compiles, invariant oracles only. Fails the job only on `crash`.
+      - name: Sweep (informational, crash-fatal)
+        if: always()
+        run: node tools/corpus/run.mjs sweep --limit 150 --seed 42
+
+      - name: Save sweep report
+        if: always()
+        run: |
+          mkdir -p corpus-reports/sweep
+          cp tools/corpus/report/report.jsonl tools/corpus/report/summary.md corpus-reports/sweep/ 2>/dev/null || true
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-reports
+          path: corpus-reports/
+          retention-days: 30

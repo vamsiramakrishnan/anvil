@@ -1,0 +1,9 @@
+listConversations
+retrieveConversation
+createConversation
+replyConversation
+ShowContact
+CreateContact
+SearchContacts
+ListContacts
+UpdateContact

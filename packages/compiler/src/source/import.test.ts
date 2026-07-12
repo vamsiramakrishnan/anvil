@@ -228,6 +228,80 @@ describe("directory import", () => {
   });
 });
 
+describe("WSDL/XSD supporting files", () => {
+  const AIR_WSDL = `<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" name="Air">
+  <import namespace="urn:air" location="AirAbstract.wsdl"/>
+</definitions>\n`;
+  const ABSTRACT_WSDL = `<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" name="AirAbstract">
+  <types><schema xmlns="http://www.w3.org/2001/XMLSchema"><include schemaLocation="AirReqRsp.xsd"/></schema></types>
+</definitions>\n`;
+  const REQRSP_XSD = `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:import schemaLocation="../common_v45_0/Common.xsd"/>
+  <xs:include schemaLocation="Air.xsd"/>
+</xs:schema>\n`;
+  const PLAIN_XSD = `<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"/>\n`;
+
+  it("captures a WSDL's import/include tree; .xsd files are never YAML-probed", async () => {
+    const entry = write("tp/airSearch/Air.wsdl", AIR_WSDL);
+    write("tp/airSearch/AirAbstract.wsdl", ABSTRACT_WSDL);
+    write("tp/airSearch/AirReqRsp.xsd", REQRSP_XSD);
+    write("tp/airSearch/Air.xsd", PLAIN_XSD);
+    write("tp/common_v45_0/Common.xsd", PLAIN_XSD); // exists, but outside the root
+    const { imported, snapshot } = await snap(entry);
+    expect(snapshot?.status).toBe("valid");
+    expect(snapshot?.entrypoints).toEqual([{ path: "Air.wsdl", format: "wsdl", version: "1.1" }]);
+    expect(snapshot?.files.map((f) => [f.path, f.role])).toEqual([
+      ["Air.wsdl", "entrypoint"],
+      ["Air.xsd", "reference"],
+      ["AirAbstract.wsdl", "reference"],
+      ["AirReqRsp.xsd", "reference"],
+    ]);
+    // Verbatim bytes, no YAML probe: an .xsd must never raise source/unparseable.
+    expect(snapshot?.diagnostics.map((d) => d.code)).not.toContain("source/unparseable");
+    const xsd = imported.files.find((f) => f.path === "AirReqRsp.xsd");
+    expect(new TextDecoder().decode(xsd?.bytes)).toBe(REQRSP_XSD);
+    // ../common_v45_0/Common.xsd escapes the entry's root: a warning, and the
+    // snapshot stays valid — the adapter degrades the missing schema at compile.
+    expect(snapshot?.diagnostics).toContainEqual(
+      expect.objectContaining({ level: "warning", code: "source/path_escape" }),
+    );
+  });
+
+  it("preserves relative directory structure in a directory import", async () => {
+    write("tree/airSearch/Air.wsdl", AIR_WSDL);
+    write("tree/airSearch/AirAbstract.wsdl", ABSTRACT_WSDL);
+    write("tree/airSearch/AirReqRsp.xsd", REQRSP_XSD);
+    write("tree/airSearch/Air.xsd", PLAIN_XSD);
+    write("tree/common_v45_0/Common.xsd", PLAIN_XSD);
+    const { snapshot } = await snap(join(tmp, "tree"));
+    expect(snapshot?.status).toBe("valid");
+    // Both WSDLs are entrypoints; every schema resolved via its relative path.
+    expect(snapshot?.files.map((f) => [f.path, f.role])).toEqual([
+      ["airSearch/Air.wsdl", "entrypoint"],
+      ["airSearch/Air.xsd", "reference"],
+      ["airSearch/AirAbstract.wsdl", "entrypoint"],
+      ["airSearch/AirReqRsp.xsd", "reference"],
+      ["common_v45_0/Common.xsd", "reference"],
+    ]);
+    expect(snapshot?.diagnostics.map((d) => d.code)).not.toContain("source/unparseable");
+    expect(snapshot?.diagnostics.map((d) => d.code)).not.toContain("source/unrelated_file");
+  });
+
+  it("captures an explicitly-added .xsd verbatim as a supporting file", async () => {
+    const xsd = write("solo/Types.xsd", REQRSP_XSD);
+    write("solo/Air.xsd", PLAIN_XSD);
+    const { snapshot } = await snap(xsd);
+    // Not an entrypoint (nothing compilable), but no source/unparseable either;
+    // its own include was followed.
+    expect(snapshot?.status).toBe("unclassified");
+    expect(snapshot?.files.map((f) => [f.path, f.role])).toEqual([
+      ["Air.xsd", "reference"],
+      ["Types.xsd", "supporting"],
+    ]);
+    expect(snapshot?.diagnostics.map((d) => d.code)).not.toContain("source/unparseable");
+  });
+});
+
 describe("content identity", () => {
   it("hashes verbatim bytes: a newline flavor change is a different source", () => {
     const lf = { path: "a.yaml", bytes: Buffer.from("openapi: 3.0.3\n", "utf8") };

@@ -1,0 +1,99 @@
+# Supplemental Anvil manifest (spec §4). Like Jira, Confluence Cloud's REST API
+# v2 has no client-supplied idempotency-key mechanism for any of these creates,
+# so they stay honestly non-idempotent rather than fabricating a strategy the
+# API doesn't support — mcp-atlassian's confluence_create_page/create_*_comment
+# tools carry no dry-run or dedupe parameter either.
+service:
+  name: confluence
+  display_name: Confluence Cloud REST API v2
+  owner: backtesting
+  environment: prod
+
+auth:
+  type: oauth2
+  scopes:
+    - read:page:confluence
+    - write:page:confluence
+    - read:space:confluence
+    - write:space:confluence
+    - read:comment:confluence
+    - write:comment:confluence
+
+operations:
+  # Not idempotent: a retried create after a timeout risks a duplicate page
+  # (Confluence only rejects an exact-duplicate *title in the same space* as a
+  # side effect of the retry, it does not deduplicate the request itself).
+  createPage:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Creates a new Confluence page; retrying after a failure may create a duplicate.
+    retries:
+      enabled: false
+    state: approved
+
+  # Not idempotent: the space key must be unique, so a bare retry after a
+  # timeout either duplicates (different key) or errors (same key) — neither
+  # is a safe automatic retry.
+  createSpace:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Creates a new Confluence space; retrying after a failure is not provably safe.
+    retries:
+      enabled: false
+    state: approved
+
+  # Not idempotent: each call appends a new footer comment.
+  createFooterComment:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Adds a comment; retrying after a failure may post it twice.
+    retries:
+      enabled: false
+    state: approved
+
+  # Not idempotent: each call appends a new inline comment.
+  createInlineComment:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Adds an inline comment; retrying after a failure may post it twice.
+    retries:
+      enabled: false
+    state: approved
+
+  # Everything else keeps the compiler's own classification; only exposure is
+  # declared here (see manifests/jira.anvil.yaml for why the manifest form is
+  # used instead of the `anvil approve` + `anvil build` per-capability path).
+  getPages: { state: approved }
+  getPageById: { state: approved }
+  updatePage: { state: approved }
+  deletePage: { state: approved }
+  getPageAttachments: { state: approved }
+  getPageLabels: { state: approved }
+  updatePageTitle: { state: approved }
+  getPageVersions: { state: approved }
+  getSpaces: { state: approved }
+  getSpaceById: { state: approved }
+  getFooterComments: { state: approved }
+  getInlineComments: { state: approved }
+  getPageDirectChildren: { state: approved }
+  getPageAncestors: { state: approved }

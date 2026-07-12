@@ -54,7 +54,10 @@ export type DeficiencyCode =
   | "error_retryability_unclear"
   | "contested_safety_semantic"
   // mock / eval coverage
-  | "required_field_no_example";
+  | "required_field_no_example"
+  // artifact review (raised by the model-driven review in review/, not detectors)
+  | "phantom_operation_documented"
+  | "cross_surface_disagreement";
 
 /**
  * A single, typed, evidence-free observation: this specific semantic node is
@@ -328,6 +331,29 @@ export const DEFICIENCY_CATALOG: Record<DeficiencyCode, DeficiencyDef> = {
     "required field has no example",
     "refinementRequired",
     "no realistic value can be generated to mock or eval this before it ships",
+  ),
+  // The two codes below are raised only by the model-driven artifact review
+  // (review/): they judge generated artifacts against AIR, which no AIR-only
+  // detector can do. Both are closable by regenerating/refining the artifact,
+  // hence refinementRequired; a *safety* disagreement between surfaces maps to
+  // `contested_safety_semantic` instead, which blocks.
+  phantom_operation_documented: def(
+    "phantom_operation_documented",
+    "documentation",
+    "high",
+    "align-artifacts",
+    "phantom operation documented",
+    "refinementRequired",
+    "the agent will plan around (and try to call) an operation that does not exist",
+  ),
+  cross_surface_disagreement: def(
+    "cross_surface_disagreement",
+    "usability",
+    "high",
+    "align-artifacts",
+    "surfaces disagree about an operation",
+    "refinementRequired",
+    "the agent learns a different meaning for the operation depending on which surface it reads",
   ),
 };
 

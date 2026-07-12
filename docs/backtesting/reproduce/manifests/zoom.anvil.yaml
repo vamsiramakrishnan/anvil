@@ -1,0 +1,36 @@
+# Supplemental Anvil manifest (spec §4) for the Zoom API backtest.
+# Generated against the real compiled AIR: reads and already-'generated'
+# mutations are approved as the compiler classified them; non-idempotent
+# creates are declared idempotency:none (no client dedupe key exists) and
+# confirmation-required. See docs/backtesting/batch2.md.
+service:
+  name: zoom
+  display_name: Zoom API
+  owner: backtesting
+  environment: prod
+auth:
+  type: jwt_bearer
+  scopes: []
+operations:
+  meetings: { state: approved }
+  meetingCreate:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  meeting: { state: approved }
+  meetingDelete: { state: approved }
+  meetingUpdate: { state: approved }
+  meetingStatus: { state: approved }
+  meetingInvitation: { state: approved }
+  meetingRegistrants: { state: approved }
+  meetingRegistrantCreate:
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: medium, reason: "Non-idempotent create; retrying after a failure may duplicate it." }
+    retries: { enabled: false }
+    state: approved
+  meetingRegistrantStatus: { state: approved }
+  meetingLiveStreamUpdate: { state: approved }
+  meetingLiveStreamStatusUpdate: { state: approved }
+  pastMeetingDetails: { state: approved }
+  pastMeetingParticipants: { state: approved }

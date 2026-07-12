@@ -13,7 +13,12 @@ import { generateDocs } from "./docs.js";
 import { generateCliSource, generateRuntimeServer } from "./entrypoints.js";
 import { generateEvals } from "./evals.js";
 import { generateMcpServerSource } from "./mcp.js";
-import { exampleInput, generateMockServerSource, generateScenarios } from "./mock.js";
+import {
+  exampleInput,
+  generateMockRoutes,
+  generateMockServerSource,
+  generateScenarios,
+} from "./mock.js";
 import { buildToolResources, type ResourceOptions } from "./resources.js";
 import { generateSkill } from "./skill.js";
 
@@ -73,13 +78,32 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   }
   for (const op of air.operations) {
     if (op.state !== "approved") continue;
+    // JSON cannot carry frontmatter, so each file self-describes in-band:
+    // schemas via the standard JSON Schema title/description keywords,
+    // examples via a small envelope naming the operation and both surfaces.
+    const schema = (op.input.schema ?? operationInputSchema(op)) as Record<string, unknown>;
     files[`skill/schemas/${op.canonicalName}.schema.json`] = `${JSON.stringify(
-      op.input.schema ?? operationInputSchema(op),
+      {
+        title: schema.title ?? `${op.canonicalName} input`,
+        description:
+          schema.description ??
+          `Input JSON Schema for \`${op.cli.command}\` / MCP tool \`${op.mcp.toolName}\` (${op.id}). Validate arguments against this before invoking.`,
+        ...schema,
+      },
       null,
       2,
     )}\n`;
-    files[`skill/examples/${op.canonicalName}.json`] =
-      `${JSON.stringify(exampleInput(op), null, 2)}\n`;
+    files[`skill/examples/${op.canonicalName}.json`] = `${JSON.stringify(
+      {
+        description: `Worked example input for ${op.displayName || op.id}. Pass \`input\` as the MCP tool arguments for \`${op.mcp.toolName}\`, or map it onto \`${op.cli.command}\` flags.`,
+        operation: op.id,
+        cli: op.cli.command,
+        tool: op.mcp.toolName,
+        input: exampleInput(op),
+      },
+      null,
+      2,
+    )}\n`;
   }
   for (const [path, text] of Object.entries(generateEvals(air))) {
     files[`skill/${path}`] = text;
@@ -89,6 +113,7 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   Object.assign(files, generateDocs(air));
   Object.assign(files, generateDeploy(air));
   files["mock/scenarios.json"] = `${JSON.stringify(generateScenarios(air), null, 2)}\n`;
+  files["mock/routes.json"] = `${JSON.stringify(generateMockRoutes(air), null, 2)}\n`;
   files["mock/server.mjs"] = generateMockServerSource(air);
   files["tests/conformance.test.ts"] = generateConformanceTest(air);
 
@@ -102,6 +127,10 @@ function bundlePackageJson(air: AirDocument): unknown {
   return {
     name: `@anvil-tools/${id}`,
     version: air.service.version,
+    // Self-describing, and honest about the install contract: `npm install`
+    // resolves only where the @anvil/* packages are reachable (a registry or
+    // packed tarballs); a linked toolchain runs the CLI directly.
+    description: `Anvil-generated tool bundle for ${air.service.displayName ?? id}: aligned CLI (bin \`${id}\`), MCP server (mcp/server.js), and skill package (skill/). Run \`node cli/${id}.mjs --help\` after \`npm install\` (or with the @anvil/* toolchain linked); see skill/SKILL.md.`,
     private: true,
     type: "module",
     bin: { [id]: `cli/${id}.mjs` },

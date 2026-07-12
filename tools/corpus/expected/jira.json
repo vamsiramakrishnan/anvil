@@ -1,0 +1,7 @@
+{
+  "operations": {
+    "createIssue": { "toolName": "jira_create_issue", "effect": "mutation" },
+    "getIssue": { "toolName": "jira_get_issue", "effect": "read", "risk": "none" },
+    "getFieldsPaginated": { "toolName": "jira_get_fields_paginated", "effect": "read", "risk": "none" }
+  }
+}
