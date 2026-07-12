@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { type AirDocument, loadAirDocument } from "@anvil/air";
+import { type AirDocument, loadAirDocument, Operation as OperationSchema } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { MockTransport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -8,6 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { generateBundle } from "./bundle.js";
 import { buildMcpServer } from "./mcp.js";
+import { exampleFromSchema, exampleInput } from "./mock.js";
 import { buildToolResources } from "./resources.js";
 
 const read = (rel: string) =>
@@ -110,6 +111,63 @@ describe("MCP server", () => {
     });
     expect(ok.isError).toBeFalsy();
     expect(transport.requests).toHaveLength(1);
+    await client.close();
+  });
+
+  it("never registers an unapproved operation as a tool (spec §17)", async () => {
+    const unapproved = structuredClone(air);
+    const refund = unapproved.operations.find((o) => o.id === "payments.refunds.create");
+    if (refund) refund.state = "review_required";
+    const server = buildMcpServer(unapproved, {
+      contextFor: () => ({
+        transport: new MockTransport(() => ({ status: 200, headers: {}, body: "{}" })),
+        baseUrl: "https://payments.internal.example.com",
+        allowedHosts: ["payments.internal.example.com"],
+        env: "prod",
+      }),
+    });
+    const client = await connect(server);
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name)).not.toContain("payments_create_refund");
+    await client.close();
+  });
+
+  it("defense in depth: even a dev server listing unapproved tools cannot execute them", async () => {
+    const unapproved = structuredClone(air);
+    const refund = unapproved.operations.find((o) => o.id === "payments.refunds.create");
+    if (refund) refund.state = "review_required";
+    const transport = new MockTransport(() => ({ status: 201, headers: {}, body: "{}" }));
+    // includeUnapproved is the dev-only escape hatch for *listing*; the
+    // executor's own approval gate still refuses execution.
+    const server = buildMcpServer(unapproved, {
+      includeUnapproved: true,
+      contextFor: () => ({
+        transport,
+        credentials: {
+          async resolve() {
+            return { headers: { Authorization: "Bearer t" } };
+          },
+        },
+        authProfile: "prod",
+        baseUrl: "https://payments.internal.example.com",
+        allowedHosts: ["payments.internal.example.com"],
+        env: "dev",
+      }),
+    });
+    const client = await connect(server);
+    const result = await client.callTool({
+      name: "payments_create_refund",
+      arguments: {
+        payment_id: "pay_1",
+        amount: 2500,
+        currency: "USD",
+        idempotency_key: "k1",
+        confirm: true,
+      },
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("unsupported_operation");
+    expect(transport.requests).toHaveLength(0);
     await client.close();
   });
 
@@ -248,6 +306,81 @@ describe("bundle", () => {
   });
 });
 
+describe("skill package format", () => {
+  it("counts only capabilities with approved members in the manifest", async () => {
+    // Nothing approved → every capability is invisible; the manifest must say
+    // 0, not the raw capability count (the audit's "29 capabilities, 4 ops").
+    const unapproved = await compile({ spec: read("openapi.yaml"), serviceId: "payments" });
+    const { files } = generateBundle(unapproved);
+    expect(files["skill/manifest.yaml"]).toContain("capabilities: 0");
+    // With the manifest, every payments capability has an approved member.
+    const approved = generateBundle(air).files["skill/manifest.yaml"] as string;
+    expect(approved).toContain(`capabilities: ${air.capabilities.length}`);
+  });
+
+  it("folds capability names into the skill description for intent routing", () => {
+    const { files } = generateBundle(air);
+    const front = (files["skill/SKILL.md"] as string).match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+    const description = front.match(/^description:\s*(.+)$/m)?.[1] ?? "";
+    expect(description).toContain("Refunds");
+    expect(description.length).toBeLessThanOrEqual(1024);
+    expect(description).toContain("Use when");
+  });
+
+  it("points each operation at its schema and example, with the confirmation reason", () => {
+    const { files } = generateBundle(air);
+    const ref = files["skill/reference/operations.md"] as string;
+    expect(ref).toContain("../schemas/create_refund.schema.json");
+    expect(ref).toContain("../examples/create_refund.json");
+    // The manifest-declared reason must surface where the agent reads the contract.
+    expect(ref).toContain("Confirmation required");
+    expect(ref).toContain("This operation creates an irreversible financial mutation.");
+    const idem = files["skill/reference/idempotency.md"] as string;
+    expect(idem).toContain("This operation creates an irreversible financial mutation");
+  });
+
+  it("teaches setup (env-var NAMES only) and links it from SKILL.md and errors.md", () => {
+    const { files } = generateBundle(air);
+    const setup = files["skill/reference/setup.md"] as string;
+    for (const name of [
+      "ANVIL_DEFAULT_TOKEN",
+      "ANVIL_BASE_URL",
+      "ANVIL_ENV",
+      "ANVIL_ALLOWED_HOSTS",
+      "ANVIL_LEDGER",
+      "--auth-profile",
+    ]) {
+      expect(setup, `setup.md must name ${name}`).toContain(name);
+    }
+    expect(files["skill/SKILL.md"]).toContain("reference/setup.md");
+    const errors = files["skill/reference/errors.md"] as string;
+    expect(errors).toMatch(/auth_required[^\n]*setup\.md/);
+    expect(errors).toMatch(/policy_denied[^\n]*setup\.md/);
+  });
+
+  it("omits empty eval suites and explains the omission in a README", () => {
+    const { files } = generateBundle(air);
+    // Payments operations carry no intent examples → operation_selection would
+    // be an empty suite; it must be absent, and the README must say why.
+    expect(files["skill/evals/operation_selection.yaml"]).toBeUndefined();
+    expect(files["skill/evals/unsafe_operation_refusal.yaml"]).toBeDefined();
+    const readme = files["skill/evals/README.md"] as string;
+    expect(readme).toMatch(/^---\n/);
+    expect(readme).toContain("operation_selection");
+    expect(readme).toContain("skill.intent_examples");
+  });
+
+  it("gives every skill markdown file self-describing frontmatter", () => {
+    const { files } = generateBundle(air);
+    for (const [rel, text] of Object.entries(files)) {
+      if (!rel.startsWith("skill/") || !rel.endsWith(".md")) continue;
+      const front = text.match(/^---\n([\s\S]*?)\n---/)?.[1] ?? "";
+      expect(front, `${rel} must carry frontmatter`).toMatch(/^name:\s*\S+/m);
+      expect(front, `${rel} must describe itself`).toMatch(/^description:\s*\S+/m);
+    }
+  });
+});
+
 describe("GCP-native deploy (single owner per concern)", () => {
   it("emits exactly one deploy path: Cloud Build (pipeline) + Terraform (infra)", () => {
     const { files } = generateBundle(air);
@@ -325,6 +458,95 @@ describe("GCP-native deploy (single owner per concern)", () => {
     // that a human must hand-edit (the old knative yaml had literal PROJECT/REGION).
     expect(tf).not.toContain("PROJECT/locations/REGION");
     expect(tf).not.toContain("REGION-docker.pkg.dev/PROJECT");
+  });
+});
+
+describe("example synthesis (mock + loopback inputs)", () => {
+  it("synthesizes through a materialized allOf with a truncation stub (finding #31)", () => {
+    // The exact Travelport shape: a depth-truncation stub (no type, only a
+    // description) composed with the object carrying the real fields.
+    const schema = {
+      allOf: [
+        { description: "…nested one level deep…" },
+        {
+          type: "object",
+          required: ["TargetBranch"],
+          properties: {
+            TargetBranch: { type: "string" },
+            SearchAirLeg: { type: "array", items: { type: "object" } },
+          },
+        },
+      ],
+    };
+    expect(exampleFromSchema(schema)).toEqual({
+      TargetBranch: "example",
+      SearchAirLeg: [{}],
+    });
+  });
+
+  it("deep-merges allOf members, later members winning on key conflict", () => {
+    const schema = {
+      allOf: [
+        {
+          type: "object",
+          properties: {
+            a: { type: "integer" },
+            nested: { type: "object", properties: { x: { type: "string" } } },
+          },
+        },
+        {
+          type: "object",
+          properties: {
+            a: { type: "string" },
+            nested: { type: "object", properties: { y: { type: "boolean" } } },
+          },
+        },
+      ],
+    };
+    expect(exampleFromSchema(schema)).toEqual({
+      a: "example",
+      nested: { x: "example", y: true },
+    });
+  });
+
+  it("picks the first member of oneOf/anyOf and treats bare stubs as {}", () => {
+    expect(exampleFromSchema({ oneOf: [{ type: "integer" }, { type: "string" }] })).toBe(1);
+    expect(exampleFromSchema({ anyOf: [{ type: "boolean" }] })).toBe(true);
+    // A typeless annotation-only stub is an empty object, not null.
+    expect(exampleFromSchema({ description: "truncated" })).toEqual({});
+    // A typeless schema that still declares properties is an object in all but name.
+    expect(exampleFromSchema({ properties: { id: { type: "string" } } })).toEqual({
+      id: "example",
+    });
+  });
+
+  it("always synthesizes at least {} for a required whole-projection body", () => {
+    const op = OperationSchema.parse({
+      id: "svc.thing.create",
+      canonicalName: "create_thing",
+      displayName: "Create thing",
+      sourceRef: { kind: "wsdl", path: "/Port/CreateThing", method: "post" },
+      effect: { kind: "mutation", resource: "thing", risk: "medium", reversible: true },
+      input: {
+        params: [],
+        body: {
+          contentType: "application/json",
+          required: true,
+          // Unsynthesizable-by-type body: only an annotation stub survived.
+          schema: { description: "truncated" },
+          projection: "whole",
+          fields: [],
+        },
+      },
+      idempotency: { mode: "none", mechanism: "none", keyDerivation: "none" },
+      retries: { mode: "none", maxAttempts: 1, backoff: "none", retryOn: [] },
+      confirmation: { required: false },
+      auth: { type: "none", scopes: [] },
+      cli: { command: "svc thing create" },
+      mcp: { toolName: "svc_create_thing" },
+      skill: { intentExamples: [] },
+    });
+    expect(exampleInput(op).body).toEqual({});
   });
 });
 

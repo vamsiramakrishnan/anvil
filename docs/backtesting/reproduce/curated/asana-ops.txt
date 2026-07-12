@@ -1,0 +1,12 @@
+getTasks
+createTask
+getTask
+updateTask
+deleteTask
+getProjects
+createProject
+getProject
+getWorkspaces
+getSectionsForProject
+createSectionForProject
+addFollowersForTask

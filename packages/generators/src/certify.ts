@@ -57,6 +57,8 @@ export type Certification = z.infer<typeof Certification>;
 export const CERTIFICATION_FILE = "certification.json";
 /** Where the publication record is written inside a bundle (PR 8). */
 export const PUBLICATION_FILE = "publication.json";
+/** Where `anvil selftest` writes its loopback report inside a bundle. */
+export const SELFTEST_REPORT_FILE = "selftest.report.json";
 
 /** Injectable clock so certification/publication records are testable. */
 export type Clock = () => string;
@@ -71,7 +73,11 @@ const systemClock: Clock = () => new Date().toISOString();
  * They are excluded from the hash so writing a certification (or publication)
  * into the bundle does not invalidate the very identity it attests to.
  */
-const RECORD_FILES: ReadonlySet<string> = new Set([CERTIFICATION_FILE, PUBLICATION_FILE]);
+const RECORD_FILES: ReadonlySet<string> = new Set([
+  CERTIFICATION_FILE,
+  PUBLICATION_FILE,
+  SELFTEST_REPORT_FILE,
+]);
 
 /**
  * Content-derived identity of a bundle: sha256 over the sorted relative paths
@@ -477,12 +483,17 @@ function runtimeChecks(files: Record<string, string>, air: AirDocument): Certifi
   }
 
   // Evals: the generated suites must exist and parse — they are the behavior
-  // contract the refinement loop measures against.
+  // contract the refinement loop measures against. Suites that derive zero
+  // cases are legitimately omitted (an empty file reads as phantom coverage),
+  // but a bundle with NO suites must carry the README documenting the omission.
   const evalFiles = Object.keys(files).filter(
     (rel) => rel.startsWith("skill/evals/") && rel.endsWith(".yaml"),
   );
   const evalFailures: string[] = [];
-  if (evalFiles.length === 0) evalFailures.push("no generated eval suites under skill/evals/");
+  if (evalFiles.length === 0 && files["skill/evals/README.md"] === undefined)
+    evalFailures.push(
+      "no generated eval suites under skill/evals/ and no skill/evals/README.md documenting their omission",
+    );
   for (const rel of evalFiles) {
     try {
       const doc = parseYaml(files[rel] ?? "") as { suite?: unknown };
@@ -511,7 +522,14 @@ function runtimeChecks(files: Record<string, string>, air: AirDocument): Certifi
       mockFailures,
       "mock server and scenarios are present and cover every approved operation",
     ),
-    check("runtime.evals-present", "runtime", evalFailures, "generated eval suites parse"),
+    check(
+      "runtime.evals-present",
+      "runtime",
+      evalFailures,
+      evalFiles.length === 0
+        ? "every eval suite derived zero cases; skill/evals/README.md documents the omission"
+        : "generated eval suites parse",
+    ),
     check(
       "runtime.conformance-present",
       "runtime",
@@ -635,11 +653,15 @@ export function verifyCertification(files: Record<string, string>): Certificatio
 /**
  * Read a bundle directory into the pure core's input shape: relative POSIX
  * paths → file contents. The only filesystem-touching entry to certification.
+ * Install artifacts are not bundle content: `node_modules` (created by an
+ * install, or linked in by `anvil selftest`) and symlinks are skipped so the
+ * certification binds to the generated files only.
  */
 export function readBundleDir(dir: string): Record<string, string> {
   const files: Record<string, string> = {};
   const walk = (rel: string): void => {
     for (const entry of readdirSync(join(dir, rel), { withFileTypes: true })) {
+      if (entry.name === "node_modules" || entry.isSymbolicLink()) continue;
       const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
       if (entry.isDirectory()) walk(childRel);
       else files[childRel] = readFileSync(join(dir, childRel), "utf8");

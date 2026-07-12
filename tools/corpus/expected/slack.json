@@ -1,0 +1,8 @@
+{
+  "operations": {
+    "conversations_history": { "toolName": "slack_conversations_history", "effect": "read", "risk": "none" },
+    "reactions_add": { "toolName": "slack_reactions_add", "effect": "mutation" },
+    "chat_postMessage": { "toolName": "slack_chat_post_message", "effect": "mutation", "risk": "high" },
+    "users_list": { "toolName": "slack_users_list", "effect": "read", "risk": "none" }
+  }
+}

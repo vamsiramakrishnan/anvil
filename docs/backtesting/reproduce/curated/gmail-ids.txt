@@ -1,0 +1,11 @@
+gmail.users.getProfile
+gmail.users.messages.list
+gmail.users.messages.get
+gmail.users.messages.send
+gmail.users.messages.delete
+gmail.users.messages.trash
+gmail.users.drafts.list
+gmail.users.drafts.create
+gmail.users.drafts.send
+gmail.users.labels.list
+gmail.users.labels.create

@@ -10,3 +10,6 @@ coverage/
 
 # Claude Code session worktrees (parallel agent sandboxes; never project content)
 .claude/worktrees/
+
+# corpus harness run output (regenerated every run; see tools/corpus/README.md)
+tools/corpus/report/

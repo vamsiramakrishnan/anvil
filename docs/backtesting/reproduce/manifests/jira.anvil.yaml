@@ -1,0 +1,129 @@
+# Supplemental Anvil manifest (spec §4). Jira Cloud's real REST API has no
+# client-supplied idempotency-key mechanism anywhere (unlike a payments API) —
+# so most creates here are honestly left non-idempotent rather than fabricating
+# a strategy the API doesn't support. Only the operations that Jira's own
+# semantics make naturally safe to repeat (a transition to the same target
+# state, adding a watcher who is already watching) are marked idempotent.
+service:
+  name: jira
+  display_name: Jira Cloud platform REST API
+  owner: backtesting
+  environment: prod
+
+auth:
+  type: oauth2
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - manage:jira-project
+
+operations:
+  # Not idempotent: Jira assigns a new issue key on every call and has no
+  # dedupe key. A retried create after a timeout risks a duplicate issue —
+  # mcp-atlassian doesn't solve this either (only its *batch* create tool has
+  # a validate_only dry-run; the single-issue create has none).
+  createIssue:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Creates a new Jira issue; retrying after a failure may create a duplicate.
+    retries:
+      enabled: false
+    state: approved
+
+  # Not idempotent: each call appends a new comment. A retry after a timeout
+  # would post the comment twice.
+  addComment:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Adds a comment; retrying after a failure may post it twice.
+    retries:
+      enabled: false
+    state: approved
+
+  # Natural idempotency: re-issuing the same transition id against an issue
+  # already in that state is a no-op (Jira's workflow engine rejects an
+  # invalid transition rather than repeating a side effect).
+  doTransition:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    state: approved
+
+  # Natural idempotency: adding a watcher who already watches the issue is a
+  # no-op in Jira's own semantics.
+  addWatcher:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    state: approved
+
+  # Not idempotent: each call logs a new worklog entry. A retry would double
+  # the logged time.
+  addWorklog:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Logs work time on the issue; retrying after a failure may double it.
+    retries:
+      enabled: false
+    state: approved
+
+  # Not idempotent: relinking the same two issues can create a duplicate link
+  # depending on link type, so this stays a confirmed, non-retried mutation.
+  linkIssues:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Links two issues; retrying after a failure may create a duplicate link.
+    retries:
+      enabled: false
+    state: approved
+
+  # Everything else keeps the compiler's own classification (effect, risk,
+  # idempotency, confirmation) — no semantic override needed, only exposure.
+  # `anvil approve <dir> <op-ids...>` also does this, but only rewrites
+  # air.yaml — it does not regenerate the already-written CLI/MCP/skill files,
+  # and the only regenerate path (`anvil build <dir> <capability-id>`) is
+  # scoped to one capability at a time (Jira split into 12 here). For a whole
+  # bundle this manifest form is the one-step path; see
+  # docs/backtesting/deficiencies.md for the approve/build friction finding.
+  getFieldsPaginated: { state: approved }
+  getIssue: { state: approved }
+  editIssue: { state: approved }
+  deleteIssue: { state: approved }
+  assignIssue: { state: approved }
+  getComments: { state: approved }
+  updateComment: { state: approved }
+  deleteComment: { state: approved }
+  getTransitions: { state: approved }
+  getIssueWatchers: { state: approved }
+  removeWatcher: { state: approved }
+  getIssueWorklog: { state: approved }
+  deleteIssueLink: { state: approved }
+  getIssueLinkTypes: { state: approved }
+  getIssueTypesForProject: { state: approved }
+  searchProjects: { state: approved }
+  getProject: { state: approved }
+  getProjectComponents: { state: approved }
+  getProjectVersions: { state: approved }
+  searchAndReconsileIssuesUsingJqlPost: { state: approved }

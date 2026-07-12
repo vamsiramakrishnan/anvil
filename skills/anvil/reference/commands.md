@@ -1,3 +1,8 @@
+---
+name: anvil-commands
+description: Every anvil command with usage, options, and mutation markers — derived from the live Commander tree. Read this before running an unfamiliar command.
+---
+
 # anvil commands
 
 ### `anvil source`  *(mutates)*
@@ -347,6 +352,18 @@ Options:
 - `--out <dir>` — bundle output directory (default generated/<capability-id>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
 
+### `anvil review`  *(mutates)*
+`anvil review [options] <dir>`
+
+Model-driven semantic review of a bundle's agent surfaces (MCP/CLI/skill).
+
+Drives a cheap reviewer model (default Haiku via the `claude` CLI) through Anvil's artifact-review SOP over a generated bundle: MCP tool descriptions must be truthful to each operation's effect/risk, the CLI surface must teach confirm/idempotency/dry-run on mutating commands, the skill doc must teach the safety posture and document no phantom operations, and all three surfaces must agree. Every finding must cite verbatim evidence from the bundle; ungrounded findings are discarded mechanically. Writes review.report.json into the bundle. Useful for spec sources with no reference server to backtest against.
+
+Options:
+- `--model <model>` — reviewer model passed to the driver
+- `--driver-command <bin>` — headless agent CLI to drive
+- `--json` — emit the full review report as JSON
+
 ### `anvil certify`  *(mutates)*
 `anvil certify [options] <path>`
 
@@ -356,6 +373,16 @@ Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates
 
 Options:
 - `--json` — emit the full certification as JSON
+
+### `anvil selftest`  *(mutates)*
+`anvil selftest [options] <dir>`
+
+Boot the bundle's mock + MCP servers and prove the generated surface end-to-end.
+
+Loopback self-test for bundles with no reference server to compare against: starts the generated mock upstream (mock/server.mjs) and the generated MCP server (mcp/server.js) pointed at it via ANVIL_BASE_URL, then invokes every approved tool over the real MCP transport. Checks: the tool surface equals the approved operations (surface), every argument reaches the wire faithfully and the response round-trips (fidelity), confirmation gates refuse before any side effect (confirmation-gate), documented upstream errors surface as structured envelopes (error-mapping), and non-idempotent mutations are never auto-retried (retry checks). Writes selftest.report.json into the bundle. Exit 0 only when no check fails.
+
+Options:
+- `--json` — emit the full report as JSON
 
 ### `anvil publish`  *(mutates)*
 `anvil publish [options] <dir>`
@@ -454,14 +481,19 @@ Serve the bundle's MCP server on stdio.
 ### `anvil package`
 `anvil package [options] [command]`
 
-Locate and verify the portable skill package.
+Validate and package the portable skill package.
 
 The skill is also served over MCP as anvil://skill/<service>/... resources.
 
 #### `anvil package skill`
 `anvil package skill [options] <dir>`
 
-Verify the bundle's skill package is complete.
+Validate the bundle's skill package against the Agent Skills spec.
+
+Checks SKILL.md frontmatter (spec-legal name and description), that every path SKILL.md references exists, that every markdown file self-describes with frontmatter, that examples parse and cover their schema's required fields, and that no absolute paths leak. With --out, copies the skill to <out>/<skill-name>/ so the directory name matches the frontmatter name (the spec rule).
+
+Options:
+- `--out <dir>` — copy the validated skill to <out>/<skill-name>/
 
 ### `anvil skill`
 `anvil skill [options] [out-dir]`

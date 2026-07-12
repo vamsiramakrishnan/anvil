@@ -36,6 +36,74 @@ describe("classifier", () => {
     expect(effect.risk).toBe("destructive");
     expect(effect.reversible).toBe(false);
   });
+
+  it("classifies a POST search endpoint as a read, not a mutation", () => {
+    // A common REST convention (Elasticsearch, GitHub, Jira's POST /search/jql):
+    // the query is too large/complex for a query string, so it rides a POST body,
+    // but the endpoint has no persisted side effect.
+    const { effect, idempotency } = classifyEffect(
+      "post",
+      "searchAndReconsileIssuesUsingJqlPost /search/jql",
+    );
+    expect(effect.kind).toBe("read");
+    expect(effect.action).toBe("search");
+    expect(idempotency.mode).toBe("natural");
+    expect(classifyConfirmation(effect, idempotency).required).toBe(false);
+  });
+
+  it("does not reclassify a POST that merely mentions an unrelated verb substring", () => {
+    // "research" contains "search" as a substring but is not the search verb —
+    // word-boundary matching must not false-positive on it.
+    const { effect } = classifyEffect("post", "createResearchNote /research-notes");
+    expect(effect.kind).toBe("mutation");
+  });
+
+  it("keeps a POST validate/simulate endpoint conservatively a mutation", () => {
+    // Unlike search, these verbs often still have a side effect
+    // (quota, temporary hold, audit trail) in real APIs, so they stay mutations.
+    const { effect } = classifyEffect("post", "validateOrder /orders/validate");
+    expect(effect.kind).toBe("mutation");
+  });
+
+  it("never flips a write-method status/progress endpoint to a read (finding #25)", () => {
+    // A write-method endpoint named with a poll-family verb SETS state, it
+    // doesn't check it. Treating `PUT /tickets/{id}/status` as a risk-free
+    // read would bypass the whole mutation review/confirmation posture.
+    for (const [m, sig] of [
+      ["put", "updateTicketStatus /tickets/{id}/status"],
+      ["post", "setStatus /tickets/{id}/status"],
+      ["put", "updateProgress /jobs/{id}/progress"],
+    ] as const) {
+      const { effect } = classifyEffect(m, sig);
+      expect(effect.kind, `${m} ${sig}`).toBe("mutation");
+    }
+  });
+
+  it("keeps PUT-search and POST-export conservatively mutations (finding #25)", () => {
+    // The write-method read exception is search-family on POST ONLY: real
+    // PUT-search endpoints are practically nonexistent, and a POST export
+    // typically creates a job/artifact. A genuinely read-only endpoint outside
+    // the rule is what the manifest's `side_effect: read` override is for.
+    expect(classifyEffect("put", "search /things/search").effect.kind).toBe("mutation");
+    expect(classifyEffect("post", "exportReport /reports/export").effect.kind).toBe("mutation");
+    // The validated Jira case is untouched.
+    expect(classifyEffect("post", "searchIssues /search").effect.kind).toBe("read");
+  });
+
+  it("honors an adapter effect assertion: a POST-read retries exactly like a GET-read", () => {
+    // Protocol adapters (SOAP/GraphQL/gRPC) emit the truthful POST wire method
+    // and assert `x-anvil-effect: read`; the safety posture must derive from
+    // the effect kind, never the raw method.
+    const signal = "ListTransactions /BankingPort/ListTransactions";
+    const hinted = classifyEffect("post", signal, false, "read");
+    const asGet = classifyEffect("get", signal, false);
+    expect(hinted.effect.kind).toBe("read");
+    expect(hinted.effect).toEqual(asGet.effect);
+    expect(hinted.idempotency).toEqual(asGet.idempotency);
+    expect(classifyConfirmation(hinted.effect, hinted.idempotency).required).toBe(false);
+    // An unhinted POST with the same signal stays a conservative mutation.
+    expect(classifyEffect("post", signal).effect.kind).toBe("mutation");
+  });
 });
 
 describe("compile pipeline (spec only)", () => {
@@ -151,10 +219,10 @@ describe("naming pass", () => {
     const clashing = `openapi: 3.0.0
 info: { title: billing, version: 1.0.0 }
 paths:
-  /orders/{id}/cancel:
+  /orders/{id}/archive:
     post:
       responses: { "200": { description: ok } }
-  /subscriptions/{id}/cancel:
+  /subscriptions/{id}/archive:
     post:
       responses: { "200": { description: ok } }
 `;
@@ -169,6 +237,167 @@ paths:
     expect(new Set(air.operations.map((o) => o.mcp.toolName)).size).toBe(air.operations.length);
   });
 
+  it("treats a verb-shaped trailing path segment as an action, not the resource", async () => {
+    // GET /field/search searches fields; naively taking the last segment as the
+    // resource misreads this as its own resource ("search list field").
+    const searchy = `openapi: 3.0.0
+info: { title: jira, version: 1.0.0 }
+paths:
+  /field/search:
+    get:
+      operationId: getFieldsPaginated
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: searchy, serviceId: "jira" });
+    const op = air.operations[0];
+    expect(op?.effect.resource).toBe("field");
+    expect(op?.cli.command).toBe("jira field search");
+    // The CLI command and the MCP tool name must agree on what the operation is —
+    // one no longer says "search" while the other says "get_fields_paginated"
+    // with an unrelated resource token wedged in between.
+    expect(op?.mcp.toolName).toContain("get_fields_paginated");
+  });
+
+  it("keeps the CLI command and effect action in agreement for a reclassified POST search", async () => {
+    const jql = `openapi: 3.0.0
+info: { title: jira, version: 1.0.0 }
+paths:
+  /search/jql:
+    post:
+      operationId: searchAndReconsileIssuesUsingJqlPost
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: jql, serviceId: "jira" });
+    const op = air.operations[0];
+    expect(op?.effect.kind).toBe("read");
+    expect(op?.cli.command).toBe("jira jql search");
+    expect(op?.confirmation.required).toBe(false);
+  });
+
+  it("strips a REST format suffix from the resource name (Twilio's .json)", async () => {
+    // Twilio's list/create paths carry `.json` (Messages.json) while fetch/delete
+    // carry it on the id segment (Messages/{Sid}.json) — leaving the suffix in
+    // renders the SAME resource two ways and leaks a wire-format detail into the
+    // agent-facing name. `sourceRef.path` (the wire path) keeps `.json`.
+    const twilioish = `openapi: 3.0.0
+info: { title: twilio, version: 1.0.0 }
+paths:
+  /Accounts/{AccountSid}/Messages.json:
+    post: { operationId: CreateMessage, responses: { "200": { description: ok } } }
+    get:  { operationId: ListMessage, responses: { "200": { description: ok } } }
+  /Accounts/{AccountSid}/Messages/{Sid}.json:
+    get: { operationId: FetchMessage, responses: { "200": { description: ok } } }
+`;
+    const air = await compile({ spec: twilioish, serviceId: "twilio" });
+    const list = air.operations.find((o) => o.sourceRef.operationId === "ListMessage");
+    const fetch = air.operations.find((o) => o.sourceRef.operationId === "FetchMessage");
+    expect(list?.cli.command).toBe("twilio Messages list");
+    expect(fetch?.cli.command).toBe("twilio Messages get"); // same resource token, no `.json`
+    expect(list?.sourceRef.path).toContain(".json"); // wire path untouched
+  });
+
+  it("keeps a synthetic-namespace operation name from doubling (GraphQL Query/Mutation wrapper)", async () => {
+    // GraphQL lowers every field to `/graphql/Mutation/<field>`. A field whose
+    // name merely CONTAINS a vocab verb (`acceptInvitation` contains "accept",
+    // `issueSearch` ends "search") must stay the resource — otherwise every
+    // field collapses onto the `Mutation` wrapper as its resource, they all
+    // collide, and disambiguation re-appends the field name, doubling the tool
+    // name (`..._accept_invitation_accept_invitation`).
+    const sdl = `type Query { issueSearch: String }
+type Mutation { acceptInvitation: Boolean createIssue: String }
+schema { query: Query mutation: Mutation }`;
+    const air = await compile({ spec: sdl, serviceId: "gql", sourceUri: "schema.graphql" });
+    const accept = air.operations.find((o) => o.sourceRef.operationId === "acceptInvitation");
+    const create = air.operations.find((o) => o.sourceRef.operationId === "createIssue");
+    const search = air.operations.find((o) => o.sourceRef.operationId === "issueSearch");
+    // Tool names are the clean field name, exactly once — no doubling.
+    expect(accept?.mcp.toolName).toBe("gql_accept_invitation");
+    expect(create?.mcp.toolName).toBe("gql_create_issue");
+    expect(search?.mcp.toolName).toBe("gql_issue_search");
+    // Every operation name is unique — no spurious collisions on the wrapper.
+    const tools = air.operations.map((o) => o.mcp.toolName);
+    expect(new Set(tools).size).toBe(tools.length);
+  });
+
+  it("compiles a large recursive schema without exploding (adapter title stamping)", async () => {
+    // A GraphQL-style recursive type: A → B → A. After dereference() inlines it
+    // into a massively-shared graph, `bundleDocument` must re-collapse each
+    // named type to a `$ref` — which it can only do if the adapter stamped a
+    // `title` on each named schema. Without the stamp, GitHub's real 1,752-type
+    // schema hung the compile (gigabytes on serialize). Here: the compiled AIR
+    // must be small and JSON-serializable.
+    const sdl = `type Query { a: A b: B }
+type A { name: String b: B }
+type B { name: String a: A }
+schema { query: Query }`;
+    const air = await compile({ spec: sdl, serviceId: "rec", sourceUri: "schema.graphql" });
+    expect(() => JSON.stringify(air)).not.toThrow();
+    // A/B collapsed to $ref pointers, so the whole document stays tiny.
+    expect(JSON.stringify(air).length).toBeLessThan(200_000);
+    expect(air.schemas.A).toBeDefined();
+    expect(air.schemas.B).toBeDefined();
+  });
+
+  it("decomposes an RPC-style dotted path into resource + action (Slack's chat.postMessage)", async () => {
+    // Slack's Web API is RPC-over-HTTP: `/chat.postMessage` is one path segment
+    // `namespace.method`. Taking it whole makes the CLI `slack chat.postMessage
+    // send` (dotted, redundant verb) and drift from the tool name.
+    const slackish = `openapi: 3.0.0
+info: { title: slack, version: 1.0.0 }
+paths:
+  /chat.postMessage:
+    post: { operationId: chat_postMessage, responses: { "200": { description: ok } } }
+  /conversations.history:
+    get: { operationId: conversations_history, responses: { "200": { description: ok } } }
+`;
+    const air = await compile({ spec: slackish, serviceId: "slack" });
+    const post = air.operations.find((o) => o.sourceRef.operationId === "chat_postMessage");
+    const hist = air.operations.find((o) => o.sourceRef.operationId === "conversations_history");
+    expect(post?.cli.command).toBe("slack chat post_message");
+    expect(post?.mcp.toolName).toBe("slack_chat_post_message"); // CLI and tool agree
+    expect(hist?.cli.command).toBe("slack conversations history");
+  });
+
+  it("keeps namespaced RPC methods distinct instead of colliding (Slack admin.* vs bare)", async () => {
+    // Slack ships both `conversations.archive` and `admin.conversations.archive`
+    // — collapsing the namespace would make them collide onto one name.
+    const slackish = `openapi: 3.0.0
+info: { title: slack, version: 1.0.0 }
+paths:
+  /conversations.archive:
+    post: { operationId: conversations_archive, responses: { "200": { description: ok } } }
+  /admin.conversations.archive:
+    post: { operationId: admin_conversations_archive, responses: { "200": { description: ok } } }
+`;
+    const air = await compile({ spec: slackish, serviceId: "slack" });
+    const commands = air.operations.map((o) => o.cli.command);
+    expect(new Set(commands).size).toBe(2); // distinct, no collision
+    expect(commands).toContain("slack conversations archive");
+    expect(commands).toContain("slack admin_conversations archive");
+    // No disambiguation suffix was needed — the names were distinct on their own.
+    expect(air.diagnostics.some((d) => d.code === "naming_collision_resolved")).toBe(false);
+  });
+
+  it("uses the operationId verb for a POST reused as update/delete (Twilio POST-for-update)", async () => {
+    // Twilio (and others) reuse POST for update, not just create; HTTP method
+    // alone maps both to "create" and collides them. The operationId carries
+    // the real verb.
+    const twilioish = `openapi: 3.0.0
+info: { title: twilio, version: 1.0.0 }
+paths:
+  /Accounts/{AccountSid}/Messages.json:
+    post: { operationId: CreateMessage, responses: { "200": { description: ok } } }
+  /Accounts/{AccountSid}/Messages/{Sid}.json:
+    post: { operationId: UpdateMessage, responses: { "200": { description: ok } } }
+`;
+    const air = await compile({ spec: twilioish, serviceId: "twilio" });
+    const create = air.operations.find((o) => o.sourceRef.operationId === "CreateMessage");
+    const update = air.operations.find((o) => o.sourceRef.operationId === "UpdateMessage");
+    expect(create?.cli.command).toBe("twilio Messages create");
+    expect(update?.cli.command).toBe("twilio Messages update"); // not "create" → no collision
+    expect(new Set(air.operations.map((o) => o.cli.command)).size).toBe(2);
+  });
+
   it("flags a weak (agent-hostile) name for review", async () => {
     const weak = `openapi: 3.0.0
 info: { title: gateway, version: 1.0.0 }
@@ -179,6 +408,148 @@ paths:
 `;
     const air = await compile({ spec: weak, serviceId: "gateway" });
     expect(air.diagnostics.some((d) => d.code === "weak_operation_name")).toBe(true);
+  });
+
+  it("flags a vague verb even from a well-declared operationId", async () => {
+    // Real-world case (Jira's POST /issue/{id}/transitions, operationId
+    // doTransition): a strong operationId signal alone must not be enough to
+    // hide an agent-hostile verb — mcp-atlassian itself renames this same
+    // operation to "transition_issue" rather than keep Atlassian's "do".
+    const vague = `openapi: 3.0.0
+info: { title: jira, version: 1.0.0 }
+paths:
+  /issue/{id}/transitions:
+    post:
+      operationId: doTransition
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: vague, serviceId: "jira" });
+    expect(air.diagnostics.some((d) => d.code === "weak_operation_name")).toBe(true);
+  });
+
+  it("picks the globally-minimal distinguishing token, not the first in path order", async () => {
+    // The old first-in-path rule would suffix the long "administrative-gateway"
+    // prefix; "v2" is an equally distinguishing but minimal token further along.
+    const clashing = `openapi: 3.0.0
+info: { title: reports, version: 1.0.0 }
+paths:
+  /administrative-gateway/v2/reports/summary:
+    get:
+      responses: { "200": { description: ok } }
+  /ops/reports/summary:
+    get:
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: clashing, serviceId: "reports" });
+    const commands = air.operations.map((o) => o.cli.command).sort();
+    expect(commands).toContain("reports summary list v2");
+    expect(commands).toContain("reports summary list ops");
+    expect(commands.some((c) => c.includes("administrative"))).toBe(false);
+  });
+
+  it("falls back to the shortest distinguishing token PAIR when no single token works", async () => {
+    // Every single token of each path also appears in another group member —
+    // only a pair pins each operation down.
+    const clashing = `openapi: 3.0.0
+info: { title: hub, version: 1.0.0 }
+paths:
+  /alpha/beta/items/sync:
+    post:
+      responses: { "200": { description: ok } }
+  /alpha/gamma/items/sync:
+    post:
+      responses: { "200": { description: ok } }
+  /beta/gamma/items/sync:
+    post:
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: clashing, serviceId: "hub" });
+    const commands = air.operations.map((o) => o.cli.command).sort();
+    expect(commands).toEqual([
+      "hub sync create alpha_beta",
+      "hub sync create alpha_gamma",
+      "hub sync create beta_gamma",
+    ]);
+    expect(air.diagnostics.filter((d) => d.code === "naming_collision_resolved")).toHaveLength(3);
+  });
+
+  it("assigns identical names regardless of input operation order (property)", async () => {
+    // A multi-collision fixture exercising every disambiguation tier: unique
+    // token, token pair, and the HTTP-method/index worst case.
+    const blocks = [
+      `  /orders/{id}/archive:
+    post:
+      responses: { "200": { description: ok } }`,
+      `  /subscriptions/{id}/archive:
+    post:
+      responses: { "200": { description: ok } }`,
+      `  /alpha/beta/items/sync:
+    post:
+      responses: { "200": { description: ok } }`,
+      `  /alpha/gamma/items/sync:
+    post:
+      responses: { "200": { description: ok } }`,
+      `  /beta/gamma/items/sync:
+    post:
+      responses: { "200": { description: ok } }`,
+      `  /things/{a}:
+    delete:
+      responses: { "204": { description: gone } }`,
+      `  /things/{a}/{b}:
+    delete:
+      responses: { "204": { description: gone } }`,
+    ];
+    const specFor = (order: number[]) => `openapi: 3.0.0
+info: { title: multi, version: 1.0.0 }
+paths:
+${order.map((i) => blocks[i]).join("\n")}
+`;
+    const orders = [
+      [0, 1, 2, 3, 4, 5, 6],
+      [6, 5, 4, 3, 2, 1, 0],
+      [3, 6, 0, 4, 1, 5, 2],
+    ];
+    const nameSets = await Promise.all(
+      orders.map(async (order) => {
+        const air = await compile({ spec: specFor(order), serviceId: "multi" });
+        return air.operations
+          .map((o) => ({
+            source: `${o.sourceRef.method} ${o.sourceRef.path}`,
+            id: o.id,
+            canonicalName: o.canonicalName,
+            command: o.cli.command,
+            toolName: o.mcp.toolName,
+          }))
+          .sort((a, b) => a.source.localeCompare(b.source));
+      }),
+    );
+    expect(nameSets[1]).toEqual(nameSets[0]);
+    expect(nameSets[2]).toEqual(nameSets[0]);
+    // And every assignment is unique — the repair actually resolved.
+    const commands = (nameSets[0] ?? []).map((o) => o.command);
+    expect(new Set(commands).size).toBe(commands.length);
+  });
+
+  it("resolves toolName collisions across read/write surfaces (Linear's Query+Mutation same-name fields)", async () => {
+    // Linear's real GraphQL schema has both Query.initiativeUpdate and
+    // Mutation.initiativeUpdate. Their CLI commands differ (list vs create
+    // action tokens), but both derive the same canonicalName and therefore the
+    // same MCP tool name — grouping by cli.command alone never sees the clash
+    // and the compile fails validation with duplicate_tool_name.
+    const sdl = `type Query { initiativeUpdate: String }
+type Mutation { initiativeUpdate(id: String): String }
+schema { query: Query mutation: Mutation }`;
+    const air = await compile({ spec: sdl, serviceId: "linear", sourceUri: "schema.graphql" });
+    expect(air.diagnostics.filter((d) => d.code === "duplicate_tool_name")).toEqual([]);
+    const tools = air.operations.map((o) => o.mcp.toolName);
+    expect(new Set(tools).size).toBe(tools.length);
+    // The disambiguation is meaningful (distinguishing path tokens, never a
+    // silent `_2`) and surfaced as a diagnostic.
+    expect(tools.every((t) => !/_2$/.test(t))).toBe(true);
+    expect(air.diagnostics.some((d) => d.code === "naming_collision_resolved")).toBe(true);
+    // Commands stay unique too — all three surfaces move together.
+    const commands = air.operations.map((o) => o.cli.command);
+    expect(new Set(commands).size).toBe(commands.length);
   });
 });
 
@@ -226,6 +597,51 @@ paths:
     // The assembled input surface carries a single `body` property.
     const props = op?.input.schema?.properties as Record<string, unknown>;
     expect(Object.keys(props)).toContain("body");
+  });
+});
+
+describe("parameter collection", () => {
+  const shared = `openapi: 3.0.0
+info: { title: projects, version: 1.0.0 }
+paths:
+  /projects/{project_gid}:
+    parameters:
+      - { name: project_gid, in: path, required: true, schema: { type: string } }
+      - { name: opt_pretty, in: query, schema: { type: boolean } }
+    get:
+      operationId: getProject
+      parameters:
+        - { name: opt_pretty, in: query, schema: { type: string } }
+        - { name: Accept, in: header, schema: { type: string } }
+        - { name: X-Request-Id, in: header, schema: { type: string } }
+      responses:
+        "200": { description: ok }
+`;
+
+  it("collects path-item-level parameters shared by every method (Asana/Zendesk style)", async () => {
+    const air = await compile({ spec: shared, serviceId: "projects" });
+    const op = air.operations[0];
+    const gid = op?.input.params.find((p) => p.name === "project_gid");
+    expect(gid?.in).toBe("path");
+    expect(gid?.required).toBe(true);
+  });
+
+  it("lets an operation-level parameter override the path-item one by name+location", async () => {
+    const air = await compile({ spec: shared, serviceId: "projects" });
+    const pretty = air.operations[0]?.input.params.filter((p) => p.name === "opt_pretty");
+    expect(pretty).toHaveLength(1);
+    expect(pretty?.[0]?.schema.type).toBe("string"); // the operation's schema won
+  });
+
+  it("ignores Accept/Content-Type/Authorization header parameters with a diagnostic (OpenAPI mandate)", async () => {
+    const air = await compile({ spec: shared, serviceId: "projects" });
+    const headers = air.operations[0]?.input.params.filter((p) => p.in === "header");
+    // The runtime owns Accept; a real header input like X-Request-Id survives.
+    expect(headers?.map((p) => p.name)).toEqual(["X-Request-Id"]);
+    const dropped = air.diagnostics.filter((d) => d.code === "header_param_ignored");
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]?.level).toBe("info");
+    expect(dropped[0]?.message).toContain("Accept");
   });
 });
 
@@ -279,5 +695,49 @@ describe("authored workflows", () => {
 `;
     const air = await compile({ spec, manifest: badManifest, serviceId: "payments" });
     expect(air.diagnostics.some((d) => d.code === "workflow_step_unresolved")).toBe(true);
+  });
+});
+
+describe("self-referential schemas", () => {
+  it("compiles a recursive schema instead of crashing on a circular object graph", async () => {
+    // Real specs legitimately nest a type inside itself (a group of groups, a
+    // comment thread of replies). Full $ref dereferencing turns that into an
+    // actual circular JS object graph; the compiler must serialize the result,
+    // not throw "Converting circular structure to JSON".
+    const recursive = `openapi: 3.0.0
+info: { title: groups, version: 1.0.0 }
+paths:
+  /groups/{id}:
+    get:
+      operationId: getGroup
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+components:
+  schemas:
+    Group:
+      type: object
+      properties:
+        name: { type: string }
+        subgroups:
+          type: array
+          items:
+            $ref: '#/components/schemas/Group'
+`;
+    const air = await compile({ spec: recursive, serviceId: "groups" });
+    expect(air.operations).toHaveLength(1);
+    // Structural identity recognizes the inlined recursive copy as `Group`
+    // even though it carries no title, so the recursion is represented as an
+    // ordinary `$ref` — real structure preserved, nothing truncated. (Before
+    // structural hashing, an UNTITLED recursive component could not be
+    // re-identified, so this compile had to cycle-truncate and report a
+    // `schema_cycle_truncated` diagnostic; that failure mode is gone.)
+    expect(air.diagnostics.some((d) => d.code === "schema_cycle_truncated")).toBe(false);
+    // The result must actually be JSON-safe (this would throw if it weren't).
+    expect(() => JSON.stringify(air)).not.toThrow();
   });
 });

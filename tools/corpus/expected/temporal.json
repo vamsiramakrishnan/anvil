@@ -1,0 +1,7 @@
+{
+  "operations": {
+    "StartWorkflowExecution": { "toolName": "temporal_start_workflow_execution", "effect": "mutation" },
+    "ListWorkflowExecutions": { "toolName": "temporal_list_workflow_executions", "effect": "read", "risk": "none" },
+    "TerminateWorkflowExecution": { "toolName": "temporal_terminate_workflow_execution", "effect": "mutation", "risk": "destructive" }
+  }
+}

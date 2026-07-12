@@ -1,0 +1,50 @@
+# Supplemental Anvil manifest (spec §4). Slack's Web API is RPC-over-HTTP
+# (POST /chat.postMessage); none of these writes accept a client idempotency
+# key, so posting a message is honestly non-idempotent (a retry double-posts).
+# The mature reference (korotovsky/slack-mcp-server) gates every write behind
+# an explicit env-var opt-in and defaults to read-only — Anvil's equivalent is
+# leaving each mutation confirmation-required and approved deliberately here.
+service:
+  name: slack
+  display_name: Slack Web API
+  owner: backtesting
+  environment: prod
+
+auth:
+  type: jwt_bearer
+  scopes: []
+
+operations:
+  # Posting a message is a non-idempotent comms action — a retry double-posts.
+  chat_postMessage:
+    side_effect: mutation
+    risk: high
+    idempotency: { strategy: none }
+    confirmation:
+      required: true
+      risk: high
+      reason: Posts a message to a channel; retrying after a failure may post it twice.
+    retries: { enabled: false }
+    state: approved
+
+  # Adding a reaction is naturally idempotent in Slack's own semantics (adding
+  # the same reaction twice is a no-op / already_reacted error, not a duplicate).
+  reactions_add:
+    side_effect: mutation
+    risk: medium
+    idempotency: { strategy: natural }
+    state: approved
+
+  # Everything else keeps the compiler's classification; only exposure declared.
+  chat_update: { state: approved }
+  chat_delete: { state: approved }
+  conversations_create: { state: approved }
+  conversations_archive: { state: approved }
+  conversations_invite: { state: approved }
+  reactions_remove: { state: approved }
+  users_profile_set: { state: approved }
+  conversations_history: { state: approved }
+  conversations_replies: { state: approved }
+  conversations_list: { state: approved }
+  users_info: { state: approved }
+  users_list: { state: approved }

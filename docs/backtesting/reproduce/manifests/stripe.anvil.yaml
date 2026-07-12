@@ -1,0 +1,59 @@
+# Supplemental Anvil manifest (spec §4). Unlike Jira/Confluence/GitHub,
+# Stripe's real API has a first-class, universal idempotency mechanism: every
+# mutating (POST) endpoint accepts a client-supplied `Idempotency-Key` header,
+# and Stripe deduplicates automatically within a 24-hour window
+# (https://docs.stripe.com/api/idempotent_requests). This is NOT expressed in
+# the OpenAPI spec itself (it's a cross-cutting convention documented in
+# prose, not a per-operation parameter — see docs/backtesting/stripe.md), so
+# every operation below declares it from real, documented Stripe behavior.
+# This is the same idempotency-key pattern the payments example (`examples/payments/anvil.yaml`, still committed)
+# already modeled — Stripe is the real API that pattern was drawn from.
+service:
+  name: stripe
+  display_name: Stripe API
+  owner: backtesting
+  environment: prod
+
+auth:
+  type: oauth2
+  scopes: []
+
+operations:
+  # Financial mutations: idempotency-key-safe to retry, but still require
+  # confirmation — see the conversation on why these are independent axes
+  # (idempotency answers "is a retry safe?"; confirmation answers "should this
+  # happen at all without a human?"). classifyConfirmation already requires
+  # confirmation for financial/destructive/irreversible risk regardless of
+  # idempotency, so no `confirmation:` override is needed here — only the
+  # idempotency strategy the spec itself cannot express.
+  PostChargesChargeCapture: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostChargesChargeRefund: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostInvoices: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostInvoicesInvoiceFinalize: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostInvoicesInvoicePay: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostInvoicesInvoiceVoid: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostPaymentIntents: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostPaymentIntentsIntentCancel: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostPaymentIntentsIntentCapture: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostPaymentIntentsIntentConfirm: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostRefunds: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostRefundsRefundCancel: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+
+  # Medium-risk mutations: same real Idempotency-Key mechanism; the compiler's
+  # own risk classification (medium, not financial/destructive) means no
+  # confirmation is forced once idempotency is proven — matches Stripe's own
+  # dashboard/API ergonomics (creating a customer or subscription isn't gated
+  # behind a confirmation step the way capturing money is).
+  PostCustomers: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+  PostSubscriptions: { idempotency: { strategy: required_request_key, key_location: header, header: Idempotency-Key }, state: approved }
+
+  # Everything else keeps the compiler's own classification; only exposure is
+  # declared.
+  GetChargesSearch: { state: approved }
+  GetCustomers: { state: approved }
+  GetCustomersCustomer: { state: approved }
+  DeleteCustomersCustomer: { state: approved }
+  GetInvoicesInvoice: { state: approved }
+  GetPaymentIntentsIntent: { state: approved }
+  GetRefundsRefund: { state: approved }
+  DeleteSubscriptionsSubscriptionExposedId: { state: approved }

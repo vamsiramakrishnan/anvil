@@ -1,3 +1,8 @@
+---
+name: refinement-proposal-contract
+description: The exact proposal JSON an executor emits — shape, grounding rules, and boundaries. Read this before emitting any proposal.
+---
+
 # The proposal contract
 
 An executor turns a skill's context into a **proposal**: evidence-backed claims plus

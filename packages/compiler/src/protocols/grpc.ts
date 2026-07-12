@@ -1,10 +1,11 @@
 /**
  * Protocol Buffers (proto3) → OpenAPI 3.0 adapter for gRPC services.
  *
- * Each `rpc` in a `service` becomes one operation. gRPC has no read/write verb
- * of its own, so effect is inferred conservatively from the method name: the
+ * Each `rpc` in a `service` becomes one operation, lowered to POST — the
+ * truthful wire method for every gRPC call. gRPC has no read/write verb of its
+ * own, so effect is inferred conservatively from the method name: the
  * canonical read prefixes (Get/List/Watch/Search/Lookup/Query/Fetch/Read/…)
- * lower to GET (read), everything else lowers to POST (mutation → treated as
+ * assert `x-anvil-effect: read`, everything else stays a mutation (treated as
  * unsafe until enriched). The request message becomes the body, the response
  * message the output schema, and every `message`/`enum` becomes a
  * `components.schemas` entry referenced by `$ref` — recursion is resolved by
@@ -116,6 +117,18 @@ function typeToSchema(typeName: string, c: Collected): JsonSchemaLike {
   return { type: "string" };
 }
 
+/**
+ * Resolve an RPC's request/response message type. Unlike a field type, a
+ * method's payload is a *message* by grammar, so an unresolved import degrades
+ * to a permissive object (all fields unknown, hence all optional — JSON
+ * transcoding carries a message as a JSON object and `{}` must stay valid),
+ * never to a scalar the wire could not carry.
+ */
+function rpcMessageSchema(typeName: string, c: Collected): JsonSchemaLike {
+  const schema = typeToSchema(typeName, c);
+  return schema.$ref !== undefined || schema.type === "object" ? schema : { type: "object" };
+}
+
 function fieldSchema(field: protobuf.Field, c: Collected): JsonSchemaLike {
   if (field instanceof protobuf.MapField) {
     return { type: "object", additionalProperties: typeToSchema(field.type, c) };
@@ -131,11 +144,55 @@ function messageSchema(message: protobuf.Type, c: Collected): JsonSchemaLike {
 }
 
 /**
- * Lower a proto3 source string into an OpenAPI 3.0 document (with `$ref`s), to
- * be dereferenced by the caller.
+ * Resolve a proto `import "path"` to the imported file's text, or undefined if
+ * it isn't available (a well-known type, or simply not provided). Real services
+ * split their request/response messages across files — Temporal's
+ * `WorkflowService` methods take `StartWorkflowExecutionRequest` etc. from a
+ * sibling `request_response.proto` — so without this the bodies compile to an
+ * opaque stub. Mirrors how the OpenAPI path resolves multi-file `$ref`s from the
+ * snapshot: same-snapshot bytes only, never an ambient host path or the network.
  */
-export function adaptProto(source: string, title?: string): OpenApiDocument {
-  const { root, package: pkg } = protobuf.parse(source, { keepCase: true });
+export type ProtoImportResolver = (importPath: string) => string | undefined;
+
+/**
+ * Lower a proto3 source into an OpenAPI 3.0 document (with `$ref`s), to be
+ * dereferenced by the caller. When `resolveImport` is given, `import`ed files
+ * are loaded into the same protobuf root (transitively) so cross-file message
+ * types resolve to their real fields; an import that can't be resolved degrades
+ * gracefully (its types stay unresolved) exactly as a missing well-known type
+ * does. Single-file callers pass no resolver and get the original behaviour.
+ */
+export function adaptProto(
+  source: string,
+  title?: string,
+  resolveImport?: ProtoImportResolver,
+): OpenApiDocument {
+  let root: protobuf.Root;
+  let pkg: string | undefined;
+  if (resolveImport) {
+    root = new protobuf.Root();
+    const seen = new Set<string>();
+    const load = (text: string): void => {
+      const parsed = protobuf.parse(text, root, { keepCase: true });
+      pkg = pkg ?? parsed.package ?? undefined;
+      for (const imp of [...(parsed.imports ?? []), ...(parsed.weakImports ?? [])]) {
+        if (seen.has(imp)) continue;
+        seen.add(imp);
+        const importedText = resolveImport(imp);
+        if (importedText !== undefined) load(importedText);
+      }
+    };
+    load(source);
+    // Best-effort: a remaining unresolved import (a well-known type, or one not
+    // provided) must degrade, not throw — same contract as the single-file path.
+    try {
+      root.resolveAll();
+    } catch {
+      /* leave unresolved types as-is; typeToSchema handles them */
+    }
+  } else {
+    ({ root, package: pkg } = protobuf.parse(source, { keepCase: true }));
+  }
   const c = collect(root);
 
   const schemas: Record<string, JsonSchemaLike> = {};
@@ -149,8 +206,10 @@ export function adaptProto(source: string, title?: string): OpenApiDocument {
   for (const service of c.services) {
     const serviceFqn = stripLeadingDot(service.fullName);
     for (const method of service.methodsArray) {
+      // Every gRPC call is POST on the wire (HTTP/2 POST per the gRPC spec);
+      // the read/write distinction is asserted explicitly via `x-anvil-effect`
+      // instead of a fake GET, which cannot carry the required request body.
       const read = READ_RPC.test(method.name);
-      const httpMethod = read ? "get" : "post";
       // gRPC wire path is /package.Service/Method — used verbatim as the AIR path.
       const path = `/${serviceFqn}/${method.name}`;
       const streaming =
@@ -164,18 +223,21 @@ export function adaptProto(source: string, title?: string): OpenApiDocument {
         responses: {
           "200": {
             description: `${method.name} response`,
-            content: { "application/json": { schema: typeToSchema(method.responseType, c) } },
+            content: { "application/json": { schema: rpcMessageSchema(method.responseType, c) } },
           },
         },
         "x-grpc-service": serviceFqn,
         "x-grpc-method": method.name,
         "x-grpc-streaming": streaming.trim() || undefined,
+        // The READ_RPC name test is a heuristic; classify.ts records it as an
+        // adapter assertion with heuristic-grade confidence.
+        ...(read ? { "x-anvil-effect": "read" } : {}),
       };
       op.requestBody = {
         required: true,
-        content: { "application/json": { schema: typeToSchema(method.requestType, c) } },
+        content: { "application/json": { schema: rpcMessageSchema(method.requestType, c) } },
       };
-      paths[path] = { [httpMethod]: op };
+      paths[path] = { post: op };
     }
   }
 

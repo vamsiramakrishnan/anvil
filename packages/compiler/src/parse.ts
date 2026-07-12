@@ -1,8 +1,9 @@
 import { posix } from "node:path";
-import type { SourceKind } from "@anvil/air";
+import type { Diagnostic, SourceKind } from "@anvil/air";
 import { dereference, load } from "@scalar/openapi-parser";
 import { convertObj } from "swagger2openapi";
-import { adaptProtocol, type ProtocolFormat } from "./protocols/index.js";
+import { bundleDocument, DEFAULT_MAX_SCHEMA_DEPTH } from "./decycle.js";
+import { adaptProtocol, type ProtocolFormat, type ProtoImportResolver } from "./protocols/index.js";
 import { type CompilerSource, ephemeralCompilerSource } from "./source/compiler-source.js";
 
 /**
@@ -22,6 +23,66 @@ export interface ParsedSpec {
   kind: SourceKind;
   /** Fully dereferenced OpenAPI 3.x document. */
   document: OpenApiDocument;
+  /** Diagnostics raised while parsing (e.g. self-referential schemas truncated). */
+  diagnostics: Diagnostic[];
+}
+
+/**
+ * Full `$ref` dereferencing turns a self-referential schema into a genuine
+ * circular object graph, and a densely cross-referential one (Stripe's
+ * ~860 schemas is the case that found this) into a combinatorial blowup when
+ * naively inlined (spec §2.4 conservatism applies to structure, not just
+ * safety: never hand the rest of the pipeline a document it cannot serialize
+ * or that takes minutes to). `bundleDocument` fixes this at the source —
+ * every named schema is processed once and referenced by `$ref` everywhere
+ * else, the same way the real spec (and every real SDK generator) already
+ * represents cross-referential types — rather than truncating a naively
+ * inlined tree after the fact. A cycle among named schemas needs no special
+ * handling at all (it's just a `$ref` back to a name); only genuinely deep
+ * *anonymous* structure can still hit the depth bound, which stays as a rare
+ * backstop, never silent: a `schema_cycle_truncated` diagnostic per
+ * occurrence (structurally significant), and one aggregate
+ * `schema_depth_truncated` diagnostic if the backstop fires at all.
+ */
+function decycle(document: OpenApiDocument): {
+  document: OpenApiDocument;
+  diagnostics: Diagnostic[];
+} {
+  const { document: bundled, truncatedAt, depthLimitedAt, synthesized } = bundleDocument(document);
+  const diagnostics: Diagnostic[] = truncatedAt.map((path) => ({
+    level: "warning",
+    code: "schema_cycle_truncated",
+    message: `Schema at ${path} is a self-referential anonymous structure; the recursive nesting was truncated to a shallow stub so the compiled bundle stays JSON-safe. Review the source spec if the full recursive shape matters to callers.`,
+    path,
+  }));
+  if (depthLimitedAt.length > 0) {
+    const sample = depthLimitedAt.slice(0, 5).join(", ");
+    diagnostics.push({
+      level: "info",
+      code: "schema_depth_truncated",
+      message:
+        `${depthLimitedAt.length} anonymous (unnamed) nested structure(s) beyond the ${DEFAULT_MAX_SCHEMA_DEPTH}-level ` +
+        `expansion bound were truncated to a shallow stub (e.g. ${sample}${depthLimitedAt.length > 5 ? ", …" : ""}). ` +
+        `Named component schemas are unaffected by this bound — they are referenced by $ref, not inlined. This does ` +
+        `not affect any operation's classified safety, only how deep an unnamed/inline payload shape nests.`,
+    });
+  }
+  if (synthesized.length > 0) {
+    const sample = synthesized
+      .slice(0, 5)
+      .map((s) => s.name)
+      .join(", ");
+    diagnostics.push({
+      level: "info",
+      code: "schema_structure_hoisted",
+      message:
+        `${synthesized.length} large repeated anonymous structure(s) were hoisted into synthesized ` +
+        `components.schemas entries (e.g. ${sample}${synthesized.length > 5 ? ", …" : ""}) so repeats become ` +
+        `$ref pointers and the compiled bundle stays proportional to unique structure. Content is unchanged — ` +
+        `only where it is defined.`,
+    });
+  }
+  return { document: bundled, diagnostics };
 }
 
 /** The subset of OpenAPI we read. Kept loose — the library owns validation. */
@@ -52,7 +113,56 @@ const PROTOCOL_FORMATS: Record<string, { format: ProtocolFormat; kind: SourceKin
   graphql: { format: "graphql", kind: "graphql" },
   protobuf: { format: "protobuf", kind: "protobuf" },
   wsdl: { format: "wsdl", kind: "wsdl" },
+  discovery: { format: "discovery", kind: "discovery" },
+  postman: { format: "postman", kind: "postman" },
 };
+
+/**
+ * Resolve a proto `import "a/b/c.proto"` — or a WSDL/XSD import location the
+ * adapter has already joined against the importing file's directory — to
+ * another file *in the same snapshot*: never the network or an ambient host
+ * path, matching the OpenAPI multi-file contract. Tries the import path
+ * verbatim, then its basename, so a snapshot that preserves the import's
+ * directory structure OR just carries the sibling files flat both resolve. A
+ * missing import returns undefined and the adapter degrades gracefully.
+ */
+function snapshotImportResolver(source: CompilerSource): ProtoImportResolver {
+  const decoder = new TextDecoder("utf-8");
+  const byBasename = new Map<string, Uint8Array>();
+  for (const [path, bytes] of source.files) {
+    const base = path.split("/").pop();
+    if (base && !byBasename.has(base)) byBasename.set(base, bytes);
+  }
+  return (importPath: string): string | undefined => {
+    const direct = source.files.get(importPath) ?? source.files.get(posix.normalize(importPath));
+    if (direct) return decoder.decode(direct);
+    const base = importPath.split("/").pop();
+    const byBase = base ? byBasename.get(base) : undefined;
+    return byBase ? decoder.decode(byBase) : undefined;
+  };
+}
+
+/**
+ * Stamp each adapter-produced named schema with `title: <componentKey>` when it
+ * has none. Titles are good display metadata for downstream artifacts (docs,
+ * skills, examples) — but they are NOT load-bearing for schema identity:
+ * `bundleDocument` (decycle.ts) re-collapses an inlined copy back to a `$ref`
+ * by structural canonical hashing, which never depends on vendor-supplied
+ * names. (Historically this stamp was what let title-based matching collapse
+ * GitHub's real 1,752-type GraphQL schema instead of hanging the compile;
+ * structural identity now handles untitled schemas by construction, and this
+ * stamp remains purely cosmetic.)
+ */
+function stampSchemaTitles(doc: OpenApiDocument): void {
+  const schemas = doc.components?.schemas;
+  if (!schemas) return;
+  for (const [name, schema] of Object.entries(schemas)) {
+    if (schema !== null && typeof schema === "object" && !Array.isArray(schema)) {
+      const s = schema as Record<string, unknown>;
+      if (typeof s.title !== "string") s.title = name;
+    }
+  }
+}
 
 /**
  * Parse the entrypoint of a CompilerSource into an OpenAPI 3.x document,
@@ -83,14 +193,21 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
     const text = new TextDecoder("utf-8").decode(bytes);
     let lowered: OpenApiDocument;
     try {
-      lowered = adaptProtocol(protocol.format, text);
+      const resolveImport = snapshotImportResolver(source);
+      lowered = adaptProtocol(protocol.format, text, undefined, {
+        proto: resolveImport,
+        wsdl: resolveImport,
+        sourcePath: source.entrypoint.path,
+      });
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to parse ${protocol.format} source: ${detail}`);
     }
+    stampSchemaTitles(lowered);
     const { schema, errors } = await dereference(lowered as Record<string, unknown>);
     if (!schema) throw failure(errors);
-    return { kind: protocol.kind, document: schema as OpenApiDocument };
+    const decycled = decycle(schema as OpenApiDocument);
+    return { kind: protocol.kind, ...decycled };
   }
 
   const entry = source.entrypoint.path;
@@ -123,12 +240,14 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
     const converted = await convertSwagger(entrypoint as OpenApiDocument);
     const { schema, errors } = await dereference(converted);
     if (!schema) throw failure(errors);
-    return { kind: "swagger", document: schema as OpenApiDocument };
+    const decycled = decycle(schema as OpenApiDocument);
+    return { kind: "swagger", ...decycled };
   }
 
   const { schema, errors } = await dereference(filesystem);
   if (!schema) throw failure(errors);
-  return { kind: "openapi", document: schema as OpenApiDocument };
+  const decycled = decycle(schema as OpenApiDocument);
+  return { kind: "openapi", ...decycled };
 }
 
 /**

@@ -1,3 +1,8 @@
+---
+name: refinement-loop
+description: The anvil refine commands, the deficiency catalog, and the refinement-pack layout. Read this to drive the loop end to end.
+---
+
 # The refinement loop
 
 ## Commands
@@ -26,6 +31,7 @@ it, and whether that skill is implemented today.
 | `missing_operation_description` | documentation | medium | describe-operation | yes |
 | `missing_service_description` | documentation | low | describe-service | — |
 | `opaque_enum_values` | documentation | medium | describe-enum | — |
+| `phantom_operation_documented` | documentation | high | align-artifacts | — |
 | `undocumented_error` | documentation | low | enrich-errors | yes |
 | `undocumented_pagination` | documentation | low | document-pagination | — |
 | `auth_principal_unclear` | safety | medium | clarify-auth | — |
@@ -35,6 +41,7 @@ it, and whether that skill is implemented today.
 | `mutation_effect_unproven` | safety | high | classify-idempotency | — |
 | `retry_basis_unproven` | safety | high | classify-idempotency | — |
 | `capability_missing_routing_phrases` | usability | low | author-intent-examples | — |
+| `cross_surface_disagreement` | usability | high | align-artifacts | — |
 | `indistinct_operation_descriptions` | usability | medium | disambiguate-operations | — |
 | `operation_lacks_intent_examples` | usability | low | author-intent-examples | — |
 | `schema_too_large_for_disclosure` | usability | info | reduce-schema-disclosure | — |

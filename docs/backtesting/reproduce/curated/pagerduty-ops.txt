@@ -1,0 +1,12 @@
+listIncidents
+createIncident
+getIncident
+updateIncident
+listServices
+getService
+listSchedules
+getSchedule
+listOnCalls
+listEscalationPolicies
+getEscalationPolicy
+listUsers

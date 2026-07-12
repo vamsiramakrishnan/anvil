@@ -25,6 +25,10 @@ beforeAll(async () => {
     [
       "compile",
       join(examples, "openapi.yaml"),
+      // The manifest approves the operations; the run pass-through tests below
+      // need an approved op — the tool engine exposes only the approved surface.
+      "--manifest",
+      join(examples, "anvil.yaml"),
       "--service",
       "payments",
       "--out",

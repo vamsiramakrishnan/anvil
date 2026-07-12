@@ -1,0 +1,15 @@
+CreateMessage
+ListMessage
+FetchMessage
+UpdateMessage
+DeleteMessage
+CreateCall
+ListCall
+FetchCall
+UpdateCall
+DeleteCall
+CreateIncomingPhoneNumber
+ListIncomingPhoneNumber
+FetchIncomingPhoneNumber
+UpdateIncomingPhoneNumber
+DeleteIncomingPhoneNumber

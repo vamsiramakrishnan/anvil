@@ -353,5 +353,8 @@ describe("anvil CLI: end-to-end compile → inspect → lint", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+    // Full compile + write-to-disk bundle + ~15 CLI subcommands is legitimately
+    // heavy; the default 5s timeout is flaky when the whole suite runs its
+    // heaviest compiles (Stripe-scale bundling, protocol adapters) in parallel.
+  }, 30_000);
 });

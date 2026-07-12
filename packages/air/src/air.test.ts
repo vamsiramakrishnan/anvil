@@ -76,6 +76,64 @@ describe("AirDocument", () => {
     expect(json.operations[0].mcp.toolName).toBe("payments_create_refund");
   });
 
+  it("round-trips a bundle with many repeated substructures without emitting aliases", () => {
+    // A large real bundle (PagerDuty's 465-op AIR) repeats identical
+    // substructures — the same retry-condition list, error shapes, etc. — on
+    // every operation. The `yaml` serializer's default would emit a YAML
+    // anchor/alias per repeat, and on re-read the parser's anti-"billion
+    // laughs" cap of 100 aliases threw "Excessive alias count", so `anvil
+    // lint`/`certify` failed on Anvil's own output. Fabricate that shape:
+    // 120 operations that all share a byte-identical retry policy object —
+    // past the parser's default 100-alias cap.
+    const base = loadAirDocument(doc);
+    const proto = base.operations[0] as Operation;
+    const many = {
+      ...base,
+      operations: Array.from({ length: 120 }, (_, i) => ({
+        ...structuredClone(proto),
+        id: `payments.refund.create_${i}`,
+        canonicalName: `create_refund_${i}`,
+      })),
+    };
+    const air = loadAirDocument(many);
+    const yaml = airToYaml(air);
+    // No YAML anchors are emitted — the canonical form is self-contained.
+    expect(yaml).not.toMatch(/: &/);
+    expect(yaml).not.toMatch(/ \*[A-Za-z0-9_]/);
+    // And it re-parses (this threw before the fix — 120 shared substructures
+    // is past the parser's default 100-alias cap).
+    const back = airFromYaml(yaml);
+    expect(back.operations).toHaveLength(120);
+  }, 20_000);
+
+  it("round-trips descriptions with YAML-hostile whitespace (whitespace-only lines, trailing spaces)", () => {
+    // Real shape from the lgtm.com spec (found by the corpus sweep's round-trip
+    // oracle): a long description mixing indented lines, a line with a trailing
+    // space, and a whitespace-only line. The pretty block-scalar emission
+    // gained an extra newline on re-parse, silently drifting the contract
+    // hash; airToYaml now verifies and falls back to lossless quoting.
+    const hostile =
+      "Download all the alerts.\nUse the `Accept:` header, e.g. `text/csv; without-header` \n" +
+      "      would result in CSV output without a header row.\n    \n\n\n\n" +
+      "To find the analysis identifier for a commit, use the analyses endpoint.";
+    const base = loadAirDocument(doc);
+    const withHostile = structuredClone(base);
+    (withHostile.operations[0] as Operation).description = hostile;
+    const air = loadAirDocument(withHostile);
+    const back = airFromYaml(airToYaml(air));
+    expect(back.operations[0]?.description).toBe(hostile);
+  });
+
+  it("keeps pretty block scalars for ordinary multi-line descriptions", () => {
+    const base = loadAirDocument(doc);
+    const withPlain = structuredClone(base);
+    (withPlain.operations[0] as Operation).description = "line one\nline two\nline three";
+    const yaml = airToYaml(loadAirDocument(withPlain));
+    // The common case still emits a readable block scalar, not quoted strings.
+    expect(yaml).toMatch(/description: [|>]/);
+    expect(airFromYaml(yaml).operations[0]?.description).toBe("line one\nline two\nline three");
+  });
+
   it("rejects unknown enum values", () => {
     const bad = structuredClone(doc) as { operations: { effect: { kind: string } }[] };
     bad.operations[0].effect.kind = "teleport";

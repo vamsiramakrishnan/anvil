@@ -1,0 +1,69 @@
+# Supplemental Anvil manifest (spec §4). Twilio's Api2010 REST API reuses POST
+# for both create and update, and has no client-supplied idempotency key on the
+# core messaging/voice resources — so sends/creates are honestly non-idempotent
+# (a retried CreateMessage after a timeout can send a second SMS). This mirrors
+# the real risk: the official twilio-labs MCP exposes these per-endpoint with no
+# dry-run or dedup either (its answer to the 1,800-endpoint surface is a compact
+# search/retrieve façade, not per-op safety — see docs/backtesting/twilio.md).
+service:
+  name: twilio
+  display_name: Twilio Api2010
+  owner: backtesting
+  environment: prod
+
+auth:
+  type: basic
+  scopes: []
+
+operations:
+  # Sending a message is a non-idempotent, billable comms action — a retry can
+  # double-send. High risk (COMMS), confirmed, never auto-retried.
+  CreateMessage:
+    side_effect: mutation
+    risk: high
+    idempotency: { strategy: none }
+    confirmation:
+      required: true
+      risk: high
+      reason: Sends an SMS/MMS; retrying after a failure may send it twice.
+    retries: { enabled: false }
+    state: approved
+
+  # Placing a call — same non-idempotent, billable, confirmed posture.
+  CreateCall:
+    side_effect: mutation
+    risk: high
+    idempotency: { strategy: none }
+    confirmation:
+      required: true
+      risk: high
+      reason: Dials an outbound call; retrying after a failure may place it twice.
+    retries: { enabled: false }
+    state: approved
+
+  # Buying a phone number is billable and non-idempotent.
+  CreateIncomingPhoneNumber:
+    side_effect: mutation
+    risk: high
+    idempotency: { strategy: none }
+    confirmation:
+      required: true
+      risk: high
+      reason: Purchases a phone number (billable); retrying may buy a second one.
+    retries: { enabled: false }
+    state: approved
+
+  # UpdateMessage on Twilio redacts/cancels — the compiler already reads its
+  # summary and flags it destructive; keep that, only declare exposure.
+  UpdateMessage: { state: approved }
+  UpdateCall: { state: approved }
+  UpdateIncomingPhoneNumber: { state: approved }
+  DeleteMessage: { state: approved }
+  DeleteCall: { state: approved }
+  DeleteIncomingPhoneNumber: { state: approved }
+  ListMessage: { state: approved }
+  FetchMessage: { state: approved }
+  ListCall: { state: approved }
+  FetchCall: { state: approved }
+  ListIncomingPhoneNumber: { state: approved }
+  FetchIncomingPhoneNumber: { state: approved }

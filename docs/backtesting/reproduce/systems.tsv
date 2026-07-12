@@ -1,0 +1,20 @@
+# system	format	spec_url	curated_list	trimmer
+jira	openapi3	https://developer.atlassian.com/cloud/jira/platform/swagger.v3.json	curated/jira-ops.txt	openapi3
+confluence	openapi3	https://dac-static.atlassian.com/cloud/confluence/openapi-v2.v3.json	curated/confluence-ops.txt	openapi3
+github	openapi3	https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json	curated/github-ops.txt	openapi3
+stripe	openapi3	https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json	curated/stripe-ops.txt	openapi3
+twilio	openapi3	https://raw.githubusercontent.com/twilio/twilio-oai/main/spec/json/twilio_api_v2010.json	curated/twilio-ops.txt	openapi3
+slack	swagger2	https://raw.githubusercontent.com/slackapi/slack-api-specs/master/web-api/slack_web_openapi_v2.json	curated/slack-paths.txt	swagger2
+gmail	discovery	https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest	curated/gmail-ids.txt	discovery
+notion	openapi3	https://raw.githubusercontent.com/makenotion/notion-mcp-server/main/scripts/notion-openapi.json	(whole)	none
+asana	openapi3	https://raw.githubusercontent.com/Asana/openapi/master/defs/asana_oas.yaml	curated/asana-ops.txt	openapi3
+pagerduty	openapi3	https://raw.githubusercontent.com/PagerDuty/api-schema/main/reference/REST/openapiv3.json	curated/pagerduty-ops.txt	openapi3
+zendesk	openapi3	https://developer.zendesk.com/zendesk/oas.yaml	curated/zendesk-ops.txt	openapi3
+intercom	openapi3	https://raw.githubusercontent.com/intercom/Intercom-OpenAPI/main/descriptions/2.11/api.intercom.io.yaml	curated/intercom-ops.txt	openapi3
+zoom	swagger2	https://raw.githubusercontent.com/zoom/api/master/openapi.v2.json	curated/zoom-paths.txt	swagger2
+hubspot	openapi3	https://raw.githubusercontent.com/HubSpot/HubSpot-public-api-spec-collection/main/PublicApiSpecs/CRM/Deals/Rollouts/424/v3/deals.json	(whole)	none
+docusign	swagger2	https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/esignature.rest.swagger-v2.1.json	curated/docusign-paths.txt	swagger2
+github_gql	graphql	https://docs.github.com/public/fpt/schema.docs.graphql	(whole)	none
+linear	graphql	https://raw.githubusercontent.com/linear/linear/master/packages/sdk/src/schema.graphql	(whole)	none
+temporal	protobuf	https://raw.githubusercontent.com/temporalio/api/master/temporal/api/workflowservice/v1/service.proto	(whole)	none
+amadeus	swagger2	https://raw.githubusercontent.com/amadeus4dev/amadeus-open-api-specification/main/spec/json/FlightOffersSearch_v2_swagger_specification.json	(whole)	none
