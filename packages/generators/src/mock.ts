@@ -57,17 +57,25 @@ export function generateScenarios(air: AirDocument): MockScenario[] {
  */
 export function exampleInput(op: Operation): Record<string, unknown> {
   const out: Record<string, unknown> = {};
+  // A null synthesis result carries no valid value: the tool's zod shape (and
+  // the executor) treat optional as ABSENT, never null, so an unsynthesizable
+  // optional input must be omitted rather than sent as null.
+  const set = (key: string, value: unknown, required: boolean) => {
+    if (value === null && !required) return;
+    out[key] = value;
+  };
   for (const p of op.input.params) {
-    out[propKey(p.name)] = p.example ?? exampleFromSchema(p.schema);
+    set(propKey(p.name), p.example ?? exampleFromSchema(p.schema), p.required);
   }
   const body = op.input.body;
   if (body?.projection === "fields") {
-    for (const f of body.fields) out[propKey(f.name)] = exampleFromSchema(f.schema);
+    for (const f of body.fields) set(propKey(f.name), exampleFromSchema(f.schema), f.required);
   } else if (body) {
     // A required body must synthesize at least {} — a null example would fail
     // the executor's required-input check before a single wire request is made.
     const example = exampleFromSchema(body.schema);
-    out.body = example ?? (body.required ? {} : example);
+    if (example !== null) out.body = example;
+    else if (body.required) out.body = {};
   }
   if (op.idempotency.mode === "required") out.idempotency_key = `${op.canonicalName}-example-key`;
   if (op.confirmation.required) out.confirm = true;
@@ -98,9 +106,18 @@ export function exampleFromSchema(
   if (!schema) return null;
   const cached = cache.get(schema);
   if (cached !== undefined) return cached;
-  if (schema.example !== undefined) return schema.example;
-  if (Array.isArray(schema.examples) && schema.examples.length) return schema.examples[0];
-  if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum[0];
+  // A literal `example: null` (HubSpot stamps one on nearly every schema) is an
+  // annotation, not a synthesizable value — null never validates against the
+  // tool's zod shape or the mock's contract, so fall through to the structure.
+  if (schema.example !== undefined && schema.example !== null) return schema.example;
+  if (Array.isArray(schema.examples)) {
+    const first = schema.examples.find((e) => e !== null && e !== undefined);
+    if (first !== undefined) return first;
+  }
+  if (Array.isArray(schema.enum)) {
+    const value = schema.enum.find((v) => v !== null);
+    if (value !== undefined) return value;
+  }
   if (depth >= MAX_EXAMPLE_DEPTH) return schema.type === "array" ? [] : {};
   // Materialized `allOf`: synthesize every member and deep-merge the object
   // results (later members win on key conflict). Real lowered specs compose a
@@ -116,11 +133,29 @@ export function exampleFromSchema(
     }
     return parts.find((p) => p !== null && p !== undefined) ?? {};
   }
-  // `oneOf`/`anyOf`: any branch satisfies the contract — take the first.
+  // `oneOf`/`anyOf`: any branch satisfies the contract — take the first. A
+  // schema may carry its own structure AND alternatives (a base object whose
+  // anyOf members only add `required` constraints — Intercom's create-contact);
+  // there the branch *refines* the base rather than replacing it.
   const alternatives = (
     Array.isArray(schema.oneOf) ? schema.oneOf : Array.isArray(schema.anyOf) ? schema.anyOf : []
   ) as JsonSchema[];
-  if (alternatives.length > 0) return exampleFromSchema(alternatives[0], cache, depth + 1);
+  if (alternatives.length > 0) {
+    const branch = exampleFromSchema(alternatives[0], cache, depth + 1);
+    if (schema.type === undefined && !isRecord(schema.properties)) return branch;
+    const own = ownExample(schema, cache, depth);
+    if (isRecord(own) && isRecord(branch)) {
+      const merged = deepMergeExamples(own, branch);
+      cache.set(schema, merged);
+      return merged;
+    }
+    return own !== null && own !== undefined ? own : branch;
+  }
+  return ownExample(schema, cache, depth);
+}
+
+/** Synthesize from the schema's own declared structure (no compositors). */
+function ownExample(schema: JsonSchema, cache: Map<JsonSchema, unknown>, depth: number): unknown {
   switch (schema.type) {
     case "string":
       return typeof schema.format === "string" && schema.format.includes("date")
@@ -134,30 +169,40 @@ export function exampleFromSchema(
       return true;
     case "array":
       return [exampleFromSchema(schema.items as JsonSchema | undefined, cache, depth + 1)];
-    case "object": {
-      const props = (schema.properties as Record<string, JsonSchema>) ?? {};
-      const obj: Record<string, unknown> = {};
-      cache.set(schema, obj); // set before recursing so a cycle in unshared data still terminates
-      for (const [k, v] of Object.entries(props)) obj[k] = exampleFromSchema(v, cache, depth + 1);
-      return obj;
-    }
+    case "object":
+      return objectExample(schema, cache, depth);
     default: {
-      // No declared type. A schema that still carries `properties` is an
-      // object in all but name; a bare annotation stub (a depth-truncation
-      // marker holding only `description` etc.) synthesizes as {} so a
-      // composed/required body never falls to null on its account.
-      if (isRecord(schema.properties)) {
-        const obj: Record<string, unknown> = {};
-        cache.set(schema, obj);
-        for (const [k, v] of Object.entries(schema.properties as Record<string, JsonSchema>)) {
-          obj[k] = exampleFromSchema(v, cache, depth + 1);
-        }
-        return obj;
+      // No declared type. A schema that still carries `properties` (or a
+      // `required` list — an object constraint in all but name) is an object;
+      // a bare annotation stub (a depth-truncation marker holding only
+      // `description` etc.) synthesizes as {} so a composed/required body
+      // never falls to null on its account.
+      if (isRecord(schema.properties) || Array.isArray(schema.required)) {
+        return objectExample(schema, cache, depth);
       }
       if (Object.keys(schema).every((k) => ANNOTATION_KEYS.has(k))) return {};
       return null;
     }
   }
+}
+
+function objectExample(
+  schema: JsonSchema,
+  cache: Map<JsonSchema, unknown>,
+  depth: number,
+): Record<string, unknown> {
+  const props = (schema.properties as Record<string, JsonSchema>) ?? {};
+  const obj: Record<string, unknown> = {};
+  cache.set(schema, obj); // set before recursing so a cycle in unshared data still terminates
+  for (const [k, v] of Object.entries(props)) obj[k] = exampleFromSchema(v, cache, depth + 1);
+  // A record/map schema (`additionalProperties`-typed, no fixed properties)
+  // gets one representative entry so the synthesized value exercises the map
+  // shape instead of the degenerate {}.
+  const extra = schema.additionalProperties;
+  if (Object.keys(obj).length === 0 && isRecord(extra)) {
+    obj.key = exampleFromSchema(extra as JsonSchema, cache, depth + 1);
+  }
+  return obj;
 }
 
 /** Schema keys that annotate without constraining — a schema of only these is a stub. */
@@ -206,8 +251,12 @@ export interface MockRoute {
   queryParams: string[];
   requiredQuery: string[];
   headerParams: string[];
-  /** The request-body contract, when the operation expects one. */
-  body?: { required: boolean; contentType: string; requiredFields: string[] };
+  /**
+   * The request-body contract, when the operation expects one. `schemaType` is
+   * the body schema's declared top-level type — a body is not always a JSON
+   * object (Jira's addWatcher takes a bare JSON string); absent means untyped.
+   */
+  body?: { required: boolean; contentType: string; requiredFields: string[]; schemaType?: string };
   /** The per-operation input schema shipped in the bundle, for reference. */
   schemaRef: string;
 }
@@ -243,11 +292,13 @@ export function generateMockRoutes(air: AirDocument): MockRoute[] {
             ? body.fields.filter((f) => f.required).map((f) => f.name)
             : ((body.schema.required as string[] | undefined) ?? []),
       };
+      if (typeof body.schema.type === "string") route.body.schemaType = body.schema.type;
     } else if (legacyBody.length > 0) {
       route.body = {
         required: legacyBody.some((p) => p.required),
         contentType: "application/json",
         requiredFields: legacyBody.filter((p) => p.required).map((p) => p.name),
+        schemaType: "object", // in:"body" params are fields of one JSON object
       };
     }
     routes.push(route);
@@ -287,18 +338,54 @@ let captures = [];
 let scenarioOverride = process.env.ANVIL_MOCK_SCENARIO ?? null;
 let faults = new Map(); // operationId -> { status, times }
 
-/** Match a path template against a concrete path; {params} match any non-empty segment. */
+/**
+ * Match one template segment against a concrete (percent-decoded) segment.
+ * A {param} may be embedded inside a segment with literal prefix/suffix
+ * (Twilio's "{Sid}.json"); literals must match exactly, params are non-empty.
+ */
+function matchSegment(tseg, seg, params) {
+  let pattern = "^";
+  const names = [];
+  for (const part of tseg.split(/(\\{[^}]+\\})/).filter((s) => s.length > 0)) {
+    const m = /^\\{(.+)\\}$/.exec(part);
+    if (m) {
+      names.push(m[1]);
+      pattern += "(.+?)";
+    } else {
+      pattern += part.replace(/[.*+?^$\\{\\}()|[\\]\\\\]/g, "\\\\$&");
+    }
+  }
+  const match = new RegExp(pattern + "$").exec(seg);
+  if (!match) return false;
+  names.forEach((name, i) => { params[name] = match[i + 1]; });
+  return true;
+}
+
+/** Match a path template against a concrete path; returns captured params or null. */
 function matchPath(template, path) {
   const t = template.split("/").filter(Boolean);
   const p = path.split("/").filter(Boolean);
   if (t.length !== p.length) return null;
   const params = {};
   for (let i = 0; i < t.length; i++) {
-    const m = /^\\{(.+)\\}$/.exec(t[i]);
-    if (m) params[m[1]] = decodeURIComponent(p[i]);
-    else if (t[i] !== p[i]) return null;
+    let seg;
+    try { seg = decodeURIComponent(p[i]); } catch { seg = p[i]; }
+    if (!matchSegment(t[i], seg, params)) return null;
   }
   return params;
+}
+
+/**
+ * Template specificity for deterministic routing on ambiguity: the most
+ * literal template wins (full-literal segment > embedded param > bare param),
+ * ties broken lexicographically so routing never depends on table order.
+ */
+function specificity(template) {
+  let score = 0;
+  for (const seg of template.split("/").filter(Boolean)) {
+    score += seg.includes("{") ? (/^\\{[^}]+\\}$/.test(seg) ? 0 : 1) : 2;
+  }
+  return score;
 }
 
 /** Rough similarity for 404 hints: shared leading path segments, then method. */
@@ -316,6 +403,23 @@ function nearest(method, path) {
     .map((r) => ({ operationId: r.operationId, method: r.method, path: r.path }));
 }
 
+/**
+ * A body's JSON type must match the contract's declared top-level schema type.
+ * Not every body is an object — Jira's addWatcher is a bare JSON string, and
+ * an untyped contract (no declared type) accepts any JSON value.
+ */
+function bodyTypeMatches(schemaType, body) {
+  switch (schemaType) {
+    case "object": return typeof body === "object" && body !== null && !Array.isArray(body);
+    case "array": return Array.isArray(body);
+    case "string": return typeof body === "string";
+    case "integer":
+    case "number": return typeof body === "number";
+    case "boolean": return typeof body === "boolean";
+    default: return true;
+  }
+}
+
 /** Validate a matched request against the operation's input contract. */
 function validate(route, query, body, bodyError) {
   const missing = [];
@@ -327,9 +431,9 @@ function validate(route, query, body, bodyError) {
     if (bodyError) invalid.push(\`body: \${bodyError}\`);
     else if (body === undefined) {
       if (route.body.required) missing.push("body");
-    } else if (typeof body !== "object" || body === null || Array.isArray(body)) {
-      invalid.push("body: expected a JSON object");
-    } else {
+    } else if (!bodyTypeMatches(route.body.schemaType, body)) {
+      invalid.push(\`body: expected a JSON \${route.body.schemaType ?? "value"}\`);
+    } else if (typeof body === "object" && body !== null && !Array.isArray(body)) {
       for (const f of route.body.requiredFields) {
         if (body[f] === undefined || body[f] === null) missing.push(\`body.\${f}\`);
       }
@@ -397,11 +501,13 @@ createServer((req, res) => {
     }
 
     // Route: method + template match. WSDL-lowered services may share one
-    // path+POST, so ambiguity is legal — first match wins, all candidates are
-    // recorded so a self-test can disambiguate by resetting capture per call.
-    const candidates = routes.filter(
-      (r) => r.method === (req.method ?? "GET").toUpperCase() && matchPath(r.path, url.pathname),
-    );
+    // path+POST, so ambiguity is legal — the most literal template wins, all
+    // candidates are recorded so a self-test can disambiguate per call.
+    const candidates = routes
+      .filter(
+        (r) => r.method === (req.method ?? "GET").toUpperCase() && matchPath(r.path, url.pathname),
+      )
+      .sort((a, b) => specificity(b.path) - specificity(a.path) || (a.path < b.path ? -1 : 1));
     const route = candidates[0];
 
     let body;
