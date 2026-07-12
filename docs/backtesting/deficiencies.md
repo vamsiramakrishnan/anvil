@@ -771,3 +771,49 @@ surfaced the WSDL analogue of proto finding #22, in three connected parts.
   real verbs: all five `*Search` operations classify as reads, ticketing/
   exchange as review-required mutations, and both refund operations as
   financial-risk mutations.
+
+## The loopback round (self-test + model review — first executions of the generated path)
+
+`anvil selftest` (boot the bundle's own mock + MCP server, drive every
+approved tool over real MCP transport, diff sent args against the wire) and
+`anvil review` (SOP-driven Haiku audit of the artifact surfaces) landed as
+standing infrastructure. The self-test's FIRST runs found the largest bug of
+the project so far — nothing had ever executed the generated MCP path.
+
+### 30. Adapter-lowered reads were un-executable: GET with a required body — FIXED
+- **Symptom**: every WSDL, GraphQL, AND gRPC read lowered to HTTP GET while
+  keeping a required JSON `requestBody`. The runtime built GET+body, the
+  HTTP client refused to send it ("Request with GET/HEAD method cannot have
+  body"), and the operation failed with `upstream_unavailable` — zero wire
+  requests, ever. Travelport searches, GitHub GraphQL queries, Linear
+  queries, and Temporal list RPCs were all dead on the wire. Invisible to
+  827 unit tests and every corpus oracle because none of them executed the
+  generated server.
+- **Root cause (mechanism-level)**: the adapters chose GET to *signal
+  read-ness to the classifier* — smuggling effect semantics through the
+  HTTP method of protocols that are POST-on-the-wire by definition.
+- **Fix**: adapters emit the truthful wire method (POST for all SOAP,
+  GraphQL, and gRPC operations) and assert effect explicitly via
+  `x-anvil-effect: read`; the classifier honors the assertion as evidence
+  (definitional 0.9 for GraphQL Query fields, name-heuristic 0.5 for
+  WSDL/gRPC — matching the old GET path), and naming derives from the
+  asserted effect so every generated name is byte-identical to before
+  (proven by the corpus naming-differential fixtures across github_gql,
+  linear, temporal). Retry/idempotency already derived from effect kind.
+- **Proof**: Travelport selftest 9/9; bank.wsdl loopback fully green; a
+  GraphQL query executes as POST and passes fidelity; corpus 19/19 with
+  op-counts and names exactly at baseline.
+
+### 31. Example synthesis produced no body for materialized schemas — FIXED
+- `exampleFromSchema` returned nothing for `allOf` schemas whose first
+  member is a depth-truncation stub (exactly what per-operation
+  materialization produces for deep WSDL/REST trees), and mishandled
+  oneOf/anyOf — so the self-test couldn't drive deep operations
+  (`validation_error: Missing required input: body`, 0 wire requests) and
+  generated skill examples were silently hollow. Now: allOf deep-merges
+  member examples (later wins), oneOf/anyOf synthesize the first member,
+  typeless stubs become `{}`, and a required body is never absent. The
+  loopback also round-trips responses against the scenario the mock
+  reports having served (capture records carry the scenario name) instead
+  of guessing, and an empty approved surface reports plainly instead of
+  leaking an MCP protocol error.

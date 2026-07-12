@@ -118,3 +118,39 @@ intended base commit before merging (one agent built against a stale base and
 was re-run; another self-corrected), and unit-green ≠ integration-green — the
 only regression of the round was caught by the corpus harness, not the test
 suite.
+
+## 5. Loopback self-test + SOP-driven model review — `anvil selftest`, `anvil review`
+
+For sources with no reference MCP server to backtest against (Travelport,
+Sabre, most enterprise SOAP), the bundle now proves itself:
+
+- **`anvil selftest <bundle>`** boots the bundle's own generated mock (real
+  routing from the AIR, input-contract validation, auth-redacted wire
+  capture, scenario/fault injection under `/__anvil/*`) and its generated
+  MCP server pointed at that mock (`ANVIL_BASE_URL`), then drives every
+  approved tool over the real MCP transport. Five check families: exact
+  approved-surface exposure, per-operation no-loss wire fidelity (every sent
+  argument diffed against what arrived, divergences reported as losses with
+  JSON paths), confirmation-before-wire (the gate must fire with ZERO wire
+  requests), structured upstream-error mapping, and never-auto-retry on
+  non-idempotent mutations (one injected 503 → exactly one attempt). It runs
+  as a corpus quick-mode oracle on every system's bundle.
+- **`anvil review <bundle>`** drives a Haiku-class reviewer through a
+  generated, versioned SOP (per-surface rubrics for MCP tool descriptions,
+  CLI help, skill docs, and cross-surface agreement; severity rubric; a
+  hard "no evidence, no finding" rule). Findings are strict-JSON,
+  zod-validated, mechanically grounded (an evidence excerpt that doesn't
+  appear verbatim in the cited file is discarded and counted), and map into
+  the existing deficiency catalog so the refinement loop consumes them like
+  any detector. Degrades to a structured `driver_unavailable` error — never
+  a fake pass. Deterministic loopback gates CI; the model review is opt-in.
+
+Scoreboard from the self-test's first hours: **finding #30** — every
+adapter-lowered read (WSDL, GraphQL, gRPC) was un-executable on the wire
+(GET with a required body), invisible to 827 unit tests because nothing had
+ever executed the generated MCP path — plus #31 (hollow example synthesis
+for materialized schemas) and a five-cluster long tail across 8 REST systems
+(path-param drops, spec-mandated Accept/Content-Type parameter handling,
+sub-segment route params, synthesis/zod-shape disagreement, non-object
+bodies). The mechanism converts "does the generated toolchain actually work"
+from an assumption into a nightly-checked property.

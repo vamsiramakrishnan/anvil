@@ -80,7 +80,7 @@ Zendesk, Intercom, Zoom, HubSpot, DocuSign) plus two **real non-REST schemas** �
 **GitHub's 1,752-type GraphQL** (vs `github-mcp-server`) and **Temporal's
 121-rpc gRPC proto** (vs `temporal-mcp`), with **Linear** GraphQL and **etcd**
 multi-file proto alongside. They span OpenAPI 3.x, Swagger 2.0, Google
-Discovery, RPC-over-HTTP, GraphQL SDL, gRPC/proto3, and SOAP/WSDL. **29 real,
+Discovery, RPC-over-HTTP, GraphQL SDL, gRPC/proto3, and SOAP/WSDL. **31 real,
 systemic compiler bugs found and fixed**, each with a regression test:
 
 1. Compiler crash on any self-referential schema (Jira's `LinkGroup`)
@@ -112,6 +112,8 @@ systemic compiler bugs found and fixed**, each with a regression test:
 27. Discovery per-method OAuth scopes were parsed but never emitted, so every Google operation lost its real scopes in the AIR (external review)
 28. Multi-file WSDL/XSD trees couldn't compile at all — Travelport's entry WSDL yielded 0 operations (portType behind `wsdl:import`), XSD includes never resolved, and `.xsd` files couldn't even be locked as sources; fixed with the same snapshot-capture + injectable-resolver mechanism as #22
 29. portType names polluted WSDL operation naming (`…create flight_details_port_type`) — the wire operation name now drives identity, portTypes only disambiguate
+30. Every adapter-lowered read (WSDL, GraphQL, gRPC) was un-executable on the wire — lowered to GET while keeping a required body, so the HTTP client refused the request; found by the loopback self-test's first run, fixed with truthful POST methods + explicit `x-anvil-effect` adapter assertions (names byte-identical, proven differentially)
+31. Example synthesis produced no request body for materialized `allOf`/truncation-stub schemas, leaving deep operations undrivable and skill examples hollow
 
 See `deficiencies.md` for the full writeup of each (symptom → root cause →
 fix → test), and the per-product / per-batch detail in `jira.md`,
