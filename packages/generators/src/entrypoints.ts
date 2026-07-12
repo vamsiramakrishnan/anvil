@@ -37,6 +37,7 @@ import { fileURLToPath } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "@anvil/mcp-runtime";
 import {
+  allowedHostsFor,
   EnvCredentialResolver,
   FetchTransport,
   InMemoryObserver,
@@ -66,14 +67,21 @@ const deps = {
   ledger: resolveLedger(config.ledger),
   observer,
 };
-const baseUrl = air.service.servers[0]?.url ?? "";
+// ANVIL_BASE_URL is a deliberate operator override (loopback self-test, staging
+// smoke tests); when set without an explicit allowlist, egress pins to its host.
+const baseUrl = process.env.ANVIL_BASE_URL ?? air.service.servers[0]?.url ?? "";
+const allowedHosts = allowedHostsFor(
+  config.allowedHosts,
+  baseUrl,
+  process.env.ANVIL_BASE_URL !== undefined,
+);
 
 function mcpContext() {
   return {
     ...deps,
     baseUrl,
     authProfile: config.authProfile,
-    allowedHosts: config.allowedHosts,
+    allowedHosts,
     env: config.env,
   };
 }
