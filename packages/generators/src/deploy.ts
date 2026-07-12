@@ -440,6 +440,11 @@ function envSchema(host?: string): unknown {
         description: "Comma-separated egress allowlist.",
         examples: [host ?? "api.internal.example.com"],
       },
+      ANVIL_BASE_URL: {
+        type: "string",
+        description:
+          "Override the compiled-in upstream base URL (loopback self-test, staging smoke). When set without ANVIL_ALLOWED_HOSTS, egress pins to this URL's host.",
+      },
       ANVIL_LEDGER: {
         type: "string",
         description:
