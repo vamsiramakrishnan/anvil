@@ -32,6 +32,7 @@ import {
   parseSourceId,
   roundTrip,
   runNode,
+  selftestPasses,
   sizeBlowup,
   sizeBudget,
   timeBudget,
@@ -278,6 +279,9 @@ async function quick(args) {
       timeBudget(res.compileMs, base?.compileMs),
       sizeBudget(res.airBytes, base?.airBytes),
       namingDifferential(res.bundleDir, join(EXPECTED_DIR, `${sys.name}.json`)),
+      // Loopback: the bundle's own mock + MCP server prove wire fidelity and
+      // the safety gates for every operation the reproduce manifest approves.
+      selftestPasses(res.bundleDir),
     ];
     // Op-count differential: a *decrease* against baseline means operations
     // were silently dropped — gate on it. An increase is vendor drift: warn.
