@@ -1,3 +1,8 @@
+---
+name: refinement-loop
+description: The anvil refine commands, the deficiency catalog, and the refinement-pack layout. Read this to drive the loop end to end.
+---
+
 # The refinement loop
 
 ## Commands

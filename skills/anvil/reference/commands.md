@@ -1,3 +1,8 @@
+---
+name: anvil-commands
+description: Every anvil command with usage, options, and mutation markers — derived from the live Commander tree. Read this before running an unfamiliar command.
+---
+
 # anvil commands
 
 ### `anvil source`  *(mutates)*
@@ -476,14 +481,19 @@ Serve the bundle's MCP server on stdio.
 ### `anvil package`
 `anvil package [options] [command]`
 
-Locate and verify the portable skill package.
+Validate and package the portable skill package.
 
 The skill is also served over MCP as anvil://skill/<service>/... resources.
 
 #### `anvil package skill`
 `anvil package skill [options] <dir>`
 
-Verify the bundle's skill package is complete.
+Validate the bundle's skill package against the Agent Skills spec.
+
+Checks SKILL.md frontmatter (spec-legal name and description), that every path SKILL.md references exists, that every markdown file self-describes with frontmatter, that examples parse and cover their schema's required fields, and that no absolute paths leak. With --out, copies the skill to <out>/<skill-name>/ so the directory name matches the frontmatter name (the spec rule).
+
+Options:
+- `--out <dir>` — copy the validated skill to <out>/<skill-name>/
 
 ### `anvil skill`
 `anvil skill [options] [out-dir]`

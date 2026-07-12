@@ -1,3 +1,8 @@
+---
+name: refinement-skill-describe-field
+description: Contract and investigation method for the describe-field skill — writes description on a field target from corroborated evidence. Read this before working a missing_field_description deficiency.
+---
+
 # Skill: describe-field (v1)
 
 **Triggers:** `missing_field_description`

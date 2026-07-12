@@ -18,13 +18,47 @@ import { DEFICIENCY_CATALOG, SEVERITIES } from "../deficiency.js";
 export function generateReviewSop(): Record<string, string> {
   return {
     "SKILL.md": skillMd(),
-    "reference/mcp-surface.md": mcpSurfaceRef(),
-    "reference/cli-surface.md": cliSurfaceRef(),
-    "reference/skill-surface.md": skillSurfaceRef(),
-    "reference/cross-surface.md": crossSurfaceRef(),
-    "reference/severity-and-codes.md": severityAndCodesRef(),
-    "reference/output-contract.md": outputContractRef(),
+    "reference/mcp-surface.md":
+      frontmatter(
+        "artifact-review-mcp-surface",
+        "Checklist for the MCP tool surface — names, descriptions, and input schemas judged against the AIR classifications. Read this when reviewing catalog.json and schemas/.",
+      ) + mcpSurfaceRef(),
+    "reference/cli-surface.md":
+      frontmatter(
+        "artifact-review-cli-surface",
+        "Checklist for the CLI surface — command truthfulness, safety flags taught in docs and examples, examples runnable in principle. Read this when reviewing docs/ and the command coordinates.",
+      ) + cliSurfaceRef(),
+    "reference/skill-surface.md":
+      frontmatter(
+        "artifact-review-skill-surface",
+        "Checklist for the skill package — safety posture taught correctly, no phantom operations, exposure honesty, disclosure intact. Read this when reviewing skill/.",
+      ) + skillSurfaceRef(),
+    "reference/cross-surface.md":
+      frontmatter(
+        "artifact-review-cross-surface",
+        "Checklist for cross-surface agreement — the CLI, MCP, and skill surfaces must mean the same thing per operation. Read this after the per-surface passes.",
+      ) + crossSurfaceRef(),
+    "reference/severity-and-codes.md":
+      frontmatter(
+        "artifact-review-severity-and-codes",
+        "The severity rubric and the symptom-to-deficiency-code mapping every finding must use. Read this before assigning any code or severity.",
+      ) + severityAndCodesRef(),
+    "reference/output-contract.md":
+      frontmatter(
+        "artifact-review-output-contract",
+        "The strict JSON contract for output/review.json, with field rules and calibration examples. Read this before writing any finding.",
+      ) + outputContractRef(),
   };
+}
+
+/**
+ * Every generated file self-describes (the same convention as the generated
+ * bundle skills): markdown carries YAML frontmatter with `name` and a
+ * one-sentence `description` saying what the file is and when to read it, so a
+ * reviewer landing on any file mid-package knows where it is.
+ */
+function frontmatter(name: string, description: string): string {
+  return `---\nname: ${name}\ndescription: ${description}\n---\n\n`;
 }
 
 /* -------------------------------------------------------------------------- */
