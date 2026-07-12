@@ -347,6 +347,18 @@ Options:
 - `--out <dir>` — bundle output directory (default generated/<capability-id>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
 
+### `anvil review`  *(mutates)*
+`anvil review [options] <dir>`
+
+Model-driven semantic review of a bundle's agent surfaces (MCP/CLI/skill).
+
+Drives a cheap reviewer model (default Haiku via the `claude` CLI) through Anvil's artifact-review SOP over a generated bundle: MCP tool descriptions must be truthful to each operation's effect/risk, the CLI surface must teach confirm/idempotency/dry-run on mutating commands, the skill doc must teach the safety posture and document no phantom operations, and all three surfaces must agree. Every finding must cite verbatim evidence from the bundle; ungrounded findings are discarded mechanically. Writes review.report.json into the bundle. Useful for spec sources with no reference server to backtest against.
+
+Options:
+- `--model <model>` — reviewer model passed to the driver
+- `--driver-command <bin>` — headless agent CLI to drive
+- `--json` — emit the full review report as JSON
+
 ### `anvil certify`  *(mutates)*
 `anvil certify [options] <path>`
 
