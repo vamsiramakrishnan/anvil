@@ -19,6 +19,12 @@ export interface AuthMaterial {
  */
 export interface CredentialResolver {
   resolve(profileName: string, auth: AuthRequirement): Promise<AuthMaterial | null>;
+  /**
+   * Optional: the credential *locations* this resolver would read for a
+   * profile (env var names, secret ids) — NAMES ONLY, never values. Surfaced
+   * in auth_required errors so a stranded caller learns exactly what to set.
+   */
+  expectedCredentials?(profileName: string, auth: AuthRequirement): string[];
 }
 
 /**
@@ -29,8 +35,23 @@ export interface CredentialResolver {
 export class EnvCredentialResolver implements CredentialResolver {
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
+  /** The env var names this resolver reads for a profile — names only, never values. */
+  expectedCredentials(profileName: string, auth: AuthRequirement): string[] {
+    const prefix = envPrefix(profileName);
+    switch (auth.type) {
+      case "none":
+        return [];
+      case "api_key":
+        return [`${prefix}_API_KEY`];
+      case "basic":
+        return [`${prefix}_USERNAME`, `${prefix}_PASSWORD`];
+      default:
+        return [`${prefix}_TOKEN`];
+    }
+  }
+
   async resolve(profileName: string, auth: AuthRequirement): Promise<AuthMaterial | null> {
-    const prefix = `ANVIL_${profileName.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
+    const prefix = envPrefix(profileName);
     const token = this.env[`${prefix}_TOKEN`];
     const apiKey = this.env[`${prefix}_API_KEY`];
     switch (auth.type) {
@@ -51,6 +72,11 @@ export class EnvCredentialResolver implements CredentialResolver {
         return token ? { headers: { Authorization: `Bearer ${token}` } } : null;
     }
   }
+}
+
+/** ANVIL_<PROFILE> env prefix for a profile name (shared by resolve/expectedCredentials). */
+function envPrefix(profileName: string): string {
+  return `ANVIL_${profileName.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
 }
 
 /** Apply resolved material to a request. Never logs the material. */

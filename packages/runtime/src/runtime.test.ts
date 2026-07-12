@@ -2,6 +2,7 @@ import { type Operation, Operation as OperationSchema } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import {
   type CredentialResolver,
+  EnvCredentialResolver,
   execute,
   type HttpResponse,
   InMemoryLedger,
@@ -53,6 +54,9 @@ function op(overrides: Record<string, unknown> = {}): Operation {
     cli: { command: "payments refunds create" },
     mcp: { toolName: "payments_create_refund" },
     skill: { intentExamples: [] },
+    // The executor refuses anything else before any other step; mechanics
+    // tests exercise an approved operation. The approval gate has its own suite.
+    state: "approved",
     ...overrides,
   });
 }
@@ -296,6 +300,45 @@ describe("dry run", () => {
   });
 });
 
+describe("approval gate", () => {
+  const args = {
+    input: { payment_id: "pay_1", amount: 2500 },
+    confirm: true,
+    idempotencyKey: "k1",
+  };
+
+  it.each([
+    "generated",
+    "review_required",
+    "deprecated",
+    "blocked",
+  ] as const)("refuses a %s operation before any other step — zero wire requests", async (state) => {
+    const transport = new MockTransport(() => ok({}));
+    const res = await execute(op({ state }), args, { ...baseCtx, transport });
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.code).toBe("unsupported_operation");
+    expect(res.envelope.error.retryable).toBe(false);
+    // The refusal names the state and the next action, not a dead end.
+    expect(res.envelope.error.message).toContain(`state: ${state}`);
+    expect(res.envelope.error.message).toContain("anvil approve");
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("refuses a dry-run of an unapproved operation — no plan for the unplannable", async () => {
+    const transport = new MockTransport(() => ok({}));
+    const res = await execute(
+      op({ state: "review_required" }),
+      { ...args, dryRun: true },
+      { ...baseCtx, transport },
+    );
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.code).toBe("unsupported_operation");
+    expect(transport.requests).toHaveLength(0);
+  });
+});
+
 describe("auth binding", () => {
   it("fails closed with auth_required when credentials cannot be resolved", async () => {
     const transport = new MockTransport(() => ok({}));
@@ -307,6 +350,34 @@ describe("auth binding", () => {
     expect(res.outcome).toBe("error");
     if (res.outcome !== "error") return;
     expect(res.envelope.error.code).toBe("auth_required");
+  });
+
+  it("names the exact env vars the default resolver would read — names only, never values", async () => {
+    const transport = new MockTransport(() => ok({}));
+    const res = await execute(
+      op({ auth: { type: "oauth2_client_credentials", scopes: ["payments.write"] } }),
+      { input: { payment_id: "pay_1", amount: 2500 }, confirm: true, idempotencyKey: "k1" },
+      { ...baseCtx, transport, authProfile: "prod", credentials: new EnvCredentialResolver({}) },
+    );
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.code).toBe("auth_required");
+    expect(res.envelope.error.message).toContain("ANVIL_PROD_TOKEN");
+    expect(res.envelope.error.details).toEqual({ expected_env: ["ANVIL_PROD_TOKEN"] });
+  });
+
+  it("names both env vars for basic auth profiles", async () => {
+    const transport = new MockTransport(() => ok({}));
+    const res = await execute(
+      op({ auth: { type: "basic", scopes: [] } }),
+      { input: { payment_id: "pay_1", amount: 2500 }, confirm: true, idempotencyKey: "k1" },
+      { ...baseCtx, transport, credentials: new EnvCredentialResolver({}) },
+    );
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.details).toEqual({
+      expected_env: ["ANVIL_DEFAULT_USERNAME", "ANVIL_DEFAULT_PASSWORD"],
+    });
   });
 
   it("applies resolved auth material to the request", async () => {
