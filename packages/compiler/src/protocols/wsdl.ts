@@ -1,10 +1,11 @@
 /**
  * WSDL 1.1 (+ embedded XSD) → OpenAPI 3.0 adapter for SOAP services.
  *
- * Each `<operation>` in a `<portType>` becomes one operation. SOAP is
- * request/response over POST, but the *effect* is inferred conservatively from
- * the operation name: read verbs (Get/List/Find/Query/Search/Retrieve/…) lower
- * to GET (read); everything else lowers to POST (mutation → unsafe until
+ * Each `<operation>` in a `<portType>` becomes one operation, lowered to POST
+ * — the truthful wire method for every SOAP call. The *effect* is inferred
+ * conservatively from the operation name: read verbs
+ * (Get/List/Find/Query/Search/Retrieve/…) assert `x-anvil-effect: read`;
+ * everything else stays a mutation (unsafe until
  * enriched). The input message's schema becomes the request body, the output
  * message's the response, and named XSD complex/simple types become
  * `components.schemas` referenced by `$ref` (resolved by the shared
@@ -442,8 +443,10 @@ export function adaptWsdl(
       // `service … flight_details_port_type` collision repair.
       const generic = (opNameUses.get(opName) ?? 0) > 1;
       const effectiveName = generic ? portTypeOperationName(portName) : opName;
+      // SOAP is POST-on-the-wire for every operation; the effect is asserted
+      // explicitly (`x-anvil-effect` below) instead of being smuggled through a
+      // fake GET — a GET with a required body is un-executable by fetch.
       const read = READ_OP.test(effectiveName);
-      const httpMethod = read ? "get" : "post";
       let path = generic ? `/${effectiveName}` : `/${portName}/${opName}`;
       if (generic && paths[path]) path = `/${portName}/${opName}`;
 
@@ -464,6 +467,9 @@ export function adaptWsdl(
         },
         "x-soap-operation": opName,
         "x-soap-port-type": portName,
+        // The READ_OP name test is a heuristic; classify.ts records it as an
+        // adapter assertion with heuristic-grade confidence.
+        ...(read ? { "x-anvil-effect": "read" } : {}),
       };
       if (bodySchema) {
         op.requestBody = {
@@ -471,7 +477,7 @@ export function adaptWsdl(
           content: { "application/json": { schema: bodySchema } },
         };
       }
-      paths[path] = { [httpMethod]: op };
+      paths[path] = { post: op };
     }
   }
 

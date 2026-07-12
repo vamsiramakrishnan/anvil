@@ -89,6 +89,21 @@ describe("classifier", () => {
     // The validated Jira case is untouched.
     expect(classifyEffect("post", "searchIssues /search").effect.kind).toBe("read");
   });
+
+  it("honors an adapter effect assertion: a POST-read retries exactly like a GET-read", () => {
+    // Protocol adapters (SOAP/GraphQL/gRPC) emit the truthful POST wire method
+    // and assert `x-anvil-effect: read`; the safety posture must derive from
+    // the effect kind, never the raw method.
+    const signal = "ListTransactions /BankingPort/ListTransactions";
+    const hinted = classifyEffect("post", signal, false, "read");
+    const asGet = classifyEffect("get", signal, false);
+    expect(hinted.effect.kind).toBe("read");
+    expect(hinted.effect).toEqual(asGet.effect);
+    expect(hinted.idempotency).toEqual(asGet.idempotency);
+    expect(classifyConfirmation(hinted.effect, hinted.idempotency).required).toBe(false);
+    // An unhinted POST with the same signal stays a conservative mutation.
+    expect(classifyEffect("post", signal).effect.kind).toBe("mutation");
+  });
 });
 
 describe("compile pipeline (spec only)", () => {

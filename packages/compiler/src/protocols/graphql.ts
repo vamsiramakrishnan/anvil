@@ -7,9 +7,15 @@
  * handed to the identical downstream pipeline. This module lowers a GraphQL
  * schema:
  *
- *   Query.field     → a read operation   (GET; no side effect)
+ *   Query.field     → a read operation   (POST + x-anvil-effect: read)
  *   Mutation.field  → a write operation  (POST; conservative — mutation)
- *   Subscription.f  → a read operation   (GET; streaming, noted in description)
+ *   Subscription.f  → a read operation   (POST + x-anvil-effect: read; streaming,
+ *                                          noted in description)
+ *
+ * Every GraphQL operation is POST on the wire; the read/write distinction is a
+ * property of the operation KIND, not the HTTP method, so it is asserted
+ * explicitly via the `x-anvil-effect` vendor extension rather than smuggled
+ * through a fake GET (a GET with a required body is un-executable by fetch).
  *
  * A field's arguments become the request body; its return type becomes the
  * response schema. Object/input/enum/union types become `components.schemas`
@@ -129,7 +135,6 @@ function addRoot(
   kind: "query" | "mutation" | "subscription",
 ): void {
   if (!root) return;
-  const httpMethod = kind === "mutation" ? "post" : "get";
   for (const [fieldName, field] of Object.entries(root.getFields())) {
     const path = `/graphql/${root.name}/${fieldName}`;
     const reqSchema = argsSchema(field.args);
@@ -147,6 +152,9 @@ function addRoot(
       },
       "x-graphql-operation": kind,
       "x-graphql-field": fieldName,
+      // Queries/subscriptions are definitionally reads — an adapter assertion
+      // classify.ts honors regardless of the (truthful, POST) wire method.
+      ...(kind === "mutation" ? {} : { "x-anvil-effect": "read" }),
     };
     if (reqSchema) {
       op.requestBody = {
@@ -154,7 +162,7 @@ function addRoot(
         content: { "application/json": { schema: reqSchema } },
       };
     }
-    paths[path] = { [httpMethod]: op };
+    paths[path] = { post: op };
   }
 }
 

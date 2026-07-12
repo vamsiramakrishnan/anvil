@@ -113,15 +113,23 @@ describe("protocol format detection", () => {
 describe("GraphQL adapter", () => {
   const doc = adaptGraphql(graphqlSpec);
 
-  it("lowers queries to GET and mutations to POST", () => {
-    expect(doc.paths?.["/graphql/Query/product"]?.get).toBeDefined();
-    expect(doc.paths?.["/graphql/Query/products"]?.get).toBeDefined();
-    expect(doc.paths?.["/graphql/Mutation/checkout"]?.post).toBeDefined();
-    expect(doc.paths?.["/graphql/Mutation/cancelOrder"]?.post).toBeDefined();
+  it("lowers everything to POST (the truthful wire method), asserting reads explicitly", () => {
+    const product = doc.paths?.["/graphql/Query/product"]?.post as Record<string, unknown>;
+    const products = doc.paths?.["/graphql/Query/products"]?.post as Record<string, unknown>;
+    expect(product).toBeDefined();
+    expect(products).toBeDefined();
+    expect(product["x-anvil-effect"]).toBe("read");
+    expect(products["x-anvil-effect"]).toBe("read");
+    const checkout = doc.paths?.["/graphql/Mutation/checkout"]?.post as Record<string, unknown>;
+    const cancel = doc.paths?.["/graphql/Mutation/cancelOrder"]?.post as Record<string, unknown>;
+    expect(checkout).toBeDefined();
+    expect(cancel).toBeDefined();
+    expect(checkout["x-anvil-effect"]).toBeUndefined();
+    expect(cancel["x-anvil-effect"]).toBeUndefined();
   });
 
   it("turns field arguments into a request body schema", () => {
-    const op = doc.paths?.["/graphql/Query/product"]?.get as Record<string, unknown>;
+    const op = doc.paths?.["/graphql/Query/product"]?.post as Record<string, unknown>;
     const body = op.requestBody as { content: Record<string, { schema: { properties: object } }> };
     expect(Object.keys(body.content["application/json"].schema.properties)).toContain("id");
   });
@@ -145,11 +153,31 @@ describe("GraphQL adapter", () => {
 describe("gRPC/proto adapter", () => {
   const doc = adaptProto(protoSpec);
 
-  it("uses the gRPC wire path and infers read vs write from the method name", () => {
-    expect(doc.paths?.["/acme.orders.v1.OrderService/GetOrder"]?.get).toBeDefined();
-    expect(doc.paths?.["/acme.orders.v1.OrderService/ListOrders"]?.get).toBeDefined();
-    expect(doc.paths?.["/acme.orders.v1.OrderService/PlaceOrder"]?.post).toBeDefined();
-    expect(doc.paths?.["/acme.orders.v1.OrderService/CancelOrder"]?.post).toBeDefined();
+  it("uses the gRPC wire path, POST throughout, asserting reads from the method name", () => {
+    const get = doc.paths?.["/acme.orders.v1.OrderService/GetOrder"]?.post as Record<
+      string,
+      unknown
+    >;
+    const list = doc.paths?.["/acme.orders.v1.OrderService/ListOrders"]?.post as Record<
+      string,
+      unknown
+    >;
+    expect(get).toBeDefined();
+    expect(list).toBeDefined();
+    expect(get["x-anvil-effect"]).toBe("read");
+    expect(list["x-anvil-effect"]).toBe("read");
+    const place = doc.paths?.["/acme.orders.v1.OrderService/PlaceOrder"]?.post as Record<
+      string,
+      unknown
+    >;
+    const cancel = doc.paths?.["/acme.orders.v1.OrderService/CancelOrder"]?.post as Record<
+      string,
+      unknown
+    >;
+    expect(place).toBeDefined();
+    expect(cancel).toBeDefined();
+    expect(place["x-anvil-effect"]).toBeUndefined();
+    expect(cancel["x-anvil-effect"]).toBeUndefined();
   });
 
   it("lowers messages, repeated fields, maps, and enums", () => {
@@ -210,11 +238,19 @@ message Res { string ok = 1; }`;
 describe("SOAP/WSDL adapter", () => {
   const doc = adaptWsdl(wsdlSpec);
 
-  it("infers read vs write from the operation name", () => {
-    expect(doc.paths?.["/BankingPort/GetAccountBalance"]?.get).toBeDefined();
-    expect(doc.paths?.["/BankingPort/ListTransactions"]?.get).toBeDefined();
-    expect(doc.paths?.["/BankingPort/TransferFunds"]?.post).toBeDefined();
-    expect(doc.paths?.["/BankingPort/CloseAccount"]?.post).toBeDefined();
+  it("lowers everything to POST, asserting reads from the operation name", () => {
+    const balance = doc.paths?.["/BankingPort/GetAccountBalance"]?.post as Record<string, unknown>;
+    const txns = doc.paths?.["/BankingPort/ListTransactions"]?.post as Record<string, unknown>;
+    expect(balance).toBeDefined();
+    expect(txns).toBeDefined();
+    expect(balance["x-anvil-effect"]).toBe("read");
+    expect(txns["x-anvil-effect"]).toBe("read");
+    const transfer = doc.paths?.["/BankingPort/TransferFunds"]?.post as Record<string, unknown>;
+    const close = doc.paths?.["/BankingPort/CloseAccount"]?.post as Record<string, unknown>;
+    expect(transfer).toBeDefined();
+    expect(close).toBeDefined();
+    expect(transfer["x-anvil-effect"]).toBeUndefined();
+    expect(close["x-anvil-effect"]).toBeUndefined();
   });
 
   it("resolves document/literal wrapped messages to the element's schema", () => {
@@ -491,6 +527,12 @@ describe("end-to-end compile through the protocol adapters", () => {
     const products = air.operations.find((o) => o.sourceRef.operationId === "products");
     expect(products?.effect.kind).toBe("read");
     expect(products?.state).toBe("approved");
+    // The wire method is truthful (POST) while retry/idempotency still follow
+    // the adapter-asserted READ effect — exactly the posture GET-reads had.
+    expect(products?.sourceRef.method).toBe("post");
+    expect(products?.idempotency.mode).toBe("natural");
+    expect(products?.retries.mode).toBe("safe");
+    expect(products?.confirmation.required).toBe(false);
     const checkout = air.operations.find((o) => o.sourceRef.operationId === "checkout");
     expect(checkout?.effect.kind).toBe("mutation");
     expect(checkout?.effect.risk).toBe("financial");
@@ -509,6 +551,7 @@ describe("end-to-end compile through the protocol adapters", () => {
     const get = air.operations.find((o) => o.sourceRef.operationId === "GetOrder");
     expect(get?.effect.kind).toBe("read");
     expect(get?.retries.mode).toBe("safe");
+    expect(get?.sourceRef.method).toBe("post");
     const place = air.operations.find((o) => o.sourceRef.operationId === "PlaceOrder");
     expect(place?.effect.risk).toBe("financial");
     expect(place?.confirmation.required).toBe(true);
