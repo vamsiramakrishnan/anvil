@@ -7,6 +7,8 @@
  */
 
 export * from "./agent.js";
+export * from "./bundle-driver.js";
+export * from "./conformance.js";
 export * from "./enrich.js";
 export * from "./evidence.js";
 export * from "./loopback.js";

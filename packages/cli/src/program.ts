@@ -7,6 +7,7 @@ import { registerCapability } from "./commands/capability.js";
 import { registerCase } from "./commands/case.js";
 import { registerCertify } from "./commands/certify.js";
 import { registerCompile } from "./commands/compile.js";
+import { registerConformance } from "./commands/conformance.js";
 import type { AnvilCliDeps, CommandContext } from "./commands/context.js";
 import { registerDeploy } from "./commands/deploy.js";
 import { registerDrift } from "./commands/drift.js";
@@ -81,6 +82,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerReview(program, ctx);
   registerCertify(program, ctx);
   registerSelftest(program, ctx);
+  registerConformance(program, ctx);
   registerPublish(program, ctx);
   registerDeploy(program, ctx);
   registerSync(program, ctx);
