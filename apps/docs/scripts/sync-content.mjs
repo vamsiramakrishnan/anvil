@@ -16,12 +16,19 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { REPO_URL } from "../src/lib/site-meta.mjs";
+import { REPO_URL, SITE_BASE } from "../src/lib/site-meta.mjs";
+import { linkGlossaryTerms, parseGlossary } from "./lib/glossary.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
 const CONTENT = join(HERE, "..", "src", "content", "docs");
 const DRY_RUN = process.argv.includes("--dry-run");
+
+// The canonical glossary: every synced page gets its first mention of each
+// term auto-linked (with a hover-tooltip definition) to the glossary page.
+const GLOSSARY_SRC = "docs/GLOSSARY.md";
+const GLOSSARY_ROUTE = `${SITE_BASE}/concepts/glossary/`;
+const GLOSSARY = parseGlossary(readFileSync(join(REPO_ROOT, GLOSSARY_SRC), "utf8"));
 
 // Sections this script owns (gitignored). Curated pages (index.mdx, start/) are
 // checked in and never touched here.
@@ -32,6 +39,7 @@ const PAGES = [
   { src: "docs/ARCHITECTURE.md", dest: "concepts/architecture.md", order: 1 },
   { src: "docs/PRODUCT_BOUNDARY.md", dest: "concepts/product-boundary.md", order: 2 },
   { src: "docs/mechanisms.md", dest: "concepts/mechanisms.md", order: 3 },
+  { src: GLOSSARY_SRC, dest: "concepts/glossary.md", order: 4, title: "Glossary" },
   {
     src: "skills/anvil/SKILL.md",
     dest: "guides/operating-anvil.md",
@@ -83,9 +91,14 @@ function firstParagraph(body) {
   return "";
 }
 
-/** YAML-safe single-line double-quoted scalar, length-capped. */
+/** YAML-safe single-line double-quoted scalar, capped at a word boundary. */
 function yamlString(s) {
-  const clean = s.replace(/\s+/g, " ").trim().slice(0, 180);
+  let clean = s.replace(/\s+/g, " ").trim();
+  if (clean.length > 180) {
+    // Cut at the last word boundary before the cap and mark the elision —
+    // a mid-word chop ("…which princi") reads as a bug in link indexes.
+    clean = `${clean.slice(0, 180).replace(/\s+\S*$/, "")}…`;
+  }
   return `"${clean.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
@@ -96,6 +109,10 @@ function transform({ src, dest, order, title }) {
   const { title: h1, body } = extractTitle(afterFm);
   const finalTitle = title || h1 || dest;
   const description = fmValue(fm, "description") || firstParagraph(body);
+
+  // Auto-link the first prose mention of each glossary term — on every synced
+  // page except the glossary itself (self-links would be noise).
+  const linked = src === GLOSSARY_SRC ? body : linkGlossaryTerms(body, GLOSSARY, { route: GLOSSARY_ROUTE });
 
   const frontmatter = [
     "---",
@@ -110,7 +127,7 @@ function transform({ src, dest, order, title }) {
     .filter(Boolean)
     .join("\n");
 
-  return `${frontmatter}\n${body.trimEnd()}\n`;
+  return `${frontmatter}\n${linked.trimEnd()}\n`;
 }
 
 /** Every docs/adr/*.md → reference/adr/, ordered by the NNNN filename prefix. */
