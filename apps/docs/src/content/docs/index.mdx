@@ -120,9 +120,20 @@ operations:
   <TabItem label="Customer messaging">
 
 An outbound SMS can't be unsent, and a timeout doesn't mean it wasn't
-delivered. Anvil marks sends **not retry-safe** — the runtime never auto-retries
-them — and requires an idempotency key, so a nervous agent re-issuing the call
-is a duplicate-suppressed no-op instead of a second text to your customer.
+delivered. Out of the box, Anvil classifies sends **high-risk** — they demand
+confirmation and are **never auto-retried**. Then one line of manifest turns
+"please don't re-run this" into a guarantee:
+
+```yaml
+# comms.anvil.yaml
+operations:
+  sendSms:
+    idempotency: { strategy: required_request_key }
+```
+
+Now every surface requires an idempotency key, and a nervous agent re-issuing
+the call is a duplicate-suppressed no-op instead of a second text to your
+customer.
 
   </TabItem>
 </Tabs>
