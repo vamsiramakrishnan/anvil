@@ -39,6 +39,12 @@ outputs:
 - SOAP / WSDL (multi-file)
 - Postman Collections
 
+And when the API lives behind a gateway rather than in a spec file, Anvil
+imports the **estate** — [Apigee, Kong, WSO2, MuleSoft, and IBM API
+Connect](/anvil/concepts/gateway-estates/) exports are read by a vendor adapter
+and compiled through the very same model, so auth plugins, product scopes, and
+quotas arrive as contract facts instead of tribal knowledge.
+
 ## What it produces
 
 - **CLI** — a typed command per approved operation.
