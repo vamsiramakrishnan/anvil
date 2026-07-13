@@ -41,3 +41,11 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      # Gateway-estate differential: import every estate in estates.tsv end-to-end
+      # through `anvil estate import` (built above) and gate on policy accounting
+      # against estates-baseline.json — a dropped opaque policy or a shifted
+      # approval posture fails here. Offline and deterministic, so it's a per-PR
+      # gate, not a nightly one.
+      - name: Estates (gateway differential, gates)
+        run: node tools/corpus/run.mjs estates
