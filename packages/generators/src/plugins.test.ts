@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ beforeAll(async () => {
 });
 
 describe("harness plugin emission", () => {
-  it("emits the Claude plugin, Codex shim, shared core, and Antigravity rules", () => {
+  it("emits the Claude, Codex, and Antigravity hooks, shared core, and rules", () => {
     const files = generateHarnessPlugins(air);
     for (const path of [
       ".claude-plugin/plugin.json",
@@ -32,10 +33,21 @@ describe("harness plugin emission", () => {
       "plugin/claude/mcp.json",
       "plugin/codex/hooks.json",
       "plugin/codex/hook.mjs",
+      "plugin/antigravity/hooks.json",
+      "plugin/antigravity/hook.mjs",
+      "plugin/antigravity/README.md",
       ".agent/rules/anvil-safety.md",
     ]) {
       expect(files[path], `missing ${path}`).toBeDefined();
     }
+  });
+
+  it("declares an Antigravity PreToolUse hook per the official schema", () => {
+    const hooks = JSON.parse(generateHarnessPlugins(air)["plugin/antigravity/hooks.json"]);
+    const cfg = hooks["anvil-payments-guard"];
+    expect(cfg.PreToolUse[0].matcher).toBe("*"); // shim self-scopes; matcher fires on all
+    expect(cfg.PreToolUse[0].hooks[0]).toMatchObject({ type: "command" });
+    expect(cfg.PreToolUse[0].hooks[0].command).toContain("plugin/antigravity/hook.mjs");
   });
 
   it("emits no ADK plugin (dropped — a per-language rule port is needless drift)", () => {
@@ -164,5 +176,70 @@ describe("emitted hookcore.decide agrees with the contract", () => {
     const byTool = new Map(cat.operations.map((o) => [o.mcpTool, o]));
     const d = decide(refundTool, { confirm: true, idempotency_key: "k" }, { byTool } as never);
     expect(d.decision).toBe("deny");
+  });
+});
+
+// The Antigravity shim is a real subprocess: feed it a PreToolUse event on stdin
+// and read its decision on stdout (verified against antigravity.google/docs/hooks).
+describe("emitted Antigravity hook enforces via stdin/stdout", () => {
+  const refundTool = "payments_create_refund";
+  let dir: string;
+  let humanDir: string;
+
+  const runHook = (bundleDir: string, event: unknown): { decision: string; reason?: string } => {
+    const out = execFileSync("node", [join(bundleDir, "plugin/antigravity/hook.mjs")], {
+      input: JSON.stringify(event),
+      encoding: "utf8",
+    });
+    return JSON.parse(out);
+  };
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "anvil-ag-"));
+    writeBundle(dir, generateBundle(air));
+    const humanAir = await compile({
+      spec: read("openapi.yaml"),
+      manifest: read("anvil.yaml"),
+      serviceId: "payments",
+      humanApproval: "all",
+    });
+    humanDir = mkdtempSync(join(tmpdir(), "anvil-ag-human-"));
+    writeBundle(humanDir, generateBundle(humanAir));
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(humanDir, { recursive: true, force: true });
+  });
+
+  it("passes non-catalog tools (Antigravity built-ins) straight through", () => {
+    // The hook fires for every tool; it must never block Antigravity's own tools.
+    const d = runHook(dir, { toolCall: { name: "run_command", args: { CommandLine: "ls" } } });
+    expect(d.decision).toBe("allow");
+  });
+
+  it("denies a model-confirm mutation until confirm, then until an idempotency key", () => {
+    expect(runHook(dir, { toolCall: { name: refundTool, args: {} } }).decision).toBe("deny");
+    const noKey = runHook(dir, { toolCall: { name: refundTool, args: { confirm: true } } });
+    expect(noKey.decision).toBe("deny");
+    expect(noKey.reason).toMatch(/idempotency/i);
+    const clean = runHook(dir, {
+      toolCall: { name: refundTool, args: { confirm: true, idempotency_key: "k" } },
+    });
+    expect(clean.decision).toBe("allow");
+  });
+
+  it("strips an mcp__ namespace before matching the catalog", () => {
+    const d = runHook(dir, {
+      toolCall: { name: `mcp__anvil_payments__${refundTool}`, args: {} },
+    });
+    expect(d.decision).toBe("deny");
+  });
+
+  it("maps the human-approval tier to force_ask (unbypassable by Always Allow)", () => {
+    const d = runHook(humanDir, {
+      toolCall: { name: refundTool, args: { confirm: true, idempotency_key: "k" } },
+    });
+    expect(d.decision).toBe("force_ask");
+    expect(d.reason).toMatch(/human approval/i);
   });
 });
