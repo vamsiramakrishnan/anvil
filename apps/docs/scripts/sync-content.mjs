@@ -39,7 +39,9 @@ const PAGES = [
   { src: "docs/ARCHITECTURE.md", dest: "concepts/architecture.md", order: 1 },
   { src: "docs/PRODUCT_BOUNDARY.md", dest: "concepts/product-boundary.md", order: 2 },
   { src: "docs/mechanisms.md", dest: "concepts/mechanisms.md", order: 3 },
-  { src: GLOSSARY_SRC, dest: "concepts/glossary.md", order: 4, title: "Glossary" },
+  { src: "docs/gateways.md", dest: "concepts/gateway-estates.md", order: 4 },
+  { src: "docs/simulation-and-backtesting.md", dest: "concepts/simulation-and-backtesting.md", order: 5 },
+  { src: GLOSSARY_SRC, dest: "concepts/glossary.md", order: 6, title: "Glossary" },
   {
     src: "skills/anvil/SKILL.md",
     dest: "guides/operating-anvil.md",

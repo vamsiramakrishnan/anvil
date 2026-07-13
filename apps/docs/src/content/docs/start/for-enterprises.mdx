@@ -27,7 +27,10 @@ gated surfaces come out; and your existing governance plugs into the middle.
 
 1. **Inventory.** The input is the spec you already publish — OpenAPI 3.x,
    Swagger 2.0, GraphQL SDL, gRPC/proto3, SOAP/WSDL, Postman, Google Discovery.
-   No service rewrites, no SDK migrations, no prerequisites.
+   Already behind a gateway? [Adapters for Apigee, Kong, WSO2, MuleSoft, and
+   IBM API Connect](/anvil/concepts/gateway-estates/) import the estate itself —
+   auth plugins, product scopes, and quotas become contract facts. No service
+   rewrites, no SDK migrations, no prerequisites.
 2. **Compile.** `anvil compile` emits the whole bundle: CLI, MCP server, skill,
    harness hooks, deploy manifests, and a conformance test that verifies the
    bundle's own safety contract.
