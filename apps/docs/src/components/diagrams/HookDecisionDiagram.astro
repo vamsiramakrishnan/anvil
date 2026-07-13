@@ -1,0 +1,217 @@
+---
+// The hookcore decision flow, drawn in the executor's order — this mirrors
+// `decide()` in the generated plugin/hookcore.mjs rule for rule. Gates on the
+// left spine, outcomes on the right: deny (failed red), ask (blocked orange),
+// allow (passed green). Every rule mirrors a runtime executor refusal; the
+// generated conformance test enforces that agreement.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 664"
+    role="img"
+    aria-label="The hook decision flow, in order. A PreToolUse call is checked against six gates: unknown tool denies (tamper guard); an unapproved operation denies; a human-approval operation asks — on Antigravity as force_ask, which ignores Always-Allow so the model cannot self-approve; a model-confirm operation without confirm true denies with the fix named; a required idempotency key that is missing denies; a clean high-risk or irreversible mutation allows with dry-run context; everything else allows — reads get zero noise."
+  >
+    <defs>
+      <marker id="hd-spine" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+      <marker id="hd-deny" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--ge-status-failed)" />
+      </marker>
+      <marker id="hd-ask" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--ge-status-blocked)" />
+      </marker>
+      <marker id="hd-allow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--ge-status-passed)" />
+      </marker>
+    </defs>
+
+    <text x="60" y="12" class="d-label">decision core · plugin/hookcore.mjs</text>
+    <text x="540" y="12" class="d-label">outcome · before the call leaves the harness</text>
+
+    <!-- entry -->
+    <rect x="60" y="22" width="420" height="30" rx="4" class="d-entry" />
+    <text x="76" y="41" class="d-entry-text">pretooluse · the model proposes a tool call</text>
+    <path d="M270 52 V64" class="d-spine" marker-end="url(#hd-spine)" />
+
+    <!-- gate 1: catalog membership -->
+    <rect x="60" y="68" width="420" height="56" rx="4" class="d-gate" />
+    <text x="76" y="92" class="d-gate-q">1 · known to catalog.json?</text>
+    <text x="76" y="112" class="d-gate-desc">the committed catalog is the source of truth — not the server</text>
+    <path d="M480 96 H534" class="d-out-deny" marker-end="url(#hd-deny)" />
+    <text x="507" y="88" text-anchor="middle" class="d-no">no</text>
+    <rect x="540" y="68" width="484" height="56" rx="4" class="d-plate-deny" />
+    <text x="558" y="92" class="d-deny-title">deny</text>
+    <text x="620" y="92" class="d-out-main">not an operation of this bundle</text>
+    <text x="620" y="112" class="d-out-detail">tamper / staleness guard — a swapped or stale server is refused</text>
+    <path d="M270 124 V146" class="d-spine" marker-end="url(#hd-spine)" />
+    <text x="284" y="140" class="d-pass">known tool</text>
+
+    <!-- gate 2: approval state -->
+    <rect x="60" y="152" width="420" height="56" rx="4" class="d-gate" />
+    <text x="76" y="176" class="d-gate-q">2 · state === approved?</text>
+    <text x="76" y="196" class="d-gate-desc">the server never compiles an unapproved operation into a tool</text>
+    <path d="M480 180 H534" class="d-out-deny" marker-end="url(#hd-deny)" />
+    <text x="507" y="172" text-anchor="middle" class="d-no">no</text>
+    <rect x="540" y="152" width="484" height="56" rx="4" class="d-plate-deny" />
+    <text x="558" y="176" class="d-deny-title">deny</text>
+    <text x="620" y="176" class="d-out-main">draft / rejected — not approved for use</text>
+    <text x="620" y="196" class="d-out-detail">mirrors the approval filter — unapproved ops never ship</text>
+    <path d="M270 208 V230" class="d-spine" marker-end="url(#hd-spine)" />
+    <text x="284" y="224" class="d-pass">approved</text>
+
+    <!-- gate 3: human-approval tier -->
+    <rect x="60" y="236" width="420" height="68" rx="4" class="d-gate" />
+    <text x="76" y="262" class="d-gate-q">3 · confirmation required · human-approval tier?</text>
+    <text x="76" y="284" class="d-gate-desc">AIR confirmation.humanApproval — the strictest tier</text>
+    <path d="M480 270 H534" class="d-out-ask" marker-end="url(#hd-ask)" />
+    <text x="507" y="262" text-anchor="middle" class="d-no">yes</text>
+    <rect x="540" y="236" width="484" height="68" rx="4" class="d-plate-ask" />
+    <text x="558" y="260" class="d-ask-title">ask</text>
+    <text x="606" y="260" class="d-out-main">escalate to the human permission dialog</text>
+    <text x="558" y="280" class="d-out-detail">Antigravity: force_ask — always prompts, ignores "Always Allow"</text>
+    <text x="558" y="296" class="d-ask-note">the model cannot self-approve</text>
+    <path d="M270 304 V326" class="d-spine" marker-end="url(#hd-spine)" />
+    <text x="284" y="320" class="d-pass">no human tier</text>
+
+    <!-- gate 4: model confirmation -->
+    <rect x="60" y="332" width="420" height="56" rx="4" class="d-gate" />
+    <text x="76" y="356" class="d-gate-q">4 · confirmation required · confirm !== true?</text>
+    <text x="76" y="376" class="d-gate-desc">the model must state the intended effect inside the call</text>
+    <path d="M480 360 H534" class="d-out-deny" marker-end="url(#hd-deny)" />
+    <text x="507" y="352" text-anchor="middle" class="d-no">yes</text>
+    <rect x="540" y="332" width="484" height="56" rx="4" class="d-plate-deny" />
+    <text x="558" y="356" class="d-deny-title">deny</text>
+    <text x="620" y="356" class="d-out-main">re-invoke with confirm: true</text>
+    <text x="620" y="376" class="d-out-detail">preview with dryRun: true first — fixed in the same turn</text>
+    <path d="M270 388 V410" class="d-spine" marker-end="url(#hd-spine)" />
+    <text x="284" y="404" class="d-pass">confirm: true · or exempt</text>
+
+    <!-- gate 5: idempotency key -->
+    <rect x="60" y="416" width="420" height="56" rx="4" class="d-gate" />
+    <text x="76" y="440" class="d-gate-q">5 · idempotency key missing where required?</text>
+    <text x="76" y="460" class="d-gate-desc">idempotency "required" and no idempotency_key in the input</text>
+    <path d="M480 444 H534" class="d-out-deny" marker-end="url(#hd-deny)" />
+    <text x="507" y="436" text-anchor="middle" class="d-no">yes</text>
+    <rect x="540" y="416" width="484" height="56" rx="4" class="d-plate-deny" />
+    <text x="558" y="440" class="d-deny-title">deny</text>
+    <text x="620" y="440" class="d-out-main">supply idempotency_key</text>
+    <text x="620" y="460" class="d-out-detail">reusing a key is safe; a new key is a new operation</text>
+    <path d="M270 472 V494" class="d-spine" marker-end="url(#hd-spine)" />
+    <text x="284" y="488" class="d-pass">key present · or optional</text>
+
+    <!-- gate 6: clean but risky -->
+    <rect x="60" y="500" width="420" height="56" rx="4" class="d-gate" />
+    <text x="76" y="524" class="d-gate-q">6 · high-risk or irreversible mutation?</text>
+    <text x="76" y="544" class="d-gate-desc">the call is clean — steer it, don't block it</text>
+    <path d="M480 528 H534" class="d-out-allow" marker-end="url(#hd-allow)" />
+    <text x="507" y="520" text-anchor="middle" class="d-no">yes</text>
+    <rect x="540" y="500" width="484" height="56" rx="4" class="d-plate-allow" />
+    <text x="558" y="524" class="d-allow-title">allow</text>
+    <text x="628" y="524" class="d-out-main">proceed — with dry-run steering</text>
+    <text x="628" y="544" class="d-out-detail">context injected: a dryRun preview is available</text>
+    <path d="M270 556 V578" class="d-spine" marker-end="url(#hd-spine)" />
+    <text x="284" y="572" class="d-pass">read · low-risk · reversible</text>
+
+    <!-- default: allow -->
+    <rect x="60" y="584" width="420" height="44" rx="4" class="d-plate-allow" />
+    <text x="78" y="611" class="d-allow-title">allow</text>
+    <text x="148" y="611" class="d-out-main">reads get zero noise on the hot path</text>
+
+    <text x="60" y="652" class="d-footnote">every rule mirrors an executor refusal — the generated conformance test enforces hook ↔ executor agreement.</text>
+  </svg>
+  <figcaption>fig 06 · the hook decides in the executor's order — deny, ask, or allow before the model burns a turn</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram { margin: 1.75rem 0; overflow-x: auto; }
+  .anvil-diagram svg { min-width: 760px; width: 100%; height: auto; display: block; }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-entry { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-entry-text { font-family: var(--sl-font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; fill: var(--sl-color-gray-2); }
+  .d-spine { stroke: var(--sl-color-gray-4); stroke-width: 1; fill: none; }
+  .d-gate { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-gate-q {
+    font-family: var(--sl-font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--sl-color-white);
+  }
+  .d-gate-desc { font-size: 12px; fill: var(--sl-color-gray-3); }
+  .d-pass {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-no {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-out-deny { stroke: var(--ge-status-failed); stroke-width: 1; fill: none; }
+  .d-out-ask { stroke: var(--ge-status-blocked); stroke-width: 1; fill: none; }
+  .d-out-allow { stroke: var(--ge-status-passed); stroke-width: 1; fill: none; }
+  .d-plate-deny { fill: none; stroke: var(--ge-status-failed); }
+  .d-plate-ask { fill: none; stroke: var(--ge-status-blocked); }
+  .d-plate-allow { fill: none; stroke: var(--ge-status-passed); }
+  .d-deny-title {
+    font-family: var(--sl-font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--ge-status-failed-text);
+  }
+  .d-ask-title {
+    font-family: var(--sl-font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--ge-status-blocked-text);
+  }
+  .d-allow-title {
+    font-family: var(--sl-font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--ge-status-passed-text);
+  }
+  .d-out-main { font-size: 12px; fill: var(--sl-color-gray-2); }
+  .d-out-detail { font-size: 11.5px; fill: var(--sl-color-gray-3); }
+  .d-ask-note { font-size: 11.5px; fill: var(--ge-status-blocked-text); }
+  .d-footnote {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+</style>
