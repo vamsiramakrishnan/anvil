@@ -64,6 +64,56 @@ Two differential tests keep the adapters honest:
   requiring `refunds:write`) expressed in *each* vendor's native format yields
   the **same effective contract** through `compileContract`, on all five.
 
+## Operating at scale
+
+A production Apigee or WSO2 estate can hold 800 APIs. Anvil's answer is not to
+compile all 800 — it is to make the estate **cheap to assess** and **deliberate
+to adopt**. Those are different problems, and Anvil scales them differently.
+
+**Assessment is whole-estate and cheap.** `anvil estate inventory` enumerates
+every API in the export — id, name, route count, auth summary, lifecycle, owner,
+quota — *without compiling any of them*. The snapshot is content-addressed and
+order-independent (re-inventorying an unchanged estate yields the same digest),
+so it drops cleanly into CI as a baseline. This is the one genuinely
+scale-aware primitive, and it is deliberately so: you look before you compile.
+
+```bash
+# The whole estate, as structured data — then triage with the tools you have
+anvil estate inventory prod-estate.zip --vendor wso2 --json \
+  | jq -r '.apis[] | select(.lifecycle=="PUBLISHED" and .hasQuota) | .id'
+```
+
+**Adoption is per-API and human-gated — on purpose.** You import the APIs you
+chose, one at a time; `--api` names a single id. There is no `--all`, and that
+is the point: the goal at scale is *fewer* agent tools, not a faithful mirror of
+a 5,000-operation estate. To onboard the handful that matter, loop the import
+over the ids you triaged:
+
+```bash
+for api in payments refunds payouts; do
+  anvil estate import prod-estate.zip --vendor wso2 --api "$api" \
+    --out "generated/$api"
+done
+```
+
+Each import produces an ordinary bundle whose operations land `review_required`
+until a human approves them. To keep that review tractable, Anvil groups
+operations into **capabilities** by tag or resource and enforces a
+tool-disclosure budget — a capability of 5–15 tools is the sweet spot, and one
+that floods past 20 is blocked until you split it (`--allow-large` to override).
+So you never face 800 undifferentiated operations: you review coherent,
+right-sized capabilities, and expose operations through `anvil approve` only
+after reading their risk.
+
+The net shape: **inventory scales to the whole estate; compilation, review, and
+approval stay granular.** Of 800 APIs, the 795 you never import are not
+half-exposed or best-effort — they are simply not there. That absence is the
+safety property. What does *not* yet exist, and shouldn't be assumed: batch or
+`--all` import, CLI-side filtering of the inventory (use `--json` + `jq`), and
+live pull from a management API (the adapters read offline exports). See
+[ADR-0013](/anvil/reference/adr/0013-gateway-adapters-emit-snapshot-plus-overlay/)
+for why inventory and per-API compilation are separated by design.
+
 ## Using it today, honestly
 
 - **Library**: every adapter is exported from `@anvil/compiler`'s gateway

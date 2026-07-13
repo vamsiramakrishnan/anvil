@@ -4,13 +4,12 @@ description: Anvil compiles the API specs an enterprise already has — OpenAPI,
 template: splash
 hero:
   tagline: >-
-    Your enterprise already wrote down what its APIs do — in OpenAPI, SOAP,
-    gRPC, GraphQL, and in the Apigee, Kong, WSO2, MuleSoft, and IBM API
-    Connect gateways that run them. Anvil compiles those specs and estates
-    into agent tools that share one meaning across a CLI, an MCP server, a
-    skill, and enforcement hooks, with risk, idempotency, and human approval
-    decided once and enforced everywhere. The highest compliment it earns —
-    the agent stopped guessing.
+    Your enterprise already wrote down what its APIs do — in OpenAPI and SOAP,
+    and in the Apigee, Kong, WSO2, MuleSoft, and IBM API Connect gateways that
+    run them. Anvil compiles all of it into agent tools that mean the same
+    thing across a CLI, an MCP server, a skill, and enforcement hooks — with
+    risk, idempotency, and human approval decided once and enforced
+    everywhere. The highest compliment it earns: the agent stopped guessing.
   actions:
     - text: Quickstart
       link: /anvil/start/quickstart/
@@ -29,35 +28,48 @@ import PipelineDiagram from '../../components/diagrams/PipelineDiagram.astro';
 import AlignmentDiagram from '../../components/diagrams/AlignmentDiagram.astro';
 import RingsDiagram from '../../components/diagrams/RingsDiagram.astro';
 
-## Built for the gateway estate you already run
+## Point it at the gateway you already run
 
-Most enterprise APIs don't live in a git repo — they live behind a gateway,
-and the gateway knows things the spec doesn't. Five vendor adapters import
-the **estate** directly and normalize it into the same compiled,
-approval-gated bundles as any hand-written spec.
+Most enterprise APIs don't live in a git repo — they live behind a gateway, and
+the gateway knows what the spec leaves out: which auth plugin actually fronts an
+operation, which scopes a product grants, where a quota bites, which requests
+get rewritten in flight. Anvil imports the **estate**, not just the spec. Five
+adapters read a vendor's own export and compile it through the exact same
+approval-gated pipeline as a hand-written OpenAPI file.
 
 <div class="ge-vendor-row" aria-label="Supported API gateways">
-  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/">Apigee</a>
-  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/">Kong</a>
-  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/">WSO2</a>
-  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/">MuleSoft</a>
-  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/">IBM API Connect</a>
+  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/"><i class="ge-vendor-mark" style="--m:url('/anvil/assets/icons/apigee.svg')" aria-hidden="true"></i>Apigee</a>
+  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/"><i class="ge-vendor-mark" style="--m:url('/anvil/assets/icons/kong.svg')" aria-hidden="true"></i>Kong</a>
+  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/"><i class="ge-vendor-mark" style="--m:url('/anvil/assets/icons/wso2.svg')" aria-hidden="true"></i>WSO2</a>
+  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/"><i class="ge-vendor-mark" style="--m:url('/anvil/assets/icons/mulesoft.svg')" aria-hidden="true"></i>MuleSoft</a>
+  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/"><i class="ge-vendor-mark" style="--m:url('/anvil/assets/icons/api-connect.svg')" aria-hidden="true"></i>IBM API&nbsp;Connect</a>
 </div>
 
 ```bash
-# List the estate's APIs without compiling anything
+# 1. List every API in the estate — without compiling a single one
 anvil estate inventory payments-estate.zip --vendor apigee
 
-# Import one API into a normal, approval-gated Anvil bundle
+# 2. Bring one API in as a normal, approval-gated Anvil bundle
 anvil estate import payments-estate.zip --vendor apigee --api payments
 ```
 
-Exports — Kong `deck` dumps, Apigee bundles, WSO2 CAR/ZIPs, MuleSoft JARs,
-API Connect archives — are decoded through a hardened archive harness, and
-any gateway policy the adapter can't prove it understands is surfaced as
-**opaque** instead of silently dropped. The result is a normal Anvil bundle:
-the approval gate still stands between the estate and the agent.
-[How gateway estates compile →](/anvil/concepts/gateway-estates/)
+Exports arrive as archives — Kong `deck` dumps, Apigee bundles, WSO2 CAR/ZIPs,
+MuleSoft JARs, API Connect archives — and every one is decoded through a
+hardened harness that refuses path traversal, symlinks, and decompression
+bombs, reporting each rejection instead of dropping it silently. Any gateway
+policy the adapter can't *prove* it understands is surfaced as **opaque** and
+blocks certification, rather than being quietly waved through. What lands is an
+ordinary bundle: the approval gate still stands between the estate and the
+agent.
+
+### An estate has 800 APIs. An agent should see five.
+
+A production gateway holds hundreds of APIs, and almost none of them belong in
+an agent's hands. Anvil is built for that ratio. One cheap **inventory**
+enumerates the whole estate without compiling anything — so you triage first and
+adopt deliberately: import the handful that matter, group their operations into
+review-sized capabilities, and leave the other 795 exactly where they are,
+behind the gate. [How Anvil operates at estate scale →](/anvil/concepts/gateway-estates/#operating-at-scale)
 
 ## Any spec in. Every surface out.
 
@@ -212,6 +224,11 @@ approves them. That refusal is the feature, not the bug.
 ## Where to go next
 
 <CardGrid>
+  <Card title="Set up in one sitting" icon="seti:powershell">
+    [Install Anvil](/anvil/cookbooks/install-anvil/) is the copy-paste path from
+    a fresh clone to a working `anvil` command — three commands, a version
+    check, and a first compile to prove it runs.
+  </Card>
   <Card title="Compile your own spec" icon="rocket">
     The [playground](/anvil/playground/) runs the real compiler in your browser —
     paste an OpenAPI document and watch every operation get classified. Nothing

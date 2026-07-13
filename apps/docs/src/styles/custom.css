@@ -806,38 +806,70 @@ button > kbd {
 }
 
 /* The gateway shelf — the five estate vendors Anvil imports (Apigee, Kong,
- * WSO2, MuleSoft, IBM API Connect). No brand marks: wordmarks set in the
- * display face, one ink, on the same tonal tile as the harness shelf, so a
- * row of five vendors reads as one system. Unlike the harness logos these
- * are links (each opens the gateway-estates concept page), so they carry
- * the same touchable hover as the value cards. */
+ * WSO2, MuleSoft, IBM API Connect). Each tile pairs a one-ink glyph with the
+ * vendor wordmark. The glyph is a CSS mask (like .ge-logo-mark), so it follows
+ * the theme's ink exactly and never fights the strict monochrome system with a
+ * stray brand color. Tiles are links to the gateway-estates page, so blue
+ * arrives only on hover — the site's single interactivity signal — and lights
+ * the glyph with it. */
 .ge-vendor-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
-  gap: var(--ge-space-4);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--ge-space-3);
   margin: var(--ge-space-5) 0;
 }
 
 .ge-vendor {
-  display: grid;
-  place-items: center;
-  height: 3.5rem;
-  padding: 0 var(--ge-space-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ge-space-3);
+  min-height: 6.75rem;
+  padding: var(--ge-space-4) var(--ge-space-2);
   border: 1px solid var(--sl-color-gray-5);
   border-radius: var(--ge-radius-md);
   background: var(--sl-color-gray-6);
   color: var(--sl-color-white);
   font-family: var(--ge-display-font);
-  font-size: 1.125rem;
+  font-size: 0.9375rem;
   font-weight: 600;
+  line-height: 1.15;
   text-align: center;
   text-decoration: none;
   transition: border-color 120ms ease, background-color 120ms ease;
 }
 
+.ge-vendor-mark {
+  width: 2.125rem;
+  height: 2.125rem;
+  flex-shrink: 0;
+  background-color: var(--sl-color-gray-1);
+  -webkit-mask: var(--m) center / contain no-repeat;
+  mask: var(--m) center / contain no-repeat;
+  transition: background-color 120ms ease;
+}
+
 .ge-vendor:hover {
   border-color: var(--sl-color-accent);
   background-color: color-mix(in srgb, var(--sl-color-accent-low) 40%, var(--sl-color-gray-6));
+}
+
+.ge-vendor:hover .ge-vendor-mark {
+  background-color: var(--sl-color-accent);
+}
+
+@media (max-width: 50rem) {
+  .ge-vendor-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ge-vendor,
+  .ge-vendor-mark {
+    transition: none;
+  }
 }
 
 .ge-screenshot-wall {
