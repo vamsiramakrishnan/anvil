@@ -32,46 +32,16 @@ describe("harness plugin emission", () => {
       "plugin/claude/mcp.json",
       "plugin/codex/hooks.json",
       "plugin/codex/hook.mjs",
-      "plugin/adk/anvil_guard_plugin.py",
-      "plugin/adk/anvil_guard_plugin.ts",
-      "plugin/adk/anvil_guard.go",
-      "plugin/hookcore.d.mts",
       ".agent/rules/anvil-safety.md",
     ]) {
       expect(files[path], `missing ${path}`).toBeDefined();
     }
   });
 
-  it("emits ADK guard plugins for Python, TypeScript, and Go, each catalog-driven", () => {
-    const f = generateHarnessPlugins(air);
-    const py = f["plugin/adk/anvil_guard_plugin.py"];
-    expect(py).toContain("class AnvilGuardPlugin");
-    expect(py).toContain("before_tool_callback");
-    expect(py).toContain('catalog.get("operations"');
-
-    const ts = f["plugin/adk/anvil_guard_plugin.ts"];
-    expect(ts).toContain("beforeToolCallback");
-    // The TS adapter reuses the one tested decision core — no duplicated rules.
-    expect(ts).toContain('from "../hookcore.mjs"');
-
-    const go = f["plugin/adk/anvil_guard.go"];
-    expect(go).toContain("package anvilguard");
-    expect(go).toContain("func (g *Guard) Decide");
-
-    // None of the variants bake in per-operation data — all read the catalog.
-    for (const src of [py, ts, go]) expect(src).not.toContain("payments_create_refund");
-  });
-
-  it("hookcore.decide carries the runtime error code (for the ADK envelope adapters)", () => {
-    const core = generateHarnessPlugins(air)["plugin/hookcore.mjs"];
-    for (const code of [
-      "confirmation_required",
-      "idempotency_required",
-      "unsupported_operation",
-      "policy_denied",
-    ]) {
-      expect(core).toContain(code);
-    }
+  it("emits no ADK plugin (dropped — a per-language rule port is needless drift)", () => {
+    const files = generateHarnessPlugins(air);
+    expect(Object.keys(files).some((p) => p.startsWith("plugin/adk/"))).toBe(false);
+    expect(files["plugin/hookcore.d.mts"]).toBeUndefined();
   });
 
   it("names the plugin and pins its version to the service (updates track approvals)", () => {
@@ -108,7 +78,7 @@ describe("emitted hookcore.decide agrees with the contract", () => {
     t: string,
     i?: Record<string, unknown>,
     c?: unknown,
-  ) => { decision: string; code?: string; reason?: string };
+  ) => { decision: string; reason?: string };
   let bareToolName: (t: string) => string;
   let dir: string;
   const refundTool = "payments_create_refund";
@@ -137,12 +107,10 @@ describe("emitted hookcore.decide agrees with the contract", () => {
     const namespaced = `mcp__plugin_anvil-payments_payments__${refundTool}`;
     const unconfirmed = decide(namespaced, {});
     expect(unconfirmed.decision).toBe("deny");
-    expect(unconfirmed.code).toBe("confirmation_required");
     expect(unconfirmed.reason).toMatch(/confirm/i);
 
     const noKey = decide(namespaced, { confirm: true });
     expect(noKey.decision).toBe("deny");
-    expect(noKey.code).toBe("idempotency_required");
     expect(noKey.reason).toMatch(/idempotency/i);
 
     const clean = decide(namespaced, {

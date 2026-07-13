@@ -169,11 +169,12 @@ prompt Codex shows for non-managed hooks, add the MCP server under
 Codex requires the user to review the exact hook definition; the README
 should say so rather than fight it.
 
-**ADK** — `plugin/adk/anvil_guard_plugin.py` + README: the app consumes the
-bundle's stdio server via `MCPToolset`, and registers
-`Runner(plugins=[AnvilGuardPlugin("<bundle>/catalog.json")])`.
-`before_tool_callback` fires for every tool including MCP-sourced ones and a
-non-None return skips execution — the interception point is exact.
+**ADK** — *dropped (see S4 in §6).* The interception point is exact
+(`before_tool_callback`, non-None return skips the tool), but ADK is per-language
+and short-circuits with a *result* rather than a verb, so supporting it meant a
+Python/TS/Go port of the rules on top of the JS core — cross-language drift not
+worth the value, given the runtime already enforces the contract for an ADK app.
+The analysis below is kept as design history.
 
 **Antigravity** — `plugin/antigravity/hooks.json` targeting the project's
 `.agents/hooks.json`, emitted **only behind a flag** until the format is
@@ -192,7 +193,7 @@ generateHarnessPlugins(air: AirDocument): Record<string, string>
   "plugin/hookcore.mjs"            // static template + service id interpolation
   "plugin/claude/{hooks.json, hook.mjs, mcp.json}"
   "plugin/codex/{hooks.json, hook.mjs, README.md}"
-  "plugin/adk/{anvil_guard_plugin.py, README.md}"
+  // "plugin/adk/*" — dropped; see S4. Kept the Antigravity rules file only.
   "plugin/antigravity/{hooks.json, hook.mjs}"   // flag-gated
 ```
 
@@ -353,29 +354,17 @@ Antigravity rules all branch on the same value with no duplicated data.
 - **S3 — Codex shim** — *done.* `plugin/codex/{hooks.json, hook.mjs, README.md}`
   share `hookcore.mjs`; `ask` degrades to `deny` (Codex documents deny/allow
   only) and the README covers the trust flow and the field-name caveat.
-- **S4 — ADK plugin (multi-language)** — *done for Python, TypeScript, Go.* ADK
-  ships for Python, TypeScript (`adk-js`), Go (`adk-go`), and Java/Kotlin, all with
-  a `BasePlugin` + before-tool callback. Verified signatures (against the ADK
-  plugin docs and `adk-go`):
-
-  | Lang | Before-tool callback | Short-circuit |
-  |---|---|---|
-  | Python | `before_tool_callback(self, *, tool, tool_args, tool_context) -> Optional[dict]` | return `dict` / `None` |
-  | TypeScript | `beforeToolCallback(tool, toolArgs, context): Promise<{…}\|undefined>` | return object / `undefined` |
-  | Go | `func(ctx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error)` | non-nil map / `(nil,nil)` |
-  | Java/Kotlin | `Maybe<Map<String,Object>> beforeToolCallback(...)` | non-empty `Maybe` / `Maybe.empty()` |
-
-  Emitted: `plugin/adk/anvil_guard_plugin.py`, `anvil_guard_plugin.ts` (reuses the
-  shared `hookcore.mjs`, typed by the new `hookcore.d.mts`), `anvil_guard.go`
-  (pure `anvilguard` package, stdlib only), and a README covering all three plus
-  the Java/Kotlin note. ADK has no `ask` tier, so a human-approval op degrades to a
-  `confirmation_required` envelope naming the human requirement. To let the
-  JS-family adapters reuse ONE tested core, `hookcore.decide()` now also returns
-  the runtime error `code` (additive; the Claude/Codex shims still use the verb).
-  All three variants were compile-verified in CI tooling (`py_compile`,
-  `tsc --strict --noEmit`, `go build` + a `go test` behavior check); the
-  per-language↔contract agreement check stays CI/manual against a pinned ADK.
-  Java/Kotlin emission is a straightforward follow-up from the same rules.
+- **S4 — ADK plugin** — *dropped.* Built and verified for Python, TypeScript, and
+  Go (signatures confirmed against the ADK plugin docs and `adk-go`, each artifact
+  compile-checked), then **removed**: ADK's plugins short-circuit by returning a
+  *result*, not a verb, and its callbacks are per-language, so honoring it meant a
+  Python/TS/Go port of the decision rules on top of the one JS `hookcore` — four
+  copies to keep in agreement. That cross-language drift is exactly what this
+  design exists to prevent, and it is not worth it: the runtime executor already
+  enforces the contract authoritatively for an ADK app, and MCP annotations (§4)
+  make risk visible with zero install. The JS-family reuse via a `code` field on
+  `hookcore.decide()` was reverted with it. Claude Code and Codex — which share the
+  *one* JS core — remain the supported hook targets.
 - **S5 — Antigravity** — *partial.* `.agent/rules/anvil-safety.md` guidance is
   emitted now (safe, prompt-shaping only, generated from the catalog). Emitting
   `.agents/hooks.json` stays blocked behind format verification against a real
