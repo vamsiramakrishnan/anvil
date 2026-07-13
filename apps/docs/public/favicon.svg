@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Anvil">
+  <rect width="32" height="32" rx="6" fill="#00408b" />
+  <!-- anvil silhouette: horn + face, waist, base -->
+  <path
+    fill="#f2f4f8"
+    d="M6 11h15c0 2.2-1.6 3.4-3.6 3.6H18v1.6h1.6c1.2 0 2.2.9 2.4 2.1H10c.2-1.2 1.2-2.1 2.4-2.1H14v-1.6h-2.2C8.6 14.6 6 13.5 6 11Z"
+  />
+  <rect x="8" y="20.4" width="16" height="3" rx="1" fill="#f2f4f8" />
+</svg>

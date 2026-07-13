@@ -1,0 +1,11 @@
+# Astro build + cache
+dist/
+.astro/
+node_modules/
+
+# Synced content — generated from the repo's canonical docs/ + skills/ by
+# scripts/sync-content.mjs before every build. Edit the source, not these.
+src/content/docs/concepts/
+src/content/docs/guides/
+src/content/docs/design/
+src/content/docs/reference/

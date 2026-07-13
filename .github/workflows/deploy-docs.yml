@@ -1,0 +1,57 @@
+# Builds the docs website (apps/docs — Astro/Starlight, content synced from the
+# repo's docs/ + skills/) and deploys it to GitHub Pages. For this to publish,
+# the repo's Pages settings must have Source = "GitHub Actions".
+name: Deploy docs website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "skills/**"
+      - "apps/docs/**"
+      - ".github/workflows/deploy-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # apps/docs is a standalone package (outside the pnpm workspace), so it is
+      # installed and built on its own — the core toolchain install never pulls
+      # in Astro. `pnpm build` syncs content from docs/ + skills/ first.
+      - name: Install docs dependencies
+        working-directory: apps/docs
+        run: pnpm install --no-frozen-lockfile
+      - name: Build site
+        working-directory: apps/docs
+        run: pnpm build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/docs/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
