@@ -65,6 +65,19 @@ describe("harness plugin emission", () => {
     expect(manifest.hooks).toBe("./plugin/claude/hooks.json");
   });
 
+  it("kebab-cases the plugin name so a snake_case service id is a valid manifest", () => {
+    // Service ids derived from a title are snake_case (snakeCase("Payments API")
+    // -> "payments_api"); Claude requires the plugin `name` to be a kebab slug.
+    const snake = structuredClone(air);
+    snake.service.id = "payments_api";
+    expect(pluginName(snake)).toBe("anvil-payments-api");
+    const files = generateHarnessPlugins(snake);
+    expect(JSON.parse(files[".claude-plugin/plugin.json"]).name).toBe("anvil-payments-api");
+    // The plugin-scoped matcher uses the same sanitized name, so it stays consistent.
+    const matcher = JSON.parse(files["plugin/claude/hooks.json"]).hooks.PreToolUse[0].matcher;
+    expect(matcher).toContain("mcp__plugin_anvil-payments-api_");
+  });
+
   it("scopes the PreToolUse matcher to this server's plugin-namespaced tools", () => {
     const hooks = JSON.parse(generateHarnessPlugins(air)["plugin/claude/hooks.json"]);
     const matcher = hooks.hooks.PreToolUse[0].matcher;
@@ -240,6 +253,65 @@ describe("emitted Antigravity hook enforces via stdin/stdout", () => {
       toolCall: { name: refundTool, args: { confirm: true, idempotency_key: "k" } },
     });
     expect(d.decision).toBe("force_ask");
+    expect(d.reason).toMatch(/human approval/i);
+  });
+});
+
+// The Codex shim: same stdin/stdout shape as Claude (tool_name/tool_input ->
+// hookSpecificOutput). Codex PreToolUse supports only "deny" and "allow"+
+// updatedInput — a BARE "allow" is unsupported (Codex marks the hook failed and
+// runs the tool anyway) and there is no "ask" — so the shim only ever emits
+// "deny" or no decision, and fail-closes human-approval ops.
+describe("emitted Codex hook only emits deny or no-decision", () => {
+  const refundTool = "payments_create_refund";
+  let dir: string;
+  let humanDir: string;
+
+  const runHook = (
+    bundleDir: string,
+    toolName: string,
+    toolInput: unknown,
+  ): { decision?: string; reason: string } => {
+    const out = execFileSync("node", [join(bundleDir, "plugin/codex/hook.mjs")], {
+      input: JSON.stringify({ tool_name: toolName, tool_input: toolInput }),
+      encoding: "utf8",
+    });
+    const parsed = JSON.parse(out).hookSpecificOutput ?? {};
+    return { decision: parsed.permissionDecision, reason: parsed.permissionDecisionReason ?? "" };
+  };
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), "anvil-cx-"));
+    writeBundle(dir, generateBundle(air));
+    const humanAir = await compile({
+      spec: read("openapi.yaml"),
+      manifest: read("anvil.yaml"),
+      serviceId: "payments",
+      humanApproval: "all",
+    });
+    humanDir = mkdtempSync(join(tmpdir(), "anvil-cx-human-"));
+    writeBundle(humanDir, generateBundle(humanAir));
+  });
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(humanDir, { recursive: true, force: true });
+  });
+
+  it("denies a model-confirm mutation until confirm, then emits NO decision (never a bare allow)", () => {
+    expect(runHook(dir, refundTool, {}).decision).toBe("deny");
+    // Cleared: hookcore allows, so the Codex hook emits no permissionDecision —
+    // a bare "allow" is unsupported (Codex would mark the hook failed), and
+    // absence lets the tool proceed.
+    expect(
+      runHook(dir, refundTool, { confirm: true, idempotency_key: "k" }).decision,
+    ).toBeUndefined();
+  });
+
+  it("fail-closes a human-approval op (Codex PreToolUse cannot prompt a human)", () => {
+    // hookcore returns "ask" even with confirm:true; Codex has no "ask" and a bare
+    // allow doesn't enforce, so the only honest enforcement is a deny.
+    const d = runHook(humanDir, refundTool, { confirm: true, idempotency_key: "k" });
+    expect(d.decision).toBe("deny");
     expect(d.reason).toMatch(/human approval/i);
   });
 });
