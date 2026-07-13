@@ -32,8 +32,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Test
-        run: pnpm test
-
+      # Build BEFORE test: the cookbook-snippet tests execute the docs' literal
+      # `node packages/cli/dist/bin-anvil.js ...` commands (that's the point —
+      # the snippets users copy must actually run), so the built CLI must exist.
+      # Everything else resolves workspace packages from source via vitest.
       - name: Build
         run: pnpm build
+
+      - name: Test
+        run: pnpm test
