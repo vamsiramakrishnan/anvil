@@ -62,7 +62,7 @@ runbook says a third thing.
   </a>
   <a class="ge-value-card" href="/anvil/design/hooks-and-plugins/">
     <strong>Enforced in the harness</strong>
-    <span>The same contract installs as Claude Code, Codex, and Antigravity hooks that refuse unsafe calls before a token is spent.</span>
+    <span>The same contract installs as Antigravity, Claude Code, and Codex hooks that refuse unsafe calls before a token is spent.</span>
   </a>
 </div>
 
@@ -84,8 +84,9 @@ anvil inspect generated/payments
 #   confirmation: required (human approval)   idempotency: required
 ```
 
-With `--human-approval unsafe`, the generated hooks escalate the refund to a
-**person** — a model-supplied `confirm: true` can't clear the gate.
+With `--human-approval unsafe`, the generated hooks — in Antigravity, Claude
+Code, and Codex alike — escalate the refund to a **person**; a model-supplied
+`confirm: true` can't clear the gate.
 
   </TabItem>
   <TabItem label="Legacy core systems">
@@ -146,6 +147,16 @@ speed and human escalation, never correctness.
 
 <RingsDiagram />
 
+<div class="ge-logo-row" aria-label="Supported harnesses">
+  <span class="ge-logo" role="img" aria-label="Antigravity"><i class="ge-logo-mark" style="--m:url('/anvil/assets/icons/antigravity.svg')"></i></span>
+  <span class="ge-logo" role="img" aria-label="Claude Code"><i class="ge-logo-mark" style="--m:url('/anvil/assets/icons/claude-code.svg')"></i></span>
+  <span class="ge-logo" role="img" aria-label="Codex"><i class="ge-logo-mark" style="--m:url('/anvil/assets/icons/codex.svg')"></i></span>
+  <span class="ge-logo" role="img" aria-label="MCP"><i class="ge-logo-mark" style="--m:url('/anvil/assets/icons/mcp.svg')"></i></span>
+</div>
+
+One contract, enforced in Antigravity, Claude Code, and Codex — and visible to
+every MCP client.
+
 ## The loop
 
 ```bash
@@ -182,6 +193,6 @@ approves them. That refusal is the feature, not the bug.
   </Card>
   <Card title="Design notes" icon="pencil">
     [Hooks and plugins](/anvil/design/hooks-and-plugins/) shows how the safety
-    contract ships into Claude Code, Codex, and Antigravity.
+    contract ships into Antigravity, Claude Code, and Codex.
   </Card>
 </CardGrid>
