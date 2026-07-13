@@ -34,6 +34,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The compile playground (/anvil/playground) bundles the REAL compiler for
+      # the browser, so @anvil/air + @anvil/compiler must be built before the
+      # site is (the vite shim plugin resolves their dist/ files).
+      - name: Build the compiler for the playground
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm --filter @anvil/air --filter @anvil/compiler build
       # apps/docs is a standalone package (outside the pnpm workspace: the root
       # pnpm-workspace.yaml lists only packages/*), so it is installed and built
       # on its own — the core toolchain install never pulls in Astro. Without
