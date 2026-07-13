@@ -7,5 +7,6 @@
  */
 export * from "./certify.js";
 export * from "./checks.js";
+export * from "./coverage.js";
 export * from "./model.js";
 export * from "./mutate.js";

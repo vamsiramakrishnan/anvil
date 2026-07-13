@@ -83,6 +83,9 @@ importers:
       '@anvil/air':
         specifier: workspace:*
         version: link:../air
+      '@anvil/certification':
+        specifier: workspace:*
+        version: link:../certification
       '@anvil/compiler':
         specifier: workspace:*
         version: link:../compiler

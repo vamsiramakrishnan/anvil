@@ -22,6 +22,7 @@ import { registerReview } from "./commands/review.js";
 import { registerRun } from "./commands/run.js";
 import { registerSelftest } from "./commands/selftest.js";
 import { registerServe } from "./commands/serve.js";
+import { registerSimulate } from "./commands/simulate.js";
 import { registerSkill } from "./commands/skill.js";
 import { registerSource } from "./commands/source.js";
 import { registerSources } from "./commands/sources.js";
@@ -83,6 +84,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerCertify(program, ctx);
   registerSelftest(program, ctx);
   registerConformance(program, ctx);
+  registerSimulate(program, ctx);
   registerPublish(program, ctx);
   registerDeploy(program, ctx);
   registerSync(program, ctx);
