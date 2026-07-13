@@ -5,6 +5,8 @@ sidebar:
   order: 1
 ---
 
+import WhichSurfaceDiagram from '../../../components/diagrams/WhichSurfaceDiagram.astro';
+
 Anvil is an **agent toolchain compiler**. It compiles an API specification into
 aligned **CLI + MCP server + skill + hook** artifacts from one canonical model
 (AIR — the Anvil Intermediate Representation), with structured errors,
@@ -43,8 +45,15 @@ outputs:
 - **MCP server** — the same operations as MCP tools, risk visible in tool
   metadata.
 - **Skill** — a progressive-disclosure operating manual for agents.
-- **Enforcement hooks** — installable Claude Code, Codex, and Antigravity hooks
+- **Enforcement hooks** — installable Antigravity, Claude Code, and Codex hooks
   that refuse unsafe calls before the model burns a turn.
+
+<WhichSurfaceDiagram />
+
+Which surface you use depends only on who is calling: humans and CI script the
+CLI, an agent in a harness reads the skill and calls the MCP server, and a
+platform team installs the harness hooks. All four are projections of the same
+AIR model, regenerated together — so they cannot disagree.
 
 ## The safety contract
 
