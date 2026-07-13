@@ -1,0 +1,321 @@
+---
+/**
+ * /anvil/playground — an in-browser compile playground. Paste an OpenAPI
+ * spec, hit Compile, and see every operation classified (effect, risk,
+ * idempotency, confirmation) exactly the way `anvil compile` does it — the
+ * REAL @anvil/compiler runs client-side (see the browser-shims plugin in
+ * astro.config.mjs). No spec text ever leaves the page.
+ */
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro";
+---
+
+<StarlightPage
+  frontmatter={{
+    title: "Compile Playground",
+    tableOfContents: false,
+    pagefind: false,
+  }}
+>
+  <p>
+    Paste an OpenAPI 3.x document (YAML or JSON) and compile it in your
+    browser with the real <code>@anvil/compiler</code>. Every operation is
+    classified the way <code>anvil compile</code> would: effect, risk,
+    idempotency, and whether it is gated behind confirmation. Nothing is
+    uploaded — the compiler runs entirely client-side.
+  </p>
+
+  <div class="pg">
+    <textarea
+      id="pg-spec"
+      class="pg-spec"
+      spellcheck="false"
+      aria-label="OpenAPI specification"
+      rows="18"
+      placeholder="Paste an OpenAPI 3.x document (YAML or JSON)…"></textarea>
+
+    <div class="pg-actions">
+      <button id="pg-compile" class="pg-button" type="button">Compile</button>
+      <span id="pg-status" class="pg-status" role="status"></span>
+    </div>
+
+    <div id="pg-error" class="pg-error" hidden></div>
+
+    <div id="pg-result" hidden>
+      <div class="pg-table-wrap">
+        <table class="pg-table">
+          <thead>
+            <tr>
+              <th>operation</th>
+              <th>source</th>
+              <th>effect</th>
+              <th>risk</th>
+              <th>reversible</th>
+              <th>idempotency</th>
+              <th>confirmation</th>
+            </tr>
+          </thead>
+          <tbody id="pg-rows"></tbody>
+        </table>
+      </div>
+      <p id="pg-diag" class="pg-diag"></p>
+    </div>
+  </div>
+</StarlightPage>
+
+<script>
+  const specEl = document.getElementById("pg-spec") as HTMLTextAreaElement;
+  const button = document.getElementById("pg-compile") as HTMLButtonElement;
+  const status = document.getElementById("pg-status") as HTMLElement;
+  const errorEl = document.getElementById("pg-error") as HTMLElement;
+  const resultEl = document.getElementById("pg-result") as HTMLElement;
+  const rowsEl = document.getElementById("pg-rows") as HTMLElement;
+  const diagEl = document.getElementById("pg-diag") as HTMLElement;
+
+  const esc = (s: string) =>
+    s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
+
+  // The sample spec lives here (not in the markup) because Astro templates
+  // parse `{...}` — including OpenAPI path templates — as expressions.
+  const SAMPLE = `openapi: 3.0.3
+info:
+  title: Payments API
+  version: 1.0.0
+paths:
+  /payments:
+    get:
+      operationId: listPayments
+      summary: List payments
+      responses:
+        "200":
+          description: OK
+    post:
+      operationId: createPayment
+      summary: Create a payment
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: integer
+                currency:
+                  type: string
+      responses:
+        "201":
+          description: Created
+  /payments/{payment_id}:
+    get:
+      operationId: getPayment
+      summary: Get a payment
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+    delete:
+      operationId: cancelPayment
+      summary: Cancel a payment
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Cancelled
+  /payments/{payment_id}/refunds:
+    post:
+      operationId: refundPayment
+      summary: Refund a payment
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Refund created
+`;
+  if (specEl.value.trim() === "") specEl.value = SAMPLE;
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    errorEl.hidden = true;
+    status.textContent = "loading compiler…";
+    try {
+      // Dynamic import: the compiler chunk (~1 MB gz with parsers) only
+      // loads when someone actually compiles.
+      const { compile } = await import("@anvil/compiler");
+      status.textContent = "compiling…";
+      const air = await compile({ spec: specEl.value });
+
+      rowsEl.innerHTML = air.operations
+        .map((op) => {
+          const src = op.sourceRef.method
+            ? `${op.sourceRef.method.toUpperCase()} ${op.sourceRef.path ?? ""}`
+            : (op.sourceRef.pointer ?? op.sourceRef.path ?? "");
+          const confirm = op.confirmation.required
+            ? op.confirmation.humanApproval
+              ? "required (human)"
+              : "required"
+            : "—";
+          const idem =
+            op.idempotency.mechanism && op.idempotency.mechanism !== "none"
+              ? `${op.idempotency.mode} (${op.idempotency.mechanism})`
+              : op.idempotency.mode;
+          return `<tr>
+            <td><code>${esc(op.id)}</code></td>
+            <td><code>${esc(src)}</code></td>
+            <td><span class="pg-chip pg-effect-${esc(op.effect.kind)}">${esc(op.effect.kind)}</span> ${esc(op.effect.action)}</td>
+            <td><span class="pg-chip pg-risk-${esc(op.effect.risk)}">${esc(op.effect.risk)}</span></td>
+            <td>${op.effect.reversible ? "yes" : "no"}</td>
+            <td>${esc(idem)}</td>
+            <td>${op.confirmation.required ? `<span class="pg-chip pg-risk-high">${esc(confirm)}</span>` : "—"}</td>
+          </tr>`;
+        })
+        .join("");
+
+      const warnings = air.diagnostics.filter((d) => d.level === "warning" || d.level === "error");
+      diagEl.textContent =
+        `${air.operations.length} operation${air.operations.length === 1 ? "" : "s"} · ` +
+        `${air.capabilities.length} capabilit${air.capabilities.length === 1 ? "y" : "ies"} · ` +
+        `${air.diagnostics.length} diagnostics (${warnings.length} warnings/errors)`;
+      resultEl.hidden = false;
+      status.textContent = "";
+    } catch (err) {
+      resultEl.hidden = true;
+      status.textContent = "";
+      errorEl.textContent = err instanceof Error ? err.message : String(err);
+      errorEl.hidden = false;
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
+
+<style>
+  .pg {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ge-space-4, 1rem);
+    margin-top: var(--ge-space-4, 1rem);
+  }
+  .pg-spec {
+    width: 100%;
+    font-family: var(--sl-font-mono, monospace);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    padding: var(--ge-space-3, 0.75rem);
+    border: 1px solid var(--sl-color-hairline, #ccc);
+    border-radius: var(--ge-radius-lg, 0.5rem);
+    background: var(--sl-color-bg-nav, var(--sl-color-bg));
+    color: var(--sl-color-text);
+    resize: vertical;
+  }
+  .pg-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--ge-space-3, 0.75rem);
+  }
+  .pg-button {
+    font-family: var(--ge-display-font, inherit);
+    font-weight: 600;
+    font-size: 0.875rem;
+    padding: var(--ge-space-2, 0.5rem) var(--ge-space-5, 1.5rem);
+    border: 1px solid var(--sl-color-accent);
+    border-radius: var(--ge-radius, 0.25rem);
+    background: var(--sl-color-accent);
+    color: var(--sl-color-black, #fff);
+    cursor: pointer;
+  }
+  .pg-button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+  .pg-status {
+    font-family: var(--sl-font-mono, monospace);
+    font-size: 0.75rem;
+    color: var(--sl-color-gray-3, #888);
+  }
+  .pg-error {
+    border: 1px solid var(--sl-color-red, #b91c1c);
+    border-radius: var(--ge-radius, 0.25rem);
+    padding: var(--ge-space-3, 0.75rem);
+    font-family: var(--sl-font-mono, monospace);
+    font-size: 0.8125rem;
+    white-space: pre-wrap;
+    color: var(--sl-color-red-high, var(--sl-color-red, #b91c1c));
+  }
+  .pg-table-wrap {
+    overflow-x: auto;
+  }
+  .pg-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+  }
+  .pg-table th {
+    font-family: var(--sl-font-mono, monospace);
+    font-size: var(--ge-label-size, 0.625rem);
+    letter-spacing: var(--ge-label-tracking, 0.1em);
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--sl-color-gray-3, #888);
+    border-bottom: 1px solid var(--sl-color-hairline, #ccc);
+    padding: var(--ge-space-2, 0.5rem);
+  }
+  .pg-table td {
+    border-bottom: 1px solid var(--sl-color-hairline, #ccc);
+    padding: var(--ge-space-2, 0.5rem);
+    vertical-align: top;
+  }
+  .pg-chip {
+    display: inline-block;
+    font-family: var(--sl-font-mono, monospace);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    padding: 0 var(--ge-space-2, 0.5rem);
+    border-radius: var(--ge-radius-sm, 0.125rem);
+    border: 1px solid var(--sl-color-hairline, #ccc);
+  }
+  .pg-effect-read {
+    color: var(--sl-color-green-high, #15803d);
+    border-color: currentColor;
+  }
+  .pg-effect-mutation {
+    color: var(--sl-color-orange-high, #c2410c);
+    border-color: currentColor;
+  }
+  .pg-risk-low {
+    color: var(--sl-color-gray-3, #888);
+  }
+  .pg-risk-medium {
+    color: var(--sl-color-orange-high, #c2410c);
+    border-color: currentColor;
+  }
+  .pg-risk-high,
+  .pg-risk-financial,
+  .pg-risk-destructive {
+    color: var(--sl-color-red-high, #b91c1c);
+    border-color: currentColor;
+  }
+  .pg-diag {
+    font-family: var(--sl-font-mono, monospace);
+    font-size: 0.75rem;
+    color: var(--sl-color-gray-3, #888);
+  }
+</style>
