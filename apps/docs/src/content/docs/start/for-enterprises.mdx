@@ -39,8 +39,8 @@ gated surfaces come out; and your existing governance plugs into the middle.
    mutations are escalated for review by default; a human decision exposes
    them. This is your change-advisory gate, expressed as a pipeline step.
 5. **Deploy.** Serve the MCP bundle (the deploy manifests target Cloud Run),
-   install the Claude Code plugin, wire the Codex and Antigravity hooks. Agents
-   discover the skill and stop guessing.
+   wire Antigravity's `.agents/hooks.json`, install the Claude Code plugin, and
+   wire the Codex hooks. Agents discover the skill and stop guessing.
 6. **Govern.** When the upstream spec changes, recompile and diff the
    *contract*, not the bytes: a description tweak is info-level, a dropped
    confirmation is **blocking**. Safety can be tightened routinely and loosened
@@ -96,4 +96,4 @@ not a project.
 - [Quickstart](/anvil/start/quickstart/) — compile your first bundle in minutes.
 - [Operating Anvil](/anvil/guides/operating-anvil/) — the full operating manual.
 - [Hooks and plugins](/anvil/design/hooks-and-plugins/) — how enforcement ships
-  into Claude Code, Codex, and Antigravity.
+  into Antigravity, Claude Code, and Codex.
