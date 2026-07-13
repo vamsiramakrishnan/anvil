@@ -1,0 +1,125 @@
+---
+// The enterprise conversion journey: six steps from an existing API estate to
+// governed agent tools, each with the team that owns it. The point the layout
+// makes: approval and governance are steps in the pipeline, not afterthoughts.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 232"
+    role="img"
+    aria-label="Six steps: inventory existing specs, compile bundles, enrich unsafe operations, approve each operation, deploy the surfaces, and govern drift. Owned across API owners, platform, and security teams."
+  >
+    <defs>
+      <marker id="jd-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+    </defs>
+
+    <text x="12" y="24" class="d-label">from api estate to governed agent tools</text>
+
+    <g>
+      <rect x="12" y="40" width="156" height="152" rx="4" class="d-card" />
+      <text x="26" y="66" class="d-index">01</text>
+      <text x="26" y="90" class="d-card-title">Inventory</text>
+      <text x="26" y="112" class="d-desc">Point Anvil at the specs</text>
+      <text x="26" y="128" class="d-desc">you already publish.</text>
+      <text x="26" y="144" class="d-desc">No rewrites.</text>
+      <circle cx="30" cy="174" r="3" class="d-dot-queued" />
+      <text x="40" y="178" class="d-owner">api owners</text>
+    </g>
+    <path d="M168 116 H184" class="d-line" marker-end="url(#jd-arrow)" />
+
+    <g>
+      <rect x="184" y="40" width="156" height="152" rx="4" class="d-card" />
+      <text x="198" y="66" class="d-index">02</text>
+      <text x="198" y="90" class="d-card-title">Compile</text>
+      <text x="198" y="112" class="d-desc">One command emits CLI,</text>
+      <text x="198" y="128" class="d-desc">MCP, skill, and hooks</text>
+      <text x="198" y="144" class="d-desc">from one model.</text>
+      <circle cx="202" cy="174" r="3" class="d-dot-running" />
+      <text x="212" y="178" class="d-owner">platform</text>
+    </g>
+    <path d="M340 116 H356" class="d-line" marker-end="url(#jd-arrow)" />
+
+    <g>
+      <rect x="356" y="40" width="156" height="152" rx="4" class="d-card" />
+      <text x="370" y="66" class="d-index">03</text>
+      <text x="370" y="90" class="d-card-title">Enrich</text>
+      <text x="370" y="112" class="d-desc">Declare idempotency,</text>
+      <text x="370" y="128" class="d-desc">confirmation, and human</text>
+      <text x="370" y="144" class="d-desc">approval in a manifest.</text>
+      <circle cx="374" cy="174" r="3" class="d-dot-queued" />
+      <text x="384" y="178" class="d-owner">api owners</text>
+    </g>
+    <path d="M512 116 H528" class="d-line" marker-end="url(#jd-arrow)" />
+
+    <g>
+      <rect x="528" y="40" width="156" height="152" rx="4" class="d-card" />
+      <text x="542" y="66" class="d-index">04</text>
+      <text x="542" y="90" class="d-card-title">Approve</text>
+      <text x="542" y="112" class="d-desc">Risk read, then a human</text>
+      <text x="542" y="128" class="d-desc">exposes each operation.</text>
+      <text x="542" y="144" class="d-desc">Nothing ships by default.</text>
+      <circle cx="546" cy="174" r="3" class="d-dot-blocked" />
+      <text x="556" y="178" class="d-owner">security</text>
+    </g>
+    <path d="M684 116 H700" class="d-line" marker-end="url(#jd-arrow)" />
+
+    <g>
+      <rect x="700" y="40" width="156" height="152" rx="4" class="d-card" />
+      <text x="714" y="66" class="d-index">05</text>
+      <text x="714" y="90" class="d-card-title">Deploy</text>
+      <text x="714" y="112" class="d-desc">Serve the MCP bundle,</text>
+      <text x="714" y="128" class="d-desc">install the plugin — agents</text>
+      <text x="714" y="144" class="d-desc">pick up the skill.</text>
+      <circle cx="718" cy="174" r="3" class="d-dot-running" />
+      <text x="728" y="178" class="d-owner">platform</text>
+    </g>
+    <path d="M856 116 H872" class="d-line" marker-end="url(#jd-arrow)" />
+
+    <g>
+      <rect x="872" y="40" width="156" height="152" rx="4" class="d-card" />
+      <text x="886" y="66" class="d-index">06</text>
+      <text x="886" y="90" class="d-card-title">Govern</text>
+      <text x="886" y="112" class="d-desc">Recompile on spec change.</text>
+      <text x="886" y="128" class="d-desc">Drift that loosens safety</text>
+      <text x="886" y="144" class="d-desc">is blocking, not a diff.</text>
+      <circle cx="890" cy="174" r="3" class="d-dot-passed" />
+      <text x="900" y="178" class="d-owner">security · platform</text>
+    </g>
+  </svg>
+  <figcaption>fig 03 · the conversion journey — approval and governance are pipeline steps, not afterthoughts</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram { margin: 1.75rem 0; overflow-x: auto; }
+  .anvil-diagram svg { min-width: 860px; width: 100%; height: auto; display: block; }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-card { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-index { font-family: var(--sl-font-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.1em; fill: var(--sl-color-text-accent); }
+  .d-card-title { font-family: var(--ge-display-font); font-size: 15px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-desc { font-size: 11.5px; fill: var(--sl-color-gray-3); }
+  .d-owner { font-family: var(--sl-font-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; fill: var(--sl-color-gray-3); }
+  .d-line { stroke: var(--sl-color-gray-4); stroke-width: 1; fill: none; }
+  .d-dot-queued { fill: var(--ge-status-queued); }
+  .d-dot-running { fill: var(--ge-status-running-text); }
+  .d-dot-blocked { fill: var(--ge-status-blocked); }
+  .d-dot-passed { fill: var(--ge-status-passed); }
+</style>

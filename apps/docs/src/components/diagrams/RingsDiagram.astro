@@ -1,0 +1,98 @@
+---
+// Defense in depth as concentric rings. The outer hook ring is drawn DASHED
+// because it is fail-open; the inner runtime ring is solid accent because it is
+// authoritative and fail-closed. The human-approval tier feeds the outer ring:
+// hooks answer ask/force_ask, so the model cannot approve itself.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 330"
+    role="img"
+    aria-label="Three nested enforcement rings: harness hooks (fail-open, outermost), generated CLI and MCP surfaces (only approved operations exist), and the runtime executor (authoritative, fail-closed). A human-approval tier feeds the hook ring so the model cannot approve itself. Removing every outer ring still leaves the runtime refusing unsafe calls."
+  >
+    <defs>
+      <marker id="rd-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--ge-status-blocked)" />
+      </marker>
+    </defs>
+
+    <!-- ring 3: hooks (fail-open → dashed) -->
+    <rect x="24" y="36" width="660" height="252" rx="8" class="d-ring-open" />
+    <text x="42" y="62" class="d-ring-label">ring 3 · harness hooks — claude code · codex · antigravity</text>
+    <text x="42" y="80" class="d-ring-desc">fail-open · denies before the model burns a turn · escalates to a human</text>
+
+    <!-- ring 2: generated surfaces -->
+    <rect x="56" y="98" width="596" height="162" rx="6" class="d-ring-mid" />
+    <text x="74" y="124" class="d-ring-label">ring 2 · generated surfaces — cli · mcp server</text>
+    <text x="74" y="142" class="d-ring-desc">only approved operations exist here at all</text>
+
+    <!-- ring 1: runtime (authoritative) -->
+    <rect x="88" y="160" width="532" height="80" rx="4" class="d-ring-core" />
+    <text x="106" y="186" class="d-core-label">ring 1 · runtime executor — authoritative, fail-closed</text>
+    <text x="106" y="206" class="d-core-desc">confirmation gate · idempotency ledger · retry policy</text>
+    <text x="106" y="222" class="d-core-desc">egress pinning · secret redaction</text>
+
+    <!-- human approval tier -->
+    <rect x="724" y="92" width="300" height="116" rx="4" class="d-human" />
+    <text x="740" y="120" class="d-human-title">Human approval tier</text>
+    <text x="740" y="144" class="d-human-line">anvil compile --human-approval unsafe</text>
+    <text x="740" y="162" class="d-human-line">manifest · human_approval true</text>
+    <text x="740" y="186" class="d-human-desc">per operation or by risk class</text>
+    <path d="M724 150 H688" class="d-human-arrow" marker-end="url(#rd-arrow)" />
+    <text x="724" y="234" class="d-human-note">hooks answer ask / force_ask —</text>
+    <text x="724" y="252" class="d-human-note">the model cannot approve itself.</text>
+
+    <text x="24" y="316" class="d-footnote">remove every outer ring and the contract still holds — the runtime refuses.</text>
+  </svg>
+  <figcaption>fig 04 · defense in depth — hooks are the outer ring, never the only ring</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram { margin: 1.75rem 0; overflow-x: auto; }
+  .anvil-diagram svg { min-width: 760px; width: 100%; height: auto; display: block; }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-ring-open { fill: none; stroke: var(--sl-color-gray-4); stroke-dasharray: 6 5; }
+  .d-ring-mid { fill: none; stroke: var(--sl-color-gray-4); }
+  .d-ring-core { fill: var(--sl-color-gray-6); stroke: var(--sl-color-accent); stroke-width: 1.5; }
+  .d-ring-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-ring-desc { font-size: 12px; fill: var(--sl-color-gray-3); }
+  .d-core-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-text-accent);
+  }
+  .d-core-desc { font-size: 12px; fill: var(--sl-color-gray-2); }
+  .d-human { fill: var(--sl-color-gray-6); stroke: var(--ge-status-blocked); }
+  .d-human-title { font-family: var(--ge-display-font); font-size: 14.5px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-human-line { font-family: var(--sl-font-mono); font-size: 11px; fill: var(--sl-color-gray-2); }
+  .d-human-desc { font-size: 11.5px; fill: var(--sl-color-gray-3); }
+  .d-human-arrow { stroke: var(--ge-status-blocked); stroke-width: 1.25; fill: none; }
+  .d-human-note { font-size: 12px; fill: var(--ge-status-blocked-text); }
+  .d-footnote {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+</style>

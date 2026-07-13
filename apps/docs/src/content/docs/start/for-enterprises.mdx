@@ -1,0 +1,99 @@
+---
+title: For enterprises
+description: The conversion playbook — how a large organization turns its existing API estate (OpenAPI, SOAP, gRPC, GraphQL) into governed agent tools, and how Anvil's compile → enrich → approve → govern loop maps onto the controls you already run.
+sidebar:
+  order: 3
+---
+
+import JourneyDiagram from '../../../components/diagrams/JourneyDiagram.astro';
+
+A large enterprise doesn't have an API problem — it has an API **estate**:
+hundreds of services across OpenAPI, twenty-year-old WSDL, gRPC, and GraphQL,
+each owned by a different team, each governed by change management the
+organization already trusts.
+
+The naive path to "agents can use our APIs" is a wrapper factory: every team
+hand-writes an MCP server, a CLI, and a prompt snippet for each service. That's
+**N services × 3 surfaces × forever**, and every wrapper embeds a guess about
+safety that no one reviews and nothing keeps aligned. The wrappers aren't the
+cost — *keeping them honest* is.
+
+Anvil replaces the wrapper factory with a compiler. Specs go in; aligned,
+gated surfaces come out; and your existing governance plugs into the middle.
+
+## The conversion journey
+
+<JourneyDiagram />
+
+1. **Inventory.** The input is the spec you already publish — OpenAPI 3.x,
+   Swagger 2.0, GraphQL SDL, gRPC/proto3, SOAP/WSDL, Postman, Google Discovery.
+   No service rewrites, no SDK migrations, no prerequisites.
+2. **Compile.** `anvil compile` emits the whole bundle: CLI, MCP server, skill,
+   harness hooks, deploy manifests, and a conformance test that verifies the
+   bundle's own safety contract.
+3. **Enrich.** Specs are honest about shapes and silent about consequences. The
+   API's owner declares what the spec can't say — idempotency keys,
+   confirmation, human approval — in a small, reviewed, diffable manifest.
+4. **Approve.** Every operation compiles in a `review_required` or `approved`
+   state, and **only approved operations exist on any surface**. Risky
+   mutations are escalated for review by default; a human decision exposes
+   them. This is your change-advisory gate, expressed as a pipeline step.
+5. **Deploy.** Serve the MCP bundle (the deploy manifests target Cloud Run),
+   install the Claude Code plugin, wire the Codex and Antigravity hooks. Agents
+   discover the skill and stop guessing.
+6. **Govern.** When the upstream spec changes, recompile and diff the
+   *contract*, not the bytes: a description tweak is info-level, a dropped
+   confirmation is **blocking**. Safety can be tightened routinely and loosened
+   only deliberately.
+
+## Governance, mapped
+
+Anvil doesn't ask an enterprise to adopt a new control framework. It gives the
+controls you already run a place to execute.
+
+| Control you already run | Where it lands in Anvil |
+| --- | --- |
+| Change advisory / CAB | The approval workflow — an operation is exposed only by an explicit `anvil approve`, never by default |
+| Security review | Risk classification (effect · risk · reversibility) surfaced by `inspect` and `lint` before anything ships |
+| Four-eyes / SoD on sensitive actions | The human-approval tier — hooks answer `ask`/`force_ask`, so a model-supplied `confirm` can never clear the gate |
+| Audit trail | Structured error envelopes with trace ids; claim-scoped evidence and provenance recorded in AIR |
+| Least privilege | Only approved operations are compiled into *any* surface — there is no hidden superset to leak |
+| Config-drift monitoring | Contract drift detection — a spec change that loosens safety is a blocking finding, not a silent diff |
+| Secret handling | The runtime redacts auth material from records; generated docs carry variable *names*, never values |
+
+## Who owns what
+
+- **API owners** enrich: they know which mutations are idempotent, which need
+  confirmation, and which need a person. The manifest is small enough to review
+  in a normal PR.
+- **Security** approves: they read risk from `inspect`, gate exposure, and own
+  the human-approval policy (`--human-approval unsafe` is a sensible default
+  for financial and destructive operations).
+- **Platform** runs the factory: compile on spec change in CI, `lint` and
+  `certify` as gates, `publish` bundles, serve the MCP endpoints, and watch
+  `drift`.
+- **Agent teams** consume: install one plugin, read one skill, and get tools
+  whose flags mean what they say. They never negotiate safety per-service.
+
+## A rollout that doesn't bet the company
+
+**Weeks 1–2 — pilot one API.** Pick a service with real stakes and a good spec
+(payments is the classic). Compile it, enrich the unsafe operations, approve a
+handful, and put the MCP server in front of an internal agent. The deliverable
+isn't the demo — it's the *manifest review* your security team does on the way.
+
+**Weeks 3–6 — template the pipeline.** Move compile/lint/certify into CI so a
+spec change automatically produces a new candidate bundle with a drift report.
+Approvals stay human; everything else is a build artifact.
+
+**Then — scale as a catalog.** Each service publishes its bundle; agent teams
+install skills and plugins from the catalog instead of writing integrations.
+New API, same contract — the marginal cost of the next service is a manifest,
+not a project.
+
+## Next
+
+- [Quickstart](/anvil/start/quickstart/) — compile your first bundle in minutes.
+- [Operating Anvil](/anvil/guides/operating-anvil/) — the full operating manual.
+- [Hooks and plugins](/anvil/design/hooks-and-plugins/) — how enforcement ships
+  into Claude Code, Codex, and Antigravity.
