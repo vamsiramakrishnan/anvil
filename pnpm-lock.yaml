@@ -108,6 +108,9 @@ importers:
         specifier: ^2.8.1
         version: 2.9.0
     devDependencies:
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(postcss@8.5.16)(typescript@5.9.3)(yaml@2.9.0)
@@ -132,6 +135,9 @@ importers:
       fast-xml-parser:
         specifier: ^5.9.3
         version: 5.9.3
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       graphql:
         specifier: ^17.0.2
         version: 17.0.2
@@ -1216,6 +1222,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
 
   finalhandler@2.1.1:
     resolution: {integrity: sha512-S8KoZgRZN+a5rNwqTxlZZePjT/4cnm0ROV70LedRHZ0p8u9fRID0hJUZQpkKLzro8LfmC8sx23bY6tVNxv8pQA==}
@@ -2626,6 +2635,8 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.5):
     optionalDependencies:
       picomatch: 4.0.5
+
+  fflate@0.8.3: {}
 
   finalhandler@2.1.1:
     dependencies:
