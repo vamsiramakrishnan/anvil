@@ -176,12 +176,16 @@ Python/TS/Go port of the rules on top of the JS core — cross-language drift no
 worth the value, given the runtime already enforces the contract for an ADK app.
 The analysis below is kept as design history.
 
-**Antigravity** — `plugin/antigravity/hooks.json` targeting the project's
-`.agents/hooks.json`, emitted **only behind a flag** until the format is
-verified against a live install (§5). Independently useful today: an
-`.agent/rules/` guidance file (the mechanism Google staff actually point to)
-restating the confirm/idempotency rules from the catalog — prompt-shaping,
-not enforcement, but zero format risk.
+**Antigravity** — `plugin/antigravity/hooks.json` (a `PreToolUse` config) copied
+into the project's `.agents/hooks.json`, plus a `hook.mjs` shim over the shared
+core and a README. Format verified against the official
+<https://antigravity.google/docs/hooks> spec (see §5). The `.agent/rules/`
+guidance file ships alongside as complementary prompt-shaping. Unlike the scoped
+Claude/Codex matchers, the Antigravity matcher is `*` and the shim self-scopes:
+Antigravity fires `PreToolUse` for its own built-in tools, so the shim passes any
+non-catalog tool through as `allow` and only gates this bundle's operations. The
+human-approval tier maps to `force_ask` (Antigravity's "always prompt, ignore
+Always-Allow").
 
 ### 3.3 Generator changes (sketch)
 
@@ -257,20 +261,18 @@ Remaining native gaps, in value order:
 
 ## 5. Honest constraints
 
-- **Antigravity is the weakest-verified target.** The official docs page
-  (<https://antigravity.google/docs/hooks>) is a JS-rendered SPA that returned
-  no content to fetching in this environment; every config detail above comes
-  from third-party posts (June 2026) and the SDK repo. The third parties
-  *disagree*: one documents output `{"allow_tool": bool, "deny_reason"}` with
-  mandatory exit 0 and global config at `~/.gemini/antigravity-cli/hooks.json`;
-  another describes `allow`/`deny`/`ask` verbs and
-  `~/.gemini/config/hooks.json`. An official forum reply (predating the CLI
-  hooks posts) said Antigravity has *no* traditional hooks and pointed at
-  `.agent/rules/` + workflows. The Python SDK's hooks
-  (`Decide`/`Inspect`/`Transform`, `HookResult`) are real but programmatic —
-  for people *building* agents with the SDK, not for configuring the IDE/CLI.
-  Conclusion: do not emit Antigravity `hooks.json` by default until validated
-  against a live install; ship the `.agent/rules/` file meanwhile.
+- **Antigravity — now format-verified, one runtime unknown.** The official spec
+  (<https://antigravity.google/docs/hooks>) settled the format the earlier
+  third-party posts contradicted: config in `.agents/hooks.json`
+  (`{hook-name: {PreToolUse: [{matcher, hooks:[{type,command,timeout}]}]}}`);
+  stdin carries `toolCall.{name,args}`; stdout is `{decision:
+  "allow"|"deny"|"ask"|"force_ask", reason?}`, exit 0. We emit an enforcing
+  `PreToolUse` hook against that spec. The remaining unknown is *runtime*, not
+  format: the docs' matcher tool list is Antigravity's built-ins, and they don't
+  state whether `PreToolUse` fires for MCP-server tool calls or how `toolCall.name`
+  is spelled for them. The shim is robust to it — it strips an `mcp__…__` prefix
+  and, being self-scoping, is harmless if the event never arrives — and the README
+  flags it. Fail-open regardless: the runtime still refuses.
 - **Codex hooks are new and deliberately friction-ful.** Non-managed hooks
   require the user to review and trust the exact definition; project-local
   hooks load only when `.codex/` is trusted; orgs can pin
@@ -365,7 +367,22 @@ Antigravity rules all branch on the same value with no duplicated data.
   make risk visible with zero install. The JS-family reuse via a `code` field on
   `hookcore.decide()` was reverted with it. Claude Code and Codex — which share the
   *one* JS core — remain the supported hook targets.
-- **S5 — Antigravity** — *partial.* `.agent/rules/anvil-safety.md` guidance is
-  emitted now (safe, prompt-shaping only, generated from the catalog). Emitting
-  `.agents/hooks.json` stays blocked behind format verification against a real
-  install.
+- **S5 — Antigravity** — *done* (format verified against the official
+  <https://antigravity.google/docs/hooks> spec). Emits `plugin/antigravity/`:
+  `hooks.json` (a `PreToolUse` config for `.agents/hooks.json`), a `hook.mjs` shim
+  over the shared `hookcore.mjs`, and a README; the `.agent/rules/` guidance stays
+  as complementary prompt-shaping. Two Antigravity-specific decisions:
+  1. **Matcher is `*` and the shim self-scopes.** Antigravity fires `PreToolUse`
+     for its own built-in tools (`run_command`, `view_file`, …) and does not
+     document how it namespaces MCP tools, so the hookcore deny-unknown guard
+     (correct behind Claude/Codex's scoped matcher) must NOT apply — the shim
+     passes any tool not in the catalog straight through as `allow`, and only
+     gates this bundle's operations. Cost: the hook runs on every tool call.
+  2. **Human-approval → `force_ask`**, Antigravity's verb for "always prompt,
+     ignoring Always-Allow" — a precise fit the model can't self-confirm past;
+     model-confirm → `deny` (re-invoke with `confirm`), everything clean →
+     `allow`. Verified end-to-end by a subprocess test (`plugins.test.ts`) that
+     pipes a `PreToolUse` event to the emitted shim and asserts its decision.
+     Residual unknown: whether Antigravity fires `PreToolUse` for MCP-tool calls
+     and under what `toolCall.name` — the shim strips an `mcp__…__` prefix and the
+     README flags it.
