@@ -1,19 +1,20 @@
 ---
 title: Anvil
-description: Anvil is an agent toolchain compiler — it compiles one API specification into aligned CLI, MCP server, skill, and hook artifacts, with structured errors, idempotency safety, and an approval workflow. The highest compliment is "the agent stopped guessing."
+description: Anvil compiles the API specs an enterprise already has — OpenAPI, SOAP, gRPC, GraphQL, Postman — into an aligned CLI, MCP server, skill, and enforcement hooks, with risk, idempotency, and human approval decided once and enforced everywhere.
 template: splash
 hero:
   tagline: >-
-    An operation should mean the same thing on every surface. Anvil compiles one
-    canonical model into an aligned CLI, MCP server, skill, and enforcement
-    hooks — so the agent stops guessing what a tool does, and can't invoke an
-    unsafe one by accident.
+    Your enterprise already wrote down what its APIs do — in OpenAPI, SOAP,
+    gRPC, GraphQL. Anvil compiles those specs into agent tools that share one
+    meaning across a CLI, an MCP server, a skill, and enforcement hooks, with
+    risk, idempotency, and human approval decided once and enforced everywhere.
+    The highest compliment it earns — the agent stopped guessing.
   actions:
     - text: Quickstart
       link: /anvil/start/quickstart/
       icon: right-arrow
-    - text: Operate Anvil
-      link: /anvil/guides/operating-anvil/
+    - text: For enterprises
+      link: /anvil/start/for-enterprises/
       variant: minimal
     - text: See the design
       link: /anvil/design/hooks-and-plugins/
@@ -21,93 +22,152 @@ hero:
 ---
 
 import { Card, CardGrid, Tabs, TabItem } from '@astrojs/starlight/components';
+import PipelineDiagram from '../../components/diagrams/PipelineDiagram.astro';
+import AlignmentDiagram from '../../components/diagrams/AlignmentDiagram.astro';
+import RingsDiagram from '../../components/diagrams/RingsDiagram.astro';
 
-<div class="ge-hero-panel">
-  <div class="ge-proof-strip" aria-label="From one spec, aligned surfaces">
-    <span>OpenAPI · GraphQL · gRPC · SOAP · Postman</span>
-    <span>→ AIR (one canonical model)</span>
-    <span>CLI</span>
-    <span>MCP server</span>
-    <span>Skill</span>
-    <span>Enforcement hooks</span>
-  </div>
-</div>
+## Any spec in. Every surface out.
+
+Enterprises don't lack APIs — they lack **agent-safe** ones. The payments API
+knows a refund moves money; the WSDL knows the transfer can't be undone. But
+none of that knowledge survives the trip into an agent's toolbox when wrappers
+are written by hand. Anvil compiles it in.
+
+<PipelineDiagram />
+
+Everything on the right is a **projection** of the model in the middle. Nobody
+hand-writes the CLI, the MCP tool descriptions, or the skill — so nobody can
+forget that the refund needs an idempotency key on one surface but not another.
+
+## The problem isn't writing wrappers. It's keeping them honest.
+
+Any team can wrap an API for one demo. The failure mode arrives six months
+later, when the CLI wrapper retries a payment the MCP wrapper wouldn't, and the
+runbook says a third thing.
+
+<AlignmentDiagram />
 
 <div class="ge-value-grid">
-  <a class="ge-value-card" href="/anvil/concepts/architecture/">
-    <strong>One model, many surfaces</strong>
-    <span>CLI, MCP server, and skill are projections of one AIR model — an operation means the same thing everywhere. The alignment is the product.</span>
+  <a class="ge-value-card" href="/anvil/start/for-enterprises/">
+    <strong>Start with what you have</strong>
+    <span>A 2004 WSDL and yesterday's OpenAPI compile the same way. No rewrites, no SDK migrations, no wrapper team.</span>
+  </a>
+  <a class="ge-value-card" href="/anvil/concepts/mechanisms/">
+    <strong>Safety is compiled in</strong>
+    <span>Effect, risk, idempotency, and confirmation are derived from the spec and enforced by the runtime — not requested politely in a prompt.</span>
   </a>
   <a class="ge-value-card" href="/anvil/guides/enrich-approve-workflow/">
-    <strong>Safe by default</strong>
-    <span>Non-idempotent mutations are never auto-retried and refuse to run without <code>--confirm</code>. Enrich unsafe operations rather than approving them blindly.</span>
-  </a>
-  <a class="ge-value-card" href="/anvil/guides/operating-anvil/">
-    <strong>Approval-gated</strong>
-    <span>Only <em>approved</em> operations are exposed by the generated artifacts. Inspect risk, then approve — never the other way around.</span>
+    <strong>Approval is the gate</strong>
+    <span>Nothing reaches an agent until a human approves it, and drift that loosens safety is <em>blocking</em> — not a comment in a diff.</span>
   </a>
   <a class="ge-value-card" href="/anvil/design/hooks-and-plugins/">
     <strong>Enforced in the harness</strong>
-    <span>The same contract compiles into installable Claude Code, Codex, and Antigravity hooks that deny unsafe calls before the model burns a turn.</span>
+    <span>The same contract installs as Claude Code, Codex, and Antigravity hooks that refuse unsafe calls before a token is spent.</span>
   </a>
 </div>
 
-Anvil is not magic because it generates code. It is useful because the CLI, MCP
-server, skill, and hooks all agree on what an operation *means* — its effect,
-risk, idempotency, and whether it needs confirmation — from one canonical model
-(AIR). Everything downstream is a projection of that model, so the surfaces can
-never quietly disagree.
-
-## The loop
+## Where enterprises point it first
 
 <Tabs>
-  <TabItem label="Compile → inspect → approve → deploy">
+  <TabItem label="Payments & billing">
+
+A refund is a **financial, irreversible mutation**. Anvil derives that from the
+spec, and every surface enforces it: the call refuses to run without
+`confirm: true` and an idempotency key, and it is never auto-retried.
 
 ```bash
-# 1. Compile a spec into a full bundle (CLI + MCP + skill + hooks)
-node packages/cli/dist/bin-anvil.js compile <spec> --manifest <manifest> --out <dir>
+anvil compile stripe-payments.yaml --manifest payments.anvil.yaml \
+  --human-approval unsafe --out generated/payments
 
-# 2. Read every operation's effect, risk, and idempotency
-node packages/cli/dist/bin-anvil.js inspect <dir>
-
-# 3. Expose an operation only after inspecting its risk
-node packages/cli/dist/bin-anvil.js approve <dir> <operation-id>
-
-# 4. Package the skill and deploy the server
-node packages/cli/dist/bin-anvil.js package skill <dir>
+anvil inspect generated/payments
+# payments.refunds.create   mutation · financial · irreversible
+#   confirmation: required (human approval)   idempotency: required
 ```
 
-Non-idempotent mutations land as `review_required` — they are not exposed until
-you approve them. That refusal is the feature.
+With `--human-approval unsafe`, the generated hooks escalate the refund to a
+**person** — a model-supplied `confirm: true` can't clear the gate.
 
   </TabItem>
-  <TabItem label="Build & test">
+  <TabItem label="Legacy core systems">
+
+The core banking system speaks SOAP, and it's not getting rewritten this
+decade. Anvil compiles multi-file WSDL directly — the twenty-year-old spec
+becomes typed, gated agent tools with the same safety contract as the newest
+OpenAPI service.
 
 ```bash
-pnpm install
-pnpm build      # compile every package
-pnpm test       # the safety contract's own conformance suite
-pnpm typecheck
+anvil compile core-banking.wsdl --manifest banking.anvil.yaml --out generated/banking
 ```
+
+No modernization project as a prerequisite. The spec you have is the input.
+
+  </TabItem>
+  <TabItem label="HR & PII">
+
+For an HCM system, reads are useful and mostly harmless — compensation changes
+are neither. Approve the reads broadly, gate the writes individually, and mark
+the sensitive mutations `human_approval: true` in the manifest so no agent can
+self-approve a salary change.
+
+```yaml
+# hcm.anvil.yaml
+operations:
+  updateCompensation:
+    confirmation: { required: true, human_approval: true }
+```
+
+  </TabItem>
+  <TabItem label="Customer messaging">
+
+An outbound SMS can't be unsent, and a timeout doesn't mean it wasn't
+delivered. Anvil marks sends **not retry-safe** — the runtime never auto-retries
+them — and requires an idempotency key, so a nervous agent re-issuing the call
+is a duplicate-suppressed no-op instead of a second text to your customer.
 
   </TabItem>
 </Tabs>
 
+## Three rings, one contract
+
+Hooks make enforcement cheap and early; the runtime makes it inescapable. Every
+check lives in the innermost ring that can enforce it — the outer rings buy
+speed and human escalation, never correctness.
+
+<RingsDiagram />
+
+## The loop
+
+```bash
+# 1. Compile a spec into a full bundle (CLI + MCP + skill + hooks)
+anvil compile <spec> --manifest <manifest> --out <dir>
+
+# 2. Read every operation's effect, risk, and idempotency
+anvil inspect <dir>
+
+# 3. Expose an operation only after reading its risk
+anvil approve <dir> <operation-id>
+
+# 4. Package the skill and deploy the server
+anvil package skill <dir>
+```
+
+Non-idempotent mutations land as `review_required` — not exposed until a human
+approves them. That refusal is the feature, not the bug.
+
 ## Where to go next
 
 <CardGrid>
+  <Card title="For enterprises" icon="seti:pipeline">
+    The [conversion playbook](/anvil/start/for-enterprises/): pilot one API,
+    template the pipeline, and map Anvil onto the governance you already run.
+  </Card>
   <Card title="Start Here" icon="rocket">
-    New to Anvil? [What Anvil is](/anvil/start/what-is-anvil/) and the
+    [What Anvil is](/anvil/start/what-is-anvil/) and the
     [Quickstart](/anvil/start/quickstart/) get you from a spec to an aligned bundle.
   </Card>
   <Card title="Operate it safely" icon="approve-check">
     [Operating Anvil](/anvil/guides/operating-anvil/) is the progressive-disclosure
     manual: the compile → enrich → approve → deploy loop and the safety rules.
-  </Card>
-  <Card title="Concepts" icon="open-book">
-    [Architecture](/anvil/concepts/architecture/) and the
-    [product boundary](/anvil/concepts/product-boundary/) explain the AIR model and
-    what Anvil deliberately does not do.
   </Card>
   <Card title="Design notes" icon="pencil">
     [Hooks and plugins](/anvil/design/hooks-and-plugins/) shows how the safety
