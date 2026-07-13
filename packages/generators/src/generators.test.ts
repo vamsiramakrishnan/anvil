@@ -50,6 +50,9 @@ describe("MCP server", () => {
     expect(refund).toBeDefined();
     expect(refund?.annotations?.destructiveHint).toBe(true);
     expect(refund?.annotations?.readOnlyHint).toBe(false);
+    // Anvil calls are closed-domain (one pinned upstream host behind the egress
+    // allowlist), so every tool declares openWorldHint:false — never the default.
+    expect(tools.every((t) => t.annotations?.openWorldHint === false)).toBe(true);
     expect(refund?.description).toMatch(/irreversible|idempotency|confirm/i);
     // Input schema requires the safety fields.
     expect(refund?.inputSchema.required).toEqual(

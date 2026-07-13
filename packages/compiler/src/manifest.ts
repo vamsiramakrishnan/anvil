@@ -29,6 +29,12 @@ export const OperationManifest = z.object({
       required: z.boolean().optional(),
       risk: z.enum(["none", "low", "medium", "high", "financial", "destructive"]).optional(),
       reason: z.string().optional(),
+      /**
+       * Require explicit HUMAN sign-off, not just a model-supplied `confirm`.
+       * Implies `required`. Harness hooks escalate these to the human dialog;
+       * the runtime still gates on `confirm`.
+       */
+      human_approval: z.boolean().optional(),
     })
     .optional(),
   /** Override the descriptive action verb (list/get/create/send/…). */
@@ -229,6 +235,17 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     if (m.confirmation.required !== undefined) op.confirmation.required = m.confirmation.required;
     if (m.confirmation.risk) op.confirmation.risk = m.confirmation.risk;
     if (m.confirmation.reason) op.confirmation.reason = m.confirmation.reason;
+    if (m.confirmation.human_approval !== undefined) {
+      op.confirmation.humanApproval = m.confirmation.human_approval;
+      // A human-approval gate is meaningless without a gate: escalating implies
+      // the operation confirms. Tightening only, so this is always safe.
+      if (m.confirmation.human_approval) {
+        op.confirmation.required = true;
+        if (!op.confirmation.reason) {
+          op.confirmation.reason = "This operation requires explicit human approval.";
+        }
+      }
+    }
   }
 
   if (m.state) op.state = m.state;
