@@ -349,6 +349,7 @@ Options:
 - `--entry <path>` — archive entry holding the config, when the archive has several
 - `--service <id>` — override the derived service id
 - `--out <dir>` — bundle output directory (default generated/<service-id>)
+- `--json` — emit a machine-readable import report (for CI oracles)
 
 ### `anvil sources`
 `anvil sources [options]`
@@ -412,6 +413,30 @@ Boot the bundle's mock + MCP servers and prove the generated surface end-to-end.
 Loopback self-test for bundles with no reference server to compare against: starts the generated mock upstream (mock/server.mjs) and the generated MCP server (mcp/server.js) pointed at it via ANVIL_BASE_URL, then invokes every approved tool over the real MCP transport. Checks: the tool surface equals the approved operations (surface), every argument reaches the wire faithfully and the response round-trips (fidelity), confirmation gates refuse before any side effect (confirmation-gate), documented upstream errors surface as structured envelopes (error-mapping), and non-idempotent mutations are never auto-retried (retry checks). Writes selftest.report.json into the bundle. Exit 0 only when no check fails.
 
 Options:
+- `--json` — emit the full report as JSON
+
+### `anvil conformance`  *(mutates)*
+`anvil conformance [options] <dir>`
+
+Prove the CLI, MCP, and skill surfaces agree on every operation, end-to-end.
+
+Tri-surface conformance for a generated bundle. Boots the bundle's mock upstream, then drives every approved operation through BOTH the generated MCP server (mcp/server.js, over the real MCP transport) and the generated CLI entrypoint (cli/<svc>.mjs, as a child process) against that mock. Checks: the skill, CLI catalog, and MCP tool list name the same operations with the same public handles (surface-agreement); the skill documents the exact confirmation/idempotency/retry posture the runtime enforces (skill-claim); the same input reaches the wire identically on both surfaces and matches the AIR contract (wire-agreement); and a confirmation-gated mutation refuses without --confirm, before any side effect, on both surfaces (gate-agreement). Writes conformance.report.json into the bundle. Exit 0 only when no check fails.
+
+With --live <config.json>, probes a REAL deployed MCP endpoint instead of the mock: it verifies the deployed server serves exactly the certified surface and that its confirmation gate refuses in production, and invokes only the reads the config opts into — it never drives a real mutation. The config names the endpoint (mcpUrl) and auth headers, whose ${VAR} values resolve from the environment; the onus of correct config is on the operator. Writes conformance.live.report.json.
+
+Options:
+- `--live <config>` — probe a real deployed MCP endpoint named in this JSON config
+- `--json` — emit the full report as JSON
+
+### `anvil simulate`  *(mutates)*
+`anvil simulate [options] <dir>`
+
+Drive the full safety matrix through the simulator and report coverage.
+
+Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the safety dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control and proving the surface signature detects it. Reports per-dimension coverage and mutants killed. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.
+
+Options:
+- `--seed <n>` — deterministic simulator seed
 - `--json` — emit the full report as JSON
 
 ### `anvil publish`  *(mutates)*

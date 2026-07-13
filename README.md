@@ -132,7 +132,9 @@ Two loops (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)):
 | `@anvil/runtime` | The safety runtime: error taxonomy, retry engine, idempotency ledger (durable-backend plugins, fail-closed in prod), auth profiles, policy hooks, executor |
 | `@anvil/mcp-runtime` | The thin MCP **serving** path: turns AIR into a live MCP server + serves precomputed skill/CLI resources. The deployed unit depends on this, not on the foundry |
 | `@anvil/generators` | The build-time artifact foundry: CLI, MCP server source, skill, docs, deploy, mocks, evals, conformance |
-| `@anvil/harness` | The harness loop: connects to **published** MCP servers (GitHub/GitLab/Confluence/…) to gather evidence and **propose** a manifest patch |
+| `@anvil/harness` | The harness loop: connects to **published** MCP servers (GitHub/GitLab/Confluence/…) to gather evidence and **propose** a manifest patch; also the loopback, **tri-surface conformance**, and opt-in **live** drivers |
+| `@anvil/simulator` | Contract-faithful, deterministic simulator — a signature-identical projection of the generated MCP surface (auth, confirmation, idempotency/replay, seeded faults, pagination) |
+| `@anvil/certification` | Static + executable certification, the safety **mutation battery**, and the **mechanistic coverage matrix** driven through the simulator |
 | `@anvil/cli` | The `anvil` command + the shared engine that drives every generated tool CLI |
 
 Built library-first: OpenAPI parsing (`@scalar/openapi-parser`), validation
@@ -182,13 +184,24 @@ Two current semantics worth stating plainly:
   and writes `publication.json` into the bundle. It makes **no cloud API calls** —
   `anvil deploy cloud-run` owns actual rollout. Publishing to prod fails closed
   without a valid certification.
-- **Certification is static (bundle-integrity) today, not executable.** The four
-  gates (CONTRACT, SAFETY, SEMANTIC, RUNTIME) re-validate AIR, prove the CLI / MCP
-  / runtime surfaces expose exactly the approved operations, and confirm the
-  generated mock, eval, conformance, and deploy artifacts are present and
-  parseable. It does **not yet** boot the mock/MCP servers and execute those
-  suites; executable certification (start the servers, run the evals live) is
-  staged.
+- **`anvil certify` is static (bundle-integrity); executable verification lives
+  in three dedicated lanes.** The four certify gates (CONTRACT, SAFETY, SEMANTIC,
+  RUNTIME) re-validate AIR, prove the CLI / MCP / runtime surfaces expose exactly
+  the approved operations, and confirm the generated artifacts parse — without
+  booting anything. To actually *run* the surfaces:
+  - `anvil selftest <dir>` — **MCP loopback.** Boots the bundle's own mock
+    upstream + generated MCP server and drives every approved tool over the real
+    MCP transport (surface, fidelity, confirmation gate, error mapping, retry).
+  - `anvil conformance <dir>` — **tri-surface agreement.** Drives the same input
+    through the MCP server *and* the generated CLI against the same mock and
+    proves they produce an identical wire request and identical safety behaviour,
+    and that the skill documents that exact contract. `--live <config>` probes a
+    real deployed `/mcp` endpoint (surface parity + production confirmation gate;
+    reads opt-in; never drives a real mutation).
+  - `anvil simulate <dir>` — **mechanistic coverage.** Enumerates the full safety
+    matrix (each operation × auth, confirmation, idempotency, fault, pagination),
+    drives every cell through the deterministic simulator, and runs the safety
+    mutation battery — reporting coverage as a number, not a vibe.
 
 ## License
 
