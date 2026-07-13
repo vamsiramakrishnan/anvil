@@ -5,3 +5,4 @@
 export * from "./fixture.js";
 export * from "./model.js";
 export * from "./reader.js";
+export * from "./zip.js";

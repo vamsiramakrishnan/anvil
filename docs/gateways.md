@@ -72,11 +72,15 @@ Two differential tests keep the adapters honest:
   harness, conformance battery, and capability matrix. `GatewayApiImport`
   feeds `compileContract` directly, and the compiled result is a normal bundle
   — CLI, MCP, skill, hooks, simulator, certification all apply.
-- **CLI**: `anvil source add --origin apigee|mulesoft|kong|api_connect|wso2`
-  records the gateway origin as provenance on a locked snapshot. A dedicated
-  estate-import command (point the CLI at a raw vendor export archive) is the
-  visible seam that has **not** landed yet — today the adapter path is driven
-  from the library.
+- **CLI**: `anvil estate inventory <export> --vendor <v>` lists an estate's
+  APIs without compiling anything, and `anvil estate import <export> --vendor
+  <v> [--api <id>]` compiles one API into a normal bundle — the export may be
+  a bare config document or a ZIP/JAR archive, which is decoded through the
+  hardened harness (rejections printed, never silent) with the real fflate
+  backend. Opaque policies are surfaced in the import summary. `anvil source
+  add --origin <vendor>` separately records gateway provenance on locked
+  snapshots. tar/gzip containers are refused by name until their thin
+  decoders land.
 - **Deferred per-vendor depth** (recorded in ADR-0021): Kong
   consumers/credentials/workspaces, WSO2 mediation-sequence semantics, MuleSoft
   Exchange metadata and client apps, API Connect subscription analytics.

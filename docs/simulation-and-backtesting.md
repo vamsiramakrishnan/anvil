@@ -88,10 +88,10 @@ effective contract** — a differential test, not a design intention.
   (fixtures, state machines, fault profiles), not a replay of your gateway's
   production traffic. Backtesting proves the *contract and controls*, not
   vendor-runtime byte behavior.
-- **Estate import is library-driven today.** The adapters, archive harness,
-  and conformance battery ship in `@anvil/compiler`; a CLI command that points
-  directly at a vendor export archive hasn't landed (see
-  [Gateway estates](/anvil/concepts/gateway-estates/)).
+- **No real-export corpus lane yet.** `anvil estate import` drives the
+  adapters end to end, but the nightly corpus still exercises only spec-based
+  systems — pointing it at a corpus of real public vendor exports (with
+  policy-accounting oracles) is the next hardening step.
 
 Related ADRs: 0017 (simulator as a projection), 0018 (static vs executable
 certification), 0020 (archive harness), 0021 (vendor adapters).
