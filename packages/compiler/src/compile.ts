@@ -4,6 +4,7 @@ import {
   type Diagnostic,
   type JsonSchema,
   loadAirDocument,
+  type Operation,
   operationInputSchema,
   snakeCase,
 } from "@anvil/air";
@@ -20,6 +21,16 @@ import { type ParsedSpec, parseSource } from "./parse.js";
 import { type CompilerSource, ephemeralCompilerSource } from "./source/compiler-source.js";
 import { validate } from "./validate.js";
 
+/**
+ * How aggressively to require explicit HUMAN approval (not just a model-supplied
+ * `confirm`) on gated operations. A coarse default that fills in where the
+ * manifest didn't decide per-operation; tightening only:
+ *   none   — no default (per-op manifest still applies). The default.
+ *   unsafe — escalate irreversible / high / financial / destructive mutations.
+ *   all    — escalate every confirmation-required operation.
+ */
+export type HumanApprovalPolicy = "none" | "unsafe" | "all";
+
 export interface CompileInput {
   /** OpenAPI 3.x / Swagger 2.0 document text. */
   spec: string;
@@ -29,6 +40,8 @@ export interface CompileInput {
   serviceId?: string;
   /** Provenance URI recorded in AIR. */
   sourceUri?: string;
+  /** Coarse human-approval default; per-op manifest `human_approval` overrides. */
+  humanApproval?: HumanApprovalPolicy;
 }
 
 export interface CompileSourceOptions {
@@ -36,6 +49,8 @@ export interface CompileSourceOptions {
   manifest?: string;
   /** Override the derived service id. */
   serviceId?: string;
+  /** Coarse human-approval default; per-op manifest `human_approval` overrides. */
+  humanApproval?: HumanApprovalPolicy;
 }
 
 /**
@@ -96,11 +111,40 @@ export async function compileSourceEffective(
  */
 export async function compile(input: CompileInput): Promise<AirDocument> {
   const source = ephemeralCompilerSource(input.spec, input.sourceUri);
-  return compileSource(source, { manifest: input.manifest, serviceId: input.serviceId });
+  return compileSource(source, {
+    manifest: input.manifest,
+    serviceId: input.serviceId,
+    humanApproval: input.humanApproval,
+  });
 }
 
 interface BuildAirOptions extends EffectiveCompileOptions {
   provenance: CompilerSource;
+}
+
+/**
+ * Apply the coarse human-approval default in place. Only touches confirmation-
+ * required operations whose `humanApproval` is still undefined — an explicit
+ * per-op manifest value (true OR false) always wins. Escalating is a tightening,
+ * so no conflict machinery is involved.
+ */
+function applyHumanApprovalPolicy(ops: Operation[], policy: HumanApprovalPolicy | undefined): void {
+  if (!policy || policy === "none") return;
+  for (const op of ops) {
+    if (!op.confirmation.required) continue;
+    if (op.confirmation.humanApproval !== undefined) continue;
+    const unsafe =
+      op.effect.reversible === false ||
+      op.effect.risk === "high" ||
+      op.effect.risk === "financial" ||
+      op.effect.risk === "destructive";
+    if (policy === "all" || (policy === "unsafe" && unsafe)) {
+      op.confirmation.humanApproval = true;
+      if (!op.confirmation.reason) {
+        op.confirmation.reason = "This operation requires explicit human approval.";
+      }
+    }
+  }
 }
 
 /**
@@ -175,6 +219,11 @@ async function buildAir(
   }
 
   const { operations: validated, diagnostics } = validate(operations);
+
+  // Human-approval policy: a coarse default that escalates already-gated ops to
+  // explicit human sign-off. Tightening only (it never removes a gate), so it
+  // needs no conflict resolution and respects any explicit per-op manifest value.
+  applyHumanApprovalPolicy(validated, options.humanApproval);
 
   // Critique the final names for agent-friendliness (reviewable diagnostics).
   const nameConfidence = new Map(

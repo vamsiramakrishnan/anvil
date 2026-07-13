@@ -17,6 +17,8 @@ export interface CatalogEntry {
   confirmationRequired: boolean;
   /** Why confirmation is gated — carried so a harness hook can cite the reason. */
   confirmationReason?: string;
+  /** True when the gate needs explicit HUMAN approval, not just a model `confirm`. */
+  humanApproval: boolean;
   auth: { type: string; scopes: string[] };
   cli: string;
   mcpTool: string;
@@ -74,6 +76,7 @@ export function operationCatalog(air: AirDocument): {
       retrySafe: op.retries.mode === "safe",
       confirmationRequired: op.confirmation.required,
       confirmationReason: op.confirmation.reason,
+      humanApproval: op.confirmation.humanApproval === true,
       auth: { type: op.auth.type, scopes: op.auth.scopes },
       cli: op.cli.command,
       mcpTool: op.mcp.toolName,

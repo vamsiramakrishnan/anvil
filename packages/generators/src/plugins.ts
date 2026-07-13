@@ -53,6 +53,8 @@ export function generateHarnessPlugins(air: AirDocument): Record<string, string>
     "plugin/codex/hooks.json": codexHooks(matcher),
     "plugin/codex/hook.mjs": codexShim(id),
     "plugin/codex/README.md": codexReadme(air),
+    "plugin/adk/anvil_guard_plugin.py": adkPlugin(id),
+    "plugin/adk/README.md": adkReadme(air),
     "plugin/README.md": pluginReadme(air, name),
     ".agent/rules/anvil-safety.md": antigravityRules(air),
   };
@@ -202,15 +204,29 @@ export function decide(toolName, toolInput = {}, catalog = loadCatalog()) {
     return { decision: "deny", reason: \`"\${name}" is \${op.state}, not approved for use.\` };
   }
 
-  // 3. Confirmation gate — mirrors the executor's confirmation refusal, but
-  //    escalates to the human ("ask") instead of letting the model self-confirm.
-  if (op.confirmationRequired && (!toolInput || toolInput.confirm !== true)) {
+  // 3. Confirmation gate — mirrors the executor's confirmation refusal. The tier
+  //    is configurable (AIR confirmation.humanApproval):
+  //    - human approval  -> "ask" ALWAYS: escalate to the human permission dialog;
+  //      a model-supplied confirm can never clear it (the model can't self-approve).
+  //    - model confirm   -> "deny" pre-flight until confirm:true, naming the flag
+  //      so the model re-invokes in the same turn instead of round-tripping.
+  if (op.confirmationRequired) {
     const posture = op.reversible ? \`\${op.risk}-risk\` : \`irreversible \${op.risk}-risk\`;
-    return {
-      decision: "ask",
-      reason: op.confirmationReason || \`"\${name}" is a \${posture} \${op.effect} and needs confirmation.\`,
-      context: "Preview with dryRun: true first, then re-invoke with confirm: true.",
-    };
+    const why = op.confirmationReason || \`"\${name}" is a \${posture} \${op.effect}\`;
+    if (op.humanApproval) {
+      return {
+        decision: "ask",
+        reason: \`\${why} — requires explicit human approval.\`,
+        context: "Preview with dryRun: true first; a human must approve this effect.",
+      };
+    }
+    if (!toolInput || toolInput.confirm !== true) {
+      return {
+        decision: "deny",
+        reason: \`\${why} — re-invoke with confirm: true if the user intends the effect.\`,
+        context: "Preview with dryRun: true first, then re-invoke with confirm: true.",
+      };
+    }
   }
 
   // 4. Idempotency key required — mirrors the executor's idempotency refusal,
@@ -350,9 +366,12 @@ authoritative. The hook is the **outer ring** and buys what the runtime cannot:
    and the required flags are injected into the same turn, instead of costing a
    full call → \`confirmation_required\` → retry round trip.
 2. **Human confirmation, not model confirmation.** \`confirm: true\` is an argument
-   the *model* supplies. The Claude hook returns \`ask\` for a gated mutation,
-   escalating to the real permission dialog — the model cannot self-confirm past
-   it.
+   the *model* supplies. For an operation marked \`human_approval\` in the Anvil
+   contract, the Claude hook returns \`ask\` — escalating to the real permission
+   dialog — so the model cannot self-confirm past it. Model-confirm operations are
+   instead denied pre-flight until \`confirm: true\`. The tier is configurable per
+   operation (\`anvil compile --human-approval unsafe|all\`, or \`confirmation:
+   human_approval: true\` in the manifest).
 3. **Tamper / drift detection.** The hook reads the committed \`catalog.json\`, not
    the server's self-report, so a swapped or stale server exposing something the
    catalog does not is denied anyway.
@@ -433,13 +452,183 @@ install-by-review — there is no silent install path, by design.
 `;
 }
 
+/**
+ * The Google ADK plugin (design S4). A `BasePlugin` whose `before_tool_callback`
+ * short-circuits a tool by returning the same structured error envelope the
+ * runtime would — or `None` to pass through. It reads the same `catalog.json`, so
+ * it carries no per-operation data. ADK has no "ask" tier, so a human-approval op
+ * degrades to a `confirmation_required` envelope that names the human requirement;
+ * the agent must surface it to the user.
+ */
+function adkPlugin(id: string): string {
+  return `"""Anvil guard plugin for Google ADK — "${id}".
+
+The OUTER enforcement ring for an Anvil tool bundle used through ADK. It reads the
+committed catalog.json (the single source of truth for the exposed safety surface)
+and short-circuits a tool call BEFORE it executes whenever the runtime would refuse
+it. This NEVER replaces the runtime (the MCP server's executor stays
+authoritative); it denies pre-flight so the model does not burn a turn.
+
+Register it on your Runner:
+
+    from anvil_guard_plugin import AnvilGuardPlugin
+    runner = Runner(..., plugins=[AnvilGuardPlugin("<bundle>/catalog.json")])
+
+before_tool_callback fires for every tool (including MCP-sourced ones); a non-None
+return skips the tool and becomes its result, so returning a structured error
+envelope is exactly the runtime's refusal delivered early.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any, Optional
+
+try:
+    from google.adk.plugins import BasePlugin
+except Exception:  # pragma: no cover - importable without ADK for agreement tests
+    class BasePlugin:  # type: ignore
+        def __init__(self, name: str = "anvil_guard") -> None:
+            self.name = name
+
+
+def _bare_tool_name(name: str) -> str:
+    # Harnesses namespace MCP tools as mcp__<server>__<tool>; strip to the bare
+    # Anvil tool name. Anvil tool names never contain "__".
+    if not isinstance(name, str):
+        return ""
+    i = name.rfind("__")
+    return name[i + 2:] if i >= 0 else name
+
+
+def _envelope(code: str, message: str, operation: str) -> dict:
+    return {
+        "error": {
+            "code": code,
+            "message": message,
+            "retryable": False,
+            "safe_to_retry": False,
+            "operation": operation,
+        }
+    }
+
+
+class AnvilGuardPlugin(BasePlugin):
+    """Enforces the Anvil approval/confirmation/idempotency contract in ADK."""
+
+    def __init__(self, catalog_path: str, name: str = "anvil_guard") -> None:
+        super().__init__(name=name)
+        with open(catalog_path, "r", encoding="utf-8") as fh:
+            catalog = json.load(fh)
+        self._by_tool = {op["mcpTool"]: op for op in catalog.get("operations", [])}
+
+    def decide(self, tool_name: str, tool_args: Optional[dict]) -> Optional[dict]:
+        name = _bare_tool_name(tool_name)
+        op = self._by_tool.get(name)
+        args = tool_args or {}
+
+        # 1. Unknown tool — tamper/staleness guard.
+        if op is None:
+            return _envelope(
+                "unsupported_operation",
+                '"' + name + '" is not an operation of this bundle.',
+                name,
+            )
+        # 2. Not approved — mirrors the approval filter.
+        if op.get("state") != "approved":
+            return _envelope(
+                "policy_denied",
+                '"' + name + '" is ' + str(op.get("state")) + ", not approved for use.",
+                name,
+            )
+        # 3. Confirmation gate. ADK has no "ask" tier, so human approval degrades to
+        #    a confirmation_required envelope naming the human requirement.
+        if op.get("confirmationRequired"):
+            reason = op.get("confirmationReason") or ('"' + name + '" needs confirmation.')
+            if op.get("humanApproval"):
+                return _envelope(
+                    "confirmation_required",
+                    reason + " Requires explicit human approval — surface this to the user.",
+                    name,
+                )
+            if args.get("confirm") is not True:
+                return _envelope(
+                    "confirmation_required",
+                    reason + " Re-invoke with confirm=true if the user intends the effect.",
+                    name,
+                )
+        # 4. Idempotency key required — mirrors the executor's idempotency refusal.
+        if op.get("idempotency") == "required":
+            key = args.get("idempotency_key")
+            if not (isinstance(key, str) and key):
+                return _envelope(
+                    "idempotency_required",
+                    '"' + name + '" requires an idempotency_key (reusing the same key is safe).',
+                    name,
+                )
+        # 5. Clean — let the tool run.
+        return None
+
+    async def before_tool_callback(
+        self, *, tool: Any, tool_args: dict, tool_context: Any = None
+    ) -> Optional[dict]:
+        return self.decide(getattr(tool, "name", ""), tool_args)
+`;
+}
+
+function adkReadme(air: AirDocument): string {
+  const id = air.service.id;
+  return `---
+name: anvil-${id}-adk
+description: Register the generated Google ADK guard plugin so the ${id} safety contract is enforced in-agent via before_tool_callback. Read this to wire ADK enforcement.
+---
+
+# ${air.service.displayName ?? id} — ADK guard plugin
+
+\`anvil_guard_plugin.py\` is the outer enforcement ring for ADK. It reuses the same
+decision logic as the Claude/Codex hooks, reading this bundle's \`catalog.json\`.
+
+## Wire it up
+
+1. Consume this bundle's stdio MCP server via \`MCPToolset\` in your ADK app.
+2. Register the plugin on the runner, pointing it at the committed catalog:
+
+   \`\`\`python
+   from anvil_guard_plugin import AnvilGuardPlugin
+   runner = Runner(
+       agent=my_agent,
+       plugins=[AnvilGuardPlugin("path/to/${id}-bundle/catalog.json")],
+   )
+   \`\`\`
+
+\`before_tool_callback\` fires for every tool call; a non-None return short-circuits
+the tool with that value as its result. The plugin returns the same structured
+error envelope the runtime would (\`confirmation_required\`, \`idempotency_required\`,
+\`unsupported_operation\`, \`policy_denied\`), so the agent sees the refusal pre-flight.
+
+## Caveats
+
+- **No \`ask\` tier.** ADK has no human-permission dialog at the callback layer, so a
+  \`human_approval\` operation degrades to a \`confirmation_required\` envelope whose
+  message says a human must approve. Your agent is responsible for surfacing that
+  to the user rather than auto-supplying \`confirm=true\`.
+- **Version pinning.** \`BasePlugin\` and the callback signature can move between ADK
+  releases; the callback semantics (a non-None return short-circuits the tool) were
+  verified from source. Pin a tested \`google-adk\` version in your project.
+- **Fail-open.** As with every hook, this is the outer ring — the MCP server's
+  runtime remains authoritative and refuses unsafe calls even if the plugin is not
+  registered.
+`;
+}
+
 function antigravityRules(air: AirDocument): string {
   const id = air.service.id;
-  const gated = air.operations.filter((o) => o.state === "approved" && o.confirmation.required);
-  const idem = air.operations.filter(
-    (o) => o.state === "approved" && o.idempotency.mode === "required",
+  const approved = air.operations.filter((o) => o.state === "approved");
+  const human = approved.filter((o) => o.confirmation.humanApproval === true);
+  const gated = approved.filter(
+    (o) => o.confirmation.required && o.confirmation.humanApproval !== true,
   );
-  const list = (ops: typeof gated) =>
+  const idem = approved.filter((o) => o.idempotency.mode === "required");
+  const list = (ops: typeof approved) =>
     ops.length ? ops.map((o) => `\`${o.mcp.toolName}\``).join(", ") : `_(none)_`;
   return `# ${air.service.displayName ?? id} — safety rules
 
@@ -450,6 +639,8 @@ a live install; see the Anvil design doc.)
 
 ## Rules
 
+- **Require explicit human approval for these** — do NOT self-confirm; stop and
+  get the user's sign-off before running: ${list(human)}.
 - **Confirm before these mutations.** They will not run without \`confirm: true\`,
   and \`confirm\` should reflect the *user's* intent, not your own: ${list(gated)}.
 - **Supply an idempotency key** (\`idempotency_key\`) for: ${list(idem)}.

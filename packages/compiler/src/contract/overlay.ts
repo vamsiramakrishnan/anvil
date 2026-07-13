@@ -86,6 +86,7 @@ export const CONTRACT_SAFETY_PREDICATES: ReadonlySet<SemanticPredicate> =
     "effect.reversible",
     "idempotency.mode",
     "confirmation.required",
+    "confirmation.human_approval",
     "retries.mode",
     "auth.principal",
     "auth.scopes",
@@ -179,6 +180,9 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     if (m.confirmation?.reason) {
       assertions.push(set(ref, "confirmation.reason", m.confirmation.reason));
     }
+    if (m.confirmation?.human_approval !== undefined) {
+      assertions.push(set(ref, "confirmation.human_approval", m.confirmation.human_approval));
+    }
 
     if (m.retries) {
       if (m.retries.enabled !== undefined) {
@@ -250,11 +254,13 @@ export function projectOperationManifest(
   const confRequired = v<boolean>("confirmation.required");
   const confRisk = v<NonNullable<OperationManifest["confirmation"]>["risk"]>("confirmation.risk");
   const confReason = v<string>("confirmation.reason");
-  if (confRequired !== undefined || confRisk || confReason) {
+  const confHuman = v<boolean>("confirmation.human_approval");
+  if (confRequired !== undefined || confRisk || confReason || confHuman !== undefined) {
     m.confirmation = {};
     if (confRequired !== undefined) m.confirmation.required = confRequired;
     if (confRisk) m.confirmation.risk = confRisk;
     if (confReason) m.confirmation.reason = confReason;
+    if (confHuman !== undefined) m.confirmation.human_approval = confHuman;
   }
 
   const retryMode = v<"safe" | "none">("retries.mode");

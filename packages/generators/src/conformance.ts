@@ -14,13 +14,20 @@ export function generateConformanceTest(air: AirDocument): string {
   const nonRetryable = approved
     .filter((o) => o.effect.kind === "mutation" && o.retries.mode !== "safe")
     .map((o) => o.id);
-  // Tool names for the hook<->executor agreement check: the hook must ASK where
-  // the executor would refuse for confirmation, and DENY where it would refuse
-  // for a missing idempotency key. `confirm: true` is passed for the idempotency
-  // cases so they clear the confirmation gate first (the executor's order).
-  const confirmTools = approved.filter((o) => o.confirmation.required).map((o) => o.mcp.toolName);
+  // Tool names for the hook<->executor agreement check. The hook must ASK where a
+  // human must sign off, DENY (pre-flight) where the model must supply confirm,
+  // and DENY where an idempotency key is missing. `confirm: true` is passed for
+  // the idempotency cases so they clear the confirmation gate first.
+  const humanApprovalTools = approved
+    .filter((o) => o.confirmation.humanApproval === true)
+    .map((o) => o.mcp.toolName);
+  const modelConfirmTools = approved
+    .filter((o) => o.confirmation.required && o.confirmation.humanApproval !== true)
+    .map((o) => o.mcp.toolName);
+  // Human-approval ops always ASK first, so the idempotency-deny rule is only
+  // reachable (via the hook) for non-human ops cleared with confirm:true.
   const keyTools = approved
-    .filter((o) => o.idempotency.mode === "required")
+    .filter((o) => o.idempotency.mode === "required" && o.confirmation.humanApproval !== true)
     .map((o) => o.mcp.toolName);
   const cleanReadTool = approved.find((o) => o.effect.kind === "read" && !o.confirmation.required)
     ?.mcp.toolName;
@@ -63,8 +70,13 @@ describe("${air.service.id} hook <-> executor agreement", () => {
     expect(decide("definitely_not_a_tool", {}).decision).toBe("deny");
   });
 
-  it.each(${JSON.stringify(confirmTools)})("asks for human confirmation on %s", (tool) => {
-    expect(decide(tool, {}).decision).toBe("ask");
+  it.each(${JSON.stringify(humanApprovalTools)})("asks for human approval on %s", (tool) => {
+    // Human-approval ops escalate to the dialog even if the model supplies confirm.
+    expect(decide(tool, { confirm: true }).decision).toBe("ask");
+  });
+
+  it.each(${JSON.stringify(modelConfirmTools)})("denies %s until confirm:true", (tool) => {
+    expect(decide(tool, {}).decision).toBe("deny");
   });
 
   it.each(${JSON.stringify(keyTools)})("denies %s without an idempotency key", (tool) => {

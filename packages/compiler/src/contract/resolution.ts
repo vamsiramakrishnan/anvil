@@ -65,6 +65,7 @@ export interface ResolveOutcome {
 function saferScalar(predicate: SemanticPredicate, a: unknown, b: unknown): unknown {
   switch (predicate) {
     case "confirmation.required":
+    case "confirmation.human_approval":
       return a === true || b === true;
     case "effect.reversible":
       return !(a === false || b === false);
@@ -81,6 +82,7 @@ function saferScalar(predicate: SemanticPredicate, a: unknown, b: unknown): unkn
 function isLoosening(predicate: SemanticPredicate, base: unknown, candidate: unknown): boolean {
   switch (predicate) {
     case "confirmation.required":
+    case "confirmation.human_approval":
       return base === true && candidate === false;
     case "effect.reversible":
       return base === false && candidate === true;
@@ -136,6 +138,8 @@ function baseValue(op: Operation, predicate: SemanticPredicate): unknown {
       return op.idempotency.key;
     case "confirmation.required":
       return op.confirmation.required;
+    case "confirmation.human_approval":
+      return op.confirmation.humanApproval;
     case "confirmation.risk":
       return op.confirmation.risk;
     case "confirmation.reason":

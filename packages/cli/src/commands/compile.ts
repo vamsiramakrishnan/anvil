@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type CompilerSource, compileSource, type SourceDiagnostic } from "@anvil/compiler";
+import {
+  type CompilerSource,
+  compileSource,
+  type HumanApprovalPolicy,
+  type SourceDiagnostic,
+} from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
@@ -28,6 +33,10 @@ export function registerCompile(parent: Command, ctx: CommandContext): void {
       .option("--service <id>", "override the derived service id")
       .option("--out <dir>", "bundle output directory (default generated/<service-id>)")
       .option("--endpoint <url>", "MCP endpoint recorded in the generated artifacts")
+      .option(
+        "--human-approval <policy>",
+        "require explicit human approval on gated mutations: none | unsafe | all (per-op manifest `human_approval` overrides)",
+      )
       .option("--root <ws>", "workspace root for .anvil/sources", ".")
       .action(async (spec: string | undefined, opts: CompileOptions) => {
         ctx.code = await runCompile(spec, opts, ctx.io);
@@ -43,8 +52,11 @@ interface CompileOptions {
   service?: string;
   out?: string;
   endpoint?: string;
+  humanApproval?: string;
   root?: string;
 }
+
+const HUMAN_APPROVAL_POLICIES: ReadonlySet<string> = new Set(["none", "unsafe", "all"]);
 
 /**
  * Resolve the one compiler input, whichever way it was named. There is a single
@@ -100,8 +112,16 @@ async function runCompile(
     return 1;
   }
 
+  if (opts.humanApproval !== undefined && !HUMAN_APPROVAL_POLICIES.has(opts.humanApproval)) {
+    io.err(`Invalid --human-approval '${opts.humanApproval}'. Use: none | unsafe | all.`);
+    return 1;
+  }
   const manifest = opts.manifest ? readFileSync(opts.manifest, "utf8") : undefined;
-  const air = await compileSource(source, { manifest, serviceId: opts.service });
+  const air = await compileSource(source, {
+    manifest,
+    serviceId: opts.service,
+    humanApproval: opts.humanApproval as HumanApprovalPolicy | undefined,
+  });
   const outDir = opts.out ?? join("generated", air.service.id);
   const bundle = generateBundle(air, { mcpEndpoint: opts.endpoint });
   const written = writeBundle(outDir, bundle);

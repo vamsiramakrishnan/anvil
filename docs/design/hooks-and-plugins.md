@@ -291,6 +291,34 @@ Remaining native gaps, in value order:
   §3 may ever be the only place a check lives. The conformance test enforces
   agreement, not delegation.
 
+## 5b. Configurable approval tier (model-confirm vs human-approval)
+
+The hook's confirmation behavior is not hardwired — it reads a per-operation tier
+from AIR. `Confirmation.humanApproval` (optional; absent ⇒ model-confirm)
+distinguishes two enforcement levels the executor alone cannot:
+
+- **model-confirm** — a `confirm: true` from the model clears the gate. The hook
+  denies pre-flight until `confirm: true` (naming the flag so the model
+  re-invokes in the same turn); the runtime still enforces `confirm`.
+- **human-approval** — the model cannot self-confirm. Claude/Codex hooks return
+  `ask` (the human permission dialog) *regardless of* a model-supplied `confirm`;
+  ADK degrades to a `confirmation_required` envelope naming the human need.
+
+Configured two ways in the CLI journey, both tightening-only (they never remove a
+gate, so no loosening-conflict resolution is involved):
+
+- **Per-operation**, via the Anvil manifest: `confirmation: { human_approval:
+  true }`. Flows through the one overlay channel (`confirmation.human_approval` is
+  a `CONTRACT_SAFETY_PREDICATE`, so dropping it is a loosening that needs
+  authority; drift reports its removal as blocking).
+- **Globally**, via `anvil compile --human-approval none|unsafe|all` — a coarse
+  default applied after resolution to already-gated ops (`unsafe` = irreversible /
+  high / financial / destructive), which an explicit per-op manifest value always
+  overrides.
+
+The catalog carries `humanApproval` per entry, so the hook, skill callout, and
+Antigravity rules all branch on the same value with no duplicated data.
+
 ## 6. Staged plan
 
 - **S1 — MCP-native completion** (`packages/mcp-runtime/src/server.ts`).
@@ -325,8 +353,13 @@ Remaining native gaps, in value order:
 - **S3 — Codex shim** — *done.* `plugin/codex/{hooks.json, hook.mjs, README.md}`
   share `hookcore.mjs`; `ask` degrades to `deny` (Codex documents deny/allow
   only) and the README covers the trust flow and the field-name caveat.
-- **S4 — ADK plugin** (not started). `anvil_guard_plugin.py` + a pytest-style
-  agreement check run in CI against a pinned ADK version.
+- **S4 — ADK plugin** — *done.* `plugin/adk/anvil_guard_plugin.py` (a
+  `BasePlugin` whose `before_tool_callback` short-circuits a tool by returning the
+  runtime's structured error envelope, or `None` to pass) + README, reading the
+  same `catalog.json`. ADK has no `ask` tier, so a human-approval op degrades to a
+  `confirmation_required` envelope that names the human requirement. Emission +
+  key symbols are covered by `plugins.test.ts`; the Python↔contract agreement
+  check stays a CI/manual step against a pinned `google-adk` (the repo is TS).
 - **S5 — Antigravity** — *partial.* `.agent/rules/anvil-safety.md` guidance is
   emitted now (safe, prompt-shaping only, generated from the catalog). Emitting
   `.agents/hooks.json` stays blocked behind format verification against a real

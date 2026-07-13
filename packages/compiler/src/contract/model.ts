@@ -79,6 +79,7 @@ export const SemanticPredicate = z.enum([
   "confirmation.required",
   "confirmation.risk",
   "confirmation.reason",
+  "confirmation.human_approval",
   // retries
   "retries.mode",
   "retries.maxAttempts",

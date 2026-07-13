@@ -32,10 +32,20 @@ describe("harness plugin emission", () => {
       "plugin/claude/mcp.json",
       "plugin/codex/hooks.json",
       "plugin/codex/hook.mjs",
+      "plugin/adk/anvil_guard_plugin.py",
       ".agent/rules/anvil-safety.md",
     ]) {
       expect(files[path], `missing ${path}`).toBeDefined();
     }
+  });
+
+  it("emits an ADK BasePlugin with a catalog-driven before_tool_callback", () => {
+    const py = generateHarnessPlugins(air)["plugin/adk/anvil_guard_plugin.py"];
+    expect(py).toContain("class AnvilGuardPlugin");
+    expect(py).toContain("before_tool_callback");
+    expect(py).toContain('catalog.get("operations"');
+    // No per-operation data baked in — it reads the catalog at runtime.
+    expect(py).not.toContain("payments_create_refund");
   });
 
   it("names the plugin and pins its version to the service (updates track approvals)", () => {
@@ -95,10 +105,13 @@ describe("emitted hookcore.decide agrees with the contract", () => {
     expect(decide("not_a_real_tool", {}).decision).toBe("deny");
   });
 
-  it("asks for confirmation on the refund, then denies without an idempotency key", () => {
-    // Namespaced name, to prove the strip + lookup path end-to-end.
+  it("model-confirm tier: denies the refund until confirm:true, then denies without a key", () => {
+    // Default payments has no human-approval policy, so the refund is model-confirm:
+    // denied pre-flight until confirm:true (namespaced name proves strip + lookup).
     const namespaced = `mcp__plugin_anvil-payments_payments__${refundTool}`;
-    expect(decide(namespaced, {}).decision).toBe("ask");
+    const unconfirmed = decide(namespaced, {});
+    expect(unconfirmed.decision).toBe("deny");
+    expect(unconfirmed.reason).toMatch(/confirm/i);
 
     const noKey = decide(namespaced, { confirm: true });
     expect(noKey.decision).toBe("deny");
@@ -112,6 +125,28 @@ describe("emitted hookcore.decide agrees with the contract", () => {
       currency: "USD",
     });
     expect(clean.decision).toBe("allow");
+  });
+
+  it("human-approval policy escalates the gate to ASK, even with confirm:true", async () => {
+    // Recompile the same spec with --human-approval all: the refund becomes a
+    // human-approval op, so the emitted hook must ASK (the model cannot self-
+    // confirm past it) rather than accept a model-supplied confirm.
+    const humanAir = await compile({
+      spec: read("openapi.yaml"),
+      manifest: read("anvil.yaml"),
+      serviceId: "payments",
+      humanApproval: "all",
+    });
+    const hdir = mkdtempSync(join(tmpdir(), "anvil-human-"));
+    try {
+      writeBundle(hdir, generateBundle(humanAir));
+      const mod = await import(pathToFileURL(join(hdir, "plugin/hookcore.mjs")).href);
+      const d = mod.decide(refundTool, { confirm: true, idempotency_key: "k1" });
+      expect(d.decision).toBe("ask");
+      expect(d.reason).toMatch(/human approval/i);
+    } finally {
+      rmSync(hdir, { recursive: true, force: true });
+    }
   });
 
   it("allows a clean approved read", () => {

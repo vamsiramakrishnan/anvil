@@ -412,6 +412,15 @@ export const Confirmation = z.object({
   required: z.boolean().default(false),
   risk: RiskLevel.optional(),
   reason: z.string().optional(),
+  /**
+   * When true, a `confirm: true` from the *model* is not enough — the effect
+   * needs explicit **human** sign-off. The runtime still gates on `confirm`;
+   * this tier is what harness hooks read to escalate to the human permission
+   * dialog (Claude `ask`) / MCP elicitation instead of letting the model
+   * self-confirm. Optional so ops that never opt in stay byte-identical in AIR;
+   * absent ⇒ model-confirm is sufficient. Only meaningful when `required`.
+   */
+  humanApproval: z.boolean().optional(),
 });
 export type Confirmation = z.infer<typeof Confirmation>;
 
