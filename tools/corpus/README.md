@@ -5,15 +5,18 @@ compile **real vendor specs** every night, hold the result to a set of
 invariant and differential oracles, and fail loudly when the compiler drifts.
 The job of this directory is to find bug #23 before a user does.
 
-Two modes, one runner (plain Node ESM, no build step):
+Three modes, one runner (plain Node ESM, no build step):
 
 ```bash
 node tools/corpus/run.mjs quick                      # 18 known systems, all oracles, gates CI
 node tools/corpus/run.mjs sweep --limit 150 --seed 42  # random slice of apis.guru, invariants only
+node tools/corpus/run.mjs estates                    # gateway estates, policy accounting, gates CI (offline)
 ```
 
-Both need a built repo (`pnpm install && pnpm build`) and network access —
-which is exactly why this harness is **not** wired into `pnpm test`.
+All need a built repo (`pnpm install && pnpm build`). `quick` and `sweep`
+additionally need network access — which is why they're **not** wired into
+`pnpm test`. `estates` is offline and deterministic, so it runs as a per-PR gate
+in `ci.yml` (and rides along nightly for its report).
 
 ## Quick mode
 
@@ -35,6 +38,30 @@ compiles each spec **raw**: no trim, no manifest. This is hostile-input
 testing; many specs are legitimately broken, and that is data, not a harness
 failure. Only invariant oracles apply. The run exits non-zero **only on
 `crash`**.
+
+## Estates mode
+
+Imports every row of `estates.tsv` through the real CLI seam — `anvil estate
+import <fixture> --vendor <v> --api <api> --json` — **twice**, and gates each on
+policy accounting against `estates-baseline.json`. The fixtures are the golden
+estate configs (`packages/compiler/src/gateway/golden/estates/*.yaml`), so the
+CLI-level differential and the projection golden test share one realistic corpus
+(plugin zoo, auth scopes, quotas, opaque policies). Offline, deterministic, no
+network — the whole pipeline runs: archive harness → adapter → `compileContract`
+→ `generateBundle` → `writeBundle`.
+
+This complements the golden unit test (which pins the *projection*): here the
+*whole bundle emission* runs, and the gate is on the safety-relevant accounting.
+
+| oracle | what it checks | why |
+|---|---|---|
+| `import-completes` | exit 0 and a non-empty bundle (`files > 0`) | the floor: an estate that imported yesterday must import today |
+| `determinism` | the two runs' `--json` reports are identical bar the out dir | reproducible imports are the basis for diffing a gateway estate over time |
+| `opaque-accounting` | the opaque-policy count equals the pinned baseline | a **drop** means a gateway rewrite silently stopped being flagged — the exact failure the honesty invariant forbids; a rise is drift to review |
+| `operations-accounting` | `{total, approved, review_required}` equals baseline | a shift means the approval/safety posture moved without a reviewed baseline change |
+
+Useful flags: `--systems kong-refunds,apigee-payments` (subset), `--work <dir>`,
+`--update-baseline` (below).
 
 ### Outcome taxonomy
 
