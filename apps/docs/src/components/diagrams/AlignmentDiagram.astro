@@ -1,0 +1,128 @@
+---
+// The drift problem, side by side: three hand-written wrappers that disagree
+// about one operation's safety posture, vs one AIR model projected onto every
+// surface. This is the argument for the whole product in one picture.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 320"
+    role="img"
+    aria-label="Without Anvil, a CLI wrapper, an MCP wrapper, and a runbook each make their own guess about whether a refund retries or needs confirmation, and drift apart. With Anvil, one AIR model projects the same posture onto CLI, MCP tool, and skill, so they cannot disagree."
+  >
+    <defs>
+      <marker id="ad-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+    </defs>
+
+    <!-- ── Left: the wrapper factory ───────────────────────────────────── -->
+    <circle cx="20" cy="28" r="3.5" class="d-dot-bad" />
+    <text x="32" y="32" class="d-label">without anvil — the wrapper factory</text>
+
+    <rect x="186" y="52" width="140" height="32" rx="4" class="d-box" />
+    <text x="256" y="72" text-anchor="middle" class="d-mono">payments.yaml</text>
+
+    <g class="d-line">
+      <path d="M256 84 V104 M256 104 H90 M90 104 V138" marker-end="url(#ad-arrow)" />
+      <path d="M256 104 V138" marker-end="url(#ad-arrow)" />
+      <path d="M256 104 H422 M422 104 V138" marker-end="url(#ad-arrow)" />
+    </g>
+
+    <g>
+      <rect x="20" y="144" width="140" height="92" rx="4" class="d-box" />
+      <text x="34" y="168" class="d-box-title">CLI wrapper</text>
+      <text x="34" y="192" class="d-bad">retry: 3×, why not</text>
+      <text x="34" y="210" class="d-warn">confirm: —</text>
+
+      <rect x="186" y="144" width="140" height="92" rx="4" class="d-box" />
+      <text x="200" y="168" class="d-box-title">MCP wrapper</text>
+      <text x="200" y="192" class="d-warn">retry: none</text>
+      <text x="200" y="210" class="d-bad">confirm: optional</text>
+
+      <rect x="352" y="144" width="140" height="92" rx="4" class="d-box" />
+      <text x="366" y="168" class="d-box-title">runbook / docs</text>
+      <text x="366" y="192" class="d-warn">"should be safe</text>
+      <text x="366" y="210" class="d-warn">to re-run…"</text>
+    </g>
+    <text x="20" y="282" class="d-caption">three teams, three guesses about one refund —</text>
+    <text x="20" y="300" class="d-caption">and they drift apart silently.</text>
+
+    <!-- divider -->
+    <path d="M520 20 V300" class="d-divider" />
+
+    <!-- ── Right: one model, projected ─────────────────────────────────── -->
+    <circle cx="552" cy="28" r="3.5" class="d-dot-ok" />
+    <text x="564" y="32" class="d-label">with anvil — one model, projected</text>
+
+    <rect x="552" y="52" width="140" height="32" rx="4" class="d-box" />
+    <text x="622" y="72" text-anchor="middle" class="d-mono">payments.yaml</text>
+    <path d="M692 68 H724" class="d-line" marker-end="url(#ad-arrow)" />
+
+    <rect x="730" y="46" width="294" height="44" rx="4" class="d-air" />
+    <text x="746" y="65" class="d-air-title">AIR · refund</text>
+    <text x="746" y="82" class="d-air-desc">financial · irreversible · key required</text>
+
+    <g class="d-line">
+      <path d="M877 90 V110 M877 110 H622 M622 110 V138" marker-end="url(#ad-arrow)" />
+      <path d="M877 110 V138" marker-end="url(#ad-arrow)" />
+      <path d="M877 110 H954 M954 110 V138" marker-end="url(#ad-arrow)" />
+    </g>
+
+    <g>
+      <rect x="552" y="144" width="140" height="92" rx="4" class="d-box" />
+      <text x="566" y="168" class="d-box-title">CLI</text>
+      <text x="566" y="192" class="d-ok">confirm ✓ key ✓</text>
+      <text x="566" y="210" class="d-ok">no auto-retry</text>
+
+      <rect x="718" y="144" width="140" height="92" rx="4" class="d-box" />
+      <text x="732" y="168" class="d-box-title">MCP tool</text>
+      <text x="732" y="192" class="d-ok">confirm ✓ key ✓</text>
+      <text x="732" y="210" class="d-ok">no auto-retry</text>
+
+      <rect x="884" y="144" width="140" height="92" rx="4" class="d-box" />
+      <text x="898" y="168" class="d-box-title">Skill</text>
+      <text x="898" y="192" class="d-ok">confirm ✓ key ✓</text>
+      <text x="898" y="210" class="d-ok">no auto-retry</text>
+    </g>
+    <text x="552" y="282" class="d-caption">the same posture on every surface, enforced —</text>
+    <text x="552" y="300" class="d-caption">regenerate, and they still can't disagree.</text>
+  </svg>
+  <figcaption>fig 02 · the drift problem — alignment is the product, not the code generation</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram { margin: 1.75rem 0; overflow-x: auto; }
+  .anvil-diagram svg { min-width: 760px; width: 100%; height: auto; display: block; }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-dot-bad { fill: var(--ge-status-failed); }
+  .d-dot-ok { fill: var(--ge-status-passed); }
+  .d-box { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-box-title { font-family: var(--ge-display-font); font-size: 13.5px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-mono { font-family: var(--sl-font-mono); font-size: 12px; fill: var(--sl-color-gray-2); }
+  .d-line path { stroke: var(--sl-color-gray-4); stroke-width: 1; fill: none; }
+  .d-divider { stroke: var(--sl-color-gray-5); stroke-width: 1; }
+  .d-bad { font-family: var(--sl-font-mono); font-size: 11.5px; fill: var(--ge-status-failed-text); }
+  .d-warn { font-family: var(--sl-font-mono); font-size: 11.5px; fill: var(--ge-status-warning-text); }
+  .d-ok { font-family: var(--sl-font-mono); font-size: 11.5px; fill: var(--ge-status-passed-text); }
+  .d-air { fill: var(--sl-color-gray-6); stroke: var(--sl-color-accent); stroke-width: 1.25; }
+  .d-air-title { font-family: var(--ge-display-font); font-size: 13.5px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-air-desc { font-family: var(--sl-font-mono); font-size: 11px; fill: var(--sl-color-gray-3); }
+  .d-caption { font-size: 12.5px; fill: var(--sl-color-gray-3); }
+</style>

@@ -1,0 +1,45 @@
+{
+  "vendor": "wso2",
+  "apis": [
+    {
+      "id": "OrderService",
+      "operations": [
+        {
+          "id": "order_service.orders.create",
+          "effect": "mutation",
+          "action": "create",
+          "risk": "medium",
+          "reversible": true,
+          "idempotency": "none",
+          "confirmation": true,
+          "scopes": ["orders:write"],
+          "state": "review_required"
+        },
+        {
+          "id": "order_service.orders.delete",
+          "effect": "mutation",
+          "action": "delete",
+          "risk": "destructive",
+          "reversible": false,
+          "idempotency": "natural",
+          "confirmation": true,
+          "scopes": ["orders:admin"],
+          "state": "generated"
+        },
+        {
+          "id": "order_service.orders.list",
+          "effect": "read",
+          "action": "list",
+          "risk": "none",
+          "reversible": true,
+          "idempotency": "natural",
+          "confirmation": false,
+          "scopes": [],
+          "state": "generated"
+        }
+      ],
+      "opaque": ["gateway/opaque_policy: /apis/0/mediationPolicies"],
+      "diagnostics": 2
+    }
+  ]
+}

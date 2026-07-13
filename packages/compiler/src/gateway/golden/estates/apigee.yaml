@@ -1,0 +1,31 @@
+# Golden estate: an Apigee management-export shape — product scopes must land
+# as auth.scopes, Quota/SpikeArrest as quota signals, AssignMessage/JavaScript
+# as opaque policies.
+proxies:
+  - name: payments-proxy
+    basePath: /payments
+    revision: "12"
+    environments: [prod]
+    flows:
+      - name: listRefunds
+        method: GET
+        path: /refunds
+      - name: createRefund
+        method: POST
+        path: /refunds
+    policies:
+      - type: OAuthV2
+        name: VerifyAccessToken
+      - type: Quota
+        name: QuotaPerApp
+      - type: SpikeArrest
+        name: SpikeArrest-1
+      - type: AssignMessage
+        name: AM-AddTenantHeader
+      - type: JavaScript
+        name: JS-Enrich
+products:
+  - name: payments-product
+    scopes: ["refunds:write"]
+    quota: "1000/minute"
+    proxies: [payments-proxy]

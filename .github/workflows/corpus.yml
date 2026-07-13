@@ -35,6 +35,12 @@ jobs:
       - name: Quick (differential, gates)
         run: node tools/corpus/run.mjs quick
 
+      # Gate: every gateway estate must stay green against estates-baseline.json
+      # (also a per-PR gate in ci.yml; here it rides along with the nightly report).
+      - name: Estates (gateway differential, gates)
+        if: always()
+        run: node tools/corpus/run.mjs estates
+
       - name: Save quick report
         if: always()
         run: |

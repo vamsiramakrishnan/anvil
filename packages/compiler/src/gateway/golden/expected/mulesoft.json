@@ -1,0 +1,34 @@
+{
+  "vendor": "mulesoft",
+  "apis": [
+    {
+      "id": "customer-api",
+      "operations": [
+        {
+          "id": "customer_api.customers.create",
+          "effect": "mutation",
+          "action": "create",
+          "risk": "medium",
+          "reversible": true,
+          "idempotency": "none",
+          "confirmation": true,
+          "scopes": ["customers:write"],
+          "state": "review_required"
+        },
+        {
+          "id": "customer_api.customers.list",
+          "effect": "read",
+          "action": "list",
+          "risk": "none",
+          "reversible": true,
+          "idempotency": "natural",
+          "confirmation": false,
+          "scopes": [],
+          "state": "generated"
+        }
+      ],
+      "opaque": ["gateway/opaque_policy: /apis/0/policies/2"],
+      "diagnostics": 2
+    }
+  ]
+}

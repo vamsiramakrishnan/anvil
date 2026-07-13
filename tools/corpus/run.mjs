@@ -42,6 +42,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPRODUCE_DIR = join(ROOT, "docs", "backtesting", "reproduce");
 const REPRODUCE_SH = join(REPRODUCE_DIR, "reproduce.sh");
 const BASELINE_PATH = join(HERE, "baseline.json");
+const ESTATES_TSV = join(HERE, "estates.tsv");
+const ESTATES_BASELINE_PATH = join(HERE, "estates-baseline.json");
 const EXPECTED_DIR = join(HERE, "expected");
 const REPORT_DIR = join(HERE, "report");
 const APIS_GURU_LIST = "https://api.apis.guru/v2/list.json";
@@ -457,6 +459,184 @@ async function sweep(args) {
   }
 }
 
+// --- estates mode ---------------------------------------------------------------
+//
+// The gateway-estate differential. Each row of estates.tsv is imported through
+// the REAL CLI seam — `anvil estate import ... --json` — twice, and gated on:
+//   import-completes   exit 0 and a non-empty bundle;
+//   determinism        the two runs' reports are byte-identical (bar the out dir);
+//   opaque-accounting  the opaque-policy count matches the pinned baseline — a
+//                      DROP means a gateway rewrite silently stopped being
+//                      flagged (the exact failure the honesty invariant forbids);
+//   operations-accounting  total/approved/review_required match baseline — a
+//                      shift means the safety posture moved without review.
+// This is complementary to the golden unit test (which pins the projection):
+// here the whole pipeline runs, archive harness through bundle emission.
+
+function readEstatesTsv() {
+  return readFileSync(ESTATES_TSV, "utf8")
+    .split("\n")
+    .filter((l) => l.trim() && !l.startsWith("#"))
+    .map((l) => {
+      const [name, vendor, fixture, api] = l.split("\t");
+      return { name, vendor, fixture, api };
+    });
+}
+
+/** Import one estate; returns { ok, report, out } or { ok:false, ... }. */
+function importEstate(est, outDir) {
+  const fixture = join(ROOT, est.fixture);
+  const res = runNode(
+    [ANVIL, "estate", "import", fixture, "--vendor", est.vendor, "--api", est.api, "--out", outDir, "--json"],
+    { timeoutMs: 120_000 },
+  );
+  if (res.timedOut) return { ok: false, classification: "timeout", out: res };
+  if (res.status !== 0) {
+    return { ok: false, classification: looksLikeCrash(res) ? "crash" : "import-error", out: res };
+  }
+  let report;
+  try {
+    report = JSON.parse(res.stdout);
+  } catch {
+    return { ok: false, classification: "crash", out: res, note: "import --json did not emit JSON" };
+  }
+  return { ok: true, report, out: res };
+}
+
+/** Compare two reports for determinism, ignoring only the (intentionally distinct) out dir. */
+function reportsMatch(a, b) {
+  const strip = (r) => JSON.stringify({ ...r, out: null });
+  return strip(a) === strip(b);
+}
+
+async function estates(args) {
+  const rows = readEstatesTsv().filter((e) => !args.systems || args.systems.includes(e.name));
+  if (rows.length === 0) throw new Error("no estates matched");
+  const baseline = existsSync(ESTATES_BASELINE_PATH)
+    ? JSON.parse(readFileSync(ESTATES_BASELINE_PATH, "utf8"))
+    : { estates: {} };
+  const work = args.work ?? mkdtempSync(join(tmpdir(), "anvil-corpus-estates-"));
+  mkdirSync(work, { recursive: true });
+  initReport();
+  process.stderr.write(`work dir: ${work}\n`);
+
+  const results = [];
+  const baselineOut = {};
+  for (const est of rows) {
+    process.stderr.write(`\n=== estates: ${est.name} (${est.vendor}) ===\n`);
+    const record = { mode: "estates", estate: est.name, vendor: est.vendor, at: new Date().toISOString() };
+
+    if (!existsSync(join(ROOT, est.fixture))) {
+      record.status = "fail";
+      record.classification = "fixture-missing";
+      record.detail = `fixture not found: ${est.fixture}`;
+      results.push(record);
+      reportLine(record);
+      process.stderr.write(`FAIL ${record.detail}\n`);
+      continue;
+    }
+
+    const first = importEstate(est, join(work, `${est.name}-a`));
+    if (!first.ok) {
+      record.status = "fail";
+      record.classification = first.classification;
+      record.detail = (first.out?.stderr || first.out?.stdout || first.note || "")
+        .split("\n").filter(Boolean).slice(-3).join(" | ").slice(0, 400);
+      results.push(record);
+      reportLine(record);
+      process.stderr.write(`${first.classification}: ${record.detail}\n`);
+      continue;
+    }
+    const report = first.report;
+    const second = importEstate(est, join(work, `${est.name}-b`));
+
+    const base = baseline.estates?.[est.name];
+    const oracles = [
+      { name: "import-completes", ok: report.files > 0, detail: `${report.files} file(s), api=${report.api}` },
+      {
+        name: "determinism",
+        ok: second.ok && reportsMatch(report, second.report),
+        detail: second.ok ? "two runs identical" : `second run failed (${second.classification})`,
+      },
+    ];
+    if (base) {
+      // opaque-accounting: a DROP is a regression (a policy silently stopped
+      // being flagged); a rise is drift to review. Gate on inequality either way
+      // so the baseline stays an intentional, reviewed record.
+      oracles.push({
+        name: "opaque-accounting",
+        ok: report.opaque.length === base.opaque,
+        detail: `${report.opaque.length} opaque vs baseline ${base.opaque}`,
+      });
+      oracles.push({
+        name: "operations-accounting",
+        ok: JSON.stringify(report.operations) === JSON.stringify(base.operations),
+        detail: `${JSON.stringify(report.operations)} vs baseline ${JSON.stringify(base.operations)}`,
+      });
+    } else {
+      oracles.push({
+        name: "baseline",
+        ok: false,
+        detail: "no baseline entry — run `estates --update-baseline` to pin it (reviewed)",
+      });
+    }
+
+    record.files = report.files;
+    record.operations = report.operations;
+    record.opaque = report.opaque.length;
+    record.oracles = oracles;
+    record.status = oracles.every((o) => o.ok) ? "green" : "regression";
+    baselineOut[est.name] = {
+      files: report.files,
+      operations: report.operations,
+      opaque: report.opaque.length,
+    };
+    results.push(record);
+    reportLine(record);
+    process.stderr.write(
+      `${record.status.toUpperCase()} files=${report.files} ops=${JSON.stringify(report.operations)} opaque=${report.opaque.length} [${fmtOracles(oracles)}]\n`,
+    );
+    for (const o of oracles.filter((o) => !o.ok)) process.stderr.write(`  FAIL ${o.name}: ${o.detail}\n`);
+  }
+
+  if (args.updateBaseline) {
+    const next = {
+      updatedAt: new Date().toISOString(),
+      note: "Per-estate policy accounting. Regenerate with: node tools/corpus/run.mjs estates --update-baseline",
+      estates: { ...baseline.estates, ...baselineOut },
+    };
+    writeFileSync(ESTATES_BASELINE_PATH, `${JSON.stringify(next, null, 2)}\n`);
+    process.stderr.write(`\nestates-baseline.json updated (${Object.keys(baselineOut).length} estates)\n`);
+  }
+
+  const lines = [
+    "# Corpus estates run",
+    "",
+    `- when: ${new Date().toISOString()}`,
+    `- estates: ${results.length}, green: ${results.filter((r) => r.status === "green").length}`,
+    "",
+    "| estate | vendor | status | files | ops (total/appr/review) | opaque | failing oracles |",
+    "|---|---|---|---:|---|---:|---|",
+    ...results.map((r) => {
+      const ops = r.operations
+        ? `${r.operations.total}/${r.operations.approved}/${r.operations.review_required}`
+        : "-";
+      const failing = (r.oracles ?? []).filter((o) => !o.ok).map((o) => `${o.name}: ${o.detail}`).join("; ") || (r.detail ?? "");
+      return `| ${r.estate} | ${r.vendor} | ${r.status} | ${r.files ?? "-"} | ${ops} | ${r.opaque ?? "-"} | ${failing} |`;
+    }),
+  ];
+  writeSummary(lines);
+  process.stderr.write(`\nreport: ${join(REPORT_DIR, "report.jsonl")}\nsummary: ${join(REPORT_DIR, "summary.md")}\n`);
+
+  const red = results.filter((r) => r.status !== "green");
+  if (red.length > 0) {
+    process.stderr.write(`\nESTATES: ${red.length} estate(s) red: ${red.map((r) => r.estate).join(", ")}\n`);
+    process.exitCode = 1;
+  } else {
+    process.stderr.write(`\nESTATES: all ${results.length} estates green\n`);
+  }
+}
+
 // --- main -----------------------------------------------------------------------
 
 const args = parseArgs(process.argv.slice(2));
@@ -466,7 +646,10 @@ if (!existsSync(ANVIL)) {
 }
 if (args.mode === "quick") await quick(args);
 else if (args.mode === "sweep") await sweep(args);
+else if (args.mode === "estates") await estates(args);
 else {
-  console.error("usage: run.mjs quick [--systems a,b] [--update-baseline] | sweep --limit N --seed S");
+  console.error(
+    "usage: run.mjs quick [--systems a,b] [--update-baseline]\n     | sweep --limit N --seed S\n     | estates [--systems a,b] [--update-baseline]",
+  );
   process.exit(2);
 }

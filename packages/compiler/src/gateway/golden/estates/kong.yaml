@@ -1,0 +1,37 @@
+# Golden estate: a realistic Kong declarative config — plugin zoo included so
+# the golden pins auth mapping, quota, transformer opacity, AND unknown-plugin
+# opacity. Changing adapter mapping semantics must diff the expected file.
+_format_version: "3.0"
+services:
+  - name: refunds
+    url: https://backend.internal/refunds
+    tags: [payments-team]
+    routes:
+      - name: refunds-route
+        paths: ["/refunds"]
+        methods: ["GET", "POST"]
+      - name: refund-by-id
+        paths: ["/refunds/{id}"]
+        methods: ["GET"]
+    plugins:
+      - name: openid-connect
+        config:
+          scopes: ["refunds:write"]
+      - name: rate-limiting
+        config:
+          minute: 100
+      - name: request-transformer
+        config:
+          add:
+            headers: ["x-tenant:acme"]
+      - name: some-custom-plugin
+        config:
+          foo: bar
+  - name: reporting
+    url: https://backend.internal/reports
+    routes:
+      - name: reports-route
+        paths: ["/reports"]
+        methods: ["GET"]
+    plugins:
+      - name: key-auth

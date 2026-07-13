@@ -4,7 +4,6 @@
  * assembly (invoke/map/…). Declared OAuth and plan rate limits normalize into the
  * overlay/inventory; `map`/custom assembly actions are classified **opaque**.
  */
-import { parse as parseYaml } from "yaml";
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
 import { finalizeInventory } from "../inventory.js";
 import type {
@@ -19,6 +18,7 @@ import type {
   GatewayProduct,
 } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
+import { asObjects, asRecord, asStrings, safeParseYaml } from "../parse-safe.js";
 import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
 
 interface ApicResource {
@@ -74,12 +74,11 @@ interface ApicExport {
 }
 
 function parseExport(config: string): ApicExport {
-  const doc = parseYaml(config) as ApicExport | null;
-  return doc && typeof doc === "object" ? doc : {};
+  return asRecord(safeParseYaml(config)) as ApicExport;
 }
 
 function opsOf(api: ApicApi): SynthOp[] {
-  return (api.resources ?? []).map((r) => ({
+  return asObjects<ApicResource>(api.resources).map((r) => ({
     operationId: synthOperationId(api.name, r.method, r.path),
     method: r.method,
     path: normalizePath(r.path),
@@ -93,9 +92,9 @@ function quotaForApi(
 ): { hasQuota: boolean; productIds: string[] } {
   const productIds: string[] = [];
   let hasQuota = false;
-  for (const product of exp.products ?? []) {
-    for (const plan of product.plans ?? []) {
-      if ((plan.apis ?? []).includes(apiName)) {
+  for (const product of asObjects<ApicProduct>(exp.products)) {
+    for (const plan of asObjects<ApicPlan>(product.plans)) {
+      if (asStrings(plan.apis).includes(apiName)) {
         productIds.push(product.name);
         if (plan.rateLimit) hasQuota = true;
       }
@@ -109,8 +108,9 @@ function normalizeApi(exp: ApicExport, api: ApicApi, apiIndex: number, origin: s
   const facts: GatewayFact[] = [];
   const diagnostics: GatewayDiagnostic[] = [];
 
-  (api.resources ?? []).forEach((r, j) => {
-    if (r.scopes && r.scopes.length > 0) {
+  asObjects<ApicResource>(api.resources).forEach((r, j) => {
+    const scopes = asStrings(r.scopes);
+    if (scopes.length > 0) {
       const coordinate: EvidenceCoordinate = {
         origin,
         pointer: `/apis/${apiIndex}/resources/${j}/scopes`,
@@ -119,14 +119,14 @@ function normalizeApi(exp: ApicExport, api: ApicApi, apiIndex: number, origin: s
         target: { scope: "operation", ref: synthOperationId(api.name, r.method, r.path) },
         predicate: "auth.scopes",
         operation: "restrict",
-        value: r.scopes,
+        value: scopes,
         coordinate,
         note: "API Connect OAuth scopes",
       });
     }
   });
 
-  (api.assembly?.execute ?? []).forEach((action, k) => {
+  asObjects<{ type: string }>(api.assembly?.execute).forEach((action, k) => {
     if (action.type === "map" || action.type === "gatewayscript" || action.type === "xslt") {
       diagnostics.push({
         level: "warning",
@@ -155,7 +155,7 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
 
   async probe(connection: ApiConnectConnection, _ctx: AdapterContext): Promise<GatewayProbeResult> {
     return {
-      reachable: (parseExport(connection.config).apis ?? []).length > 0,
+      reachable: asObjects(parseExport(connection.config).apis).length > 0,
       capabilities: CAPABILITIES,
       diagnostics: [],
     };
@@ -168,7 +168,7 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
     const origin = connection.origin ?? "apiconnect.yaml";
     const exp = parseExport(connection.config);
     const diagnostics: GatewayDiagnostic[] = [];
-    const summaries: GatewayApiSummary[] = (exp.apis ?? []).map((api, i) => {
+    const summaries: GatewayApiSummary[] = asObjects<ApicApi>(exp.apis).map((api, i) => {
       const norm = normalizeApi(exp, api, i, origin);
       diagnostics.push(...norm.diagnostics);
       return {
@@ -186,14 +186,14 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
         })),
         hasSpec: norm.ops.length > 0,
         productIds: norm.productIds,
-        authSummary: (api.oauthProviders ?? []).length > 0 ? "OAuth2" : undefined,
+        authSummary: asStrings(api.oauthProviders).length > 0 ? "OAuth2" : undefined,
         hasQuota: norm.hasQuota,
       };
     });
-    const products: GatewayProduct[] = (exp.products ?? []).map((p) => ({
+    const products: GatewayProduct[] = asObjects<ApicProduct>(exp.products).map((p) => ({
       id: p.name,
       name: p.name,
-      plans: (p.plans ?? []).map((plan) => plan.name),
+      plans: asObjects<ApicPlan>(p.plans).map((plan) => plan.name),
     }));
     return finalizeInventory({
       schemaVersion: 1,
@@ -212,8 +212,9 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
   ): Promise<GatewayApiImport> {
     const origin = connection.origin ?? "apiconnect.yaml";
     const exp = parseExport(connection.config);
-    const apiIndex = (exp.apis ?? []).findIndex((a) => a.name === api.id);
-    const found = (exp.apis ?? [])[apiIndex];
+    const apis = asObjects<ApicApi>(exp.apis);
+    const apiIndex = apis.findIndex((a) => a.name === api.id);
+    const found = apis[apiIndex];
     if (!found) {
       const empty = buildGatewayApiImport({
         originKind: "api_connect",

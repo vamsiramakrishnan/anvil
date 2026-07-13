@@ -1,0 +1,135 @@
+---
+title: "Error taxonomy & recovery"
+description: "Every error code the runtime can return, with the recovery rule an agent should follow — rendered from the compiled taxonomy so it cannot go stale."
+sidebar:
+  order: 3
+---
+
+import errors from "../../../data/errors.json";
+
+Anvil never leaks raw upstream chaos as the primary interface: every failure —
+from any generated CLI or MCP tool — becomes exactly one structured envelope
+with a code from the closed taxonomy below.
+
+```json
+{ "error": { "code": "rate_limited", "message": "...", "retryable": true, "safe_to_retry": true, "operation": "...", "trace_id": "..." } }
+```
+
+The code list on this page is imported from `apps/docs/src/data/errors.json`,
+which is produced by an actual compile (`node scripts/gen-docs-data.mjs`) and
+**test-enforced against the runtime taxonomy** by
+`packages/generators/src/docs-data.test.ts` — the page physically cannot list a
+code the runtime no longer returns. The recovery prose mirrors the
+`reference/errors.md` file that ships inside every generated skill (see
+`errorsRef()` in `packages/generators/src/skill.ts`), so what you read here is
+what deployed agents read.
+
+export const recovery = {
+  validation_error: {
+    rule: "Fix the input; check `details.missing`. Do not retry unchanged.",
+    retry: "no",
+  },
+  auth_required: {
+    rule: "The auth profile lacks access. Check the credential env-var names in the generated `setup.md`, then stop and report.",
+    retry: "no",
+  },
+  permission_denied: {
+    rule: "The auth profile lacks access. Check the credential env-var names in the generated `setup.md`, then stop and report.",
+    retry: "no",
+  },
+  not_found: {
+    rule: "The resource does not exist. Do not retry.",
+    retry: "no",
+  },
+  conflict: {
+    rule: "The resource already exists or a request with the same idempotency key is in flight. Do not blindly retry.",
+    retry: "no",
+  },
+  rate_limited: {
+    rule: "Transient. Retry **only** if `safe_to_retry` is true; the tool already retried what it safely could.",
+    retry: "if safe",
+  },
+  upstream_timeout: {
+    rule: "Transient. Retry **only** if `safe_to_retry` is true; the tool already retried what it safely could.",
+    retry: "if safe",
+  },
+  upstream_unavailable: {
+    rule: "Transient. Retry **only** if `safe_to_retry` is true; the tool already retried what it safely could.",
+    retry: "if safe",
+  },
+  unsafe_retry_blocked: {
+    rule: "The runtime refused to auto-retry a non-idempotent mutation after an ambiguous failure. Check upstream state before doing anything else — the call may have landed.",
+    retry: "no",
+  },
+  confirmation_required: {
+    rule: "Re-issue with `--confirm` **only if the user intends the effect**. Check `required_flags` for what to supply.",
+    retry: "with flag",
+  },
+  idempotency_required: {
+    rule: "Supply `--idempotency-key` and re-issue.",
+    retry: "with flag",
+  },
+  schema_mismatch: {
+    rule: "The input does not match the compiled schema for this operation. Fix the shape; do not retry unchanged.",
+    retry: "no",
+  },
+  unsupported_operation: {
+    rule: "The operation is not exposed by this artifact — usually not approved, or removed at recompile. Do not retry; report it.",
+    retry: "no",
+  },
+  policy_denied: {
+    rule: "A local policy blocked the call (often the `ANVIL_ALLOWED_HOSTS` egress allowlist — see `setup.md`). Stop and report.",
+    retry: "no",
+  },
+  unknown_upstream_error: {
+    rule: "The upstream failed in a way the taxonomy cannot classify. Do not retry a mutation; report with the `trace_id`.",
+    retry: "no",
+  },
+};
+
+export const codeText = (s) =>
+  s.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part) =>
+    part.startsWith("`") ? (
+      <code>{part.slice(1, -1)}</code>
+    ) : part.startsWith("**") ? (
+      <strong>{part.slice(2, -2)}</strong>
+    ) : (
+      part
+    ),
+  );
+
+<div style="overflow-x: auto;">
+  <table>
+    <thead>
+      <tr>
+        <th style="white-space: nowrap;">Code</th>
+        <th style="white-space: nowrap;">Retry?</th>
+        <th>Recovery rule</th>
+      </tr>
+    </thead>
+    <tbody>
+      {errors.taxonomy.map((code) => (
+        <tr>
+          <td style="white-space: nowrap;">
+            <code>{code}</code>
+          </td>
+          <td style="white-space: nowrap; font-family: var(--sl-font-system-mono, monospace); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;">
+            {(recovery[code] ?? { retry: "—" }).retry}
+          </td>
+          <td>
+            {codeText(
+              (recovery[code] ?? { rule: "New code — recovery rule not yet documented here." })
+                .rule,
+            )}
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>
+
+Two fields in the envelope carry the retry contract: `retryable` says whether
+the *class* of failure is transient, and `safe_to_retry` says whether **this
+operation** may actually be retried given its idempotency posture. An agent
+should only ever act on `safe_to_retry` — the runtime has already retried
+whatever it safely could.

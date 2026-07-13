@@ -1,0 +1,142 @@
+---
+// "Which surface do I use?" — three callers flow to the four generated
+// surfaces, and every surface is anchored to the same AIR model underneath.
+// The point is not the routing; it is the anchor bar: pick any entry point and
+// you land on the same contract.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 404"
+    role="img"
+    aria-label="Three callers — a human at a terminal or in CI, an agent in a harness (Antigravity, Claude Code, Codex), and a platform team enforcing policy — flow to four surfaces: the human runs the CLI, the agent reads the skill and calls the MCP server, the platform team installs harness hooks. All four surfaces are anchored to one AIR box at the bottom labeled: one model — every surface agrees."
+  >
+    <defs>
+      <marker id="ws-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+      <marker id="ws-anchor" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-accent)" />
+      </marker>
+    </defs>
+
+    <!-- ── Who is calling ─────────────────────────────────────────────── -->
+    <text x="30" y="24" class="d-label">who is calling</text>
+
+    <g>
+      <rect x="30" y="40" width="300" height="64" rx="4" class="d-actor" />
+      <text x="48" y="66" class="d-actor-title">Human at a terminal</text>
+      <text x="48" y="88" class="d-actor-desc">engineers · CI pipelines · scripts</text>
+
+      <rect x="370" y="40" width="300" height="64" rx="4" class="d-actor" />
+      <text x="388" y="66" class="d-actor-title">Agent in a harness</text>
+      <text x="388" y="88" class="d-actor-desc">Antigravity · Claude Code · Codex</text>
+
+      <rect x="710" y="40" width="300" height="64" rx="4" class="d-actor" />
+      <text x="728" y="66" class="d-actor-title">Platform team</text>
+      <text x="728" y="88" class="d-actor-desc">enforcing policy across every agent</text>
+    </g>
+
+    <!-- routing: caller → surface -->
+    <g class="d-line">
+      <path d="M180 104 L142 176" marker-end="url(#ws-arrow)" />
+      <path d="M470 104 L402 176" marker-end="url(#ws-arrow)" />
+      <path d="M570 104 L642 176" marker-end="url(#ws-arrow)" />
+      <path d="M860 104 L898 176" marker-end="url(#ws-arrow)" />
+    </g>
+    <text x="152" y="136" text-anchor="end" class="d-verb">runs</text>
+    <text x="432" y="136" text-anchor="end" class="d-verb">reads</text>
+    <text x="610" y="136" class="d-verb">calls</text>
+    <text x="888" y="136" class="d-verb">installs</text>
+
+    <!-- ── The four surfaces ──────────────────────────────────────────── -->
+    <g>
+      <rect x="18" y="184" width="236" height="88" rx="4" class="d-plate" />
+      <rect x="18" y="184" width="3" height="88" class="d-bar" />
+      <text x="36" y="210" class="d-plate-title">CLI</text>
+      <text x="36" y="232" class="d-plate-desc">typed commands · --dry-run</text>
+      <text x="36" y="250" class="d-plate-desc">scriptable in CI</text>
+
+      <rect x="274" y="184" width="236" height="88" rx="4" class="d-plate" />
+      <rect x="274" y="184" width="3" height="88" class="d-bar" />
+      <text x="292" y="210" class="d-plate-title">Skill</text>
+      <text x="292" y="232" class="d-plate-desc">the operating manual</text>
+      <text x="292" y="250" class="d-plate-desc">capabilities → workflows</text>
+
+      <rect x="530" y="184" width="236" height="88" rx="4" class="d-plate" />
+      <rect x="530" y="184" width="3" height="88" class="d-bar" />
+      <text x="548" y="210" class="d-plate-title">MCP server</text>
+      <text x="548" y="232" class="d-plate-desc">one tool per approved op</text>
+      <text x="548" y="250" class="d-plate-desc">risk visible in annotations</text>
+
+      <rect x="786" y="184" width="236" height="88" rx="4" class="d-plate" />
+      <rect x="786" y="184" width="3" height="88" class="d-bar" />
+      <text x="804" y="210" class="d-plate-title">Harness hooks</text>
+      <text x="804" y="232" class="d-plate-desc">Antigravity · Claude Code · Codex</text>
+      <text x="804" y="250" class="d-plate-desc">deny pre-flight · escalate</text>
+    </g>
+
+    <!-- anchors: every surface stands on the same model -->
+    <g class="d-anchor">
+      <path d="M136 332 V282" marker-end="url(#ws-anchor)" />
+      <path d="M392 332 V282" marker-end="url(#ws-anchor)" />
+      <path d="M648 332 V282" marker-end="url(#ws-anchor)" />
+      <path d="M904 332 V282" marker-end="url(#ws-anchor)" />
+    </g>
+
+    <!-- ── AIR: the shared anchor ─────────────────────────────────────── -->
+    <rect x="18" y="332" width="1006" height="56" rx="6" class="d-air" />
+    <text x="42" y="367" class="d-title">AIR</text>
+    <text x="521" y="366" text-anchor="middle" class="d-air-text">one model — every surface agrees</text>
+  </svg>
+  <figcaption>fig 05 · pick any entry point — they all land on the same contract</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram { margin: 1.75rem 0; overflow-x: auto; }
+  .anvil-diagram svg { min-width: 760px; width: 100%; height: auto; display: block; }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-actor { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-actor-title { font-family: var(--ge-display-font); font-size: 14.5px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-actor-desc { font-size: 12px; fill: var(--sl-color-gray-3); }
+  .d-line path { stroke: var(--sl-color-gray-4); stroke-width: 1; fill: none; }
+  .d-verb {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-plate { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-bar { fill: var(--sl-color-accent); }
+  .d-plate-title { font-family: var(--ge-display-font); font-size: 14.5px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-plate-desc { font-size: 12px; fill: var(--sl-color-gray-3); }
+  .d-anchor path { stroke: var(--sl-color-accent); stroke-width: 1; fill: none; }
+  .d-air { fill: var(--sl-color-gray-6); stroke: var(--sl-color-accent); stroke-width: 1.25; }
+  .d-title { font-family: var(--ge-display-font); font-size: 17px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-air-text {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--sl-color-text-accent);
+  }
+</style>

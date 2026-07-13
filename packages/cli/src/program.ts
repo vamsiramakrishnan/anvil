@@ -11,6 +11,7 @@ import type { AnvilCliDeps, CommandContext } from "./commands/context.js";
 import { registerDeploy } from "./commands/deploy.js";
 import { registerDrift } from "./commands/drift.js";
 import { registerEnrich } from "./commands/enrich.js";
+import { registerEstate } from "./commands/estate.js";
 import { registerInspect } from "./commands/inspect.js";
 import { registerLint } from "./commands/lint.js";
 import { registerPackage } from "./commands/package.js";
@@ -72,6 +73,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerRefine(program, ctx);
   registerCase(program, ctx);
   registerEnrich(program, ctx);
+  registerEstate(program, ctx);
   registerSources(program, ctx);
   registerApprove(program, ctx);
   registerLint(program, ctx);

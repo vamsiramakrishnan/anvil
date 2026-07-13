@@ -578,7 +578,7 @@ the MCP server's runtime stays authoritative even if the hook is never installed
 
 ## Install
 
-1. Register this bundle's MCP server in Antigravity (see \`docs/mcp\`).
+1. Register this bundle's MCP server in Antigravity (see \`docs/README.md\`).
 2. Copy (or merge) \`plugin/antigravity/hooks.json\` into your workspace's
    \`.agents/hooks.json\` (or the global \`~/.gemini/config/hooks.json\`).
 3. The hook command is \`node ./plugin/antigravity/hook.mjs\`, a path **relative to

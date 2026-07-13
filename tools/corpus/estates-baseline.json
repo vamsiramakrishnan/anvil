@@ -1,0 +1,60 @@
+{
+  "updatedAt": "2026-07-13T07:59:51.567Z",
+  "note": "Per-estate policy accounting. Regenerate with: node tools/corpus/run.mjs estates --update-baseline",
+  "estates": {
+    "kong-refunds": {
+      "files": 55,
+      "operations": {
+        "total": 3,
+        "approved": 0,
+        "review_required": 1
+      },
+      "opaque": 2
+    },
+    "kong-reporting": {
+      "files": 53,
+      "operations": {
+        "total": 1,
+        "approved": 0,
+        "review_required": 0
+      },
+      "opaque": 0
+    },
+    "apigee-payments": {
+      "files": 54,
+      "operations": {
+        "total": 2,
+        "approved": 0,
+        "review_required": 1
+      },
+      "opaque": 2
+    },
+    "wso2-orders": {
+      "files": 55,
+      "operations": {
+        "total": 3,
+        "approved": 0,
+        "review_required": 1
+      },
+      "opaque": 1
+    },
+    "mulesoft-customer": {
+      "files": 54,
+      "operations": {
+        "total": 2,
+        "approved": 0,
+        "review_required": 1
+      },
+      "opaque": 1
+    },
+    "apiconnect-claims": {
+      "files": 54,
+      "operations": {
+        "total": 2,
+        "approved": 0,
+        "review_required": 1
+      },
+      "opaque": 2
+    }
+  }
+}

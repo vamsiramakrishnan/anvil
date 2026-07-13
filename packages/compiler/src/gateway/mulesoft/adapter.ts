@@ -5,7 +5,6 @@
  * arbitrary flow logic are classified **opaque** — Anvil does not claim to
  * understand them.
  */
-import { parse as parseYaml } from "yaml";
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
 import { finalizeInventory } from "../inventory.js";
 import type {
@@ -19,6 +18,7 @@ import type {
   GatewayProbeResult,
 } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
+import { asObjects, asRecord, asStrings, safeParseYaml } from "../parse-safe.js";
 import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
 
 interface MuleResource {
@@ -69,12 +69,11 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
 };
 
 function apisOf(config: string): MuleApi[] {
-  const doc = parseYaml(config) as { apis?: MuleApi[] } | null;
-  return Array.isArray(doc?.apis) ? (doc?.apis as MuleApi[]) : [];
+  return asObjects<MuleApi>(asRecord(safeParseYaml(config)).apis);
 }
 
 function opsOf(api: MuleApi): SynthOp[] {
-  return (api.resources ?? []).map((r) => ({
+  return asObjects<MuleResource>(api.resources).map((r) => ({
     operationId: synthOperationId(api.assetId, r.method, r.path),
     method: r.method,
     path: normalizePath(r.path),
@@ -88,8 +87,9 @@ function normalizeApi(api: MuleApi, apiIndex: number, origin: string) {
   let hasQuota = false;
   let authSummary: string | undefined;
 
-  (api.resources ?? []).forEach((r, j) => {
-    if (r.scopes && r.scopes.length > 0) {
+  asObjects<MuleResource>(api.resources).forEach((r, j) => {
+    const scopes = asStrings(r.scopes);
+    if (scopes.length > 0) {
       const coordinate: EvidenceCoordinate = {
         origin,
         pointer: `/apis/${apiIndex}/resources/${j}/scopes`,
@@ -98,14 +98,14 @@ function normalizeApi(api: MuleApi, apiIndex: number, origin: string) {
         target: { scope: "operation", ref: synthOperationId(api.assetId, r.method, r.path) },
         predicate: "auth.scopes",
         operation: "restrict",
-        value: r.scopes,
+        value: scopes,
         coordinate,
         note: "MuleSoft resource scopes",
       });
     }
   });
 
-  (api.policies ?? []).forEach((p, k) => {
+  asObjects<MulePolicy>(api.policies).forEach((p, k) => {
     const coordinate: EvidenceCoordinate = { origin, pointer: `/apis/${apiIndex}/policies/${k}` };
     if (AUTH_POLICIES.has(p.policyId)) authSummary = p.policyId;
     else if (RATE_POLICIES.has(p.policyId)) {
