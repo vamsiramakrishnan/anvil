@@ -353,13 +353,29 @@ Antigravity rules all branch on the same value with no duplicated data.
 - **S3 — Codex shim** — *done.* `plugin/codex/{hooks.json, hook.mjs, README.md}`
   share `hookcore.mjs`; `ask` degrades to `deny` (Codex documents deny/allow
   only) and the README covers the trust flow and the field-name caveat.
-- **S4 — ADK plugin** — *done.* `plugin/adk/anvil_guard_plugin.py` (a
-  `BasePlugin` whose `before_tool_callback` short-circuits a tool by returning the
-  runtime's structured error envelope, or `None` to pass) + README, reading the
-  same `catalog.json`. ADK has no `ask` tier, so a human-approval op degrades to a
-  `confirmation_required` envelope that names the human requirement. Emission +
-  key symbols are covered by `plugins.test.ts`; the Python↔contract agreement
-  check stays a CI/manual step against a pinned `google-adk` (the repo is TS).
+- **S4 — ADK plugin (multi-language)** — *done for Python, TypeScript, Go.* ADK
+  ships for Python, TypeScript (`adk-js`), Go (`adk-go`), and Java/Kotlin, all with
+  a `BasePlugin` + before-tool callback. Verified signatures (against the ADK
+  plugin docs and `adk-go`):
+
+  | Lang | Before-tool callback | Short-circuit |
+  |---|---|---|
+  | Python | `before_tool_callback(self, *, tool, tool_args, tool_context) -> Optional[dict]` | return `dict` / `None` |
+  | TypeScript | `beforeToolCallback(tool, toolArgs, context): Promise<{…}\|undefined>` | return object / `undefined` |
+  | Go | `func(ctx tool.Context, t tool.Tool, args map[string]any) (map[string]any, error)` | non-nil map / `(nil,nil)` |
+  | Java/Kotlin | `Maybe<Map<String,Object>> beforeToolCallback(...)` | non-empty `Maybe` / `Maybe.empty()` |
+
+  Emitted: `plugin/adk/anvil_guard_plugin.py`, `anvil_guard_plugin.ts` (reuses the
+  shared `hookcore.mjs`, typed by the new `hookcore.d.mts`), `anvil_guard.go`
+  (pure `anvilguard` package, stdlib only), and a README covering all three plus
+  the Java/Kotlin note. ADK has no `ask` tier, so a human-approval op degrades to a
+  `confirmation_required` envelope naming the human requirement. To let the
+  JS-family adapters reuse ONE tested core, `hookcore.decide()` now also returns
+  the runtime error `code` (additive; the Claude/Codex shims still use the verb).
+  All three variants were compile-verified in CI tooling (`py_compile`,
+  `tsc --strict --noEmit`, `go build` + a `go test` behavior check); the
+  per-language↔contract agreement check stays CI/manual against a pinned ADK.
+  Java/Kotlin emission is a straightforward follow-up from the same rules.
 - **S5 — Antigravity** — *partial.* `.agent/rules/anvil-safety.md` guidance is
   emitted now (safe, prompt-shaping only, generated from the catalog). Emitting
   `.agents/hooks.json` stays blocked behind format verification against a real
