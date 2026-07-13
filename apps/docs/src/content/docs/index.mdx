@@ -1,0 +1,116 @@
+---
+title: Anvil
+description: Anvil is an agent toolchain compiler — it compiles one API specification into aligned CLI, MCP server, skill, and hook artifacts, with structured errors, idempotency safety, and an approval workflow. The highest compliment is "the agent stopped guessing."
+template: splash
+hero:
+  tagline: >-
+    An operation should mean the same thing on every surface. Anvil compiles one
+    canonical model into an aligned CLI, MCP server, skill, and enforcement
+    hooks — so the agent stops guessing what a tool does, and can't invoke an
+    unsafe one by accident.
+  actions:
+    - text: Quickstart
+      link: /anvil/start/quickstart/
+      icon: right-arrow
+    - text: Operate Anvil
+      link: /anvil/guides/operating-anvil/
+      variant: minimal
+    - text: See the design
+      link: /anvil/design/hooks-and-plugins/
+      variant: minimal
+---
+
+import { Card, CardGrid, Tabs, TabItem } from '@astrojs/starlight/components';
+
+<div class="ge-hero-panel">
+  <div class="ge-proof-strip" aria-label="From one spec, aligned surfaces">
+    <span>OpenAPI · GraphQL · gRPC · SOAP · Postman</span>
+    <span>→ AIR (one canonical model)</span>
+    <span>CLI</span>
+    <span>MCP server</span>
+    <span>Skill</span>
+    <span>Enforcement hooks</span>
+  </div>
+</div>
+
+<div class="ge-value-grid">
+  <a class="ge-value-card" href="/anvil/concepts/architecture/">
+    <strong>One model, many surfaces</strong>
+    <span>CLI, MCP server, and skill are projections of one AIR model — an operation means the same thing everywhere. The alignment is the product.</span>
+  </a>
+  <a class="ge-value-card" href="/anvil/guides/enrich-approve-workflow/">
+    <strong>Safe by default</strong>
+    <span>Non-idempotent mutations are never auto-retried and refuse to run without <code>--confirm</code>. Enrich unsafe operations rather than approving them blindly.</span>
+  </a>
+  <a class="ge-value-card" href="/anvil/guides/operating-anvil/">
+    <strong>Approval-gated</strong>
+    <span>Only <em>approved</em> operations are exposed by the generated artifacts. Inspect risk, then approve — never the other way around.</span>
+  </a>
+  <a class="ge-value-card" href="/anvil/design/hooks-and-plugins/">
+    <strong>Enforced in the harness</strong>
+    <span>The same contract compiles into installable Claude Code, Codex, and Antigravity hooks that deny unsafe calls before the model burns a turn.</span>
+  </a>
+</div>
+
+Anvil is not magic because it generates code. It is useful because the CLI, MCP
+server, skill, and hooks all agree on what an operation *means* — its effect,
+risk, idempotency, and whether it needs confirmation — from one canonical model
+(AIR). Everything downstream is a projection of that model, so the surfaces can
+never quietly disagree.
+
+## The loop
+
+<Tabs>
+  <TabItem label="Compile → inspect → approve → deploy">
+
+```bash
+# 1. Compile a spec into a full bundle (CLI + MCP + skill + hooks)
+node packages/cli/dist/bin-anvil.js compile <spec> --manifest <manifest> --out <dir>
+
+# 2. Read every operation's effect, risk, and idempotency
+node packages/cli/dist/bin-anvil.js inspect <dir>
+
+# 3. Expose an operation only after inspecting its risk
+node packages/cli/dist/bin-anvil.js approve <dir> <operation-id>
+
+# 4. Package the skill and deploy the server
+node packages/cli/dist/bin-anvil.js package skill <dir>
+```
+
+Non-idempotent mutations land as `review_required` — they are not exposed until
+you approve them. That refusal is the feature.
+
+  </TabItem>
+  <TabItem label="Build & test">
+
+```bash
+pnpm install
+pnpm build      # compile every package
+pnpm test       # the safety contract's own conformance suite
+pnpm typecheck
+```
+
+  </TabItem>
+</Tabs>
+
+## Where to go next
+
+<CardGrid>
+  <Card title="Start Here" icon="rocket">
+    New to Anvil? [What Anvil is](/anvil/start/what-is-anvil/) and the
+    [Quickstart](/anvil/start/quickstart/) get you from a spec to an aligned bundle.
+  </Card>
+  <Card title="Operate it safely" icon="approve-check">
+    [Operating Anvil](/anvil/guides/operating-anvil/) is the progressive-disclosure
+    manual: the compile → enrich → approve → deploy loop and the safety rules.
+  </Card>
+  <Card title="Concepts" icon="open-book">
+    [Architecture](/anvil/concepts/architecture/) and the
+    [product boundary](/anvil/concepts/product-boundary/) explain the AIR model and
+    what Anvil deliberately does not do.
+  </Card>
+  <Card title="Design notes" icon="pencil">
+    [Hooks and plugins](/anvil/design/hooks-and-plugins/) shows how the safety
+    contract ships into Claude Code, Codex, and Antigravity.
+  </Card>
+</CardGrid>
