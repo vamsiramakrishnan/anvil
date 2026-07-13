@@ -41,7 +41,9 @@ export default defineConfig({
       sidebar: [
         { label: "Start Here", autogenerate: { directory: "start" } },
         { label: "Concepts", autogenerate: { directory: "concepts" } },
+        { label: "Cookbooks", autogenerate: { directory: "cookbooks" } },
         { label: "Guides", autogenerate: { directory: "guides" } },
+        { label: "Explore the output", autogenerate: { directory: "explore" } },
         { label: "Design", autogenerate: { directory: "design" } },
         { label: "Architecture Decisions", autogenerate: { directory: "reference/adr" } },
       ],
