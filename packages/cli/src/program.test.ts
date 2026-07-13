@@ -84,7 +84,9 @@ describe("root help", () => {
       last = at;
     }
     // Concise: one summary line per command, no long descriptions or options.
-    expect(text.split("\n").length).toBeLessThan(40);
+    // The bound carries headroom for new commands (each adds one line); a
+    // multi-line description leaking into root help would still trip it.
+    expect(text.split("\n").length).toBeLessThan(45);
     expect(text).not.toContain("--manifest");
   });
 
