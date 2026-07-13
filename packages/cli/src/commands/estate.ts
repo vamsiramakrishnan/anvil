@@ -82,6 +82,7 @@ export function registerEstate(parent: Command, ctx: CommandContext): void {
       .option("--entry <path>", "archive entry holding the config, when the archive has several")
       .option("--service <id>", "override the derived service id")
       .option("--out <dir>", "bundle output directory (default generated/<service-id>)")
+      .option("--json", "emit a machine-readable import report (for CI oracles)")
       .action(async (exportPath: string, opts: ImportOptions) => {
         ctx.code = await runImport(exportPath, opts, ctx.io);
       }),
@@ -98,6 +99,7 @@ interface ImportOptions extends InventoryOptions {
   api?: string;
   service?: string;
   out?: string;
+  json?: boolean;
 }
 
 /** Resolve the vendor adapter or explain the valid set. */
@@ -276,6 +278,27 @@ async function runImport(exportPath: string, opts: ImportOptions, io: CliIO): Pr
 
   const approved = air.operations.filter((o) => o.state === "approved").length;
   const review = air.operations.filter((o) => o.state === "review_required").length;
+  if (opts.json) {
+    // The machine-readable report CI oracles gate on (policy accounting: opaque
+    // findings are DATA here, so a corpus baseline can pin their exact count).
+    io.out(
+      JSON.stringify(
+        {
+          vendor: opts.vendor,
+          api: apiRef.id,
+          serviceId: air.service.id,
+          out: outDir,
+          files: written.length,
+          operations: { total: air.operations.length, approved, review_required: review },
+          opaque: opaque.map((d) => ({ code: d.code, message: d.message })),
+          diagnostics: imported.diagnostics.length,
+        },
+        null,
+        2,
+      ),
+    );
+    return imported.diagnostics.some((d) => d.level === "error") ? 1 : 0;
+  }
   io.out(
     `Imported ${apiRef.id} from the ${opts.vendor} estate → ${outDir} (${written.length} files).`,
   );

@@ -6,7 +6,8 @@
  */
 import type { EvidenceCoordinate, GatewayDiagnostic } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
-import type { KongService } from "./model.js";
+import { asObjects } from "../parse-safe.js";
+import type { KongPlugin, KongService } from "./model.js";
 
 const AUTH_PLUGINS: Record<string, string> = {
   "key-auth": "API key",
@@ -60,7 +61,7 @@ export function normalizeServicePlugins(
   let authSummary: string | undefined;
   let hasQuota = false;
 
-  const plugins = service.plugins ?? [];
+  const plugins = asObjects<KongPlugin>(service.plugins);
   plugins.forEach((plugin, pluginIndex) => {
     if (plugin.enabled === false) return;
     const coordinate: EvidenceCoordinate = {

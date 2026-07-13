@@ -1,0 +1,37 @@
+{
+  "vendor": "apigee",
+  "apis": [
+    {
+      "id": "payments-proxy",
+      "operations": [
+        {
+          "id": "payments_proxy.refunds.create",
+          "effect": "mutation",
+          "action": "create",
+          "risk": "financial",
+          "reversible": false,
+          "idempotency": "none",
+          "confirmation": true,
+          "scopes": ["refunds:write"],
+          "state": "review_required"
+        },
+        {
+          "id": "payments_proxy.refunds.list",
+          "effect": "read",
+          "action": "list",
+          "risk": "none",
+          "reversible": true,
+          "idempotency": "natural",
+          "confirmation": false,
+          "scopes": ["refunds:write"],
+          "state": "generated"
+        }
+      ],
+      "opaque": [
+        "gateway/opaque_policy: /proxies/0/policies/3",
+        "gateway/opaque_policy: /proxies/0/policies/4"
+      ],
+      "diagnostics": 4
+    }
+  ]
+}

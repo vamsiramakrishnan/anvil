@@ -18,8 +18,9 @@ import type {
   GatewayProbeResult,
   GatewayRoute,
 } from "../model.js";
+import { asObjects, asStrings } from "../parse-safe.js";
 import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
-import type { KongService } from "./model.js";
+import type { KongRoute, KongService } from "./model.js";
 import { parseKongConfig } from "./parse.js";
 import { normalizeServicePlugins } from "./plugins.js";
 
@@ -50,9 +51,11 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
 /** The (path, method) operations a service exposes, deduped and sorted. */
 function serviceOps(service: KongService): SynthOp[] {
   const ops = new Map<string, SynthOp>();
-  for (const route of service.routes ?? []) {
-    const paths = route.paths?.length ? route.paths : ["/"];
-    const methods = route.methods?.length ? route.methods : ["GET"];
+  for (const route of asObjects<KongRoute>(service.routes)) {
+    const routePaths = asStrings(route.paths);
+    const routeMethods = asStrings(route.methods);
+    const paths = routePaths.length ? routePaths : ["/"];
+    const methods = routeMethods.length ? routeMethods : ["GET"];
     for (const path of paths) {
       for (const method of methods) {
         const operationId = synthOperationId(service.name, method, path);
@@ -64,12 +67,12 @@ function serviceOps(service: KongService): SynthOp[] {
 }
 
 function routesOf(service: KongService): GatewayRoute[] {
-  return (service.routes ?? []).map((r, i) => ({
+  return asObjects<KongRoute>(service.routes).map((r, i) => ({
     id: r.name ?? `${service.name}-route-${i}`,
-    methods: r.methods ?? [],
-    paths: r.paths ?? [],
-    hosts: r.hosts ?? [],
-    protocols: r.protocols ?? [],
+    methods: asStrings(r.methods),
+    paths: asStrings(r.paths),
+    hosts: asStrings(r.hosts),
+    protocols: asStrings(r.protocols),
   }));
 }
 
@@ -103,7 +106,7 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
         diagnostics: parsed.diagnostics,
       });
     }
-    const services = parsed.config.services ?? [];
+    const services = asObjects<KongService>(parsed.config.services);
     const diagnostics: GatewayDiagnostic[] = [];
     const apis: GatewayApiSummary[] = services.map((service, svcIndex) => {
       const operationIds = serviceOps(service).map((o) => o.operationId);
@@ -118,7 +121,7 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
         routes: routesOf(service),
         hasSpec: operationIds.length > 0,
         productIds: [],
-        owner: service.tags?.[0],
+        owner: asStrings(service.tags)[0],
         authSummary: norm.authSummary,
         hasQuota: norm.hasQuota,
       };
@@ -150,7 +153,7 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
       });
     if (!parsed.ok) return { ...empty(), diagnostics: parsed.diagnostics };
 
-    const services = parsed.config.services ?? [];
+    const services = asObjects<KongService>(parsed.config.services);
     const svcIndex = services.findIndex((s) => s.name === api.id);
     const service = services[svcIndex];
     if (!service) {

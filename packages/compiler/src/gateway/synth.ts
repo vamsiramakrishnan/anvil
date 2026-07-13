@@ -19,18 +19,33 @@ export interface SynthOp {
   path: string;
 }
 
-/** A stable operationId for a (service, method, path). */
+/**
+ * A stable operationId for a (service, method, path). Inputs are coerced to
+ * strings so a malformed vendor export (a missing verb, a numeric path) yields a
+ * degenerate id instead of a throw — for well-formed strings this is the
+ * identity, so golden ids never move.
+ */
 export function synthOperationId(service: string, method: string, path: string): string {
-  const pathToken = snakeCase(path.replace(/[{}]/g, "").replace(/[^a-zA-Z0-9]+/g, "_")) || "root";
-  return `${snakeCase(service)}_${method.toLowerCase()}_${pathToken}`;
+  const p = String(path ?? "");
+  const m = String(method ?? "");
+  const pathToken = snakeCase(p.replace(/[{}]/g, "").replace(/[^a-zA-Z0-9]+/g, "_")) || "root";
+  return `${snakeCase(String(service ?? ""))}_${m.toLowerCase()}_${pathToken}`;
 }
 
 /** Build the minimal OpenAPI YAML for a set of operations. Deterministic. */
 export function synthesizeOpenApiFromOperations(
   title: string,
   version: string,
-  ops: readonly SynthOp[],
+  rawOps: readonly SynthOp[],
 ): string {
+  // Coerce method/path to strings so a malformed vendor op (a verb that parsed
+  // as an object, a numeric path) degenerates rather than throwing downstream.
+  // For well-formed ops this is the identity.
+  const ops: SynthOp[] = rawOps.map((op) => ({
+    operationId: String(op.operationId ?? ""),
+    method: String(op.method ?? ""),
+    path: String(op.path ?? ""),
+  }));
   const byPath = new Map<string, SynthOp[]>();
   for (const op of ops) byPath.set(op.path, [...(byPath.get(op.path) ?? []), op]);
 
@@ -54,7 +69,9 @@ export function synthesizeOpenApiFromOperations(
 
 /** Normalize a vendor path to an OpenAPI path (leading slash, `{}` params kept). */
 export function normalizePath(path: string): string {
-  const clean = path.replace(/^~/, "").trim();
+  const clean = String(path ?? "")
+    .replace(/^~/, "")
+    .trim();
   return clean.startsWith("/") ? clean : `/${clean}`;
 }
 
@@ -70,19 +87,18 @@ export function buildGatewayApiImport(input: {
   facts: readonly GatewayFact[];
   diagnostics: GatewayDiagnostic[];
 }): GatewayApiImport {
-  const specText = synthesizeOpenApiFromOperations(
-    input.apiName,
-    input.version ?? "0.0.0",
-    input.ops,
-  );
-  const base = ephemeralCompilerSource(specText, `${snakeCase(input.apiName)}.openapi.yaml`);
+  // A malformed vendor entity may lack a name; coerce so synthesis degrades to a
+  // blank id instead of throwing. For a real name this is the identity.
+  const apiName = String(input.apiName ?? "");
+  const specText = synthesizeOpenApiFromOperations(apiName, input.version ?? "0.0.0", input.ops);
+  const base = ephemeralCompilerSource(specText, `${snakeCase(apiName)}.openapi.yaml`);
   const source = {
     ...base,
-    origin: { kind: input.originKind, uri: `${input.originKind}://${input.apiName}` },
+    origin: { kind: input.originKind, uri: `${input.originKind}://${apiName}` },
   };
   const overlay = buildGatewayOverlay(
     [...input.facts],
-    `overlay_${input.originKind}_${snakeCase(input.apiName)}`,
+    `overlay_${input.originKind}_${snakeCase(apiName)}`,
   );
   return { source, overlay, diagnostics: input.diagnostics };
 }
