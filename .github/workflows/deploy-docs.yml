@@ -34,12 +34,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # apps/docs is a standalone package (outside the pnpm workspace), so it is
-      # installed and built on its own — the core toolchain install never pulls
-      # in Astro. `pnpm build` syncs content from docs/ + skills/ first.
+      # apps/docs is a standalone package (outside the pnpm workspace: the root
+      # pnpm-workspace.yaml lists only packages/*), so it is installed and built
+      # on its own — the core toolchain install never pulls in Astro. Without
+      # --ignore-workspace, pnpm run from apps/docs still resolves the ROOT
+      # workspace and installs those packages instead of apps/docs's deps, so
+      # Astro is never installed and `astro build` fails with "astro: not found".
+      # `pnpm build` syncs content from docs/ + skills/ first.
       - name: Install docs dependencies
         working-directory: apps/docs
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --ignore-workspace --no-frozen-lockfile
       - name: Build site
         working-directory: apps/docs
         run: pnpm build
