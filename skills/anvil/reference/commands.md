@@ -82,6 +82,7 @@ Options:
 - `--service <id>` — override the derived service id
 - `--out <dir>` — bundle output directory (default generated/<service-id>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
+- `--human-approval <policy>` — require explicit human approval on gated mutations: none | unsafe | all (per-op manifest `human_approval` overrides)
 - `--root <ws>` — workspace root for .anvil/sources
 
 ### `anvil inspect`
@@ -319,6 +320,35 @@ Options:
 - `--sources <file>` — sources.yaml naming the MCP servers to consult
 - `--write <manifest>` — write the proposed manifest here instead of printing it
 - `--json` — emit the per-operation decisions as JSON
+
+### `anvil estate`
+`anvil estate [options] [command]`
+
+Inventory and import gateway estates (Apigee, Kong, WSO2, MuleSoft, API Connect).
+
+Reads a vendor gateway export — a bare config document, or a ZIP/JAR archive (decoded through the hardened archive harness: zip-slip, symlink, and bomb defences with every rejection reported) — and normalizes it through the vendor adapter into the one compiler pipeline. `inventory` lists the estate's APIs without compiling anything; `import` compiles one API into a normal Anvil bundle, where the usual approval gate applies: risky operations land review_required and are not exposed until approved.
+
+#### `anvil estate inventory`
+`anvil estate inventory [options] <export>`
+
+List the APIs in a gateway export without compiling anything.
+
+Options:
+- `--vendor <vendor>` — gateway vendor (kong | apigee | wso2 | mulesoft | api_connect)
+- `--entry <path>` — archive entry holding the config, when the archive has several
+- `--json` — emit the inventory snapshot as JSON
+
+#### `anvil estate import`  *(mutates)*
+`anvil estate import [options] <export>`
+
+Import one API from a gateway export and compile it into a bundle.
+
+Options:
+- `--vendor <vendor>` — gateway vendor (kong | apigee | wso2 | mulesoft | api_connect)
+- `--api <id>` — API id from `estate inventory` (optional when the estate has one)
+- `--entry <path>` — archive entry holding the config, when the archive has several
+- `--service <id>` — override the derived service id
+- `--out <dir>` — bundle output directory (default generated/<service-id>)
 
 ### `anvil sources`
 `anvil sources [options]`

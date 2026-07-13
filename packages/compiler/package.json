@@ -28,6 +28,7 @@
     "@anvil/air": "workspace:*",
     "@scalar/openapi-parser": "^0.28.8",
     "fast-xml-parser": "^5.9.3",
+    "fflate": "^0.8.3",
     "graphql": "^17.0.2",
     "protobufjs": "^8.7.0",
     "swagger2openapi": "^7.0.8",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@types/swagger2openapi": "^7.0.4",
+    "fast-check": "^4.9.0",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"

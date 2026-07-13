@@ -1,0 +1,160 @@
+{
+  "service": {
+    "id": "payments",
+    "version": "2026-07-09-prod",
+    "displayName": "Payments API"
+  },
+  "capabilities": [
+    {
+      "id": "payments.customers",
+      "displayName": "Customers",
+      "description": "Customers capability for payments.",
+      "source": "tag",
+      "operations": [
+        "payments.customers.get"
+      ],
+      "workflows": [],
+      "state": "approved",
+      "confidence": 0.63
+    },
+    {
+      "id": "payments.payments",
+      "displayName": "Payments",
+      "description": "Payments capability for payments.",
+      "source": "tag",
+      "operations": [
+        "payments.capture.create",
+        "payments.payments.get"
+      ],
+      "workflows": [],
+      "state": "approved",
+      "confidence": 0.63
+    },
+    {
+      "id": "payments.refunds",
+      "displayName": "Refunds",
+      "description": "Refunds capability for payments.",
+      "source": "tag",
+      "operations": [
+        "payments.refunds.create"
+      ],
+      "workflows": [
+        "payments.refunds.refund_customer"
+      ],
+      "state": "approved",
+      "confidence": 0.63
+    }
+  ],
+  "operations": [
+    {
+      "id": "payments.customers.get",
+      "canonicalName": "get_customer",
+      "displayName": "Get a customer",
+      "description": "Get a customer",
+      "capability": "payments.customers",
+      "effect": "read",
+      "action": "get",
+      "principal": "service",
+      "risk": "none",
+      "reversible": true,
+      "idempotency": "natural",
+      "retrySafe": true,
+      "confirmationRequired": false,
+      "humanApproval": false,
+      "auth": {
+        "type": "oauth2_client_credentials",
+        "scopes": [
+          "payments.read"
+        ]
+      },
+      "cli": "payments customers get",
+      "mcpTool": "payments_get_customer",
+      "state": "approved",
+      "intentExamples": [],
+      "confidence": 0.19999999999999996
+    },
+    {
+      "id": "payments.payments.get",
+      "canonicalName": "get_payment",
+      "displayName": "Get a payment",
+      "description": "Get a payment",
+      "capability": "payments.payments",
+      "effect": "read",
+      "action": "get",
+      "principal": "service",
+      "risk": "none",
+      "reversible": true,
+      "idempotency": "natural",
+      "retrySafe": true,
+      "confirmationRequired": false,
+      "humanApproval": false,
+      "auth": {
+        "type": "oauth2_client_credentials",
+        "scopes": [
+          "payments.read"
+        ]
+      },
+      "cli": "payments payments get",
+      "mcpTool": "payments_get_payment",
+      "state": "approved",
+      "intentExamples": [],
+      "confidence": 0.19999999999999996
+    },
+    {
+      "id": "payments.refunds.create",
+      "canonicalName": "create_refund",
+      "displayName": "Create a refund",
+      "description": "Creates a refund for a captured payment. Irreversible.",
+      "capability": "payments.refunds",
+      "effect": "mutation",
+      "action": "create",
+      "principal": "service",
+      "risk": "financial",
+      "reversible": false,
+      "idempotency": "required",
+      "retrySafe": true,
+      "confirmationRequired": true,
+      "confirmationReason": "This operation creates an irreversible financial mutation.",
+      "humanApproval": false,
+      "auth": {
+        "type": "oauth2_client_credentials",
+        "scopes": [
+          "payments.read"
+        ]
+      },
+      "cli": "payments refunds create",
+      "mcpTool": "payments_create_refund",
+      "state": "approved",
+      "intentExamples": [],
+      "confidence": 0.19999999999999996
+    },
+    {
+      "id": "payments.capture.create",
+      "canonicalName": "capture_payment",
+      "displayName": "Capture a payment",
+      "description": "Capture a payment",
+      "capability": "payments.payments",
+      "effect": "mutation",
+      "action": "create",
+      "principal": "service",
+      "risk": "financial",
+      "reversible": false,
+      "idempotency": "natural",
+      "retrySafe": true,
+      "confirmationRequired": true,
+      "confirmationReason": "This operation is an irreversible financial mutation.",
+      "humanApproval": false,
+      "auth": {
+        "type": "oauth2_client_credentials",
+        "scopes": [
+          "payments.read"
+        ]
+      },
+      "cli": "payments capture create",
+      "mcpTool": "payments_capture_payment",
+      "state": "approved",
+      "intentExamples": [],
+      "confidence": 0.19999999999999996
+    }
+  ]
+}

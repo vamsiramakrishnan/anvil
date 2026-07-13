@@ -1,0 +1,47 @@
+---
+title: "The example bundle, browsed"
+description: "Every operation Anvil compiled from examples/payments — real output, with its CLI command, MCP tool, risk, and safety posture side by side."
+sidebar:
+  order: 1
+---
+
+import OperationTable from "../../../components/OperationTable.astro";
+
+This table is **real compiled output**, not documentation prose. It is generated
+by running Anvil's actual compiler over
+[`examples/payments`](https://github.com/vamsiramakrishnan/anvil/tree/main/examples/payments)
+(`openapi.yaml` + the `anvil.yaml` enrichment manifest) via
+`node scripts/gen-docs-data.mjs`, and a workspace test —
+`packages/generators/src/docs-data.test.ts` — recompiles the example on every
+test run and fails if this page's data no longer matches what the compiler
+produces. Docs that can't lie: if you can read it here, the toolchain agrees.
+
+Each row is one operation in the canonical model (AIR), projected into all three
+surfaces at once. The CLI command, the MCP tool, and the skill that describes
+them are compiled from the same entry — that alignment is the point.
+
+<OperationTable />
+
+## Reading the posture columns
+
+- **Effect / risk** — the classifier's verdict on what the operation does.
+  Reads are calm; the two `financial` mutations are irreversible, which is why
+  their posture is stricter.
+- **Confirm required** — the generated artifacts refuse the call until an
+  explicit `--confirm` (CLI) or `confirm: true` (MCP). **Human approval** is the
+  stricter tier: a model cannot self-confirm past it.
+- **Idempotency key** — the operation demands `--idempotency-key`, so an
+  accidental double-fire cannot double-refund.
+- **Retry-safe** — the runtime may auto-retry transient failures. Operations
+  without natural or key-based idempotency are never auto-retried.
+
+## Approved vs. review required
+
+The **state** column is the approval gate. Only `approved` operations are
+exposed by the generated CLI, MCP server, and skill; a `review_required`
+operation exists in the model but is compiled *out* of every artifact until a
+human approves it (typically after enriching it with a manifest that proves its
+idempotency or names its risk). Every operation above is currently approved —
+the `anvil.yaml` manifest in the example already did that enrichment work. To
+see how an operation earns its way from `review_required` to `approved`, read
+[the enrich → approve workflow](/anvil/guides/enrich-approve-workflow/).

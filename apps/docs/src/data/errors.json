@@ -1,0 +1,19 @@
+{
+  "taxonomy": [
+    "validation_error",
+    "auth_required",
+    "permission_denied",
+    "not_found",
+    "conflict",
+    "rate_limited",
+    "upstream_timeout",
+    "upstream_unavailable",
+    "unsafe_retry_blocked",
+    "confirmation_required",
+    "idempotency_required",
+    "schema_mismatch",
+    "unsupported_operation",
+    "policy_denied",
+    "unknown_upstream_error"
+  ]
+}

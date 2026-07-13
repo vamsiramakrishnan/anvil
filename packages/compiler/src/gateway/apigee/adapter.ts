@@ -4,7 +4,6 @@
  * SpikeArrest, AssignMessage/JavaScript, …). Product scopes and quota normalize
  * into the overlay/inventory; message-mutating policies are classified **opaque**.
  */
-import { parse as parseYaml } from "yaml";
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
 import { finalizeInventory } from "../inventory.js";
 import type {
@@ -19,6 +18,7 @@ import type {
   GatewayProduct,
 } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
+import { asObjects, asRecord, asStrings, safeParseYaml } from "../parse-safe.js";
 import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
 
 interface ApigeeFlow {
@@ -79,12 +79,11 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
 };
 
 function parseExport(config: string): ApigeeExport {
-  const doc = parseYaml(config) as ApigeeExport | null;
-  return doc && typeof doc === "object" ? doc : {};
+  return asRecord(safeParseYaml(config)) as ApigeeExport;
 }
 
 function opsOf(proxy: ApigeeProxy): SynthOp[] {
-  return (proxy.flows ?? []).map((f) => ({
+  return asObjects<ApigeeFlow>(proxy.flows).map((f) => ({
     operationId: synthOperationId(proxy.name, f.method, f.path),
     method: f.method,
     path: normalizePath(f.path),
@@ -99,10 +98,10 @@ function productFor(
   const scopes = new Set<string>();
   const productIds: string[] = [];
   let hasQuota = false;
-  for (const product of exp.products ?? []) {
-    if ((product.proxies ?? []).includes(proxyName)) {
+  for (const product of asObjects<ApigeeProduct>(exp.products)) {
+    if (asStrings(product.proxies).includes(proxyName)) {
       productIds.push(product.name);
-      for (const s of product.scopes ?? []) scopes.add(s);
+      for (const s of asStrings(product.scopes)) scopes.add(s);
       if (product.quota) hasQuota = true;
     }
   }
@@ -117,8 +116,8 @@ function normalizeProxy(exp: ApigeeExport, proxy: ApigeeProxy, proxyIndex: numbe
   const { scopes, hasQuota, productIds } = productFor(exp, proxy.name);
   if (scopes.length > 0) {
     for (const op of ops) {
-      const productIndex = (exp.products ?? []).findIndex((p) =>
-        (p.proxies ?? []).includes(proxy.name),
+      const productIndex = asObjects<ApigeeProduct>(exp.products).findIndex((p) =>
+        asStrings(p.proxies).includes(proxy.name),
       );
       const coordinate: EvidenceCoordinate = {
         origin,
@@ -135,7 +134,7 @@ function normalizeProxy(exp: ApigeeExport, proxy: ApigeeProxy, proxyIndex: numbe
     }
   }
 
-  (proxy.policies ?? []).forEach((policy, k) => {
+  asObjects<ApigeePolicy>(proxy.policies).forEach((policy, k) => {
     const coordinate: EvidenceCoordinate = {
       origin,
       pointer: `/proxies/${proxyIndex}/policies/${k}`,
@@ -166,7 +165,7 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
 
   async probe(connection: ApigeeConnection, _ctx: AdapterContext): Promise<GatewayProbeResult> {
     return {
-      reachable: (parseExport(connection.config).proxies ?? []).length > 0,
+      reachable: asObjects(parseExport(connection.config).proxies).length > 0,
       capabilities: CAPABILITIES,
       diagnostics: [],
     };
@@ -180,16 +179,16 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
     const exp = parseExport(connection.config);
     const diagnostics: GatewayDiagnostic[] = [];
     const environments = new Set<string>();
-    const summaries: GatewayApiSummary[] = (exp.proxies ?? []).map((proxy, i) => {
+    const summaries: GatewayApiSummary[] = asObjects<ApigeeProxy>(exp.proxies).map((proxy, i) => {
       const norm = normalizeProxy(exp, proxy, i, origin);
       diagnostics.push(...norm.diagnostics);
-      for (const e of proxy.environments ?? []) environments.add(e);
+      for (const e of asStrings(proxy.environments)) environments.add(e);
       return {
         id: proxy.name,
         name: proxy.name,
         version: proxy.revision ?? "1",
         lifecycle: "deployed",
-        environmentIds: proxy.environments ?? [],
+        environmentIds: asStrings(proxy.environments),
         routes: norm.ops.map((o) => ({
           id: o.operationId,
           methods: [o.method],
@@ -203,7 +202,7 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
         hasQuota: norm.hasQuota,
       };
     });
-    const products: GatewayProduct[] = (exp.products ?? []).map((p) => ({
+    const products: GatewayProduct[] = asObjects<ApigeeProduct>(exp.products).map((p) => ({
       id: p.name,
       name: p.name,
       plans: [],
@@ -225,8 +224,9 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
   ): Promise<GatewayApiImport> {
     const origin = connection.origin ?? "apigee.yaml";
     const exp = parseExport(connection.config);
-    const proxyIndex = (exp.proxies ?? []).findIndex((p) => p.name === api.id);
-    const proxy = (exp.proxies ?? [])[proxyIndex];
+    const proxies = asObjects<ApigeeProxy>(exp.proxies);
+    const proxyIndex = proxies.findIndex((p) => p.name === api.id);
+    const proxy = proxies[proxyIndex];
     if (!proxy) {
       const empty = buildGatewayApiImport({
         originKind: "apigee",

@@ -1,0 +1,155 @@
+---
+// The signature pipeline: any spec → `anvil compile` → AIR (one canonical
+// model, gated by approval) → four projected surfaces. Inline SVG so every
+// color rides the theme's CSS variables and flips correctly in light/dark.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 400"
+    role="img"
+    aria-label="Anvil compiles any API specification into one canonical model (AIR), which projects into an aligned CLI, MCP server, skill, and harness hooks. An approval gate keeps unapproved operations out of every surface."
+  >
+    <defs>
+      <marker id="pd-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+    </defs>
+
+    <!-- ── Inputs: the spec formats an enterprise already has ─────────── -->
+    <text x="16" y="38" class="d-label">any spec you already publish</text>
+    <g class="d-chip-group">
+      <rect x="16" y="56" width="180" height="30" rx="4" class="d-chip" />
+      <text x="28" y="75" class="d-chip-text">OpenAPI 3.x</text>
+      <rect x="16" y="94" width="180" height="30" rx="4" class="d-chip" />
+      <text x="28" y="113" class="d-chip-text">Swagger 2.0</text>
+      <rect x="16" y="132" width="180" height="30" rx="4" class="d-chip" />
+      <text x="28" y="151" class="d-chip-text">GraphQL SDL</text>
+      <rect x="16" y="170" width="180" height="30" rx="4" class="d-chip" />
+      <text x="28" y="189" class="d-chip-text">gRPC · proto3</text>
+      <rect x="16" y="208" width="180" height="30" rx="4" class="d-chip" />
+      <text x="28" y="227" class="d-chip-text">SOAP · WSDL</text>
+      <rect x="16" y="246" width="180" height="30" rx="4" class="d-chip" />
+      <text x="28" y="265" class="d-chip-text">Postman Collection</text>
+      <rect x="16" y="284" width="180" height="30" rx="4" class="d-chip" />
+      <text x="28" y="303" class="d-chip-text">Google Discovery</text>
+    </g>
+
+    <!-- bus collecting the inputs into the compiler -->
+    <g class="d-line">
+      <path d="M196 71 H224" /><path d="M196 109 H224" /><path d="M196 147 H224" />
+      <path d="M196 185 H224" /><path d="M196 223 H224" /><path d="M196 261 H224" />
+      <path d="M196 299 H224" />
+      <path d="M224 71 V299" />
+      <path d="M224 185 H252" marker-end="url(#pd-arrow)" />
+    </g>
+
+    <!-- ── The compiler ────────────────────────────────────────────────── -->
+    <rect x="258" y="163" width="132" height="44" rx="4" class="d-accent" />
+    <text x="324" y="190" text-anchor="middle" class="d-accent-text">anvil compile</text>
+    <text x="324" y="228" text-anchor="middle" class="d-label">parse · classify · validate</text>
+    <path d="M390 185 H422" class="d-line" marker-end="url(#pd-arrow)" />
+
+    <!-- ── AIR: the one canonical model ────────────────────────────────── -->
+    <rect x="428" y="92" width="220" height="186" rx="6" class="d-air" />
+    <text x="448" y="122" class="d-title">AIR</text>
+    <text x="448" y="140" class="d-label">one canonical model</text>
+    <g class="d-body">
+      <text x="448" y="168">effect · action · risk</text>
+      <text x="448" y="190">reversibility</text>
+      <text x="448" y="212">idempotency · retries</text>
+      <text x="448" y="234">confirmation · approval tier</text>
+      <text x="448" y="256">auth · structured errors</text>
+    </g>
+    <path d="M538 278 V290" class="d-line" />
+    <rect x="428" y="290" width="220" height="34" rx="4" class="d-gate" />
+    <text x="538" y="311" text-anchor="middle" class="d-gate-text">approval gate · unapproved ops never ship</text>
+
+    <!-- ── Projections ─────────────────────────────────────────────────── -->
+    <text x="686" y="24" text-anchor="middle" class="d-label">projections</text>
+    <g class="d-line">
+      <path d="M648 120 L718 80" marker-end="url(#pd-arrow)" />
+      <path d="M648 160 L718 168" marker-end="url(#pd-arrow)" />
+      <path d="M648 200 L718 256" marker-end="url(#pd-arrow)" />
+      <path d="M648 240 L718 344" marker-end="url(#pd-arrow)" />
+    </g>
+
+    <g>
+      <rect x="724" y="44" width="300" height="72" rx="4" class="d-plate" />
+      <rect x="724" y="44" width="3" height="72" class="d-bar" />
+      <text x="742" y="70" class="d-plate-title">CLI</text>
+      <text x="742" y="90" class="d-plate-desc">typed commands · --dry-run · --confirm</text>
+      <text x="742" y="106" class="d-plate-desc">for engineers, pipelines, and agents alike</text>
+
+      <rect x="724" y="132" width="300" height="72" rx="4" class="d-plate" />
+      <rect x="724" y="132" width="3" height="72" class="d-bar" />
+      <text x="742" y="158" class="d-plate-title">MCP server</text>
+      <text x="742" y="178" class="d-plate-desc">one tool per approved operation</text>
+      <text x="742" y="194" class="d-plate-desc">risk visible in every tool's annotations</text>
+
+      <rect x="724" y="220" width="300" height="72" rx="4" class="d-plate" />
+      <rect x="724" y="220" width="3" height="72" class="d-bar" />
+      <text x="742" y="246" class="d-plate-title">Skill</text>
+      <text x="742" y="266" class="d-plate-desc">the operating manual agents actually read</text>
+      <text x="742" y="282" class="d-plate-desc">capabilities → operations → workflows</text>
+
+      <rect x="724" y="308" width="300" height="72" rx="4" class="d-plate" />
+      <rect x="724" y="308" width="3" height="72" class="d-bar" />
+      <text x="742" y="334" class="d-plate-title">Harness hooks</text>
+      <text x="742" y="354" class="d-plate-desc">Antigravity · Claude Code · Codex</text>
+      <text x="742" y="370" class="d-plate-desc">deny pre-flight · escalate to a human</text>
+    </g>
+  </svg>
+  <figcaption>fig 01 · one spec in, four aligned surfaces out — regenerated together, so they cannot disagree</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram {
+    margin: 1.75rem 0;
+    overflow-x: auto;
+  }
+  .anvil-diagram svg {
+    min-width: 760px;
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-chip { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-chip-text { font-family: var(--sl-font-mono); font-size: 12.5px; fill: var(--sl-color-gray-2); }
+  .d-line path { stroke: var(--sl-color-gray-4); stroke-width: 1; fill: none; }
+  .d-accent { fill: var(--sl-color-accent); }
+  .d-accent-text { font-family: var(--sl-font-mono); font-size: 13px; font-weight: 600; fill: #f2f4f8; }
+  .d-air { fill: var(--sl-color-gray-6); stroke: var(--sl-color-accent); stroke-width: 1.25; }
+  .d-title { font-family: var(--ge-display-font); font-size: 17px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-body text { font-size: 12.5px; fill: var(--sl-color-gray-2); }
+  .d-gate { fill: none; stroke: var(--ge-status-blocked); }
+  .d-gate-text {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--ge-status-blocked-text);
+  }
+  .d-plate { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-bar { fill: var(--sl-color-accent); }
+  .d-plate-title { font-family: var(--ge-display-font); font-size: 14.5px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-plate-desc { font-size: 12px; fill: var(--sl-color-gray-3); }
+</style>

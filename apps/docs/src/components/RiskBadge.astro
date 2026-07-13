@@ -1,0 +1,54 @@
+---
+// Risk chip for compiled operations. `risk` values are AIR's effect.risk
+// vocabulary (none/low/medium/high/destructive/financial); tones map onto the
+// same status ramp (--ge-status-* in src/styles/custom.css) the rest of the
+// site uses, so risk reads in the same color vocabulary as run state.
+interface Props {
+  risk: string;
+  effect?: string;
+  reversible?: boolean;
+}
+const { risk, effect, reversible } = Astro.props;
+
+const TONES: Record<string, string> = {
+  destructive: "ge-status-failed",
+  financial: "ge-status-failed",
+  high: "ge-status-blocked",
+  medium: "ge-status-warning",
+  low: "ge-status-passed",
+  none: "ge-status-passed",
+  read: "ge-status-passed",
+};
+// A read effect is calm regardless of how the risk field is spelled.
+const tone = effect === "read" ? "ge-status-passed" : (TONES[risk] ?? "ge-status-queued");
+const label = effect === "read" ? "read" : risk;
+const irreversible = reversible === false && effect !== "read";
+const toneStyle = `--risk-tone: var(--${tone}); --risk-text: var(--${tone}-text);`;
+---
+
+<span class="risk-badge" style={toneStyle}
+  >{label}{irreversible && <span class="risk-irr">· irreversible</span>}</span
+>
+
+<style>
+  .risk-badge {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35em;
+    padding: 0.1rem 0.5rem;
+    border: 1px solid color-mix(in srgb, var(--risk-tone) 45%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--risk-tone) 12%, transparent);
+    color: var(--risk-text);
+    font-family: var(--sl-font-system-mono, monospace);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .risk-irr {
+    opacity: 0.8;
+    font-weight: 500;
+  }
+</style>

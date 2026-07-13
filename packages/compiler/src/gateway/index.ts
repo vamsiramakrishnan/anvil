@@ -13,6 +13,7 @@ export * from "./archive/index.js";
 export * from "./capability-matrix.js";
 export * from "./conformance.js";
 export * from "./fixture.js";
+export * from "./golden/project.js";
 export * from "./inventory.js";
 export * from "./kong/index.js";
 export * from "./model.js";

@@ -1,0 +1,17 @@
+# Gateway-estate corpus. Each row is one API imported end-to-end through
+# `anvil estate import` (adapter → compileContract → generateBundle → writeBundle)
+# and gated by the estates lane (tools/corpus/run.mjs estates) against
+# estates-baseline.json. Columns are TAB-separated:
+#
+#   name<TAB>vendor<TAB>fixture<TAB>api
+#
+# `fixture` is repo-relative. These reuse the golden estate fixtures so the
+# CLI-level differential and the projection golden test share one realistic
+# corpus (plugin zoo, auth scopes, quotas, opaque policies). Kong appears twice
+# to exercise the multi-API selection path.
+kong-refunds	kong	packages/compiler/src/gateway/golden/estates/kong.yaml	refunds
+kong-reporting	kong	packages/compiler/src/gateway/golden/estates/kong.yaml	reporting
+apigee-payments	apigee	packages/compiler/src/gateway/golden/estates/apigee.yaml	payments-proxy
+wso2-orders	wso2	packages/compiler/src/gateway/golden/estates/wso2.yaml	OrderService
+mulesoft-customer	mulesoft	packages/compiler/src/gateway/golden/estates/mulesoft.yaml	customer-api
+apiconnect-claims	api_connect	packages/compiler/src/gateway/golden/estates/apiconnect.yaml	claims-api

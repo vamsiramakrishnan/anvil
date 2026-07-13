@@ -1,0 +1,50 @@
+---
+title: How the hook decides
+description: The generated hook's allow/deny/ask decision flow — every rule mirrors a runtime executor refusal, in the executor's order.
+sidebar:
+  order: 2
+---
+
+import HookDecisionDiagram from '../../../components/diagrams/HookDecisionDiagram.astro';
+
+Every generated bundle ships one shared decision core, `plugin/hookcore.mjs`.
+It reads the committed `catalog.json` — the single source of truth for the
+exposed safety surface — and decides **allow**, **deny**, or **ask** for a tool
+call *before* it leaves the harness. Thin per-harness shims (Antigravity,
+Claude Code, Codex) translate that one decision into each harness's PreToolUse
+protocol.
+
+<HookDecisionDiagram />
+
+## The hook mirrors the runtime — it never replaces it
+
+Each rule above mirrors a refusal the runtime executor would make anyway, in
+the executor's order: unknown, unapproved, confirmation, then idempotency. The
+hook is the **outer, fail-open ring** — uninstall it and the runtime still
+refuses. What it buys is turn economy and human authority: a missing
+`confirm: true` or `idempotency_key` is denied in-harness with the exact fix
+named, so the model repairs the call in the same turn instead of burning a full
+round trip; and the human-approval tier escalates to a real person, which a
+model-supplied argument can never do.
+
+The outer ring is only honest if it agrees with the inner one. The generated
+conformance test (`tests/conformance.test.ts`, the
+"hook ↔ executor agreement" suite) asserts that `hookcore.decide()` asks or
+denies exactly where the executor would refuse — drift between the two fails
+the bundle's own tests.
+
+## What each harness does with the decision
+
+`allow` and `deny` map directly everywhere. The interesting case is `ask` — the
+human-approval tier, where a human must sign off and the model must not be able
+to self-approve:
+
+| Harness | `ask` becomes | Why |
+| --- | --- | --- |
+| Antigravity | `force_ask` | Always prompts the user, ignoring any cached "Always Allow" — the model cannot self-approve past it. |
+| Claude Code | `ask` | Escalates to the real permission dialog; the decision travels in the hook's JSON output. |
+| Codex | `deny` (fail-closed) | Codex's PreToolUse has no interactive ask, so the only honest enforcement is to block and route the operation through Codex's own human approval flow. |
+
+One more Antigravity nuance: its hooks fire for *every* tool, built-ins
+included, so the shim passes non-catalog tools straight through — the
+deny-unknown tamper guard applies only to this bundle's operations.
