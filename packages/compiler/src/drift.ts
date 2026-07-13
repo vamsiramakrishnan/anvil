@@ -381,6 +381,26 @@ function diffOperation(before: Operation, after: Operation, caps: string[]): Dri
     );
   }
 
+  if (
+    (before.confirmation.humanApproval ?? false) !== (after.confirmation.humanApproval ?? false)
+  ) {
+    const added = after.confirmation.humanApproval === true;
+    items.push(
+      item(
+        "confirmation_changed",
+        added ? "info" : "blocking", // dropping human sign-off loosens safety
+        opId,
+        "confirmation.human_approval",
+        `Human-approval requirement ${added ? "added" : "REMOVED"} (${before.confirmation.humanApproval ?? false} → ${after.confirmation.humanApproval ?? false}).`,
+        {
+          before: before.confirmation.humanApproval ?? false,
+          after: after.confirmation.humanApproval ?? false,
+        },
+        caps,
+      ),
+    );
+  }
+
   // --- pagination -----------------------------------------------------------------
   if (!sameJson(before.pagination ?? null, after.pagination ?? null)) {
     items.push(
