@@ -1,0 +1,37 @@
+{
+  "vendor": "apiconnect",
+  "apis": [
+    {
+      "id": "claims-api",
+      "operations": [
+        {
+          "id": "claims_api.claims.create",
+          "effect": "mutation",
+          "action": "create",
+          "risk": "medium",
+          "reversible": true,
+          "idempotency": "none",
+          "confirmation": true,
+          "scopes": ["claims:write"],
+          "state": "review_required"
+        },
+        {
+          "id": "claims_api.claims.list",
+          "effect": "read",
+          "action": "list",
+          "risk": "none",
+          "reversible": true,
+          "idempotency": "natural",
+          "confirmation": false,
+          "scopes": [],
+          "state": "generated"
+        }
+      ],
+      "opaque": [
+        "gateway/opaque_policy: /apis/0/assembly/execute/0",
+        "gateway/opaque_policy: /apis/0/assembly/execute/1"
+      ],
+      "diagnostics": 3
+    }
+  ]
+}

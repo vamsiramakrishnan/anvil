@@ -1,0 +1,25 @@
+# Golden estate: an IBM API Connect export shape — plan rate limits map to
+# quota, OAuth providers to auth, map/gatewayscript/xslt assembly steps stay
+# opaque.
+apis:
+  - name: claims-api
+    version: 2.1.0
+    basePath: /claims
+    oauthProviders: [corporate-oauth]
+    resources:
+      - method: GET
+        path: /claims
+      - method: POST
+        path: /claims
+        scopes: ["claims:write"]
+    assembly:
+      execute:
+        - type: map
+        - type: gatewayscript
+        - type: invoke
+products:
+  - name: insurance-product
+    plans:
+      - name: gold
+        rateLimit: 100/hour
+        apis: [claims-api]

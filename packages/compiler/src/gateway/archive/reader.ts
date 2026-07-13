@@ -22,8 +22,10 @@ function isUnsafePath(path: string): boolean {
   if (/^[a-zA-Z]:[\\/]/.test(path)) return true; // Windows drive
   if (path.includes("\\")) return true; // backslash separator
   if (path.includes("\0")) return true; // NUL
-  const segments = path.split("/");
-  if (segments.some((s) => s === "..")) return true; // traversal
+  // Reject any `..` anywhere, not just a bare `..` segment: Windows strips
+  // trailing dots/spaces so `.. ` collapses to a traversal, and a conservative
+  // boundary on untrusted archives has no reason to admit `..` in a name at all.
+  if (path.includes("..")) return true; // traversal (incl. Windows `.. ` / `..\` tricks)
   return false;
 }
 

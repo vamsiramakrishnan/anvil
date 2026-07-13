@@ -3,7 +3,6 @@
  * per-operation verbs, scopes, and security scheme, plus throttling tiers. The
  * adapter normalizes those into the common source + overlay; no WSO2 type escapes.
  */
-import { parse as parseYaml } from "yaml";
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
 import { finalizeInventory } from "../inventory.js";
 import type {
@@ -17,6 +16,7 @@ import type {
   GatewayProbeResult,
 } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
+import { asObjects, asRecord, asStrings, safeParseYaml } from "../parse-safe.js";
 import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
 
 interface WsoOperation {
@@ -60,16 +60,15 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
 };
 
 function apisOf(config: string): WsoApi[] {
-  const doc = parseYaml(config) as { apis?: WsoApi[]; data?: WsoApi } | WsoApi | null;
-  if (!doc || typeof doc !== "object") return [];
-  if (Array.isArray((doc as { apis?: WsoApi[] }).apis)) return (doc as { apis: WsoApi[] }).apis;
-  if ((doc as { data?: WsoApi }).data) return [(doc as { data: WsoApi }).data];
-  if ((doc as WsoApi).name) return [doc as WsoApi];
+  const doc = asRecord(safeParseYaml(config));
+  if (Array.isArray(doc.apis)) return asObjects<WsoApi>(doc.apis);
+  if (doc.data && typeof doc.data === "object") return [doc.data as WsoApi];
+  if (typeof doc.name === "string") return [doc as unknown as WsoApi];
   return [];
 }
 
 function opsOf(api: WsoApi): SynthOp[] {
-  return (api.operations ?? []).map((op) => ({
+  return asObjects<WsoOperation>(api.operations).map((op) => ({
     operationId: synthOperationId(api.name, op.verb, op.target),
     method: op.verb,
     path: normalizePath(op.target),
@@ -85,8 +84,9 @@ function normalizeApi(
   const facts: GatewayFact[] = [];
   const diagnostics: GatewayDiagnostic[] = [];
 
-  (api.operations ?? []).forEach((op, j) => {
-    if (op.scopes && op.scopes.length > 0) {
+  asObjects<WsoOperation>(api.operations).forEach((op, j) => {
+    const scopes = asStrings(op.scopes);
+    if (scopes.length > 0) {
       const coordinate: EvidenceCoordinate = {
         origin,
         pointer: `/apis/${apiIndex}/operations/${j}/scopes`,
@@ -95,7 +95,7 @@ function normalizeApi(
         target: { scope: "operation", ref: synthOperationId(api.name, op.verb, op.target) },
         predicate: "auth.scopes",
         operation: "restrict",
-        value: op.scopes,
+        value: scopes,
         coordinate,
         note: "WSO2 operation scopes",
       });
@@ -160,7 +160,7 @@ export class Wso2GatewayAdapter implements GatewayAdapter<Wso2Connection> {
         hasSpec: norm.ops.length > 0,
         productIds: [],
         owner: api.provider,
-        authSummary: (api.securityScheme ?? []).join(", ") || undefined,
+        authSummary: asStrings(api.securityScheme).join(", ") || undefined,
         hasQuota: norm.hasQuota,
       };
     });

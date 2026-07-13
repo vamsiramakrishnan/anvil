@@ -1,0 +1,18 @@
+# Golden estate: a MuleSoft asset shape — resource scopes + auth/SLA policies
+# map to contract facts; DataWeave/flow logic stays opaque.
+apis:
+  - assetId: customer-api
+    productVersion: v1
+    instanceLabel: prod
+    resources:
+      - method: GET
+        path: /customers
+      - method: POST
+        path: /customers
+        scopes: ["customers:write"]
+    policies:
+      - policyId: openidconnect
+      - policyId: rate-limiting-sla
+      - policyId: custom-dataweave-transform
+        config:
+          script: "%dw 2.0 --- payload"

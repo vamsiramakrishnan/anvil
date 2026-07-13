@@ -1,0 +1,66 @@
+{
+  "vendor": "kong",
+  "apis": [
+    {
+      "id": "refunds",
+      "operations": [
+        {
+          "id": "refunds.refunds.create",
+          "effect": "mutation",
+          "action": "create",
+          "risk": "financial",
+          "reversible": false,
+          "idempotency": "none",
+          "confirmation": true,
+          "scopes": ["refunds:write"],
+          "state": "review_required"
+        },
+        {
+          "id": "refunds.refunds.get",
+          "effect": "read",
+          "action": "get",
+          "risk": "none",
+          "reversible": true,
+          "idempotency": "natural",
+          "confirmation": false,
+          "scopes": ["refunds:write"],
+          "state": "generated"
+        },
+        {
+          "id": "refunds.refunds.list",
+          "effect": "read",
+          "action": "list",
+          "risk": "none",
+          "reversible": true,
+          "idempotency": "natural",
+          "confirmation": false,
+          "scopes": ["refunds:write"],
+          "state": "generated"
+        }
+      ],
+      "opaque": [
+        "gateway/opaque_policy: /services/0/plugins/2",
+        "gateway/opaque_policy: /services/0/plugins/3"
+      ],
+      "diagnostics": 3
+    },
+    {
+      "id": "reporting",
+      "operations": [
+        {
+          "id": "reporting.reports.list",
+          "effect": "read",
+          "action": "list",
+          "risk": "none",
+          "reversible": true,
+          "idempotency": "natural",
+          "confirmation": false,
+          "scopes": [],
+          "state": "generated"
+        }
+      ],
+      "opaque": [],
+      "diagnostics": 0
+    }
+  ]
+}
