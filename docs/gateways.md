@@ -74,8 +74,8 @@ to adopt**. Those are different problems, and Anvil scales them differently.
 every API in the export — id, name, route count, auth summary, lifecycle, owner,
 quota — *without compiling any of them*. The snapshot is content-addressed and
 order-independent (re-inventorying an unchanged estate yields the same digest),
-so it drops cleanly into CI as a baseline. This is the one genuinely
-scale-aware primitive, and it is deliberately so: you look before you compile.
+so it drops cleanly into CI as a baseline. This is the one scale-aware
+primitive, and the order matters: you look before you compile.
 
 ```bash
 # The whole estate, as structured data — then triage with the tools you have
@@ -83,11 +83,11 @@ anvil estate inventory prod-estate.zip --vendor wso2 --json \
   | jq -r '.apis[] | select(.lifecycle=="PUBLISHED" and .hasQuota) | .id'
 ```
 
-**Adoption is per-API and human-gated — on purpose.** You import the APIs you
-chose, one at a time; `--api` names a single id. There is no `--all`, and that
-is the point: the goal at scale is *fewer* agent tools, not a faithful mirror of
-a 5,000-operation estate. To onboard the handful that matter, loop the import
-over the ids you triaged:
+**Adoption is per-API and human-gated.** You import the APIs you chose, one at a
+time; `--api` names a single id. There is no `--all`, and that is the point: the
+goal at scale is *fewer* agent tools, not a faithful mirror of an estate that
+size. To onboard the handful that matter, loop the import over the ids you
+triaged:
 
 ```bash
 for api in payments refunds payouts; do
