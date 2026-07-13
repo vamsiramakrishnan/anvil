@@ -1,14 +1,16 @@
 ---
 title: Anvil
-description: Anvil compiles the API specs an enterprise already has — OpenAPI, SOAP, gRPC, GraphQL, Postman — into an aligned CLI, MCP server, skill, and enforcement hooks, with risk, idempotency, and human approval decided once and enforced everywhere.
+description: Anvil compiles the API specs an enterprise already has — OpenAPI, SOAP, gRPC, GraphQL, Postman, and gateway estates from Apigee, Kong, WSO2, MuleSoft, and IBM API Connect — into an aligned CLI, MCP server, skill, and enforcement hooks, with risk, idempotency, and human approval decided once and enforced everywhere.
 template: splash
 hero:
   tagline: >-
     Your enterprise already wrote down what its APIs do — in OpenAPI, SOAP,
-    gRPC, GraphQL. Anvil compiles those specs into agent tools that share one
-    meaning across a CLI, an MCP server, a skill, and enforcement hooks, with
-    risk, idempotency, and human approval decided once and enforced everywhere.
-    The highest compliment it earns — the agent stopped guessing.
+    gRPC, GraphQL, and in the Apigee, Kong, WSO2, MuleSoft, and IBM API
+    Connect gateways that run them. Anvil compiles those specs and estates
+    into agent tools that share one meaning across a CLI, an MCP server, a
+    skill, and enforcement hooks, with risk, idempotency, and human approval
+    decided once and enforced everywhere. The highest compliment it earns —
+    the agent stopped guessing.
   actions:
     - text: Quickstart
       link: /anvil/start/quickstart/
@@ -26,6 +28,36 @@ import { Card, CardGrid, Tabs, TabItem } from '@astrojs/starlight/components';
 import PipelineDiagram from '../../components/diagrams/PipelineDiagram.astro';
 import AlignmentDiagram from '../../components/diagrams/AlignmentDiagram.astro';
 import RingsDiagram from '../../components/diagrams/RingsDiagram.astro';
+
+## Built for the gateway estate you already run
+
+Most enterprise APIs don't live in a git repo — they live behind a gateway,
+and the gateway knows things the spec doesn't. Five vendor adapters import
+the **estate** directly and normalize it into the same compiled,
+approval-gated bundles as any hand-written spec.
+
+<div class="ge-vendor-row" aria-label="Supported API gateways">
+  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/">Apigee</a>
+  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/">Kong</a>
+  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/">WSO2</a>
+  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/">MuleSoft</a>
+  <a class="ge-vendor" href="/anvil/concepts/gateway-estates/">IBM API Connect</a>
+</div>
+
+```bash
+# List the estate's APIs without compiling anything
+anvil estate inventory payments-estate.zip --vendor apigee
+
+# Import one API into a normal, approval-gated Anvil bundle
+anvil estate import payments-estate.zip --vendor apigee --api payments
+```
+
+Exports — Kong `deck` dumps, Apigee bundles, WSO2 CAR/ZIPs, MuleSoft JARs,
+API Connect archives — are decoded through a hardened archive harness, and
+any gateway policy the adapter can't prove it understands is surfaced as
+**opaque** instead of silently dropped. The result is a normal Anvil bundle:
+the approval gate still stands between the estate and the agent.
+[How gateway estates compile →](/anvil/concepts/gateway-estates/)
 
 ## Any spec in. Every surface out.
 

@@ -805,6 +805,41 @@ button > kbd {
   background-color: var(--sl-color-gray-1);
 }
 
+/* The gateway shelf — the five estate vendors Anvil imports (Apigee, Kong,
+ * WSO2, MuleSoft, IBM API Connect). No brand marks: wordmarks set in the
+ * display face, one ink, on the same tonal tile as the harness shelf, so a
+ * row of five vendors reads as one system. Unlike the harness logos these
+ * are links (each opens the gateway-estates concept page), so they carry
+ * the same touchable hover as the value cards. */
+.ge-vendor-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: var(--ge-space-4);
+  margin: var(--ge-space-5) 0;
+}
+
+.ge-vendor {
+  display: grid;
+  place-items: center;
+  height: 3.5rem;
+  padding: 0 var(--ge-space-3);
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: var(--ge-radius-md);
+  background: var(--sl-color-gray-6);
+  color: var(--sl-color-white);
+  font-family: var(--ge-display-font);
+  font-size: 1.125rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.ge-vendor:hover {
+  border-color: var(--sl-color-accent);
+  background-color: color-mix(in srgb, var(--sl-color-accent-low) 40%, var(--sl-color-gray-6));
+}
+
 .ge-screenshot-wall {
   grid-template-columns: 1.25fr 1fr;
   align-items: stretch;
