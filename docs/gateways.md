@@ -53,6 +53,21 @@ Each adapter also declares an explicit **capability matrix**
 (`capabilityMatrix` / `capabilityGaps`): what it supports fully, partially, or
 not at all, rendered as rows so partial support is never invisible.
 
+## How you feed it: an offline export, not a live connection
+
+Anvil never connects to your gateway — no URL, no management-API token, no live
+discovery. `anvil estate` reads a **file** you export (a config document, or a
+ZIP/JAR the archive harness unpacks) and parses it offline. What the adapter
+reads is a YAML/JSON *description* of the estate, not the vendor's raw binary:
+Kong's `deck` dump and WSO2's `apictl` `api.yaml` are already in the shape the
+adapter expects, and for Apigee, MuleSoft, and IBM API Connect you flatten the
+vendor's export into that shape. The archive harness makes *opening* a container
+safe — it does not translate proxy XML, a CAR, or a JAR into a description.
+
+For the exact document each adapter reads, and step-by-step export instructions
+per vendor (with links to each gateway's own export docs), see the
+[Import a gateway estate](/anvil/cookbooks/import-a-gateway-estate/) tutorial.
+
 ## Proof the abstraction isn't vendor-shaped
 
 Two differential tests keep the adapters honest:

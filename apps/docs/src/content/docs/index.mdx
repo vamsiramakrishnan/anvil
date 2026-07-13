@@ -33,9 +33,10 @@ import RingsDiagram from '../../components/diagrams/RingsDiagram.astro';
 Most enterprise APIs don't live in a git repo — they live behind a gateway, and
 the gateway knows what the spec leaves out: which auth plugin actually fronts an
 operation, which scopes a product grants, where a quota bites, which requests
-get rewritten in flight. Anvil imports the **estate**, not just the spec. Five
-adapters read a vendor's own export and compile it through the exact same
-approval-gated pipeline as a hand-written OpenAPI file.
+get rewritten in flight. Anvil imports the **estate**, not just the spec: five
+adapters read an export you produce from the gateway — an offline file, never a
+live connection — and compile it through the exact same approval-gated pipeline
+as a hand-written OpenAPI file.
 
 <div class="ge-vendor-row" aria-label="Supported API gateways">
   <a class="ge-vendor" href="/anvil/concepts/gateway-estates/"><i class="ge-vendor-mark" style="--m:url('/anvil/assets/icons/apigee.svg')" aria-hidden="true"></i>Apigee</a>
@@ -60,7 +61,8 @@ bombs, reporting each rejection instead of dropping it silently. Any gateway
 policy the adapter can't *prove* it understands is called out as **opaque** and
 holds up certification until a human reviews it — named, never ignored. What
 lands is an ordinary bundle: the approval gate still stands between the estate
-and the agent.
+and the agent. New to this? [Export your estate, vendor by vendor
+→](/anvil/cookbooks/import-a-gateway-estate/)
 
 ### An estate has 800 APIs. An agent should see five.
 
