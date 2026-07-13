@@ -258,9 +258,11 @@ describe("emitted Antigravity hook enforces via stdin/stdout", () => {
 });
 
 // The Codex shim: same stdin/stdout shape as Claude (tool_name/tool_input ->
-// hookSpecificOutput), but Codex has no "ask" verb — so it must never brick a
-// human-approval op with a terminal deny.
-describe("emitted Codex hook maps the two gate tiers correctly", () => {
+// hookSpecificOutput). Codex PreToolUse supports only "deny" and "allow"+
+// updatedInput — a BARE "allow" is unsupported (Codex marks the hook failed and
+// runs the tool anyway) and there is no "ask" — so the shim only ever emits
+// "deny" or no decision, and fail-closes human-approval ops.
+describe("emitted Codex hook only emits deny or no-decision", () => {
   const refundTool = "payments_create_refund";
   let dir: string;
   let humanDir: string;
@@ -269,12 +271,12 @@ describe("emitted Codex hook maps the two gate tiers correctly", () => {
     bundleDir: string,
     toolName: string,
     toolInput: unknown,
-  ): { decision: string; reason: string } => {
+  ): { decision?: string; reason: string } => {
     const out = execFileSync("node", [join(bundleDir, "plugin/codex/hook.mjs")], {
       input: JSON.stringify({ tool_name: toolName, tool_input: toolInput }),
       encoding: "utf8",
     });
-    const parsed = JSON.parse(out).hookSpecificOutput;
+    const parsed = JSON.parse(out).hookSpecificOutput ?? {};
     return { decision: parsed.permissionDecision, reason: parsed.permissionDecisionReason ?? "" };
   };
 
@@ -295,20 +297,21 @@ describe("emitted Codex hook maps the two gate tiers correctly", () => {
     rmSync(humanDir, { recursive: true, force: true });
   });
 
-  it("denies a model-confirm mutation pre-flight (cleared by re-invoking with confirm)", () => {
+  it("denies a model-confirm mutation until confirm, then emits NO decision (never a bare allow)", () => {
     expect(runHook(dir, refundTool, {}).decision).toBe("deny");
-    expect(runHook(dir, refundTool, { confirm: true, idempotency_key: "k" }).decision).toBe(
-      "allow",
-    );
+    // Cleared: hookcore allows, so the Codex hook emits no permissionDecision —
+    // a bare "allow" is unsupported (Codex would mark the hook failed), and
+    // absence lets the tool proceed.
+    expect(
+      runHook(dir, refundTool, { confirm: true, idempotency_key: "k" }).decision,
+    ).toBeUndefined();
   });
 
-  it("does NOT brick a human-approval op — allows and defers to Codex's permission flow", () => {
-    // The bug: hookcore returns "ask" even with confirm:true, and the old shim
-    // turned every "ask" into a terminal deny, so the tool could never run. It
-    // must ALLOW with the human-approval requirement surfaced instead.
+  it("fail-closes a human-approval op (Codex PreToolUse cannot prompt a human)", () => {
+    // hookcore returns "ask" even with confirm:true; Codex has no "ask" and a bare
+    // allow doesn't enforce, so the only honest enforcement is a deny.
     const d = runHook(humanDir, refundTool, { confirm: true, idempotency_key: "k" });
-    expect(d.decision).toBe("allow");
-    expect(d.decision).not.toBe("deny");
+    expect(d.decision).toBe("deny");
     expect(d.reason).toMatch(/human approval/i);
   });
 });
