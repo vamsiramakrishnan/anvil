@@ -283,6 +283,9 @@ function confirmationCallout(op: Operation): string {
   if (!op.confirmation.required) return "";
   const tier = op.confirmation.risk ?? op.effect.risk;
   const reason = op.confirmation.reason ? `: ${op.confirmation.reason}` : ".";
+  if (op.confirmation.humanApproval) {
+    return `\n> ⛔ **Human approval required** — ${tier}-risk ${op.effect.kind}${reason} Do not self-confirm; get the user's explicit sign-off before running.\n`;
+  }
   return `\n> ⚠ **Confirmation required** — ${tier}-risk ${op.effect.kind}${reason}\n`;
 }
 

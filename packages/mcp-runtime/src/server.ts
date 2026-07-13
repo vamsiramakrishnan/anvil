@@ -80,7 +80,10 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           readOnlyHint: op.effect.kind === "read",
           destructiveHint: op.effect.kind === "mutation" && !op.effect.reversible,
           idempotentHint: op.idempotency.mode !== "none",
-          openWorldHint: true,
+          // Anvil calls are closed-domain: one pinned upstream host, gated by
+          // the ANVIL_ALLOWED_HOSTS egress allowlist. The spec default is true,
+          // so emitting false is the informative value for well-behaved clients.
+          openWorldHint: false,
         },
         _meta: {
           "anvil/effect": op.effect.kind,

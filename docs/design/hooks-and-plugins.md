@@ -169,18 +169,23 @@ prompt Codex shows for non-managed hooks, add the MCP server under
 Codex requires the user to review the exact hook definition; the README
 should say so rather than fight it.
 
-**ADK** — `plugin/adk/anvil_guard_plugin.py` + README: the app consumes the
-bundle's stdio server via `MCPToolset`, and registers
-`Runner(plugins=[AnvilGuardPlugin("<bundle>/catalog.json")])`.
-`before_tool_callback` fires for every tool including MCP-sourced ones and a
-non-None return skips execution — the interception point is exact.
+**ADK** — *dropped (see S4 in §6).* The interception point is exact
+(`before_tool_callback`, non-None return skips the tool), but ADK is per-language
+and short-circuits with a *result* rather than a verb, so supporting it meant a
+Python/TS/Go port of the rules on top of the JS core — cross-language drift not
+worth the value, given the runtime already enforces the contract for an ADK app.
+The analysis below is kept as design history.
 
-**Antigravity** — `plugin/antigravity/hooks.json` targeting the project's
-`.agents/hooks.json`, emitted **only behind a flag** until the format is
-verified against a live install (§5). Independently useful today: an
-`.agent/rules/` guidance file (the mechanism Google staff actually point to)
-restating the confirm/idempotency rules from the catalog — prompt-shaping,
-not enforcement, but zero format risk.
+**Antigravity** — `plugin/antigravity/hooks.json` (a `PreToolUse` config) copied
+into the project's `.agents/hooks.json`, plus a `hook.mjs` shim over the shared
+core and a README. Format verified against the official
+<https://antigravity.google/docs/hooks> spec (see §5). The `.agent/rules/`
+guidance file ships alongside as complementary prompt-shaping. Unlike the scoped
+Claude/Codex matchers, the Antigravity matcher is `*` and the shim self-scopes:
+Antigravity fires `PreToolUse` for its own built-in tools, so the shim passes any
+non-catalog tool through as `allow` and only gates this bundle's operations. The
+human-approval tier maps to `force_ask` (Antigravity's "always prompt, ignore
+Always-Allow").
 
 ### 3.3 Generator changes (sketch)
 
@@ -192,7 +197,7 @@ generateHarnessPlugins(air: AirDocument): Record<string, string>
   "plugin/hookcore.mjs"            // static template + service id interpolation
   "plugin/claude/{hooks.json, hook.mjs, mcp.json}"
   "plugin/codex/{hooks.json, hook.mjs, README.md}"
-  "plugin/adk/{anvil_guard_plugin.py, README.md}"
+  // "plugin/adk/*" — dropped; see S4. Kept the Antigravity rules file only.
   "plugin/antigravity/{hooks.json, hook.mjs}"   // flag-gated
 ```
 
@@ -256,20 +261,18 @@ Remaining native gaps, in value order:
 
 ## 5. Honest constraints
 
-- **Antigravity is the weakest-verified target.** The official docs page
-  (<https://antigravity.google/docs/hooks>) is a JS-rendered SPA that returned
-  no content to fetching in this environment; every config detail above comes
-  from third-party posts (June 2026) and the SDK repo. The third parties
-  *disagree*: one documents output `{"allow_tool": bool, "deny_reason"}` with
-  mandatory exit 0 and global config at `~/.gemini/antigravity-cli/hooks.json`;
-  another describes `allow`/`deny`/`ask` verbs and
-  `~/.gemini/config/hooks.json`. An official forum reply (predating the CLI
-  hooks posts) said Antigravity has *no* traditional hooks and pointed at
-  `.agent/rules/` + workflows. The Python SDK's hooks
-  (`Decide`/`Inspect`/`Transform`, `HookResult`) are real but programmatic —
-  for people *building* agents with the SDK, not for configuring the IDE/CLI.
-  Conclusion: do not emit Antigravity `hooks.json` by default until validated
-  against a live install; ship the `.agent/rules/` file meanwhile.
+- **Antigravity — now format-verified, one runtime unknown.** The official spec
+  (<https://antigravity.google/docs/hooks>) settled the format the earlier
+  third-party posts contradicted: config in `.agents/hooks.json`
+  (`{hook-name: {PreToolUse: [{matcher, hooks:[{type,command,timeout}]}]}}`);
+  stdin carries `toolCall.{name,args}`; stdout is `{decision:
+  "allow"|"deny"|"ask"|"force_ask", reason?}`, exit 0. We emit an enforcing
+  `PreToolUse` hook against that spec. The remaining unknown is *runtime*, not
+  format: the docs' matcher tool list is Antigravity's built-ins, and they don't
+  state whether `PreToolUse` fires for MCP-server tool calls or how `toolCall.name`
+  is spelled for them. The shim is robust to it — it strips an `mcp__…__` prefix
+  and, being self-scoping, is harmless if the event never arrives — and the README
+  flags it. Fail-open regardless: the runtime still refuses.
 - **Codex hooks are new and deliberately friction-ful.** Non-managed hooks
   require the user to review and trust the exact definition; project-local
   hooks load only when `.codex/` is trusted; orgs can pin
@@ -291,21 +294,95 @@ Remaining native gaps, in value order:
   §3 may ever be the only place a check lives. The conformance test enforces
   agreement, not delegation.
 
+## 5b. Configurable approval tier (model-confirm vs human-approval)
+
+The hook's confirmation behavior is not hardwired — it reads a per-operation tier
+from AIR. `Confirmation.humanApproval` (optional; absent ⇒ model-confirm)
+distinguishes two enforcement levels the executor alone cannot:
+
+- **model-confirm** — a `confirm: true` from the model clears the gate. The hook
+  denies pre-flight until `confirm: true` (naming the flag so the model
+  re-invokes in the same turn); the runtime still enforces `confirm`.
+- **human-approval** — the model cannot self-confirm. Claude/Codex hooks return
+  `ask` (the human permission dialog) *regardless of* a model-supplied `confirm`;
+  ADK degrades to a `confirmation_required` envelope naming the human need.
+
+Configured two ways in the CLI journey, both tightening-only (they never remove a
+gate, so no loosening-conflict resolution is involved):
+
+- **Per-operation**, via the Anvil manifest: `confirmation: { human_approval:
+  true }`. Flows through the one overlay channel (`confirmation.human_approval` is
+  a `CONTRACT_SAFETY_PREDICATE`, so dropping it is a loosening that needs
+  authority; drift reports its removal as blocking).
+- **Globally**, via `anvil compile --human-approval none|unsafe|all` — a coarse
+  default applied after resolution to already-gated ops (`unsafe` = irreversible /
+  high / financial / destructive), which an explicit per-op manifest value always
+  overrides.
+
+The catalog carries `humanApproval` per entry, so the hook, skill callout, and
+Antigravity rules all branch on the same value with no duplicated data.
+
 ## 6. Staged plan
 
-- **S1 — MCP-native completion** (small; `packages/mcp-runtime/src/server.ts`).
-  `openWorldHint: false`; `outputSchema` where AIR has one;
-  elicitation-backed confirmation with capability-negotiated fallback to the
-  `confirmation_required` envelope. Benefits every MCP client, no packaging.
-- **S2 — Claude Code plugin emission** (medium; new
-  `packages/generators/src/plugins.ts` + `bundle.ts` wiring). `hookcore.mjs`,
-  Claude shim, `.claude-plugin/plugin.json`, plugin-scoped matcher, and the
-  hook↔executor agreement addition to the generated conformance test. This is
-  the reference implementation of the outer ring.
-- **S3 — Codex shim** (small, after S2). Same `hooks.json` schema modulo
-  field drift; `plugin/codex/` + README covering the trust flow.
-- **S4 — ADK plugin** (medium). `anvil_guard_plugin.py` + a pytest-style
-  agreement check run in CI against a pinned ADK version.
-- **S5 — Antigravity** (blocked on verification). Emit `.agent/rules/`
-  guidance now (safe, prompt-shaping only); emit `.agents/hooks.json` behind
-  a generator flag once the format is confirmed on a real install.
+- **S1 — MCP-native completion** (`packages/mcp-runtime/src/server.ts`).
+  - *Done:* `openWorldHint: false` — Anvil is closed-domain (one pinned upstream
+    host behind `ANVIL_ALLOWED_HOSTS`), so the informative value is `false`, not
+    the spec default `true`.
+  - *Deferred — needs a schema rework, not a bolt-on:* elicitation-backed
+    confirmation. AIR synthesizes `confirm` as a **required `const: true`** in the
+    operation input schema (`packages/air/src/jsonschema.ts:57`), so the MCP SDK
+    rejects any call without `confirm: true` at input validation — *before* a
+    server handler could elicit. Reaching the human via `elicitation/create`
+    therefore requires decoupling the confirm *gate* from the *served input
+    schema* (present `confirm` as optional at the MCP layer and let elicitation
+    or the runtime gate supply it), which touches the canonical JSON-Schema
+    synthesis shared with the CLI and the refusal/conformance tests. Real work;
+    tracked separately so we don't ship unreachable code.
+  - *Deferred:* `outputSchema`. The SDK enforces that a tool declaring
+    `outputSchema` returns conforming `structuredContent`, so attaching it on the
+    runtime hot path would convert a non-conforming-but-successful upstream
+    response into a server error — a regression on the safety path. Only worth it
+    behind a conformance guarantee we don't have per-upstream.
+- **S2 — Claude Code plugin emission** — *done.*
+  `packages/generators/src/plugins.ts` (`generateHarnessPlugins`) wired into
+  `bundle.ts`: `plugin/hookcore.mjs` (shared decision core, reads
+  `catalog.json`), the Claude shim, `.claude-plugin/plugin.json`, `mcp.json`,
+  the plugin-scoped PreToolUse matcher, and the hook↔executor agreement block
+  added to the generated conformance test. An in-repo test
+  (`plugins.test.ts`) writes a bundle, imports the emitted `hookcore.mjs`, and
+  asserts `decide()` agrees with AIR (ask on confirmation, deny on missing key,
+  deny on unknown/revoked tool, allow on a clean read). This is the reference
+  implementation of the outer ring.
+- **S3 — Codex shim** — *done.* `plugin/codex/{hooks.json, hook.mjs, README.md}`
+  share `hookcore.mjs`; `ask` degrades to `deny` (Codex documents deny/allow
+  only) and the README covers the trust flow and the field-name caveat.
+- **S4 — ADK plugin** — *dropped.* Built and verified for Python, TypeScript, and
+  Go (signatures confirmed against the ADK plugin docs and `adk-go`, each artifact
+  compile-checked), then **removed**: ADK's plugins short-circuit by returning a
+  *result*, not a verb, and its callbacks are per-language, so honoring it meant a
+  Python/TS/Go port of the decision rules on top of the one JS `hookcore` — four
+  copies to keep in agreement. That cross-language drift is exactly what this
+  design exists to prevent, and it is not worth it: the runtime executor already
+  enforces the contract authoritatively for an ADK app, and MCP annotations (§4)
+  make risk visible with zero install. The JS-family reuse via a `code` field on
+  `hookcore.decide()` was reverted with it. Claude Code and Codex — which share the
+  *one* JS core — remain the supported hook targets.
+- **S5 — Antigravity** — *done* (format verified against the official
+  <https://antigravity.google/docs/hooks> spec). Emits `plugin/antigravity/`:
+  `hooks.json` (a `PreToolUse` config for `.agents/hooks.json`), a `hook.mjs` shim
+  over the shared `hookcore.mjs`, and a README; the `.agent/rules/` guidance stays
+  as complementary prompt-shaping. Two Antigravity-specific decisions:
+  1. **Matcher is `*` and the shim self-scopes.** Antigravity fires `PreToolUse`
+     for its own built-in tools (`run_command`, `view_file`, …) and does not
+     document how it namespaces MCP tools, so the hookcore deny-unknown guard
+     (correct behind Claude/Codex's scoped matcher) must NOT apply — the shim
+     passes any tool not in the catalog straight through as `allow`, and only
+     gates this bundle's operations. Cost: the hook runs on every tool call.
+  2. **Human-approval → `force_ask`**, Antigravity's verb for "always prompt,
+     ignoring Always-Allow" — a precise fit the model can't self-confirm past;
+     model-confirm → `deny` (re-invoke with `confirm`), everything clean →
+     `allow`. Verified end-to-end by a subprocess test (`plugins.test.ts`) that
+     pipes a `PreToolUse` event to the emitted shim and asserts its decision.
+     Residual unknown: whether Antigravity fires `PreToolUse` for MCP-tool calls
+     and under what `toolCall.name` — the shim strips an `mcp__…__` prefix and the
+     README flags it.

@@ -1,0 +1,57 @@
+---
+title: What Anvil is
+description: Anvil is an agent toolchain compiler — it turns one API specification into aligned, safe agent tools from a single canonical model.
+sidebar:
+  order: 1
+---
+
+Anvil is an **agent toolchain compiler**. It compiles an API specification into
+aligned **CLI + MCP server + skill + hook** artifacts from one canonical model
+(AIR — the Anvil Intermediate Representation), with structured errors,
+retry/idempotency safety, and an approval workflow.
+
+## The problem it solves
+
+Hand-wiring an agent to an API means the agent guesses: what does this endpoint
+*do*, is it safe to retry, will it charge a card twice, does it need
+confirmation? Those answers live in a human's head, not in the tool. When the
+same API is exposed as a CLI, an MCP server, and a skill, each surface can drift
+from the others, and the agent guesses differently on each.
+
+Anvil removes the guessing. It derives one model of every operation — its
+**effect** (read vs mutation), **risk**, **reversibility**, **idempotency**,
+**retry policy**, and whether it needs **confirmation** — and projects that one
+model onto every surface. The highest compliment the project aims for: *the
+agent stopped guessing.*
+
+## What it compiles
+
+Every source format lands in the same canonical model and the same aligned
+outputs:
+
+- OpenAPI 3.x
+- Swagger 2.0
+- Google Discovery
+- GraphQL SDL
+- gRPC / proto3 (multi-file)
+- SOAP / WSDL (multi-file)
+- Postman Collections
+
+## What it produces
+
+- **CLI** — a typed command per approved operation.
+- **MCP server** — the same operations as MCP tools, risk visible in tool
+  metadata.
+- **Skill** — a progressive-disclosure operating manual for agents.
+- **Enforcement hooks** — installable Claude Code, Codex, and Antigravity hooks
+  that refuse unsafe calls before the model burns a turn.
+
+## The safety contract
+
+- Only **approved** operations are exposed by the generated artifacts.
+- Non-idempotent mutations are **never** auto-retried and require `--confirm`.
+- Unsafe operations are enriched with a manifest rather than approved blindly.
+- Secrets are never logged; the runtime redacts auth material from records.
+
+Read [Operating Anvil](/anvil/guides/operating-anvil/) for the day-to-day loop,
+or the [Quickstart](/anvil/start/quickstart/) to build your first bundle.

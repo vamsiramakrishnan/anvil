@@ -19,6 +19,7 @@ import {
   generateMockServerSource,
   generateScenarios,
 } from "./mock.js";
+import { generateHarnessPlugins } from "./plugins.js";
 import { buildToolResources, type ResourceOptions } from "./resources.js";
 import { generateSkill } from "./skill.js";
 
@@ -108,6 +109,11 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   for (const [path, text] of Object.entries(generateEvals(air))) {
     files[`skill/${path}`] = text;
   }
+
+  // Harness plugins — the bundle root becomes an installable Claude Code plugin
+  // (skill + MCP server + PreToolUse enforcement hook), with a Codex shim and
+  // Antigravity guidance sharing one decision core. The outer enforcement ring.
+  Object.assign(files, generateHarnessPlugins(air));
 
   // Docs, deploy, mocks, conformance.
   Object.assign(files, generateDocs(air));
