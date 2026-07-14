@@ -163,7 +163,8 @@ and Antigravity (`.agent/skills/anvil/SKILL.md`). Regenerate with `anvil skill <
 
 The parser layer is an adapter interface: alongside OpenAPI 3.x / Swagger 2.0
 REST JSON, Anvil now lowers **GraphQL SDL**, **gRPC / Protocol Buffers (proto3)**,
-**SOAP / WSDL 1.1**, **Google API Discovery**, and **Postman Collection v2.x**
+**SOAP / WSDL 1.1**, **Google API Discovery**, **OData v2/v4 ($metadata/EDMX —
+SAP S/4HANA's native surface)**, and **Postman Collection v2.x**
 into the same canonical model. Each protocol is *lowered*
 into a pre-dereference OpenAPI 3.0 document and then runs through the identical
 normalize → classify → validate → generate pipeline — so effect/idempotency
