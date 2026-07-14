@@ -59,7 +59,6 @@ describe.skipIf(!RUN_REAL)("investigator effectiveness battery (real driver)", (
       for (const c of EFFECTIVENESS_CASES) rows.push(await runEffectivenessCase(c, driver));
       const metrics = effectivenessMetrics(rows);
       // Report; do not hard-assert thresholds — this is a measurement, not a gate.
-      // biome-ignore lint/suspicious/noConsole: the battery's purpose is to report metrics.
       console.log(JSON.stringify(metrics, null, 2));
       expect(metrics.cases).toBe(30);
     },

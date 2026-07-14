@@ -83,7 +83,10 @@ function dockerignore(): string {
  */
 function cloudBuild(air: AirDocument): string {
   const id = air.service.id;
-  const image = "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/" + `${id}-tools:$SHORT_SHA`;
+  // The ${...} tokens are Cloud Build substitution variables (expanded by
+  // Cloud Build at runtime), NOT JS interpolation — so they stay in a plain
+  // string; only `id` is a real JS value, concatenated in.
+  const image = `\${_REGION}-docker.pkg.dev/\${PROJECT_ID}/\${_AR_REPO}/${id}-tools:$SHORT_SHA`;
   return toYaml({
     steps: [
       {
