@@ -1,0 +1,114 @@
+---
+// The working loop as a cycle of five steps: compile → inspect → enrich →
+// approve → deploy, and back to compile. Five cards read left to right with a
+// return arrow underneath, so the loop is legible without a circle. Each card
+// carries a plain title and a short gloss. Inline SVG so every color rides the
+// theme's CSS variables and flips correctly in light/dark.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 300"
+    role="img"
+    aria-label="The working loop as a cycle of five steps. Compile turns a spec into a bundle. Inspect reads the risk. Enrich fills the gaps the spec left out. Approve is where a human opens the gate. Deploy serves the tools. Then it repeats — recompile whenever the spec changes."
+  >
+    <defs>
+      <marker id="lp-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+      <marker id="lp-back" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-accent)" />
+      </marker>
+    </defs>
+
+    <text x="12" y="28" class="d-label">the working loop</text>
+
+    <!-- 01 compile -->
+    <rect x="12" y="48" width="180" height="140" rx="4" class="d-card" />
+    <rect x="12" y="48" width="3" height="140" class="d-bar" />
+    <text x="30" y="80" class="d-index">01</text>
+    <text x="30" y="108" class="d-card-title">Compile</text>
+    <text x="30" y="132" class="d-gloss">spec in, bundle out</text>
+    <path d="M192 118 H216" class="d-line" marker-end="url(#lp-arrow)" />
+
+    <!-- 02 inspect -->
+    <rect x="216" y="48" width="180" height="140" rx="4" class="d-card" />
+    <rect x="216" y="48" width="3" height="140" class="d-bar" />
+    <text x="234" y="80" class="d-index">02</text>
+    <text x="234" y="108" class="d-card-title">Inspect</text>
+    <text x="234" y="132" class="d-gloss">read the risk</text>
+    <path d="M396 118 H420" class="d-line" marker-end="url(#lp-arrow)" />
+
+    <!-- 03 enrich -->
+    <rect x="420" y="48" width="180" height="140" rx="4" class="d-card" />
+    <rect x="420" y="48" width="3" height="140" class="d-bar" />
+    <text x="438" y="80" class="d-index">03</text>
+    <text x="438" y="108" class="d-card-title">Enrich</text>
+    <text x="438" y="132" class="d-gloss">fill the gaps</text>
+    <path d="M600 118 H624" class="d-line" marker-end="url(#lp-arrow)" />
+
+    <!-- 04 approve -->
+    <rect x="624" y="48" width="180" height="140" rx="4" class="d-card" />
+    <rect x="624" y="48" width="3" height="140" class="d-bar-gate" />
+    <text x="642" y="80" class="d-index">04</text>
+    <text x="642" y="108" class="d-card-title">Approve</text>
+    <text x="642" y="132" class="d-gloss">a human opens the gate</text>
+    <path d="M804 118 H828" class="d-line" marker-end="url(#lp-arrow)" />
+
+    <!-- 05 deploy -->
+    <rect x="828" y="48" width="180" height="140" rx="4" class="d-card" />
+    <rect x="828" y="48" width="3" height="140" class="d-bar" />
+    <text x="846" y="80" class="d-index">05</text>
+    <text x="846" y="108" class="d-card-title">Deploy</text>
+    <text x="846" y="132" class="d-gloss">serve the tools</text>
+
+    <!-- return arrow: deploy → compile -->
+    <path d="M918 188 V226 Q918 244 896 244 H124 Q102 244 102 226 V194" class="d-back" marker-end="url(#lp-back)" />
+    <text x="510" y="238" text-anchor="middle" class="d-back-label">and back · recompile when the spec drifts</text>
+  </svg>
+  <figcaption>fig 09 · the loop: compile, inspect, enrich, approve, deploy</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram { margin: 1.75rem 0; overflow-x: auto; }
+  .anvil-diagram svg { min-width: 820px; width: 100%; height: auto; display: block; }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-card { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-bar { fill: var(--sl-color-accent); }
+  .d-bar-gate { fill: var(--ge-status-passed); }
+  .d-index {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    fill: var(--sl-color-text-accent);
+  }
+  .d-card-title { font-family: var(--ge-display-font); font-size: 16px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-gloss { font-family: var(--sl-font-mono); font-size: 11px; fill: var(--sl-color-gray-3); }
+  .d-line { stroke: var(--sl-color-gray-4); stroke-width: 1; fill: none; }
+  .d-back { stroke: var(--sl-color-accent); stroke-width: 1; fill: none; }
+  .d-back-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-text-accent);
+  }
+</style>

@@ -1,0 +1,171 @@
+---
+// Messy, varied raw upstream failures — a 429, a 500, an HTML error page, a
+// socket timeout, malformed JSON — all funnel into ONE structured error
+// envelope { code, retryable, safe_to_retry, trace_id }, which drives the
+// agent's recovery choice: fix the input, retry if safe, or stop and report.
+// Inline SVG so every color rides the theme's CSS variables and flips in
+// light/dark.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 380"
+    role="img"
+    aria-label="Varied raw upstream failures — a 429, a 500, an HTML error page, a socket timeout, and malformed JSON — all funnel into one structured error envelope with the fields code, retryable, safe_to_retry, and trace_id. That envelope drives the agent's recovery choice: fix the input, retry if it is safe, or stop and report the trace_id."
+  >
+    <defs>
+      <marker id="ee-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+      <marker id="ee-warn" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--ge-status-warning)" />
+      </marker>
+      <marker id="ee-allow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--ge-status-passed)" />
+      </marker>
+      <marker id="ee-deny" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--ge-status-failed)" />
+      </marker>
+    </defs>
+
+    <!-- ── Left: raw upstream failures ─────────────────────────────────── -->
+    <text x="16" y="28" class="d-label">raw upstream failures</text>
+    <rect x="16" y="48" width="210" height="30" rx="4" class="d-chip" />
+    <text x="30" y="67" class="d-chip-text">429 · too many requests</text>
+    <rect x="16" y="86" width="210" height="30" rx="4" class="d-chip" />
+    <text x="30" y="105" class="d-chip-text">500 · internal error</text>
+    <rect x="16" y="124" width="210" height="30" rx="4" class="d-chip" />
+    <text x="30" y="143" class="d-chip-text">&lt;html&gt; error page</text>
+    <rect x="16" y="162" width="210" height="30" rx="4" class="d-chip" />
+    <text x="30" y="181" class="d-chip-text">socket timeout</text>
+    <rect x="16" y="200" width="210" height="30" rx="4" class="d-chip" />
+    <text x="30" y="219" class="d-chip-text">malformed JSON</text>
+
+    <!-- bus collecting the failures -->
+    <g class="d-line">
+      <path d="M226 63 H250" /><path d="M226 101 H250" /><path d="M226 139 H250" />
+      <path d="M226 177 H250" /><path d="M226 215 H250" />
+      <path d="M250 63 V215" />
+      <path d="M250 139 H294" marker-end="url(#ee-arrow)" />
+    </g>
+
+    <!-- ── Middle: one structured envelope ─────────────────────────────── -->
+    <text x="300" y="28" class="d-label">one structured envelope</text>
+    <rect x="300" y="86" width="250" height="184" rx="6" class="d-envelope" />
+    <text x="320" y="118" class="d-env-title">Error envelope</text>
+    <text x="320" y="140" class="d-env-sub">one shape for every failure</text>
+    <text x="320" y="172" class="d-field">code</text>
+    <text x="320" y="196" class="d-field">retryable</text>
+    <text x="320" y="220" class="d-field">safe_to_retry</text>
+    <text x="320" y="244" class="d-field">trace_id</text>
+
+    <!-- ── Right: the agent's recovery choice ──────────────────────────── -->
+    <text x="620" y="28" class="d-label">the agent's recovery choice</text>
+
+    <path d="M550 150 L620 84" class="d-out-warn" marker-end="url(#ee-warn)" />
+    <text x="560" y="112" class="d-edge-warn">code</text>
+    <rect x="620" y="48" width="404" height="72" rx="4" class="d-plate-warn" />
+    <text x="638" y="78" class="d-warn-title">fix the input</text>
+    <text x="638" y="100" class="d-out-detail">the request was wrong — correct it and re-send</text>
+
+    <path d="M550 186 H620" class="d-out-allow" marker-end="url(#ee-allow)" />
+    <text x="566" y="178" class="d-edge-allow">retryable</text>
+    <rect x="620" y="150" width="404" height="72" rx="4" class="d-plate-allow" />
+    <text x="638" y="180" class="d-allow-title">retry if safe</text>
+    <text x="638" y="202" class="d-out-detail">retryable and safe_to_retry — retry with the idempotency key</text>
+
+    <path d="M550 222 L620 288" class="d-out-deny" marker-end="url(#ee-deny)" />
+    <text x="560" y="262" class="d-edge-deny">not safe</text>
+    <rect x="620" y="252" width="404" height="72" rx="4" class="d-plate-deny" />
+    <text x="638" y="282" class="d-deny-title">stop &amp; report</text>
+    <text x="638" y="304" class="d-out-detail">not safe to repeat — halt and surface the trace_id</text>
+
+    <text x="16" y="362" class="d-footnote">the runtime redacts secrets and attaches a trace_id to every envelope.</text>
+  </svg>
+  <figcaption>fig 11 · every upstream failure becomes one structured, recoverable error</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram { margin: 1.75rem 0; overflow-x: auto; }
+  .anvil-diagram svg { min-width: 760px; width: 100%; height: auto; display: block; }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-chip { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-chip-text { font-family: var(--sl-font-mono); font-size: 12px; fill: var(--sl-color-gray-2); }
+  .d-line path { stroke: var(--sl-color-gray-4); stroke-width: 1; fill: none; }
+  .d-envelope { fill: var(--sl-color-gray-6); stroke: var(--sl-color-accent); stroke-width: 1.25; }
+  .d-env-title { font-family: var(--ge-display-font); font-size: 16px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-env-sub {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--sl-color-text-accent);
+  }
+  .d-field { font-family: var(--sl-font-mono); font-size: 13px; fill: var(--sl-color-gray-2); }
+  .d-out-warn { stroke: var(--ge-status-warning); stroke-width: 1; fill: none; }
+  .d-out-allow { stroke: var(--ge-status-passed); stroke-width: 1; fill: none; }
+  .d-out-deny { stroke: var(--ge-status-failed); stroke-width: 1; fill: none; }
+  .d-plate-warn { fill: none; stroke: var(--ge-status-warning); }
+  .d-plate-allow { fill: none; stroke: var(--ge-status-passed); }
+  .d-plate-deny { fill: none; stroke: var(--ge-status-failed); }
+  .d-warn-title {
+    font-family: var(--sl-font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--ge-status-warning-text);
+  }
+  .d-allow-title {
+    font-family: var(--sl-font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--ge-status-passed-text);
+  }
+  .d-deny-title {
+    font-family: var(--sl-font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--ge-status-failed-text);
+  }
+  .d-out-detail { font-size: 12px; fill: var(--sl-color-gray-3); }
+  .d-edge-warn, .d-edge-allow, .d-edge-deny {
+    font-family: var(--sl-font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .d-edge-warn { fill: var(--ge-status-warning-text); }
+  .d-edge-allow { fill: var(--ge-status-passed-text); }
+  .d-edge-deny { fill: var(--ge-status-failed-text); }
+  .d-footnote {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+</style>

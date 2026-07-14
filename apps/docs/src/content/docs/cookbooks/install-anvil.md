@@ -76,7 +76,7 @@ inspected its safety contract.
 
 ```bash
 pnpm test        # the full suite, including the tested snippets on this site
-pnpm typecheck   # the workspace type boundary
+pnpm typecheck   # every package typechecks
 ```
 
 ## What next
@@ -84,10 +84,11 @@ pnpm typecheck   # the workspace type boundary
 - **[Quickstart](/anvil/start/quickstart/)** — the compile → inspect → approve →
   deploy loop on your own spec.
 - **[Operating Anvil](/anvil/guides/operating-anvil/)** — the progressive-disclosure
-  manual, and the safety rules that keep unapproved operations off every surface.
+  manual, and the safety rules that keep unapproved operations out of every
+  tool an agent sees.
 - **Behind a gateway instead of a spec file?**
-  [Import the estate](/anvil/concepts/gateway-estates/) — Apigee, Kong, WSO2,
-  MuleSoft, or IBM API Connect — with `anvil estate`.
+  [Import the estate](/anvil/concepts/gateway-estates/) — the catalog of APIs
+  behind Apigee, Kong, WSO2, MuleSoft, or IBM API Connect — with `anvil estate`.
 
 ## If something breaks
 
