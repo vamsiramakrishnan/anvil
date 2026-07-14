@@ -119,6 +119,38 @@ export const PROFILES: Record<SourceSystem, SystemProfile> = {
     // server enforces the contract, so cap it just below the loosen threshold.
     strong: 0.82,
   },
+  salesforce: {
+    system: "salesforce",
+    displayName: "Salesforce",
+    // The official Salesforce DX MCP server (github.com/salesforcecli/mcp).
+    // Credentials/org selection come from the environment, never config.
+    defaultTransport: {
+      kind: "stdio",
+      command: "npx",
+      args: ["-y", "@salesforce/mcp", "--orgs", "DEFAULT_TARGET_ORG", "--toolsets", "all"],
+      env: { SFDX_AUTH_URL: "${SFDX_AUTH_URL}" },
+    },
+    searchTools: ["run_soql_query", "list_all_orgs", "search"],
+    // The vendor's own server over its real API is implementation-grade evidence.
+    evidenceKind: "source_impl",
+    floor: 0.55,
+    strong: 0.88,
+  },
+  sap: {
+    system: "sap",
+    displayName: "SAP S/4HANA",
+    // SAP's MCP server (the "Unlimited ABAP add-on") is served from the SAP
+    // system itself over HTTP; the URL and token are supplied by the operator.
+    defaultTransport: {
+      kind: "http",
+      url: "${SAP_MCP_URL}",
+      headers: { Authorization: "Bearer ${SAP_MCP_TOKEN}" },
+    },
+    searchTools: ["search", "odata_search", "list_services"],
+    evidenceKind: "source_impl",
+    floor: 0.55,
+    strong: 0.85,
+  },
   generic: {
     system: "generic",
     displayName: "Generic MCP source",

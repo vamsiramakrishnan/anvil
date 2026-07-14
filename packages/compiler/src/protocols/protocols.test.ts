@@ -6,6 +6,7 @@ import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
 import { adaptProto } from "./grpc.js";
 import { detectProtocolFormat } from "./index.js";
+import { adaptOData } from "./odata.js";
 import { adaptPostman, isPostmanCollection, postmanSchemaVersion } from "./postman.js";
 import { adaptWsdl } from "./wsdl.js";
 import { findAll, localName, parseXml } from "./xml.js";
@@ -203,6 +204,33 @@ const protoManifest = example("grpc/anvil.yaml");
 const wsdlSpec = example("soap/bank.wsdl");
 const wsdlManifest = example("soap/anvil.yaml");
 
+// A minimal but real-shaped SAP OData v2 $metadata: two entity sets, one with a
+// composite key, SAP capability annotations (deletable=false on the first set),
+// and the v2 EDM dialect namespaces.
+const odataSpec = `<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx Version="1.0" xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx" xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata" xmlns:sap="http://www.sap.com/Protocols/SAPData">
+ <edmx:DataServices m:DataServiceVersion="2.0">
+  <Schema Namespace="API_BUSINESS_PARTNER" xmlns="http://schemas.microsoft.com/ado/2008/09/edm">
+   <EntityType Name="A_BusinessPartner">
+    <Key><PropertyRef Name="BusinessPartner"/></Key>
+    <Property Name="BusinessPartner" Type="Edm.String" Nullable="false" MaxLength="10" sap:label="Business Partner"/>
+    <Property Name="BusinessPartnerName" Type="Edm.String" MaxLength="81"/>
+    <Property Name="CreationDate" Type="Edm.DateTime"/>
+   </EntityType>
+   <EntityType Name="A_BusinessPartnerAddress">
+    <Key><PropertyRef Name="BusinessPartner"/><PropertyRef Name="AddressID"/></Key>
+    <Property Name="BusinessPartner" Type="Edm.String" Nullable="false" MaxLength="10"/>
+    <Property Name="AddressID" Type="Edm.String" Nullable="false" MaxLength="10"/>
+    <Property Name="CityName" Type="Edm.String" MaxLength="40"/>
+   </EntityType>
+   <EntityContainer Name="Container" m:IsDefaultEntityContainer="true">
+    <EntitySet Name="A_BusinessPartner" EntityType="API_BUSINESS_PARTNER.A_BusinessPartner" sap:creatable="true" sap:updatable="true" sap:deletable="false"/>
+    <EntitySet Name="A_BusinessPartnerAddress" EntityType="API_BUSINESS_PARTNER.A_BusinessPartnerAddress"/>
+   </EntityContainer>
+  </Schema>
+ </edmx:DataServices>
+</edmx:Edmx>`;
+
 describe("protocol format detection", () => {
   it("detects by file extension", () => {
     expect(detectProtocolFormat("schema.graphql", "")?.format).toBe("graphql");
@@ -213,6 +241,18 @@ describe("protocol format detection", () => {
   it("detects by content when the filename is unknown", () => {
     expect(detectProtocolFormat("", protoSpec)?.format).toBe("protobuf");
     expect(detectProtocolFormat("", graphqlSpec)?.format).toBe("graphql");
+    expect(detectProtocolFormat("", wsdlSpec)?.format).toBe("wsdl");
+  });
+
+  it("detects OData $metadata by the .edmx extension and by its EDMX root", () => {
+    expect(detectProtocolFormat("metadata.edmx", "")?.format).toBe("odata");
+    // SAP serves $metadata as a bare XML body with no filename → content sniff.
+    expect(detectProtocolFormat("", odataSpec)).toEqual({ format: "odata", version: "2.0" });
+    // A v4 wrapper is recognized as 4.0.
+    const v4 =
+      '<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx"></edmx:Edmx>';
+    expect(detectProtocolFormat("", v4)).toEqual({ format: "odata", version: "4.0" });
+    // EDMX is checked before WSDL: both are XML, only EDMX has the <Edmx> root.
     expect(detectProtocolFormat("", wsdlSpec)?.format).toBe("wsdl");
   });
 
@@ -418,6 +458,59 @@ describe("SOAP/WSDL adapter", () => {
     const schemas = doc.components?.schemas as Record<string, Record<string, unknown>>;
     expect(schemas.Money).toMatchObject({ type: "object" });
     expect(schemas.Currency).toMatchObject({ type: "string", enum: ["USD", "EUR", "GBP"] });
+  });
+});
+
+describe("OData/EDMX adapter", () => {
+  const doc = adaptOData(odataSpec);
+
+  it("lowers each entity set to conventional CRUD paths", () => {
+    // Collection: list (GET) + create (POST).
+    const collection = doc.paths?.["/A_BusinessPartner"] as Record<string, unknown>;
+    expect(collection.get).toBeDefined();
+    expect(collection.post).toBeDefined();
+    // Single-key item: string keys are quoted on the wire — Set('key').
+    const item = doc.paths?.["/A_BusinessPartner('{BusinessPartner}')"] as Record<string, unknown>;
+    expect(item.get).toBeDefined();
+    expect(item.patch).toBeDefined();
+    // deletable="false" on the set → no DELETE is emitted (truthful surface).
+    expect(item.delete).toBeUndefined();
+  });
+
+  it("addresses composite keys with the k=v OData form, quoting string keys", () => {
+    const path =
+      "/A_BusinessPartnerAddress(BusinessPartner='{BusinessPartner}',AddressID='{AddressID}')";
+    const item = doc.paths?.[path] as Record<string, unknown>;
+    expect(item.get).toBeDefined();
+    // No SAP annotation → all of update + delete are allowed.
+    expect(item.patch).toBeDefined();
+    expect(item.delete).toBeDefined();
+  });
+
+  it("maps EDM types and key nullability into the entity schema", () => {
+    const schemas = doc.components?.schemas as Record<string, Record<string, unknown>>;
+    const bp = schemas.A_BusinessPartner;
+    expect(bp.type).toBe("object");
+    expect((bp.properties as Record<string, unknown>).CreationDate).toMatchObject({
+      type: "string",
+      format: "date-time",
+    });
+    // Nullable="false" (the key) is required; a nullable-by-default field is not.
+    expect(bp.required).toEqual(["BusinessPartner"]);
+  });
+
+  it("compiles end-to-end into aligned operations with path-key params", async () => {
+    const air = await compile({ spec: odataSpec, serviceId: "bp" });
+    const get = air.operations.find(
+      (o) => o.sourceRef.method === "get" && o.sourceRef.path.includes("("),
+    );
+    expect(get?.effect.kind).toBe("read");
+    expect(get?.input.params.some((p) => p.in === "path" && p.name === "BusinessPartner")).toBe(
+      true,
+    );
+    // The create lowers to a POST mutation (unsafe until enriched).
+    const create = air.operations.find((o) => o.sourceRef.method === "post");
+    expect(create?.effect.kind).toBe("mutation");
   });
 });
 

@@ -115,6 +115,7 @@ const PROTOCOL_FORMATS: Record<string, { format: ProtocolFormat; kind: SourceKin
   wsdl: { format: "wsdl", kind: "wsdl" },
   discovery: { format: "discovery", kind: "discovery" },
   postman: { format: "postman", kind: "postman" },
+  odata: { format: "odata", kind: "odata" },
 };
 
 /**
