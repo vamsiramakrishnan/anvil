@@ -18,3 +18,12 @@ github_gql	graphql	https://docs.github.com/public/fpt/schema.docs.graphql	(whole
 linear	graphql	https://raw.githubusercontent.com/linear/linear/master/packages/sdk/src/schema.graphql	(whole)	none
 temporal	protobuf	https://raw.githubusercontent.com/temporalio/api/master/temporal/api/workflowservice/v1/service.proto	(whole)	none
 amadeus	swagger2	https://raw.githubusercontent.com/amadeus4dev/amadeus-open-api-specification/main/spec/json/FlightOffersSearch_v2_swagger_specification.json	(whole)	none
+# --- Enterprise back-office / infrastructure systems (protocol-diverse corpus) ---
+# OData and SOAP/WSDL are the formats enterprise systems (SAP, Dynamics, NetSuite,
+# Workday) actually publish; the reference OData services stand in for the
+# credential-gated enterprise OData endpoints (SAP S/4HANA, Dynamics 365 / Business
+# Central). See ENTERPRISE_SYSTEMS.md for the full catalog and gated-spec recipes.
+netsuite	wsdl	https://webservices.netsuite.com/wsdl/v2024_2_0/netsuite.wsdl	(whole)	none
+odata_trippin	odata	https://services.odata.org/V4/TripPinServiceRW/$metadata	(whole)	none
+odata_northwind	odata	https://services.odata.org/V2/Northwind/Northwind.svc/$metadata	(whole)	none
+etcd	protobuf	https://raw.githubusercontent.com/etcd-io/etcd/main/api/etcdserverpb/rpc.proto	(whole)	none

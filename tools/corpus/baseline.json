@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-11T23:10:24.675Z",
+  "updatedAt": "2026-07-14T23:42:58.431Z",
   "note": "Per-system quick-mode metrics. Regenerate with: node tools/corpus/run.mjs quick --update-baseline",
   "systems": {
     "jira": {
@@ -96,6 +96,26 @@
       "compileMs": 722,
       "airBytes": 118664,
       "opCount": 2
+    },
+    "netsuite": {
+      "compileMs": 587,
+      "airBytes": 211585,
+      "opCount": 42
+    },
+    "odata_trippin": {
+      "compileMs": 534,
+      "airBytes": 118602,
+      "opCount": 20
+    },
+    "odata_northwind": {
+      "compileMs": 712,
+      "airBytes": 925797,
+      "opCount": 130
+    },
+    "etcd": {
+      "compileMs": 581,
+      "airBytes": 279698,
+      "opCount": 42
     }
   }
 }

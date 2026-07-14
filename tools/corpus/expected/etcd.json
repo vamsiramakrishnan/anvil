@@ -1,0 +1,9 @@
+{
+  "_note": "etcd's Range RPC is a key-range READ, but its name is not a read-verb, so the compiler conservatively classifies it as a mutation. This is intended: effect is proven from the name, never guessed. A real etcd manifest would declare Range a read via x-anvil-effect. Pinning it here documents the conservative default so a future 'helpful' heuristic that silently promotes Range to read trips this differential.",
+  "operations": {
+    "Watch": { "toolName": "etcd_watch", "effect": "read", "risk": "none" },
+    "Range": { "toolName": "etcd_range", "effect": "mutation", "risk": "medium" },
+    "Put": { "toolName": "etcd_put", "effect": "mutation", "risk": "medium" },
+    "Compact": { "toolName": "etcd_compact", "effect": "mutation", "risk": "medium" }
+  }
+}

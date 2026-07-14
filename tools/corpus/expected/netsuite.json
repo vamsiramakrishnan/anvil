@@ -1,0 +1,8 @@
+{
+  "operations": {
+    "get": { "toolName": "netsuite_get", "effect": "read", "risk": "none" },
+    "search": { "toolName": "netsuite_search", "effect": "read", "risk": "none" },
+    "add": { "toolName": "netsuite_add", "effect": "mutation", "risk": "medium" },
+    "delete": { "toolName": "netsuite_delete", "effect": "mutation", "risk": "destructive" }
+  }
+}

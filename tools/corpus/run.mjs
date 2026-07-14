@@ -77,6 +77,10 @@ function readSystemsTsv() {
 function preparedPath(work, sys) {
   if (sys.format === "graphql") return join(work, `${sys.name}.graphql`);
   if (sys.format === "protobuf") return join(work, `${sys.name}.proto`);
+  // XML protocols keep their real extension so format detection stays
+  // authoritative and reproduce.sh's non-REST branch (no JSON conversion) runs.
+  if (sys.format === "odata") return join(work, `${sys.name}.edmx`);
+  if (sys.format === "wsdl") return join(work, `${sys.name}.wsdl`);
   return join(work, `${sys.name}.spec.json`);
 }
 
