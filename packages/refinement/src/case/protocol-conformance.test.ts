@@ -674,7 +674,7 @@ describe("evidence acquisition provider boundary", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("proposal ↔ case identity binding", () => {
-  async function groundedProposal(air: AirDocument, dir: string): Promise<CaseProposal> {
+  async function groundedProposal(_air: AirDocument, dir: string): Promise<CaseProposal> {
     await addEvidence(dir, {
       predicate: "field.description",
       value: REASON_TEXT,
