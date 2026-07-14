@@ -1,0 +1,13 @@
+{
+  "_comment": "Example config for `anvil conformance <bundle> --live <this-file>` — the opt-in real lane. Copy it, point mcpUrl at your deployed Cloud Run /mcp endpoint, and run. The onus of correct config is on you (the operator).",
+  "_credentials": "Header values may reference ${ENV_VAR}; they are resolved from the environment at connect time, so no secret is ever written into this file. Set PAYMENTS_TOKEN in the environment before running.",
+  "_safety": "The live lane is production-safe: it lists tools (surface-live), proves the confirmation gate refuses without --confirm before any request is built (gate-live), and invokes ONLY the read operations you list in probeReads. It never drives a real mutation to completion.",
+  "mcpUrl": "https://payments-xxxxxxxx.a.run.app/mcp",
+  "headers": {
+    "Authorization": "Bearer ${PAYMENTS_TOKEN}"
+  },
+  "probeReads": ["payments.customers.get"],
+  "inputs": {
+    "payments.customers.get": { "customer_id": "cus_example_readonly" }
+  }
+}

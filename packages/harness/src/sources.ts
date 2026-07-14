@@ -31,6 +31,8 @@ export const SourceSystem = z.enum([
   "jira",
   "notion",
   "postman",
+  "salesforce",
+  "sap",
   "generic",
 ]);
 export type SourceSystem = z.infer<typeof SourceSystem>;

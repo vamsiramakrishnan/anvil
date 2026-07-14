@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@anvil/air": "workspace:*",
+    "@anvil/certification": "workspace:*",
     "@anvil/compiler": "workspace:*",
     "@anvil/generators": "workspace:*",
     "@anvil/harness": "workspace:*",

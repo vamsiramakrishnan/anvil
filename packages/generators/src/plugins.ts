@@ -99,7 +99,8 @@ function claudeHooks(matcher: string): string {
             hooks: [
               {
                 type: "command",
-                // biome-ignore lint/suspicious/noTemplateCurlyInString: ${CLAUDE_PLUGIN_ROOT} is a literal Claude Code path variable the harness expands at runtime, not a JS template.
+                // ${CLAUDE_PLUGIN_ROOT} is a literal Claude Code path variable
+                // the harness expands at runtime, not a JS template.
                 command: 'node "${CLAUDE_PLUGIN_ROOT}/plugin/claude/hook.mjs"',
               },
             ],
@@ -118,7 +119,8 @@ function claudeMcp(id: string): string {
       mcpServers: {
         [id]: {
           command: "node",
-          // biome-ignore lint/suspicious/noTemplateCurlyInString: ${CLAUDE_PLUGIN_ROOT} is a literal Claude Code path variable the harness expands at runtime, not a JS template.
+          // ${CLAUDE_PLUGIN_ROOT} is a literal Claude Code path variable the
+          // harness expands at runtime, not a JS template.
           args: ["${CLAUDE_PLUGIN_ROOT}/mcp/server.js"],
         },
       },

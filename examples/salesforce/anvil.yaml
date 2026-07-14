@@ -1,0 +1,78 @@
+# Supplemental Anvil manifest for the Salesforce REST API. Declares the safety
+# semantics the OpenAPI spec cannot express: which writes are idempotent, which
+# need confirmation, and which operations are approved for agent use.
+service:
+  name: salesforce
+  display_name: Salesforce
+  owner: crm-platform
+  environment: prod
+
+auth:
+  type: oauth2
+  scopes:
+    - api
+
+operations:
+  # Reads — safe to expose directly.
+  query:
+    state: approved
+  getAccount:
+    state: approved
+  getContact:
+    state: approved
+
+  # Upsert-by-external-id is idempotent by construction: the external id is the
+  # natural key, so re-issuing the same request converges. Retry-safe.
+  upsertAccountByExternalId:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    retries:
+      enabled: true
+      only_on:
+        - timeout
+        - "429"
+        - "503"
+      max_attempts: 3
+    state: approved
+
+  # A plain create is NOT idempotent (a retry makes a second record). Expose it,
+  # but require confirmation and never auto-retry.
+  createAccount:
+    side_effect: mutation
+    risk: medium
+    confirmation:
+      required: true
+      risk: medium
+      reason: Creating an Account is not idempotent; a blind retry duplicates the record.
+    state: approved
+  createContact:
+    side_effect: mutation
+    risk: medium
+    confirmation:
+      required: true
+      risk: medium
+      reason: Creating a Contact is not idempotent; a blind retry duplicates the record.
+    state: approved
+
+  # Update by id is naturally idempotent (same id, same fields → same state).
+  updateAccount:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    state: approved
+
+  # Delete is destructive and irreversible from the agent's view.
+  deleteAccount:
+    side_effect: mutation
+    risk: high
+    reversible: false
+    idempotency:
+      strategy: natural
+    confirmation:
+      required: true
+      risk: high
+      reason: Deleting an Account is destructive and cannot be undone by the agent.
+    state: approved
