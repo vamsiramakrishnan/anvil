@@ -1,0 +1,158 @@
+---
+// An operation's approval lifecycle as a horizontal state flow:
+// generated → review_required → approved, with blocked and deprecated as
+// terminal side states. The point the layout makes: only an approved operation
+// is compiled into a tool an agent can call, and risky or non-idempotent
+// mutations default to review_required — held for a human. Inline SVG so every
+// color rides the theme's CSS variables and flips correctly in light/dark.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 360"
+    role="img"
+    aria-label="An operation's approval lifecycle. After compile it is generated; risky or non-idempotent mutations default to review_required, held for review; a human moves it to approved, and only an approved operation is compiled into a tool an agent can call. A rejected operation becomes blocked and a removed one becomes deprecated — neither reaches an agent."
+  >
+    <defs>
+      <marker id="lc-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+      <marker id="lc-accent" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-accent)" />
+      </marker>
+      <marker id="lc-deny" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--ge-status-failed)" />
+      </marker>
+      <marker id="lc-mute" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+    </defs>
+
+    <text x="30" y="28" class="d-label">an operation's approval lifecycle</text>
+
+    <!-- top stage labels -->
+    <text x="130" y="62" text-anchor="middle" class="d-stage">after compile</text>
+    <text x="400" y="62" text-anchor="middle" class="d-stage">held for review</text>
+    <text x="670" y="62" text-anchor="middle" class="d-stage">a human decides</text>
+    <text x="920" y="62" text-anchor="middle" class="d-stage">the agent</text>
+
+    <!-- main spine: generated → review_required → approved → tool -->
+    <rect x="30" y="76" width="200" height="72" rx="4" class="d-box" />
+    <text x="46" y="108" class="d-t-neutral">Generated</text>
+    <text x="46" y="132" class="d-gloss">state: generated</text>
+
+    <path d="M230 112 H300" class="d-line" marker-end="url(#lc-arrow)" />
+    <text x="265" y="100" text-anchor="middle" class="d-edge">risky · non-idempotent</text>
+
+    <rect x="300" y="76" width="200" height="72" rx="4" class="d-review" />
+    <text x="316" y="108" class="d-t-review">Review required</text>
+    <text x="316" y="132" class="d-gloss-review">held for review</text>
+
+    <path d="M500 112 H570" class="d-line" marker-end="url(#lc-arrow)" />
+    <text x="535" y="100" text-anchor="middle" class="d-edge">human approves</text>
+
+    <rect x="570" y="76" width="200" height="72" rx="4" class="d-approved" />
+    <text x="586" y="108" class="d-t-approved">Approved</text>
+    <text x="586" y="132" class="d-gloss-approved">state: approved</text>
+
+    <path d="M770 112 H820" class="d-line-accent" marker-end="url(#lc-accent)" />
+    <text x="795" y="100" text-anchor="middle" class="d-edge">compiled</text>
+
+    <rect x="820" y="76" width="200" height="72" rx="4" class="d-agent" />
+    <rect x="820" y="76" width="3" height="72" class="d-bar" />
+    <text x="838" y="108" class="d-t-neutral">MCP tool</text>
+    <text x="838" y="132" class="d-gloss">the agent can call it</text>
+
+    <!-- terminal side states -->
+    <path d="M400 148 V248" class="d-line-deny" marker-end="url(#lc-deny)" />
+    <text x="416" y="202" class="d-edge-deny">rejected</text>
+
+    <rect x="300" y="248" width="200" height="64" rx="4" class="d-blocked-box" />
+    <text x="316" y="278" class="d-t-blocked">Blocked</text>
+    <text x="316" y="300" class="d-gloss-deny">never ships to an agent</text>
+
+    <path d="M670 148 V248" class="d-line-mute" marker-end="url(#lc-mute)" />
+    <text x="686" y="202" class="d-edge">later</text>
+
+    <rect x="570" y="248" width="200" height="64" rx="4" class="d-dep" />
+    <text x="586" y="278" class="d-t-dep">Deprecated</text>
+    <text x="586" y="300" class="d-gloss">the spec dropped it</text>
+
+    <text x="30" y="344" class="d-footnote">only approved operations are compiled into a tool — everything else is invisible to the agent.</text>
+  </svg>
+  <figcaption>fig 07 · nothing reaches an agent until a human moves it to approved</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram { margin: 1.75rem 0; overflow-x: auto; }
+  .anvil-diagram svg { min-width: 760px; width: 100%; height: auto; display: block; }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-stage {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-box { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-review { fill: var(--sl-color-gray-6); stroke: var(--ge-status-blocked); }
+  .d-approved { fill: var(--sl-color-gray-6); stroke: var(--ge-status-passed); }
+  .d-blocked-box { fill: none; stroke: var(--ge-status-failed); }
+  .d-dep { fill: none; stroke: var(--sl-color-gray-4); stroke-dasharray: 6 5; }
+  .d-agent { fill: var(--sl-color-gray-6); stroke: var(--sl-color-accent); }
+  .d-bar { fill: var(--sl-color-accent); }
+  .d-t-neutral { font-family: var(--ge-display-font); font-size: 15px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-t-review { font-family: var(--ge-display-font); font-size: 15px; font-weight: 700; fill: var(--ge-status-blocked-text); }
+  .d-t-approved { font-family: var(--ge-display-font); font-size: 15px; font-weight: 700; fill: var(--ge-status-passed-text); }
+  .d-t-blocked { font-family: var(--ge-display-font); font-size: 14.5px; font-weight: 700; fill: var(--ge-status-failed-text); }
+  .d-t-dep { font-family: var(--ge-display-font); font-size: 14.5px; font-weight: 700; fill: var(--sl-color-gray-3); }
+  .d-gloss { font-family: var(--sl-font-mono); font-size: 11px; fill: var(--sl-color-gray-3); }
+  .d-gloss-review { font-family: var(--sl-font-mono); font-size: 11px; fill: var(--ge-status-blocked-text); }
+  .d-gloss-approved { font-family: var(--sl-font-mono); font-size: 11px; fill: var(--ge-status-passed-text); }
+  .d-gloss-deny { font-family: var(--sl-font-mono); font-size: 11px; fill: var(--ge-status-failed-text); }
+  .d-edge {
+    font-family: var(--sl-font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-edge-deny {
+    font-family: var(--sl-font-mono);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--ge-status-failed-text);
+  }
+  .d-line path, .d-line { stroke: var(--sl-color-gray-4); stroke-width: 1; fill: none; }
+  .d-line-accent { stroke: var(--sl-color-accent); stroke-width: 1; fill: none; }
+  .d-line-deny { stroke: var(--ge-status-failed); stroke-width: 1; fill: none; }
+  .d-line-mute { stroke: var(--sl-color-gray-4); stroke-width: 1; stroke-dasharray: 5 4; fill: none; }
+  .d-footnote {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+</style>
