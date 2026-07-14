@@ -43,6 +43,26 @@ export const singularize = (s: string): string => {
   return s;
 };
 
+/** An API-version path segment: `v1`, `v60`, `v60.0`, `2.0`. Never a resource. */
+function isVersionLike(segment: string): boolean {
+  return /^v?\d+(\.\d+)*$/i.test(segment);
+}
+
+/**
+ * OData addresses a single entity with a key predicate in the SAME segment —
+ * `A_BusinessPartner('0001')` or `Address(Partner='1',ID='2')` — where REST
+ * would use a separate `/{id}` segment. The predicate is the identity, not part
+ * of the resource name, and its presence means the segment addresses one item
+ * (so the action is get/update/delete, never list). Returns the bare resource
+ * name and whether a key predicate was present.
+ */
+function stripODataKey(segment: string): { resource: string; keyed: boolean } {
+  const match = /^([A-Za-z_]\w*)\(.*\)$/.exec(segment);
+  return match
+    ? { resource: match[1] as string, keyed: true }
+    : { resource: segment, keyed: false };
+}
+
 export function actionFor(method: HttpMethod, endsWithParam: boolean): string {
   switch (method) {
     case "get":
@@ -93,6 +113,21 @@ function postVerbFromOperationId(operationId: string | undefined): string | unde
 }
 
 /**
+ * The action for a PATCH/PUT whose operationId names an *upsert* — the
+ * idempotent create-or-update by an external key (Salesforce's
+ * `upsertAccountByExternalId`, many OData/REST APIs). The HTTP method collapses
+ * it to "update", so a plain `updateX` and an `upsertX` on the same resource
+ * would collide onto one command and disambiguate with a meaningless `_patch`
+ * suffix. Honouring the operationId verb keeps them distinct and truthful
+ * (`account update` vs `account upsert`). Scoped to the one verb the method
+ * genuinely drops, mirroring `postVerbFromOperationId`.
+ */
+function upsertVerbFromOperationId(operationId: string | undefined): string | undefined {
+  if (!operationId) return undefined;
+  return /^upsert(_|$)/.test(snakeCase(operationId)) ? "upsert" : undefined;
+}
+
+/**
  * Decompose a concrete path segment into a resource token and, when the
  * segment is an RPC-style dotted method (Slack's `chat.postMessage`,
  * `users.profile.set`), the method name that should drive the action. A plain
@@ -108,6 +143,11 @@ function postVerbFromOperationId(operationId: string | undefined): string | unde
  */
 function decomposeSegment(segment: string): { resource: string; rpcAction?: string } {
   const noSuffix = segment.replace(FORMAT_SUFFIX, "");
+  // A dotted API-version segment (`v60.0`, `2.0`) is not an RPC dotted method —
+  // splitting it would make the version ("v60") the resource and its minor
+  // ("0") the action. It is not a resource at all; return it whole so the
+  // caller's version guard can skip it.
+  if (isVersionLike(noSuffix)) return { resource: noSuffix };
   if (noSuffix.includes(".")) {
     const parts = noSuffix.split(".").filter(Boolean);
     if (parts.length >= 2) {
@@ -149,7 +189,12 @@ export function deriveNames(
   // format suffix (`Messages.json` → `Messages`) and split an RPC-style dotted
   // method (`chat.postMessage` → resource `chat`, method `postMessage`). Both
   // otherwise leak the literal URL shape into the agent-facing names.
-  const lastRaw = concrete[concrete.length - 1];
+  // An OData key predicate rides on the segment (`Set('id')`); strip it to the
+  // bare resource name before any other segment reasoning, and remember that the
+  // segment addresses a single item.
+  const lastStripped = concrete[concrete.length - 1];
+  const odata = lastStripped !== undefined ? stripODataKey(lastStripped) : undefined;
+  const lastRaw = odata?.resource ?? concrete[concrete.length - 1];
   const decomposed = lastRaw !== undefined ? decomposeSegment(lastRaw) : undefined;
   // A static trailing path segment that names a verb from the shared action
   // vocabulary (classify.ts) is a verb over the resource before it, not a
@@ -168,9 +213,16 @@ export function deriveNames(
   // the resource, or every field collapses onto the synthetic `Mutation`/`Query`
   // wrapper as its resource and collides — then disambiguation re-appends the
   // field name and the tool name doubles.
+  // A bare trailing verb names an action over the segment BEFORE it — but only
+  // when that segment is a real resource. When it is an API version (or absent),
+  // the trailing segment IS the resource: `/data/v60.0/query` is the `query`
+  // resource, not a `search` over the version.
+  const beforeLast = concrete.length > 1 ? concrete[concrete.length - 2] : undefined;
+  const beforeIsResource = beforeLast !== undefined && !isVersionLike(beforeLast);
   const trailingVerb =
     decomposed?.rpcAction === undefined &&
     lastConcrete !== undefined &&
+    beforeIsResource &&
     !snakeCase(lastConcrete).includes("_")
       ? actionVerbFor(lastConcrete)
       : undefined;
@@ -180,8 +232,12 @@ export function deriveNames(
       : hasResource
         ? (lastConcrete as string)
         : serviceId;
+  // The path addresses a single item when it ends in a `/{param}` segment or an
+  // OData key predicate (`Set('id')`) — either way the action is get/update/
+  // delete, not list.
+  const lastSegment = segments[segments.length - 1] as string | undefined;
   const endsWithParam =
-    segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
+    lastSegment !== undefined && (lastSegment.startsWith("{") || stripODataKey(lastSegment).keyed);
   // A write-method endpoint with a readIntent verb (see classify.ts) is
   // reclassified to a read; the action verb must agree, or the CLI/MCP surface
   // would call a read "create" while its own safety posture says otherwise.
@@ -198,7 +254,9 @@ export function deriveNames(
         ? (actionVerbFor(readIntentSignal) as string)
         : method === "post"
           ? (postVerbFromOperationId(raw.operationId) ?? actionFor(method, endsWithParam))
-          : actionFor(method, endsWithParam);
+          : method === "patch" || method === "put"
+            ? (upsertVerbFromOperationId(raw.operationId) ?? actionFor(method, endsWithParam))
+            : actionFor(method, endsWithParam);
 
   const fromOperationId = Boolean(raw.operationId);
   const canonicalName = raw.operationId

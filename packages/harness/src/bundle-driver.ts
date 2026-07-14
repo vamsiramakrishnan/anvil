@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Operation, propKey } from "@anvil/air";
+import { cliFlag, type Operation, propKey } from "@anvil/air";
 import { exampleInput } from "@anvil/generators";
 
 /**
@@ -75,8 +75,15 @@ export function cliFlagsFor(op: Operation, args: Record<string, unknown>): strin
   const out: string[] = [];
   const emit = (name: string) => {
     const value = args[propKey(name)];
-    if (value === undefined || value === null || typeof value === "boolean") return;
-    out.push(`--${kebab(name)}`, String(value));
+    if (value === undefined || value === null) return;
+    // Use @anvil/air's real cliFlag, never a local re-implementation — the CLI
+    // engine parses exactly these flags, and only the shared function handles
+    // the full naming (e.g. OData's `$filter` → `--filter`) identically. A real
+    // boolean *field* (e.g. an Edm.Boolean property) is a value flag `--f true`,
+    // not a bare toggle — the tool CLI coerces it back; only the injected
+    // `confirm`/`dry-run` control toggles are bare, and those are never fields
+    // iterated here.
+    out.push(cliFlag(name), String(value));
   };
   for (const p of op.input.params) emit(p.name);
   if (op.input.body?.projection === "fields") for (const f of op.input.body.fields) emit(f.name);
@@ -85,15 +92,6 @@ export function cliFlagsFor(op: Operation, args: Record<string, unknown>): strin
   }
   if (typeof args.idempotency_key === "string") out.push("--idempotency-key", args.idempotency_key);
   return out;
-}
-
-// A local kebab-case mirroring @anvil/air's cliFlag naming, so the flag names
-// this driver emits match the ones the generated CLI parses exactly.
-function kebab(name: string): string {
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .replace(/[_\s]+/g, "-")
-    .toLowerCase();
 }
 
 /**

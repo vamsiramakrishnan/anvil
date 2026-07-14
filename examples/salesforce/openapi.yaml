@@ -1,0 +1,169 @@
+openapi: 3.0.3
+info:
+  title: Salesforce REST API (sObjects)
+  version: v60.0
+  description: >
+    A representative slice of the Salesforce REST API: sObject record CRUD for
+    Account and Contact, SOQL query, and idempotent upsert-by-external-id. This
+    is the REST surface an agent reaches; Salesforce also publishes its own DX
+    MCP server (github.com/salesforcecli/mcp), which Anvil reconciles against.
+servers:
+  - url: https://example.my.salesforce.com
+security:
+  - salesforce_oauth: []
+components:
+  securitySchemes:
+    salesforce_oauth:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://login.salesforce.com/services/oauth2/token
+          scopes:
+            api: Access the Salesforce REST API
+  schemas:
+    Account:
+      type: object
+      properties:
+        Id: { type: string, readOnly: true }
+        Name: { type: string }
+        Industry: { type: string }
+        AnnualRevenue: { type: number }
+        ExternalId__c: { type: string }
+      required: [Name]
+    Contact:
+      type: object
+      properties:
+        Id: { type: string, readOnly: true }
+        FirstName: { type: string }
+        LastName: { type: string }
+        Email: { type: string, format: email }
+        AccountId: { type: string }
+      required: [LastName]
+    CreateResult:
+      type: object
+      properties:
+        id: { type: string }
+        success: { type: boolean }
+        errors: { type: array, items: { type: string } }
+    QueryResult:
+      type: object
+      properties:
+        totalSize: { type: integer }
+        done: { type: boolean }
+        records: { type: array, items: { type: object } }
+paths:
+  /services/data/v60.0/query:
+    get:
+      operationId: query
+      summary: Run a SOQL query
+      tags: [query]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: The SOQL query string
+          schema: { type: string }
+      responses:
+        "200":
+          description: Query result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryResult" }
+  /services/data/v60.0/sobjects/Account:
+    post:
+      operationId: createAccount
+      summary: Create an Account
+      tags: [account]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Account" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateResult" }
+  /services/data/v60.0/sobjects/Account/{id}:
+    get:
+      operationId: getAccount
+      summary: Retrieve an Account by id
+      tags: [account]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Account record
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+    patch:
+      operationId: updateAccount
+      summary: Update an Account
+      tags: [account]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Account" }
+      responses:
+        "204": { description: Updated }
+    delete:
+      operationId: deleteAccount
+      summary: Delete an Account
+      tags: [account]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted }
+  /services/data/v60.0/sobjects/Account/{externalIdField}/{externalId}:
+    patch:
+      operationId: upsertAccountByExternalId
+      summary: Upsert an Account by an external id (idempotent create-or-update)
+      tags: [account]
+      parameters:
+        - { name: externalIdField, in: path, required: true, schema: { type: string } }
+        - { name: externalId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Account" }
+      responses:
+        "200":
+          description: Upserted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateResult" }
+  /services/data/v60.0/sobjects/Contact:
+    post:
+      operationId: createContact
+      summary: Create a Contact
+      tags: [contact]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Contact" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateResult" }
+  /services/data/v60.0/sobjects/Contact/{id}:
+    get:
+      operationId: getContact
+      summary: Retrieve a Contact by id
+      tags: [contact]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Contact record
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contact" }

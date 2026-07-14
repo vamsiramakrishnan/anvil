@@ -116,3 +116,34 @@ describe("tri-surface conformance (banking, WSDL)", () => {
     expect(report.summary.fail).toBe(0);
   }, 120_000);
 });
+
+describe("tri-surface conformance (enterprise vendors)", () => {
+  it("Salesforce (REST) — every surface agrees, gates and all", async () => {
+    const dir = await buildBundle("salesforce/openapi.yaml", "salesforce/anvil.yaml", "salesforce");
+    const report = await runConformance(dir, { cliPackageDir: CLI_PACKAGE_DIR });
+    expect(report.summary.fail).toBe(0);
+    // The destructive delete and non-idempotent creates gate on both surfaces.
+    const gates = byId(report, "gate-agreement").map((c) => c.operationId);
+    expect(gates).toEqual(
+      expect.arrayContaining([
+        "salesforce.account.delete",
+        "salesforce.account.create",
+        "salesforce.contact.create",
+      ]),
+    );
+    expect(byId(report, "gate-agreement").every((c) => c.status === "pass")).toBe(true);
+    // Larger fixtures spawn a CLI child per operation; the whole suite runs once
+    // per workspace package concurrently, so give the process-heavy vendor runs
+    // generous wall-clock headroom (they finish in seconds uncontended).
+  }, 240_000);
+
+  it("SAP S/4HANA (OData) — OData $filter and composite keys reach the wire identically", async () => {
+    const dir = await buildBundle("sap/metadata.edmx", "sap/anvil.yaml", "sap_bp");
+    const report = await runConformance(dir, { cliPackageDir: CLI_PACKAGE_DIR });
+    expect(report.summary.fail).toBe(0);
+    // The OData `$filter`/`$top` query options and quoted composite keys survive
+    // both surfaces byte-identically.
+    expect(byId(report, "wire-agreement").every((c) => c.status === "pass")).toBe(true);
+    expect(byId(report, "surface-agreement")[0]?.status).toBe("pass");
+  }, 300_000);
+});

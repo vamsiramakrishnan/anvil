@@ -1,0 +1,78 @@
+# Supplemental Anvil manifest for the SAP S/4HANA Business Partner OData service.
+# OData $metadata declares structure and CRUD capability, but not the safety
+# semantics an agent needs: which writes are idempotent, which need confirmation,
+# and which operations are approved for use. Operation ids follow the adapter's
+# convention: <verb>_<EntitySet>.
+service:
+  name: sap_bp
+  display_name: SAP Business Partner (S/4HANA)
+  owner: erp-platform
+  environment: prod
+
+auth:
+  type: oauth2
+  scopes:
+    - API_BUSINESS_PARTNER_0001
+
+operations:
+  # Reads across the three entity sets — safe to expose directly.
+  list_A_BusinessPartner:
+    state: approved
+  get_A_BusinessPartner:
+    state: approved
+  list_A_BusinessPartnerAddress:
+    state: approved
+  get_A_BusinessPartnerAddress:
+    state: approved
+  list_A_Customer:
+    state: approved
+  get_A_Customer:
+    state: approved
+
+  # Creating a business partner is a non-idempotent master-data mutation:
+  # a blind retry risks a duplicate BP. Require confirmation, never auto-retry.
+  create_A_BusinessPartner:
+    side_effect: mutation
+    risk: high
+    confirmation:
+      required: true
+      risk: high
+      reason: Creating a Business Partner is not idempotent; a retry can create a duplicate master record.
+    state: approved
+
+  # An OData update by key is naturally idempotent (same key + same body →
+  # same state), so it is retry-safe without an explicit key.
+  update_A_BusinessPartner:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    state: approved
+
+  # Addresses: create needs confirmation; update is idempotent by key; delete is
+  # destructive.
+  create_A_BusinessPartnerAddress:
+    side_effect: mutation
+    risk: medium
+    confirmation:
+      required: true
+      risk: medium
+      reason: Creating an address is not idempotent; a retry can duplicate the address.
+    state: approved
+  update_A_BusinessPartnerAddress:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: natural
+    state: approved
+  delete_A_BusinessPartnerAddress:
+    side_effect: mutation
+    risk: high
+    reversible: false
+    idempotency:
+      strategy: natural
+    confirmation:
+      required: true
+      risk: high
+      reason: Deleting an address removes master data and cannot be undone by the agent.
+    state: approved

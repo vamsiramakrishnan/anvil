@@ -235,9 +235,9 @@ export async function runConformance(
         checks.push(skip("wire-agreement", op, surfaces, "operation is not wire-executable"));
         continue;
       }
-      checks.push(await checkWireAgreement(mcpCall, cli, ctl, op, cliEnabled, surfaces));
+      checks.push(await checkWireAgreement(mcpCall, cli, ctl, op, cliEnabled));
       if (op.confirmation.required) {
-        checks.push(await checkGateAgreement(mcpCall, cli, ctl, op, cliEnabled, surfaces));
+        checks.push(await checkGateAgreement(mcpCall, cli, ctl, op, cliEnabled));
       }
     }
   } finally {
@@ -497,7 +497,6 @@ async function checkWireAgreement(
   ctl: MockControl,
   op: Operation,
   cliEnabled: boolean,
-  surfaces: Surface[],
 ): Promise<ConformanceCheck> {
   const id = "wire-agreement";
   const s: Surface[] = cliEnabled ? ["mcp", "cli"] : ["mcp"];
@@ -577,7 +576,6 @@ async function checkGateAgreement(
   ctl: MockControl,
   op: Operation,
   cliEnabled: boolean,
-  surfaces: Surface[],
 ): Promise<ConformanceCheck> {
   const id = "gate-agreement";
   const s: Surface[] = cliEnabled ? ["mcp", "cli"] : ["mcp"];

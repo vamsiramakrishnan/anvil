@@ -230,6 +230,7 @@ export const SourceKind = z.enum([
   "graphql",
   "discovery",
   "postman",
+  "odata",
   "mcp",
 ]);
 export type SourceKind = z.infer<typeof SourceKind>;
