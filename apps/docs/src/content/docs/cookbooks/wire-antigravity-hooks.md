@@ -16,6 +16,11 @@ shared decision core `plugin/hookcore.mjs`, and the prompt-shaping rules file
 `.agent/rules/anvil-safety.md`. Nothing needs to be generated separately —
 this recipe is about copying two files into the right place.
 
+:::note[Before you start]
+You need Anvil built from source (see [Install Anvil](/anvil/cookbooks/install-anvil/))
+and a spec to compile. The commands below use the repo's payments example.
+:::
+
 ## 1. Compile the bundle
 
 ```bash
@@ -118,13 +123,14 @@ For each tool call, the shim reads `toolCall.name` / `toolCall.args` and emits
 missing flag (`confirm: true`, `idempotency_key`) — re-invoke with it only if
 the user actually intends the effect. A `force_ask` cannot be satisfied by the
 model at all; it hands the decision to the human. Do not weaken the matcher or
-remove the hook to get past a refusal — enrich the operation's manifest entry
+remove the hook to get past a refusal — fill in the operation's manifest entry
 or get the human's approval instead.
 
 ## Notes
 
-- The hook is **fail-open** by design: if it is never installed, the MCP
-  server's runtime still refuses the same calls. The hook's value is denying
+- The hook is the outer, advisory check and **fail-open** by design: if it is
+  never installed, the MCP server's runtime still refuses the same calls. The
+  hook's value is denying
   *before* the model burns a turn, and escalating human-approval operations to
   a real prompt.
 - The hook carries no per-operation data. It reads `catalog.json` at runtime,

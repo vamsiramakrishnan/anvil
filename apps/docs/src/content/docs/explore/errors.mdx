@@ -1,28 +1,40 @@
 ---
 title: "Error taxonomy & recovery"
-description: "Every error code the runtime can return, with the recovery rule an agent should follow — rendered from the compiled taxonomy so it cannot go stale."
+description: "Every error code the runtime can return and the recovery rule an agent should follow — generated from the runtime itself, so it can't go stale."
 sidebar:
   order: 3
 ---
 
 import errors from "../../../data/errors.json";
+import ErrorEnvelopeDiagram from '../../../components/diagrams/ErrorEnvelopeDiagram.astro';
+import RetryDecisionDiagram from '../../../components/diagrams/RetryDecisionDiagram.astro';
 
-Anvil never leaks raw upstream chaos as the primary interface: every failure —
-from any generated CLI or MCP tool — becomes exactly one structured envelope
-with a code from the closed taxonomy below.
+When an API fails, it can fail in a hundred different shapes. Anvil turns all of
+them into one. Every failure — from any generated CLI or MCP tool — comes back
+as a single structured envelope with a code from the fixed list below.
 
 ```json
 { "error": { "code": "rate_limited", "message": "...", "retryable": true, "safe_to_retry": true, "operation": "...", "trace_id": "..." } }
 ```
 
-The code list on this page is imported from `apps/docs/src/data/errors.json`,
-which is produced by an actual compile (`node scripts/gen-docs-data.mjs`) and
-**test-enforced against the runtime taxonomy** by
-`packages/generators/src/docs-data.test.ts` — the page physically cannot list a
-code the runtime no longer returns. The recovery prose mirrors the
+<ErrorEnvelopeDiagram />
+
+The codes on this page aren't written by hand. They're imported from
+`apps/docs/src/data/errors.json`, which a real compile produces
+(`node scripts/gen-docs-data.mjs`). A test —
+`packages/generators/src/docs-data.test.ts` — checks that file against the
+runtime's own list of codes, so this page can't show a code the runtime no
+longer returns.
+
+The recovery advice comes from the same place agents read: it mirrors the
 `reference/errors.md` file that ships inside every generated skill (see
-`errorsRef()` in `packages/generators/src/skill.ts`), so what you read here is
-what deployed agents read.
+`errorsRef()` in `packages/generators/src/skill.ts`). What you read here is what
+a deployed agent reads.
+
+:::note
+Every code below is closed and stable. An agent can branch on the `code` field
+with confidence — the list won't shift under it between releases.
+:::
 
 export const recovery = {
   validation_error: {
@@ -128,8 +140,24 @@ export const codeText = (s) =>
   </table>
 </div>
 
-Two fields in the envelope carry the retry contract: `retryable` says whether
-the *class* of failure is transient, and `safe_to_retry` says whether **this
-operation** may actually be retried given its idempotency posture. An agent
-should only ever act on `safe_to_retry` — the runtime has already retried
-whatever it safely could.
+## Should the agent retry?
+
+Two fields in the envelope answer that, and they are not the same question:
+
+- **`retryable`** — is this *kind* of failure temporary? A rate limit or a
+  timeout is; a validation error is not.
+- **`safe_to_retry`** — may *this specific operation* be repeated? This depends
+  on its idempotency: an operation that is safe to repeat (calling it twice does
+  the same thing as once) can be retried; a mutation that isn't must not be.
+
+An agent should act only on `safe_to_retry`. By the time it sees the error, the
+runtime has already retried whatever it safely could, so a `safe_to_retry: false`
+means "stop and check," not "try harder."
+
+<RetryDecisionDiagram />
+
+:::caution
+A transient failure on a non-idempotent mutation is the trap: `retryable` is
+true, but `safe_to_retry` is false because the first call may have landed.
+Retrying could double the effect — check upstream state instead.
+:::
