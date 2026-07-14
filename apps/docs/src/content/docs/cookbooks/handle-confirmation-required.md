@@ -48,8 +48,12 @@ intent** — `--confirm` asserts *their* intent, not yours.
 
 Add the required flags *plus* `--dry-run` to see precisely what would happen
 without any side effect — the dry-run short-circuits before auth and before
-anything leaves the machine (note that a gated operation's confirmation gate
-runs even before dry-run planning, so `--dry-run` alone gets the same refusal):
+anything leaves the machine:
+
+:::note
+The confirmation gate runs even before dry-run planning, so `--dry-run` on its
+own still gets the same refusal. You need the flags too.
+:::
 
 ```bash
 anvil run generated/payments refunds create --payment-id pay_123 --amount 500 --currency USD \
@@ -126,7 +130,8 @@ each envelope tells you the one thing it needs.
 
 ## Notes
 
-- The same gates guard every surface. Over MCP, the equivalent arguments are
+- The same gates guard every place the operation shows up (CLI, MCP, hooks).
+  Over MCP, the equivalent arguments are
   `confirm: true`, `idempotency_key`, and `dryRun: true` — and the
   [harness hooks](/anvil/cookbooks/wire-antigravity-hooks/) deny a missing
   flag before the call even leaves the harness.

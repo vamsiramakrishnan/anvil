@@ -1,43 +1,49 @@
 ---
 title: How the hook decides
-description: The generated hook's allow/deny/ask decision flow — every rule mirrors a runtime executor refusal, in the executor's order.
+description: How the generated hook decides allow, deny, or ask before a tool call — every rule mirrors one the runtime would apply anyway.
 sidebar:
   order: 2
 ---
 
 import HookDecisionDiagram from '../../../components/diagrams/HookDecisionDiagram.astro';
 
-Every generated bundle ships one shared decision core, `plugin/hookcore.mjs`.
-It reads the committed `catalog.json` — the single source of truth for the
-exposed safety surface — and decides **allow**, **deny**, or **ask** for a tool
-call *before* it leaves the harness. Thin per-harness shims (Antigravity,
-Claude Code, Codex) translate that one decision into each harness's PreToolUse
-protocol.
+A hook is a script the agent's harness runs before a tool call — it can let the
+call through, block it, or escalate it to a human. Every generated bundle ships
+one shared decision core, `plugin/hookcore.mjs`, that makes that call.
+
+It reads the bundle's `catalog.json` — the one list of what's approved and how
+each operation is gated — and returns **allow**, **deny**, or **ask** *before*
+the call leaves the harness. Thin per-harness shims (Antigravity, Claude Code,
+Codex) translate that single verdict into each harness's own PreToolUse format.
 
 <HookDecisionDiagram />
 
 ## The hook mirrors the runtime — it never replaces it
 
-Each rule above mirrors a refusal the runtime executor would make anyway, in
-the executor's order: unknown, unapproved, confirmation, then idempotency. The
-hook is the **outer, fail-open ring** — uninstall it and the runtime still
-refuses. What it buys is turn economy and human authority: a missing
-`confirm: true` or `idempotency_key` is denied in-harness with the exact fix
-named, so the model repairs the call in the same turn instead of burning a full
-round trip; and the human-approval tier escalates to a real person, which a
-model-supplied argument can never do.
+Every rule the hook applies is one the runtime executor would apply anyway, in
+the same order: unknown, unapproved, confirmation, then idempotency. The hook is
+the outer ring, and it fails open — uninstall it and the runtime still refuses
+every unsafe call.
 
-The outer ring is only honest if it agrees with the inner one. The generated
-conformance test (`tests/conformance.test.ts`, the
-"hook ↔ executor agreement" suite) asserts that `hookcore.decide()` asks or
-denies exactly where the executor would refuse — drift between the two fails
-the bundle's own tests.
+So what does the hook buy? Two things:
+
+- **Fewer wasted turns.** A missing `confirm: true` or `idempotency_key` is
+  denied right in the harness, with the exact fix named, so the model repairs
+  the call on the same turn instead of spending a full round trip to learn what
+  the runtime would have told it.
+- **Real human authority.** The human-approval tier escalates to a person — a
+  model-supplied argument can never satisfy it.
+
+The outer ring is only honest if it agrees with the inner one. A generated
+conformance test (`tests/conformance.test.ts`, the "hook ↔ executor agreement"
+suite) checks that `hookcore.decide()` asks or denies exactly where the executor
+would refuse. If the two ever disagree, the bundle's own tests fail.
 
 ## What each harness does with the decision
 
-`allow` and `deny` map directly everywhere. The interesting case is `ask` — the
-human-approval tier, where a human must sign off and the model must not be able
-to self-approve:
+`allow` and `deny` map straight across in every harness. The interesting case is
+`ask` — the human-approval tier, where a person must sign off and the model must
+not be able to approve itself past the gate:
 
 | Harness | `ask` becomes | Why |
 | --- | --- | --- |
@@ -45,6 +51,6 @@ to self-approve:
 | Claude Code | `ask` | Escalates to the real permission dialog; the decision travels in the hook's JSON output. |
 | Codex | `deny` (fail-closed) | Codex's PreToolUse has no interactive ask, so the only honest enforcement is to block and route the operation through Codex's own human approval flow. |
 
-One more Antigravity nuance: its hooks fire for *every* tool, built-ins
-included, so the shim passes non-catalog tools straight through — the
-deny-unknown tamper guard applies only to this bundle's operations.
+One Antigravity detail: its hooks fire for *every* tool, built-ins included, so
+the shim passes any tool not in this bundle's catalog straight through. The
+deny-unknown guard applies only to this bundle's own operations.

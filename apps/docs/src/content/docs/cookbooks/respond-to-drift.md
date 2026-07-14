@@ -24,7 +24,7 @@ anvil sync openapi.yaml generated/payments --manifest anvil.yaml
 ```
 
 Pass the same `--manifest` you compile with — sync's in-memory recompile must
-see the same enrichment, or your own manifest guards will misreport as drift.
+see the same added facts, or your own manifest guards will misreport as drift.
 Unchanged content is a fast path (same source hash, no compile, no drift).
 
 A worked run, end to end — compile, simulate an upstream spec change, detect:
@@ -74,9 +74,10 @@ size:
 - **medium/low/info** — new operations (they arrive unapproved), pagination,
   documentation-only edits.
 
-The record also names the affected capabilities and which certifications are
-invalidated even though their bundle bytes are untouched — those must be
-re-earned with `anvil certify`.
+The record also names the affected capabilities (the business groups of
+operations, like *Refunds*) and which certifications — the signed check that a
+bundle is safe to ship — are invalidated even though their bundle bytes are
+untouched. Those must be re-earned with `anvil certify`.
 
 ## 3. Why a dropped confirmation is blocking
 
@@ -92,12 +93,13 @@ human previously required*. The stored contract said "gated"; the new one says
     [4b2322d17d4bd339] payments.refunds.create confirmation.human_approval: Human-approval requirement REMOVED (true → false).
 ```
 
-(A common accidental source of exactly this finding: the bundle was compiled
-with `--human-approval unsafe` but the escalation was never written into the
-manifest. Sync recompiles from spec + manifest only, so the flag-only guard
-looks dropped. The fix is to make the guard durable:
+:::note[A common false alarm]
+The bundle was compiled with `--human-approval unsafe`, but the escalation was
+never written into the manifest. Sync recompiles from spec + manifest only, so
+the flag-only guard looks dropped. The fix is to make the guard durable:
 `confirmation: { human_approval: true }` per operation — see
-[Require human approval](/anvil/cookbooks/require-human-approval/).)
+[Require human approval](/anvil/cookbooks/require-human-approval/).
+:::
 
 ## 4. Resolve it — two legitimate paths
 

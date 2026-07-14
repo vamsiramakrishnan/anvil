@@ -10,6 +10,11 @@ layer. **Anvil is a compiler.** This document is the north star: it states the
 boundary the product must own, and maps each principle to what exists in this
 repo today (`docs/ARCHITECTURE.md` is the how; this is the why and the where).
 
+> **How to read this page.** Each of the 12 principles states a design rule,
+> then a **Today** note grades how far the repo has gone toward it. The point of
+> the grade is honesty: it separates what you can rely on now from what the
+> architecture leaves room for later.
+
 Status legend used throughout:
 
 - **Implemented** — shipped and tested in this repo.
@@ -49,13 +54,14 @@ GitHub · Confluence · Postman · Examples · Incidents · Recorded Traffic
 CLI · MCP · Skill Package · Cloud Run Runtime · Mocks · Tests · Docs · Deploy
 ```
 
-**The compiler is the product. AIR is the product. Everything else is
-generated, and everything else is replaceable.** This keeps the architecture
-clean for years instead of accumulating runtime complexity.
+**The compiler is the product. AIR — the one shared model everything is built
+from — is the product. Everything else is generated, and everything else is
+replaceable.** This keeps the architecture clean for years instead of piling up
+runtime complexity.
 
 > **Today.** The compiler loop (`parse → normalize → classify → enrich →
 > validate → AIR → generate`) is implemented in `@anvil/compiler`, and AIR is
-> the single canonical model in `@anvil/air`. The deployed unit is a *thin*,
+> the single shared model in `@anvil/air`. The deployed unit is a *thin*,
 > stateless runtime — nothing on the hot path parses specs or runs an LLM. The
 > boundary is held: **Anvil compiles AIR; it is not a platform.**
 
@@ -101,8 +107,9 @@ plugins evolve.
 > **Today.** The harness (`@anvil/harness`) is an **MCP client** — it connects
 > to the MCP servers GitHub/GitLab/Confluence/Notion/Postman already publish
 > rather than building bespoke API clients (`mcp-source.ts`, `sources.ts`). Each
-> source contributes **evidence**; none owns the truth. **Seam exists** for any
-> new MCP-published source.
+> source contributes **evidence** — a fact plus where it came from and how much
+> to trust it; none owns the truth. **Seam exists** for any new MCP-published
+> source.
 
 ---
 
@@ -114,8 +121,9 @@ not understand retries, idempotency, business capabilities, workflows, side
 effects, operational risk, approval requirements, SLAs, ownership, confidence,
 documentation quality, examples, or incidents.
 
-**AIR should understand all of those.** AIR is not an abstract syntax tree — it
-is a *semantic graph* describing how an enterprise capability behaves:
+**AIR should understand all of those.** AIR is not a parse tree — it is a graph
+of *meaning*, describing how an enterprise capability (a group of related
+operations, like *Refunds* or *Payments*) actually behaves:
 
 ```
 Refund Payment
@@ -132,9 +140,9 @@ Once AIR carries this, every generator becomes straightforward.
 
 > **Today.** Each AIR operation already carries `effect` (read/mutation, risk,
 > reversibility), `idempotency`, `retries`, `confirmation`, `auth`, `bindings`
-> (one op → three surfaces), `state`, and `evidence` with an aggregate
-> confidence. **Implemented.** SLAs, ownership, and incident linkage are
-> **boundary** — additive fields on the same model.
+> (one operation, three tools — CLI, MCP, skill), `state`, and `evidence` with an
+> aggregate confidence. **Implemented.** SLAs, ownership, and incident linkage
+> are **boundary** — additive fields on the same model.
 
 ---
 
@@ -150,8 +158,8 @@ Think `payments.skill`, not `payments.md`.
 > **Today.** `anvil package skill` emits a progressive-disclosure package
 > (`SKILL.md` + `reference/` + `evals/`), and the deployed MCP server serves the
 > skill and CLI as **MCP resources** (`anvil://skill/…`, `anvil://cli/…`) so an
-> agent materializes them adjacent to itself. **Implemented.** Bundling
-> workflows and policies *into* the skill package is **boundary** (see §6).
+> agent can load them right next to itself. **Implemented.** Bundling workflows
+> and policies *into* the skill package is **boundary** (see §6).
 
 ---
 

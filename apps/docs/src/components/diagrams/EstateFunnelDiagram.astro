@@ -1,0 +1,109 @@
+---
+// The estate funnel: the gateway's whole catalog narrows, stage by stage, to
+// the few operations an agent actually sees. A single funnel silhouette carries
+// the narrowing; stage names sit above, counts inside, glosses below. Inline
+// SVG so every color rides the theme's CSS variables and flips in light/dark.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 380"
+    role="img"
+    aria-label="A funnel that narrows from left to right. Roughly 800 APIs sit behind the gateway. Inventory lists all of them cheaply. You import only the handful that matter. Those are grouped into a few capabilities. The agent ends up seeing about five operations."
+  >
+    <defs>
+      <marker id="ef-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+    </defs>
+
+    <text x="12" y="24" class="d-label">from the gateway's whole catalog to what the agent sees</text>
+
+    <!-- stage names -->
+    <text x="100" y="60" text-anchor="middle" class="d-stage">the estate</text>
+    <text x="300" y="60" text-anchor="middle" class="d-stage">inventory</text>
+    <text x="500" y="60" text-anchor="middle" class="d-stage">import</text>
+    <text x="700" y="60" text-anchor="middle" class="d-stage">capabilities</text>
+    <text x="900" y="60" text-anchor="middle" class="d-stage">the agent</text>
+
+    <!-- funnel silhouette -->
+    <path
+      d="M100 76 L300 76 L500 138 L700 158 L900 176 L900 208 L700 226 L500 244 L300 300 L100 300 Z"
+      class="d-funnel"
+    />
+
+    <!-- stage dividers -->
+    <path d="M200 76 V300" class="d-divider" />
+    <path d="M400 107 V283" class="d-divider" />
+    <path d="M600 148 V235" class="d-divider" />
+    <path d="M800 167 V217" class="d-divider" />
+
+    <!-- flow arrows along the neck -->
+    <path d="M188 188 H212" class="d-flow" marker-end="url(#ef-arrow)" />
+    <path d="M388 188 H412" class="d-flow" marker-end="url(#ef-arrow)" />
+    <path d="M588 188 H612" class="d-flow" marker-end="url(#ef-arrow)" />
+    <path d="M788 192 H812" class="d-flow" marker-end="url(#ef-arrow)" />
+
+    <!-- counts -->
+    <text x="100" y="196" text-anchor="middle" class="d-count-big">≈800</text>
+    <text x="300" y="196" text-anchor="middle" class="d-count-big">800</text>
+    <text x="500" y="196" text-anchor="middle" class="d-count-mid">handful</text>
+    <text x="700" y="196" text-anchor="middle" class="d-count-mid">a few</text>
+    <text x="900" y="196" text-anchor="middle" class="d-count-end">5</text>
+
+    <!-- glosses -->
+    <text x="100" y="330" text-anchor="middle" class="d-gloss">APIs behind the gateway</text>
+    <text x="300" y="330" text-anchor="middle" class="d-gloss">list them all · cheap</text>
+    <text x="500" y="330" text-anchor="middle" class="d-gloss">the handful that matter</text>
+    <text x="700" y="330" text-anchor="middle" class="d-gloss">grouped · refunds, payments</text>
+    <text x="900" y="330" text-anchor="middle" class="d-gloss">operations it can call</text>
+
+    <text x="12" y="366" class="d-footnote">the estate stays 800 wide; only a few operations ever reach an agent.</text>
+  </svg>
+  <figcaption>fig 10 · 800 APIs in the estate, five in the agent's hands</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram { margin: 1.75rem 0; overflow-x: auto; }
+  .anvil-diagram svg { min-width: 760px; width: 100%; height: auto; display: block; }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-stage {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-funnel { fill: var(--sl-color-gray-6); stroke: var(--sl-color-accent); stroke-width: 1.25; }
+  .d-divider { stroke: var(--sl-color-gray-5); stroke-width: 1; fill: none; }
+  .d-flow { stroke: var(--sl-color-gray-4); stroke-width: 1; fill: none; }
+  .d-count-big { font-family: var(--ge-display-font); font-size: 22px; font-weight: 700; fill: var(--sl-color-white); }
+  .d-count-mid { font-family: var(--ge-display-font); font-size: 16px; font-weight: 700; fill: var(--sl-color-text-accent); }
+  .d-count-end { font-family: var(--ge-display-font); font-size: 22px; font-weight: 700; fill: var(--ge-status-passed-text); }
+  .d-gloss { font-size: 11.5px; fill: var(--sl-color-gray-3); }
+  .d-footnote {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+</style>
