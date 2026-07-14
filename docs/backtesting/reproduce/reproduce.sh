@@ -54,10 +54,16 @@ reproduce_one () {
   fmt="$(echo "$line" | cut -f2)"; url="$(echo "$line" | cut -f3)"
   list="$(echo "$line" | cut -f4)"; trimmer="$(echo "$line" | cut -f5)"
 
-  # Non-REST protocols (GraphQL SDL, proto) are compiled as-is: no JSON
-  # conversion, no path trim — the adapter lowers the raw schema directly.
-  if [ "$fmt" = "graphql" ] || [ "$fmt" = "protobuf" ]; then
-    local ext="graphql"; [ "$fmt" = "protobuf" ] && ext="proto"
+  # Non-REST protocols (GraphQL SDL, proto, OData $metadata/EDMX, SOAP/WSDL) are
+  # compiled as-is: no JSON conversion, no path trim — the adapter lowers the raw
+  # schema directly. XML formats (odata/wsdl) MUST bypass the REST `to_json`
+  # path, which would corrupt their bytes; the extension is preserved so
+  # detection stays authoritative.
+  if [ "$fmt" = "graphql" ] || [ "$fmt" = "protobuf" ] || [ "$fmt" = "odata" ] || [ "$fmt" = "wsdl" ]; then
+    local ext="graphql"
+    [ "$fmt" = "protobuf" ] && ext="proto"
+    [ "$fmt" = "odata" ] && ext="edmx"
+    [ "$fmt" = "wsdl" ] && ext="wsdl"
     local raw="$WORK/$sys.$ext"
     echo "→ $sys ($fmt): fetching $url"
     curl -fsSL "$url" -o "$raw"

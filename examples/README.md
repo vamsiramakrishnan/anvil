@@ -1,4 +1,4 @@
-# Anvil examples — one pipeline, four protocols
+# Anvil examples — one pipeline, five protocols
 
 Each directory here is a **complete, diverse API** plus the Anvil manifest that
 enriches the semantics its source format cannot express. They exist so you (or an
@@ -8,11 +8,17 @@ against a generated **mock simulator** — without touching a real upstream.
 | Example | Format | Source | Highlights |
 | --- | --- | --- | --- |
 | `payments/` | OpenAPI 3.x | `openapi.yaml` | Financial refunds, idempotency keys, workflows |
+| `salesforce/` | OpenAPI 3.x | `openapi.yaml` | CRM accounts/contacts, per-object risk posture |
 | `graphql/`  | GraphQL SDL | `schema.graphql` | Queries→reads, `checkout` (financial), `cancelOrder` (destructive) |
 | `grpc/`     | gRPC / proto3 | `orders.proto` | `Get*`/`List*`→reads, `PlaceOrder` (financial), maps/enums/nested messages |
 | `soap/`     | SOAP / WSDL 1.1 | `bank.wsdl` | `Get*`/`List*`→reads, `TransferFunds` (financial), `CloseAccount` (destructive) |
+| `sap/`      | OData v2 (`$metadata`/EDMX) | `metadata.edmx` | SAP business-partner entities, composite keys, `sap:deletable=false` annotations |
 
-All four compile through the **same** normalize → classify → validate → generate
+For **real** enterprise specifications (NetSuite SOAP, live OData v2/v4, gRPC)
+compiled through the same pipeline, see the backtest corpus
+([`../docs/backtesting/ENTERPRISE_SYSTEMS.md`](../docs/backtesting/ENTERPRISE_SYSTEMS.md)).
+
+All of these compile through the **same** normalize → classify → validate → generate
 pipeline. Non-REST protocols are *lowered* into a pre-dereference OpenAPI 3.0
 document by the adapters in `packages/compiler/src/protocols/`, so effect,
 idempotency, retry-safety, confirmation, and every generated artifact behave

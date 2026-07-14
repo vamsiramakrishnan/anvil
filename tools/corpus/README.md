@@ -8,7 +8,7 @@ The job of this directory is to find bug #23 before a user does.
 Three modes, one runner (plain Node ESM, no build step):
 
 ```bash
-node tools/corpus/run.mjs quick                      # 18 known systems, all oracles, gates CI
+node tools/corpus/run.mjs quick                      # 23 known systems, all oracles, gates CI
 node tools/corpus/run.mjs sweep --limit 150 --seed 42  # random slice of apis.guru, invariants only
 node tools/corpus/run.mjs estates                    # gateway estates, policy accounting, gates CI (offline)
 ```
@@ -19,6 +19,12 @@ additionally need network access — which is why they're **not** wired into
 in `ci.yml` (and rides along nightly for its report).
 
 ## Quick mode
+
+The corpus spans REST/OpenAPI, Swagger 2.0, Google Discovery, GraphQL, gRPC,
+**OData v2/v4**, and **SOAP/WSDL** — the last two added to exercise the formats
+enterprise back-office systems (SAP, Dynamics, NetSuite, Workday) actually
+publish. See [`../../docs/backtesting/ENTERPRISE_SYSTEMS.md`](../../docs/backtesting/ENTERPRISE_SYSTEMS.md)
+for the enterprise catalog and the reproduce recipes for credential-gated specs.
 
 Runs every system in `docs/backtesting/reproduce/systems.tsv` through the
 existing recipe (`reproduce.sh` with `PREPARE_ONLY=1` for fetch + trim, so
@@ -89,7 +95,7 @@ than being lumped into `ok` or `crash`.)
 | `round-trip` | `airFromYaml(airToYaml(doc))` parses and its `contractHash` equals the original's | AIR is the canonical model; if YAML round-trip changes the contract, every downstream artifact silently disagrees |
 | `determinism` | compiling the same **locked source** twice yields byte-identical `air.json` | reproducible builds are the basis for contract hashing and diffing. No volatile-field normalization is currently needed — verified byte-stable across all 18 systems at baseline time. If a volatile field is ever introduced, normalize it in `determinism()` and document it here. |
 | `lint` | `anvil lint <bundle>` exits 0 (warnings allowed) | the generated bundle must satisfy Anvil's own consistency rules |
-| `naming-differential` | quick only: fixtures in `expected/<system>.json` pin `operationId → mcp.toolName` and `effect.kind`/`effect.risk` for five systems (slack, twilio, jira, github_gql, temporal) | tool naming and effect/risk classification are the semantics agents route on; these fixtures were validated in the manual backtests and must never drift silently |
+| `naming-differential` | quick only: fixtures in `expected/<system>.json` pin `operationId → mcp.toolName` and `effect.kind`/`effect.risk` for nine systems (slack, twilio, jira, github_gql, temporal, plus the enterprise formats: netsuite (SOAP), odata_trippin (OData v4), odata_northwind (OData v2), etcd (gRPC)) | tool naming and effect/risk classification are the semantics agents route on; these fixtures were validated in the manual backtests and must never drift silently |
 | `op-count` | quick only: operation count vs baseline. **Decrease ⇒ fail** (operations silently dropped); increase ⇒ warning (vendor added ops — drift, not a bug) | dropping operations is one of the quietest possible compiler failures |
 
 ## `baseline.json`
