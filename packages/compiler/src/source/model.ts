@@ -50,6 +50,7 @@ export const EntrypointFormat = z.enum([
   "wsdl",
   "discovery",
   "postman",
+  "odata",
 ]);
 export type EntrypointFormat = z.infer<typeof EntrypointFormat>;
 

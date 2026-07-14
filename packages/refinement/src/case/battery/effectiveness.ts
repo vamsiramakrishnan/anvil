@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { type AirDocument, loadAirDocument } from "@anvil/air";
 import { buildRefinementPlan } from "../../plan.js";
 import { skillFor } from "../../skills/registry.js";
-import { targetKey } from "../../target.js";
 import type { AgentDriver } from "../driver.js";
 import { closeCase, readInvestigation } from "../executor.js";
 import type { InvestigationStatus } from "../investigation.js";

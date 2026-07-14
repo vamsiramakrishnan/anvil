@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A representative slice of SAP S/4HANA's API_BUSINESS_PARTNER OData v2
+     service ($metadata). This is the REST-style surface Anvil compiles; SAP's
+     "Unlimited ABAP add-on" MCP server auto-generates its tools from the same
+     OData metadata, which Anvil reconciles against. Trimmed to a handful of
+     properties per entity for readability; the shape (entity types, keys,
+     entity sets, sap: capability annotations) is faithful. -->
+<edmx:Edmx Version="1.0"
+  xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx"
+  xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"
+  xmlns:sap="http://www.sap.com/Protocols/SAPData">
+  <edmx:DataServices m:DataServiceVersion="2.0">
+    <Schema Namespace="API_BUSINESS_PARTNER" xmlns="http://schemas.microsoft.com/ado/2008/09/edm">
+
+      <EntityType Name="A_BusinessPartner" sap:content-version="1">
+        <Key><PropertyRef Name="BusinessPartner"/></Key>
+        <Property Name="BusinessPartner" Type="Edm.String" Nullable="false" MaxLength="10" sap:label="Business Partner"/>
+        <Property Name="BusinessPartnerFullName" Type="Edm.String" MaxLength="81" sap:label="Full Name"/>
+        <Property Name="BusinessPartnerCategory" Type="Edm.String" MaxLength="1" sap:label="Category"/>
+        <Property Name="OrganizationBPName1" Type="Edm.String" MaxLength="40" sap:label="Name"/>
+        <Property Name="CreationDate" Type="Edm.DateTime" sap:label="Created On"/>
+        <Property Name="IsMarkedForArchiving" Type="Edm.Boolean" sap:label="Archiving Flag"/>
+      </EntityType>
+
+      <EntityType Name="A_BusinessPartnerAddress" sap:content-version="1">
+        <Key>
+          <PropertyRef Name="BusinessPartner"/>
+          <PropertyRef Name="AddressID"/>
+        </Key>
+        <Property Name="BusinessPartner" Type="Edm.String" Nullable="false" MaxLength="10"/>
+        <Property Name="AddressID" Type="Edm.String" Nullable="false" MaxLength="10"/>
+        <Property Name="CityName" Type="Edm.String" MaxLength="40" sap:label="City"/>
+        <Property Name="PostalCode" Type="Edm.String" MaxLength="10" sap:label="Postal Code"/>
+        <Property Name="Country" Type="Edm.String" MaxLength="3" sap:label="Country"/>
+      </EntityType>
+
+      <EntityType Name="A_Customer" sap:content-version="1">
+        <Key><PropertyRef Name="Customer"/></Key>
+        <Property Name="Customer" Type="Edm.String" Nullable="false" MaxLength="10" sap:label="Customer"/>
+        <Property Name="CustomerName" Type="Edm.String" MaxLength="80" sap:label="Name"/>
+        <Property Name="CustomerAccountGroup" Type="Edm.String" MaxLength="4"/>
+      </EntityType>
+
+      <EntityContainer Name="API_BUSINESS_PARTNER_Entities" m:IsDefaultEntityContainer="true">
+        <!-- Business Partner: read/create/update, but NOT deletable via this API. -->
+        <EntitySet Name="A_BusinessPartner" EntityType="API_BUSINESS_PARTNER.A_BusinessPartner"
+          sap:content-version="1" sap:creatable="true" sap:updatable="true" sap:deletable="false" sap:pageable="true"/>
+        <!-- Addresses: full CRUD. -->
+        <EntitySet Name="A_BusinessPartnerAddress" EntityType="API_BUSINESS_PARTNER.A_BusinessPartnerAddress"
+          sap:content-version="1" sap:creatable="true" sap:updatable="true" sap:deletable="true"/>
+        <!-- Customer master: read-only projection (not creatable/updatable/deletable). -->
+        <EntitySet Name="A_Customer" EntityType="API_BUSINESS_PARTNER.A_Customer"
+          sap:content-version="1" sap:creatable="false" sap:updatable="false" sap:deletable="false" sap:pageable="true"/>
+      </EntityContainer>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>

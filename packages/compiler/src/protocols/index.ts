@@ -14,11 +14,12 @@ import type { OpenApiDocument } from "../parse.js";
 import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
 import { adaptProto, type ProtoImportResolver } from "./grpc.js";
+import { adaptOData } from "./odata.js";
 import { adaptPostman, isPostmanCollection, postmanSchemaVersion } from "./postman.js";
 import { adaptWsdl, type WsdlImportResolver } from "./wsdl.js";
 
 /** The non-REST source formats Anvil can lower. Aligns with AIR's SourceKind. */
-export type ProtocolFormat = "graphql" | "protobuf" | "wsdl" | "discovery" | "postman";
+export type ProtocolFormat = "graphql" | "protobuf" | "wsdl" | "discovery" | "postman" | "odata";
 
 export interface DetectedProtocol {
   format: ProtocolFormat;
@@ -31,6 +32,7 @@ const EXT_FORMAT: Record<string, ProtocolFormat> = {
   graphqls: "graphql",
   proto: "protobuf",
   wsdl: "wsdl",
+  edmx: "odata",
   // Google Discovery and Postman collections are `.json`; detected by content
   // (Postman also honors its `.postman_collection.json` filename convention).
 };
@@ -69,7 +71,21 @@ export function detectProtocolFormat(path: string, text: string): DetectedProtoc
 function versionFor(format: ProtocolFormat, text: string): string {
   if (format === "protobuf") return /proto3/.test(text) ? "proto3" : "proto2";
   if (format === "wsdl") return /wsdl\/2/.test(text) ? "2.0" : "1.1";
+  if (format === "odata") return odataVersion(text);
   return "1.0";
+}
+
+/**
+ * OData version from the EDMX wrapper. A `Version="4.0"` on <edmx:Edmx> is v4;
+ * a DataServiceVersion of 2.0 (or the 2007 EDM namespace) is the v2 dialect SAP
+ * publishes most. Default to 4.0 when the document is unspecific.
+ */
+function odataVersion(text: string): string {
+  const head = text.slice(0, 4000);
+  if (/<(\w+:)?Edmx[^>]*\bVersion\s*=\s*["']4\.0["']/.test(head)) return "4.0";
+  if (/DataServiceVersion\s*=\s*["']2\.0["']/.test(head) || /edm\/2007\/05/.test(head))
+    return "2.0";
+  return "4.0";
 }
 
 /** Content-only detection for sources that arrive without a filename. */
@@ -82,6 +98,11 @@ function sniffContent(text: string): DetectedProtocol | undefined {
   // proto3: a syntax pragma, or a service/message with an rpc.
   if (/^\s*syntax\s*=\s*["']proto[23]["']/m.test(head)) {
     return { format: "protobuf", version: /proto3/.test(head) ? "proto3" : "proto2" };
+  }
+  // OData $metadata: an EDMX envelope. Checked before WSDL — both are XML, but
+  // only EDMX carries the <Edmx> root.
+  if (/<(\w+:)?Edmx[\s>]/.test(head)) {
+    return { format: "odata", version: odataVersion(head) };
   }
   // WSDL: an XML <definitions> root, optionally namespaced.
   if (/<(\w+:)?definitions[\s>]/.test(head) && /wsdl/.test(head)) {
@@ -132,9 +153,11 @@ export function adaptProtocol(
       return adaptDiscovery(text);
     case "postman":
       return adaptPostman(text);
+    case "odata":
+      return adaptOData(text, title);
   }
 }
 
 export type { ProtoImportResolver } from "./grpc.js";
 export type { WsdlImportResolver } from "./wsdl.js";
-export { adaptDiscovery, adaptGraphql, adaptPostman, adaptProto, adaptWsdl };
+export { adaptDiscovery, adaptGraphql, adaptOData, adaptPostman, adaptProto, adaptWsdl };

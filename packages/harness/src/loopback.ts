@@ -1,11 +1,21 @@
-import { type ChildProcess, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { loadAirDocument, type Operation, operationInputSchema, propKey } from "@anvil/air";
-import { exampleInput, type MockScenario } from "@anvil/generators";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { loadAirDocument, type Operation, operationInputSchema } from "@anvil/air";
+import type { MockScenario } from "@anvil/generators";
 import { z } from "zod";
+import {
+  argsFor,
+  type CaptureRecord,
+  diff,
+  ensureBundleNodeModules,
+  expectedWire,
+  MockControl,
+  parseJson,
+  startMockServer,
+  trim,
+  wireable,
+  withTimeout,
+} from "./bundle-driver.js";
 import { connectSource, type McpSource } from "./mcp-source.js";
 
 /**
@@ -54,23 +64,6 @@ export interface LoopbackOptions {
   callTimeoutMs?: number;
   /** Extra environment for the spawned MCP server (e.g. real auth material). */
   env?: Record<string, string>;
-}
-
-/** One captured wire request, as recorded by the generated mock's ring buffer. */
-interface CaptureRecord {
-  method: string;
-  url: string;
-  path: string;
-  query: Record<string, string>;
-  headers: Record<string, string>;
-  contentType: string | null;
-  body: unknown;
-  matchedOpId: string | null;
-  matchedCandidates: string[];
-  pathParams: Record<string, string> | null;
-  validation: { ok: boolean; missing: string[]; invalid: string[] };
-  /** What the mock answered — carries the NAME of the scenario it served. */
-  response: { status: number; kind: string; scenario?: string } | null;
 }
 
 /** Run the loopback self-test over a generated bundle directory. */
@@ -536,261 +529,5 @@ async function checkRetryMutationGuard(
     };
   } catch (err) {
     return failCheck(id, op.id, String(err));
-  }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Wire expectations                                                           */
-/* -------------------------------------------------------------------------- */
-
-/** Redacted by the mock; their captured value is never comparable. */
-const REDACTED_HEADERS = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "x-api-key",
-  "api-key",
-]);
-
-/**
- * Synthesized arguments for one invocation. Idempotency keys are made unique
- * per call — replaying the example key would let the runtime's ledger serve the
- * previous result without touching the wire, which is correct behavior but
- * would starve the capture-based assertions.
- */
-function argsFor(op: Operation, tag: string): Record<string, unknown> {
-  const args = exampleInput(op);
-  if (typeof args.idempotency_key === "string") {
-    args.idempotency_key = `loopback-${tag}-${randomUUID()}`;
-  }
-  return args;
-}
-
-/**
- * A GET operation that still carries a request body cannot be sent by fetch at
- * all; probing one for error/retry behavior would only re-report its fidelity
- * failure under the wrong check id. Current adapters emit truthful POST
- * methods, so this only guards bundles compiled before that change.
- */
-function wireable(op: Operation): boolean {
-  const method = (op.sourceRef.method ?? "get").toLowerCase();
-  return method !== "get" || (!op.input.body && !op.input.params.some((p) => p.in === "body"));
-}
-
-interface ExpectedWire {
-  path: string;
-  query: Record<string, string>;
-  headers: Record<string, string>;
-  body: unknown;
-}
-
-/**
- * The wire request the AIR contract promises for these args. Derived from AIR
- * here, independently of the executor's own request builder — the self-test is
- * an oracle over the contract, not a mirror of the implementation.
- */
-function expectedWire(op: Operation, args: Record<string, unknown>): ExpectedWire {
-  let path = op.sourceRef.path ?? "/";
-  const query: Record<string, string> = {};
-  const headers: Record<string, string> = {};
-  const fields: Record<string, unknown> = {};
-  let hasBody = false;
-  for (const p of op.input.params) {
-    const value = args[propKey(p.name)];
-    if (value === undefined || value === null) continue;
-    if (p.in === "path") path = path.replace(`{${p.name}}`, encodeURIComponent(String(value)));
-    else if (p.in === "query") query[p.name] = String(value);
-    else if (p.in === "header" && !REDACTED_HEADERS.has(p.name.toLowerCase())) {
-      headers[p.name.toLowerCase()] = String(value);
-    } else if (p.in === "body") {
-      fields[p.name] = value;
-      hasBody = true;
-    }
-  }
-  let body: unknown;
-  const b = op.input.body;
-  if (b?.projection === "fields") {
-    for (const f of b.fields) {
-      const value = args[propKey(f.name)];
-      if (value === undefined || value === null) continue;
-      fields[f.name] = value;
-      hasBody = true;
-    }
-  } else if (b && args.body !== undefined && args.body !== null) {
-    body = args.body;
-  }
-  if (body === undefined && hasBody) body = fields;
-  if (
-    op.idempotency.mechanism === "header" &&
-    op.idempotency.key &&
-    typeof args.idempotency_key === "string" &&
-    !REDACTED_HEADERS.has(op.idempotency.key.toLowerCase())
-  ) {
-    headers[op.idempotency.key.toLowerCase()] = args.idempotency_key;
-  }
-  return { path, query, headers, body };
-}
-
-/** Structural diff producing loss entries with JSON paths; walks both sides. */
-function diff(sent: unknown, received: unknown, path: string, losses: LoopbackLoss[]): void {
-  if (isRecord(sent) && isRecord(received)) {
-    for (const key of new Set([...Object.keys(sent), ...Object.keys(received)])) {
-      diff(sent[key], received[key], `${path}.${key}`, losses);
-    }
-    return;
-  }
-  if (Array.isArray(sent) && Array.isArray(received)) {
-    if (sent.length !== received.length) {
-      losses.push({ path: `${path}.length`, sent: sent.length, received: received.length });
-      return;
-    }
-    for (let i = 0; i < sent.length; i++) diff(sent[i], received[i], `${path}[${i}]`, losses);
-    return;
-  }
-  if (!Object.is(sent, received)) losses.push({ path, sent, received });
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-function trim(text: string): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > 300 ? `${flat.slice(0, 300)}…` : flat;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Mock control + process plumbing                                             */
-/* -------------------------------------------------------------------------- */
-
-/** Client for the generated mock's reserved /__anvil/ control surface. */
-class MockControl {
-  constructor(private readonly base: string) {}
-
-  async capture(): Promise<CaptureRecord[]> {
-    const res = await fetch(`${this.base}/__anvil/capture`);
-    if (!res.ok) throw new Error(`mock capture failed with ${res.status}`);
-    const data = (await res.json()) as { requests: CaptureRecord[] };
-    return data.requests;
-  }
-
-  reset(): Promise<void> {
-    return this.post("/__anvil/reset", {});
-  }
-
-  scenario(name: string | null): Promise<void> {
-    return this.post("/__anvil/scenario", { name });
-  }
-
-  fault(opId: string, status: number, times: number): Promise<void> {
-    return this.post("/__anvil/fault", { opId, status, times });
-  }
-
-  private async post(path: string, body: unknown): Promise<void> {
-    const res = await fetch(`${this.base}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`mock control ${path} failed with ${res.status}`);
-  }
-}
-
-/** Boot mock/server.mjs on an ephemeral port and parse its ready line. */
-function startMockServer(dir: string): Promise<{ port: number; child: ChildProcess }> {
-  const child = spawn(process.execPath, [join(dir, "mock", "server.mjs")], {
-    env: { ...process.env, PORT: "0", ANVIL_MOCK_SCENARIO: "" },
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  return new Promise((resolvePromise, reject) => {
-    let buffer = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error("mock server did not report listening within 15s"));
-    }, 15_000);
-    child.stderr?.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString("utf8");
-      for (const line of buffer.split("\n")) {
-        const event = parseJson(line) as { event?: string; port?: number } | undefined;
-        if (event?.event === "listening" && typeof event.port === "number") {
-          clearTimeout(timer);
-          resolvePromise({ port: event.port, child });
-          return;
-        }
-      }
-    });
-    child.on("exit", (code) => {
-      clearTimeout(timer);
-      reject(new Error(`mock server exited before listening (code ${code})`));
-    });
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise((resolvePromise, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-    promise.then(
-      (v) => {
-        clearTimeout(timer);
-        resolvePromise(v);
-      },
-      (e) => {
-        clearTimeout(timer);
-        reject(e);
-      },
-    );
-  });
-}
-
-/** What the generated mcp/server.js imports at runtime. */
-const BUNDLE_RUNTIME_DEPS = [
-  "@anvil/air",
-  "@anvil/runtime",
-  "@anvil/mcp-runtime",
-  "@modelcontextprotocol/sdk",
-] as const;
-
-/**
- * A deployed bundle installs its own package.json dependencies; a bundle under
- * self-test usually has not been installed. Link the toolchain's own copies of
- * the runtime packages into the bundle so `node mcp/server.js` resolves them.
- * No-op for every dependency that is already present.
- */
-function ensureBundleNodeModules(dir: string): void {
-  for (const name of BUNDLE_RUNTIME_DEPS) {
-    const link = join(dir, "node_modules", ...name.split("/"));
-    if (existsSync(link)) continue;
-    mkdirSync(dirname(link), { recursive: true });
-    symlinkSync(packageDirOf(name), link, "dir");
-  }
-}
-
-/**
- * Locate a dependency's package directory by walking this module's own
- * node_modules chain (ESM-safe: `require.resolve` cannot resolve packages whose
- * exports map has no "require" condition, which is true of every @anvil/*).
- */
-function packageDirOf(name: string): string {
-  let current = dirname(fileURLToPath(import.meta.url));
-  while (true) {
-    const candidate = join(current, "node_modules", ...name.split("/"));
-    if (existsSync(join(candidate, "package.json"))) return realpathSync(candidate);
-    const parent = dirname(current);
-    if (parent === current) {
-      throw new Error(`Cannot locate ${name} in any node_modules above ${import.meta.url}.`);
-    }
-    current = parent;
   }
 }

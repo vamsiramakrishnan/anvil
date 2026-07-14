@@ -1,6 +1,6 @@
 ---
 name: anvil
-description: Use this skill to operate Anvil — compile API specifications (OpenAPI 3.x, Swagger 2.0, Google Discovery, GraphQL SDL, gRPC/proto3 (multi-file), SOAP/WSDL (multi-file), Postman Collections) into agent-ready CLI + MCP + skill bundles, enrich unsafe-operation semantics, approve operations, and deploy. Use when turning an API specification into safe agent tools.
+description: Use this skill to operate Anvil — compile API specifications (OpenAPI 3.x, Swagger 2.0, Google Discovery, GraphQL SDL, gRPC/proto3 (multi-file), SOAP/WSDL (multi-file), OData v2/v4 ($metadata/EDMX), Postman Collections) into agent-ready CLI + MCP + skill bundles, enrich unsafe-operation semantics, approve operations, and deploy. Use when turning an API specification into safe agent tools.
 ---
 
 # Operating Anvil
@@ -16,6 +16,7 @@ to drive Anvil safely, not to invent semantics.
 - GraphQL SDL
 - gRPC/proto3 (multi-file)
 - SOAP/WSDL (multi-file)
+- OData v2/v4 ($metadata/EDMX)
 - Postman Collections
 
 Every source format lands in the same canonical model (AIR) and the same

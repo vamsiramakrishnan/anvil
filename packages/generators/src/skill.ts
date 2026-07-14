@@ -15,6 +15,7 @@ export const ANVIL_SOURCE_FORMATS = [
   "GraphQL SDL",
   "gRPC/proto3 (multi-file)",
   "SOAP/WSDL (multi-file)",
+  "OData v2/v4 ($metadata/EDMX)",
   "Postman Collections",
 ] as const;
 
