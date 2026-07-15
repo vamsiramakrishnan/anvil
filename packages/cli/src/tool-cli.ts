@@ -372,14 +372,16 @@ async function invoke(
     throw err;
   }
 
-  // skill → CLI → MCP: when a target is configured, this invocation is routed
-  // through an MCP server (local stdio or remote SSE) instead of executing
-  // directly. The server holds the credentials, egress allowlist, and idempotency
-  // ledger; the CLI just maps flags → tool args (carrying the safety controls as
-  // reserved anvil_* args) and renders the result. Unset ⇒ direct execution.
-  const mcpTarget =
-    typeof flags.mcp === "string" ? flags.mcp : (deps.env ?? process.env).ANVIL_MCP_TARGET;
-  if (typeof mcpTarget === "string" && mcpTarget.length > 0) {
+  // skill → CLI → MCP: where this invocation runs is a per-call runtime choice.
+  //   (unset)                    → execute directly (the default)
+  //   --mcp stdio  | =stdio      → route through the bundle's LOCAL mcp/server.js
+  //   --mcp <sse-url>            → route through a REMOTE SSE server
+  //   --mcp direct | off | none  → force DIRECT, overriding an ANVIL_MCP_TARGET env
+  // The per-call flag always wins over the env default, so a user who set
+  // ANVIL_MCP_TARGET can still do a one-off direct (or differently-targeted) call.
+  // A bare `--mcp` (no value) means "route locally" — the common intent.
+  const mcpTarget = resolveMcpTarget(flags.mcp, (deps.env ?? process.env).ANVIL_MCP_TARGET);
+  if (mcpTarget) {
     return invokeViaMcp(
       op,
       input,
@@ -437,6 +439,21 @@ async function invoke(
   renderMissingFlags(result.envelope, op);
   io.err(JSON.stringify(result.envelope, null, 2));
   return exitCodeFor(result.envelope.error.code);
+}
+
+/** Runtime target selection: resolve the `--mcp` flag (which wins) against the
+ *  `ANVIL_MCP_TARGET` env default into a concrete target, or `undefined` for
+ *  direct execution. `direct`/`off`/`none` (or empty) mean direct — the per-call
+ *  escape hatch when an env default is set; a bare `--mcp` means route locally. */
+const DIRECT_TARGETS = new Set(["direct", "off", "none", ""]);
+function resolveMcpTarget(
+  flag: string | boolean | undefined,
+  env: string | undefined,
+): string | undefined {
+  const raw = flag === true ? "stdio" : typeof flag === "string" ? flag : env;
+  if (typeof raw !== "string") return undefined;
+  const t = raw.trim();
+  return t.length === 0 || DIRECT_TARGETS.has(t.toLowerCase()) ? undefined : t;
 }
 
 interface McpSafety {
@@ -1026,7 +1043,8 @@ function serviceHelp(air: AirDocument): string {
     `  --help --schema --examples --errors --policy --explain --dry-run --json --trace`,
     `  --confirm --idempotency-key <k> --auth-profile <p> --timeout <ms> --no-retries`,
     `  --body '<json>'  (for operations whose body is not a flat object)`,
-    `  --mcp stdio | <sse-url>  (route this call through a local or remote MCP server)`,
+    `  --mcp stdio | <sse-url> | direct  (per-call: run via a local/remote MCP server,`,
+    `                                     or force direct; overrides ANVIL_MCP_TARGET)`,
     `\nCapabilities:`,
     capabilitiesTable(air),
     `\nUnsafe mutations refuse to run without --confirm. That refusal is correct.`,
