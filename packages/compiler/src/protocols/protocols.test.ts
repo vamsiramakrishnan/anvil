@@ -669,6 +669,43 @@ describe("Google Discovery adapter", () => {
     expect(doc.paths?.["/gmail/v1/users/{userId}/messages/send"]?.post).toBeDefined();
   });
 
+  it("normalizes RFC 6570 reserved-expansion `{+name}` path templates to `{name}` so params bind", () => {
+    // BigQuery-shaped: `path` uses `{+projectId}` (reserved expansion), and the
+    // placeholder name IS the declared parameter. `flatPath` carries a synthetic
+    // pluralized name (`{projectsId}`) that does NOT match the param, so it must
+    // NOT be preferred. Either way the wire path must end up as `{projectId}`,
+    // which the pipeline can substitute — an unbound `{+name}`/`{projectsId}`
+    // leaks into the URL and the CLI and MCP surfaces then encode it differently.
+    const disco = JSON.stringify({
+      kind: "discovery#restDescription",
+      name: "bq",
+      version: "v2",
+      baseUrl: "https://bigquery.googleapis.com/bigquery/v2/",
+      resources: {
+        datasets: {
+          methods: {
+            get: {
+              id: "bigquery.datasets.get",
+              httpMethod: "GET",
+              path: "projects/{+projectId}/datasets/{+datasetId}",
+              flatPath: "projects/{projectsId}/datasets/{datasetsId}",
+              parameters: {
+                projectId: { location: "path", required: true, type: "string" },
+                datasetId: { location: "path", required: true, type: "string" },
+              },
+            },
+          },
+        },
+      },
+    });
+    const lowered = adaptDiscovery(disco);
+    expect(lowered.paths?.["/projects/{projectId}/datasets/{datasetId}"]?.get).toBeDefined();
+    // No reserved-expansion or synthetic-name residue leaked into any path.
+    const allPaths = Object.keys(lowered.paths ?? {}).join(" ");
+    expect(allPaths).not.toContain("{+");
+    expect(allPaths).not.toContain("projectsId");
+  });
+
   it("maps Discovery parameters (location → in, repeated → array)", () => {
     const list = doc.paths?.["/gmail/v1/users/{userId}/messages"]?.get as Record<string, unknown>;
     const params = list.parameters as Array<Record<string, unknown>>;

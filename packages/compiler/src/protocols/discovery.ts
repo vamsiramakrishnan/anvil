@@ -129,7 +129,18 @@ export function adaptDiscovery(text: string): OpenApiDocument {
 
   const paths: Record<string, Record<string, unknown>> = {};
   for (const method of eachMethod(doc.resources)) {
-    const rawPath = method.path ?? method.flatPath;
+    // Discovery's `path` uses RFC 6570 level-2 reserved expansion (`{+projectId}`)
+    // for segments that may contain slashes, and its placeholder names ARE the
+    // declared parameter names (`projectId`, `datasetId`, …). Normalize the `+`
+    // away so `{+projectId}` → `{projectId}` matches its param. Do NOT prefer
+    // `flatPath`: for reserved-expansion methods Google fills flatPath with
+    // synthetic pluralized names (`{projectsId}`, `{datasetsId}`) that DON'T match
+    // the parameters, so it would leave every path variable unsubstituted. A
+    // `{+name}` (or flatPath's mismatched name) that never binds leaks into the
+    // wire URL, and the CLI and MCP surfaces then encode the leftover braces
+    // differently (`{+projectId}` vs `%7B+projectId%7D`) — a silent CLI↔MCP
+    // divergence the conformance gate catches.
+    const rawPath = (method.path ?? method.flatPath)?.replace(/\{\+([^{}]+)\}/g, "{$1}");
     if (!rawPath || !method.httpMethod) continue;
     const path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
     const verb = method.httpMethod.toLowerCase();

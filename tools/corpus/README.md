@@ -11,6 +11,7 @@ Three modes, one runner (plain Node ESM, no build step):
 node tools/corpus/run.mjs quick                      # 34 known systems, all oracles, gates CI
 node tools/corpus/run.mjs sweep --limit 150 --seed 42  # random slice of apis.guru, invariants only
 node tools/corpus/run.mjs estates                    # gateway estates, policy accounting, gates CI (offline)
+node tools/corpus/run.mjs conformance                # tri-surface CLI==MCP==skill, one per format, gates CI
 ```
 
 All need a built repo (`pnpm install && pnpm build`). `quick` and `sweep`
@@ -68,6 +69,37 @@ This complements the golden unit test (which pins the *projection*): here the
 
 Useful flags: `--systems kong-refunds,apigee-payments` (subset), `--work <dir>`,
 `--update-baseline` (below).
+
+## Conformance mode
+
+The tri-surface **end-to-end** gate. Quick mode proves a spec *compiles* and that
+the AIR invariants hold, but it never builds a capability bundle — so it never
+checks that the generated **CLI, MCP server, and skill actually agree**. That gap
+let a `--schema` reserved-flag collision ship (the CLI produced zero wire requests
+where the MCP tool produced one) and hid a Google Discovery `{+projectId}`
+template bug (MCP emitted `%7BprojectId%7D`, the CLI emitted `{projectId}`).
+
+Conformance mode drives the real pipeline for one system per adapter format —
+**compile → approve reads → capability approve → build → `anvil conformance
+<bundle>`** — and asserts the tri-surface report PASSED with **at least one
+wire-agreement check** (a pass that drove zero checks is treated as a `vacuous`
+failure, so a silent divergence can't hide behind an empty run). The subset
+(`CONFORMANCE_SYSTEMS` in `run.mjs`) is deliberately one-per-format so every
+adapter's CLI/MCP/skill projection is exercised:
+
+| system | format |
+|---|---|
+| `oracle_ords` | REST / OpenAPI 3.1 (the `schema` path-param ↔ `--schema` flag regression) |
+| `docusign_clm` | REST / OpenAPI 3.0 |
+| `netsuite` | SOAP / WSDL |
+| `odata_trippin` | OData v4 |
+| `etcd` | gRPC / proto3 |
+| `bigquery` | Google Discovery (the `{+projectId}` template regression) |
+| `linear` | GraphQL |
+
+Network-gated (it fetches the real specs), so it runs **nightly** in `corpus.yml`,
+not as a per-PR gate. Exits non-zero if any system is red. Flags: `--systems a,b`
+(subset), `--work <dir>` (keep the built bundles).
 
 ### Outcome taxonomy
 
