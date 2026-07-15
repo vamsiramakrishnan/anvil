@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-15T00:47:42.784Z",
+  "updatedAt": "2026-07-15T04:14:18.690Z",
   "note": "Per-system quick-mode metrics. Regenerate with: node tools/corpus/run.mjs quick --update-baseline",
   "systems": {
     "jira": {
@@ -128,8 +128,8 @@
       "opCount": 10
     },
     "bigquery": {
-      "compileMs": 807,
-      "airBytes": 1702871,
+      "compileMs": 1176,
+      "airBytes": 1704388,
       "opCount": 42
     },
     "datadog": {
