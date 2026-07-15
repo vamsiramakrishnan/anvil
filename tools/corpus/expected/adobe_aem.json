@@ -1,0 +1,6 @@
+{
+  "operations": {
+    "getQuery": { "toolName": "adobe_aem_get_query", "effect": "read", "risk": "none" },
+    "deleteAgent": { "toolName": "adobe_aem_delete_agent_delete", "effect": "mutation", "risk": "destructive" }
+  }
+}

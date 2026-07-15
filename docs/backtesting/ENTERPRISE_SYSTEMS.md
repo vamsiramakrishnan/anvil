@@ -178,11 +178,30 @@ customer-reproducible only):
 So of the nine downloadable specs, **seven are now in the corpus** and the two
 omissions are deliberate (size / naming clarity), not failures.
 
-Beyond the catalog, three more **publicly-published enterprise REST specs** were
-found on the web and wired in — **Xero** (accounting), **Box** (enterprise
-content), **Adyen** (payments) — chosen because they are real, anonymously
-fetchable, compile clean, and stand in for the credential-gated finance/content
-back-office systems above. That brings the corpus to 30 systems.
+Beyond the catalog, seven more **publicly-published enterprise specs** were
+found on the web and wired in — all real, anonymously fetchable, compiling clean
+on every oracle, and standing in for the credential-gated back-office systems
+above:
+
+| System | Vertical | Ops | Note |
+| --- | --- | ---: | --- |
+| **Xero** | Accounting | 235 | `XeroAPI/Xero-OpenAPI` |
+| **Box** | Enterprise content mgmt | 294 | `box/box-openapi` |
+| **Adyen** | Payments | 28 | `Adyen/adyen-openapi` |
+| **Oracle ORDS** | Oracle Database REST | 12 | **OpenAPI 3.1**; Oracle EBS/Fusion publish no public spec, so ORDS (Oracle REST Data Services) is Oracle's real public machine-readable contract |
+| **Shopware** | Enterprise e-commerce | 1109 | **OpenAPI 3.1**; largest single spec in the corpus |
+| **Adobe AEM** | Experience Manager (content) | 48 | via apis.guru |
+| **Plaid** | Fintech / bank data | 331 | `plaid/plaid-openapi` |
+
+`oracle_ords` and `shopware` are the corpus's first **OpenAPI 3.1** systems,
+extending version coverage beyond the 3.0 majority. That brings the corpus to
+**34 systems**.
+
+On "Oracle EBS" specifically: Oracle E-Business Suite and Fusion Cloud expose
+REST per-pod behind auth and publish **no** anonymous machine-readable spec, so
+they stay in the gated table below (per-pod WSDL/OpenAPI catalog). Oracle ORDS is
+the closest real, public Oracle contract and exercises the same OpenAPI 3.1 path
+a Fusion export would.
 
 ## Why this is the right kind of validation
 
