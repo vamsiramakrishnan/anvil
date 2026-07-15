@@ -89,3 +89,44 @@ describe("distill — the mechanistic eigenbasis", () => {
     expect(JSON.stringify(distill(payments))).toBe(JSON.stringify(distill(payments)));
   });
 });
+
+// Distillation reads only the protocol-agnostic AIR (effect/resource/action,
+// input arity, intent phrases), so it must hold its invariants for EVERY adapter,
+// not just REST. One spec per lowered format, asserted structurally.
+const exampleFile = (rel: string) =>
+  readFileSync(fileURLToPath(new URL(`../../../examples/${rel}`, import.meta.url)), "utf8");
+
+const postman = JSON.stringify({
+  info: { name: "crm", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  item: [
+    { name: "list contacts", request: { method: "GET", url: "https://api.crm.test/contacts" } },
+    { name: "get contact", request: { method: "GET", url: "https://api.crm.test/contacts/:id" } },
+    { name: "create contact", request: { method: "POST", url: "https://api.crm.test/contacts", body: { mode: "raw", raw: "{}" } } },
+    { name: "delete contact", request: { method: "DELETE", url: "https://api.crm.test/contacts/:id" } },
+  ],
+});
+
+describe("distill holds its invariants across every protocol adapter", () => {
+  const cases: { name: string; spec: string; sourceUri: string }[] = [
+    { name: "openapi/rest", spec: exampleFile("payments/openapi.yaml"), sourceUri: "openapi.yaml" },
+    { name: "graphql", spec: exampleFile("graphql/schema.graphql"), sourceUri: "schema.graphql" },
+    { name: "grpc/proto3", spec: exampleFile("grpc/orders.proto"), sourceUri: "orders.proto" },
+    { name: "soap/wsdl", spec: exampleFile("soap/bank.wsdl"), sourceUri: "bank.wsdl" },
+    { name: "odata/edmx", spec: exampleFile("sap/metadata.edmx"), sourceUri: "metadata.edmx" },
+    { name: "postman", spec: postman, sourceUri: "crm.postman_collection.json" },
+  ];
+
+  it.each(cases)("$name: partitions cleanly, never reconstructs a write, is deterministic", async ({ spec, sourceUri }) => {
+    const air = await compile({ spec, serviceId: "svc", sourceUri });
+    const r = distill(air);
+    // Total partition, exactly once.
+    expect(r.basis.length + r.reconstructible.length + r.review.length).toBe(air.operations.length);
+    // A write is never reconstructible on any adapter.
+    const recon = new Set(r.reconstructible.map((d) => d.operationId));
+    for (const op of air.operations) if (op.effect.kind !== "read") expect(recon.has(op.id)).toBe(false);
+    // Reduction is a valid fraction, and the pass is deterministic.
+    expect(r.reduction).toBeGreaterThanOrEqual(0);
+    expect(r.reduction).toBeLessThanOrEqual(1);
+    expect(JSON.stringify(distill(air))).toBe(JSON.stringify(r));
+  });
+});
