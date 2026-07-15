@@ -184,6 +184,59 @@ paths:
   });
 });
 
+describe("operation parameters that collide with progressive-disclosure flags stay reachable", () => {
+  // Oracle ORDS's `/{schema}/{table}` addresses an AutoREST table by a required
+  // path parameter literally named `schema` — the same word as the `--schema`
+  // disclosure view. Forcing `--schema` boolean made the parameter unreachable:
+  // `--schema hr` triggered the schema view and dropped "hr", so the CLI sent
+  // zero wire requests where the MCP tool sent one, silently breaking tri-surface
+  // conformance. A valued flag must set the parameter; only a bare flag is the view.
+  const ordsSpec = `openapi: 3.0.0
+info: { title: ords, version: 1.0.0 }
+paths:
+  /{schema}/{table}:
+    get:
+      operationId: queryTable
+      tags: [data]
+      parameters:
+        - { name: schema, in: path, required: true, schema: { type: string } }
+        - { name: table, in: path, required: true, schema: { type: string } }
+      responses: { '200': { description: ok } }
+`;
+
+  it("sets the `schema` path param from `--schema value` and reaches the wire (not the schema view)", async () => {
+    const doc = await compile({ spec: ordsSpec, serviceId: "ords" });
+    for (const op of doc.operations) op.state = "approved";
+    const command = doc.operations[0]?.cli.command.split(" ").slice(1) ?? [];
+    const transport = new MockTransport(() => ok({ items: [] }));
+    const io = bufferIO();
+    const code = await runToolCli(
+      doc,
+      [...command, "--schema", "hr", "--table", "employees", "--dry-run"],
+      { transport, env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv, io },
+    );
+    expect(code).toBe(0);
+    // A dry-run PLAN was produced (the wire request), not the JSON-schema view.
+    const out = JSON.parse(io.stdout.join("\n"));
+    expect(out.url ?? out.request?.url ?? JSON.stringify(out)).toContain("/hr/employees");
+    // The schema disclosure view (which prints `$schema`/`properties`) did NOT fire.
+    expect(io.stdout.join("\n")).not.toContain("json-schema.org");
+  });
+
+  it("still serves the bare `--schema` disclosure view when no value follows", async () => {
+    const doc = await compile({ spec: ordsSpec, serviceId: "ords" });
+    for (const op of doc.operations) op.state = "approved";
+    const command = doc.operations[0]?.cli.command.split(" ").slice(1) ?? [];
+    const io = bufferIO();
+    const code = await runToolCli(doc, [...command, "--schema"], {
+      env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv,
+      io,
+    });
+    expect(code).toBe(0);
+    expect(io.stdout.join("\n")).toContain("json-schema.org");
+  });
+});
+
 describe("unknown flags and commands are never silently swallowed", () => {
   it("refuses a typoed flag with a nearest-match suggestion, exit 2", async () => {
     const transport = new MockTransport(() => ok({}));
