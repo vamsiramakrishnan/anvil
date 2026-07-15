@@ -108,6 +108,17 @@ Options:
 - `--fail-on <disposition>` — the disposition threshold --check fails at (default blocked)
 - `--json` — emit the versioned artifact (or the filtered view) as JSON
 
+### `anvil distill`
+`anvil distill [options] <path>`
+
+Strip a surface to its eigenbasis: the minimal spanning set of operations.
+
+Deterministic, read-only whole-surface analysis (a peer of `assess`). Reads collapse by (resource, action) to one canonical, most-general read per cluster; every write is kept as its own basis vector; same-signature mutations are flagged for review, never auto-dropped. Reports the basis, the reconstructible read projections, the redundant clusters, any intents reachable ONLY through reconstructible ops (which a mechanical strip would lose), and capabilities whose basis still exceeds the tool budget. `--json` emits the full artifact for the Stage-2 coding-harness loop; `--check` gates on over-budget capabilities. It proposes only — approval stays an explicit, reviewed step.
+
+Options:
+- `--json` — emit the distillation artifact as JSON
+- `--check` — gate: exit non-zero if a capability's basis exceeds the tool budget
+
 ### `anvil capability`  *(mutates)*
 `anvil capability [options] [command]`
 
