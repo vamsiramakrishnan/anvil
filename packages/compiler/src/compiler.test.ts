@@ -551,6 +551,44 @@ schema { query: Query mutation: Mutation }`;
     const commands = air.operations.map((o) => o.cli.command);
     expect(new Set(commands).size).toBe(commands.length);
   });
+
+  it("resolves operation-id collisions from snake-case-folded resources (Datadog apm/rum retention filters)", async () => {
+    // Datadog's real v2 spec has two retention-filter families whose resource
+    // segments differ ONLY by a separator that snake_case folds:
+    // `apm/config/retention-filters` (hyphen) and
+    // `rum/applications/{id}/retention_filters` (underscore). The operation id
+    // snake-cases the resource, so both fold to `retention_filters` and the ids
+    // collide — but the CLI command keeps the raw token (hyphen vs underscore)
+    // and the tool name derives from the distinct operationIds, so NEITHER of
+    // those surfaces groups them. Without the operation-id surface the id
+    // collision is invisible to the resolver and the compile fails validation on
+    // duplicate_operation_id.
+    const spec = `openapi: 3.0.0
+info: { title: datadog, version: 2.0.0 }
+paths:
+  /api/v2/apm/config/retention-filters:
+    get: { operationId: ListApmRetentionFilters, responses: { '200': { description: ok } } }
+  /api/v2/rum/applications/{app_id}/retention_filters:
+    get:
+      operationId: ListRetentionFilters
+      parameters: [{ name: app_id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: ok } }
+`;
+    const air = await compile({ spec, serviceId: "datadog", sourceUri: "openapi.yaml" });
+    // No hard error: the id collision is repaired, not validated into a failure.
+    expect(air.diagnostics.filter((d) => d.code === "duplicate_operation_id")).toEqual([]);
+    const ids = air.operations.map((o) => o.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    // The disambiguation is meaningful — the distinguishing namespace token
+    // (`apm` vs `rum`), never a silent `_2` — and every surface moves together.
+    expect(ids.some((i) => i.endsWith(".apm")) && ids.some((i) => i.endsWith(".rum"))).toBe(true);
+    expect(air.diagnostics.some((d) => d.code === "naming_collision_resolved")).toBe(true);
+    for (const key of ["cli.command", "mcp.toolName"] as const) {
+      const [a, b] = key.split(".") as ["cli" | "mcp", string];
+      const vals = air.operations.map((o) => (o[a] as Record<string, string>)[b]);
+      expect(new Set(vals).size).toBe(vals.length);
+    }
+  });
 });
 
 describe("request body handling", () => {

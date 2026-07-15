@@ -318,16 +318,37 @@ const byStableIdentity = (a: Operation, b: Operation): number =>
   (a.sourceRef.operationId ?? "").localeCompare(b.sourceRef.operationId ?? "");
 
 /**
- * The projected surfaces on which every operation name must be unique. The CLI
- * command and the MCP tool name can collide INDEPENDENTLY: Linear's GraphQL
- * schema has both `Query.initiativeUpdate` and `Mutation.initiativeUpdate`,
- * whose commands differ (`... list` vs `... create`) while both derive the same
- * canonicalName and hence the same tool name — grouping by command alone never
- * sees them and the whole spec fails validation on `duplicate_tool_name`.
+ * The projected surfaces on which every operation name must be unique. This set
+ * must stay in lockstep with the uniqueness checks in `validate.ts` — the
+ * resolver has to repair every surface the validator will hard-error on, or a
+ * collision the resolver cannot see becomes a compile error instead of a
+ * deterministic rename. `validate.ts` enforces three: operation id, MCP tool
+ * name, and CLI command. All three can collide INDEPENDENTLY, because each is
+ * projected through a DIFFERENT normalization:
+ *
+ * - CLI command vs MCP tool name: Linear's GraphQL schema has both
+ *   `Query.initiativeUpdate` and `Mutation.initiativeUpdate`, whose commands
+ *   differ (`… list` vs `… create`) while both derive the same canonicalName and
+ *   hence the same tool name — grouping by command alone never sees them.
+ * - operation id vs both: the id snake-cases the resource
+ *   (`${service}.${snakeCase(resource)}.${action}`) while the CLI command keeps
+ *   the raw resource token and the tool name derives from the operationId. So
+ *   two resources that differ ONLY by a separator that snake-case folds —
+ *   Datadog's `apm/config/retention-filters` vs `rum/.../retention_filters` —
+ *   share one id but have distinct commands and tool names. Neither of the other
+ *   two surfaces groups them, so without the id surface the id collision is
+ *   never repaired and the spec fails on `duplicate_operation_id`.
+ *
+ * Ordering: id is checked LAST, so a collision already repairable via the more
+ * meaningful command/tool surfaces is handled there first; the id surface only
+ * catches the residue those two cannot see. This keeps every previously-green
+ * spec byte-identical (its id surface finds nothing new) while turning the
+ * id-only class from a hard error into a deterministic disambiguation.
  */
 const SURFACES: ReadonlyArray<{ label: string; keyOf: (op: Operation) => string }> = [
   { label: "CLI command", keyOf: (op) => op.cli.command },
   { label: "MCP tool name", keyOf: (op) => op.mcp.toolName },
+  { label: "operation id", keyOf: (op) => op.id },
 ];
 
 /**

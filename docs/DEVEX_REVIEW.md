@@ -61,12 +61,18 @@ These are the substantive ones — see `docs/backtesting/ENTERPRISE_SYSTEMS.md`.
   and naming/effect differentials. The last three were sourced from the
   `ge-agent-factory` simulator catalog's `openapi-sources.json`, using only its
   `downloadable` entries with real URLs.
-- **A compiler finding fell out of the expansion.** Datadog's real v2 OpenAPI
-  fails to compile with four `duplicate_operation_id` errors — Anvil's
-  operation-id derivation collapses the APM and logs retention-filter families
-  onto one id (same class as the documented `linear` #23). Left out of the
-  corpus and recorded in `ENTERPRISE_SYSTEMS.md` as the next `naming.ts` target,
-  per the "the red is the finding" policy.
+- **A compiler finding fell out of the expansion — and was fixed at the
+  mechanism level.** Datadog's real v2 OpenAPI failed with four
+  `duplicate_operation_id` errors: its `apm/…/retention-filters` and
+  `rum/…/retention_filters` families differ only by a separator that
+  `snake_case` folds, so their operation ids collided. Root cause was general:
+  the naming pass deduped only two of the three surfaces `validate.ts` enforces
+  unique. The fix adds the operation id as a resolver surface (one line in
+  `SURFACES`), closing the whole id-collision class — and, as a bonus, revealed
+  that the corpus's long-documented "known red: linear #23" was already stale
+  (the tool-name surface had fixed it). Both are now wired green with pinned
+  differentials and a unit test. See `ENTERPRISE_SYSTEMS.md` and
+  `tools/corpus/README.md` → "Resolved naming-collision class".
 
 ## Open recommendations (not changed here)
 

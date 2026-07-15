@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-14T23:57:24.511Z",
+  "updatedAt": "2026-07-15T00:23:36.494Z",
   "note": "Per-system quick-mode metrics. Regenerate with: node tools/corpus/run.mjs quick --update-baseline",
   "systems": {
     "jira": {
@@ -88,8 +88,8 @@
       "opCount": 9
     },
     "linear": {
-      "compileMs": 2946,
-      "airBytes": 7613901,
+      "compileMs": 3529,
+      "airBytes": 7654237,
       "opCount": 611
     },
     "amadeus": {
@@ -131,6 +131,11 @@
       "compileMs": 807,
       "airBytes": 1702871,
       "opCount": 42
+    },
+    "datadog": {
+      "compileMs": 9556,
+      "airBytes": 14658180,
+      "opCount": 1409
     }
   }
 }

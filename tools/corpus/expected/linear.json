@@ -1,0 +1,7 @@
+{
+  "_note": "Linear historically failed as bug #23: Query.initiativeUpdate and Mutation.initiativeUpdate share a field name → same MCP tool name → duplicate_tool_name. Resolved by the naming pass treating the MCP tool name as its own collision surface (the pair disambiguate by root: linear_initiative_update_query vs _mutation). That exact collision is asserted in compiler.test.ts; here we pin a few stable UNIQUE-operationId ops (the plural query fields sit right next to the colliding singular ones) so the whole real schema stays green and correctly classified.",
+  "operations": {
+    "initiativeUpdates": { "toolName": "linear_initiative_updates", "effect": "read", "risk": "none" },
+    "projectUpdates": { "toolName": "linear_project_updates", "effect": "read", "risk": "none" }
+  }
+}
