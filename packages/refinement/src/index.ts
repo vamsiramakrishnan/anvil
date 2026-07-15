@@ -27,6 +27,7 @@ export * from "./assess.js";
 export * from "./case/index.js";
 export * from "./deficiency.js";
 export * from "./detect.js";
+export * from "./distill.js";
 export * from "./evals/index.js";
 export * from "./model.js";
 export * from "./pack.js";
