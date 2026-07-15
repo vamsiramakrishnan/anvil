@@ -18,7 +18,10 @@ import { loadAirDocument } from "@anvil/air";
 const air = loadAirDocument(
   JSON.parse(readFileSync(fileURLToPath(new URL("./air.json", import.meta.url)), "utf8")),
 );
-process.exitCode = await runToolCli(air, process.argv.slice(2));
+// The sibling local MCP server, for \`--mcp stdio\` (skill → CLI → MCP). The CLI
+// lives at cli/${air.service.id}.mjs, so its stdio server is ../mcp/server.js.
+const mcpServerPath = fileURLToPath(new URL("../mcp/server.js", import.meta.url));
+process.exitCode = await runToolCli(air, process.argv.slice(2), { mcpServerPath });
 `;
 }
 

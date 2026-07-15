@@ -142,6 +142,22 @@ connects to a URL), plus the pre-existing `runtime/server.js` (stateless
 StreamableHTTP for Cloud Run). Same tools, same safety hot path; verified by a
 real MCP SSE client connecting and listing tools.
 
+## Layered execution: skill → CLI → MCP (local or remote)
+
+The three surfaces used to be flat siblings — the CLI and the MCP server each
+executed operations independently against upstream. They can now be **layered**:
+the skill drives the CLI, and the CLI can route a call **through** an MCP server
+(the single execution engine that holds credentials, the egress allowlist, and
+the idempotency ledger). Opt-in and reversible — direct execution stays the
+default; `--mcp stdio` (or `ANVIL_MCP_TARGET=stdio`) spawns the bundle's local
+server, `--mcp <sse-url>` connects to a remote one. The safety contract survives
+the hop unchanged: `confirm` and `idempotency_key` are already synthesized input
+fields the executor reads, and `--dry-run` rides a reserved `anvil_dry_run` tool
+arg (the one control the input schema didn't carry — which also means a *direct*
+MCP client can now dry-run, which it never could before). So `skill → CLI → MCP`
+and `agent → MCP` are two views of one aligned surface, and MCP is local or
+remote by configuration, not by regeneration.
+
 ## Open recommendations (not changed here)
 
 - **No `.nvmrc`** despite `engines.node >= 22.17`. A newcomer on an older Node
