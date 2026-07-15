@@ -1,0 +1,6 @@
+{
+  "operations": {
+    "get_files_id": { "toolName": "box_get_files_id_get", "effect": "read", "risk": "none" },
+    "post_oauth2_revoke": { "toolName": "box_post_oauth2_revoke", "effect": "mutation", "risk": "destructive" }
+  }
+}

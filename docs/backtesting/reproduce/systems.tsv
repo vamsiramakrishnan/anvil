@@ -36,3 +36,10 @@ okta	openapi3	https://raw.githubusercontent.com/okta/okta-management-openapi-spe
 docusign_clm	openapi3	https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/agreementmanager.rest.swagger-1.0.0.json	(whole)	none
 bigquery	discovery	https://bigquery.googleapis.com/$discovery/rest?version=v2	(whole)	none
 datadog	openapi3	https://raw.githubusercontent.com/DataDog/datadog-api-client-go/master/.generator/schemas/v2/openapi.yaml	(whole)	none
+# --- Public enterprise REST specs found on the web (real, fetchable OpenAPI) ---
+# Stand-ins for the credential-gated back-office systems: real published specs
+# across finance/content/payments verticals. See ENTERPRISE_SYSTEMS.md for the
+# gated-system reproduce recipes (Icertis APIM export, BlackLine portal).
+xero	openapi3	https://raw.githubusercontent.com/XeroAPI/Xero-OpenAPI/master/xero_accounting.yaml	(whole)	none
+box	openapi3	https://raw.githubusercontent.com/box/box-openapi/main/openapi.json	(whole)	none
+adyen	openapi3	https://raw.githubusercontent.com/Adyen/adyen-openapi/main/json/CheckoutService-v71.json	(whole)	none
