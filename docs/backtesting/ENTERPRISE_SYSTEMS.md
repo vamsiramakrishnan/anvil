@@ -28,6 +28,18 @@ system.
 | **OData v4 (TripPin)** | OData v4 `$metadata` | The OASIS reference service — exercises the same v4 EDMX path SAP S/4HANA, Dynamics 365 and Business Central publish | [public $metadata](https://services.odata.org/V4/TripPinServiceRW/$metadata) |
 | **OData v2 (Northwind)** | OData v2 `$metadata` | The classic v2 EDM dialect — the dialect SAP Gateway / SuccessFactors serve most | [public $metadata](https://services.odata.org/V2/Northwind/Northwind.svc/$metadata) |
 | **etcd** | gRPC / proto3 | Distributed KV powering Kubernetes — real multi-message proto with streaming RPCs | [public rpc.proto](https://raw.githubusercontent.com/etcd-io/etcd/main/api/etcdserverpb/rpc.proto) |
+| **Okta** | OpenAPI 3 | Enterprise identity / IGA — 732 operations, heavy collision-resolution surface | [public spec](https://raw.githubusercontent.com/okta/okta-management-openapi-spec/master/dist/current/management-minimal.yaml) |
+| **DocuSign CLM (Agreement Manager)** | OpenAPI 3 | The closest **public, machine-readable CLM contract** — agreements, agreement types, tasks | [public swagger](https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/agreementmanager.rest.swagger-1.0.0.json) |
+| **BigQuery** | Google Discovery | Enterprise data warehouse — jobs, datasets, row-access-policy deletes | [public $discovery](https://bigquery.googleapis.com/$discovery/rest?version=v2) |
+
+The last three were sourced from the **`ge-agent-factory`** simulator catalog
+(`apps/factory/simulator-systems/openapi-sources.json`), which classifies ~89
+enterprise systems by whether their spec is `downloadable`, `auth_required`,
+`docs_only`, or `manual_required`. Only the `downloadable` entries with a real,
+stable URL can be committed as recipes; the rest are cataloged below as
+customer-reproducible. DocuSign CLM stands in for the credential-gated CLM
+systems (Icertis, Fenergo, SAP) — it is the same agreement/clause/template
+domain, publicly published.
 
 The two OData reference services are deliberate **stand-ins** for the
 credential-gated enterprise OData endpoints below: they publish the identical
@@ -45,6 +57,23 @@ never guessed* — and it is exactly the case a manifest exists to enrich
 (`x-anvil-effect: read`). The behavior is pinned in
 `tools/corpus/expected/etcd.json` so a future "helpful" heuristic that silently
 promotes `Range` to a read trips the differential.
+
+### A compiler finding this corpus surfaced (Datadog — not wired in)
+
+Datadog's public v2 OpenAPI (`downloadable`, Apache-2.0, ~7 MB, 1409 ops) does
+**not** compile clean: it fails with four `duplicate_operation_id` errors on
+`datadog.retention_filters.{list,get,delete,search}`. Root cause: Datadog ships
+two distinct retention-filter endpoint families —
+`ListApmRetentionFilters` under `/api/v2/apm/config/retention-filters` and
+`ListRetentionFilters` under the logs config — and Anvil's operation-id
+derivation strips the `Apm` resource qualifier, collapsing both families onto
+one id. This is the **same class** as the documented `linear` bug #23
+(`duplicate_tool_name` from a same-named query+mutation): a real spec exposing a
+naming-normalization gap. Per the corpus's standing policy — *the red is the
+finding, do not paper over it with a manifest rename* — Datadog is deliberately
+left out of `systems.tsv` and recorded here until the compiler disambiguates
+colliding ids by their full resource path, not a stripped tag. It is a prime
+candidate for the next `naming.ts` fix.
 
 ## The broader enterprise landscape (reproduce with customer credentials)
 
@@ -79,6 +108,18 @@ the same three steps:
 Legend: **bold protocol** = a format now exercised by the wired-in corpus
 above, so the adapter path is validated even while the specific vendor spec
 stays gated.
+
+Other `ge-agent-factory` **`downloadable`** specs I fetched and compiled but did
+**not** wire into the nightly corpus, with the reason (kept honest so the
+omission is a decision, not an oversight):
+
+- **Datadog** — compiles with errors (the `duplicate_operation_id` finding
+  above); left out until the compiler fix lands.
+- **Kubernetes** (`swagger.json`) and the **Apigee admin API** (Google
+  Discovery) — compile clean, but Kubernetes is enormous and the Apigee *admin*
+  API collides conceptually with Anvil's existing Apigee **gateway-estate**
+  import (`anvil estate import --vendor apigee`); wiring it as a plain compiled
+  system would confuse the two. Both are one `systems.tsv` row away if wanted.
 
 ## Why this is the right kind of validation
 

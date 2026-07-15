@@ -27,3 +27,11 @@ netsuite	wsdl	https://webservices.netsuite.com/wsdl/v2024_2_0/netsuite.wsdl	(who
 odata_trippin	odata	https://services.odata.org/V4/TripPinServiceRW/$metadata	(whole)	none
 odata_northwind	odata	https://services.odata.org/V2/Northwind/Northwind.svc/$metadata	(whole)	none
 etcd	protobuf	https://raw.githubusercontent.com/etcd-io/etcd/main/api/etcdserverpb/rpc.proto	(whole)	none
+# --- Real enterprise systems sourced from ge-agent-factory simulator-systems ---
+# (openapi-sources.json "downloadable" entries; okta=identity, docusign_clm=CLM,
+# bigquery=data warehouse). Datadog is intentionally NOT added: its v2 spec trips
+# duplicate_operation_id on retention_filters.* — a real naming-collision finding
+# (same class as linear #23), documented in ENTERPRISE_SYSTEMS.md.
+okta	openapi3	https://raw.githubusercontent.com/okta/okta-management-openapi-spec/master/dist/current/management-minimal.yaml	(whole)	none
+docusign_clm	openapi3	https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/agreementmanager.rest.swagger-1.0.0.json	(whole)	none
+bigquery	discovery	https://bigquery.googleapis.com/$discovery/rest?version=v2	(whole)	none
