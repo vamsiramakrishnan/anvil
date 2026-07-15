@@ -35,3 +35,4 @@ etcd	protobuf	https://raw.githubusercontent.com/etcd-io/etcd/main/api/etcdserver
 okta	openapi3	https://raw.githubusercontent.com/okta/okta-management-openapi-spec/master/dist/current/management-minimal.yaml	(whole)	none
 docusign_clm	openapi3	https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/agreementmanager.rest.swagger-1.0.0.json	(whole)	none
 bigquery	discovery	https://bigquery.googleapis.com/$discovery/rest?version=v2	(whole)	none
+datadog	openapi3	https://raw.githubusercontent.com/DataDog/datadog-api-client-go/master/.generator/schemas/v2/openapi.yaml	(whole)	none

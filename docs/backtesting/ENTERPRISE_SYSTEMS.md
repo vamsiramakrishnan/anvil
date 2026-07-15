@@ -31,15 +31,35 @@ system.
 | **Okta** | OpenAPI 3 | Enterprise identity / IGA — 732 operations, heavy collision-resolution surface | [public spec](https://raw.githubusercontent.com/okta/okta-management-openapi-spec/master/dist/current/management-minimal.yaml) |
 | **DocuSign CLM (Agreement Manager)** | OpenAPI 3 | The closest **public, machine-readable CLM contract** — agreements, agreement types, tasks | [public swagger](https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/agreementmanager.rest.swagger-1.0.0.json) |
 | **BigQuery** | Google Discovery | Enterprise data warehouse — jobs, datasets, row-access-policy deletes | [public $discovery](https://bigquery.googleapis.com/$discovery/rest?version=v2) |
+| **Datadog** | OpenAPI 3 | Observability — 1409 ops; drove the naming-collision mechanism fix (see below) | [public spec](https://raw.githubusercontent.com/DataDog/datadog-api-client-go/master/.generator/schemas/v2/openapi.yaml) |
 
-The last three were sourced from the **`ge-agent-factory`** simulator catalog
-(`apps/factory/simulator-systems/openapi-sources.json`), which classifies ~89
-enterprise systems by whether their spec is `downloadable`, `auth_required`,
-`docs_only`, or `manual_required`. Only the `downloadable` entries with a real,
-stable URL can be committed as recipes; the rest are cataloged below as
-customer-reproducible. DocuSign CLM stands in for the credential-gated CLM
-systems (Icertis, Fenergo, SAP) — it is the same agreement/clause/template
-domain, publicly published.
+The last four were sourced from the **`ge-agent-factory`** simulator catalog
+(`apps/factory/simulator-systems/openapi-sources.json`). DocuSign CLM stands in
+for the credential-gated CLM systems (Icertis, Fenergo, SAP) — it is the same
+agreement/clause/template domain, publicly published.
+
+### Accounting for all 89 systems in the catalog
+
+The `ge-agent-factory` catalog has **89 system directories**; each is a
+synthesized simulator pack (schema/tools/seed JSON), *not* an API spec, so there
+is nothing for Anvil to compile in the directory itself. The compilable input is
+the spec URL recorded in `openapi-sources.json`, which covers 54 of the 89 and
+tags each by fetchability. Every system is therefore accounted for as follows:
+
+| Status | Count | Anvil can ingest? | Action taken |
+| --- | ---: | --- | --- |
+| `downloadable` (real URL) | 9 | **Yes** | Fetched + compiled all 9; **7 wired into the corpus**, 2 deliberately omitted (see table below) |
+| `auth_required` | 9 | Only with a tenant export | Cataloged with reproduce recipe (SAP S/4HANA FI/MM, SAP Ariba/Fieldglass, Workday, ServiceNow, Salesforce CRM/Marketing, Icertis) |
+| `docs_only` | 26 | No public machine-readable spec | Cataloged (Coupa, BlackLine, Concur, Avalara, JAGGAER, Kyriba, …) |
+| `manual_required` | 10 | No | Cataloged (HighRadius, Benefitfocus, C2FO, …) |
+| no source hint | 35 | No | Synthesized-only; no public API contract exists to fetch |
+
+So the honest answer to "have you run them all?" is: **all 9 with a real,
+fetchable spec have been fetched and compiled** (the ceiling this catalog
+allows); the other 80 have no public machine-readable contract and are
+customer-reproducible only, via the recipes below. Chasing them without
+credentials would mean inventing specs — exactly what `openapi-sources.json`
+exists to prevent.
 
 The two OData reference services are deliberate **stand-ins** for the
 credential-gated enterprise OData endpoints below: they publish the identical
@@ -58,22 +78,31 @@ never guessed* — and it is exactly the case a manifest exists to enrich
 `tools/corpus/expected/etcd.json` so a future "helpful" heuristic that silently
 promotes `Range` to a read trips the differential.
 
-### A compiler finding this corpus surfaced (Datadog — not wired in)
+### A compiler finding this corpus surfaced — then fixed at the mechanism level
 
-Datadog's public v2 OpenAPI (`downloadable`, Apache-2.0, ~7 MB, 1409 ops) does
-**not** compile clean: it fails with four `duplicate_operation_id` errors on
+Datadog's public v2 OpenAPI (`downloadable`, Apache-2.0, ~7 MB, 1409 ops)
+originally failed with four `duplicate_operation_id` errors on
 `datadog.retention_filters.{list,get,delete,search}`. Root cause: Datadog ships
-two distinct retention-filter endpoint families —
-`ListApmRetentionFilters` under `/api/v2/apm/config/retention-filters` and
-`ListRetentionFilters` under the logs config — and Anvil's operation-id
-derivation strips the `Apm` resource qualifier, collapsing both families onto
-one id. This is the **same class** as the documented `linear` bug #23
-(`duplicate_tool_name` from a same-named query+mutation): a real spec exposing a
-naming-normalization gap. Per the corpus's standing policy — *the red is the
-finding, do not paper over it with a manifest rename* — Datadog is deliberately
-left out of `systems.tsv` and recorded here until the compiler disambiguates
-colliding ids by their full resource path, not a stripped tag. It is a prime
-candidate for the next `naming.ts` fix.
+two retention-filter families — `apm/config/retention-filters` (hyphen) and
+`rum/applications/{id}/retention_filters` (underscore) — whose resource segments
+differ **only by a separator that `snake_case` folds**. The operation id
+snake-cases the resource, so both fold to `retention_filters` and the ids
+collide; but the CLI command keeps the raw token and the tool name derives from
+the distinct operationIds, so neither of those surfaces sees the clash.
+
+The fix was **mechanism-level, not a per-spec patch**: the naming pass
+(`resolveNameCollisions`) was deduping only two of the three surfaces that
+`validate.ts` enforces unique (CLI command + tool name), leaving the operation
+id — a third, independently-normalized surface — unrepaired. Adding the
+operation id as a resolver surface closes the *entire class* of id-only
+collisions (any two resources that differ only by a snake-case-folded separator,
+on any spec), not just Datadog's four. The two colliding families now
+disambiguate by their real namespace token (`.apm` / `.rum`). This is the same
+class as the historical `linear` #23 (`duplicate_tool_name`), which the tool-name
+surface already closed. Datadog is now wired into the corpus and green; the
+resolution is pinned in `tools/corpus/expected/datadog.json` and asserted as a
+unit test (`compiler.test.ts`). See `tools/corpus/README.md` →
+"Resolved naming-collision class".
 
 ## The broader enterprise landscape (reproduce with customer credentials)
 
@@ -109,17 +138,21 @@ Legend: **bold protocol** = a format now exercised by the wired-in corpus
 above, so the adapter path is validated even while the specific vendor spec
 stays gated.
 
-Other `ge-agent-factory` **`downloadable`** specs I fetched and compiled but did
-**not** wire into the nightly corpus, with the reason (kept honest so the
-omission is a decision, not an oversight):
+Coverage of all nine `ge-agent-factory` **`downloadable`** specs (the only ones
+with a real, fetchable URL — the other 80 systems are `auth_required`,
+`docs_only`, `manual_required`, or have no source hint at all, so they are
+customer-reproducible only):
 
-- **Datadog** — compiles with errors (the `duplicate_operation_id` finding
-  above); left out until the compiler fix lands.
-- **Kubernetes** (`swagger.json`) and the **Apigee admin API** (Google
-  Discovery) — compile clean, but Kubernetes is enormous and the Apigee *admin*
-  API collides conceptually with Anvil's existing Apigee **gateway-estate**
-  import (`anvil estate import --vendor apigee`); wiring it as a plain compiled
-  system would confuse the two. Both are one `systems.tsv` row away if wanted.
+| Spec | Fetched | Compiles | In corpus | Note |
+| --- | --- | --- | --- | --- |
+| github, jira, pagerduty | ✓ | clean | ✓ (pre-existing) | already validated |
+| okta, docusign_clm, bigquery | ✓ | clean | ✓ | added this round |
+| **datadog** | ✓ | clean **after the naming fix** | ✓ | was 4 errors; drove the mechanism fix |
+| kubernetes | ✓ | clean | — | enormous `swagger.json`; one row away if wanted |
+| apigee (admin API) | ✓ | clean | — | Google Discovery admin API collides *conceptually* with Anvil's existing Apigee **gateway-estate** import (`anvil estate import --vendor apigee`); wiring it as a plain compiled system would confuse the two |
+
+So of the nine downloadable specs, **seven are now in the corpus** and the two
+omissions are deliberate (size / naming clarity), not failures.
 
 ## Why this is the right kind of validation
 

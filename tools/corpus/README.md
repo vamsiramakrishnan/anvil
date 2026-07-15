@@ -8,7 +8,7 @@ The job of this directory is to find bug #23 before a user does.
 Three modes, one runner (plain Node ESM, no build step):
 
 ```bash
-node tools/corpus/run.mjs quick                      # 26 known systems, all oracles, gates CI
+node tools/corpus/run.mjs quick                      # 27 known systems, all oracles, gates CI
 node tools/corpus/run.mjs sweep --limit 150 --seed 42  # random slice of apis.guru, invariants only
 node tools/corpus/run.mjs estates                    # gateway estates, policy accounting, gates CI (offline)
 ```
@@ -95,7 +95,7 @@ than being lumped into `ok` or `crash`.)
 | `round-trip` | `airFromYaml(airToYaml(doc))` parses and its `contractHash` equals the original's | AIR is the canonical model; if YAML round-trip changes the contract, every downstream artifact silently disagrees |
 | `determinism` | compiling the same **locked source** twice yields byte-identical `air.json` | reproducible builds are the basis for contract hashing and diffing. No volatile-field normalization is currently needed — verified byte-stable across all 18 systems at baseline time. If a volatile field is ever introduced, normalize it in `determinism()` and document it here. |
 | `lint` | `anvil lint <bundle>` exits 0 (warnings allowed) | the generated bundle must satisfy Anvil's own consistency rules |
-| `naming-differential` | quick only: fixtures in `expected/<system>.json` pin `operationId → mcp.toolName` and `effect.kind`/`effect.risk` for twelve systems (slack, twilio, jira, github_gql, temporal, plus the enterprise systems: netsuite (SOAP), odata_trippin (OData v4), odata_northwind (OData v2), etcd (gRPC), okta (identity), docusign_clm (CLM), bigquery (Google Discovery)) | tool naming and effect/risk classification are the semantics agents route on; these fixtures were validated in the manual backtests and must never drift silently |
+| `naming-differential` | quick only: fixtures in `expected/<system>.json` pin `operationId → mcp.toolName` and `effect.kind`/`effect.risk` for fourteen systems (slack, twilio, jira, github_gql, temporal; the enterprise systems netsuite (SOAP), odata_trippin (OData v4), odata_northwind (OData v2), etcd (gRPC), okta (identity), docusign_clm (CLM), bigquery (Google Discovery), datadog (OpenAPI); and linear (GraphQL) — the last two pinning the naming-collision resolutions described below) | tool naming and effect/risk classification are the semantics agents route on; these fixtures were validated in the manual backtests and must never drift silently |
 | `op-count` | quick only: operation count vs baseline. **Decrease ⇒ fail** (operations silently dropped); increase ⇒ warning (vendor added ops — drift, not a bug) | dropping operations is one of the quietest possible compiler failures |
 
 ## `baseline.json`
@@ -132,20 +132,28 @@ One JSON file per pinned system:
 for operations whose classification has been human-validated (these came from
 the manual backtests in `docs/backtesting/`).
 
-## Known red: linear (bug #23 — found by this harness's first full run)
+## Resolved naming-collision class (was: linear #23, datadog id-collision)
 
-`linear` currently fails quick mode with two `duplicate_tool_name` **error**
-diagnostics (exit 1): Linear's GraphQL schema has both `Query.initiativeUpdate`
-and `Mutation.initiativeUpdate` (likewise `projectUpdate`). The compiler's
-`resolveNameCollisions` (`packages/compiler/src/naming.ts`) groups colliding
-operations by **CLI command**, which embeds the action (`… list` vs `… create`)
-— but `mcp.toolName` does **not** embed the action, so the two operations get
-distinct CLI commands yet the *same* tool name, the resolver never sees the
-group, and validation then hard-errors. Consequence: any GraphQL schema with a
-same-named query and mutation field cannot compile without a manifest rename.
-`linear` therefore has no `baseline.json` entry and stays red until the
-compiler disambiguates tool names by tool-name group (not just CLI-command
-group). Do not "fix" this with a manifest — the red is the finding.
+The naming pass (`resolveNameCollisions`, `packages/compiler/src/naming.ts`) now
+dedupes on **exactly the three surfaces `validate.ts` requires unique** —
+operation id, MCP tool name, and CLI command — because each is projected through
+a different normalization and can therefore collide independently. Two real
+specs proved the class, and both are pinned green in `expected/`:
+
+- **linear (GraphQL, bug #23):** `Query.initiativeUpdate` and
+  `Mutation.initiativeUpdate` share a field name → same tool name, distinct CLI
+  commands. Fixed by treating the MCP tool name as its own collision surface
+  (they disambiguate `…_query` / `…_mutation`).
+- **datadog (OpenAPI):** `apm/config/retention-filters` and
+  `rum/.../retention_filters` differ only by a separator that `snake_case`
+  folds, so their **operation ids** collide while CLI commands and tool names do
+  not. Fixed by adding the operation id as the third surface (they disambiguate
+  `.apm` / `.rum`).
+
+The invariant to preserve: **the set of surfaces the resolver dedupes must equal
+the set the validator enforces.** If a fourth uniqueness check is ever added to
+`validate.ts`, add the matching surface to `SURFACES` or a collision it cannot
+see becomes a hard error instead of a deterministic, meaningful rename.
 
 ## Reports
 
