@@ -180,8 +180,24 @@ If neither applies, \`node cli/${id}.mjs\` fails with \`ERR_MODULE_NOT_FOUND\` f
 \`@anvil/cli\` — that means the dependencies are not installed, not that the bundle
 is broken.
 
-MCP alternative: \`node mcp/server.js\` (from the bundle root, same resolution rules)
-serves the same approved operations as MCP tools that mirror the CLI one-to-one.
+## How execution flows: CLI → MCP (local or remote)
+Drive the **CLI** — it is your interface. By default the CLI executes the
+operation itself. But the same call can be **routed through an MCP server**, which
+is the single execution engine (it holds the credentials, the egress allowlist,
+and the idempotency ledger); the CLI then just maps flags to the tool and renders
+the result. The MCP server can be **local or remote**:
+- **Local (stdio)** — \`${id} <op> … --mcp stdio\` (or \`ANVIL_MCP_TARGET=stdio\`)
+  spawns the bundle's own \`mcp/server.js\` and speaks MCP over stdio.
+- **Remote (SSE)** — \`${id} <op> … --mcp https://host/sse\` (or
+  \`ANVIL_MCP_TARGET=sse:https://host/sse\`) connects to a running remote server
+  (\`mcp/server-sse.js\`, exposing \`GET /sse\` + \`POST /messages\`). Useful when the
+  credentials and network egress live on the server, not where the CLI runs.
+
+The safety contract is identical on every path: \`--dry-run\` previews without a
+wire call, \`--confirm\` is still required for unsafe mutations, and
+\`--idempotency-key\` still dedups — they travel the MCP hop unchanged. An agent
+connecting to the MCP server directly (no CLI) gets the same tools, so
+\`skill → CLI → MCP\` and \`agent → MCP\` are two views of one aligned surface.
 
 ## Safety rules (read before any write)
 - **Never** call a mutation without first reading its help / \`explain\`.

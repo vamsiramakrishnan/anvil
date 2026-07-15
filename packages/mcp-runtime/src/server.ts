@@ -1,7 +1,7 @@
 import type { AirDocument, Operation } from "@anvil/air";
 import { type ExecuteContext, execute } from "@anvil/runtime";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { operationZodShape } from "./zodshape.js";
+import { MCP_RESERVED, operationZodShape, reservedSafetyShape } from "./zodshape.js";
 
 /**
  * A resource the MCP server advertises to agents (skill, catalog, CLI install
@@ -74,7 +74,10 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
       {
         title: op.displayName,
         description: toolDescription(op),
-        inputSchema: operationZodShape(op),
+        // Operation input + the reserved safety controls (anvil_dry_run /
+        // anvil_confirm / anvil_idempotency_key), so a client — the CLI over its
+        // MCP transport, or any direct MCP caller — can dry-run and confirm.
+        inputSchema: { ...operationZodShape(op), ...reservedSafetyShape(op) },
         annotations: {
           title: op.displayName,
           readOnlyHint: op.effect.kind === "read",
@@ -97,7 +100,16 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         },
       },
       async (args: Record<string, unknown>) => {
-        const result = await execute(op, { input: args }, options.contextFor(op));
+        // Peel the reserved dry-run control off the arguments; the rest is the
+        // operation input. `confirm` and `idempotency_key` are ordinary input
+        // fields (synthesized by operationInputSchema) that the executor reads
+        // straight out of `input`, so they need no special handling here — the
+        // same safety contract holds whether an op is invoked directly, over the
+        // CLI, or over the CLI routed through this server (local stdio / remote SSE).
+        const dryRun = args[MCP_RESERVED.dryRun] === true;
+        const input = { ...args };
+        delete input[MCP_RESERVED.dryRun];
+        const result = await execute(op, { input, dryRun }, options.contextFor(op));
         if (result.outcome === "success") {
           const data = result.data ?? null;
           return {

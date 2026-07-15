@@ -6,6 +6,7 @@ import type { AirDocument } from "@anvil/air";
 // directly and never pulls in this artifact foundry.
 export {
   buildMcpServer,
+  MCP_RESERVED,
   type McpBuildOptions,
   operationZodShape,
   type ServedResource,
