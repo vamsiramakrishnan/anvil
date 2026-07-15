@@ -181,17 +181,22 @@ If neither applies, \`node cli/${id}.mjs\` fails with \`ERR_MODULE_NOT_FOUND\` f
 is broken.
 
 ## How execution flows: CLI → MCP (local or remote)
-Drive the **CLI** — it is your interface. By default the CLI executes the
-operation itself. But the same call can be **routed through an MCP server**, which
-is the single execution engine (it holds the credentials, the egress allowlist,
-and the idempotency ledger); the CLI then just maps flags to the tool and renders
-the result. The MCP server can be **local or remote**:
-- **Local (stdio)** — \`${id} <op> … --mcp stdio\` (or \`ANVIL_MCP_TARGET=stdio\`)
-  spawns the bundle's own \`mcp/server.js\` and speaks MCP over stdio.
-- **Remote (SSE)** — \`${id} <op> … --mcp https://host/sse\` (or
-  \`ANVIL_MCP_TARGET=sse:https://host/sse\`) connects to a running remote server
-  (\`mcp/server-sse.js\`, exposing \`GET /sse\` + \`POST /messages\`). Useful when the
-  credentials and network egress live on the server, not where the CLI runs.
+Drive the **CLI** — it is your interface. Where each call runs is **your choice
+at runtime**, made per invocation with \`--mcp\` (which always wins over the
+\`ANVIL_MCP_TARGET\` env default):
+- **Direct** (default, or \`--mcp direct\`) — the CLI executes the operation
+  itself. \`--mcp direct\` forces this even when \`ANVIL_MCP_TARGET\` is set, so a
+  one-off direct call is always available.
+- **Local MCP (stdio)** — \`${id} <op> … --mcp stdio\` (or \`ANVIL_MCP_TARGET=stdio\`)
+  routes the call through the bundle's own \`mcp/server.js\` over stdio.
+- **Remote MCP (SSE)** — \`${id} <op> … --mcp https://host/sse\` (or
+  \`ANVIL_MCP_TARGET=sse:https://host/sse\`) routes it through a running remote
+  server (\`mcp/server-sse.js\`, exposing \`GET /sse\` + \`POST /messages\`). Useful
+  when the credentials and network egress live on the server, not where the CLI runs.
+
+The MCP server is the single execution engine (it holds the credentials, the
+egress allowlist, and the idempotency ledger); routed through it, the CLI just
+maps flags to the tool and renders the result.
 
 The safety contract is identical on every path: \`--dry-run\` previews without a
 wire call, \`--confirm\` is still required for unsafe mutations, and

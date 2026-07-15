@@ -127,6 +127,53 @@ describe("CLI routed through MCP (--mcp)", () => {
     expect(mcp.requests).toHaveLength(0);
   });
 
+  it("routes through MCP when ANVIL_MCP_TARGET is set as the env default (no flag)", async () => {
+    const mcp = inProcessMcp();
+    const io = bufferIO();
+    const code = await runToolCli(air, [...REFUND, "--idempotency-key", "k1", "--confirm"], {
+      env: { ANVIL_ENV: "dev", ANVIL_MCP_TARGET: "inmem" } as NodeJS.ProcessEnv,
+      io,
+      mcpConnect: mcp.connect,
+    });
+    expect(code).toBe(0);
+    expect(mcp.requests).toHaveLength(1); // the env default routed it through MCP
+  });
+
+  it("`--mcp direct` forces direct execution, overriding the ANVIL_MCP_TARGET env", async () => {
+    const mcp = inProcessMcp(); // must stay untouched
+    let connected = false;
+    const directTransport = new MockTransport(() => ok({ id: "re_direct" }));
+    const io = bufferIO();
+    const code = await runToolCli(
+      air,
+      [...REFUND, "--idempotency-key", "k1", "--confirm", "--mcp", "direct"],
+      {
+        env: {
+          ANVIL_ENV: "dev",
+          ANVIL_MCP_TARGET: "inmem",
+          ANVIL_ALLOWED_HOSTS: "payments.internal.example.com",
+          ANVIL_AUTH_PROFILE: "prod",
+        } as NodeJS.ProcessEnv,
+        io,
+        transport: directTransport,
+        credentials: {
+          async resolve() {
+            return { headers: { Authorization: "Bearer t" } };
+          },
+        },
+        mcpConnect: async () => {
+          connected = true;
+          throw new Error("should not have connected");
+        },
+      },
+    );
+    expect(code).toBe(0);
+    expect(connected).toBe(false); // --mcp direct won over the env → no MCP hop
+    expect(mcp.requests).toHaveLength(0);
+    expect(directTransport.requests).toHaveLength(1); // executed directly
+    expect(io.stdout.join("\n")).toContain("re_direct");
+  });
+
   it("maps an MCP connection failure onto the upstream-availability exit code (7)", async () => {
     const io = bufferIO();
     const code = await runToolCli(
