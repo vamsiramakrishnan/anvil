@@ -53,10 +53,20 @@ These are the substantive ones — see `docs/backtesting/ENTERPRISE_SYSTEMS.md`.
   non-REST branch (and `run.mjs`'s `preparedPath`) to compile `odata`/`wsdl`
   as-is.
 - **Zero enterprise / OData / SOAP systems in the corpus.** The 19 systems
-  skewed entirely to developer SaaS over REST. Added four real, publicly-
-  fetchable specs across the gap formats — NetSuite SuiteTalk (SOAP), OData v4
-  (TripPin), OData v2 (Northwind), etcd (gRPC) — each green on every oracle,
-  with pinned baselines and naming/effect differentials.
+  skewed entirely to developer SaaS over REST. Added seven real, publicly-
+  fetchable enterprise specs across the gap formats — NetSuite SuiteTalk (SOAP),
+  OData v4 (TripPin), OData v2 (Northwind), etcd (gRPC), plus Okta (identity),
+  DocuSign CLM / Agreement Manager (contract lifecycle), and BigQuery (Google
+  Discovery, data warehouse) — each green on every oracle, with pinned baselines
+  and naming/effect differentials. The last three were sourced from the
+  `ge-agent-factory` simulator catalog's `openapi-sources.json`, using only its
+  `downloadable` entries with real URLs.
+- **A compiler finding fell out of the expansion.** Datadog's real v2 OpenAPI
+  fails to compile with four `duplicate_operation_id` errors — Anvil's
+  operation-id derivation collapses the APM and logs retention-filter families
+  onto one id (same class as the documented `linear` #23). Left out of the
+  corpus and recorded in `ENTERPRISE_SYSTEMS.md` as the next `naming.ts` target,
+  per the "the red is the finding" policy.
 
 ## Open recommendations (not changed here)
 

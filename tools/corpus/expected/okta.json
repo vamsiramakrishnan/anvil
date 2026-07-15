@@ -1,0 +1,8 @@
+{
+  "operations": {
+    "listUsers": { "toolName": "okta_list_users_get", "effect": "read", "risk": "none" },
+    "getUser": { "toolName": "okta_get_user_get", "effect": "read", "risk": "none" },
+    "createUser": { "toolName": "okta_create_user_post", "effect": "mutation", "risk": "medium" },
+    "deleteUser": { "toolName": "okta_delete_user_delete", "effect": "mutation", "risk": "destructive" }
+  }
+}
