@@ -120,8 +120,8 @@ the same three steps:
 
 | System | Category | Protocol(s) published | Where the spec lives |
 | --- | --- | --- | --- |
-| **Icertis (ICI)** | Contract lifecycle (CLM) | REST (OpenAPI) | ICI tenant → API catalog; partner portal. Gated. |
-| **BlackLine** | Financial close | REST (OpenAPI/Swagger) | BlackLine developer portal (per-customer key). Gated. |
+| **Icertis (ICI)** | Contract lifecycle (CLM) | REST (OpenAPI) | Azure APIM developer portal ([Icertis API Hub](https://centralindia-nonprod-apim.developer.azure-api.net/apioverview)). Gated — see recipe below. |
+| **BlackLine** | Financial close | REST (OpenAPI/Swagger) | [developer.blackline.com](https://developer.blackline.com/apis) — registration-gated SPA. See recipe below. |
 | **Coupa** | Procure-to-pay | REST + bulk XML/CSV | `/api` on your Coupa instance; OpenAPI via portal. Gated. |
 | **SAP Ariba** | Sourcing / procurement | REST (OpenAPI) + SOAP | Ariba Developer Portal (`api.sap.com`), app-key gated. |
 | **SAP S/4HANA** | ERP | **OData v2 & v4** + SOAP | `/sap/opu/odata/.../$metadata` on the tenant; SAP Business Accelerator Hub. |
@@ -132,11 +132,35 @@ the same three steps:
 | **Oracle Fusion / EBS** | ERP | SOAP/WSDL + REST | Per-pod WSDL/OpenAPI catalog. Gated. |
 | **Microsoft Dynamics 365 / Business Central** | ERP / CRM | **OData v4** `$metadata` | `/data/$metadata` per environment. Gated. |
 | **Salesforce** | CRM | REST + SOAP (Enterprise/Partner WSDL) + GraphQL | Per-org WSDL export; `examples/salesforce` ships a shape. |
-| **Xero** | Accounting (SMB/mid-market) | REST (OpenAPI) | **Public** — `XeroAPI/Xero-OpenAPI` on GitHub (large; curate first). |
+| **Xero** | Accounting | REST (OpenAPI) | **Public + wired in** — `XeroAPI/Xero-OpenAPI` on GitHub. |
+| **Box** | Enterprise content mgmt | REST (OpenAPI) | **Public + wired in** — `box/box-openapi` on GitHub. |
+| **Adyen** | Payments | REST (OpenAPI) | **Public + wired in** — `Adyen/adyen-openapi` on GitHub. |
 
 Legend: **bold protocol** = a format now exercised by the wired-in corpus
 above, so the adapter path is validated even while the specific vendor spec
 stays gated.
+
+### Reproduce recipes for the two named gated systems
+
+Both Icertis and BlackLine were investigated directly. Neither publishes a
+spec anonymously — the honest outcome, confirmed rather than assumed:
+
+- **Icertis (ICI)** — the [API Hub](https://centralindia-nonprod-apim.developer.azure-api.net/apioverview)
+  is an **Azure API Management** developer portal. Its `config.json`
+  (`…/config.json`) publicly exposes the `managementApiUrl`, but the data API
+  behind it (`…/apis?api-version=2022-04-01-preview`) returns **401** without a
+  portal-issued token — you must register for the portal. Once signed in, each
+  API's OpenAPI is exported from APIM via
+  `GET {managementApiUrl}/apis/{apiId}?format=openapi&export=true&api-version=2022-04-01-preview`;
+  save that JSON and run `anvil source add` → `anvil compile`. The ICI entities
+  (Agreements, Masterdata, Users, Requests, Clauses, Templates) then compile
+  through the same OpenAPI path DocuSign CLM already validates.
+- **BlackLine** — [developer.blackline.com/apis](https://developer.blackline.com/apis)
+  is a registration-gated single-page portal (no anonymous spec at any guessed
+  path). Register, open an API product, use the portal's OpenAPI/Swagger export,
+  then `anvil source add` the downloaded file. Its account-reconciliation and
+  admin/settings APIs are ordinary REST/OpenAPI, so no adapter work is needed —
+  only the credentialed export.
 
 Coverage of all nine `ge-agent-factory` **`downloadable`** specs (the only ones
 with a real, fetchable URL — the other 80 systems are `auth_required`,
@@ -153,6 +177,12 @@ customer-reproducible only):
 
 So of the nine downloadable specs, **seven are now in the corpus** and the two
 omissions are deliberate (size / naming clarity), not failures.
+
+Beyond the catalog, three more **publicly-published enterprise REST specs** were
+found on the web and wired in — **Xero** (accounting), **Box** (enterprise
+content), **Adyen** (payments) — chosen because they are real, anonymously
+fetchable, compile clean, and stand in for the credential-gated finance/content
+back-office systems above. That brings the corpus to 30 systems.
 
 ## Why this is the right kind of validation
 

@@ -1,0 +1,7 @@
+{
+  "operations": {
+    "getAccounts": { "toolName": "xero_get_accounts", "effect": "read", "risk": "none" },
+    "getAccount": { "toolName": "xero_get_account", "effect": "read", "risk": "none" },
+    "deleteAccount": { "toolName": "xero_delete_account", "effect": "mutation", "risk": "destructive" }
+  }
+}
