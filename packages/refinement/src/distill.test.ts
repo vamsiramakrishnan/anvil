@@ -97,12 +97,25 @@ const exampleFile = (rel: string) =>
   readFileSync(fileURLToPath(new URL(`../../../examples/${rel}`, import.meta.url)), "utf8");
 
 const postman = JSON.stringify({
-  info: { name: "crm", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  info: {
+    name: "crm",
+    schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+  },
   item: [
     { name: "list contacts", request: { method: "GET", url: "https://api.crm.test/contacts" } },
     { name: "get contact", request: { method: "GET", url: "https://api.crm.test/contacts/:id" } },
-    { name: "create contact", request: { method: "POST", url: "https://api.crm.test/contacts", body: { mode: "raw", raw: "{}" } } },
-    { name: "delete contact", request: { method: "DELETE", url: "https://api.crm.test/contacts/:id" } },
+    {
+      name: "create contact",
+      request: {
+        method: "POST",
+        url: "https://api.crm.test/contacts",
+        body: { mode: "raw", raw: "{}" },
+      },
+    },
+    {
+      name: "delete contact",
+      request: { method: "DELETE", url: "https://api.crm.test/contacts/:id" },
+    },
   ],
 });
 
@@ -116,14 +129,18 @@ describe("distill holds its invariants across every protocol adapter", () => {
     { name: "postman", spec: postman, sourceUri: "crm.postman_collection.json" },
   ];
 
-  it.each(cases)("$name: partitions cleanly, never reconstructs a write, is deterministic", async ({ spec, sourceUri }) => {
+  it.each(cases)("$name: partitions cleanly, never reconstructs a write, is deterministic", async ({
+    spec,
+    sourceUri,
+  }) => {
     const air = await compile({ spec, serviceId: "svc", sourceUri });
     const r = distill(air);
     // Total partition, exactly once.
     expect(r.basis.length + r.reconstructible.length + r.review.length).toBe(air.operations.length);
     // A write is never reconstructible on any adapter.
     const recon = new Set(r.reconstructible.map((d) => d.operationId));
-    for (const op of air.operations) if (op.effect.kind !== "read") expect(recon.has(op.id)).toBe(false);
+    for (const op of air.operations)
+      if (op.effect.kind !== "read") expect(recon.has(op.id)).toBe(false);
     // Reduction is a valid fraction, and the pass is deterministic.
     expect(r.reduction).toBeGreaterThanOrEqual(0);
     expect(r.reduction).toBeLessThanOrEqual(1);
