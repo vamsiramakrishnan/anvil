@@ -123,13 +123,24 @@ malformed request demonstrating the `validation_error` refusal. The runtime does
 reject it (there's a test), but the skill never shows an agent the rejection. A
 worthwhile future addition.
 
-Remaining gap (recommendation): **wire `conformance` into the corpus.** It needs
-a built capability bundle (approve → build), which is heavier than the
-compile-only quick oracles, so it belongs as its own corpus mode (like
-`estates`) that builds one capability per pinned system and asserts tri-surface
-agreement. Until then the unit test guards the specific class found here, but a
-*new* CLI/skill divergence on a real spec would still slip through the nightly
-run.
+Gap now closed: **`conformance` is wired into the corpus** as its own mode
+(`node tools/corpus/run.mjs conformance`, nightly in `corpus.yml`). It builds one
+capability bundle per adapter format — REST, OData, SOAP, gRPC, Discovery,
+GraphQL — and asserts the tri-surface report PASSED with at least one
+wire-agreement check (a zero-check pass is a `vacuous` failure). On its first full
+run it caught a **second** divergence beyond the `--schema` bug: Google
+Discovery's `{+projectId}` RFC 6570 reserved-expansion path template left the
+variable unbound, so the MCP surface emitted `%7BprojectId%7D` while the CLI
+emitted `{projectId}`. Fixed in the discovery adapter (normalize `{+name}` →
+`{name}`, and never prefer `flatPath` — Google fills it with synthetic
+pluralized names that don't match the parameters). All seven formats now pass.
+
+The two MCP transports are both generated now, too: `mcp/server.js` (LOCAL,
+stdio — for a client that spawns the process) and `mcp/server-sse.js` (REMOTE,
+HTTP + SSE — `GET /sse` + `POST /messages?sessionId=…`, for a client that
+connects to a URL), plus the pre-existing `runtime/server.js` (stateless
+StreamableHTTP for Cloud Run). Same tools, same safety hot path; verified by a
+real MCP SSE client connecting and listing tools.
 
 ## Open recommendations (not changed here)
 
