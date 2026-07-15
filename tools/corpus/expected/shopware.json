@@ -1,0 +1,7 @@
+{
+  "operations": {
+    "getAclRoleList": { "toolName": "shopware_get_acl_role_list", "effect": "read", "risk": "none" },
+    "searchAclRole": { "toolName": "shopware_search_acl_role", "effect": "read", "risk": "none" },
+    "deleteAclRole": { "toolName": "shopware_delete_acl_role", "effect": "mutation", "risk": "destructive" }
+  }
+}

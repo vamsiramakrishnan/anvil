@@ -1,0 +1,7 @@
+{
+  "operations": {
+    "getMetadataCatalog": { "toolName": "oracle_ords_get_metadata_catalog", "effect": "read", "risk": "none" },
+    "queryTable": { "toolName": "oracle_ords_query_table_get", "effect": "read", "risk": "none" },
+    "deleteRow": { "toolName": "oracle_ords_delete_row", "effect": "mutation", "risk": "destructive" }
+  }
+}

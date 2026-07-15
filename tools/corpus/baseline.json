@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-15T00:35:22.123Z",
+  "updatedAt": "2026-07-15T00:47:42.784Z",
   "note": "Per-system quick-mode metrics. Regenerate with: node tools/corpus/run.mjs quick --update-baseline",
   "systems": {
     "jira": {
@@ -151,6 +151,26 @@
       "compileMs": 1805,
       "airBytes": 1847148,
       "opCount": 28
+    },
+    "oracle_ords": {
+      "compileMs": 519,
+      "airBytes": 72241,
+      "opCount": 12
+    },
+    "adobe_aem": {
+      "compileMs": 602,
+      "airBytes": 307154,
+      "opCount": 48
+    },
+    "shopware": {
+      "compileMs": 7872,
+      "airBytes": 16969024,
+      "opCount": 1109
+    },
+    "plaid": {
+      "compileMs": 3607,
+      "airBytes": 6614559,
+      "opCount": 331
     }
   }
 }

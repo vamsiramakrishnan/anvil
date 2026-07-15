@@ -43,3 +43,11 @@ datadog	openapi3	https://raw.githubusercontent.com/DataDog/datadog-api-client-go
 xero	openapi3	https://raw.githubusercontent.com/XeroAPI/Xero-OpenAPI/master/xero_accounting.yaml	(whole)	none
 box	openapi3	https://raw.githubusercontent.com/box/box-openapi/main/openapi.json	(whole)	none
 adyen	openapi3	https://raw.githubusercontent.com/Adyen/adyen-openapi/main/json/CheckoutService-v71.json	(whole)	none
+# --- More top enterprise systems (public machine-readable specs, found on the web) ---
+# oracle_ords + shopware are OpenAPI 3.1 (broadens version coverage beyond 3.0).
+# Oracle EBS/Fusion publish no public spec; Oracle REST Data Services (ORDS) is
+# Oracle's real public machine-readable contract and stands in for the Oracle estate.
+oracle_ords	openapi3	https://raw.githubusercontent.com/api-evangelist/oracle-database-19c/refs/heads/main/openapi/oracle-database-19c-ords-openapi.yml	(whole)	none
+adobe_aem	openapi3	https://api.apis.guru/v2/specs/adobe.com/aem/3.7.1-pre.0/openapi.json	(whole)	none
+shopware	openapi3	https://raw.githubusercontent.com/shopware/admin-api-reference/main/adminapi.json	(whole)	none
+plaid	openapi3	https://raw.githubusercontent.com/plaid/plaid-openapi/master/2020-09-14.yml	(whole)	none
