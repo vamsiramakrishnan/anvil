@@ -52,16 +52,20 @@ const BOOLEAN_FLAGS = new Set([
   "allow-degraded-native",
   "allow-uncertified",
   "allow-large",
-  // Capability show sections and progressive-disclosure views: always boolean
-  // so they never swallow a value.
+  // Capability show sections: always boolean so they never swallow a value.
   "operations",
   "auth",
   "evidence",
-  "schema",
-  "examples",
-  "errors",
-  "policy",
-  "explain",
+  // NOTE: the progressive-disclosure views (`--schema`, `--examples`,
+  // `--errors`, `--policy`, `--explain`) are deliberately NOT here. A real
+  // operation can have a parameter of the same name — Oracle ORDS's
+  // `/{schema}/{table}` has a required `schema` param — and forcing the flag
+  // boolean makes that parameter unreachable (`--schema example` would trigger
+  // the schema view and drop "example"), silently breaking CLI↔MCP wire
+  // agreement. Semantics: a BARE flag (`--schema`) is the disclosure view; a
+  // VALUED flag (`--schema example`, which `--schema=example` already did) sets
+  // the operation parameter. The disclosure short-circuits fire only on
+  // `=== true`, so bare-vs-valued disambiguates cleanly.
 ]);
 
 function parseArgs(argv: string[]): ParsedArgs {

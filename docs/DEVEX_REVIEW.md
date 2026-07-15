@@ -74,6 +74,63 @@ These are the substantive ones — see `docs/backtesting/ENTERPRISE_SYSTEMS.md`.
   differentials and a unit test. See `ENTERPRISE_SYSTEMS.md` and
   `tools/corpus/README.md` → "Resolved naming-collision class".
 
+## Are the CLI and skill validated end-to-end — not just the MCP/compile path?
+
+Honest answer after digging in: **the artifacts are complete and there ARE
+end-to-end validators, but the corpus was only running half of them — and the
+half it skipped caught a real bug.**
+
+What a built bundle actually contains (verified on a real Oracle ORDS build):
+three aligned surfaces plus a progressively-disclosed skill —
+`cli/<svc>.mjs`, `mcp/server.js`, and `skill/` with `SKILL.md`, six
+`reference/*.md` files (capabilities, operations, idempotency, errors,
+workflows, setup), `examples/` (worked inputs), `schemas/`, and `evals/`. Plus a
+generated `tests/conformance.test.ts`. So the CLI and skill are genuinely
+generated, not stubs.
+
+Two validators exist: `anvil selftest` (boots the mock + MCP + CLI and checks
+fidelity/retry) and `anvil conformance` (proves the **CLI == MCP == skill** wire
+surfaces agree, operation by operation). The gap: **the corpus quick oracles ran
+`selftest` on every system but never `conformance`**, and the only
+conformance-tested bundle in the repo is `payments` — which has no parameter
+whose name collides with a CLI flag. So the tri-surface agreement was unvalidated
+for every real spec added in this branch.
+
+Running `conformance` on a real bundle immediately found a bug:
+
+- **Reserved-flag / parameter collision (fixed, mechanism-level).** Oracle ORDS
+  addresses a table by `/{schema}/{table}` — a required path parameter literally
+  named `schema`, the same word as the CLI's `--schema` disclosure view. The
+  flag parser force-booleaned `schema`, so `--schema hr` triggered the schema
+  view and **dropped the value**: the CLI sent zero wire requests where the MCP
+  tool sent one. `conformance` failed (`wire-agreement … CLI produced 0 wire
+  requests`); `selftest` passed, because it drives inputs as objects, not CLI
+  flags. Fix: the disclosure views (`--schema/--examples/--errors/--policy/
+  --explain`) are no longer force-boolean — a **bare** flag is the view, a
+  **valued** flag sets the operation parameter (exactly what `--schema=hr`
+  already did; the space-form was silently inconsistent). This restores CLI↔MCP
+  agreement for *any* spec whose parameter names a reserved flag, not just ORDS.
+  Guarded by a new unit test (`tool-cli-gates.test.ts`) and verified by
+  `conformance` going red→green on the real ORDS bundle; a second real spec
+  (DocuSign CLM) passes conformance 7/7 unchanged.
+
+On "examples, good and bad": skills ship **good** worked examples
+(`examples/*.json`, synthesized from the same `exampleInput` used by `--examples`
+and the MCP surface, so they can't drift) and **behavioral bad-path** coverage
+(`evals/error_recovery.yaml`: `must_not: retry` on `not_found`, backoff on
+`rate_limited`). What they do NOT ship is an **invalid-input** example — a
+malformed request demonstrating the `validation_error` refusal. The runtime does
+reject it (there's a test), but the skill never shows an agent the rejection. A
+worthwhile future addition.
+
+Remaining gap (recommendation): **wire `conformance` into the corpus.** It needs
+a built capability bundle (approve → build), which is heavier than the
+compile-only quick oracles, so it belongs as its own corpus mode (like
+`estates`) that builds one capability per pinned system and asserts tri-surface
+agreement. Until then the unit test guards the specific class found here, but a
+*new* CLI/skill divergence on a real spec would still slip through the nightly
+run.
+
 ## Open recommendations (not changed here)
 
 - **No `.nvmrc`** despite `engines.node >= 22.17`. A newcomer on an older Node
