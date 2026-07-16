@@ -35,6 +35,7 @@
     "@anvil/harness": "workspace:*",
     "@anvil/refinement": "workspace:*",
     "@anvil/runtime": "workspace:*",
+    "@anvil/targets": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.22.0",
     "commander": "^14.0.3",
     "yaml": "^2.8.1"

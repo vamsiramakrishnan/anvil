@@ -44,6 +44,7 @@ describe("target kit generation", () => {
       "action-selection.json",
       "admin-runbook.md",
       "compatibility-report.json",
+      "inbound-auth.env",
       "oauth.template.json",
       "organization-policy-checklist.md",
       "server-description.md",
@@ -112,8 +113,10 @@ describe("target validation", () => {
     expect(GEMINI_ENTERPRISE_PROFILE.unsupportedAssumptions.length).toBeGreaterThan(0);
   });
 
-  it("warns that an unverified profile is a draft, structurally (Gemini labeling)", () => {
-    expect(GEMINI_ENTERPRISE_PROFILE.verificationStatus).toBe("unverified");
+  it("warns that a not-yet-verified profile is a draft, structurally (Gemini labeling)", () => {
+    // Provisional = checked once against live docs but possibly stale; the
+    // validator still warns on anything that is not `verified`.
+    expect(GEMINI_ENTERPRISE_PROFILE.verificationStatus).toBe("provisional");
     const result = validateTarget(air, GEMINI_ENTERPRISE_PROFILE, {
       endpoint: "https://x.example/mcp",
     });

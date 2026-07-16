@@ -6,5 +6,6 @@
  * here, so a generated Cloud Run service depends on this, not on the generators.
  */
 
+export * from "./inbound-auth.js";
 export * from "./server.js";
 export * from "./zodshape.js";

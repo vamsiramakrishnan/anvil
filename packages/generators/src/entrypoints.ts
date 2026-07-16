@@ -37,7 +37,12 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { buildMcpServer } from "@anvil/mcp-runtime";
+import {
+  buildMcpServer,
+  loadInboundAuthConfig,
+  protectedResourceMetadata,
+  verifyInboundToken,
+} from "@anvil/mcp-runtime";
 import {
   allowedHostsFor,
   EnvCredentialResolver,
@@ -88,13 +93,48 @@ function mcpContext() {
   };
 }
 
+// Inbound authentication: this server is an OAuth 2 resource server. When a
+// platform (e.g. Gemini Enterprise) is configured to present a bearer token, we
+// validate it on every protected route rather than trusting the network. Mode
+// "none" (the default) admits everything, for local runs behind other controls.
+const inboundAuth = loadInboundAuthConfig();
+
+// The MCP Authorization discovery document, served unauthenticated so a client
+// can find the authorization server before it has a token.
+const resourceMetadata = protectedResourceMetadata(inboundAuth);
+
+async function authorized(req, res) {
+  const result = await verifyInboundToken(req.headers["authorization"], inboundAuth);
+  if (result.ok) return true;
+  res.writeHead(result.status, {
+    "content-type": "application/json",
+    "www-authenticate": result.wwwAuthenticate,
+  });
+  res.end(JSON.stringify({ error: { code: result.error, message: result.description } }));
+  return false;
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
+  // Health/readiness are always open — probes have no token.
   if (url.pathname === "/healthz") return json(res, 200, { status: "ok" });
   if (url.pathname === "/readyz") return json(res, 200, { ready: true, service: config.serviceId });
-  if (url.pathname === "/metrics") return json(res, 200, { records: observer.records.length });
-  if (url.pathname === "/openapi") return json(res, 200, catalog);
+  if (url.pathname === "/.well-known/oauth-protected-resource") {
+    return resourceMetadata
+      ? json(res, 200, resourceMetadata)
+      : json(res, 404, { error: { code: "not_found", message: "Inbound auth is not configured." } });
+  }
+  // Everything below exposes the tool surface — gate it on the inbound token.
+  if (url.pathname === "/metrics") {
+    if (!(await authorized(req, res))) return;
+    return json(res, 200, { records: observer.records.length });
+  }
+  if (url.pathname === "/openapi") {
+    if (!(await authorized(req, res))) return;
+    return json(res, 200, catalog);
+  }
   if (url.pathname === "/mcp") {
+    if (!(await authorized(req, res))) return;
     // Stateless StreamableHTTP: a fresh server+transport per request, closed on
     // response. Tool specs and resources are precomputed data, so per-request
     // construction is cheap and holds no cross-request state. sessionIdGenerator

@@ -21,9 +21,16 @@ export type TransportRequirement = z.infer<typeof TransportRequirement>;
 
 /** An auth scheme the platform can configure for the server. */
 export const TargetAuthRequirement = z.object({
-  kind: z.enum(["oauth2", "api_key", "none"]),
+  kind: z.enum(["oauth2", "service_account", "api_key", "none"]),
   /** OAuth fields the setup template must supply. */
   oauthFields: z.array(z.string()).default([]),
+  /**
+   * The inbound-auth mode the generated MCP server enforces for this scheme
+   * (`@anvil/mcp-runtime` `InboundAuthMode`): `oidc` validates a user-delegated
+   * IdP token, `google_service_account` a Google-issued machine token. The
+   * server is an OAuth 2 resource server — it self-enforces this token.
+   */
+  inboundMode: z.enum(["oidc", "google_service_account"]).optional(),
 });
 export type TargetAuthRequirement = z.infer<typeof TargetAuthRequirement>;
 
