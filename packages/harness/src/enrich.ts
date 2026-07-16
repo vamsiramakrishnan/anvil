@@ -1,14 +1,62 @@
-import { type AirDocument, confidenceFor } from "@anvil/air";
+import { type AirDocument, confidenceFor, type Operation } from "@anvil/air";
 import type { AnvilManifest, OperationManifest } from "@anvil/compiler";
-import { type HarnessAgent, type HarnessFinding, HeuristicHarnessAgent } from "./agent.js";
+import type { EnrichmentPlan } from "@anvil/refinement";
+import {
+  type HarnessAgent,
+  type HarnessFinding,
+  HeuristicHarnessAgent,
+  type ProbePlanQuestion,
+} from "./agent.js";
 import { EvidenceGraph } from "./evidence.js";
 import { connectSource, type TransportFactory } from "./mcp-source.js";
+import { sourceClassOf } from "./profiles.js";
 import { type ReconcileDecision, reconcile } from "./reconcile.js";
 import type { SourceConfig } from "./sources.js";
 
 export interface EnrichOptions {
   agent?: HarnessAgent;
   transportFactory?: TransportFactory;
+  /**
+   * When given, enrichment is PLAN-DRIVEN: instead of sweeping every operation
+   * against every source, it probes only the plan's targeted operations and
+   * routes each question to the sources whose evidence pole matches its
+   * `sourceClass` (code proves idempotency; docs describe intent). This is the
+   * consume side of `anvil distill --as-enrich-plan` — the surface's UNCERTAIN
+   * operations, asked the sharp question, at the tier that can answer it.
+   */
+  plan?: EnrichmentPlan;
+}
+
+/** One (operation, question) probe to run against a source, after plan routing. */
+interface RoutedProbe {
+  op: Operation;
+  question?: ProbePlanQuestion;
+}
+
+/**
+ * The probes to run against ONE source. Plan-driven: each target's questions,
+ * routed to this source only when its `sourceClass` matches the source's pole
+ * (`any` matches every source). Un-planned: every operation, generic query.
+ */
+function probesForSource(
+  air: AirDocument,
+  config: SourceConfig,
+  plan: EnrichmentPlan | undefined,
+): RoutedProbe[] {
+  if (!plan) return air.operations.map((op) => ({ op }));
+  const cls = sourceClassOf(config.system);
+  const byId = new Map(air.operations.map((o) => [o.id, o]));
+  const out: RoutedProbe[] = [];
+  for (const target of plan.targets) {
+    const op = byId.get(target.operationId);
+    if (!op) continue;
+    for (const q of target.questions) {
+      if (q.sourceClass === "any" || q.sourceClass === cls) {
+        out.push({ op, question: { queries: q.queries, predicate: q.predicate } });
+      }
+    }
+  }
+  return out;
 }
 
 export interface OperationEnrichment {
@@ -25,6 +73,8 @@ export interface EnrichmentReport {
   /** A proposed manifest patch — NOT applied. Review, then `anvil compile --manifest`. */
   proposedManifest: AnvilManifest;
   graph: EvidenceGraph;
+  /** Plan-driven only: the operations the plan targeted (the rest were never probed). */
+  targetedOperationIds?: string[];
 }
 
 /**
@@ -39,6 +89,7 @@ export async function runEnrichment(
   options: EnrichOptions = {},
 ): Promise<EnrichmentReport> {
   const agent = options.agent ?? new HeuristicHarnessAgent();
+  const plan = options.plan;
   const graph = new EvidenceGraph();
   const connected: string[] = [];
   // operationId -> all findings across every source.
@@ -50,8 +101,8 @@ export async function runEnrichment(
       source = await connectSource(config, options.transportFactory);
       const tools = await source.listTools();
       connected.push(config.id);
-      for (const op of air.operations) {
-        const findings = await agent.probe({ op, source, config, tools });
+      for (const { op, question } of probesForSource(air, config, plan)) {
+        const findings = await agent.probe({ op, source, config, tools, question });
         for (const f of findings) graph.add(op.id, f.evidence);
         const list = findingsByOp.get(op.id) ?? [];
         list.push(...findings);
@@ -67,7 +118,17 @@ export async function runEnrichment(
   const proposed: Record<string, OperationManifest> = {};
   const operations: OperationEnrichment[] = [];
 
-  for (const op of air.operations) {
+  // In plan mode only the targeted operations were probed — report exactly those,
+  // in the plan's priority order, so the output mirrors what was investigated.
+  const byId = new Map(air.operations.map((o) => [o.id, o]));
+  const targetedIds = plan
+    ? [...new Set(plan.targets.map((t) => t.operationId))].filter((id) => byId.has(id))
+    : undefined;
+  const reported = targetedIds
+    ? (targetedIds.map((id) => byId.get(id) as Operation) as Operation[])
+    : air.operations;
+
+  for (const op of reported) {
     const findings = findingsByOp.get(op.id) ?? [];
     const { patch, decisions } = reconcile(op, findings);
     if (Object.keys(patch).length > 0) proposed[op.canonicalName] = patch;
@@ -102,5 +163,6 @@ export async function runEnrichment(
     operations,
     proposedManifest: { operations: proposed, workflows: {} },
     graph,
+    targetedOperationIds: targetedIds,
   };
 }

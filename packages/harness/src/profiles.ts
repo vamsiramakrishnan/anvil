@@ -165,6 +165,18 @@ export function profileFor(system: SourceSystem): SystemProfile {
   return PROFILES[system];
 }
 
+/**
+ * The evidence pole a source sits at, for routing an enrichment plan's questions:
+ * a CODE host (implementation-grade) is the only pole that can *loosen* safety,
+ * so an "prove idempotency" question routes there; every other host is a DOC pole
+ * that tightens / corroborates. Derived from the profile's `evidenceKind` so this
+ * never drifts from the reconciler's trust model — the routing is advisory, and
+ * `reconcile` remains the sole authority on what actually clears the loosen bar.
+ */
+export function sourceClassOf(system: SourceSystem): "code" | "docs" {
+  return profileFor(system).evidenceKind === "source_impl" ? "code" : "docs";
+}
+
 /** Substitute ${VAR} placeholders from the environment (secrets stay out of config). */
 function subst(value: string, env: NodeJS.ProcessEnv): string {
   return value.replace(/\$\{([A-Z0-9_]+)\}/g, (_, name) => env[name] ?? "");
