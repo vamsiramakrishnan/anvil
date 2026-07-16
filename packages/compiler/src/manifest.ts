@@ -3,6 +3,7 @@ import { snakeCase } from "@anvil/air";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { classifyConfirmation, classifyRetry } from "./classify.js";
+import { projectRoutingNames, singularize } from "./naming.js";
 
 /**
  * The supplemental Anvil manifest (spec §4). Specs are incomplete; this is how
@@ -58,6 +59,23 @@ export const OperationManifest = z.object({
       "reserve",
       "other",
     ])
+    .optional(),
+  /**
+   * Re-home the AGENT-FACING routing name — canonical name, CLI command, MCP
+   * tool. This is the remediation for a name a router cannot follow (the
+   * `weak_operation_name` deficiency): `do_transition` → `transition_issue`,
+   * `get_object` → `get_customer`. Distinct from `action`, which reclassifies
+   * the *effect* and is constrained to the effect-verb enum — `verb` here is a
+   * free string, because a real fix ("transition") often is not an effect verb.
+   * Every surface re-projects together via one `projectRoutingNames`, so the
+   * CLI / MCP / code names cannot drift, and the stable operation `id` is kept
+   * as identity. Set either axis; the other is read from the current name.
+   */
+  name: z
+    .object({
+      resource: z.string().optional(),
+      verb: z.string().optional(),
+    })
     .optional(),
   /** Whose authority the call runs under, and how it is credentialed. */
   auth: z
@@ -190,6 +208,31 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
   if (m.action) op.effect.action = m.action;
   if (m.display_name) op.displayName = m.display_name;
   if (m.description) op.description = m.description;
+
+  // Re-home the agent-facing routing names from one (service, resource, verb)
+  // triple, so canonicalName / CLI command / MCP tool cannot drift apart. Only
+  // these three change — the operation `id` stays as its stable identity (an
+  // authored rename is not a new operation), and callers keep matching it. Any
+  // re-projection can reintroduce a name collision the pre-overlay resolver
+  // already settled, so `compile` re-runs `resolveNameCollisions` afterwards.
+  if (m.name?.resource || m.name?.verb) {
+    const serviceId = op.id.split(".")[0] ?? "";
+    const resource = m.name.resource ?? op.effect.resource ?? serviceId;
+    const verb = m.name.verb ?? (op.canonicalName.split("_")[0] as string) ?? "other";
+    const projected = projectRoutingNames(serviceId, resource, verb);
+    op.canonicalName = projected.canonicalName;
+    op.cli.command = projected.cliCommand;
+    op.mcp.toolName = projected.toolName;
+    if (m.name.resource) op.effect.resource = singularize(resource);
+    // The name is now operator-authored — clear the low-confidence naming signal
+    // so `critiqueNames` no longer flags an operation the human just fixed.
+    const nq = op.evidence.claims.find((c) => c.predicate === "name.quality");
+    if (nq) {
+      nq.value = op.canonicalName;
+      nq.confidence = 0.95;
+      nq.note = "name re-homed by manifest";
+    }
+  }
 
   if (m.auth) {
     if (m.auth.principal) op.auth.principal = m.auth.principal;
