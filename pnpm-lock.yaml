@@ -221,6 +221,9 @@ importers:
       '@anvil/mcp-runtime':
         specifier: workspace:*
         version: link:../mcp-runtime
+      '@anvil/refinement':
+        specifier: workspace:*
+        version: link:../refinement
       '@anvil/runtime':
         specifier: workspace:*
         version: link:../runtime
