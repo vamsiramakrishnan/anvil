@@ -10,6 +10,7 @@ import { registerCompile } from "./commands/compile.js";
 import { registerConformance } from "./commands/conformance.js";
 import type { AnvilCliDeps, CommandContext } from "./commands/context.js";
 import { registerDeploy } from "./commands/deploy.js";
+import { registerDistill } from "./commands/distill.js";
 import { registerDrift } from "./commands/drift.js";
 import { registerEnrich } from "./commands/enrich.js";
 import { registerEstate } from "./commands/estate.js";
@@ -71,6 +72,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerCompile(program, ctx);
   registerInspect(program, ctx);
   registerAssess(program, ctx);
+  registerDistill(program, ctx);
   registerCapability(program, ctx);
   registerRefine(program, ctx);
   registerCase(program, ctx);

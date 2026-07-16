@@ -1,0 +1,7 @@
+{
+  "operations": {
+    "GetAgreementsList": { "toolName": "docusign_clm_get_agreements_list", "effect": "read", "risk": "none" },
+    "GetAgreementTypes": { "toolName": "docusign_clm_get_agreement_types", "effect": "read", "risk": "none" },
+    "DeleteAgreement": { "toolName": "docusign_clm_delete_agreement", "effect": "mutation", "risk": "destructive" }
+  }
+}

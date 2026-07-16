@@ -139,6 +139,62 @@ describe("manifest ⇄ overlay migration", () => {
   });
 });
 
+describe("name override — re-homing a weakly-named operation (#A)", () => {
+  // A vague verb over a real resource: `doTransition` is the canonical case an
+  // agent cannot route on (Atlassian's own MCP server renames it).
+  const WEAK = `openapi: "3.0.3"
+info: { title: Tracker, version: "1.0.0" }
+paths:
+  /issues/{id}/transitions:
+    post:
+      operationId: doTransition
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+`;
+
+  it("flags the weak name, then re-homes every surface together and clears the flag", async () => {
+    const before = await compile({ spec: WEAK, serviceId: "tracker" });
+    const weak = before.operations.find((o) => o.sourceRef.operationId === "doTransition");
+    expect(weak?.canonicalName).toBe("do_transition");
+    // The naming pass scored it below the review threshold (vague verb).
+    const conf = weak?.evidence.claims.find((c) => c.predicate === "name.quality")?.confidence ?? 1;
+    expect(conf).toBeLessThan(0.5);
+
+    const manifestText = `operations:
+  doTransition:
+    name: { resource: issue, verb: transition }
+`;
+    const after = await compile({ spec: WEAK, manifest: manifestText, serviceId: "tracker" });
+    const fixed = after.operations.find((o) => o.sourceRef.operationId === "doTransition");
+    // One triple re-projects all three surfaces coherently — no drift.
+    expect(fixed?.canonicalName).toBe("transition_issue");
+    expect(fixed?.cli.command).toBe("tracker issue transition");
+    expect(fixed?.mcp.toolName).toBe("tracker_transition_issue");
+    // The stable id is preserved — a rename is not a new operation.
+    expect(fixed?.id).toBe(weak?.id);
+    // The name is now operator-authored, so it is no longer low-confidence.
+    const fixedConf =
+      fixed?.evidence.claims.find((c) => c.predicate === "name.quality")?.confidence ?? 0;
+    expect(fixedConf).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it("applies identically through the overlay path (manifest ⇄ overlay parity)", async () => {
+    const manifestText = `operations:
+  doTransition:
+    name: { resource: issue, verb: transition }
+`;
+    const viaOverlay = await compileContract(
+      ephemeralCompilerSource(WEAK, "openapi.yaml"),
+      [manifestToOverlay(parseManifest(manifestText))],
+      { serviceId: "tracker" },
+    );
+    const o = op(viaOverlay, "doTransition");
+    expect(o?.canonicalName).toBe("transition_issue");
+    expect(o?.mcp.toolName).toBe("tracker_transition_issue");
+  });
+});
+
 describe("overlay digest — dedupe and order independence", () => {
   it("a duplicated assertion does not change the overlay digest", async () => {
     const a = assertion("refundPayment", "confirmation.required", "set", true);

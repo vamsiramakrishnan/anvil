@@ -157,6 +157,8 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     if (m.action) assertions.push(set(ref, "effect.action", m.action));
     if (m.display_name) assertions.push(set(ref, "displayName", m.display_name));
     if (m.description) assertions.push(set(ref, "description", m.description));
+    if (m.name?.resource) assertions.push(set(ref, "name.resource", m.name.resource));
+    if (m.name?.verb) assertions.push(set(ref, "name.verb", m.name.verb));
 
     if (m.auth?.principal) assertions.push(set(ref, "auth.principal", m.auth.principal));
     if (m.auth?.audience) assertions.push(set(ref, "auth.audience", m.auth.audience));
@@ -224,6 +226,14 @@ export function projectOperationManifest(
   if (displayName) m.display_name = displayName;
   const description = v<string>("description");
   if (description) m.description = description;
+
+  const nameResource = v<string>("name.resource");
+  const nameVerb = v<string>("name.verb");
+  if (nameResource !== undefined || nameVerb !== undefined) {
+    m.name = {};
+    if (nameResource !== undefined) m.name.resource = nameResource;
+    if (nameVerb !== undefined) m.name.verb = nameVerb;
+  }
 
   const auth: NonNullable<OperationManifest["auth"]> = {};
   const principal = v<NonNullable<OperationManifest["auth"]>["principal"]>("auth.principal");

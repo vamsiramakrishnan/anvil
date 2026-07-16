@@ -4,6 +4,8 @@ import {
   type Capability,
   conflictedSafetyPredicates,
   type ErrorCode,
+  type NameWeakness,
+  nameWeaknesses,
   type Operation,
   type Param,
 } from "@anvil/air";
@@ -261,21 +263,44 @@ const undocumentedPagination: Detector = {
 
 /* --- agent usability ------------------------------------------------------ */
 
+/** Human phrase for each weakness reason, for the deficiency message. */
+const WEAKNESS_REASON: Record<NameWeakness, string> = {
+  bare_noun: "not verb_noun",
+  vague_verb: "leads with a verb an agent cannot route on",
+  generic_resource: "names a placeholder resource, not a concrete thing",
+  no_resource: "no concrete resource — fell back to the service name",
+};
+
 const weakNames: Detector = {
   name: "weak-operation-names",
   detect(air) {
     const out: Deficiency[] = [];
     for (const op of air.operations) {
-      // A good MCP/CLI name reads as verb_noun; a bare noun forces the agent to
-      // guess intent from context it may not have.
+      // The SAME weakness predicate the compiler's naming pass scores confidence
+      // with (@anvil/air). Firing on bare_noun ALONE was the gap that let
+      // `do_transition` (vague verb) be penalized by confidence yet never flagged,
+      // and `get_object` / `list_records` (generic resource) escape both surfaces.
+      // The resource is read back off the canonicalName's noun tokens — the name
+      // is exactly the agent-facing surface this detector judges. `no_resource`
+      // is a derive-time signal not recoverable from the name, so it is out of
+      // scope here (the compiler still scores it); passing hasResource:true keeps
+      // this to the three name-shape weaknesses.
       const parts = op.canonicalName.split("_").filter(Boolean);
-      if (parts.length < 2) {
+      const weaknesses = nameWeaknesses({
+        canonicalName: op.canonicalName,
+        resource: parts.slice(1).join("_"),
+        action: parts[0] ?? "",
+        hasResource: true,
+      });
+      if (weaknesses.length > 0) {
         out.push(
           makeDeficiency(
             "weak_operation_name",
             { kind: "operation", operationId: op.id },
-            `Operation '${op.id}' has a weak name '${op.canonicalName}' (not verb_noun).`,
-            { canonicalName: op.canonicalName },
+            `Operation '${op.id}' has a weak name '${op.canonicalName}' (${weaknesses
+              .map((w) => WEAKNESS_REASON[w])
+              .join("; ")}).`,
+            { canonicalName: op.canonicalName, weaknesses },
           ),
         );
       }

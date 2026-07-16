@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { Command } from "commander";
 import { runToolCli } from "../tool-cli.js";
 import type { CommandContext } from "./context.js";
@@ -29,7 +31,11 @@ export function registerRun(parent: Command, ctx: CommandContext): void {
       .passThroughOptions()
       .action(async (dir: string, args: string[]) => {
         const air = loadAir(dir);
-        ctx.code = await runToolCli(air, args, { ...ctx.deps, io: ctx.io });
+        // Point `--mcp stdio` at this bundle's own local MCP server, when present
+        // (dir may be a bundle root or an air.yaml path — only the former ships one).
+        const serverPath = join(dir, "mcp", "server.js");
+        const mcpServerPath = existsSync(serverPath) ? serverPath : undefined;
+        ctx.code = await runToolCli(air, args, { ...ctx.deps, io: ctx.io, mcpServerPath });
       }),
     { mutates: true },
   );

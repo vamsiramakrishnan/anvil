@@ -30,11 +30,26 @@ export interface HarnessFinding {
   claim?: OperationClaim;
 }
 
+/**
+ * One plan-routed question to investigate against a source. When `runEnrichment`
+ * is plan-driven, this replaces the generic "search for the operation" probe with
+ * the specific queries the enrichment plan seeded (idempotency phrases, stranded
+ * intents, …), so the source is asked what it can actually answer.
+ */
+export interface ProbePlanQuestion {
+  /** Search phrases the plan derived for this question. */
+  queries: string[];
+  /** The AIR predicate an answer bears on (documentation for the case loop). */
+  predicate: string;
+}
+
 export interface ProbeInput {
   op: Operation;
   source: McpSource;
   config: SourceConfig;
   tools: Array<{ name: string; description?: string }>;
+  /** Plan-driven only: the specific question to investigate (seeds the search). */
+  question?: ProbePlanQuestion;
 }
 
 /**
@@ -78,7 +93,12 @@ export class HeuristicHarnessAgent implements HarnessAgent {
     const tool = searchToolName(input);
     if (!tool) return [];
     const scope = input.config.hints.scope.join(" ");
-    const query = `${input.op.canonicalName} ${input.op.sourceRef.path ?? ""} ${scope}`.trim();
+    // Plan-driven: search for the plan's queries (the thing actually in question).
+    // Otherwise fall back to the operation's own name + path — a generic sweep.
+    const seed = input.question
+      ? input.question.queries.join(" ")
+      : `${input.op.canonicalName} ${input.op.sourceRef.path ?? ""}`;
+    const query = `${seed} ${scope}`.trim();
 
     let text: string;
     try {

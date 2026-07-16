@@ -108,6 +108,19 @@ Options:
 - `--fail-on <disposition>` — the disposition threshold --check fails at (default blocked)
 - `--json` — emit the versioned artifact (or the filtered view) as JSON
 
+### `anvil distill`
+`anvil distill [options] <path>`
+
+Strip a surface to its eigenbasis: the minimal spanning set of operations.
+
+Deterministic, read-only whole-surface analysis (a peer of `assess`). Reads collapse by (resource, action) to one canonical, most-general read per cluster; every write is kept as its own basis vector; same-signature mutations are flagged for review, never auto-dropped. Reports the basis, the reconstructible read projections, the redundant clusters, any intents reachable ONLY through reconstructible ops (which a mechanical strip would lose), and capabilities whose basis still exceeds the tool budget. `--json` emits the full artifact for the Stage-2 coding-harness loop; `--check` gates on over-budget capabilities. It proposes only — approval stays an explicit, reviewed step.
+
+Options:
+- `--json` — emit the distillation artifact as JSON
+- `--check` — gate: exit non-zero if a capability's basis exceeds the tool budget
+- `--as-enrich-plan` — emit a targeted enrichment plan (the surface's open questions) instead of the report
+- `--write <file>` — write the output (report or enrich plan) to a file
+
 ### `anvil capability`  *(mutates)*
 `anvil capability [options] [command]`
 
@@ -318,6 +331,7 @@ Anvil is an MCP client here: it connects to the MCP servers those systems alread
 
 Options:
 - `--sources <file>` — sources.yaml naming the MCP servers to consult
+- `--plan <file>` — an enrichment plan from `anvil distill --as-enrich-plan`: probe only its targeted operations, routing each question to the matching source pole (code loosens, docs tighten)
 - `--write <manifest>` — write the proposed manifest here instead of printing it
 - `--json` — emit the per-operation decisions as JSON
 
@@ -352,11 +366,27 @@ Options:
 - `--json` — emit a machine-readable import report (for CI oracles)
 
 ### `anvil sources`
-`anvil sources [options]`
+`anvil sources [options] [command]`
 
-List the enrichment sources (published MCP servers) Anvil can connect to.
+List enrichment sources, or scaffold a sources.yaml with `sources init`.
 
-Shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server Anvil runs for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman).
+The published MCP servers Anvil enriches from. `anvil sources` (or `sources list`) shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman). `anvil sources init <dir>` scaffolds a sources.yaml for a compiled service and lists the interview questions to finish it.
+
+#### `anvil sources list`
+`anvil sources list [options]`
+
+List the built-in enrichment source profiles.
+
+#### `anvil sources init`
+`anvil sources init [options] <path>`
+
+Scaffold a sources.yaml for a service, with the interview questions to finish it.
+
+Reads the compiled AIR and proposes a sources.yaml: the two evidence poles every enrichment wants — a CODE host (the only tier that can loosen safety) and a DOC host (tightens/corroborates, supplies intent phrases) — plus any product vendor it detects (Salesforce, SAP) and a Postman source when the spec came from a collection. It also emits the exact QUESTIONS a coding harness should put to the user (which repo, which space, which env vars) — the interview is agent-native: propose, then refine with the operator. Propose-only; `--write <file>` saves the scaffold, `--json` emits the questions + proposal for a harness.
+
+Options:
+- `--write <file>` — write the scaffolded sources.yaml here
+- `--json` — emit the proposal + interview questions as JSON
 
 ### `anvil approve`  *(mutates)*
 `anvil approve [options] <path> <operation-ids...>`

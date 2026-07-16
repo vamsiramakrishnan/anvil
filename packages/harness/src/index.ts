@@ -17,3 +17,4 @@ export * from "./mcp-source.js";
 export * from "./profiles.js";
 export * from "./reconcile.js";
 export * from "./sources.js";
+export * from "./sources-init.js";

@@ -1,7 +1,7 @@
 {
   "name": "@anvil/harness",
   "version": "0.1.0",
-  "description": "Anvil harness — connect to published MCP servers to enrich AIR with evidence.",
+  "description": "Anvil harness \u2014 connect to published MCP servers to enrich AIR with evidence.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -26,6 +26,7 @@
     "@anvil/compiler": "workspace:*",
     "@anvil/generators": "workspace:*",
     "@anvil/mcp-runtime": "workspace:*",
+    "@anvil/refinement": "workspace:*",
     "@anvil/runtime": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.22.0",
     "yaml": "^2.8.1",

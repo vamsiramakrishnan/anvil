@@ -1,0 +1,7 @@
+{
+  "operations": {
+    "bigquery.projects.list": { "toolName": "bigquery_bigquery_projects_list", "effect": "read", "risk": "none" },
+    "bigquery.projects.getServiceAccount": { "toolName": "bigquery_bigquery_projects_get_service_account", "effect": "read", "risk": "none" },
+    "bigquery.rowAccessPolicies.delete": { "toolName": "bigquery_bigquery_row_access_policies_delete", "effect": "mutation", "risk": "destructive" }
+  }
+}

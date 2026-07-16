@@ -47,6 +47,20 @@ jobs:
           mkdir -p corpus-reports/quick
           cp tools/corpus/report/report.jsonl tools/corpus/report/summary.md corpus-reports/quick/ 2>/dev/null || true
 
+      # Gate: the tri-surface end-to-end check. Builds one capability bundle per
+      # adapter format (REST/OData/SOAP/gRPC/Discovery/GraphQL) and asserts the
+      # generated CLI, MCP server, and skill agree on the wire. Needs network
+      # (fetches real specs) so it rides the nightly job, not the per-PR gate.
+      - name: Conformance (tri-surface CLI == MCP == skill, gates)
+        if: always()
+        run: node tools/corpus/run.mjs conformance
+
+      - name: Save conformance report
+        if: always()
+        run: |
+          mkdir -p corpus-reports/conformance
+          cp tools/corpus/report/report.jsonl tools/corpus/report/summary.md corpus-reports/conformance/ 2>/dev/null || true
+
       # Informational: seeded random sample of the apis.guru universe, raw
       # compiles, invariant oracles only. Fails the job only on `crash`.
       - name: Sweep (informational, crash-fatal)
