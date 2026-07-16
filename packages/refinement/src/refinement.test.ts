@@ -5,7 +5,7 @@ import { DEFICIENCY_CATALOG, READINESS_CONSTRAINTS } from "./deficiency.js";
 import { runDetectors } from "./detect.js";
 import { buildRefinementPlan, summarizeRefinementPlan } from "./plan.js";
 import { discoverSkills, skillFor } from "./skills/registry.js";
-import { targetKey } from "./target.js";
+import { targetKey, targetOperationId } from "./target.js";
 
 /**
  * A document engineered to trip a spread of detectors: a service with no display
@@ -230,6 +230,56 @@ describe("detectors", () => {
         d.code === "missing_field_description" && targetKey(d.target).endsWith("input.body.reason"),
     );
     expect(reason?.severity).toBe("high");
+  });
+
+  it("flag weak names beyond bare nouns — vague verbs and generic resources", () => {
+    // The gap the shared @anvil/air `nameWeaknesses` predicate closes: before it,
+    // `weak_operation_name` fired ONLY on bare nouns, so a `do_transition` (vague
+    // verb) or `list_records` (generic resource) — two-token names — slipped past
+    // the detector while the compiler quietly scored their confidence down.
+    const doc = loadAirDocument({
+      service: { id: "svc", displayName: "Svc", version: "1", source: { kind: "openapi" } },
+      operations: [
+        {
+          id: "svc.issue.do_transition",
+          canonicalName: "do_transition",
+          displayName: "Do transition",
+          description: "Transitions an issue.",
+          sourceRef: { kind: "openapi", path: "/issues/{id}/transitions", method: "post" },
+          effect: { kind: "mutation", action: "other", risk: "low", reversible: true },
+          input: { params: [] },
+          idempotency: { mode: "natural" },
+          retries: { mode: "none" },
+          confirmation: { required: false },
+          auth: { type: "none" },
+          cli: { command: "svc issue do_transition" },
+          mcp: { toolName: "svc_do_transition" },
+          skill: { intentExamples: ["Move an issue to the next state."] },
+        },
+        {
+          id: "svc.record.list",
+          canonicalName: "list_records",
+          displayName: "List records",
+          description: "Lists records.",
+          sourceRef: { kind: "openapi", path: "/records", method: "get" },
+          effect: { kind: "read", action: "list", risk: "none" },
+          input: { params: [] },
+          idempotency: { mode: "natural" },
+          retries: { mode: "safe", basis: "read_safe", maxAttempts: 3, retryOn: ["http_503"] },
+          confirmation: { required: false },
+          auth: { type: "none" },
+          cli: { command: "svc record list" },
+          mcp: { toolName: "svc_list_records" },
+          skill: { intentExamples: ["Show me the records."] },
+        },
+      ],
+    });
+    const weak = runDetectors(doc).filter((d) => d.code === "weak_operation_name");
+    const byOp = new Map(
+      weak.map((d) => [targetOperationId(d.target), d.facts.weaknesses as string[]]),
+    );
+    expect(byOp.get("svc.issue.do_transition")).toContain("vague_verb");
+    expect(byOp.get("svc.record.list")).toContain("generic_resource");
   });
 
   it("do not flag enum fields as plain missing descriptions", () => {

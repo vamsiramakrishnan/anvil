@@ -32,3 +32,26 @@ operations:
 Then `anvil compile <spec> --manifest anvil.yaml --out <dir>` regenerates every
 artifact consistently. If you cannot prove idempotency, leave the operation
 unapproved — an unexposed operation is safer than an unsafe one.
+
+## Re-homing a weak name
+
+When `anvil lint` reports `weak_operation_name` — a name an agent cannot route
+on (`do_transition`, `get_object`, `list_records`) — fix the routing name with
+the `name` axis. It re-projects the canonical name, CLI command, and MCP tool
+together from one `(resource, verb)` pair, so the three surfaces cannot drift,
+and the stable operation `id` is preserved (a rename is not a new operation):
+
+```yaml
+operations:
+  doTransition:
+    name:
+      resource: issue        # the concrete thing it acts on
+      verb: transition       # a free string — not limited to the effect-verb set
+    # → canonical `transition_issue`, CLI `<svc> issue transition`,
+    #   tool `<svc>_transition_issue`
+```
+
+`name` renames only; `action` (list/get/create/…) reclassifies the *effect* and
+is a separate axis. Set either `resource` or `verb`; the other is read from the
+current name. A re-home that collides with another operation is re-disambiguated
+deterministically, never silently.
