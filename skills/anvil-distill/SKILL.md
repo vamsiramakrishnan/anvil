@@ -68,6 +68,21 @@ member is a *deliberate* keep, `residualIntents` is empty, and no capability is 
 budget. That is the eigenbasis: minimal spanning set, no stranded coverage, each
 capability a basis rather than a screen.
 
+## Handing uncertainty to enrichment
+
+When Stage-2 can't decide from AIR alone — is this stranded intent real? is this
+write idempotent? what does this vague name mean? — don't guess: turn the open
+questions into a targeted enrichment plan and let the systems of record answer.
+
+```
+anvil distill <dir> --as-enrich-plan --write plan.json
+anvil enrich <dir> --sources sources.yaml --plan plan.json --write anvil.manifest.yaml
+anvil compile <spec> --manifest anvil.manifest.yaml --out <dir>   # reproject, then re-distill
+```
+
+The plan probes ONLY the uncertain ops, routed to the tier that can answer (code
+proves idempotency, docs describe intent). See `skills/anvil-enrich/SKILL.md`.
+
 ## Rules (do not violate)
 
 - **Never drop a write.** Mutations are basis vectors; the pass will only ever put

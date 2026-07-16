@@ -130,7 +130,7 @@ export function scaffoldSources(air: AirDocument): SourcesScaffold {
   }
 
   // A Postman collection source → real-usage corroboration.
-  if (air.source?.kind === "postman") {
+  if (air.service.source?.kind === "postman") {
     proposal.push({ id: "postman", system: "postman", hints: { scope: [] } });
     questions.push({
       sourceId: "postman",
