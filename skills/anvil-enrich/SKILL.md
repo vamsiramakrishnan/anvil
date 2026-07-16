@@ -67,14 +67,28 @@ Then reproject: `anvil compile <spec> --manifest anvil.manifest.yaml --out <dir>
 
 ## How this closes the loop with distillation
 
-`anvil distill` (the eigenbasis pass) is what tells you *where* enrichment is worth
-the round-trip: its **stranded intents** ("show the mobile summary view" — is this
-a real capability or flab?), **weak/vague names** (`doTransition` — what does it
-do?), and **review clusters** (are these two mutations really distinct?) are exactly
-the questions to send the sources. Run `distill` first, let its ambiguities target
-the `sources init` interview and the `enrich` retrieval, then re-distill with the
-grounded intent phrases. distill finds what's uncertain → enrich resolves it from
-the systems of record → the conversion gets better each pass.
+`anvil distill` (the eigenbasis pass) tells you *where* enrichment is worth the
+round-trip, and hands it over as a plan:
+
+```
+anvil distill <dir> --as-enrich-plan --write plan.json   # the surface's open questions
+anvil enrich <dir> --sources sources.yaml --plan plan.json --write anvil.manifest.yaml
+```
+
+The plan turns distillation's open questions into **source-routed probes**, one per
+UNCERTAIN operation (clean-basis ops are skipped entirely):
+- **unproven-idempotency writes** (highest priority) → ask a **code** source to
+  prove an idempotency key (the only thing that can loosen safety).
+- **review clusters** (same-signature mutations) → a code idempotency question +
+  a docs "deprecated/superseded?" question.
+- **stranded intents** ("show the mobile summary view") → a **docs** question:
+  meaningful projection, or flab? (a keep/re-home usability call — no safety change).
+- **weak/vague names** (`doTransition`) → an any-source "what does it do?" question.
+
+The plan is **advisory routing only** — it never sets a manifest field or changes a
+threshold; `reconcile` still owns the tier (docs tighten / code loosens). So: distill
+finds what's uncertain → the plan aims the sources at those ops → enrich resolves it →
+re-distill with the grounded intent phrases. The conversion gets better each pass.
 
 ## Rules
 

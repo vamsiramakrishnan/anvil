@@ -1,4 +1,11 @@
-import { distill, renderDistillation } from "@anvil/refinement";
+import { writeFileSync } from "node:fs";
+import {
+  distill,
+  distillToEnrichmentPlan,
+  renderDistillation,
+  renderEnrichmentPlan,
+  runDetectors,
+} from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
@@ -32,17 +39,52 @@ export function registerDistill(parent: Command, ctx: CommandContext): void {
       .argument("<path>", "generated bundle directory or air.yaml")
       .option("--json", "emit the distillation artifact as JSON")
       .option("--check", "gate: exit non-zero if a capability's basis exceeds the tool budget")
-      .action((path: string, opts: { json?: boolean; check?: boolean }) => {
+      .option(
+        "--as-enrich-plan",
+        "emit a targeted enrichment plan (the surface's open questions) instead of the report",
+      )
+      .option("--write <file>", "write the output (report or enrich plan) to a file")
+      .action((path: string, opts: DistillOptions) => {
         ctx.code = runDistill(path, opts, ctx.io);
       }),
     { mutates: false },
   );
 }
 
-function runDistill(path: string, opts: { json?: boolean; check?: boolean }, io: CliIO): number {
+interface DistillOptions {
+  json?: boolean;
+  check?: boolean;
+  asEnrichPlan?: boolean;
+  write?: string;
+}
+
+function runDistill(path: string, opts: DistillOptions, io: CliIO): number {
   const air = loadAir(path);
   const report = distill(air);
-  io.out(opts.json === true ? JSON.stringify(report, null, 2) : renderDistillation(report));
+
+  // --as-enrich-plan: turn distillation's open questions (unproven writes, review
+  // clusters, stranded intents, weak names) into a targeted enrichment plan that
+  // `anvil enrich --plan` consumes. distill stays pure; detection runs here.
+  if (opts.asEnrichPlan === true) {
+    const plan = distillToEnrichmentPlan(report, runDetectors(air));
+    const out =
+      opts.write || opts.json === true ? JSON.stringify(plan, null, 2) : renderEnrichmentPlan(plan);
+    if (opts.write) {
+      writeFileSync(opts.write, `${out}\n`);
+      io.out(`Wrote enrichment plan (${plan.targets.length} target(s)) to ${opts.write}`);
+    } else {
+      io.out(out);
+    }
+    return 0;
+  }
+
+  const out = opts.json === true ? JSON.stringify(report, null, 2) : renderDistillation(report);
+  if (opts.write) {
+    writeFileSync(opts.write, `${out}\n`);
+    io.out(`Wrote distillation report to ${opts.write}`);
+  } else {
+    io.out(out);
+  }
   if (opts.check === true && report.overBudgetCapabilities.length > 0) return 1;
   return 0;
 }
