@@ -52,6 +52,7 @@ export function generateTargetKit(
       }),
     },
     { path: `${dir}/oauth.template.json`, bytes: json(oauthTemplate) },
+    { path: `${dir}/inbound-auth.env`, bytes: enc(inboundAuthEnv(profile, options.endpoint)) },
     {
       path: `${dir}/server-description.md`,
       bytes: enc(serverDescription(air, profile, options.serverDescription)),
@@ -96,14 +97,71 @@ function adminRunbook(
   profile: AgentPlatformTargetProfile,
   endpoint?: string,
 ): string {
+  const url = endpoint ?? "https://<your-connector-host>/mcp";
   return [
     `# Admin runbook — ${air.service.displayName ?? air.service.id} on ${profile.displayName}`,
     "",
-    "1. Deploy the generated MCP server to a public HTTPS endpoint.",
-    `2. Register the server URL${endpoint ? ` (${endpoint})` : ""} in the platform admin console.`,
-    "3. Fill oauth.template.json and configure OAuth.",
-    "4. Review organization-policy-checklist.md.",
-    "5. Confirm compatibility-report.json has no errors before enabling for agents.",
+    "The final registration of a custom MCP data store has no public API today, so",
+    "step 5 is a console (or Agent Registry) action. Everything before it is",
+    "scriptable and produced by this kit.",
+    "",
+    "1. Deploy the generated StreamableHTTP MCP server to a public HTTPS endpoint",
+    `   (${url}). SSE is not supported by ${profile.displayName}.`,
+    "2. Configure the server's inbound auth from inbound-auth.env — it validates",
+    "   the token the platform presents on /mcp as an OAuth 2 resource server.",
+    "3. Prerequisites: grant the admin the required IAM role, override the org",
+    "   policy that blocks custom MCP, and allowlist the FQDNs of the server URL,",
+    "   authorization URL, and token URL (see organization-policy-checklist.md).",
+    "4. Register the platform as an OAuth client with your IdP; put its client id /",
+    "   secret and the authorization/token URLs into oauth.template.json. The",
+    "   client's token audience MUST equal ANVIL_INBOUND_AUDIENCE and its scopes",
+    "   MUST cover ANVIL_INBOUND_REQUIRED_SCOPES.",
+    `5. In the console: Data stores → Create data store → Custom MCP Server → enter`,
+    `   ${url} and the auth details. Enable at most ${profile.actionLimits.maxActions} actions.`,
+    "6. Confirm compatibility-report.json has no errors before enabling for agents.",
     "",
   ].join("\n");
+}
+
+/**
+ * The inbound-auth environment contract for the connector's MCP server. These
+ * are non-secret configuration values read by `@anvil/mcp-runtime`'s resource
+ * server; the actual token is presented by the platform at call time. Defaults
+ * to the profile's first auth scheme, with the alternative shown commented.
+ */
+function inboundAuthEnv(profile: AgentPlatformTargetProfile, endpoint?: string): string {
+  const audience = endpoint ?? "<the connector's public URL, e.g. https://host/mcp>";
+  const primary = profile.authRequirements.find((a) => a.inboundMode)?.inboundMode ?? "oidc";
+  const lines = [
+    `# Inbound auth for the ${profile.displayName} connector's MCP server.`,
+    "# The server is an OAuth 2 resource server: it validates the bearer token the",
+    "# platform presents on /mcp. These are non-secret config values, not secrets.",
+    "",
+  ];
+  if (primary === "oidc") {
+    lines.push(
+      "# User-delegated OAuth (OIDC) — per-user identity.",
+      "ANVIL_INBOUND_AUTH_MODE=oidc",
+      "ANVIL_INBOUND_ISSUER=<your IdP issuer, e.g. https://accounts.google.com>",
+      `ANVIL_INBOUND_AUDIENCE=${audience}`,
+      "# ANVIL_INBOUND_JWKS_URI=<override; otherwise discovered from the issuer>",
+      "# ANVIL_INBOUND_REQUIRED_SCOPES=read write",
+      "",
+      "# Alternative: Google service-account token (machine identity).",
+      "# ANVIL_INBOUND_AUTH_MODE=google_service_account",
+      `# ANVIL_INBOUND_AUDIENCE=${audience}`,
+    );
+  } else {
+    lines.push(
+      "# Google service-account token (machine identity).",
+      "ANVIL_INBOUND_AUTH_MODE=google_service_account",
+      `ANVIL_INBOUND_AUDIENCE=${audience}`,
+      "",
+      "# Alternative: user-delegated OAuth (OIDC).",
+      "# ANVIL_INBOUND_AUTH_MODE=oidc",
+      "# ANVIL_INBOUND_ISSUER=<your IdP issuer>",
+      `# ANVIL_INBOUND_AUDIENCE=${audience}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
 }
