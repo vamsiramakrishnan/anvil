@@ -118,6 +118,8 @@ Deterministic, read-only whole-surface analysis (a peer of `assess`). Reads coll
 Options:
 - `--json` — emit the distillation artifact as JSON
 - `--check` — gate: exit non-zero if a capability's basis exceeds the tool budget
+- `--as-enrich-plan` — emit a targeted enrichment plan (the surface's open questions) instead of the report
+- `--write <file>` — write the output (report or enrich plan) to a file
 
 ### `anvil capability`  *(mutates)*
 `anvil capability [options] [command]`
@@ -329,6 +331,7 @@ Anvil is an MCP client here: it connects to the MCP servers those systems alread
 
 Options:
 - `--sources <file>` — sources.yaml naming the MCP servers to consult
+- `--plan <file>` — an enrichment plan from `anvil distill --as-enrich-plan`: probe only its targeted operations, routing each question to the matching source pole (code loosens, docs tighten)
 - `--write <manifest>` — write the proposed manifest here instead of printing it
 - `--json` — emit the per-operation decisions as JSON
 

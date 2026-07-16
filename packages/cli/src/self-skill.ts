@@ -58,7 +58,7 @@ aligned MCP server + CLI + skill bundle.
 1. \`anvil compile <spec> --manifest <manifest> --out <dir>\` — build the bundle.
 2. \`anvil inspect <dir>\` — read every operation's effect, risk, and idempotency.
 3. \`anvil lint <dir>\` — fix diagnostics. Non-idempotent mutations are \`review_required\`.
-4. Enrich: write an Anvil manifest to declare idempotency, confirmation, and retry policy for unsafe operations (see reference/workflow.md).
+4. Enrich: write an Anvil manifest to declare idempotency, confirmation, retry policy, and routing names for unsafe or weakly-named operations. \`anvil distill <dir> --as-enrich-plan\` targets the residue for \`anvil enrich --plan\` (see reference/workflow.md).
 5. \`anvil approve <dir> <operation-id...>\` — expose operations only after inspecting risk.
 6. \`anvil package skill <dir>\` and \`anvil deploy cloud-run <dir> --env prod\`.
 
@@ -177,6 +177,42 @@ operations:
 Then \`anvil compile <spec> --manifest anvil.yaml --out <dir>\` regenerates every
 artifact consistently. If you cannot prove idempotency, leave the operation
 unapproved — an unexposed operation is safer than an unsafe one.
+
+## Targeting the residue with distill
+
+Don't sweep every operation. \`anvil distill <dir>\` reduces the surface to its
+eigenbasis (one canonical read per cluster, every write its own vector), and
+\`--as-enrich-plan\` turns its open questions into a source-routed plan that
+\`anvil enrich --plan\` probes — asking code hosts to prove idempotency and doc
+hosts to describe intent, only for the operations that are actually uncertain.
+
+\`\`\`bash
+anvil distill <dir> --as-enrich-plan --write plan.json
+anvil enrich <dir> --sources sources.yaml --plan plan.json
+\`\`\`
+
+## Re-homing a weak name
+
+When \`anvil lint\` reports \`weak_operation_name\` — a name an agent cannot route
+on (\`do_transition\`, \`get_object\`, \`list_records\`) — fix the routing name with
+the \`name\` axis. It re-projects the canonical name, CLI command, and MCP tool
+together from one \`(resource, verb)\` pair, so the three surfaces cannot drift,
+and the stable operation \`id\` is preserved (a rename is not a new operation):
+
+\`\`\`yaml
+operations:
+  doTransition:
+    name:
+      resource: issue        # the concrete thing it acts on
+      verb: transition       # a free string — not limited to the effect-verb set
+    # → canonical \`transition_issue\`, CLI \`<svc> issue transition\`,
+    #   tool \`<svc>_transition_issue\`
+\`\`\`
+
+\`name\` renames only; \`action\` (list/get/create/…) reclassifies the *effect* and
+is a separate axis. Set either \`resource\` or \`verb\`; the other is read from the
+current name. A re-home that collides with another operation is re-disambiguated
+deterministically, never silently.
 `;
 }
 

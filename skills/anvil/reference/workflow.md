@@ -33,6 +33,19 @@ Then `anvil compile <spec> --manifest anvil.yaml --out <dir>` regenerates every
 artifact consistently. If you cannot prove idempotency, leave the operation
 unapproved — an unexposed operation is safer than an unsafe one.
 
+## Targeting the residue with distill
+
+Don't sweep every operation. `anvil distill <dir>` reduces the surface to its
+eigenbasis (one canonical read per cluster, every write its own vector), and
+`--as-enrich-plan` turns its open questions into a source-routed plan that
+`anvil enrich --plan` probes — asking code hosts to prove idempotency and doc
+hosts to describe intent, only for the operations that are actually uncertain.
+
+```bash
+anvil distill <dir> --as-enrich-plan --write plan.json
+anvil enrich <dir> --sources sources.yaml --plan plan.json
+```
+
 ## Re-homing a weak name
 
 When `anvil lint` reports `weak_operation_name` — a name an agent cannot route

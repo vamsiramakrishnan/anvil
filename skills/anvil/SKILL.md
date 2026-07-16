@@ -26,7 +26,7 @@ aligned MCP server + CLI + skill bundle.
 1. `anvil compile <spec> --manifest <manifest> --out <dir>` — build the bundle.
 2. `anvil inspect <dir>` — read every operation's effect, risk, and idempotency.
 3. `anvil lint <dir>` — fix diagnostics. Non-idempotent mutations are `review_required`.
-4. Enrich: write an Anvil manifest to declare idempotency, confirmation, and retry policy for unsafe operations (see reference/workflow.md).
+4. Enrich: write an Anvil manifest to declare idempotency, confirmation, retry policy, and routing names for unsafe or weakly-named operations. `anvil distill <dir> --as-enrich-plan` targets the residue for `anvil enrich --plan` (see reference/workflow.md).
 5. `anvil approve <dir> <operation-id...>` — expose operations only after inspecting risk.
 6. `anvil package skill <dir>` and `anvil deploy cloud-run <dir> --env prod`.
 
