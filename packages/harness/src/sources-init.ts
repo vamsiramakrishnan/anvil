@@ -62,7 +62,8 @@ function envForSystem(system: SourceSystem): string[] {
   if (!t) return [];
   const bag: string[] = [];
   const scan = (rec?: Record<string, string>) => {
-    for (const v of Object.values(rec ?? {})) for (const m of v.matchAll(/\$\{(\w+)\}/g)) bag.push(m[1] as string);
+    for (const v of Object.values(rec ?? {}))
+      for (const m of v.matchAll(/\$\{(\w+)\}/g)) bag.push(m[1] as string);
   };
   if (t.kind === "stdio") scan(t.env);
   else {
@@ -89,7 +90,11 @@ export function scaffoldSources(air: AirDocument): SourcesScaffold {
   const questions: SourceQuestion[] = [];
 
   // Pole 1 — a code host (the only tier that can loosen safety).
-  proposal.push({ id: "code", system: "github", hints: { scope: [`repo:your-org/${slug}-service`] } });
+  proposal.push({
+    id: "code",
+    system: "github",
+    hints: { scope: [`repo:your-org/${slug}-service`] },
+  });
   questions.push({
     sourceId: "code",
     system: "github",
@@ -138,7 +143,13 @@ export function scaffoldSources(air: AirDocument): SourcesScaffold {
   }
 
   const requiredEnv = [...new Set(proposal.flatMap((s) => envForSystem(s.system)))].sort();
-  return { detectedVendor: vendor, proposal, questions, requiredEnv, yaml: renderYaml(proposal, requiredEnv) };
+  return {
+    detectedVendor: vendor,
+    proposal,
+    questions,
+    requiredEnv,
+    yaml: renderYaml(proposal, requiredEnv),
+  };
 }
 
 function renderYaml(proposal: SourceConfig[], requiredEnv: string[]): string {
@@ -157,7 +168,9 @@ function renderYaml(proposal: SourceConfig[], requiredEnv: string[]): string {
     const scope = s.hints?.scope ?? [];
     if (scope.length > 0) {
       lines.push("    hints:");
-      lines.push(`      scope: [${scope.map((x) => `"${x.includes("your-") || /[A-Z_]+$/.test(x) ? `<${x}>` : x}"`).join(", ")}]`);
+      lines.push(
+        `      scope: [${scope.map((x) => `"${x.includes("your-") || /[A-Z_]+$/.test(x) ? `<${x}>` : x}"`).join(", ")}]`,
+      );
     }
   }
   return `${lines.join("\n")}\n`;
