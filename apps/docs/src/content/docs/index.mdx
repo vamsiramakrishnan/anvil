@@ -1,15 +1,15 @@
 ---
 title: Anvil
-description: Anvil compiles the API specs an enterprise already has — OpenAPI, SOAP, gRPC, GraphQL, Postman, and gateway estates from Apigee, Kong, WSO2, MuleSoft, and IBM API Connect — into an aligned CLI, MCP server, skill, and enforcement hooks, with risk, idempotency, and human approval decided once and enforced everywhere.
+description: Anvil compiles the API specs an enterprise already has — OpenAPI, SOAP, gRPC, GraphQL, Postman, and gateway exports from Apigee, Kong, WSO2, MuleSoft, and IBM API Connect — into a CLI, an MCP server, an agent skill, and enforcement hooks that define each operation identically. Risk, idempotency, and human approval are set once and enforced on every surface.
 template: splash
 hero:
   tagline: >-
-    Your enterprise already wrote down what its APIs do — in OpenAPI and SOAP,
-    and in the Apigee, Kong, WSO2, MuleSoft, and IBM API Connect gateways that
-    run them. Anvil compiles all of it into agent tools that mean the same
-    thing across a CLI, an MCP server, a skill, and enforcement hooks — with
-    risk, idempotency, and human approval decided once and enforced
-    everywhere. The highest compliment it earns: the agent stopped guessing.
+    Anvil compiles an API spec into four artifacts that stay in sync: a CLI,
+    an MCP server, an agent skill, and enforcement hooks. It reads the specs
+    you already have — OpenAPI, SOAP, gRPC, GraphQL, Postman, and exports from
+    Apigee, Kong, WSO2, MuleSoft, and IBM API Connect gateways. Every operation
+    carries the same risk, idempotency, and approval rules on every surface,
+    and none reaches an agent until a person approves it.
   actions:
     - text: Quickstart
       link: /anvil/start/quickstart/
@@ -31,8 +31,8 @@ import RingsDiagram from '../../components/diagrams/RingsDiagram.astro';
 ## Import the gateway you already run
 
 Most enterprise APIs don't live in a git repo — they live behind a gateway, and
-the gateway knows what the spec leaves out: which auth plugin actually fronts an
-operation, which scopes a product grants, where a quota bites, which requests
+the gateway holds details the spec leaves out: which auth plugin fronts an
+operation, which scopes a product grants, where quotas apply, and which requests
 get rewritten in flight. Anvil imports the **estate**, not just the spec: five
 adapters read an export you produce from the gateway — an offline file, never a
 live connection — and compile it through the exact same approval-gated pipeline
@@ -75,10 +75,10 @@ behind the gate. [How Anvil operates at estate scale →](/anvil/concepts/gatewa
 
 ## Any spec in. Every surface out.
 
-Enterprises don't lack APIs — they lack **agent-safe** ones. The payments API
-knows a refund moves money; the WSDL knows the transfer can't be undone. But
-none of that knowledge survives the trip into an agent's toolbox when wrappers
-are written by hand. Anvil compiles it in.
+Enterprises don't lack APIs — they lack **agent-safe** ones. A payments spec
+says a refund moves money; a WSDL says a transfer can't be undone. That
+information is in the spec, but hand-written wrappers usually drop it. Anvil
+compiles it in.
 
 <PipelineDiagram />
 
@@ -86,7 +86,7 @@ Everything on the right is a **projection** of the model in the middle. Nobody
 hand-writes the CLI, the MCP tool descriptions, or the skill — so nobody can
 forget that the refund needs an idempotency key on one surface but not another.
 
-## The problem isn't writing wrappers. It's keeping them honest.
+## The problem isn't writing wrappers. It's keeping them in sync.
 
 Any team can wrap an API for one demo. The failure mode arrives six months
 later, when the CLI wrapper retries a payment the MCP wrapper wouldn't, and the
@@ -101,7 +101,7 @@ runbook says a third thing.
   </a>
   <a class="ge-value-card" href="/anvil/concepts/mechanisms/">
     <strong>Safety is compiled in</strong>
-    <span>Effect, risk, idempotency, and confirmation are derived from the spec and enforced by the runtime — not requested politely in a prompt.</span>
+    <span>Effect, risk, idempotency, and confirmation are derived from the spec and enforced by the runtime — not left to a prompt.</span>
   </a>
   <a class="ge-value-card" href="/anvil/guides/enrich-approve-workflow/">
     <strong>Approval is the gate</strong>
@@ -220,8 +220,9 @@ anvil approve <dir> <operation-id>
 anvil package skill <dir>
 ```
 
-Non-idempotent mutations land as `review_required` — not exposed until a human
-approves them. That refusal is the feature, not the bug.
+Non-idempotent mutations land as `review_required` and stay unexposed until a
+human approves them. Blocking an unproven mutation is the intended behavior, not
+a limitation.
 
 ## Where to go next
 
