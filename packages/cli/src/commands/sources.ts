@@ -43,11 +43,7 @@ export function registerSources(parent: Command, ctx: CommandContext): void {
   );
 }
 
-function runSourcesInit(
-  path: string,
-  opts: { write?: string; json?: boolean },
-  io: CliIO,
-): number {
+function runSourcesInit(path: string, opts: { write?: string; json?: boolean }, io: CliIO): number {
   const air = loadAir(path);
   const scaffold = scaffoldSources(air);
   if (opts.json === true) {

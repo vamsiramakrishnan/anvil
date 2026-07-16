@@ -13,7 +13,10 @@ paths:
 
 describe("scaffoldSources — the sources.yaml interview", () => {
   it("always proposes the two evidence poles: a code host (loosens) and a docs host (tightens)", async () => {
-    const air = await compile({ spec: openapi("acme", "https://api.acme.test"), serviceId: "acme" });
+    const air = await compile({
+      spec: openapi("acme", "https://api.acme.test"),
+      serviceId: "acme",
+    });
     const s = scaffoldSources(air);
     const systems = s.proposal.map((p) => p.system);
     expect(systems).toContain("github"); // code — the only tier that can loosen safety
@@ -38,7 +41,10 @@ describe("scaffoldSources — the sources.yaml interview", () => {
   });
 
   it("emits the env vars the chosen servers need (secrets stay out of the file)", async () => {
-    const air = await compile({ spec: openapi("acme", "https://api.acme.test"), serviceId: "acme" });
+    const air = await compile({
+      spec: openapi("acme", "https://api.acme.test"),
+      serviceId: "acme",
+    });
     const s = scaffoldSources(air);
     expect(s.requiredEnv).toContain("GITHUB_TOKEN");
     expect(s.requiredEnv.some((e) => e.startsWith("CONFLUENCE_"))).toBe(true);
@@ -46,7 +52,10 @@ describe("scaffoldSources — the sources.yaml interview", () => {
   });
 
   it("produces a sources.yaml that round-trips through parseSources", async () => {
-    const air = await compile({ spec: openapi("acme", "https://api.acme.test"), serviceId: "acme" });
+    const air = await compile({
+      spec: openapi("acme", "https://api.acme.test"),
+      serviceId: "acme",
+    });
     const s = scaffoldSources(air);
     const parsed = parseSources(s.yaml);
     expect(parsed.map((p) => p.id).sort()).toEqual(s.proposal.map((p) => p.id).sort());
@@ -54,7 +63,10 @@ describe("scaffoldSources — the sources.yaml interview", () => {
   });
 
   it("is deterministic", async () => {
-    const air = await compile({ spec: openapi("acme", "https://api.acme.test"), serviceId: "acme" });
+    const air = await compile({
+      spec: openapi("acme", "https://api.acme.test"),
+      serviceId: "acme",
+    });
     expect(JSON.stringify(scaffoldSources(air))).toBe(JSON.stringify(scaffoldSources(air)));
   });
 });
