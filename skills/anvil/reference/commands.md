@@ -363,11 +363,27 @@ Options:
 - `--json` — emit a machine-readable import report (for CI oracles)
 
 ### `anvil sources`
-`anvil sources [options]`
+`anvil sources [options] [command]`
 
-List the enrichment sources (published MCP servers) Anvil can connect to.
+List enrichment sources, or scaffold a sources.yaml with `sources init`.
 
-Shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server Anvil runs for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman).
+The published MCP servers Anvil enriches from. `anvil sources` (or `sources list`) shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman). `anvil sources init <dir>` scaffolds a sources.yaml for a compiled service and lists the interview questions to finish it.
+
+#### `anvil sources list`
+`anvil sources list [options]`
+
+List the built-in enrichment source profiles.
+
+#### `anvil sources init`
+`anvil sources init [options] <path>`
+
+Scaffold a sources.yaml for a service, with the interview questions to finish it.
+
+Reads the compiled AIR and proposes a sources.yaml: the two evidence poles every enrichment wants — a CODE host (the only tier that can loosen safety) and a DOC host (tightens/corroborates, supplies intent phrases) — plus any product vendor it detects (Salesforce, SAP) and a Postman source when the spec came from a collection. It also emits the exact QUESTIONS a coding harness should put to the user (which repo, which space, which env vars) — the interview is agent-native: propose, then refine with the operator. Propose-only; `--write <file>` saves the scaffold, `--json` emits the questions + proposal for a harness.
+
+Options:
+- `--write <file>` — write the scaffolded sources.yaml here
+- `--json` — emit the proposal + interview questions as JSON
 
 ### `anvil approve`  *(mutates)*
 `anvil approve [options] <path> <operation-ids...>`
