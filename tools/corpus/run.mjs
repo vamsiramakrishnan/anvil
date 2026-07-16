@@ -77,6 +77,10 @@ function readSystemsTsv() {
 function preparedPath(work, sys) {
   if (sys.format === "graphql") return join(work, `${sys.name}.graphql`);
   if (sys.format === "protobuf") return join(work, `${sys.name}.proto`);
+  // XML protocols keep their real extension so format detection stays
+  // authoritative and reproduce.sh's non-REST branch (no JSON conversion) runs.
+  if (sys.format === "odata") return join(work, `${sys.name}.edmx`);
+  if (sys.format === "wsdl") return join(work, `${sys.name}.wsdl`);
   return join(work, `${sys.name}.spec.json`);
 }
 
@@ -637,6 +641,182 @@ async function estates(args) {
   }
 }
 
+// --- conformance mode -----------------------------------------------------------
+//
+// The tri-surface end-to-end gate. Quick mode proves a spec COMPILES and that the
+// AIR-level invariants hold, but it never builds a capability bundle, so it never
+// checks that the generated CLI, MCP server, and skill actually AGREE — the exact
+// gap that let a `--schema` reserved-flag collision (CLI produced 0 wire requests
+// where MCP produced 1) ship silently. This mode closes it: for a small subset
+// that covers every adapter format, it drives the REAL pipeline — compile →
+// approve reads → capability approve → build → `anvil conformance <bundle>` — and
+// asserts the tri-surface report PASSED with at least one wire-agreement check
+// (so a vacuous pass can't hide a divergence). Network-gated like quick (it fetches
+// the real specs), so it runs nightly, not per-PR.
+
+// One system per adapter format, plus oracle_ords (the reserved-flag collision
+// regression at the real-spec level). Names must exist in systems.tsv.
+const CONFORMANCE_SYSTEMS = [
+  "oracle_ords", // REST / OpenAPI 3.1 — the `schema` path-param vs `--schema` flag collision
+  "docusign_clm", // REST / OpenAPI 3.0
+  "netsuite", // SOAP / WSDL
+  "odata_trippin", // OData v4
+  "etcd", // gRPC / proto3
+  "bigquery", // Google Discovery
+  "linear", // GraphQL
+];
+
+/** Read the operation ids the compiled AIR classifies as reads (safe to approve). */
+function readOpIds(airPath, limit = 8) {
+  const air = JSON.parse(readFileSync(airPath, "utf8"));
+  return air.operations
+    .filter((o) => o.effect?.kind === "read")
+    .map((o) => o.id)
+    .sort()
+    .slice(0, limit);
+}
+
+/** The capability whose operation set overlaps the approved reads the most (ties: lexicographic). */
+function capabilityForReads(airPath, approved) {
+  const air = JSON.parse(readFileSync(airPath, "utf8"));
+  const set = new Set(approved);
+  let best = null;
+  let bestN = 0;
+  for (const c of [...(air.capabilities ?? [])].sort((a, b) => a.id.localeCompare(b.id))) {
+    const n = (c.operationIds ?? []).filter((id) => set.has(id)).length;
+    if (n > bestN) {
+      bestN = n;
+      best = c.id;
+    }
+  }
+  return best;
+}
+
+/** Build one capability bundle from a prepared spec and run tri-surface conformance on it. */
+function conformanceOne(sys, work) {
+  const dir = join(work, "compiled", sys.name);
+  const spec = preparedPath(work, sys);
+  const compiled = runNode([ANVIL, "compile", spec, "--service", sys.name, "--out", dir], {
+    timeoutMs: 300_000,
+  });
+  if (compiled.status !== 0)
+    return { ok: false, classification: "compile-error", detail: lastLines(compiled) };
+
+  const airPath = join(dir, "air.json");
+  if (!existsSync(airPath)) return { ok: false, classification: "compile-error", detail: "no air.json" };
+  const reads = readOpIds(airPath);
+  if (reads.length === 0) return { ok: false, classification: "no-read-ops", detail: "nothing safe to approve" };
+
+  const approved = runNode([ANVIL, "approve", dir, ...reads], { timeoutMs: 60_000 });
+  if (approved.status !== 0)
+    return { ok: false, classification: "approve-error", detail: lastLines(approved) };
+
+  const cap = capabilityForReads(airPath, reads);
+  if (!cap) return { ok: false, classification: "no-capability", detail: "no capability owns an approved read" };
+  // --allow-large: real specs group large capabilities (Linear's `query` has 162
+  // fields) that exceed the 20-tool budget. The budget is a deliberate safety
+  // guardrail for a human approving a capability; here we only need a buildable
+  // bundle to drive conformance over, and the built bundle still exposes only the
+  // handful of reads we approved — so the escape hatch is the right call.
+  const capApproved = runNode([ANVIL, "capability", "approve", dir, cap, "--allow-large"], {
+    timeoutMs: 60_000,
+  });
+  if (capApproved.status !== 0)
+    return { ok: false, classification: "capability-approve-error", detail: lastLines(capApproved) };
+
+  const bundle = join(work, "bundles", sys.name);
+  const built = runNode([ANVIL, "build", dir, cap, "--out", bundle], { timeoutMs: 120_000 });
+  if (built.status !== 0)
+    return { ok: false, classification: "build-error", detail: lastLines(built) };
+
+  const conf = runNode([ANVIL, "conformance", bundle], { timeoutMs: 300_000 });
+  const out = `${conf.stdout}\n${conf.stderr}`;
+  const wireChecks = (out.match(/wire-agreement/g) ?? []).length;
+  const failed = (out.match(/✗/g) ?? []).length;
+  const passed = conf.status === 0 && /PASSED/.test(out);
+  // A pass with zero wire-agreement checks is vacuous — the CLI↔MCP surface was
+  // never actually driven — so require at least one, matching the failure it guards.
+  if (passed && wireChecks === 0)
+    return { ok: false, classification: "vacuous", detail: "conformance passed but drove 0 wire-agreement checks", cap, wireChecks };
+  return {
+    ok: passed,
+    classification: passed ? "ok" : "conformance-failed",
+    detail: passed ? `${wireChecks} wire-agreement check(s)` : lastLines(conf),
+    cap,
+    wireChecks,
+    failedChecks: failed,
+  };
+}
+
+function lastLines(res) {
+  return `${res.stdout}\n${res.stderr}`.split("\n").filter(Boolean).slice(-4).join(" | ");
+}
+
+async function conformance(args) {
+  const wanted = args.systems ?? CONFORMANCE_SYSTEMS;
+  const rows = readSystemsTsv().filter((s) => wanted.includes(s.name));
+  const missing = wanted.filter((n) => !rows.some((r) => r.name === n));
+  if (missing.length) throw new Error(`unknown system(s): ${missing.join(", ")}`);
+  const work = args.work ?? mkdtempSync(join(tmpdir(), "anvil-corpus-conformance-"));
+  mkdirSync(work, { recursive: true });
+  initReport();
+  process.stderr.write(`work dir: ${work}\n`);
+
+  const results = [];
+  for (const sys of rows) {
+    process.stderr.write(`\n=== conformance: ${sys.name} (${sys.format}) ===\n`);
+    const record = { mode: "conformance", system: sys.name, format: sys.format, at: new Date().toISOString() };
+
+    const prep = spawnSync("bash", [REPRODUCE_SH, sys.name], {
+      encoding: "utf8",
+      env: { ...process.env, WORK: work, PREPARE_ONLY: "1" },
+      timeout: 600_000,
+    });
+    if (prep.status !== 0) {
+      record.status = "fetch-failed";
+      record.detail = (prep.stderr || prep.stdout || "").split("\n").filter(Boolean).slice(-2).join(" | ");
+      results.push(record);
+      reportLine(record);
+      process.stderr.write(`fetch FAILED: ${record.detail}\n`);
+      continue;
+    }
+
+    const res = conformanceOne(sys, work);
+    record.status = res.ok ? "green" : "red";
+    record.classification = res.classification;
+    record.capability = res.cap;
+    record.wireChecks = res.wireChecks;
+    record.detail = res.detail;
+    results.push(record);
+    reportLine(record);
+    process.stderr.write(
+      `${record.status.toUpperCase()} ${sys.name} [${res.classification}] ${res.detail ?? ""}\n`,
+    );
+  }
+
+  const red = results.filter((r) => r.status !== "green");
+  const lines = [
+    "# Corpus conformance run",
+    "",
+    `- when: ${new Date().toISOString()}`,
+    `- systems: ${results.length}, green: ${results.filter((r) => r.status === "green").length}`,
+    "",
+    "| system | format | status | capability | wire checks | detail |",
+    "|---|---|---|---|---:|---|",
+    ...results.map(
+      (r) =>
+        `| ${r.system} | ${r.format} | ${r.status} | ${r.capability ?? "-"} | ${r.wireChecks ?? "-"} | ${r.detail ?? ""} |`,
+    ),
+  ];
+  writeSummary(lines);
+
+  if (red.length) {
+    process.stderr.write(`\nCONFORMANCE: ${red.length} system(s) red: ${red.map((r) => r.system).join(", ")}\n`);
+    process.exit(1);
+  }
+  process.stderr.write(`\nCONFORMANCE: all ${results.length} systems green\n`);
+}
+
 // --- main -----------------------------------------------------------------------
 
 const args = parseArgs(process.argv.slice(2));
@@ -647,9 +827,10 @@ if (!existsSync(ANVIL)) {
 if (args.mode === "quick") await quick(args);
 else if (args.mode === "sweep") await sweep(args);
 else if (args.mode === "estates") await estates(args);
+else if (args.mode === "conformance") await conformance(args);
 else {
   console.error(
-    "usage: run.mjs quick [--systems a,b] [--update-baseline]\n     | sweep --limit N --seed S\n     | estates [--systems a,b] [--update-baseline]",
+    "usage: run.mjs quick [--systems a,b] [--update-baseline]\n     | sweep --limit N --seed S\n     | estates [--systems a,b] [--update-baseline]\n     | conformance [--systems a,b]",
   );
   process.exit(2);
 }

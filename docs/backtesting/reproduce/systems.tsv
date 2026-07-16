@@ -18,3 +18,36 @@ github_gql	graphql	https://docs.github.com/public/fpt/schema.docs.graphql	(whole
 linear	graphql	https://raw.githubusercontent.com/linear/linear/master/packages/sdk/src/schema.graphql	(whole)	none
 temporal	protobuf	https://raw.githubusercontent.com/temporalio/api/master/temporal/api/workflowservice/v1/service.proto	(whole)	none
 amadeus	swagger2	https://raw.githubusercontent.com/amadeus4dev/amadeus-open-api-specification/main/spec/json/FlightOffersSearch_v2_swagger_specification.json	(whole)	none
+# --- Enterprise back-office / infrastructure systems (protocol-diverse corpus) ---
+# OData and SOAP/WSDL are the formats enterprise systems (SAP, Dynamics, NetSuite,
+# Workday) actually publish; the reference OData services stand in for the
+# credential-gated enterprise OData endpoints (SAP S/4HANA, Dynamics 365 / Business
+# Central). See ENTERPRISE_SYSTEMS.md for the full catalog and gated-spec recipes.
+netsuite	wsdl	https://webservices.netsuite.com/wsdl/v2024_2_0/netsuite.wsdl	(whole)	none
+odata_trippin	odata	https://services.odata.org/V4/TripPinServiceRW/$metadata	(whole)	none
+odata_northwind	odata	https://services.odata.org/V2/Northwind/Northwind.svc/$metadata	(whole)	none
+etcd	protobuf	https://raw.githubusercontent.com/etcd-io/etcd/main/api/etcdserverpb/rpc.proto	(whole)	none
+# --- Real enterprise systems sourced from ge-agent-factory simulator-systems ---
+# (openapi-sources.json "downloadable" entries; okta=identity, docusign_clm=CLM,
+# bigquery=data warehouse). Datadog is intentionally NOT added: its v2 spec trips
+# duplicate_operation_id on retention_filters.* — a real naming-collision finding
+# (same class as linear #23), documented in ENTERPRISE_SYSTEMS.md.
+okta	openapi3	https://raw.githubusercontent.com/okta/okta-management-openapi-spec/master/dist/current/management-minimal.yaml	(whole)	none
+docusign_clm	openapi3	https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/master/agreementmanager.rest.swagger-1.0.0.json	(whole)	none
+bigquery	discovery	https://bigquery.googleapis.com/$discovery/rest?version=v2	(whole)	none
+datadog	openapi3	https://raw.githubusercontent.com/DataDog/datadog-api-client-go/master/.generator/schemas/v2/openapi.yaml	(whole)	none
+# --- Public enterprise REST specs found on the web (real, fetchable OpenAPI) ---
+# Stand-ins for the credential-gated back-office systems: real published specs
+# across finance/content/payments verticals. See ENTERPRISE_SYSTEMS.md for the
+# gated-system reproduce recipes (Icertis APIM export, BlackLine portal).
+xero	openapi3	https://raw.githubusercontent.com/XeroAPI/Xero-OpenAPI/master/xero_accounting.yaml	(whole)	none
+box	openapi3	https://raw.githubusercontent.com/box/box-openapi/main/openapi.json	(whole)	none
+adyen	openapi3	https://raw.githubusercontent.com/Adyen/adyen-openapi/main/json/CheckoutService-v71.json	(whole)	none
+# --- More top enterprise systems (public machine-readable specs, found on the web) ---
+# oracle_ords + shopware are OpenAPI 3.1 (broadens version coverage beyond 3.0).
+# Oracle EBS/Fusion publish no public spec; Oracle REST Data Services (ORDS) is
+# Oracle's real public machine-readable contract and stands in for the Oracle estate.
+oracle_ords	openapi3	https://raw.githubusercontent.com/api-evangelist/oracle-database-19c/refs/heads/main/openapi/oracle-database-19c-ords-openapi.yml	(whole)	none
+adobe_aem	openapi3	https://api.apis.guru/v2/specs/adobe.com/aem/3.7.1-pre.0/openapi.json	(whole)	none
+shopware	openapi3	https://raw.githubusercontent.com/shopware/admin-api-reference/main/adminapi.json	(whole)	none
+plaid	openapi3	https://raw.githubusercontent.com/plaid/plaid-openapi/master/2020-09-14.yml	(whole)	none

@@ -12,7 +12,7 @@ import { generateDeploy } from "./deploy.js";
 import { generateDocs } from "./docs.js";
 import { generateCliSource, generateRuntimeServer } from "./entrypoints.js";
 import { generateEvals } from "./evals.js";
-import { generateMcpServerSource } from "./mcp.js";
+import { generateMcpServerSource, generateMcpSseServerSource } from "./mcp.js";
 import {
   exampleInput,
   generateMockRoutes,
@@ -59,10 +59,13 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   files["cli/air.json"] = airJson;
   files[`cli/${id}.mjs`] = generateCliSource(air);
 
-  // MCP server (stdio).
+  // MCP servers — two transports, one runtime. `server.js` is LOCAL (stdio, for
+  // a client that spawns the process); `server-sse.js` is REMOTE (HTTP + SSE, for
+  // a client that connects to a URL). Same tools, same safety hot path.
   files["mcp/air.json"] = airJson;
   files["mcp/resources.json"] = resourcesJson;
   files["mcp/server.js"] = generateMcpServerSource(air);
+  files["mcp/server-sse.js"] = generateMcpSseServerSource(air);
 
   // Thin runtime server (Cloud Run hot path) + compiled manifests.
   files["runtime/air.json"] = airJson;
@@ -143,6 +146,7 @@ function bundlePackageJson(air: AirDocument): unknown {
     scripts: {
       start: "node runtime/server.js",
       mcp: "node mcp/server.js",
+      "mcp:sse": "node mcp/server-sse.js",
       mock: "node mock/server.mjs",
     },
     dependencies: {

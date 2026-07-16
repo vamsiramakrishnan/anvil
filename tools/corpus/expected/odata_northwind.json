@@ -1,0 +1,7 @@
+{
+  "operations": {
+    "list_Customers": { "toolName": "odata_northwind_list_customers", "effect": "read", "risk": "none" },
+    "get_Customers": { "toolName": "odata_northwind_get_customers", "effect": "read", "risk": "none" },
+    "delete_Customers": { "toolName": "odata_northwind_delete_customers", "effect": "mutation", "risk": "destructive" }
+  }
+}

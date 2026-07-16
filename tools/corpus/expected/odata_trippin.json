@@ -1,0 +1,8 @@
+{
+  "operations": {
+    "list_People": { "toolName": "odata_trippin_list_people", "effect": "read", "risk": "none" },
+    "get_People": { "toolName": "odata_trippin_get_people", "effect": "read", "risk": "none" },
+    "create_People": { "toolName": "odata_trippin_create_people", "effect": "mutation", "risk": "medium" },
+    "delete_People": { "toolName": "odata_trippin_delete_people", "effect": "mutation", "risk": "destructive" }
+  }
+}

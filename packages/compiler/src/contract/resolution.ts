@@ -116,6 +116,13 @@ function baseValue(op: Operation, predicate: SemanticPredicate): unknown {
       return op.description;
     case "state":
       return op.state;
+    // The current routing name's parts — the leading token is the verb, the
+    // rest the resource — so a `set` override has a base to replace and an
+    // `assert` a base to conflict against, like every other predicate.
+    case "name.resource":
+      return op.canonicalName.split("_").slice(1).join("_");
+    case "name.verb":
+      return op.canonicalName.split("_")[0] ?? "";
     case "auth.principal":
       return op.auth.principal;
     case "auth.audience":

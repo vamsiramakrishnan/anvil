@@ -1,0 +1,7 @@
+{
+  "operations": {
+    "get-paymentLinks-linkId": { "toolName": "adyen_get_payment_links_link_id", "effect": "read", "risk": "none" },
+    "get-sessions-sessionId": { "toolName": "adyen_get_sessions_session_id", "effect": "read", "risk": "none" },
+    "post-cancels": { "toolName": "adyen_post_cancels_post", "effect": "mutation", "risk": "destructive" }
+  }
+}

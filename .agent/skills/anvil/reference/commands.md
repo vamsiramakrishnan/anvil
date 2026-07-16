@@ -1,3 +1,8 @@
+---
+name: anvil-commands
+description: Every anvil command with usage, options, and mutation markers — derived from the live Commander tree. Read this before running an unfamiliar command.
+---
+
 # anvil commands
 
 ### `anvil source`  *(mutates)*
@@ -77,6 +82,7 @@ Options:
 - `--service <id>` — override the derived service id
 - `--out <dir>` — bundle output directory (default generated/<service-id>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
+- `--human-approval <policy>` — require explicit human approval on gated mutations: none | unsafe | all (per-op manifest `human_approval` overrides)
 - `--root <ws>` — workspace root for .anvil/sources
 
 ### `anvil inspect`
@@ -101,6 +107,19 @@ Options:
 - `--check` — gate: exit non-zero at/past the --fail-on threshold
 - `--fail-on <disposition>` — the disposition threshold --check fails at (default blocked)
 - `--json` — emit the versioned artifact (or the filtered view) as JSON
+
+### `anvil distill`
+`anvil distill [options] <path>`
+
+Strip a surface to its eigenbasis: the minimal spanning set of operations.
+
+Deterministic, read-only whole-surface analysis (a peer of `assess`). Reads collapse by (resource, action) to one canonical, most-general read per cluster; every write is kept as its own basis vector; same-signature mutations are flagged for review, never auto-dropped. Reports the basis, the reconstructible read projections, the redundant clusters, any intents reachable ONLY through reconstructible ops (which a mechanical strip would lose), and capabilities whose basis still exceeds the tool budget. `--json` emits the full artifact for the Stage-2 coding-harness loop; `--check` gates on over-budget capabilities. It proposes only — approval stays an explicit, reviewed step.
+
+Options:
+- `--json` — emit the distillation artifact as JSON
+- `--check` — gate: exit non-zero if a capability's basis exceeds the tool budget
+- `--as-enrich-plan` — emit a targeted enrichment plan (the surface's open questions) instead of the report
+- `--write <file>` — write the output (report or enrich plan) to a file
 
 ### `anvil capability`  *(mutates)*
 `anvil capability [options] [command]`
@@ -312,15 +331,62 @@ Anvil is an MCP client here: it connects to the MCP servers those systems alread
 
 Options:
 - `--sources <file>` — sources.yaml naming the MCP servers to consult
+- `--plan <file>` — an enrichment plan from `anvil distill --as-enrich-plan`: probe only its targeted operations, routing each question to the matching source pole (code loosens, docs tighten)
 - `--write <manifest>` — write the proposed manifest here instead of printing it
 - `--json` — emit the per-operation decisions as JSON
 
+### `anvil estate`
+`anvil estate [options] [command]`
+
+Inventory and import gateway estates (Apigee, Kong, WSO2, MuleSoft, API Connect).
+
+Reads a vendor gateway export — a bare config document, or a ZIP/JAR archive (decoded through the hardened archive harness: zip-slip, symlink, and bomb defences with every rejection reported) — and normalizes it through the vendor adapter into the one compiler pipeline. `inventory` lists the estate's APIs without compiling anything; `import` compiles one API into a normal Anvil bundle, where the usual approval gate applies: risky operations land review_required and are not exposed until approved.
+
+#### `anvil estate inventory`
+`anvil estate inventory [options] <export>`
+
+List the APIs in a gateway export without compiling anything.
+
+Options:
+- `--vendor <vendor>` — gateway vendor (kong | apigee | wso2 | mulesoft | api_connect)
+- `--entry <path>` — archive entry holding the config, when the archive has several
+- `--json` — emit the inventory snapshot as JSON
+
+#### `anvil estate import`  *(mutates)*
+`anvil estate import [options] <export>`
+
+Import one API from a gateway export and compile it into a bundle.
+
+Options:
+- `--vendor <vendor>` — gateway vendor (kong | apigee | wso2 | mulesoft | api_connect)
+- `--api <id>` — API id from `estate inventory` (optional when the estate has one)
+- `--entry <path>` — archive entry holding the config, when the archive has several
+- `--service <id>` — override the derived service id
+- `--out <dir>` — bundle output directory (default generated/<service-id>)
+- `--json` — emit a machine-readable import report (for CI oracles)
+
 ### `anvil sources`
-`anvil sources [options]`
+`anvil sources [options] [command]`
 
-List the enrichment sources (published MCP servers) Anvil can connect to.
+List enrichment sources, or scaffold a sources.yaml with `sources init`.
 
-Shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server Anvil runs for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman).
+The published MCP servers Anvil enriches from. `anvil sources` (or `sources list`) shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman). `anvil sources init <dir>` scaffolds a sources.yaml for a compiled service and lists the interview questions to finish it.
+
+#### `anvil sources list`
+`anvil sources list [options]`
+
+List the built-in enrichment source profiles.
+
+#### `anvil sources init`
+`anvil sources init [options] <path>`
+
+Scaffold a sources.yaml for a service, with the interview questions to finish it.
+
+Reads the compiled AIR and proposes a sources.yaml: the two evidence poles every enrichment wants — a CODE host (the only tier that can loosen safety) and a DOC host (tightens/corroborates, supplies intent phrases) — plus any product vendor it detects (Salesforce, SAP) and a Postman source when the spec came from a collection. It also emits the exact QUESTIONS a coding harness should put to the user (which repo, which space, which env vars) — the interview is agent-native: propose, then refine with the operator. Propose-only; `--write <file>` saves the scaffold, `--json` emits the questions + proposal for a harness.
+
+Options:
+- `--write <file>` — write the scaffolded sources.yaml here
+- `--json` — emit the proposal + interview questions as JSON
 
 ### `anvil approve`  *(mutates)*
 `anvil approve [options] <path> <operation-ids...>`
@@ -347,6 +413,18 @@ Options:
 - `--out <dir>` — bundle output directory (default generated/<capability-id>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
 
+### `anvil review`  *(mutates)*
+`anvil review [options] <dir>`
+
+Model-driven semantic review of a bundle's agent surfaces (MCP/CLI/skill).
+
+Drives a cheap reviewer model (default Haiku via the `claude` CLI) through Anvil's artifact-review SOP over a generated bundle: MCP tool descriptions must be truthful to each operation's effect/risk, the CLI surface must teach confirm/idempotency/dry-run on mutating commands, the skill doc must teach the safety posture and document no phantom operations, and all three surfaces must agree. Every finding must cite verbatim evidence from the bundle; ungrounded findings are discarded mechanically. Writes review.report.json into the bundle. Useful for spec sources with no reference server to backtest against.
+
+Options:
+- `--model <model>` — reviewer model passed to the driver
+- `--driver-command <bin>` — headless agent CLI to drive
+- `--json` — emit the full review report as JSON
+
 ### `anvil certify`  *(mutates)*
 `anvil certify [options] <path>`
 
@@ -356,6 +434,40 @@ Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates
 
 Options:
 - `--json` — emit the full certification as JSON
+
+### `anvil selftest`  *(mutates)*
+`anvil selftest [options] <dir>`
+
+Boot the bundle's mock + MCP servers and prove the generated surface end-to-end.
+
+Loopback self-test for bundles with no reference server to compare against: starts the generated mock upstream (mock/server.mjs) and the generated MCP server (mcp/server.js) pointed at it via ANVIL_BASE_URL, then invokes every approved tool over the real MCP transport. Checks: the tool surface equals the approved operations (surface), every argument reaches the wire faithfully and the response round-trips (fidelity), confirmation gates refuse before any side effect (confirmation-gate), documented upstream errors surface as structured envelopes (error-mapping), and non-idempotent mutations are never auto-retried (retry checks). Writes selftest.report.json into the bundle. Exit 0 only when no check fails.
+
+Options:
+- `--json` — emit the full report as JSON
+
+### `anvil conformance`  *(mutates)*
+`anvil conformance [options] <dir>`
+
+Prove the CLI, MCP, and skill surfaces agree on every operation, end-to-end.
+
+Tri-surface conformance for a generated bundle. Boots the bundle's mock upstream, then drives every approved operation through BOTH the generated MCP server (mcp/server.js, over the real MCP transport) and the generated CLI entrypoint (cli/<svc>.mjs, as a child process) against that mock. Checks: the skill, CLI catalog, and MCP tool list name the same operations with the same public handles (surface-agreement); the skill documents the exact confirmation/idempotency/retry posture the runtime enforces (skill-claim); the same input reaches the wire identically on both surfaces and matches the AIR contract (wire-agreement); and a confirmation-gated mutation refuses without --confirm, before any side effect, on both surfaces (gate-agreement). Writes conformance.report.json into the bundle. Exit 0 only when no check fails.
+
+With --live <config.json>, probes a REAL deployed MCP endpoint instead of the mock: it verifies the deployed server serves exactly the certified surface and that its confirmation gate refuses in production, and invokes only the reads the config opts into — it never drives a real mutation. The config names the endpoint (mcpUrl) and auth headers, whose ${VAR} values resolve from the environment; the onus of correct config is on the operator. Writes conformance.live.report.json.
+
+Options:
+- `--live <config>` — probe a real deployed MCP endpoint named in this JSON config
+- `--json` — emit the full report as JSON
+
+### `anvil simulate`  *(mutates)*
+`anvil simulate [options] <dir>`
+
+Drive the full safety matrix through the simulator and report coverage.
+
+Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the safety dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control and proving the surface signature detects it. Reports per-dimension coverage and mutants killed. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.
+
+Options:
+- `--seed <n>` — deterministic simulator seed
+- `--json` — emit the full report as JSON
 
 ### `anvil publish`  *(mutates)*
 `anvil publish [options] <dir>`
@@ -454,14 +566,19 @@ Serve the bundle's MCP server on stdio.
 ### `anvil package`
 `anvil package [options] [command]`
 
-Locate and verify the portable skill package.
+Validate and package the portable skill package.
 
 The skill is also served over MCP as anvil://skill/<service>/... resources.
 
 #### `anvil package skill`
 `anvil package skill [options] <dir>`
 
-Verify the bundle's skill package is complete.
+Validate the bundle's skill package against the Agent Skills spec.
+
+Checks SKILL.md frontmatter (spec-legal name and description), that every path SKILL.md references exists, that every markdown file self-describes with frontmatter, that examples parse and cover their schema's required fields, and that no absolute paths leak. With --out, copies the skill to <out>/<skill-name>/ so the directory name matches the frontmatter name (the spec rule).
+
+Options:
+- `--out <dir>` — copy the validated skill to <out>/<skill-name>/
 
 ### `anvil skill`
 `anvil skill [options] [out-dir]`

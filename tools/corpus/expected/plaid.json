@@ -1,0 +1,7 @@
+{
+  "operations": {
+    "institutionsSearch": { "toolName": "plaid_institutions_search", "effect": "read", "risk": "none" },
+    "employersSearch": { "toolName": "plaid_employers_search", "effect": "read", "risk": "none" },
+    "assetReportRemove": { "toolName": "plaid_asset_report_remove_post", "effect": "mutation", "risk": "destructive" }
+  }
+}

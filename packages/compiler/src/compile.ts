@@ -201,11 +201,21 @@ async function buildAir(
   const overlayDiagnostics: Diagnostic[] = [];
   let appliedOverlays: AppliedOverlay[] = [];
   if (overlays.length > 0) {
+    // A `name.resource`/`name.verb` override re-projects an operation's routing
+    // names DURING application — after the pre-overlay collision pass already ran.
+    // A re-homed name can land on another operation's, so remember the surfaces
+    // and re-resolve collisions if any changed. The resolver is a no-op when
+    // nothing moved, so overlays that touch no name stay byte-identical.
+    const nameSurface = (op: (typeof operations)[number]) =>
+      `${op.canonicalName} ${op.cli.command} ${op.mcp.toolName}`;
+    const before = new Map(operations.map((op) => [op.id, nameSurface(op)]));
     const outcome = resolveOverlays(operations, overlays);
     operations = applyResolved(operations, outcome);
     conflicts = outcome.conflicts;
     blockedOperationIds = outcome.blockedOperationIds;
     overlayDiagnostics.push(...outcome.diagnostics);
+    const namesChanged = operations.some((op) => before.get(op.id) !== nameSurface(op));
+    if (namesChanged) overlayDiagnostics.push(...resolveNameCollisions(operations));
     appliedOverlays = overlays.map((o) => ({
       id: o.id,
       digest: o.digest || overlayDigest(o),

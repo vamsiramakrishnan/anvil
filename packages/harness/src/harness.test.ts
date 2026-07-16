@@ -178,6 +178,101 @@ describe("harness enrichment", () => {
   });
 });
 
+describe("plan-driven enrichment routing", () => {
+  // A minimal enrichment plan (the shape `anvil distill --as-enrich-plan` emits):
+  // a CODE question on the refund mutation, a DOCS question on a read.
+  const plan = {
+    total: 4,
+    basisSize: 2,
+    targets: [
+      {
+        operationId: "payments.refunds.create",
+        toolName: "payments_create_refund",
+        motive: "unproven_safety" as const,
+        priority: 90,
+        questions: [
+          {
+            ask: "Prove idempotency.",
+            queries: ["create_refund", "idempotency", "Idempotency-Key"],
+            sourceClass: "code" as const,
+            predicate: "idempotency.mode",
+            safetyDirection: "loosen" as const,
+          },
+        ],
+        reason: "unproven safety on payments.refunds.create",
+      },
+      {
+        operationId: "payments.customers.get",
+        toolName: "payments_get_customer",
+        motive: "stranded_intent" as const,
+        priority: 60,
+        questions: [
+          {
+            ask: "Is this a meaningful projection?",
+            queries: ["show the mobile summary view"],
+            sourceClass: "docs" as const,
+            predicate: "description",
+          },
+        ],
+        reason: "stranded intent on payments.customers.get",
+      },
+    ],
+  };
+
+  /** A source server that records every query it is asked, for routing assertions. */
+  function recordingServer(seen: string[], reply: (q: string) => string): McpServer {
+    return makeSourceServer((q) => {
+      seen.push(q);
+      return reply(q);
+    });
+  }
+
+  it("routes a code question to the code host and a docs question to the docs host", async () => {
+    const codeSeen: string[] = [];
+    const docsSeen: string[] = [];
+    const servers = {
+      github: recordingServer(codeSeen, (q) =>
+        q.includes("Idempotency-Key") ? "handler reads the Idempotency-Key header" : "",
+      ),
+      confluence: recordingServer(docsSeen, () => "the mobile summary view shows recent activity"),
+    };
+    const report = await runEnrichment(air, [githubSource, confluenceSource], {
+      transportFactory: factoryFor(servers),
+      plan: plan as Parameters<typeof runEnrichment>[2]["plan"],
+    });
+
+    // The CODE question reached the code host and loosened safety.
+    expect(report.proposedManifest.operations?.create_refund?.idempotency?.strategy).toBe(
+      "required_request_key",
+    );
+    // The code host was asked ONLY the code question — never the docs one.
+    expect(codeSeen.some((q) => q.includes("Idempotency-Key"))).toBe(true);
+    expect(codeSeen.some((q) => q.includes("mobile summary view"))).toBe(false);
+    // The docs host was asked ONLY the docs question — never the idempotency one.
+    expect(docsSeen.some((q) => q.includes("mobile summary view"))).toBe(true);
+    expect(docsSeen.some((q) => q.includes("Idempotency-Key"))).toBe(false);
+  });
+
+  it("probes only the plan's targets — untargeted operations are never touched", async () => {
+    const servers = {
+      github: makeSourceServer(() => ""),
+      confluence: makeSourceServer(() => ""),
+    };
+    const report = await runEnrichment(air, [githubSource, confluenceSource], {
+      transportFactory: factoryFor(servers),
+      plan: plan as Parameters<typeof runEnrichment>[2]["plan"],
+    });
+    expect(report.targetedOperationIds).toEqual([
+      "payments.refunds.create",
+      "payments.customers.get",
+    ]);
+    // capture_payment / get_payment were not in the plan → not in the report.
+    const reported = new Set(report.operations.map((o) => o.operationId));
+    expect(reported.has("payments.capture.create")).toBe(false);
+    expect(reported.has("payments.payments.get")).toBe(false);
+  });
+});
+
 describe("reconcile conflict gate", () => {
   it("refuses to auto-loosen idempotency when two authoritative sources disagree", () => {
     const op = air.operations.find((o) => o.canonicalName === "create_refund");

@@ -1,5 +1,5 @@
-import type { Diagnostic, HttpMethod, Operation } from "@anvil/air";
-import { snakeCase } from "@anvil/air";
+import type { Diagnostic, HttpMethod, NameWeakness, Operation } from "@anvil/air";
+import { nameWeaknesses, snakeCase } from "@anvil/air";
 import { actionVerbFor, isReadIntentWriteMethod } from "./classify.js";
 
 /**
@@ -10,17 +10,6 @@ import { actionVerbFor, isReadIntentWriteMethod } from "./classify.js";
  * three surfaces (id / CLI command / MCP tool) instead of silently suffixing
  * `_2`, and critiques agent-hostile names into reviewable diagnostics.
  */
-
-const VAGUE_ACTIONS = new Set([
-  "do",
-  "run",
-  "exec",
-  "execute",
-  "process",
-  "handle",
-  "call",
-  "post",
-]);
 
 export interface DerivedNames {
   id: string;
@@ -42,6 +31,32 @@ export const singularize = (s: string): string => {
   if (/s$/.test(s) && !/ss$/.test(s)) return s.replace(/s$/, "");
   return s;
 };
+
+/**
+ * The ONE projection from a (service, resource, action) triple to the four
+ * routing names — id, canonicalName, CLI command, MCP tool name. `deriveNames`
+ * produces these inline from a parsed operation (and honours a declared
+ * operationId for the canonicalName); this is the same projection for the case
+ * where those axes are supplied DIRECTLY — a manifest `resource`/`action`
+ * override (overlay.ts) — so an override re-homes an operation onto names that
+ * are byte-identical to what a spec naming that resource would have produced.
+ * The canonicalName here is always synthesized `action_singular(resource)` (an
+ * override names the routing, not an operationId), and every surface derives
+ * from it, so the four names can never drift apart.
+ */
+export function projectRoutingNames(
+  serviceId: string,
+  resource: string,
+  action: string,
+): { id: string; canonicalName: string; cliCommand: string; toolName: string } {
+  const canonicalName = `${action}_${singularize(resource)}`;
+  return {
+    id: `${serviceId}.${snakeCase(resource)}.${action}`,
+    canonicalName,
+    cliCommand: `${serviceId} ${resource} ${action}`,
+    toolName: `${serviceId}_${canonicalName}`,
+  };
+}
 
 /** An API-version path segment: `v1`, `v60`, `v60.0`, `2.0`. Never a resource. */
 function isVersionLike(segment: string): boolean {
@@ -274,19 +289,41 @@ export function deriveNames(
   } else {
     signals.push("name synthesized from HTTP method + path");
   }
-  if (!hasResource) {
-    confidence -= 0.25;
-    signals.push("no concrete path segment — resource fell back to the service name");
-  }
+  // The ONE weakness predicate (shared with the refinement detector via
+  // @anvil/air) decides which names an agent cannot route on; the confidence
+  // deltas live here because they are a naming-pass concern. Emitted in a fixed
+  // order (resource-shape, then verb) so a spec's signals are input-independent.
+  // `bare_noun` carries no confidence delta — a single-token name is a review
+  // *signal* the detector raises, not on its own a low-confidence one (a bare
+  // `refund` from a strong operationId is fine); the other three each pull the
+  // score, and `vague_verb`'s -0.45 is large enough to drag even a declared
+  // operationId (0.9) below the 0.5 review threshold. Jira's own `doTransition`
+  // is exactly that case — Atlassian's community MCP server renames it to
+  // `transition_issue` for the same reason this must not stay confident.
+  const weaknesses = new Set(nameWeaknesses({ canonicalName, resource, action, hasResource }));
   const verb = canonicalName.split("_")[0] ?? "";
-  if (VAGUE_ACTIONS.has(verb)) {
-    // Large enough to pull even a strong operationId signal (0.9) below the
-    // review threshold: a real spec's operationId can be well-declared and
-    // still name nothing an agent can route on. Jira's own `doTransition` is
-    // exactly this case — Atlassian's community MCP server renames it to
-    // `transition_issue` for the same reason this must not stay confident.
-    confidence -= 0.45;
-    signals.push(`vague verb "${verb}" — hard for an agent to route on`);
+  const WEAKNESS_DELTA: ReadonlyArray<{ w: NameWeakness; delta: number; signal: string }> = [
+    {
+      w: "no_resource",
+      delta: -0.25,
+      signal: "no concrete path segment — resource fell back to the service name",
+    },
+    {
+      w: "generic_resource",
+      delta: -0.3,
+      signal: `generic resource "${snakeCase(resource)}" — names no concrete thing an agent can route on`,
+    },
+    {
+      w: "vague_verb",
+      delta: -0.45,
+      signal: `vague verb "${verb}" — hard for an agent to route on`,
+    },
+  ];
+  for (const { w, delta, signal } of WEAKNESS_DELTA) {
+    if (weaknesses.has(w)) {
+      confidence += delta;
+      signals.push(signal);
+    }
   }
 
   return {
@@ -318,16 +355,37 @@ const byStableIdentity = (a: Operation, b: Operation): number =>
   (a.sourceRef.operationId ?? "").localeCompare(b.sourceRef.operationId ?? "");
 
 /**
- * The projected surfaces on which every operation name must be unique. The CLI
- * command and the MCP tool name can collide INDEPENDENTLY: Linear's GraphQL
- * schema has both `Query.initiativeUpdate` and `Mutation.initiativeUpdate`,
- * whose commands differ (`... list` vs `... create`) while both derive the same
- * canonicalName and hence the same tool name — grouping by command alone never
- * sees them and the whole spec fails validation on `duplicate_tool_name`.
+ * The projected surfaces on which every operation name must be unique. This set
+ * must stay in lockstep with the uniqueness checks in `validate.ts` — the
+ * resolver has to repair every surface the validator will hard-error on, or a
+ * collision the resolver cannot see becomes a compile error instead of a
+ * deterministic rename. `validate.ts` enforces three: operation id, MCP tool
+ * name, and CLI command. All three can collide INDEPENDENTLY, because each is
+ * projected through a DIFFERENT normalization:
+ *
+ * - CLI command vs MCP tool name: Linear's GraphQL schema has both
+ *   `Query.initiativeUpdate` and `Mutation.initiativeUpdate`, whose commands
+ *   differ (`… list` vs `… create`) while both derive the same canonicalName and
+ *   hence the same tool name — grouping by command alone never sees them.
+ * - operation id vs both: the id snake-cases the resource
+ *   (`${service}.${snakeCase(resource)}.${action}`) while the CLI command keeps
+ *   the raw resource token and the tool name derives from the operationId. So
+ *   two resources that differ ONLY by a separator that snake-case folds —
+ *   Datadog's `apm/config/retention-filters` vs `rum/.../retention_filters` —
+ *   share one id but have distinct commands and tool names. Neither of the other
+ *   two surfaces groups them, so without the id surface the id collision is
+ *   never repaired and the spec fails on `duplicate_operation_id`.
+ *
+ * Ordering: id is checked LAST, so a collision already repairable via the more
+ * meaningful command/tool surfaces is handled there first; the id surface only
+ * catches the residue those two cannot see. This keeps every previously-green
+ * spec byte-identical (its id surface finds nothing new) while turning the
+ * id-only class from a hard error into a deterministic disambiguation.
  */
 const SURFACES: ReadonlyArray<{ label: string; keyOf: (op: Operation) => string }> = [
   { label: "CLI command", keyOf: (op) => op.cli.command },
   { label: "MCP tool name", keyOf: (op) => op.mcp.toolName },
+  { label: "operation id", keyOf: (op) => op.id },
 ];
 
 /**

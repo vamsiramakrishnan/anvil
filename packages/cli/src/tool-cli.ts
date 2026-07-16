@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { dirname, resolve as resolvePath } from "node:path";
 import {
   type AirDocument,
   cliFlag,
@@ -10,7 +11,7 @@ import {
   operationInputSchema,
   propKey,
 } from "@anvil/air";
-import { exampleInput } from "@anvil/generators";
+import { exampleInput, MCP_RESERVED } from "@anvil/generators";
 import {
   AnvilError,
   allowedHostsFor,
@@ -52,16 +53,20 @@ const BOOLEAN_FLAGS = new Set([
   "allow-degraded-native",
   "allow-uncertified",
   "allow-large",
-  // Capability show sections and progressive-disclosure views: always boolean
-  // so they never swallow a value.
+  // Capability show sections: always boolean so they never swallow a value.
   "operations",
   "auth",
   "evidence",
-  "schema",
-  "examples",
-  "errors",
-  "policy",
-  "explain",
+  // NOTE: the progressive-disclosure views (`--schema`, `--examples`,
+  // `--errors`, `--policy`, `--explain`) are deliberately NOT here. A real
+  // operation can have a parameter of the same name — Oracle ORDS's
+  // `/{schema}/{table}` has a required `schema` param — and forcing the flag
+  // boolean makes that parameter unreachable (`--schema example` would trigger
+  // the schema view and drop "example"), silently breaking CLI↔MCP wire
+  // agreement. Semantics: a BARE flag (`--schema`) is the disclosure view; a
+  // VALUED flag (`--schema example`, which `--schema=example` already did) sets
+  // the operation parameter. The disclosure short-circuits fire only on
+  // `=== true`, so bare-vs-valued disambiguates cleanly.
 ]);
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -137,6 +142,22 @@ export interface ToolCliDeps {
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   env?: NodeJS.ProcessEnv;
+  /** Absolute path to this bundle's local `mcp/server.js`, used by `--mcp stdio`.
+   *  The generated CLI passes its own sibling; `anvil run <dir>` passes
+   *  `<dir>/mcp/server.js`. Absent ⇒ resolved relative to the running script. */
+  mcpServerPath?: string;
+  /** Test seam: connect an MCP client to a target and return a minimal client. */
+  mcpConnect?: (target: string, deps: ToolCliDeps) => Promise<McpToolClient>;
+}
+
+/** The slice of the MCP client the CLI uses — a tool call and a close. */
+export interface McpToolClient {
+  callTool(req: { name: string; arguments: Record<string, unknown> }): Promise<{
+    content?: Array<{ type?: string; text?: string }>;
+    structuredContent?: unknown;
+    isError?: boolean;
+  }>;
+  close(): Promise<void>;
 }
 
 /**
@@ -351,6 +372,30 @@ async function invoke(
     throw err;
   }
 
+  // skill → CLI → MCP: where this invocation runs is a per-call runtime choice.
+  //   (unset)                    → execute directly (the default)
+  //   --mcp stdio  | =stdio      → route through the bundle's LOCAL mcp/server.js
+  //   --mcp <sse-url>            → route through a REMOTE SSE server
+  //   --mcp direct | off | none  → force DIRECT, overriding an ANVIL_MCP_TARGET env
+  // The per-call flag always wins over the env default, so a user who set
+  // ANVIL_MCP_TARGET can still do a one-off direct (or differently-targeted) call.
+  // A bare `--mcp` (no value) means "route locally" — the common intent.
+  const mcpTarget = resolveMcpTarget(flags.mcp, (deps.env ?? process.env).ANVIL_MCP_TARGET);
+  if (mcpTarget) {
+    return invokeViaMcp(
+      op,
+      input,
+      {
+        confirm: flags.confirm === true,
+        dryRun: flags["dry-run"] === true,
+        idempotencyKey: (flags["idempotency-key"] as string) ?? undefined,
+      },
+      mcpTarget,
+      deps,
+      io,
+    );
+  }
+
   const baseUrl = (flags["base-url"] as string) ?? air.service.servers[0]?.url ?? "";
   const allowedHosts = allowedHostsFor(config.allowedHosts, baseUrl, true);
 
@@ -394,6 +439,136 @@ async function invoke(
   renderMissingFlags(result.envelope, op);
   io.err(JSON.stringify(result.envelope, null, 2));
   return exitCodeFor(result.envelope.error.code);
+}
+
+/** Runtime target selection: resolve the `--mcp` flag (which wins) against the
+ *  `ANVIL_MCP_TARGET` env default into a concrete target, or `undefined` for
+ *  direct execution. `direct`/`off`/`none` (or empty) mean direct — the per-call
+ *  escape hatch when an env default is set; a bare `--mcp` means route locally. */
+const DIRECT_TARGETS = new Set(["direct", "off", "none", ""]);
+function resolveMcpTarget(
+  flag: string | boolean | undefined,
+  env: string | undefined,
+): string | undefined {
+  const raw = flag === true ? "stdio" : typeof flag === "string" ? flag : env;
+  if (typeof raw !== "string") return undefined;
+  const t = raw.trim();
+  return t.length === 0 || DIRECT_TARGETS.has(t.toLowerCase()) ? undefined : t;
+}
+
+interface McpSafety {
+  confirm: boolean;
+  dryRun: boolean;
+  idempotencyKey?: string;
+}
+
+/**
+ * Route one operation call through an MCP server (local stdio or remote SSE)
+ * instead of executing it directly. Flags are already mapped to `input`; the
+ * safety controls ride as the reserved `anvil_*` args the server understands, so
+ * the same dry-run / confirm / idempotency contract holds over the hop. The
+ * server's response — success data, a dry-run plan, or a structured error
+ * envelope — is rendered exactly as the direct path renders it, and the error
+ * envelope's code drives the same exit-code contract.
+ */
+async function invokeViaMcp(
+  op: Operation,
+  input: Record<string, unknown>,
+  safety: McpSafety,
+  target: string,
+  deps: ToolCliDeps,
+  io: CliIO,
+): Promise<number> {
+  // Map the CLI's safety flags onto what the MCP tool expects. `confirm` and
+  // `idempotency_key` are synthesized INPUT fields (present in the published
+  // schema exactly when the op requires them), so they go into the arguments as
+  // ordinary input; dry-run rides the reserved anvil_ arg. Only add confirm /
+  // idempotency_key when the schema has them, or strict validation would reject
+  // an unknown field on a read.
+  const args: Record<string, unknown> = { ...input };
+  if (safety.dryRun) args[MCP_RESERVED.dryRun] = true;
+  if (safety.confirm && op.confirmation.required) args.confirm = true;
+  if (safety.idempotencyKey && op.idempotency.mode === "required")
+    args.idempotency_key = safety.idempotencyKey;
+
+  let client: McpToolClient;
+  try {
+    client = deps.mcpConnect
+      ? await deps.mcpConnect(target, deps)
+      : await connectMcpClient(target, deps);
+  } catch (err) {
+    io.err(
+      JSON.stringify(
+        {
+          error: {
+            code: "upstream_unavailable",
+            message: `Could not connect to the MCP server '${target}': ${err instanceof Error ? err.message : String(err)}`,
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    return exitCodeFor("upstream_unavailable");
+  }
+
+  try {
+    const res = await client.callTool({ name: op.mcp.toolName, arguments: args });
+    const text =
+      res.content?.find((c) => c.type === "text")?.text ??
+      JSON.stringify(res.structuredContent ?? res, null, 2);
+    if (res.isError) {
+      io.err(text);
+      return exitCodeFromEnvelopeText(text);
+    }
+    io.out(text);
+    return 0;
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+/** Map a server-returned error-envelope JSON back onto the CLI exit-code contract. */
+function exitCodeFromEnvelopeText(text: string): number {
+  try {
+    const code = (JSON.parse(text) as ErrorEnvelope).error?.code;
+    if (code) return exitCodeFor(code);
+  } catch {
+    // not an envelope — fall through
+  }
+  return exitCodeFor("unknown_upstream_error");
+}
+
+/** Connect a real MCP client to `target`: `stdio`/`local` spawns the bundle's
+ *  `mcp/server.js`; anything else is treated as an SSE URL (an optional `sse:`
+ *  prefix is stripped). Transports are imported lazily so the direct path never
+ *  loads the client SDK. */
+async function connectMcpClient(target: string, deps: ToolCliDeps): Promise<McpToolClient> {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const client = new Client({ name: "anvil-cli", version: "1.0.0" }, { capabilities: {} });
+  if (target === "stdio" || target === "local") {
+    const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
+    const serverPath = deps.mcpServerPath ?? defaultLocalServerPath();
+    await client.connect(
+      new StdioClientTransport({
+        command: process.execPath,
+        args: [serverPath],
+        env: (deps.env ?? process.env) as Record<string, string>,
+      }),
+    );
+  } else {
+    const { SSEClientTransport } = await import("@modelcontextprotocol/sdk/client/sse.js");
+    const url = target.startsWith("sse:") ? target.slice(4) : target;
+    await client.connect(new SSEClientTransport(new URL(url)));
+  }
+  return client as unknown as McpToolClient;
+}
+
+/** Best-effort local server path when the caller didn't pass one: the generated
+ *  CLI lives at `cli/<svc>.mjs`, so its sibling MCP server is `../mcp/server.js`. */
+function defaultLocalServerPath(): string {
+  const self = process.argv[1] ?? "";
+  return resolvePath(dirname(self), "..", "mcp", "server.js");
 }
 
 /**
@@ -526,6 +701,10 @@ const GLOBAL_OPERATION_FLAGS = [
   "base-url",
   "timeout",
   "input",
+  // Route this invocation THROUGH an MCP server instead of executing directly:
+  // `--mcp stdio` (spawn the bundle's local mcp/server.js) or `--mcp <sse-url>`
+  // (a remote SSE server). Env ANVIL_MCP_TARGET sets the same. skill → CLI → MCP.
+  "mcp",
 ] as const;
 
 function knownFlagsFor(op: Operation): Set<string> {
@@ -864,6 +1043,8 @@ function serviceHelp(air: AirDocument): string {
     `  --help --schema --examples --errors --policy --explain --dry-run --json --trace`,
     `  --confirm --idempotency-key <k> --auth-profile <p> --timeout <ms> --no-retries`,
     `  --body '<json>'  (for operations whose body is not a flat object)`,
+    `  --mcp stdio | <sse-url> | direct  (per-call: run via a local/remote MCP server,`,
+    `                                     or force direct; overrides ANVIL_MCP_TARGET)`,
     `\nCapabilities:`,
     capabilitiesTable(air),
     `\nUnsafe mutations refuse to run without --confirm. That refusal is correct.`,

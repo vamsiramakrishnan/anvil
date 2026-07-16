@@ -7,7 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { generateBundle } from "./bundle.js";
-import { buildMcpServer } from "./mcp.js";
+import { buildMcpServer, generateMcpServerSource, generateMcpSseServerSource } from "./mcp.js";
 import { exampleFromSchema, exampleInput } from "./mock.js";
 import { buildToolResources } from "./resources.js";
 
@@ -33,6 +33,27 @@ async function connect(server: ReturnType<typeof buildMcpServer>) {
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return client;
 }
+
+describe("MCP server entrypoints — two transports, one runtime", () => {
+  it("generates a LOCAL stdio server and a REMOTE SSE server from the same AIR", () => {
+    const stdio = generateMcpServerSource(air);
+    const sse = generateMcpSseServerSource(air);
+    // Local: stdio transport, no HTTP.
+    expect(stdio).toContain("StdioServerTransport");
+    expect(stdio).not.toContain("createServer");
+    // Remote: HTTP + SSE transport with the MCP HTTP+SSE routes.
+    expect(sse).toContain("SSEServerTransport");
+    expect(sse).toContain('url.pathname === "/sse"');
+    expect(sse).toContain('url.pathname === "/messages"');
+    expect(sse).toContain("sessionId");
+    // Same safety runtime on both: build from @anvil/mcp-runtime + the runtime deps.
+    for (const src of [stdio, sse]) {
+      expect(src).toContain("buildMcpServer");
+      expect(src).toContain("allowedHostsFor");
+      expect(src).toContain("EnvCredentialResolver");
+    }
+  });
+});
 
 describe("MCP server", () => {
   it("exposes one tool per approved operation with risk-visible metadata", async () => {
@@ -275,6 +296,7 @@ describe("bundle", () => {
       "catalog.json",
       "cli/payments.mjs",
       "mcp/server.js",
+      "mcp/server-sse.js",
       "runtime/server.js",
       "runtime/operations.manifest.json",
       "skill/SKILL.md",

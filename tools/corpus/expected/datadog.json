@@ -1,0 +1,7 @@
+{
+  "_note": "Datadog v2 has two retention-filter families whose resource segments differ only by a separator that snake_case folds (apm/config/retention-filters vs rum/.../retention_filters), so their operation ids collide while their CLI commands and tool names do not. Before the naming-pass fix (adding operation id as a resolver surface, matching validate.ts's three uniqueness checks) this failed with duplicate_operation_id. These two entries pin the meaningful disambiguation (.apm / .rum namespace tokens) so a regression re-collapses them.",
+  "operations": {
+    "ListApmRetentionFilters": { "toolName": "datadog_list_apm_retention_filters_apm", "effect": "read", "risk": "none" },
+    "ListRetentionFilters": { "toolName": "datadog_list_retention_filters_rum", "effect": "read", "risk": "none" }
+  }
+}
