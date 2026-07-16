@@ -14,14 +14,19 @@ drifts from the CLI. Regenerate it with `anvil skill skills/anvil`.
 1. `pnpm build` then `node packages/cli/dist/bin-anvil.js --help`.
 2. `anvil compile <spec> --manifest <manifest> --out <dir>`.
 3. `anvil inspect <dir>` and `anvil lint <dir>` — read the safety posture.
-4. Enrich unsafe operations via a manifest (see `skills/anvil/reference/workflow.md`).
+4. `anvil distill <dir>` — reduce to the eigenbasis; `--as-enrich-plan` targets
+   the residue. Enrich unsafe/uncertain operations via a manifest, or drive it
+   with `anvil enrich --plan` (see `skills/anvil/reference/workflow.md`).
 5. `anvil approve <dir> <operation-id...>` — only after inspecting risk.
 6. `anvil package skill <dir>` / `anvil deploy cloud-run <dir> --env prod`.
 
 ## Rules
 - Only approved operations are ever exposed. Never approve what you have not inspected.
 - Do not assert idempotency you cannot prove. Leave unproven mutations `review_required`.
-- Prefer `anvil run ... --dry-run` before real invocations.
+- Prefer `anvil run ... --dry-run` before real invocations. `anvil run --mcp stdio`
+  routes the CLI through the bundle's own MCP server (skill → CLI → MCP).
+- Fix a `weak_operation_name` with the manifest `name: { resource, verb }` axis —
+  it re-projects the CLI command, MCP tool, and canonical name together (ADR-0024).
 
 ## Repo layout
 - `packages/air` — AIR (the IR). `packages/compiler` — parse/normalize/classify/validate.

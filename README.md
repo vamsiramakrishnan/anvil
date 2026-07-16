@@ -25,8 +25,9 @@ spec (OpenAPI / Swagger)
       AIR  (the Anvil Intermediate Representation — one source of truth,
              cryptographically bound to the snapshot it was compiled from)
         │  generate
-        ├─ type-safe CLI            (discovery, --dry-run, --explain, --schema)
-        ├─ MCP server               (one tool per approved op, risk in metadata)
+        ├─ type-safe CLI            (discovery, --dry-run, --explain, --schema, --mcp)
+        ├─ MCP server               (one tool per approved op, risk in metadata;
+        │                            local stdio + remote SSE, one serving core — ADR-0022)
         ├─ skill package            (progressive disclosure: SKILL.md + reference/)
         ├─ compiled runtime         (thin, stateless Cloud Run server)
         ├─ deploy artifacts         (Dockerfile, Cloud Run YAML, env/secret contracts)
@@ -95,6 +96,12 @@ Without `--confirm`, the refund refuses:
 
 That refusal is the correct behavior.
 
+The same command can **route through an MCP server** instead of executing
+directly — `--mcp stdio` spawns the bundle's own local server, `--mcp <url>`
+targets a remote one, and `ANVIL_MCP_TARGET` sets the default (the per-call flag
+wins). This makes *skill → CLI → MCP* one code path, so the CLI and the MCP tool
+provably do the same thing (see [ADR-0023](docs/adr/0023-cli-to-mcp-runtime-routing.md)).
+
 ## Architecture
 
 Anvil is a **compiler, not a framework** — the compiler and AIR are the product;
@@ -121,6 +128,27 @@ Two loops (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)):
   anvil enrich generated/payments --sources examples/payments/sources.yaml
   # → proposes an anvil.yaml patch; review it, then:
   anvil compile examples/payments/openapi.yaml --manifest proposed.anvil.yaml --out generated/payments
+  ```
+
+  Enrichment can be **targeted** rather than a full sweep: `anvil distill`
+  reduces a surface to its eigenbasis (one canonical read per cluster, every
+  write its own vector) and `--as-enrich-plan` turns its *open questions* into a
+  source-routed plan that `anvil enrich --plan` probes — asking code hosts to
+  prove idempotency and doc hosts to describe intent, only for the operations
+  that are actually uncertain (see [ADR-0024](docs/adr/0024-distillation-eigenbasis-and-enrichment-plan.md)).
+
+  ```bash
+  anvil distill generated/payments --as-enrich-plan --write plan.json
+  anvil enrich generated/payments --sources sources.yaml --plan plan.json
+  ```
+
+  A name an agent cannot route on (`do_transition`, `get_object`) is a
+  first-class deficiency, and its fix re-homes every surface at once:
+
+  ```yaml
+  # anvil.yaml — re-project canonical name, CLI command, and MCP tool together
+  operations:
+    doTransition: { name: { resource: issue, verb: transition } }
   ```
 
 ### Packages
