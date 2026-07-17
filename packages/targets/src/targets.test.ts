@@ -3,6 +3,7 @@ import { approveOperations, compile } from "@anvil/compiler";
 import { beforeEach, describe, expect, it } from "vitest";
 import { GEMINI_ENTERPRISE_PROFILE } from "./gemini-enterprise.js";
 import { generateTargetKit } from "./generate.js";
+import { buildRegistrationRequest, renderRegistrationCurl } from "./registration.js";
 import { validateTarget } from "./validate.js";
 
 const SPEC = `openapi: "3.0.3"
@@ -47,6 +48,8 @@ describe("target kit generation", () => {
       "inbound-auth.env",
       "oauth.template.json",
       "organization-policy-checklist.md",
+      "registration.curl.sh",
+      "registration.request.json",
       "server-description.md",
       "setup.json",
       "target-profile.json",
@@ -74,6 +77,47 @@ describe("target kit generation", () => {
       kit.files.find((f) => f.path.endsWith("connector.tf"))!.bytes,
     );
     expect(tf).toContain("roles/discoveryengine.editor");
+  });
+
+  it("builds a SetUpDataConnector registration request from the endpoint + oauth", () => {
+    const reg = buildRegistrationRequest(air, {
+      endpoint: "https://x.example/mcp",
+      project: "acme-proj",
+      location: "global",
+      clientId: "client-123",
+      clientSecretRef: "projects/acme-proj/secrets/mcp-oauth/versions/latest",
+      tokenUri: "https://idp.example/token",
+      scopes: ["read", "write"],
+    });
+    expect(reg.url).toBe(
+      "https://discoveryengine.googleapis.com/v1/projects/acme-proj/locations/global:setUpDataConnector",
+    );
+    // The MCP server URL is the connector's instance_uri; tools are NOT enumerated
+    // (the platform fetches them — dynamic_tools is output-only).
+    expect(reg.body.dataConnector.params.instance_uri).toBe("https://x.example/mcp");
+    expect(reg.body.dataConnector.actionConfig?.actionParams.client_id).toBe("client-123");
+    expect(reg.body.dataConnector.actionConfig?.actionParams.client_secret).toBe(
+      "projects/acme-proj/secrets/mcp-oauth/versions/latest",
+    );
+    expect(reg.body.dataConnector.actionConfig?.actionParams.token_uri).toBe(
+      "https://idp.example/token",
+    );
+    // The two Struct conventions the RPC ref leaves open are surfaced, not hidden.
+    expect(reg.provisional.length).toBe(2);
+    // The curl runs under the operator's own credentials — Anvil holds none.
+    expect(renderRegistrationCurl(reg)).toContain("gcloud auth print-access-token");
+  });
+
+  it("emits the registration request + curl in the connector kit", () => {
+    const kit = generateTargetKit(air, GEMINI_ENTERPRISE_PROFILE, {
+      endpoint: "https://x.example/mcp",
+    });
+    const req = kit.files.find((f) => f.path.endsWith("registration.request.json"));
+    expect(req).toBeDefined();
+    const parsed = JSON.parse(new TextDecoder().decode(req!.bytes)) as {
+      dataConnector: { params: { instance_uri: string } };
+    };
+    expect(parsed.dataConnector.params.instance_uri).toBe("https://x.example/mcp");
   });
 
   it("lists every approved action for selection", () => {

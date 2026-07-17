@@ -7,6 +7,11 @@
 import type { AirDocument } from "@anvil/air";
 import { surfaceSignatureFor } from "@anvil/compiler";
 import type { AgentPlatformTargetProfile, TargetKit, TargetKitFile } from "./model.js";
+import {
+  buildRegistrationRequest,
+  renderRegistrationCurl,
+  renderRegistrationJson,
+} from "./registration.js";
 import { validateTarget } from "./validate.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -83,6 +88,20 @@ export function generateTargetKit(
           { path: `${dir}/terraform/connector.tf`, bytes: enc(connectorTf(profile)) },
         ]
       : []),
+    // The programmatic registration: a ready SetUpDataConnector request body and
+    // a curl that POSTs it under the operator's own credentials.
+    ...(isPublicConnector(profile)
+      ? (() => {
+          const reg = buildRegistrationRequest(
+            air,
+            options.endpoint ? { endpoint: options.endpoint } : {},
+          );
+          return [
+            { path: `${dir}/registration.request.json`, bytes: enc(renderRegistrationJson(reg)) },
+            { path: `${dir}/registration.curl.sh`, bytes: enc(renderRegistrationCurl(reg)) },
+          ];
+        })()
+      : []),
   ].sort((a, b) => a.path.localeCompare(b.path));
 
   return { targetId: profile.id, targetVersion: profile.version, files };
@@ -113,23 +132,25 @@ function adminRunbook(
   return [
     `# Admin runbook — ${air.service.displayName ?? air.service.id} on ${profile.displayName}`,
     "",
-    "The final registration of a custom MCP data store has no public API today, so",
-    "step 5 is a console (or Agent Registry) action. Everything before it is",
-    "scriptable and produced by this kit.",
+    "Registration is a real API call — the Discovery Engine `setUpDataConnector`",
+    "method (registration.request.json holds the ready body). Everything here is",
+    "scriptable; the console is only an alternative to step 5.",
     "",
     "1. Deploy the generated StreamableHTTP MCP server to a public HTTPS endpoint",
     `   (${url}). SSE is not supported by ${profile.displayName}.`,
     "2. Configure the server's inbound auth from inbound-auth.env — it validates",
     "   the token the platform presents on /mcp as an OAuth 2 resource server.",
-    "3. Prerequisites: grant the admin the required IAM role, override the org",
-    "   policy that blocks custom MCP, and allowlist the FQDNs of the server URL,",
-    "   authorization URL, and token URL (see organization-policy-checklist.md).",
+    "3. Prerequisites: grant the admin the required IAM role (discoveryengine.editor),",
+    "   override the org policy that blocks custom MCP, and allowlist the FQDNs of the",
+    "   server URL, authorization URL, and token URL (see organization-policy-checklist.md).",
     "4. Register the platform as an OAuth client with your IdP; put its client id /",
-    "   secret and the authorization/token URLs into oauth.template.json. The",
-    "   client's token audience MUST equal ANVIL_INBOUND_AUDIENCE and its scopes",
-    "   MUST cover ANVIL_INBOUND_REQUIRED_SCOPES.",
-    `5. In the console: Data stores → Create data store → Custom MCP Server → enter`,
-    `   ${url} and the auth details. Enable at most ${profile.actionLimits.maxActions} actions.`,
+    "   secret (as a Secret Manager reference) and the authorization/token URLs into",
+    "   registration.request.json. The client's token audience MUST equal",
+    "   ANVIL_INBOUND_AUDIENCE and its scopes MUST cover ANVIL_INBOUND_REQUIRED_SCOPES.",
+    "5. Register the connector: POST registration.request.json to",
+    "   `…/locations/{loc}:setUpDataConnector` (see registration.curl.sh), or do the",
+    "   equivalent in the console: Data stores → Create data store → Custom MCP Server.",
+    `   The platform fetches the tool list from the server; keep it under ${profile.actionLimits.maxActions} actions.`,
     "6. Confirm compatibility-report.json has no errors before enabling for agents.",
     "",
   ].join("\n");

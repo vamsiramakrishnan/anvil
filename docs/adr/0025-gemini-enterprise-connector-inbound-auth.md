@@ -17,10 +17,17 @@ facts from Google's current docs shape the design:
    not authenticate the caller *for* the server. It also documents an FQDN
    org-policy allowlist and a ≤100 enabled-action budget.
 
-A third fact bounds ambition: **there is no public API to register a custom MCP
-data store.** Both the direct path and the Agent Registry are console-only
-(Preview). So a truthful "end-to-end" pathway automates everything up to the
-registration handoff, not the handoff itself.
+Registration is a real API. (An earlier revision of this ADR claimed there was no
+public registration API — that was wrong, based on the console *setup guide*
+rather than the RPC reference.) The Discovery Engine API's
+`DataConnectorService.SetUpDataConnector`
+(`POST …/locations/*:setUpDataConnector`) creates a Collection and a
+`DataConnector`; a custom MCP server is a connector whose `connector_type` the
+system sets to `REMOTE_MCP`. The MCP server URL and auth live in the connector's
+free-form Struct params (`instance_uri`, `action_config.action_params` with
+`client_id` / `token_uri`, secrets as Secret Manager references); the tool list
+is `dynamic_tools`, which is **output-only** — the platform fetches it from the
+server. So the end-to-end pathway can be fully programmatic.
 
 Before this ADR, the generated server did **no** inbound authentication — `/mcp`
 was open, delegated to platform IAM — and the entire `@anvil/targets` package
@@ -57,10 +64,14 @@ The profile is corrected to Google's live requirements (StreamableHTTP-only,
 100-action budget, FQDN allowlist, both auth modes, `provisional` provenance
 against the dated doc).
 
-**Registration keeps a seam, not a fiction.** Because Google exposes no
-registration API, the kit's admin runbook drives every scriptable prerequisite
-and ends at the console (or Agent Registry) step. A future `RegistrationAdapter`
-slots a real Discovery Engine call in when one ships, without changing the rest.
+**Registration is programmatic.** The kit emits a ready `SetUpDataConnector`
+request body (`registration.request.json`) and a `registration.curl.sh` that
+POSTs it with the caller's own credentials — Anvil holds none. The connector's
+`instance_uri`, OAuth params, and Secret Manager secret references are filled from
+what Anvil already knows; two values that the RPC reference leaves to a free-form
+Struct — the exact `data_source` identifier and the precise param split for
+`REMOTE_MCP` — are isolated in one place and marked provisional until validated
+against a live project. The console remains an equivalent alternative to the call.
 
 ## Consequences
 - The connector now *is* what the profile always claimed: it self-enforces the
@@ -79,12 +90,19 @@ guard is now exercised over a real socket (a live-boot HTTP test: 401 without a
 token, 200 with a token verified against a live JWKS, health open), and ES256 is
 supported alongside RS256.
 
-- **Deferred (Phase 3+):**
+**Phase 3 (landed):** the `SetUpDataConnector` registration request is built and
+emitted by the kit (`registration.request.json` + `registration.curl.sh`), and
+the earlier "no public API" claim is corrected across the profile, runbook, CLI,
+and this ADR.
+
+- **Deferred (Phase 4+):**
+  - Confirming the two provisional values (`data_source` for REMOTE_MCP, and the
+    exact `params`/`action_params`/`auth_params` split) against a live project or a
+    Google sample, then removing the provisional markers.
+  - Optionally POSTing the request from the CLI using Application Default
+    Credentials (today the kit emits the request + curl; the operator runs it).
   - Mapping a validated delegated identity onto the *upstream* call (on-behalf-of,
-    RFC 8693 token exchange) — the resource server authenticates the caller;
-    propagating that identity outward is the outbound-auth work in the earlier
-    auth-gap analysis.
+    RFC 8693 token exchange) — the outbound-auth work from the earlier auth-gap
+    analysis.
   - Provisioning the OAuth *client* itself (inherently IdP/console-side) beyond
     emitting its exact configuration.
-  - The `RegistrationAdapter` `discoveryengine-api` implementation, if/when Google
-    exposes a registration API.
