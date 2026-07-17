@@ -56,7 +56,6 @@ export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
     "The platform does not enforce the API's auth for you — the MCP server must self-enforce it.",
     "The platform does not confirm irreversible actions for you — confirmation must be in the contract.",
     "An external gateway in front of the server is not assumed; controls travel in the pack.",
-    "There is no public API to register a custom MCP data store — the final registration is a console (or Agent Registry) step.",
   ],
   // Checked once against the live Google docs (2026-07); re-verify before a real
   // registration, since the custom-MCP feature is in Preview and moving.
