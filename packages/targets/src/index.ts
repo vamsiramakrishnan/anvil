@@ -9,4 +9,5 @@
 export * from "./gemini-enterprise.js";
 export * from "./generate.js";
 export * from "./model.js";
+export * from "./registration.js";
 export * from "./validate.js";

@@ -3,6 +3,7 @@ import { approveOperations, compile } from "@anvil/compiler";
 import { beforeEach, describe, expect, it } from "vitest";
 import { GEMINI_ENTERPRISE_PROFILE } from "./gemini-enterprise.js";
 import { generateTargetKit } from "./generate.js";
+import { buildRegistrationRequest, renderRegistrationCurl } from "./registration.js";
 import { validateTarget } from "./validate.js";
 
 const SPEC = `openapi: "3.0.3"
@@ -44,16 +45,79 @@ describe("target kit generation", () => {
       "action-selection.json",
       "admin-runbook.md",
       "compatibility-report.json",
+      "inbound-auth.env",
       "oauth.template.json",
       "organization-policy-checklist.md",
+      "registration.curl.sh",
+      "registration.request.json",
       "server-description.md",
       "setup.json",
       "target-profile.json",
+      "connector.auto.tfvars",
+      "connector.tf",
     ]);
     // Deterministic bytes.
     for (let i = 0; i < a.files.length; i++) {
       expect(Buffer.from(a.files[i]!.bytes).equals(Buffer.from(b.files[i]!.bytes))).toBe(true);
     }
+  });
+
+  it("overlays the deploy for a public connector: public ingress + inbound-auth env", () => {
+    const kit = generateTargetKit(air, GEMINI_ENTERPRISE_PROFILE, {
+      endpoint: "https://x.example/mcp",
+    });
+    const tfvars = new TextDecoder().decode(
+      kit.files.find((f) => f.path.endsWith("connector.auto.tfvars"))!.bytes,
+    );
+    expect(tfvars).toContain('ingress               = "INGRESS_TRAFFIC_ALL"');
+    expect(tfvars).toContain("allow_unauthenticated = true");
+    expect(tfvars).toContain('ANVIL_INBOUND_AUTH_MODE = "oidc"');
+    expect(tfvars).toContain('ANVIL_INBOUND_AUDIENCE = "https://x.example/mcp"');
+    const tf = new TextDecoder().decode(
+      kit.files.find((f) => f.path.endsWith("connector.tf"))!.bytes,
+    );
+    expect(tf).toContain("roles/discoveryengine.editor");
+  });
+
+  it("builds a SetUpDataConnector registration request from the endpoint + oauth", () => {
+    const reg = buildRegistrationRequest(air, {
+      endpoint: "https://x.example/mcp",
+      project: "acme-proj",
+      location: "global",
+      clientId: "client-123",
+      clientSecretRef: "projects/acme-proj/secrets/mcp-oauth/versions/latest",
+      tokenUri: "https://idp.example/token",
+      scopes: ["read", "write"],
+    });
+    expect(reg.url).toBe(
+      "https://discoveryengine.googleapis.com/v1/projects/acme-proj/locations/global:setUpDataConnector",
+    );
+    // The MCP server URL is the connector's instance_uri; tools are NOT enumerated
+    // (the platform fetches them — dynamic_tools is output-only).
+    expect(reg.body.dataConnector.params.instance_uri).toBe("https://x.example/mcp");
+    expect(reg.body.dataConnector.actionConfig?.actionParams.client_id).toBe("client-123");
+    expect(reg.body.dataConnector.actionConfig?.actionParams.client_secret).toBe(
+      "projects/acme-proj/secrets/mcp-oauth/versions/latest",
+    );
+    expect(reg.body.dataConnector.actionConfig?.actionParams.token_uri).toBe(
+      "https://idp.example/token",
+    );
+    // The two Struct conventions the RPC ref leaves open are surfaced, not hidden.
+    expect(reg.provisional.length).toBe(2);
+    // The curl runs under the operator's own credentials — Anvil holds none.
+    expect(renderRegistrationCurl(reg)).toContain("gcloud auth print-access-token");
+  });
+
+  it("emits the registration request + curl in the connector kit", () => {
+    const kit = generateTargetKit(air, GEMINI_ENTERPRISE_PROFILE, {
+      endpoint: "https://x.example/mcp",
+    });
+    const req = kit.files.find((f) => f.path.endsWith("registration.request.json"));
+    expect(req).toBeDefined();
+    const parsed = JSON.parse(new TextDecoder().decode(req!.bytes)) as {
+      dataConnector: { params: { instance_uri: string } };
+    };
+    expect(parsed.dataConnector.params.instance_uri).toBe("https://x.example/mcp");
   });
 
   it("lists every approved action for selection", () => {
@@ -112,8 +176,10 @@ describe("target validation", () => {
     expect(GEMINI_ENTERPRISE_PROFILE.unsupportedAssumptions.length).toBeGreaterThan(0);
   });
 
-  it("warns that an unverified profile is a draft, structurally (Gemini labeling)", () => {
-    expect(GEMINI_ENTERPRISE_PROFILE.verificationStatus).toBe("unverified");
+  it("warns that a not-yet-verified profile is a draft, structurally (Gemini labeling)", () => {
+    // Provisional = checked once against live docs but possibly stale; the
+    // validator still warns on anything that is not `verified`.
+    expect(GEMINI_ENTERPRISE_PROFILE.verificationStatus).toBe("provisional");
     const result = validateTarget(air, GEMINI_ENTERPRISE_PROFILE, {
       endpoint: "https://x.example/mcp",
     });

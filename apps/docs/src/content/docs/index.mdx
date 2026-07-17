@@ -1,13 +1,15 @@
 ---
 title: Anvil
-description: Anvil compiles the API specs you already have — OpenAPI, SOAP, gRPC, GraphQL, and gateway exports — into agent tools that agree on what each call does and whether it's safe.
+description: Anvil compiles the API specs an enterprise already has — OpenAPI, SOAP, gRPC, GraphQL, Postman, and gateway exports from Apigee, Kong, WSO2, MuleSoft, and IBM API Connect — into a CLI, an MCP server, an agent skill, and enforcement hooks that define each operation identically. Risk, idempotency, and human approval are set once and enforced on every surface.
 template: splash
 hero:
   tagline: >-
-    Turn the API specs you already have into agent tools that don't guess. One
-    spec compiles into a CLI, an MCP server, a skill, and enforcement hooks —
-    all agreeing on what each call does and whether it's safe to run. A human
-    approves every operation before an agent can touch it.
+    Anvil compiles an API spec into four artifacts that stay in sync: a CLI,
+    an MCP server, an agent skill, and enforcement hooks. It reads the specs
+    you already have — OpenAPI, SOAP, gRPC, GraphQL, Postman, and exports from
+    Apigee, Kong, WSO2, MuleSoft, and IBM API Connect gateways. Every operation
+    carries the same risk, idempotency, and approval rules on every surface,
+    and none reaches an agent until a person approves it.
   actions:
     - text: Quickstart
       link: /anvil/start/quickstart/
@@ -31,8 +33,8 @@ import LoopDiagram from '../../components/diagrams/LoopDiagram.astro';
 ## Import the gateway you already run
 
 Most enterprise APIs don't live in a git repo. They live behind a gateway, and
-the gateway knows what the spec leaves out: which auth plugin fronts an
-operation, which scopes a product grants, where a quota bites, which requests
+the gateway holds details the spec leaves out: which auth plugin fronts an
+operation, which scopes a product grants, where quotas apply, and which requests
 get rewritten in flight.
 
 Anvil imports the whole catalog of APIs behind your gateway — its *estate* — not
@@ -81,10 +83,10 @@ gate. [How Anvil operates at scale →](/anvil/concepts/gateway-estates/#operati
 
 ## Any spec in. Aligned tools out.
 
-Enterprises don't lack APIs — they lack **agent-safe** ones. The payments API
-knows a refund moves money; the WSDL knows the transfer can't be undone. But
-none of that knowledge survives the trip into an agent's toolbox when wrappers
-are written by hand. Anvil compiles it in.
+Enterprises don't lack APIs — they lack **agent-safe** ones. A payments spec
+says a refund moves money; a WSDL says a transfer can't be undone. That
+information is in the spec, but hand-written wrappers usually drop it. Anvil
+compiles it in.
 
 <PipelineDiagram />
 
@@ -93,7 +95,7 @@ hand-writes the CLI, the MCP tool descriptions, or the skill — so nobody can
 forget that a refund needs an idempotency key (a token that makes a repeated
 call safe: run it twice, it still counts once) in one place but not another.
 
-## The problem isn't writing wrappers. It's keeping them honest.
+## The problem isn't writing wrappers. It's keeping them in sync.
 
 Any team can wrap an API for one demo. The failure mode arrives six months
 later, when the CLI wrapper retries a payment the MCP wrapper wouldn't, and the

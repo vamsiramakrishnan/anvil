@@ -119,6 +119,9 @@ importers:
       '@anvil/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@anvil/targets':
+        specifier: workspace:*
+        version: link:../targets
       '@modelcontextprotocol/sdk':
         specifier: ^1.22.0
         version: 1.29.0(zod@4.4.3)
