@@ -71,6 +71,18 @@ export function generateTargetKit(
     { path: `${dir}/organization-policy-checklist.md`, bytes: enc(orgPolicyChecklist(profile)) },
     { path: `${dir}/admin-runbook.md`, bytes: enc(adminRunbook(air, profile, options.endpoint)) },
     { path: `${dir}/compatibility-report.json`, bytes: json(compatibility) },
+    // A public connector overlays the generic Cloud Run deploy: flip ingress to
+    // public (the server's own OAuth check is the gate) and inject the inbound
+    // env. Copy these into deploy/terraform/ and apply.
+    ...(isPublicConnector(profile)
+      ? [
+          {
+            path: `${dir}/terraform/connector.auto.tfvars`,
+            bytes: enc(connectorTfvars(profile, options.endpoint)),
+          },
+          { path: `${dir}/terraform/connector.tf`, bytes: enc(connectorTf(profile)) },
+        ]
+      : []),
   ].sort((a, b) => a.path.localeCompare(b.path));
 
   return { targetId: profile.id, targetVersion: profile.version, files };
@@ -121,6 +133,76 @@ function adminRunbook(
     "6. Confirm compatibility-report.json has no errors before enabling for agents.",
     "",
   ].join("\n");
+}
+
+/** A connector whose platform reaches the server over the public internet. */
+function isPublicConnector(profile: AgentPlatformTargetProfile): boolean {
+  return profile.transportRequirements.some((t) => t.publicEndpoint);
+}
+
+/** The inbound-auth env map (Terraform `var.env`), from the primary auth scheme. */
+function inboundEnvEntries(
+  profile: AgentPlatformTargetProfile,
+  endpoint?: string,
+): Record<string, string> {
+  const audience = endpoint ?? "<the connector's public URL, e.g. https://host/mcp>";
+  const mode = profile.authRequirements.find((a) => a.inboundMode)?.inboundMode ?? "oidc";
+  if (mode === "google_service_account") {
+    return { ANVIL_INBOUND_AUTH_MODE: "google_service_account", ANVIL_INBOUND_AUDIENCE: audience };
+  }
+  return {
+    ANVIL_INBOUND_AUTH_MODE: "oidc",
+    ANVIL_INBOUND_ISSUER: "<your IdP issuer, e.g. https://accounts.google.com>",
+    ANVIL_INBOUND_AUDIENCE: audience,
+  };
+}
+
+/**
+ * The public-connector overlay for the generic Cloud Run deploy: flip ingress to
+ * public and inject the inbound-auth env. The server's own OAuth resource-server
+ * check is the gate — Cloud Run only admits the request at the edge.
+ */
+function connectorTfvars(profile: AgentPlatformTargetProfile, endpoint?: string): string {
+  const env = inboundEnvEntries(profile, endpoint);
+  return `${[
+    `# ${profile.displayName} — public-connector overlay for the generic Cloud Run deploy.`,
+    "# Copy into deploy/terraform/ (auto-loaded) before `terraform apply`.",
+    "# The platform reaches /mcp over the internet; the server's inbound OAuth check",
+    "# (ANVIL_INBOUND_*) is the real gate, never network reachability alone.",
+    'ingress               = "INGRESS_TRAFFIC_ALL"',
+    "allow_unauthenticated = true",
+    "env = {",
+    ...Object.entries(env).map(([k, v]) => `  ${k} = ${JSON.stringify(v)}`),
+    "}",
+    "",
+  ].join("\n")}`;
+}
+
+/** Platform IAM + org-policy overlay Terraform for the connector. */
+function connectorTf(profile: AgentPlatformTargetProfile): string {
+  return `${[
+    `# ${profile.displayName} connector — platform IAM + org-policy overlay.`,
+    "# Copy into deploy/terraform/ and apply alongside the generic module.",
+    "#",
+    "# The admin who registers the custom MCP data store needs discoveryengine.editor",
+    '# (or the "Gemini Enterprise Admin" role). Scope it to a named principal.',
+    'variable "gemini_registrar_member" {',
+    "  type    = string",
+    '  default = ""',
+    "}",
+    'resource "google_project_iam_member" "gemini_registrar" {',
+    '  count   = var.gemini_registrar_member == "" ? 0 : 1',
+    "  project = var.project_id",
+    '  role    = "roles/discoveryengine.editor"',
+    "  member  = var.gemini_registrar_member",
+    "}",
+    "",
+    "# Org policy: the platform requires the FQDNs of the server URL, authorization",
+    "# URL, and token URL to be allowlisted for custom MCP. That is an organization",
+    "# policy set per current Google docs (see organization-policy-checklist.md),",
+    "# not a per-service resource — configure it at the org level.",
+    "",
+  ].join("\n")}`;
 }
 
 /**

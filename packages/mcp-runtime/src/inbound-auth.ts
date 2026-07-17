@@ -167,16 +167,18 @@ export async function verifyInboundToken(
   } catch {
     return deny(401, "invalid_token", "JWT header/payload is not valid JSON.", config);
   }
-  if (header.alg !== "RS256") {
+  if (header.alg !== "RS256" && header.alg !== "ES256") {
     return deny(
       401,
       "invalid_token",
-      `Unsupported JWT alg "${header.alg}" (expected RS256).`,
+      `Unsupported JWT alg "${header.alg}" (expected RS256 or ES256).`,
       config,
     );
   }
 
-  // Signature: JWK → public key → RS256 verify over "header.payload".
+  // Signature: JWK → public key → verify over "header.payload". RS256 is
+  // RSA-SHA256; ES256 is ECDSA-P256 whose JWT signature is raw r||s (IEEE
+  // P1363), NOT DER — so it needs `dsaEncoding: "ieee-p1363"`.
   let verified = false;
   try {
     const uri = await resolveJwksUri(config, fetchJwks);
@@ -188,12 +190,12 @@ export async function verifyInboundToken(
     const key = createPublicKey({ key: jwk, format: "jwk" } as unknown as Parameters<
       typeof createPublicKey
     >[0]);
-    verified = cryptoVerify(
-      "RSA-SHA256",
-      Buffer.from(`${rawHeader}.${rawPayload}`),
-      key,
-      Buffer.from(rawSig, "base64url"),
-    );
+    const data = Buffer.from(`${rawHeader}.${rawPayload}`);
+    const sig = Buffer.from(rawSig, "base64url");
+    verified =
+      header.alg === "RS256"
+        ? cryptoVerify("RSA-SHA256", data, key, sig)
+        : cryptoVerify("sha256", data, { key, dsaEncoding: "ieee-p1363" }, sig);
   } catch {
     // A JWKS fetch/parse failure is a server-side inability to verify — fail
     // closed as an invalid token rather than admitting an unverified caller.

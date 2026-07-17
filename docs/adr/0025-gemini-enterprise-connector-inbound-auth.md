@@ -69,14 +69,22 @@ slots a real Discovery Engine call in when one ships, without changing the rest.
   per-user identity).
 - `@anvil/targets` is no longer dead code — `anvil target` runs it, validates the
   contract against the platform, and gates on errors.
-- **Deferred (Phase 2+):**
-  - Provisioning Terraform for the OAuth client, the org-policy FQDN allowlist,
-    and the IAM roles; reconciling the deploy ingress (public HTTPS) with the
-    in-app token enforcement (today's Terraform pins internal-only ingress).
-  - Mapping a validated delegated identity onto the *upstream* call (on-behalf-of)
-    — the resource server authenticates the caller; propagating that identity
-    outward is the outbound-auth work in the earlier auth-gap analysis.
-  - A live-boot harness check that drives `runtime/server.js` under auth (the
-    loopback check currently drives the stdio server only); ES256 tokens.
+**Phase 2 (landed):** the generic Cloud Run deploy is parameterized (`var.ingress`,
+`var.allow_unauthenticated`, `var.env`) with defaults that preserve the
+internal-only posture, and the connector kit emits the overlay that flips it to
+public ingress + injects the inbound-auth env + adds the `discoveryengine.editor`
+IAM — so the "public endpoint vs internal ingress" contradiction is resolved
+without platform specifics leaking into the core deploy. The resource-server
+guard is now exercised over a real socket (a live-boot HTTP test: 401 without a
+token, 200 with a token verified against a live JWKS, health open), and ES256 is
+supported alongside RS256.
+
+- **Deferred (Phase 3+):**
+  - Mapping a validated delegated identity onto the *upstream* call (on-behalf-of,
+    RFC 8693 token exchange) — the resource server authenticates the caller;
+    propagating that identity outward is the outbound-auth work in the earlier
+    auth-gap analysis.
+  - Provisioning the OAuth *client* itself (inherently IdP/console-side) beyond
+    emitting its exact configuration.
   - The `RegistrationAdapter` `discoveryengine-api` implementation, if/when Google
     exposes a registration API.
