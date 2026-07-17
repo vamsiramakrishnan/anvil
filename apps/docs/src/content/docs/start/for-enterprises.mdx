@@ -1,6 +1,6 @@
 ---
 title: For enterprises
-description: The conversion playbook — how a large organization turns its existing API estate (OpenAPI, SOAP, gRPC, GraphQL) into governed agent tools, and how Anvil's compile → enrich → approve → govern loop maps onto the controls you already run.
+description: How a large organization turns the APIs it already has into governed agent tools — and how Anvil's loop maps onto the controls you already run.
 sidebar:
   order: 3
 ---
@@ -12,14 +12,14 @@ hundreds of services across OpenAPI, twenty-year-old WSDL, gRPC, and GraphQL,
 each owned by a different team, each governed by change management the
 organization already trusts.
 
-The naive path to "agents can use our APIs" is a wrapper factory: every team
+The obvious path to "agents can use our APIs" is a wrapper factory: every team
 hand-writes an MCP server, a CLI, and a prompt snippet for each service. That's
-**N services × 3 surfaces × forever**, and every wrapper embeds a guess about
+**N services × 3 tools × forever**, and every wrapper embeds a guess about
 safety that no one reviews and nothing keeps aligned. The wrappers aren't the
 cost — *keeping them honest* is.
 
-Anvil replaces the wrapper factory with a compiler. Specs go in; aligned,
-gated surfaces come out; and your existing governance plugs into the middle.
+Anvil replaces the wrapper factory with a compiler. Specs go in; aligned, gated
+tools come out; and your existing governance plugs into the middle.
 
 ## The conversion journey
 
@@ -38,9 +38,9 @@ gated surfaces come out; and your existing governance plugs into the middle.
    API's owner declares what the spec can't say — idempotency keys,
    confirmation, human approval — in a small, reviewed, diffable manifest.
 4. **Approve.** Every operation compiles in a `review_required` or `approved`
-   state, and **only approved operations exist on any surface**. Risky
-   mutations are escalated for review by default; a human decision exposes
-   them. This is your change-advisory gate, expressed as a pipeline step.
+   state, and **only approved operations exist in any generated tool**. Risky
+   mutations are held for review by default; a human decision exposes them.
+   This is your change-advisory gate, expressed as a pipeline step.
 5. **Deploy.** Serve the MCP bundle (the deploy manifests target Cloud Run),
    wire Antigravity's `.agents/hooks.json`, install the Claude Code plugin, and
    wire the Codex hooks. Agents discover the skill and stop guessing.
@@ -60,7 +60,7 @@ controls you already run a place to execute.
 | Security review | Risk classification (effect · risk · reversibility) surfaced by `inspect` and `lint` before anything ships |
 | Four-eyes / SoD on sensitive actions | The human-approval tier — hooks answer `ask`/`force_ask`, so a model-supplied `confirm` can never clear the gate |
 | Audit trail | Structured error envelopes with trace ids; claim-scoped evidence and provenance recorded in AIR |
-| Least privilege | Only approved operations are compiled into *any* surface — there is no hidden superset to leak |
+| Least privilege | Only approved operations are compiled into *any* generated tool — there is no hidden superset to leak |
 | Config-drift monitoring | Contract drift detection — a spec change that loosens safety is a blocking finding, not a silent diff |
 | Secret handling | The runtime redacts auth material from records; generated docs carry variable *names*, never values |
 

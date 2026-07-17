@@ -9,6 +9,11 @@ sidebar:
 skill, MCP server, and PreToolUse hook installed together, all generated from
 the same Anvil model and versioned as one unit.
 
+:::note[Before you start]
+You need Anvil built from source and Claude Code installed. See
+[Install Anvil](/anvil/cookbooks/install-anvil/) for the one-time setup.
+:::
+
 There is no separate plugin build step. The composition is deliberate: a
 Claude Code plugin *is* skills + MCP server + hooks in one directory, which is
 exactly what an Anvil bundle already is. `anvil compile` writes
@@ -46,7 +51,8 @@ The generated `.claude-plugin/plugin.json`:
 ```
 
 `version` tracks the service version, so re-approving operations and
-regenerating the bundle updates the enforced surface as a plugin update.
+regenerating the bundle ships as a normal plugin update — the tools the agent
+can call move with it.
 
 ## 2. Install it
 
@@ -105,7 +111,7 @@ executor refuses the same calls anyway, just one turn later.
 
 ## Notes
 
-- The hook is the **outer ring** and fail-open: uninstall the plugin or
+- The hook is the outer, advisory check and fail-open: uninstall the plugin or
   disable hooks and the MCP server's runtime still refuses unsafe calls. The
   generated conformance test (`tests/conformance.test.ts` in the bundle)
   asserts the hook core and the executor agree, so the rings cannot silently

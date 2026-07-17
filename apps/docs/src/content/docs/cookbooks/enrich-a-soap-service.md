@@ -1,6 +1,6 @@
 ---
-title: "Enrich a SOAP service"
-description: "Compile a WSDL, then use an Anvil manifest to declare the idempotency and confirmation semantics the WSDL cannot express — instead of approving unsafe operations blindly."
+title: "Add the safety facts a WSDL leaves out"
+description: "Compile a WSDL, then use a manifest to state the idempotency and confirmation facts a WSDL can't carry — so you approve on facts, not guesses."
 sidebar:
   order: 5
 ---
@@ -12,13 +12,16 @@ compiler guessed.
 
 A WSDL says even less about safety than OpenAPI does: no idempotency headers,
 no risk annotations. Anvil compiles it anyway — conservatively. Operation
-names drive effect inference (`Get*`/`List*` lower to reads; everything else
-lowers to writes), and a mutation with no proven idempotency is escalated to
-`review_required` and **not exposed** until you say otherwise. The manifest is
-how you say otherwise.
+names drive the read-vs-write guess (`Get*`/`List*` become reads; everything
+else becomes a write), and a mutation with no proven idempotency (safe to
+repeat: calling twice does the same thing as calling once) is held for review
+(`review_required`) and **not exposed** until you say otherwise. The manifest —
+a small YAML file where you fill in what the spec left out — is how you say
+otherwise.
 
 The repo ships a worked example: `examples/soap/bank.wsdl` (a retail-banking
-SOAP 1.1 service) and `examples/soap/anvil.yaml` (its enrichment).
+SOAP 1.1 service) and `examples/soap/anvil.yaml` (the manifest that fills in
+its safety facts).
 
 ## 1. Compile the bare WSDL and read the posture
 
@@ -96,9 +99,13 @@ operations:
     state: approved
 ```
 
+:::caution
 Only claim `strategy: required_request_key` (or `natural`, `key_supported`,
-`client_id`) if the backend genuinely behaves that way — the manifest is a
-statement of fact that unlocks retries and shapes every generated artifact.
+`client_id`) if the backend genuinely behaves that way. The manifest is a
+statement of fact: it unlocks retries and shapes every generated tool. Claim
+idempotency the backend doesn't have, and a retry can double-charge.
+:::
+
 For header-carried keys, add `header: Idempotency-Key` and the runtime injects
 the key into that header on execution. If you cannot prove idempotency, leave
 `strategy` out and the operation stays non-retryable; if you cannot justify
@@ -113,7 +120,7 @@ WORK=$(mktemp -d)
 node packages/cli/dist/bin-anvil.js compile examples/soap/bank.wsdl \
   --service banking --out "$WORK/banking-bare" --root "$WORK"
 node packages/cli/dist/bin-anvil.js inspect "$WORK/banking-bare" | grep -q review_required
-# Enriched compile: the manifest declares idempotency + confirmation and approves.
+# With the manifest: it declares idempotency + confirmation and approves.
 node packages/cli/dist/bin-anvil.js compile examples/soap/bank.wsdl \
   --manifest examples/soap/anvil.yaml --service banking \
   --out "$WORK/banking" --root "$WORK"
@@ -123,14 +130,14 @@ node packages/cli/dist/bin-anvil.js lint "$WORK/banking"
 rm -rf "$WORK"
 ```
 
-After enrichment, `inspect` shows all four operations `approved`, with
+With the manifest in place, `inspect` shows all four operations `approved`, with
 `TransferFunds` as `mutation/financial ⚠` (gated) — and `lint` still warns
 `unproven_idempotency` for `CloseAccount`, which is honest: we approved it
 *without* an idempotency claim, so auto-retry stays disabled and confirmation
 stays required. A warning you understand is better than a claim you can't
 back.
 
-## 4. What the enrichment bought
+## 4. What the manifest bought
 
 - **Retry safety:** `TransferFunds` may now retry on `timeout` and
   `soap_transport_fault` — because the same idempotency key makes a retry a
@@ -138,7 +145,7 @@ back.
 - **Confirmation:** both mutations refuse without `--confirm` (CLI) /
   `confirm: true` (MCP), with your stated reason in the refusal envelope.
 - **Alignment:** the CLI, MCP server, skill, and harness hooks are all
-  regenerated from the same enriched model — they cannot disagree about what
+  generated from the same filled-in model — they cannot disagree about what
   `TransferFunds` means.
 
 **If it refuses:** a `confirmation_required` envelope at call time means the

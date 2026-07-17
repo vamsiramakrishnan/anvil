@@ -1,35 +1,35 @@
 ---
 title: What Anvil is
-description: Anvil is an agent toolchain compiler — it turns one API specification into aligned, safe agent tools from a single canonical model.
+description: Anvil turns an API spec you already have into agent tools — a CLI, MCP server, skill, and hooks — that agree on what each call does and whether it's safe.
 sidebar:
   order: 1
 ---
 
 import WhichSurfaceDiagram from '../../../components/diagrams/WhichSurfaceDiagram.astro';
+import LifecycleDiagram from '../../../components/diagrams/LifecycleDiagram.astro';
 
-Anvil is an **agent toolchain compiler**. It compiles an API specification into
-aligned **CLI + MCP server + skill + hook** artifacts from one canonical model
-(AIR — the Anvil Intermediate Representation), with structured errors,
-retry/idempotency safety, and an approval workflow.
+Anvil is a compiler for agent tools. Point it at an API spec you already have,
+and it produces four things that stay in sync: a **CLI**, an **MCP server**, an
+agent **skill**, and enforcement **hooks**. All four are built from one shared
+model — AIR, the Anvil Intermediate Representation — so they can't disagree
+about what an operation does or whether it's safe to run.
 
 ## The problem it solves
 
-Hand-wiring an agent to an API means the agent guesses: what does this endpoint
-*do*, is it safe to retry, will it charge a card twice, does it need
-confirmation? Those answers live in a human's head, not in the tool. When the
-same API is exposed as a CLI, an MCP server, and a skill, each surface can drift
-from the others, and the agent guesses differently on each.
+Wire an agent to an API by hand and the agent has to guess: what does this
+endpoint *do*, is it safe to retry, will it charge a card twice, does it need
+confirmation? Those answers live in a person's head, not in the tool. And when
+the same API becomes a CLI, an MCP server, and a skill, the three copies drift
+apart as the API changes — so the agent guesses differently on each.
 
-Anvil removes the guessing. It derives one model of every operation — its
-**effect** (read vs mutation), **risk**, **reversibility**, **idempotency**,
-**retry policy**, and whether it needs **confirmation** — and projects that one
-model onto every surface. The highest compliment the project aims for: *the
-agent stopped guessing.*
+Anvil removes the guessing. It builds one model of every operation — what it
+does (read or mutation), how risky it is, whether it can be undone, whether it's
+safe to repeat, and whether it needs confirmation — and generates every tool
+from that one model. The result: the agent stops guessing.
 
 ## What it compiles
 
-Every source format lands in the same canonical model and the same aligned
-outputs:
+Every format lands in the same shared model and the same aligned outputs:
 
 - OpenAPI 3.x
 - Swagger 2.0
@@ -39,11 +39,11 @@ outputs:
 - SOAP / WSDL (multi-file)
 - Postman Collections
 
-And when the API lives behind a gateway rather than in a spec file, Anvil
-imports the **estate** — [Apigee, Kong, WSO2, MuleSoft, and IBM API
-Connect](/anvil/concepts/gateway-estates/) exports are read by a vendor adapter
-and compiled through the very same model, so auth plugins, product scopes, and
-quotas arrive as contract facts instead of tribal knowledge.
+When the API lives behind a gateway instead of a spec file, Anvil imports the
+whole catalog of APIs behind it — its *estate*. [Apigee, Kong, WSO2, MuleSoft,
+and IBM API Connect](/anvil/concepts/gateway-estates/) exports are read by a
+vendor adapter and compiled through the same model, so auth plugins, product
+scopes, and quotas arrive as facts in the contract instead of tribal knowledge.
 
 ## What it produces
 
@@ -56,17 +56,26 @@ quotas arrive as contract facts instead of tribal knowledge.
 
 <WhichSurfaceDiagram />
 
-Which surface you use depends only on who is calling: humans and CI script the
-CLI, an agent in a harness reads the skill and calls the MCP server, and a
-platform team installs the harness hooks. All four are projections of the same
-AIR model, regenerated together — so they cannot disagree.
+Which tool you use depends only on who's calling: people and CI script the CLI,
+an agent in a harness reads the skill and calls the MCP server, and a platform
+team installs the hooks. All four are generated from the same model and
+regenerated together — so they can't disagree.
 
 ## The safety contract
 
-- Only **approved** operations are exposed by the generated artifacts.
-- Non-idempotent mutations are **never** auto-retried and require `--confirm`.
-- Unsafe operations are enriched with a manifest rather than approved blindly.
+- Only **approved** operations are exposed by the generated tools.
+- Mutations that can't be safely repeated are **never** retried automatically
+  and require `--confirm`.
+- Unsafe operations get the missing facts filled in with a manifest — a small
+  YAML file where you add what the spec left out — rather than being approved
+  blindly.
 - Secrets are never logged; the runtime redacts auth material from records.
+
+Every operation moves through a fixed set of states before an agent can call
+it: it starts `generated`, waits at `review_required` until a person reads its
+risk, and only then becomes `approved`.
+
+<LifecycleDiagram />
 
 Read [Operating Anvil](/anvil/guides/operating-anvil/) for the day-to-day loop,
 or the [Quickstart](/anvil/start/quickstart/) to build your first bundle.

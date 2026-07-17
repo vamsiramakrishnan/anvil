@@ -1,13 +1,14 @@
 ---
 title: "Import a gateway estate"
-description: "What anvil estate actually reads: an export you produce from Apigee, Kong, WSO2, MuleSoft, or IBM API Connect — an offline file, never a live connection — plus the exact document shape each adapter expects and how to produce it."
+description: "Import the APIs behind your gateway from an offline export you produce — Apigee, Kong, WSO2, MuleSoft, or IBM API Connect — never a live connection."
 sidebar:
   order: 3
 ---
 
-**What you'll have at the end:** a clear picture of what `anvil estate` reads, the
-exact document each of the five adapters expects, and a working import you can
-run right now with no gateway account.
+**What you'll have at the end:** a clear picture of what `anvil estate` reads
+from a gateway estate — the catalog of APIs behind your gateway — the exact
+document each of the five adapters expects, and a working import you can run
+right now with no gateway account.
 
 ## First, the question everyone asks: is Anvil talking to my gateway?
 
@@ -45,8 +46,10 @@ other three you produce a small normalized document from the vendor's export.
 | `api_connect` | product / API archive (XML assembly) | No | a normalized `apis:` / `products:` document |
 
 Anything Anvil can't *prove* it understands — a Kong transformer, an Apigee
-`JavaScript` policy, a MuleSoft DataWeave step — is preserved as an **opaque**
-policy and blocks certification, so a mapping gap is never a silent one.
+`JavaScript` policy, a MuleSoft DataWeave step — is kept as an **opaque**
+policy: one Anvil can't fully read, so it flags it for a human. An opaque policy
+blocks certification (the signed check that a bundle is safe to ship), so a
+mapping gap is never a silent one.
 
 ## Try it now — no gateway required
 
@@ -273,10 +276,10 @@ anvil estate import apiconnect-estate.yaml --vendor api_connect --api claims-api
 
 ## Feeding a ZIP or JAR
 
-If your export is an archive, hand it to `anvil estate` directly — the hardened
+If your export is an archive, hand it to `anvil estate` directly — the
 [archive harness](/anvil/reference/adr/0020-offline-gateway-archive-harness/)
-unpacks it, refusing path traversal, symlinks, and decompression bombs, and
-reporting every rejection instead of dropping it silently. It auto-selects a
+safely unpacks it, refusing path traversal, symlinks, and decompression bombs,
+and reporting every rejection instead of dropping it silently. It auto-selects a
 `.json` / `.yaml` / `.yml` / `.xml` entry; if the archive holds several, name
 the one with the config:
 
@@ -313,4 +316,4 @@ belong in an agent's hands.
 - **It does not import a whole estate at once** — one API per `import`; loop the
   command for several.
 - **It does not trust an export's own "public" flag.** Every operation still
-  passes the approval gate before any surface exposes it.
+  passes the approval gate before any tool an agent sees exposes it.
