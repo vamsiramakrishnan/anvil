@@ -249,7 +249,11 @@ resource "google_cloud_run_v2_service" "tools" {
   name     = "${id}-tools"
   location = var.region
   project  = var.project_id
-  ingress  = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  # Defaults to internal-only. A connector target (e.g. Gemini Enterprise) that
+  # is reached over the public internet sets var.ingress = "INGRESS_TRAFFIC_ALL"
+  # and relies on the server's own inbound OAuth check (see var.env below), never
+  # on network reachability alone.
+  ingress  = var.ingress
 
   template {
     service_account = google_service_account.runtime.email
@@ -285,6 +289,16 @@ resource "google_cloud_run_v2_service" "tools" {
       env {
         name  = "ANVIL_LEDGER"
         value = ${ledger ? '"firestore://\\${var.project_id}/(default)"' : '""'}
+      }
+      # Additional plain env — a connector target injects its inbound-auth
+      # contract (ANVIL_INBOUND_*) here so the server self-enforces the platform's
+      # token. Empty by default.
+      dynamic "env" {
+        for_each = var.env
+        content {
+          name  = env.key
+          value = env.value
+        }
       }${
         secret
           ? `
@@ -311,6 +325,19 @@ resource "google_cloud_run_v2_service_iam_member" "invokers" {
   project  = var.project_id
   role     = "roles/run.invoker"
   member   = each.value
+}
+
+# A connector reached by an external platform (Gemini Enterprise calls the /mcp
+# URL over the internet) sets allow_unauthenticated = true. Cloud Run then admits
+# the request at the network edge, and the SERVER enforces the OAuth token — the
+# resource-server check is the real gate, not IAM. Defaults to false.
+resource "google_cloud_run_v2_service_iam_member" "public" {
+  count    = var.allow_unauthenticated ? 1 : 0
+  name     = google_cloud_run_v2_service.tools.name
+  location = var.region
+  project  = var.project_id
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }
 `;
 }
@@ -342,6 +369,24 @@ variable "max_instances" {
 variable "invoker_members" {
   type    = list(string)
   default = []
+}
+# Ingress posture. Internal-only by default; a public connector target overrides
+# this to "INGRESS_TRAFFIC_ALL" (its own inbound OAuth check is the real gate).
+variable "ingress" {
+  type    = string
+  default = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+}
+# When true, bind allUsers as run.invoker (public reach). Only safe when the
+# server self-enforces auth — a connector target sets this alongside var.env.
+variable "allow_unauthenticated" {
+  type    = bool
+  default = false
+}
+# Extra plain env for the runtime container — a connector target injects its
+# ANVIL_INBOUND_* inbound-auth contract here. Secrets never go here.
+variable "env" {
+  type    = map(string)
+  default = {}
 }
 `;
 }

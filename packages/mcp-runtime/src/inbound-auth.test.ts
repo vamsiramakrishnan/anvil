@@ -1,4 +1,4 @@
-import { createSign, generateKeyPairSync, type KeyObject } from "node:crypto";
+import { createSign, sign as cryptoSign, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   type InboundAuthConfig,
@@ -131,12 +131,35 @@ describe("verifyInboundToken", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("rejects a non-RS256 alg", async () => {
+  it("rejects an unsupported alg (HS256)", async () => {
     const r = await verifyInboundToken(`Bearer ${sign(goodClaims, { alg: "HS256" })}`, base, {
       now: NOW,
       fetchJwks,
     });
     expect(r.ok).toBe(false);
+  });
+
+  it("verifies an ES256 (ECDSA P-256) token — IEEE-P1363 signature", async () => {
+    const ec = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const ecJwk: Jwk = {
+      ...(ec.publicKey.export({ format: "jwk" }) as Jwk),
+      kid: "ec-1",
+      alg: "ES256",
+      use: "sig",
+    };
+    const h = b64url({ alg: "ES256", typ: "JWT", kid: "ec-1" });
+    const p = b64url(goodClaims);
+    // JWT ES256 signatures are raw r||s (IEEE P1363), not DER.
+    const sig = cryptoSign("sha256", Buffer.from(`${h}.${p}`), {
+      key: ec.privateKey,
+      dsaEncoding: "ieee-p1363",
+    }).toString("base64url");
+    const cfg: InboundAuthConfig = { ...base, jwksUri: "https://idp.example.com/ec-jwks" };
+    const r = await verifyInboundToken(`Bearer ${h}.${p}.${sig}`, cfg, {
+      now: NOW,
+      fetchJwks: async () => ({ keys: [ecJwk] }),
+    });
+    expect(r.ok).toBe(true);
   });
 
   it("fails closed when the JWKS cannot be fetched", async () => {

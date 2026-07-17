@@ -50,11 +50,30 @@ describe("target kit generation", () => {
       "server-description.md",
       "setup.json",
       "target-profile.json",
+      "connector.auto.tfvars",
+      "connector.tf",
     ]);
     // Deterministic bytes.
     for (let i = 0; i < a.files.length; i++) {
       expect(Buffer.from(a.files[i]!.bytes).equals(Buffer.from(b.files[i]!.bytes))).toBe(true);
     }
+  });
+
+  it("overlays the deploy for a public connector: public ingress + inbound-auth env", () => {
+    const kit = generateTargetKit(air, GEMINI_ENTERPRISE_PROFILE, {
+      endpoint: "https://x.example/mcp",
+    });
+    const tfvars = new TextDecoder().decode(
+      kit.files.find((f) => f.path.endsWith("connector.auto.tfvars"))!.bytes,
+    );
+    expect(tfvars).toContain('ingress               = "INGRESS_TRAFFIC_ALL"');
+    expect(tfvars).toContain("allow_unauthenticated = true");
+    expect(tfvars).toContain('ANVIL_INBOUND_AUTH_MODE = "oidc"');
+    expect(tfvars).toContain('ANVIL_INBOUND_AUDIENCE = "https://x.example/mcp"');
+    const tf = new TextDecoder().decode(
+      kit.files.find((f) => f.path.endsWith("connector.tf"))!.bytes,
+    );
+    expect(tf).toContain("roles/discoveryengine.editor");
   });
 
   it("lists every approved action for selection", () => {
