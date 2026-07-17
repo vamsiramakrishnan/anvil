@@ -15,6 +15,11 @@ reuses the same decision core (`plugin/hookcore.mjs`) behind a Codex-specific
 shim (`plugin/codex/hook.mjs`). What differs is what Codex lets a hook *say* —
 and that difference matters for safety, so read step 4 before relying on it.
 
+:::note[Before you start]
+You need Anvil built from source (see [Install Anvil](/anvil/cookbooks/install-anvil/))
+and Codex installed. The commands below use the repo's payments example.
+:::
+
 ## 1. Compile the bundle
 
 ```bash
@@ -116,7 +121,7 @@ both escalate to a real prompt).
 
 - An org policy of `allow_managed_hooks_only = true` silently drops this hook.
   The MCP server's runtime still refuses unsafe calls regardless — the hook is
-  the outer ring, not the contract.
+  the outer, advisory check, not the contract.
 - The output shape mirrors Claude's `hookSpecificOutput`. If your installed
   Codex build documents different PreToolUse field names, adjust
   `plugin/codex/hook.mjs` against the current Codex hooks reference — the

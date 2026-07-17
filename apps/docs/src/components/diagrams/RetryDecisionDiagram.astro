@@ -1,0 +1,142 @@
+---
+// The retry / idempotency decision as a small flowchart. Gates on the left
+// spine, outcomes on the right: a read is safe to auto-retry; a mutation is
+// only auto-retried if it is safe to repeat (idempotent), and then only with
+// the idempotency key; a non-idempotent mutation is NEVER auto-retried — it
+// asks a human. Idempotency is glossed in place as "safe to repeat". Inline SVG
+// so every color rides the theme's CSS variables and flips in light/dark.
+---
+
+<figure class="anvil-diagram">
+  <svg
+    viewBox="0 0 1040 400"
+    role="img"
+    aria-label="A retry decision after a failed call. If the call was a read, it is safe to auto-retry. If it was a mutation, ask whether it is safe to repeat — idempotent. If yes, retry using the idempotency key, since reusing a key is safe. If no, never auto-retry: ask a human or require confirmation."
+  >
+    <defs>
+      <marker id="rt-spine" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--sl-color-gray-4)" />
+      </marker>
+      <marker id="rt-allow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--ge-status-passed)" />
+      </marker>
+      <marker id="rt-deny" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0 0.5 L7.5 4 L0 7.5 Z" fill="var(--ge-status-failed)" />
+      </marker>
+    </defs>
+
+    <text x="40" y="24" class="d-label">a call failed · retry or not?</text>
+    <text x="500" y="24" class="d-label">outcome</text>
+
+    <!-- entry -->
+    <rect x="40" y="34" width="420" height="34" rx="4" class="d-entry" />
+    <text x="58" y="56" class="d-entry-text">an upstream call returned an error</text>
+    <path d="M250 68 V90" class="d-spine" marker-end="url(#rt-spine)" />
+
+    <!-- gate 1: mutation? -->
+    <rect x="40" y="94" width="420" height="64" rx="4" class="d-gate" />
+    <text x="58" y="120" class="d-gate-q">1 · is it a mutation?</text>
+    <text x="58" y="142" class="d-gate-desc">reads change nothing — repeating one is always safe</text>
+    <path d="M460 126 H500" class="d-out-allow" marker-end="url(#rt-allow)" />
+    <text x="480" y="118" text-anchor="middle" class="d-branch">read</text>
+    <rect x="500" y="94" width="524" height="64" rx="4" class="d-plate-allow" />
+    <text x="518" y="120" class="d-allow-title">auto-retry</text>
+    <text x="606" y="120" class="d-out-main">safe to auto-retry with backoff</text>
+    <text x="606" y="142" class="d-out-detail">no key, no confirmation — a read can't cause harm twice</text>
+    <path d="M250 158 V186" class="d-spine" marker-end="url(#rt-spine)" />
+    <text x="264" y="180" class="d-pass">mutation</text>
+
+    <!-- gate 2: idempotent? -->
+    <rect x="40" y="192" width="420" height="72" rx="4" class="d-gate" />
+    <text x="58" y="218" class="d-gate-q">2 · safe to repeat? · idempotent</text>
+    <text x="58" y="240" class="d-gate-desc">calling twice does the same thing as calling once —</text>
+    <text x="58" y="256" class="d-gate-desc">declared in the model, not guessed</text>
+    <path d="M460 228 H500" class="d-out-allow" marker-end="url(#rt-allow)" />
+    <text x="480" y="220" text-anchor="middle" class="d-branch">yes</text>
+    <rect x="500" y="192" width="524" height="72" rx="4" class="d-plate-allow" />
+    <text x="518" y="222" class="d-allow-title">retry · with key</text>
+    <text x="628" y="222" class="d-out-main">retry using the idempotency key</text>
+    <text x="628" y="244" class="d-out-detail">reusing a key repeats the same operation, not a new one</text>
+
+    <!-- gate 2 "no" → deny -->
+    <path d="M250 264 V336 H500" class="d-out-deny" marker-end="url(#rt-deny)" />
+    <text x="264" y="290" class="d-no">no · not idempotent</text>
+    <rect x="500" y="300" width="524" height="72" rx="4" class="d-plate-deny" />
+    <text x="518" y="330" class="d-deny-title">never auto-retry</text>
+    <text x="646" y="330" class="d-out-main">stop — ask a human or require confirm</text>
+    <text x="646" y="352" class="d-out-detail">a refund charged twice can't be un-charged — repeating is not safe</text>
+  </svg>
+  <figcaption>fig 08 · a non-idempotent mutation is never auto-retried</figcaption>
+</figure>
+
+<style>
+  .anvil-diagram { margin: 1.75rem 0; overflow-x: auto; }
+  .anvil-diagram svg { min-width: 760px; width: 100%; height: auto; display: block; }
+  .anvil-diagram figcaption {
+    font-family: var(--sl-font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--sl-color-gray-3);
+    margin-top: 0.625rem;
+  }
+  .d-label {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-entry { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-entry-text {
+    font-family: var(--sl-font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-2);
+  }
+  .d-spine { stroke: var(--sl-color-gray-4); stroke-width: 1; fill: none; }
+  .d-gate { fill: var(--sl-color-gray-6); stroke: var(--sl-color-gray-5); }
+  .d-gate-q {
+    font-family: var(--sl-font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    fill: var(--sl-color-white);
+  }
+  .d-gate-desc { font-size: 12px; fill: var(--sl-color-gray-3); }
+  .d-pass, .d-branch, .d-no {
+    font-family: var(--sl-font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--sl-color-gray-3);
+  }
+  .d-out-allow { stroke: var(--ge-status-passed); stroke-width: 1; fill: none; }
+  .d-out-deny { stroke: var(--ge-status-failed); stroke-width: 1; fill: none; }
+  .d-plate-allow { fill: none; stroke: var(--ge-status-passed); }
+  .d-plate-deny { fill: none; stroke: var(--ge-status-failed); }
+  .d-allow-title {
+    font-family: var(--sl-font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--ge-status-passed-text);
+  }
+  .d-deny-title {
+    font-family: var(--sl-font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    fill: var(--ge-status-failed-text);
+  }
+  .d-out-main { font-size: 12px; fill: var(--sl-color-gray-2); }
+  .d-out-detail { font-size: 11.5px; fill: var(--sl-color-gray-3); }
+</style>

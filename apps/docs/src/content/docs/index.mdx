@@ -27,16 +27,20 @@ import { Card, CardGrid, Tabs, TabItem } from '@astrojs/starlight/components';
 import PipelineDiagram from '../../components/diagrams/PipelineDiagram.astro';
 import AlignmentDiagram from '../../components/diagrams/AlignmentDiagram.astro';
 import RingsDiagram from '../../components/diagrams/RingsDiagram.astro';
+import EstateFunnelDiagram from '../../components/diagrams/EstateFunnelDiagram.astro';
+import LoopDiagram from '../../components/diagrams/LoopDiagram.astro';
 
 ## Import the gateway you already run
 
-Most enterprise APIs don't live in a git repo — they live behind a gateway, and
+Most enterprise APIs don't live in a git repo. They live behind a gateway, and
 the gateway holds details the spec leaves out: which auth plugin fronts an
 operation, which scopes a product grants, where quotas apply, and which requests
-get rewritten in flight. Anvil imports the **estate**, not just the spec: five
-adapters read an export you produce from the gateway — an offline file, never a
-live connection — and compile it through the exact same approval-gated pipeline
-as a hand-written OpenAPI file.
+get rewritten in flight.
+
+Anvil imports the whole catalog of APIs behind your gateway — its *estate* — not
+just one spec. Five adapters read a file you export from the gateway (offline,
+never a live connection) and compile it through the same approval-gated steps as
+a hand-written OpenAPI file.
 
 <div class="ge-vendor-row" aria-label="Supported API gateways">
   <a class="ge-vendor" href="/anvil/concepts/gateway-estates/"><i class="ge-vendor-mark" style="--m:url('/anvil/assets/icons/apigee.svg')" aria-hidden="true"></i>Apigee</a>
@@ -55,25 +59,29 @@ anvil estate import payments-estate.zip --vendor apigee --api payments
 ```
 
 Exports arrive as archives — Kong `deck` dumps, Apigee bundles, WSO2 CAR/ZIPs,
-MuleSoft JARs, API Connect archives — and every one is decoded through a
-hardened harness that refuses path traversal, symlinks, and decompression
-bombs, reporting each rejection instead of dropping it silently. Any gateway
-policy the adapter can't *prove* it understands is called out as **opaque** and
-holds up certification until a human reviews it — named, never ignored. What
-lands is an ordinary bundle: the approval gate still stands between the estate
-and the agent. New to this? [Export your estate, vendor by vendor
-→](/anvil/cookbooks/import-a-gateway-estate/)
+MuleSoft JARs, API Connect archives. Anvil decodes each one safely: it refuses
+path traversal, symlinks, and decompression bombs, and reports every rejection
+instead of dropping it silently.
+
+If the adapter can't fully read a gateway policy, it flags that policy for a
+human and holds the bundle back from shipping until someone reviews it. Nothing
+is ignored. What lands is an ordinary bundle, and the approval gate still stands
+between the API and the agent. New to this? [Export your gateway, vendor by
+vendor →](/anvil/cookbooks/import-a-gateway-estate/)
 
 ### An estate has 800 APIs. An agent should see five.
 
-A production gateway holds hundreds of APIs, and almost none of them belong in
-an agent's hands. Anvil is built for that ratio. One cheap **inventory**
-enumerates the whole estate without compiling anything — so you triage first and
-adopt deliberately: import the handful that matter, group their operations into
-review-sized capabilities, and leave the other 795 exactly where they are,
-behind the gate. [How Anvil operates at estate scale →](/anvil/concepts/gateway-estates/#operating-at-scale)
+<EstateFunnelDiagram />
 
-## Any spec in. Every surface out.
+A production gateway holds hundreds of APIs, and almost none of them belong in
+an agent's hands. Anvil is built for that ratio. One cheap `inventory` command
+lists every API without compiling anything, so you triage first and adopt
+deliberately: import the handful that matter, group their operations into
+review-sized *capabilities* (a capability is a set of related operations, like
+*Refunds* or *Payments*), and leave the other 795 where they are, behind the
+gate. [How Anvil operates at scale →](/anvil/concepts/gateway-estates/#operating-at-scale)
+
+## Any spec in. Aligned tools out.
 
 Enterprises don't lack APIs — they lack **agent-safe** ones. A payments spec
 says a refund moves money; a WSDL says a transfer can't be undone. That
@@ -82,9 +90,10 @@ compiles it in.
 
 <PipelineDiagram />
 
-Everything on the right is a **projection** of the model in the middle. Nobody
+Everything on the right is generated from the one model in the middle. Nobody
 hand-writes the CLI, the MCP tool descriptions, or the skill — so nobody can
-forget that the refund needs an idempotency key on one surface but not another.
+forget that a refund needs an idempotency key (a token that makes a repeated
+call safe: run it twice, it still counts once) in one place but not another.
 
 ## The problem isn't writing wrappers. It's keeping them in sync.
 
@@ -101,11 +110,11 @@ runbook says a third thing.
   </a>
   <a class="ge-value-card" href="/anvil/concepts/mechanisms/">
     <strong>Safety is compiled in</strong>
-    <span>Effect, risk, idempotency, and confirmation are derived from the spec and enforced by the runtime — not left to a prompt.</span>
+    <span>What a call does, how risky it is, and whether it's safe to repeat — all read from the spec and enforced by the runtime, not asked for in a prompt.</span>
   </a>
   <a class="ge-value-card" href="/anvil/guides/enrich-approve-workflow/">
     <strong>Approval is the gate</strong>
-    <span>Nothing reaches an agent until a human approves it, and drift that loosens safety is <em>blocking</em> — not a comment in a diff.</span>
+    <span>Nothing reaches an agent until a human approves it. If the spec later changes in a way that loosens safety, that's <em>blocking</em> — not a comment in a diff.</span>
   </a>
   <a class="ge-value-card" href="/anvil/design/hooks-and-plugins/">
     <strong>Enforced in the harness</strong>
@@ -118,9 +127,10 @@ runbook says a third thing.
 <Tabs>
   <TabItem label="Payments & billing">
 
-A refund is a **financial, irreversible mutation**. Anvil derives that from the
-spec, and every surface enforces it: the call refuses to run without
-`confirm: true` and an idempotency key, and it is never auto-retried.
+A refund is a **financial, irreversible mutation** — money moves and you can't
+take it back. Anvil reads that from the spec, and every generated tool enforces
+it: the call refuses to run without `confirm: true` and an idempotency key, and
+it's never retried automatically.
 
 ```bash
 anvil compile stripe-payments.yaml --manifest payments.anvil.yaml \
@@ -131,9 +141,10 @@ anvil inspect generated/payments
 #   confirmation: required (human approval)   idempotency: required
 ```
 
-With `--human-approval unsafe`, the generated hooks — in Antigravity, Claude
-Code, and Codex alike — escalate the refund to a **person**; a model-supplied
-`confirm: true` can't clear the gate.
+With `--human-approval unsafe`, the generated hooks — scripts the agent harness
+runs before each tool call, in Antigravity, Claude Code, and Codex alike —
+escalate the refund to a **person**; a model-supplied `confirm: true` can't
+clear the gate.
 
   </TabItem>
   <TabItem label="Legacy core systems">
@@ -179,9 +190,9 @@ operations:
     idempotency: { strategy: required_request_key }
 ```
 
-Now every surface requires an idempotency key, and a nervous agent re-issuing
-the call is a duplicate-suppressed no-op instead of a second text to your
-customer.
+Now every generated tool requires an idempotency key, and a nervous agent
+re-issuing the call is a duplicate-suppressed no-op instead of a second text to
+your customer.
 
   </TabItem>
 </Tabs>
@@ -206,6 +217,8 @@ every MCP client.
 
 ## The loop
 
+<LoopDiagram />
+
 ```bash
 # 1. Compile a spec into a full bundle (CLI + MCP + skill + hooks)
 anvil compile <spec> --manifest <manifest> --out <dir>
@@ -220,9 +233,8 @@ anvil approve <dir> <operation-id>
 anvil package skill <dir>
 ```
 
-Non-idempotent mutations land as `review_required` and stay unexposed until a
-human approves them. Blocking an unproven mutation is the intended behavior, not
-a limitation.
+Mutations that can't be safely repeated land as `review_required` — held for
+review, not exposed until a human approves them. That refusal is the point.
 
 ## Where to go next
 

@@ -1,6 +1,6 @@
 ---
-// The signature pipeline: any spec → `anvil compile` → AIR (one canonical
-// model, gated by approval) → four projected surfaces. Inline SVG so every
+// The signature pipeline: any spec → `anvil compile` → AIR (one shared
+// model, gated by approval) → four generated tools. Inline SVG so every
 // color rides the theme's CSS variables and flips correctly in light/dark.
 ---
 
@@ -8,7 +8,7 @@
   <svg
     viewBox="0 0 1040 400"
     role="img"
-    aria-label="Anvil compiles any API specification — or a gateway estate exported from Apigee, Kong, WSO2, MuleSoft, or IBM API Connect — into one canonical model (AIR), which projects into an aligned CLI, MCP server, skill, and harness hooks. An approval gate keeps unapproved operations out of every surface."
+    aria-label="Anvil compiles any API specification — or a gateway export from Apigee, Kong, WSO2, MuleSoft, or IBM API Connect — into one shared model (AIR), which it generates into an aligned CLI, MCP server, skill, and harness hooks. An approval gate keeps unapproved operations out of every generated tool."
   >
     <defs>
       <marker id="pd-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -53,10 +53,10 @@
     <text x="324" y="228" text-anchor="middle" class="d-label">parse · classify · validate</text>
     <path d="M390 185 H422" class="d-line" marker-end="url(#pd-arrow)" />
 
-    <!-- ── AIR: the one canonical model ────────────────────────────────── -->
+    <!-- ── AIR: the one shared model ───────────────────────────────────── -->
     <rect x="428" y="92" width="220" height="186" rx="6" class="d-air" />
     <text x="448" y="122" class="d-title">AIR</text>
-    <text x="448" y="140" class="d-label">one canonical model</text>
+    <text x="448" y="140" class="d-label">one shared model</text>
     <g class="d-body">
       <text x="448" y="168">effect · action · risk</text>
       <text x="448" y="190">reversibility</text>
@@ -68,8 +68,8 @@
     <rect x="428" y="290" width="220" height="34" rx="4" class="d-gate" />
     <text x="538" y="311" text-anchor="middle" class="d-gate-text">approval gate · unapproved ops never ship</text>
 
-    <!-- ── Projections ─────────────────────────────────────────────────── -->
-    <text x="686" y="24" text-anchor="middle" class="d-label">projections</text>
+    <!-- ── Generated tools ─────────────────────────────────────────────── -->
+    <text x="686" y="24" text-anchor="middle" class="d-label">generated tools</text>
     <g class="d-line">
       <path d="M648 120 L718 80" marker-end="url(#pd-arrow)" />
       <path d="M648 160 L718 168" marker-end="url(#pd-arrow)" />
@@ -103,7 +103,7 @@
       <text x="742" y="370" class="d-plate-desc">deny pre-flight · escalate to a human</text>
     </g>
   </svg>
-  <figcaption>fig 01 · one spec in, four aligned surfaces out — regenerated together, so they cannot disagree</figcaption>
+  <figcaption>fig 01 · one spec in, four aligned tools out — regenerated together, so they cannot disagree</figcaption>
 </figure>
 
 <style>
