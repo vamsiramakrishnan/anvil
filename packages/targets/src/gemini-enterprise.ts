@@ -1,40 +1,46 @@
 /**
  * The Gemini Enterprise target profile.
  *
- * Gemini Enterprise registers a *custom MCP server* as an agent's tool source over
- * a public HTTPS StreamableHTTP endpoint, with OAuth for user/service auth and an
- * action-selection budget. The MCP server must **self-enforce** auth and safety —
- * the platform does not assume an external gateway in front of it.
+ * Gemini Enterprise registers a *custom MCP server* (`data_source = custom_mcp`,
+ * connector_type REMOTE_MCP) as an agent's tool source over a public HTTPS
+ * StreamableHTTP endpoint, with an action-selection budget. The MCP server must
+ * **self-enforce** auth and safety — the platform does not assume an external
+ * gateway in front of it.
  *
- * IMPORTANT: at implementation/registration time these requirements MUST be
- * re-verified against the current official Google Cloud "custom MCP server" setup
- * documentation; `verifiedAgainst` records the source. The profile is versioned so
- * a requirements change is a new profile version, never an edit that leaks into
- * Anvil's core contracts.
+ * The connector authenticates to the server one of exactly two ways — the ONLY
+ * `auth_type` values the platform accepts for a custom MCP server:
+ *   - `OAUTH`: a user-delegated OAuth 2 / OIDC flow. The platform runs the
+ *     auth-code flow with your IdP (`auth_uri`/`token_uri`/`client_id`) and
+ *     presents the user's token to `/mcp`; the server validates it (`oidc`).
+ *   - `NO_AUTH`: the platform calls `/mcp` with no token (server mode `none`).
+ * Verified against the live Discovery Engine API + 7 real connectors;
+ * `verifiedAgainst` records exactly what was and was not observed.
  */
 import type { AgentPlatformTargetProfile } from "./model.js";
 
 export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
   id: "gemini-enterprise",
-  version: "2026.07.1",
+  version: "2026.07.2",
   displayName: "Gemini Enterprise (custom MCP)",
   // StreamableHTTP ONLY — Gemini Enterprise explicitly does not support the SSE
   // transport, so the connector's remote server must be the StreamableHTTP one.
   transportRequirements: [{ kind: "streamable-http", requiresHttps: true, publicEndpoint: true }],
   authRequirements: [
     {
-      // The platform runs a user-delegated OAuth 2 auth-code flow with your IdP;
-      // the MCP server validates the resulting token as an OAuth resource server.
+      // CONFIRMED primary path: auth_type=OAUTH — a user-delegated OAuth 2 flow.
+      // The platform runs the auth-code flow with your IdP and presents the
+      // resulting user token to /mcp; the server validates it as an OIDC resource
+      // server. The IdP app registration's redirect URI must be GE's fixed
+      // https://vertexaisearch.cloud.google.com/oauth-redirect.
       kind: "oauth2",
       oauthFields: ["client_id", "client_secret", "auth_uri", "token_uri", "scopes"],
       inboundMode: "oidc",
     },
     {
-      // Since 2026-06, the platform can instead present a Google service-account
-      // access token; the server validates it against Google's certs.
-      kind: "service_account",
+      // auth_type=NO_AUTH — the platform calls /mcp with no token. Only safe
+      // behind other controls; the server admits everything (inbound mode none).
+      kind: "none",
       oauthFields: [],
-      inboundMode: "google_service_account",
     },
   ],
   // The platform surfaces at most 100 enabled actions from a custom MCP data
@@ -47,19 +53,22 @@ export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
     },
     { id: "egress", description: "Server egress to the upstream API it fronts." },
     {
-      id: "fqdn-allowlist",
+      id: "instance-uri-allowlist",
       description:
-        "Org policy must allow the FQDNs of the server URL, authorization URL, and token URL.",
+        "The MCP server URL (instance_uri) must be reachable; a 'protected' project additionally requires it to be allowlisted (403 otherwise).",
     },
   ],
   unsupportedAssumptions: [
     "The platform does not enforce the API's auth for you — the MCP server must self-enforce it.",
     "The platform does not confirm irreversible actions for you — confirmation must be in the contract.",
     "An external gateway in front of the server is not assumed; controls travel in the pack.",
+    "The raw setUpDataConnector API cannot finish OAUTH consent — the connector reaches ACTIVE only after the console's interactive Authorize step.",
   ],
-  // Checked once against the live Google docs (2026-07); re-verify before a real
-  // registration, since the custom-MCP feature is in Preview and moving.
+  // Schema + auth methods verified against the LIVE Discovery Engine API
+  // (setUpDataConnector) and 7 real connectors, not just docs. The final GE→server
+  // tool-list fetch requires the console's interactive OAuth Authorize step, which
+  // could not be scripted, so the status stays `provisional` until observed.
   verificationStatus: "provisional",
   verifiedAgainst:
-    "https://docs.cloud.google.com/gemini/enterprise/docs/connectors/custom-mcp-server/set-up-custom-mcp-server (checked 2026-07)",
+    "Live setUpDataConnector API (a real GE project), location global, v1alpha, 2026-07-17: data_source=custom_mcp confirmed (only value that resolves); create shape params{oauth_access_token} + action_config.action_params{auth_type, auth_uri, token_uri, scopes, instance_uri, mcp_server_source=BYO_MCP, client_id, client_secret} + create_bap_connection confirmed by creating real connectors and reading back 7 live ones; auth_type is OAUTH or NO_AUTH only (NONE/API_KEY/BEARER rejected). GE→server tool-list fetch needs the console's interactive OAuth Authorize step (raw API create hits INITIALIZATION_FAILED before calling the server). See docs/backtesting/GEMINI_ENTERPRISE_VALIDATION.md",
 };

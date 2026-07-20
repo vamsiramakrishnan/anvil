@@ -23,11 +23,15 @@ rather than the RPC reference.) The Discovery Engine API's
 `DataConnectorService.SetUpDataConnector`
 (`POST …/locations/*:setUpDataConnector`) creates a Collection and a
 `DataConnector`; a custom MCP server is a connector whose `connector_type` the
-system sets to `REMOTE_MCP`. The MCP server URL and auth live in the connector's
-free-form Struct params (`instance_uri`, `action_config.action_params` with
-`client_id` / `token_uri`, secrets as Secret Manager references); the tool list
-is `dynamic_tools`, which is **output-only** — the platform fetches it from the
-server. So the end-to-end pathway can be fully programmatic.
+system sets (output-only) to `REMOTE_MCP` from `data_source = custom_mcp`. The
+server URL and OAuth flow live in `action_config.action_params` (`auth_type` is
+`OAUTH` or `NO_AUTH`, with `auth_uri`/`token_uri`/`scopes`/`client_id`/
+`client_secret` and `instance_uri`/`mcp_server_source`), with a seed token in
+`params.oauth_access_token`; the tool list is `dynamic_tools`, which is
+**output-only** — the platform fetches it from the server. The request body is
+buildable programmatically, but an OAUTH connector reaches ACTIVE only after the
+console's interactive OAuth Authorize step (see the "validated against a live
+project" note below).
 
 Before this ADR, the generated server did **no** inbound authentication — `/mcp`
 was open, delegated to platform IAM — and the entire `@anvil/targets` package
@@ -61,17 +65,17 @@ now including an `inbound-auth.env` contract that ties the server's resource-ser
 config to the endpoint (the OAuth client's token audience must equal
 `ANVIL_INBOUND_AUDIENCE`; its scopes must cover `ANVIL_INBOUND_REQUIRED_SCOPES`).
 The profile is corrected to Google's live requirements (StreamableHTTP-only,
-100-action budget, FQDN allowlist, both auth modes, `provisional` provenance
-against the dated doc).
+100-action budget, `OAUTH`/`NO_AUTH` methods → `oidc`/`none`, `provisional`
+provenance against the live API — see Phase 4).
 
-**Registration is programmatic.** The kit emits a ready `SetUpDataConnector`
-request body (`registration.request.json`) and a `registration.curl.sh` that
-POSTs it with the caller's own credentials — Anvil holds none. The connector's
-`instance_uri`, OAuth params, and Secret Manager secret references are filled from
-what Anvil already knows; two values that the RPC reference leaves to a free-form
-Struct — the exact `data_source` identifier and the precise param split for
-`REMOTE_MCP` — are isolated in one place and marked provisional until validated
-against a live project. The console remains an equivalent alternative to the call.
+**Registration body is built by the kit; the console finishes it.** The kit emits
+a ready `SetUpDataConnector` body (`registration.request.json`) and a
+`registration.curl.sh` that POSTs it under the caller's own credentials — Anvil
+holds none. The `data_source` (`custom_mcp`) and the `action_config.action_params`
+shape (OAuth flow + `instance_uri` + `mcp_server_source`) are now **confirmed**
+against the live API and 7 real connectors (Phase 4). But an OAUTH connector only
+reaches ACTIVE after the console's interactive OAuth **Authorize** step, so the
+console is the reliable registration path, not merely an alternative.
 
 ## Consequences
 - The connector now *is* what the profile always claimed: it self-enforces the
@@ -95,10 +99,35 @@ emitted by the kit (`registration.request.json` + `registration.curl.sh`), and
 the earlier "no public API" claim is corrected across the profile, runbook, CLI,
 and this ADR.
 
-- **Deferred (Phase 4+):**
-  - Confirming the two provisional values (`data_source` for REMOTE_MCP, and the
-    exact `params`/`action_params`/`auth_params` split) against a live project or a
-    Google sample, then removing the provisional markers.
+**Phase 4 (landed) — validated against live projects.** Probed against the live
+Discovery Engine API (real GE projects, location `global`, v1alpha, 2026-07-17),
+**7 real ACTIVE `custom_mcp` connectors read back**, and a real StreamableHTTP
+server deployed to public Cloud Run. Full evidence:
+`docs/backtesting/GEMINI_ENTERPRISE_VALIDATION.md`. Confirmed:
+- `data_source = custom_mcp` is the only identifier the platform resolves (every
+  other guess → 404).
+- The server URL + OAuth flow live in `action_config.action_params`
+  (`auth_type`, `auth_uri`, `token_uri`, `scopes`, `instance_uri`,
+  `mcp_server_source`, `client_id`, `client_secret`) with a seed
+  `params.oauth_access_token` and `create_bap_connection`. `auth_type` is
+  **`OAUTH` or `NO_AUTH`** only (all others rejected). `registration.ts` now
+  emits this shape; `OAUTH`→`oidc` and `NO_AUTH`→`none`. (A "protected" project's
+  misleading errors had briefly suggested a static-token-only shape — the 7 real
+  connectors corrected that.)
+- A real Anvil bug: the generated server was **stateless**, so GE's
+  `initialize → tools/list` failed (`Method not found`). It is now **session-based**
+  (`entrypoints.ts`) — a fresh session per `initialize`, reused by `mcp-session-id`.
+- The wall to a fully-scripted ACTIVE connector: the raw API creates the record
+  but hits `INITIALIZATION_FAILED` before calling the server — the interactive
+  OAuth **Authorize** step (BAP-connection consent) is console-only. Hence the
+  profile stays `provisional`; GE's own inbound OAuth token (the user's IdP token,
+  `oidc`) is not yet captured end to end.
+
+- **Deferred (Phase 5+):**
+  - Completing the console Authorize step to observe GE's inbound token end to
+    end, then promoting the profile to `verified`.
+  - Generating the IdP OAuth app-registration command (redirect URI
+    `https://vertexaisearch.cloud.google.com/oauth-redirect`) as part of the kit.
   - Optionally POSTing the request from the CLI using Application Default
     Credentials (today the kit emits the request + curl; the operator runs it).
   - Mapping a validated delegated identity onto the *upstream* call (on-behalf-of,

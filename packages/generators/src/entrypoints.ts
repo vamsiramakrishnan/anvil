@@ -37,6 +37,8 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { randomUUID } from "node:crypto";
 import {
   buildMcpServer,
   loadInboundAuthConfig,
@@ -114,6 +116,13 @@ async function authorized(req, res) {
   return false;
 }
 
+// Live MCP sessions keyed by the mcp-session-id minted at initialize. Gemini
+// Enterprise (and any spec-compliant client) drives a real lifecycle —
+// initialize, then tools/list and tool calls on that SAME session in separate
+// HTTP requests — so the server must be stateful: a stateless transport builds a
+// fresh, uninitialized server per request and the second call fails.
+const sessions = new Map();
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   // Health/readiness are always open — probes have no token.
@@ -135,17 +144,44 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === "/mcp") {
     if (!(await authorized(req, res))) return;
-    // Stateless StreamableHTTP: a fresh server+transport per request, closed on
-    // response. Tool specs and resources are precomputed data, so per-request
-    // construction is cheap and holds no cross-request state. sessionIdGenerator
-    // MUST be undefined here — a session id would make the transport stateful and
-    // expect the same instance across requests, but each request builds its own,
-    // so the second call fails with "Server not initialized".
-    const mcp = buildMcpServer(air, { resources, contextFor: () => mcpContext() });
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    res.on("close", () => transport.close());
-    await mcp.connect(transport);
-    return transport.handleRequest(req, res);
+    // Stateful StreamableHTTP sessions. Buffer the POST body so we can both route
+    // by session and detect the initialize request; GET/DELETE carry no body.
+    let body;
+    if (req.method === "POST") {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const raw = Buffer.concat(chunks).toString("utf8");
+      body = raw ? JSON.parse(raw) : undefined;
+    }
+    const sid = req.headers["mcp-session-id"];
+    let entry = sid ? sessions.get(sid) : undefined;
+    if (!entry) {
+      if (req.method === "POST" && isInitializeRequest(body)) {
+        // New session: build the server once and keep it for the session's life.
+        const mcp = buildMcpServer(air, { resources, contextFor: () => mcpContext() });
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (id) => sessions.set(id, { mcp, transport }),
+        });
+        transport.onclose = () => {
+          if (transport.sessionId) sessions.delete(transport.sessionId);
+        };
+        await mcp.connect(transport);
+        entry = { mcp, transport };
+      } else {
+        // A non-initialize request with no known session — reject per the spec.
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "No valid session; send initialize first." },
+            id: null,
+          }),
+        );
+        return;
+      }
+    }
+    return entry.transport.handleRequest(req, res, body);
   }
   return json(res, 404, { error: { code: "not_found", message: "No such route." } });
 });

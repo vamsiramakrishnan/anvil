@@ -71,41 +71,60 @@ describe("target kit generation", () => {
     );
     expect(tfvars).toContain('ingress               = "INGRESS_TRAFFIC_ALL"');
     expect(tfvars).toContain("allow_unauthenticated = true");
+    // Confirmed primary inbound for GE's OAUTH connector: the server validates the
+    // user's IdP token as an OIDC resource server (issuer/audience from the IdP).
     expect(tfvars).toContain('ANVIL_INBOUND_AUTH_MODE = "oidc"');
-    expect(tfvars).toContain('ANVIL_INBOUND_AUDIENCE = "https://x.example/mcp"');
+    expect(tfvars).toContain("ANVIL_INBOUND_ISSUER");
     const tf = new TextDecoder().decode(
       kit.files.find((f) => f.path.endsWith("connector.tf"))!.bytes,
     );
     expect(tf).toContain("roles/discoveryengine.editor");
   });
 
-  it("builds a SetUpDataConnector registration request from the endpoint + oauth", () => {
+  it("builds a SetUpDataConnector registration request with the confirmed custom_mcp shape", () => {
     const reg = buildRegistrationRequest(air, {
       endpoint: "https://x.example/mcp",
       project: "acme-proj",
       location: "global",
+      oauthAccessTokenRef: "the-private-app-access-token",
       clientId: "client-123",
       clientSecretRef: "projects/acme-proj/secrets/mcp-oauth/versions/latest",
+      authUri: "https://idp.example/authorize",
       tokenUri: "https://idp.example/token",
-      scopes: ["read", "write"],
+      scopes: ["openid", "email"],
     });
     expect(reg.url).toBe(
       "https://discoveryengine.googleapis.com/v1/projects/acme-proj/locations/global:setUpDataConnector",
     );
-    // The MCP server URL is the connector's instance_uri; tools are NOT enumerated
-    // (the platform fetches them — dynamic_tools is output-only).
-    expect(reg.body.dataConnector.params.instance_uri).toBe("https://x.example/mcp");
-    expect(reg.body.dataConnector.actionConfig?.actionParams.client_id).toBe("client-123");
-    expect(reg.body.dataConnector.actionConfig?.actionParams.client_secret).toBe(
-      "projects/acme-proj/secrets/mcp-oauth/versions/latest",
-    );
-    expect(reg.body.dataConnector.actionConfig?.actionParams.token_uri).toBe(
-      "https://idp.example/token",
-    );
-    // The two Struct conventions the RPC ref leaves open are surfaced, not hidden.
-    expect(reg.provisional.length).toBe(2);
+    // Confirmed against 7 live connectors: data_source=custom_mcp; params carries
+    // the Private App Access Token; the server URL + OAuth flow live under
+    // action_config.action_params. Tools are NOT enumerated (dynamic_tools is output-only).
+    const dc = reg.body.dataConnector;
+    expect(dc.dataSource).toBe("custom_mcp");
+    expect(dc.refreshInterval).toBe("86400s");
+    expect(dc.params.oauth_access_token).toBe("the-private-app-access-token");
+    const ap = dc.actionConfig.actionParams;
+    expect(ap.auth_type).toBe("OAUTH");
+    expect(ap.instance_uri).toBe("https://x.example/mcp");
+    expect(ap.client_id).toBe("client-123");
+    expect(ap.token_uri).toBe("https://idp.example/token");
+    expect(ap.mcp_server_source).toBe("BYO_MCP");
+    expect(dc.actionConfig.createBapConnection).toBe(true);
+    // The remaining work is operator prerequisites (incl. the interactive Authorize).
+    expect(reg.prerequisites.join("\n")).toContain("Authorize");
     // The curl runs under the operator's own credentials — Anvil holds none.
     expect(renderRegistrationCurl(reg)).toContain("gcloud auth print-access-token");
+  });
+
+  it("supports a NO_AUTH custom MCP connector (no OAuth params)", () => {
+    const reg = buildRegistrationRequest(air, {
+      endpoint: "https://x.example/mcp",
+      authType: "NO_AUTH",
+    });
+    const ap = reg.body.dataConnector.actionConfig.actionParams;
+    expect(ap.auth_type).toBe("NO_AUTH");
+    expect(ap.client_id).toBeUndefined();
+    expect(ap.auth_uri).toBeUndefined();
   });
 
   it("emits the registration request + curl in the connector kit", () => {
@@ -115,9 +134,10 @@ describe("target kit generation", () => {
     const req = kit.files.find((f) => f.path.endsWith("registration.request.json"));
     expect(req).toBeDefined();
     const parsed = JSON.parse(new TextDecoder().decode(req!.bytes)) as {
-      dataConnector: { params: { instance_uri: string } };
+      dataConnector: { dataSource: string; actionConfig: { actionParams: { instance_uri: string } } };
     };
-    expect(parsed.dataConnector.params.instance_uri).toBe("https://x.example/mcp");
+    expect(parsed.dataConnector.dataSource).toBe("custom_mcp");
+    expect(parsed.dataConnector.actionConfig.actionParams.instance_uri).toBe("https://x.example/mcp");
   });
 
   it("lists every approved action for selection", () => {

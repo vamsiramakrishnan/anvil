@@ -132,25 +132,32 @@ function adminRunbook(
   return [
     `# Admin runbook — ${air.service.displayName ?? air.service.id} on ${profile.displayName}`,
     "",
-    "Registration is a real API call — the Discovery Engine `setUpDataConnector`",
-    "method (registration.request.json holds the ready body). Everything here is",
-    "scriptable; the console is only an alternative to step 5.",
+    "The kit builds the Discovery Engine `setUpDataConnector` body",
+    "(registration.request.json). NOTE: the raw API creates the connector record but",
+    "an OAUTH connector reaches ACTIVE only after the console's interactive OAuth",
+    "Authorize step, so the console is the reliable path for step 5, not just an",
+    "alternative.",
     "",
     "1. Deploy the generated StreamableHTTP MCP server to a public HTTPS endpoint",
-    `   (${url}). SSE is not supported by ${profile.displayName}.`,
-    "2. Configure the server's inbound auth from inbound-auth.env — it validates",
-    "   the token the platform presents on /mcp as an OAuth 2 resource server.",
-    "3. Prerequisites: grant the admin the required IAM role (discoveryengine.editor),",
-    "   override the org policy that blocks custom MCP, and allowlist the FQDNs of the",
-    "   server URL, authorization URL, and token URL (see organization-policy-checklist.md).",
-    "4. Register the platform as an OAuth client with your IdP; put its client id /",
-    "   secret (as a Secret Manager reference) and the authorization/token URLs into",
-    "   registration.request.json. The client's token audience MUST equal",
-    "   ANVIL_INBOUND_AUDIENCE and its scopes MUST cover ANVIL_INBOUND_REQUIRED_SCOPES.",
-    "5. Register the connector: POST registration.request.json to",
-    "   `…/locations/{loc}:setUpDataConnector` (see registration.curl.sh), or do the",
-    "   equivalent in the console: Data stores → Create data store → Custom MCP Server.",
-    `   The platform fetches the tool list from the server; keep it under ${profile.actionLimits.maxActions} actions.`,
+    `   (${url}). SSE is not supported by ${profile.displayName}. The server is`,
+    "   session-based (mints an mcp-session-id on initialize) so the platform can",
+    "   fetch the tool list — do not make it stateless.",
+    "2. Configure the server's inbound auth from inbound-auth.env. For auth_type=OAUTH",
+    "   the platform presents the user's IdP token to /mcp; the server validates it",
+    "   as an OIDC resource server (issuer/audience from your IdP).",
+    "3. Prerequisites: grant the admin discoveryengine.editor, ensure the server URL",
+    "   is reachable (a 'protected' project also requires it allowlisted — 403",
+    "   otherwise; the console's Custom MCP flow allowlists it).",
+    "4. Register an OAuth client at your IdP (Entra/Google/Okta) whose redirect URI",
+    "   is https://vertexaisearch.cloud.google.com/oauth-redirect. Put its client_id /",
+    "   client_secret (Secret Manager) and auth_uri / token_uri / scopes into the",
+    "   connector's action_config.action_params. auth_type is OAUTH or NO_AUTH only —",
+    "   the API rejects any other value. (Or use NO_AUTH for an unauthenticated server.)",
+    "5. Create the connector in the console: Data stores → Create data store →",
+    "   Custom MCP Server, using registration.request.json's values, then click",
+    "   Authorize to complete OAuth consent. (registration.curl.sh POSTs the same body,",
+    "   but the API alone cannot finish the consent / BAP-connection provisioning.)",
+    `   The platform then fetches the tool list from the server; keep it under ${profile.actionLimits.maxActions} actions.`,
     "6. Confirm compatibility-report.json has no errors before enabling for agents.",
     "",
   ].join("\n");
@@ -161,20 +168,32 @@ function isPublicConnector(profile: AgentPlatformTargetProfile): boolean {
   return profile.transportRequirements.some((t) => t.publicEndpoint);
 }
 
-/** The inbound-auth env map (Terraform `var.env`), from the primary auth scheme. */
+/**
+ * The inbound-auth env map (Terraform `var.env`), from the primary auth scheme.
+ * For Gemini Enterprise's `OAUTH` connector the platform presents the user's IdP
+ * token to `/mcp`, so the server validates it as an OIDC resource server: the
+ * issuer and audience come from YOUR IdP / OAuth client, not from the endpoint.
+ */
 function inboundEnvEntries(
   profile: AgentPlatformTargetProfile,
   endpoint?: string,
 ): Record<string, string> {
-  const audience = endpoint ?? "<the connector's public URL, e.g. https://host/mcp>";
+  const primary = profile.authRequirements[0];
   const mode = profile.authRequirements.find((a) => a.inboundMode)?.inboundMode ?? "oidc";
+  // A profile whose primary scheme is NO_AUTH (kind "none") admits everything.
+  if (primary && primary.kind === "none") {
+    return { ANVIL_INBOUND_AUTH_MODE: "none" };
+  }
   if (mode === "google_service_account") {
-    return { ANVIL_INBOUND_AUTH_MODE: "google_service_account", ANVIL_INBOUND_AUDIENCE: audience };
+    return {
+      ANVIL_INBOUND_AUTH_MODE: "google_service_account",
+      ANVIL_INBOUND_AUDIENCE: endpoint ?? "<the connector's public URL>",
+    };
   }
   return {
     ANVIL_INBOUND_AUTH_MODE: "oidc",
-    ANVIL_INBOUND_ISSUER: "<your IdP issuer, e.g. https://accounts.google.com>",
-    ANVIL_INBOUND_AUDIENCE: audience,
+    ANVIL_INBOUND_ISSUER: "<your IdP issuer, e.g. https://login.microsoftonline.com/<tenant>/v2.0>",
+    ANVIL_INBOUND_AUDIENCE: "<your OAuth client id / resource audience>",
   };
 }
 
@@ -232,38 +251,38 @@ function connectorTf(profile: AgentPlatformTargetProfile): string {
  * server; the actual token is presented by the platform at call time. Defaults
  * to the profile's first auth scheme, with the alternative shown commented.
  */
-function inboundAuthEnv(profile: AgentPlatformTargetProfile, endpoint?: string): string {
-  const audience = endpoint ?? "<the connector's public URL, e.g. https://host/mcp>";
-  const primary = profile.authRequirements.find((a) => a.inboundMode)?.inboundMode ?? "oidc";
+function inboundAuthEnv(profile: AgentPlatformTargetProfile, _endpoint?: string): string {
+  const noAuthPrimary = profile.authRequirements[0]?.kind === "none";
   const lines = [
     `# Inbound auth for the ${profile.displayName} connector's MCP server.`,
     "# The server is an OAuth 2 resource server: it validates the bearer token the",
     "# platform presents on /mcp. These are non-secret config values, not secrets.",
     "",
   ];
-  if (primary === "oidc") {
+  if (noAuthPrimary) {
     lines.push(
-      "# User-delegated OAuth (OIDC) — per-user identity.",
-      "ANVIL_INBOUND_AUTH_MODE=oidc",
-      "ANVIL_INBOUND_ISSUER=<your IdP issuer, e.g. https://accounts.google.com>",
-      `ANVIL_INBOUND_AUDIENCE=${audience}`,
-      "# ANVIL_INBOUND_JWKS_URI=<override; otherwise discovered from the issuer>",
-      "# ANVIL_INBOUND_REQUIRED_SCOPES=read write",
+      "# auth_type=NO_AUTH — the platform calls /mcp without a token. Only safe",
+      "# behind other controls (private network, mTLS, etc.).",
+      "ANVIL_INBOUND_AUTH_MODE=none",
       "",
-      "# Alternative: Google service-account token (machine identity).",
-      "# ANVIL_INBOUND_AUTH_MODE=google_service_account",
-      `# ANVIL_INBOUND_AUDIENCE=${audience}`,
+      "# To require a token instead, switch the connector to auth_type=OAUTH and:",
+      "# ANVIL_INBOUND_AUTH_MODE=oidc",
+      "# ANVIL_INBOUND_ISSUER=<your IdP issuer>",
+      "# ANVIL_INBOUND_AUDIENCE=<your OAuth client id / resource audience>",
     );
   } else {
     lines.push(
-      "# Google service-account token (machine identity).",
-      "ANVIL_INBOUND_AUTH_MODE=google_service_account",
-      `ANVIL_INBOUND_AUDIENCE=${audience}`,
+      "# auth_type=OAUTH — the platform runs a user-delegated OAuth flow with your",
+      "# IdP and presents the user's token to /mcp. The server validates it as an",
+      "# OIDC resource server; issuer + audience come from YOUR IdP / OAuth client.",
+      "ANVIL_INBOUND_AUTH_MODE=oidc",
+      "ANVIL_INBOUND_ISSUER=<your IdP issuer, e.g. https://login.microsoftonline.com/<tenant>/v2.0>",
+      "ANVIL_INBOUND_AUDIENCE=<your OAuth client id / resource audience>",
+      "# ANVIL_INBOUND_JWKS_URI=<override; otherwise discovered from the issuer>",
+      "# ANVIL_INBOUND_REQUIRED_SCOPES=<space-separated scopes the token must carry>",
       "",
-      "# Alternative: user-delegated OAuth (OIDC).",
-      "# ANVIL_INBOUND_AUTH_MODE=oidc",
-      "# ANVIL_INBOUND_ISSUER=<your IdP issuer>",
-      `# ANVIL_INBOUND_AUDIENCE=${audience}`,
+      "# Alternative: auth_type=NO_AUTH (no token presented).",
+      "# ANVIL_INBOUND_AUTH_MODE=none",
     );
   }
   return `${lines.join("\n")}\n`;

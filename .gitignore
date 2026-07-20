@@ -13,3 +13,4 @@ coverage/
 
 # corpus harness run output (regenerated every run; see tools/corpus/README.md)
 tools/corpus/report/
+gen/
