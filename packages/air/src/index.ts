@@ -9,6 +9,7 @@
 export * from "./enums.js";
 export * from "./hash.js";
 export * from "./jsonschema.js";
+export * from "./mcp.js";
 export * from "./naming.js";
 export * from "./resolve.js";
 export * from "./schema.js";

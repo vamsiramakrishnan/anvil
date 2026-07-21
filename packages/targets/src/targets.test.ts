@@ -44,6 +44,11 @@ describe("target kit generation", () => {
     expect(names).toEqual([
       "action-selection.json",
       "admin-runbook.md",
+      "agent-gateway.md",
+      "agent-gateway.yaml",
+      "agent-registry.tf",
+      "register.sh",
+      "toolspec.json",
       "compatibility-report.json",
       "inbound-auth.env",
       "oauth.template.json",
@@ -138,6 +143,32 @@ describe("target kit generation", () => {
     };
     expect(parsed.dataConnector.dataSource).toBe("custom_mcp");
     expect(parsed.dataConnector.actionConfig.actionParams.instance_uri).toBe("https://x.example/mcp");
+  });
+
+  it("emits an Agent Registry toolspec + gateway artifacts (programmatic path)", () => {
+    const kit = generateTargetKit(air, GEMINI_ENTERPRISE_PROFILE, {
+      endpoint: "https://x.example/mcp",
+    });
+    const read = (suffix: string) =>
+      new TextDecoder().decode(kit.files.find((f) => f.path.endsWith(suffix))!.bytes);
+    // toolspec.json — one tool per approved op, annotations shared with the live
+    // server (no drift), and a real input schema per tool.
+    const spec = JSON.parse(read("agent-registry/toolspec.json")) as {
+      tools: { name: string; annotations: { readOnlyHint: boolean }; inputSchema: unknown }[];
+    };
+    expect(spec.tools.map((t) => t.name).sort()).toEqual([
+      "refunds_create_refund",
+      "refunds_list_refunds",
+    ]);
+    const list = spec.tools.find((t) => t.name === "refunds_list_refunds")!;
+    const create = spec.tools.find((t) => t.name === "refunds_create_refund")!;
+    expect(list.annotations.readOnlyHint).toBe(true);
+    expect(create.annotations.readOnlyHint).toBe(false);
+    expect(list.inputSchema).toBeDefined();
+    // The gateway is egress mode and references the registry; the script is scripted.
+    expect(read("agent-registry/agent-gateway.yaml")).toContain("AGENT_TO_ANYWHERE");
+    expect(read("agent-registry/register.sh")).toContain("gcloud agent-registry services create");
+    expect(read("agent-registry/agent-registry.tf")).toContain("google_agent_registry_service");
   });
 
   it("lists every approved action for selection", () => {

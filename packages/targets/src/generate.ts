@@ -8,6 +8,13 @@ import type { AirDocument } from "@anvil/air";
 import { surfaceSignatureFor } from "@anvil/compiler";
 import type { AgentPlatformTargetProfile, TargetKit, TargetKitFile } from "./model.js";
 import {
+  renderAgentGatewayRunbook,
+  renderAgentGatewayYaml,
+  renderAgentRegistryScript,
+  renderAgentRegistryTf,
+  renderToolSpecJson,
+} from "./agent-registry.js";
+import {
   buildRegistrationRequest,
   renderRegistrationCurl,
   renderRegistrationJson,
@@ -99,6 +106,33 @@ export function generateTargetKit(
           return [
             { path: `${dir}/registration.request.json`, bytes: enc(renderRegistrationJson(reg)) },
             { path: `${dir}/registration.curl.sh`, bytes: enc(renderRegistrationCurl(reg)) },
+          ];
+        })()
+      : []),
+    // The Agent Registry / Agent Gateway surface: the fully-programmatic
+    // alternative to the DataConnector (no interactive OAuth consent). Toolspec is
+    // generated from the same approved operations, so it never drifts.
+    ...(isPublicConnector(profile)
+      ? (() => {
+          const ar = options.endpoint ? { endpoint: options.endpoint } : {};
+          return [
+            { path: `${dir}/agent-registry/toolspec.json`, bytes: enc(renderToolSpecJson(air)) },
+            {
+              path: `${dir}/agent-registry/agent-gateway.yaml`,
+              bytes: enc(renderAgentGatewayYaml(air, ar)),
+            },
+            {
+              path: `${dir}/agent-registry/agent-registry.tf`,
+              bytes: enc(renderAgentRegistryTf(air, ar)),
+            },
+            {
+              path: `${dir}/agent-registry/register.sh`,
+              bytes: enc(renderAgentRegistryScript(air, ar)),
+            },
+            {
+              path: `${dir}/agent-registry/agent-gateway.md`,
+              bytes: enc(renderAgentGatewayRunbook(air, ar)),
+            },
           ];
         })()
       : []),
