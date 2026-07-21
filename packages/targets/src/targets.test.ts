@@ -196,19 +196,17 @@ describe("target validation", () => {
     expect(GEMINI_ENTERPRISE_PROFILE.unsupportedAssumptions.length).toBeGreaterThan(0);
   });
 
-  it("warns that a not-yet-verified profile is a draft, structurally (Gemini labeling)", () => {
-    // Provisional = checked once against live docs but possibly stale; the
-    // validator still warns on anything that is not `verified`.
-    expect(GEMINI_ENTERPRISE_PROFILE.verificationStatus).toBe("provisional");
-    const result = validateTarget(air, GEMINI_ENTERPRISE_PROFILE, {
+  it("warns that a not-yet-verified profile is a draft, structurally", () => {
+    // The Gemini profile is now `verified` end to end, so it does NOT warn.
+    expect(GEMINI_ENTERPRISE_PROFILE.verificationStatus).toBe("verified");
+    const clean = validateTarget(air, GEMINI_ENTERPRISE_PROFILE, {
       endpoint: "https://x.example/mcp",
     });
-    // A green (no-error) validation still surfaces the unverified-profile warning.
+    expect(clean.findings.map((f) => f.code)).not.toContain("target/unverified_profile");
+    // But the validator still warns on anything that is not `verified`.
+    const draft = { ...GEMINI_ENTERPRISE_PROFILE, verificationStatus: "provisional" as const };
+    const result = validateTarget(air, draft, { endpoint: "https://x.example/mcp" });
     expect(result.ok).toBe(true);
     expect(result.findings.map((f) => f.code)).toContain("target/unverified_profile");
-    // A verified profile does not warn.
-    const verified = { ...GEMINI_ENTERPRISE_PROFILE, verificationStatus: "verified" as const };
-    const clean = validateTarget(air, verified, { endpoint: "https://x.example/mcp" });
-    expect(clean.findings.map((f) => f.code)).not.toContain("target/unverified_profile");
   });
 });

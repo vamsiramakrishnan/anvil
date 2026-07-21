@@ -118,16 +118,28 @@ server deployed to public Cloud Run. Full evidence:
   `initialize → tools/list` failed (`Method not found`). It is now **session-based**
   (`entrypoints.ts`) — a fresh session per `initialize`, reused by `mcp-session-id`.
 - The wall to a fully-scripted ACTIVE connector: the raw API creates the record
-  but hits `INITIALIZATION_FAILED` before calling the server — the interactive
-  OAuth **Authorize** step (BAP-connection consent) is console-only. Hence the
-  profile stays `provisional`; GE's own inbound OAuth token (the user's IdP token,
-  `oidc`) is not yet captured end to end.
+  but hits `INITIALIZATION_FAILED` before calling the server — the `OAUTH`
+  authorization-code grant is interactive by design (`offline_access` only avoids
+  *re-consent* on refreshes), so the console **Authorize** step is required.
+- **End to end (2026-07-21): profile is now `verified`.** Created the connector in
+  the console (Entra OAuth) → `ACTIVE`; GE loaded then enabled the tool
+  (`bapConfig.enabledActions: [demo_list_pets]`) and called `/mcp` (POST+GET, one
+  session — proving the stateful-session fix) with the user's OAuth access token:
+  `iss=the IdP` (`https://sts.windows.net/<tenant>/`), `aud=the scope's resource`
+  (Microsoft Graph), scope `email openid profile User.Read`. Note `aud` is the
+  scope's resource, NOT the server — for a strict resource-server check, register
+  the MCP server as an IdP API and use its own scope.
 
 - **Deferred (Phase 5+):**
-  - Completing the console Authorize step to observe GE's inbound token end to
-    end, then promoting the profile to `verified`.
   - Generating the IdP OAuth app-registration command (redirect URI
     `https://vertexaisearch.cloud.google.com/oauth-redirect`) as part of the kit.
+  - A second, fully-programmatic surface: the **Agent Gateway / Agent Registry**
+    path (register a ≤10 KB `toolspec.json` for the MCP server; deployed agents
+    resolve it via `get_mcp_toolset` and call through the Agent Gateway under a
+    Google-managed **agent-identity principalSet**, authorized by IAM —
+    `agentregistry.viewer` + `iap.egressor` + `run.invoker`). This avoids the
+    interactive OAuth consent entirely and is Terraform-scriptable; it targets the
+    Vertex AI Agent Engine model rather than a GE custom-MCP data store.
   - Optionally POSTing the request from the CLI using Application Default
     Credentials (today the kit emits the request + curl; the operator runs it).
   - Mapping a validated delegated identity onto the *upstream* call (on-behalf-of,

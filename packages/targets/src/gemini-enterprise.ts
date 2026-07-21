@@ -64,11 +64,12 @@ export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
     "An external gateway in front of the server is not assumed; controls travel in the pack.",
     "The raw setUpDataConnector API cannot finish OAUTH consent — the connector reaches ACTIVE only after the console's interactive Authorize step.",
   ],
-  // Schema + auth methods verified against the LIVE Discovery Engine API
-  // (setUpDataConnector) and 7 real connectors, not just docs. The final GE→server
-  // tool-list fetch requires the console's interactive OAuth Authorize step, which
-  // could not be scripted, so the status stays `provisional` until observed.
-  verificationStatus: "provisional",
+  // VERIFIED end to end against a live GE app: an Anvil-generated StreamableHTTP
+  // server was deployed to Cloud Run, registered as a custom_mcp connector
+  // (auth_type=OAUTH), driven to ACTIVE via the console Authorize step, and GE
+  // fetched + enabled its tool (demo_list_pets) and called /mcp with a real user
+  // token. See docs/backtesting/GEMINI_ENTERPRISE_VALIDATION.md.
+  verificationStatus: "verified",
   verifiedAgainst:
-    "Live setUpDataConnector API (a real GE project), location global, v1alpha, 2026-07-17: data_source=custom_mcp confirmed (only value that resolves); create shape params{oauth_access_token} + action_config.action_params{auth_type, auth_uri, token_uri, scopes, instance_uri, mcp_server_source=BYO_MCP, client_id, client_secret} + create_bap_connection confirmed by creating real connectors and reading back 7 live ones; auth_type is OAUTH or NO_AUTH only (NONE/API_KEY/BEARER rejected). GE→server tool-list fetch needs the console's interactive OAuth Authorize step (raw API create hits INITIALIZATION_FAILED before calling the server). See docs/backtesting/GEMINI_ENTERPRISE_VALIDATION.md",
+    "Live GE app end-to-end, 2026-07-21 (a real GE project, location global, v1alpha). data_source=custom_mcp; create shape params{oauth_access_token} + action_config.action_params{auth_type, auth_uri, token_uri, scopes, instance_uri, mcp_server_source=BYO_MCP, client_id, client_secret} + create_bap_connection (confirmed by creating connectors + reading back 7 live ones); auth_type is OAUTH or NO_AUTH only. Connector reached ACTIVE and GE fetched+enabled the tool after the console's interactive OAuth Authorize step (raw API create alone hits INITIALIZATION_FAILED — OAuth consent is interactive by design). GE calls /mcp (POST+GET, one session) with the user's OAuth access token: iss=the IdP, aud=the scope's resource (not the server). See docs/backtesting/GEMINI_ENTERPRISE_VALIDATION.md",
 };

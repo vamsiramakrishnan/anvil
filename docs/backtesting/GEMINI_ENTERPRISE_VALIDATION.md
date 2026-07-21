@@ -5,7 +5,8 @@ Enterprise / Discovery Engine projects, to resolve the two documented unknowns
 and confirm what the platform actually requires and presents.
 
 - **Location:** `global` · **API:** Discovery Engine `v1alpha`
-- **Dates:** 2026-07-17 (project ids / numbers / tenant / client / host ids redacted)
+- **Dates:** 2026-07-17 (schema) → 2026-07-21 (end-to-end); ids/tenant/client/host redacted
+- **Status:** ✅ verified end to end — connector ACTIVE, tool fetched + enabled, real inbound token observed
 - **Method:** empirical — POST `:setUpDataConnector` and read the errors; read
   back **7 real, working `custom_mcp` connectors**; deploy a real StreamableHTTP
   server to Cloud Run and observe GE's inbound calls.
@@ -29,7 +30,7 @@ All tokens/secrets/ids below are **redacted**.
 | server URL field | `params.instance_uri` | **`action_config.action_params.instance_uri`** (system promotes it into `params` after) | 7 live connectors + create errors |
 | auth placement/keys | `action_config.action_params` client creds | ✅ **`action_config.action_params`** with `auth_type`, `auth_uri`, `token_uri`, `scopes`, `client_id`, `client_secret` (+ `params.oauth_access_token` seed) | 7 live connectors + create |
 | auth methods | oidc / google_service_account | **`OAUTH` or `NO_AUTH`** only | probed `auth_type` (others rejected) |
-| inbound token (OAUTH) | google_service_account JWT | user-delegated **IdP token → `oidc`** | model confirmed; full token not observed (console-gated) |
+| inbound token (OAUTH) | google_service_account JWT | user-delegated **IdP token → `oidc`**; `aud` = the scope's resource, not the server | ✅ observed a real GE call end to end |
 | `connector_type` | output-only `REMOTE_MCP` | ✅ output-only enum `REMOTE_MCP` | discovery doc |
 
 ---
@@ -123,14 +124,48 @@ protected project was an artifact of Cloud Run IAM-gating, **not** a GE method.)
   **session-based** (mint `mcp-session-id` on initialize, reuse it); `tools/list`
   then returns the tool. Also: exposing a tool needs `anvil build <capability>`
   after `anvil approve`, not `approve` alone (the runtime manifest was empty).
-- **The wall**: a raw `setUpDataConnector` API call **creates the record but the
-  connector never reaches ACTIVE** — it hits `INITIALIZATION_FAILED` (`code 13
-  INTERNAL, pipeline failure`) *before calling the server*, for both `NO_AUTH`
-  and `OAUTH` (even with real Entra client creds). All 7 working connectors were
-  **console-created**: the interactive OAuth **Authorize** step (BAP-connection
-  provisioning / user consent) is only completed by the GE console. So GE's own
-  inbound token in `OAUTH` mode could not be captured by scripting alone; it is
-  the user's IdP access token (`oidc`), validated by the server.
+- **The programmatic wall**: a raw `setUpDataConnector` call **creates the record
+  but the connector never reaches ACTIVE** on its own — it hits
+  `INITIALIZATION_FAILED` (`code 13 INTERNAL`) *before calling the server*, for
+  both `NO_AUTH` and `OAUTH` (even with real client creds). The `OAUTH`
+  authorization-code grant is **interactive by design**: it needs a human to sign
+  in at the IdP and be redirected back with a code. `offline_access` only removes
+  re-consent on *future* refreshes — not the first authorization. There is no
+  machine-to-machine `auth_type` for custom MCP (only `OAUTH`/`NO_AUTH`) and no
+  API to inject a pre-obtained refresh token. So the console's **Authorize** step
+  is required.
+
+- **✅ CONFIRMED end to end (2026-07-21).** Created the connector in the console
+  (auth_type=OAUTH, Entra IdP) pointed at the Anvil server, clicked Authorize →
+  connector `ACTIVE`, `dynamicTools: [demo_list_pets]`. GE's console then does two
+  steps: **load actions** (fetch `tools/list` → `dynamicTools`) and **enable
+  actions** (write the ≤100 selected into `bapConfig.enabledActions`); after
+  enabling, `bapConfig.enabledActions: [demo_list_pets]`.
+  The server observed GE's real inbound call (`ua: python-httpx`), both `POST /mcp`
+  (initialize/tools/list) and `GET /mcp` (SSE stream) on **one session** —
+  proving the stateful-session fix in production:
+
+  ```json
+  [INBOUND] { "path": "/mcp", "method": "POST",
+    "jwt": { "alg": "RS256",
+             "iss": "https://sts.windows.net/<TENANT>/",              // Entra v1 STS
+             "aud": "00000003-0000-0000-c000-000000000000",           // Microsoft Graph
+             "scope": "email openid profile User.Read",
+             "sub": "<REDACTED>", "exp": <REDACTED> } }
+  ```
+
+  **Key nuance:** the token GE presents is the user's OAuth **access token for the
+  configured `scopes`**, so `iss` = the IdP and **`aud` = the resource those scopes
+  target (here Microsoft Graph), NOT the MCP server or client_id.** For a true
+  resource-server check, register your MCP server as an API in the IdP and use its
+  own scope so `aud` = your server; otherwise set `ANVIL_INBOUND_AUDIENCE` to the
+  scope's resource. (`iss` for Entra Graph tokens is the **v1** issuer
+  `https://sts.windows.net/<tenant>/`, not `.../v2.0`.)
+
+- **Entra vs Google/keycloak:** an earlier Entra attempt failed with "Failed to
+  obtain refresh token" (transient — a retry via the console succeeded). The app
+  itself was correct (secret valid via client-credentials, `offline_access`
+  consented, Web redirect). Google/keycloak connectors fetch tools reliably too.
 
 ### Entra OAuth app (the devex seam)
 GE connectors use a fixed redirect URI: **`https://vertexaisearch.cloud.google.com/oauth-redirect`**,
@@ -140,6 +175,46 @@ single-tenant (`AzureADMyOrg`), Graph `User.Read`. Created via
 should generate (see below).
 
 ---
+
+## Alternative surface — Agent Registry / Agent Gateway (fully programmatic) ✅
+
+Besides the custom-MCP *DataConnector*, GE's agent platform has a second front
+door: **Agent Registry** (the registry behind the **Agent Gateway**, surfaced on
+an Engine as the output-only `associatedAgentRegistry`). Unlike the DataConnector
+OAUTH path, registering an MCP server here is **fully programmatic — no
+interactive OAuth consent** — via `gcloud agent-registry services create` or the
+Terraform `google_agent_registry_service` resource (role
+`roles/agentregistry.editor`; region or `global`, not `us`/`eu` multi-region).
+
+Validated live (2026-07-21):
+```bash
+gcloud agent-registry services create anvil-petstore \
+  --project=<PROJECT_ID> --location=global \
+  --display-name="Anvil Petstore MCP" \
+  --interfaces="url=https://<host>/mcp,protocolBinding=JSONRPC" \
+  --mcp-server-spec-type=tool-spec --mcp-server-spec-content=toolspec.json
+# -> Created service [anvil-petstore]; registryResource .../mcpServers/agentregistry-…
+```
+The `toolspec.json` (≤10 KB) requires per-tool `name` + **`inputSchema`** +
+`annotations` — and those annotations (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`, `openWorldHint`) are **exactly what Anvil already emits** from
+its effect/idempotency classification. So Anvil can generate the toolspec for free.
+
+How this path authenticates (why it's programmatic): deployed agents run under a
+Google-managed **agent-identity principalSet** and call the MCP server through the
+Agent Gateway, authorized by IAM — `roles/agentregistry.viewer` (resolve the
+toolset), `roles/iap.egressor` (agent→MCP egress), `roles/run.invoker` (reach the
+Cloud Run backend). No user-delegated OAuth, so it is Terraform-scriptable
+end to end. Trade-off: it targets the Vertex AI Agent Engine / agent model and
+needs an Agent Gateway provisioned, versus the lighter custom-MCP data store.
+
+| | Custom MCP DataConnector | Agent Registry / Agent Gateway |
+|---|---|---|
+| API | `discoveryengine…:setUpDataConnector` | `agentregistry services create` / Terraform |
+| Auth to server | user OAuth (`OAUTH`) or `NO_AUTH` | Google agent-identity principalSet + IAM |
+| Fully programmatic? | No — OAUTH needs console Authorize | **Yes** |
+| Tool spec | fetched from server (`dynamic_tools`) | `toolspec.json` (or introspection) |
+| Best for | a custom MCP data/action store in a GE app | tools for deployed agents (Agent Engine) |
 
 ## What changed in the repo
 - `packages/generators/src/entrypoints.ts` — generated MCP server is now
