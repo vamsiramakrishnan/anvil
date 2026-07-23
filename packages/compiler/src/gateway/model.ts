@@ -89,6 +89,33 @@ export const GatewayProduct = z.object({
 });
 export type GatewayProduct = z.infer<typeof GatewayProduct>;
 
+/**
+ * Provenance and fidelity of the API contract behind an inventory/import
+ * record. Gateway route tables are not formal API contracts: adapters must say
+ * when Anvil synthesized a route-only OpenAPI document instead of implying the
+ * gateway supplied Swagger/OpenAPI.
+ */
+export const GatewayContractProvenance = z.object({
+  kind: z.enum(["native", "synthesized", "missing"]),
+  fidelity: z.enum(["full", "route_only", "missing"]),
+  /** Contract syntax when known. This is intentionally open for RAML/WSDL/etc. */
+  format: z.string().optional(),
+  version: z.string().optional(),
+  /** Exact export/member/pointer from which this contract claim was derived. */
+  location: EvidenceCoordinate,
+  /** Immutable source identity once bytes have been materialized for compilation. */
+  source: z
+    .object({
+      snapshotId: z.string(),
+      sourceHash: z.string(),
+      entrypoint: z.string(),
+    })
+    .optional(),
+  /** Stable next step when the available contract is degraded or missing. */
+  remediation: z.string().optional(),
+});
+export type GatewayContractProvenance = z.infer<typeof GatewayContractProvenance>;
+
 /** One API as it appears in the estate — enough to assess without compiling it. */
 export const GatewayApiSummary = z.object({
   id: z.string(),
@@ -97,8 +124,12 @@ export const GatewayApiSummary = z.object({
   lifecycle: z.string().optional(),
   environmentIds: z.array(z.string()).default([]),
   routes: z.array(GatewayRoute).default([]),
-  /** Whether a formal contract (OpenAPI/RAML/WSDL) is available for this API. */
+  /**
+   * @deprecated Use `contract`. True means a native, full-fidelity formal
+   * contract is available; synthesized route tables must remain false.
+   */
   hasSpec: z.boolean().default(false),
+  contract: GatewayContractProvenance.optional(),
   productIds: z.array(z.string()).default([]),
   owner: z.string().optional(),
   /** A one-line summary of the authentication posture (never a secret). */
@@ -151,6 +182,7 @@ export type GatewayPolicyOverlay = PolicyOverlay;
 export interface GatewayApiImport {
   source: CompilerSource;
   overlay: GatewayPolicyOverlay;
+  contract: GatewayContractProvenance;
   diagnostics: GatewayDiagnostic[];
 }
 

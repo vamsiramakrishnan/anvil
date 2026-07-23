@@ -6,10 +6,11 @@ import {
   compileSource,
   proposeCapabilities,
 } from "@anvil/compiler";
-import { generateBundle, writeBundle } from "@anvil/generators";
+import { generateBundle } from "@anvil/generators";
 import { assessReadiness, type ReadinessAssessment } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
+import { installGeneratedBundle } from "./bundle-transaction.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 import { loadAir } from "./shared.js";
@@ -106,7 +107,9 @@ async function runAgentify(specPath: string, opts: AgentifyOptions, io: CliIO): 
     serviceId: opts.service,
   });
   const outDir = opts.out ?? join("generated", air.service.id);
-  const written = writeBundle(outDir, generateBundle(air));
+  const written = installGeneratedBundle(outDir, generateBundle(air), {
+    onCleanupWarning: (message) => io.err(`Warning: ${message}`),
+  });
   const compileErrors = air.diagnostics.filter((d) => d.level === "error");
   if (compileErrors.length > 0) {
     // Mirror `anvil compile`: the bundle exists for forensics, but a step

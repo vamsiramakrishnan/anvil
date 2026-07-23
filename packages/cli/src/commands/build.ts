@@ -1,7 +1,8 @@
 import { join } from "node:path";
-import { CapabilityBuildError, generateCapabilityBundle, writeBundle } from "@anvil/generators";
+import { CapabilityBuildError, generateCapabilityBundle } from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
+import { installGeneratedBundle } from "./bundle-transaction.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 import { loadAir } from "./shared.js";
@@ -54,7 +55,9 @@ function runBuild(path: string, capabilityId: string, opts: BuildOptions, io: Cl
   }
 
   const outDir = opts.out ?? join("generated", capabilityId);
-  const written = writeBundle(outDir, built.bundle);
+  const written = installGeneratedBundle(outDir, built.bundle, {
+    onCleanupWarning: (message) => io.err(`Warning: ${message}`),
+  });
   const { manifest, view } = built;
   io.out(
     `Built capability ${capabilityId} @ ${manifest.capabilityVersion} → ${outDir} (${written.length} files).`,

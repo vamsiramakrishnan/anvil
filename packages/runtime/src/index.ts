@@ -6,10 +6,13 @@
 
 export * from "./auth.js";
 export * from "./config.js";
+export * from "./credentials.js";
 export * from "./errors.js";
 export * from "./executor.js";
 export * from "./idempotency.js";
+export * from "./inbound-identity.js";
 export * from "./observability.js";
 export * from "./policy.js";
 export * from "./retry.js";
+export * from "./safe-http.js";
 export * from "./transport.js";

@@ -16,8 +16,14 @@ import type {
   GatewayProbeResult,
 } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
-import { asObjects, asRecord, asStrings, safeParseYaml } from "../parse-safe.js";
-import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
+import { asObjects, asStrings, parseGatewayDocument } from "../parse-safe.js";
+import {
+  buildGatewayApiImport,
+  joinGatewayPath,
+  routeOnlyContract,
+  type SynthOp,
+  synthOperationId,
+} from "../synth.js";
 
 interface WsoOperation {
   target: string;
@@ -45,7 +51,7 @@ export interface Wso2Connection extends GatewayConnection {
 
 const CAPABILITIES: GatewayAdapterCapabilities = {
   inventory: true,
-  apiSpecs: true,
+  apiSpecs: false,
   routes: true,
   authentication: true,
   authorization: true,
@@ -59,25 +65,91 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
   publish: false,
 };
 
-function apisOf(config: string): WsoApi[] {
-  const doc = asRecord(safeParseYaml(config));
-  if (Array.isArray(doc.apis)) return asObjects<WsoApi>(doc.apis);
-  if (doc.data && typeof doc.data === "object") return [doc.data as WsoApi];
-  if (typeof doc.name === "string") return [doc as unknown as WsoApi];
-  return [];
+interface LocatedWsoApi {
+  api: WsoApi;
+  pointer?: string;
+}
+
+function parseExport(
+  config: string,
+  origin: string,
+): { apis: LocatedWsoApi[]; diagnostics: GatewayDiagnostic[] } {
+  const parsed = parseGatewayDocument(config, "wso2", origin);
+  if (!parsed.document) return { apis: [], diagnostics: parsed.diagnostics };
+  let apis: LocatedWsoApi[] = [];
+  if (Array.isArray(parsed.document.apis)) {
+    apis = asObjects<WsoApi>(parsed.document.apis).map((api, i) => ({
+      api,
+      pointer: `/apis/${i}`,
+    }));
+    if (parsed.document.apis.length === 0) {
+      return {
+        apis: [],
+        diagnostics: [
+          {
+            level: "error",
+            code: "wso2/empty_export",
+            message: "The WSO2 export contains no APIs.",
+            coordinate: { origin, pointer: "/apis" },
+          },
+        ],
+      };
+    }
+  } else if (
+    parsed.document.data !== null &&
+    typeof parsed.document.data === "object" &&
+    !Array.isArray(parsed.document.data)
+  ) {
+    apis = [{ api: parsed.document.data as WsoApi, pointer: "/data" }];
+  } else if (typeof parsed.document.name === "string") {
+    apis = [{ api: parsed.document as unknown as WsoApi }];
+  } else {
+    return {
+      apis: [],
+      diagnostics: [
+        {
+          level: "error",
+          code: "wso2/invalid_export",
+          message:
+            "The WSO2 export must be an API object, a `data` API object, or contain an `apis` array.",
+          coordinate: { origin },
+        },
+      ],
+    };
+  }
+  if (
+    apis.length === 0 ||
+    apis.some(({ api }) => typeof api.name !== "string" || api.name.length === 0)
+  ) {
+    return {
+      apis: [],
+      diagnostics: [
+        {
+          level: "error",
+          code: "wso2/invalid_export",
+          message: "Every WSO2 API must be an object with a non-empty `name`.",
+          coordinate: { origin },
+        },
+      ],
+    };
+  }
+  return { apis, diagnostics: [] };
 }
 
 function opsOf(api: WsoApi): SynthOp[] {
-  return asObjects<WsoOperation>(api.operations).map((op) => ({
-    operationId: synthOperationId(api.name, op.verb, op.target),
-    method: op.verb,
-    path: normalizePath(op.target),
-  }));
+  return asObjects<WsoOperation>(api.operations).map((op) => {
+    const path = joinGatewayPath(api.context, op.target);
+    return {
+      operationId: synthOperationId(api.name, op.verb, path),
+      method: op.verb,
+      path,
+    };
+  });
 }
 
 function normalizeApi(
   api: WsoApi,
-  apiIndex: number,
+  pointer: string | undefined,
   origin: string,
 ): { ops: SynthOp[]; facts: GatewayFact[]; diagnostics: GatewayDiagnostic[]; hasQuota: boolean } {
   const ops = opsOf(api);
@@ -89,10 +161,13 @@ function normalizeApi(
     if (scopes.length > 0) {
       const coordinate: EvidenceCoordinate = {
         origin,
-        pointer: `/apis/${apiIndex}/operations/${j}/scopes`,
+        pointer: `${pointer ?? ""}/operations/${j}/scopes`,
       };
       facts.push({
-        target: { scope: "operation", ref: synthOperationId(api.name, op.verb, op.target) },
+        target: {
+          scope: "operation",
+          ref: synthOperationId(api.name, op.verb, joinGatewayPath(api.context, op.target)),
+        },
         predicate: "auth.scopes",
         operation: "restrict",
         value: scopes,
@@ -108,7 +183,7 @@ function normalizeApi(
       level: "info",
       code: "wso2/throttling_present",
       message: `Throttling tier '${api.apiThrottlingPolicy}' on '${api.name}' applies but is not an operation semantic.`,
-      coordinate: { origin, pointer: `/apis/${apiIndex}/apiThrottlingPolicy` },
+      coordinate: { origin, pointer: `${pointer ?? ""}/apiThrottlingPolicy` },
     });
   }
   if (api.mediationPolicies && api.mediationPolicies.length > 0) {
@@ -116,7 +191,7 @@ function normalizeApi(
       level: "warning",
       code: "gateway/opaque_policy",
       message: `WSO2 mediation on '${api.name}' is not modelled; it may transform requests/responses.`,
-      coordinate: { origin, pointer: `/apis/${apiIndex}/mediationPolicies` },
+      coordinate: { origin, pointer: `${pointer ?? ""}/mediationPolicies` },
     });
   }
   return { ops, facts, diagnostics, hasQuota };
@@ -127,10 +202,12 @@ export class Wso2GatewayAdapter implements GatewayAdapter<Wso2Connection> {
   readonly capabilities = CAPABILITIES;
 
   async probe(connection: Wso2Connection, _ctx: AdapterContext): Promise<GatewayProbeResult> {
+    const origin = connection.origin ?? "wso2-api.yaml";
+    const parsed = parseExport(connection.config, origin);
     return {
-      reachable: apisOf(connection.config).length > 0,
+      reachable: parsed.diagnostics.every((d) => d.level !== "error"),
       capabilities: CAPABILITIES,
-      diagnostics: [],
+      diagnostics: parsed.diagnostics,
     };
   }
 
@@ -139,10 +216,10 @@ export class Wso2GatewayAdapter implements GatewayAdapter<Wso2Connection> {
     _ctx: AdapterContext,
   ): Promise<GatewayInventorySnapshot> {
     const origin = connection.origin ?? "wso2-api.yaml";
-    const apis = apisOf(connection.config);
-    const diagnostics: GatewayDiagnostic[] = [];
-    const summaries: GatewayApiSummary[] = apis.map((api, i) => {
-      const norm = normalizeApi(api, i, origin);
+    const parsed = parseExport(connection.config, origin);
+    const diagnostics: GatewayDiagnostic[] = [...parsed.diagnostics];
+    const summaries: GatewayApiSummary[] = parsed.apis.map(({ api, pointer }) => {
+      const norm = normalizeApi(api, pointer, origin);
       diagnostics.push(...norm.diagnostics);
       return {
         id: api.name,
@@ -157,7 +234,8 @@ export class Wso2GatewayAdapter implements GatewayAdapter<Wso2Connection> {
           hosts: [],
           protocols: [],
         })),
-        hasSpec: norm.ops.length > 0,
+        hasSpec: false,
+        contract: routeOnlyContract({ origin, pointer }),
         productIds: [],
         owner: api.provider,
         authSummary: asStrings(api.securityScheme).join(", ") || undefined,
@@ -180,13 +258,13 @@ export class Wso2GatewayAdapter implements GatewayAdapter<Wso2Connection> {
     _ctx: AdapterContext,
   ): Promise<GatewayApiImport> {
     const origin = connection.origin ?? "wso2-api.yaml";
-    const apis = apisOf(connection.config);
-    const apiIndex = apis.findIndex((a) => a.name === api.id);
-    const found = apis[apiIndex];
+    const parsed = parseExport(connection.config, origin);
+    const found = parsed.apis.find(({ api: candidate }) => candidate.name === api.id);
     if (!found) {
       const empty = buildGatewayApiImport({
         originKind: "wso2",
         apiName: api.id,
+        sourceCoordinate: { origin },
         ops: [],
         facts: [],
         diagnostics: [],
@@ -194,17 +272,22 @@ export class Wso2GatewayAdapter implements GatewayAdapter<Wso2Connection> {
       return {
         ...empty,
         diagnostics: [
+          ...parsed.diagnostics,
           { level: "error", code: "wso2/unknown_api", message: `No WSO2 API '${api.id}'.` },
         ],
       };
     }
-    const norm = normalizeApi(found, apiIndex, origin);
+    const norm = normalizeApi(found.api, found.pointer, origin);
     return buildGatewayApiImport({
       originKind: "wso2",
-      apiName: found.name,
-      version: found.version,
+      apiName: found.api.name,
+      version: found.api.version,
+      sourceCoordinate: { origin, pointer: found.pointer },
       ops: norm.ops,
       facts: norm.facts,
+      authConfigured:
+        asStrings(found.api.securityScheme).length > 0 ||
+        asObjects<WsoOperation>(found.api.operations).some((op) => Boolean(op.authType)),
       diagnostics: norm.diagnostics,
     });
   }

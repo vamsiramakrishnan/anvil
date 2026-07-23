@@ -13,7 +13,7 @@
           "idempotency": "none",
           "confirmation": true,
           "scopes": ["refunds:write"],
-          "state": "review_required"
+          "state": "blocked"
         },
         {
           "id": "payments_proxy.refunds.list",
@@ -24,14 +24,14 @@
           "idempotency": "natural",
           "confirmation": false,
           "scopes": ["refunds:write"],
-          "state": "generated"
+          "state": "blocked"
         }
       ],
       "opaque": [
         "gateway/opaque_policy: /proxies/0/policies/3",
         "gateway/opaque_policy: /proxies/0/policies/4"
       ],
-      "diagnostics": 4
+      "diagnostics": 7
     }
   ]
 }

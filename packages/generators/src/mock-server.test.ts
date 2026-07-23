@@ -166,6 +166,24 @@ describe("generated mock server", () => {
     expect(await capture()).toEqual([]);
   });
 
+  it("mints hermetic OAuth tokens without polluting operation captures", async () => {
+    await reset();
+    const res = await fetch(`${base}/__anvil/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "client_credentials",
+        scope: "payments.read",
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      access_token: "anvil-hermetic-upstream-token",
+      token_type: "Bearer",
+    });
+    expect(await capture()).toEqual([]);
+  });
+
   it("serves an activated error scenario via the control endpoint", async () => {
     await reset();
     await fetch(`${base}/__anvil/scenario`, {

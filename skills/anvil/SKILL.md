@@ -24,12 +24,14 @@ aligned MCP server + CLI + skill bundle.
 
 ## The loop
 1. `anvil compile <spec> --manifest <manifest> --out <dir>` — build the bundle.
-2. `anvil inspect <dir>` — read every operation's effect, risk, and idempotency.
-3. `anvil lint <dir>` — fix diagnostics. Non-idempotent mutations are `review_required`.
-4. Enrich: write an Anvil manifest to declare idempotency, confirmation, retry policy, and routing names for unsafe or weakly-named operations. `anvil distill <dir> --as-enrich-plan` targets the residue for `anvil enrich --plan` (see reference/workflow.md).
+2. `anvil status <dir>` — orient on projection, approval, certification, target, and release state and read the next safe action.
+3. `anvil inspect <dir>` and `anvil lint <dir>` — inspect risk and fix diagnostics. Non-idempotent mutations remain `review_required`.
+4. Enrich unsafe or weakly named operations with a manifest. `anvil distill <dir> --as-enrich-plan` targets the residue for `anvil enrich --plan` (see reference/workflow.md).
 5. `anvil approve <dir> <operation-id...>` — expose operations only after inspecting risk.
-6. `anvil package skill <dir>` and `anvil deploy cloud-run <dir> --env prod`.
-7. Connect to an agent platform: `anvil target gemini-enterprise <dir> --endpoint <url>` — emit the BYO-MCP connector kit. It generates BOTH registration surfaces (a custom-MCP DataConnector and the Agent Registry / Agent Gateway path) plus the inbound-auth contract and an admin runbook. See reference/gemini-enterprise.md for which surface to use and the end-to-end steps.
+6. If the bundle will connect to Gemini Enterprise, generate the target now: `anvil target gemini-enterprise <dir> --surface <custom-mcp|agent-gateway> --server-auth <oauth|no-auth> ...`. Integrate its deployment inputs through the generated external var-file; never copy target files into compiler-owned output.
+7. Run `anvil status <dir>`, then certify the complete bundle. Target artifacts are deployment inputs and part of the certified hash.
+8. Publish and deploy only with a fresh passing certification.
+9. After the endpoint is live, complete the external Gemini console or guarded Agent Gateway registration steps. See reference/gemini-enterprise.md.
 
 ## Safety rules
 - **Never approve an operation you have not inspected.** Only approved operations are exposed.
@@ -40,7 +42,8 @@ aligned MCP server + CLI + skill bundle.
 ## Where to look
 - `reference/commands.md` — every command and what it does.
 - `reference/workflow.md` — the enrich → approve workflow and manifest shape.
-- `reference/gemini-enterprise.md` — connect the bundle to Gemini Enterprise (the two BYO-MCP surfaces + end-to-end steps).
+- `reference/gemini-enterprise.md` — choose and safely configure one Gemini Enterprise BYO-MCP journey.
+- `reference/upstream-credentials.md` — configure outbound authentication from the runtime to the upstream API.
 - `evals/operate_anvil.yaml` — behavior checks for operating Anvil.
 
 Run `anvil --help` before guessing.

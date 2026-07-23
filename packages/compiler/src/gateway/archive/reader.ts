@@ -136,7 +136,7 @@ export function readArchive(
   decoder: ArchiveDecoder,
   limits: ArchiveLimits = DEFAULT_ARCHIVE_LIMITS,
 ): ReadArchiveResult {
-  return normalizeArchive(decoder.decode(bytes), limits);
+  return normalizeArchive(decoder.decode(bytes, limits), limits);
 }
 
 /** Decode UTF-8 text from a normalized file, rejecting invalid encodings. */

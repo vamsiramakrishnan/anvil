@@ -77,7 +77,10 @@ describe("anvil review", () => {
     const io = bufferIO();
     const code = await runReview(
       dir,
-      { driverCommand: "/definitely/not/a/real/agent-binary" },
+      {
+        driverCommand: "/definitely/not/a/real/agent-binary",
+        allowDegradedNative: true,
+      },
       io,
       {},
     );
@@ -85,6 +88,20 @@ describe("anvil review", () => {
     expect(io.stderr.join("\n")).toContain("review/driver_unavailable");
     expect(io.stderr.join("\n")).toContain("No report was written");
     // Never a fake pass: no report appears on failure.
+    expect(existsSync(join(dir, REVIEW_REPORT_FILE))).toBe(false);
+  });
+
+  it("fails closed before launching the default native reviewer without explicit consent", async () => {
+    const io = bufferIO();
+    const code = await runReview(
+      dir,
+      { driverCommand: "/definitely/not/a/real/agent-binary" },
+      io,
+      {},
+    );
+    expect(code).toBe(1);
+    expect(io.stderr.join("\n")).toContain("--allow-degraded-native");
+    expect(io.stderr.join("\n")).toContain("isolated HOME");
     expect(existsSync(join(dir, REVIEW_REPORT_FILE))).toBe(false);
   });
 
@@ -107,6 +124,7 @@ describe("anvil review", () => {
     const help = io.text();
     expect(help).toContain("--model");
     expect(help).toContain("--driver-command");
+    expect(help).toContain("--allow-degraded-native");
     expect(help).toContain("--json");
   });
 });

@@ -1,4 +1,8 @@
-import { readFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createNetServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AirDocument, loadAirDocument, Operation as OperationSchema } from "@anvil/air";
 import { compile } from "@anvil/compiler";
@@ -6,7 +10,9 @@ import { MockTransport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeAll, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { generateBundle } from "./bundle.js";
+import { generateDeploy } from "./deploy.js";
 import { buildMcpServer, generateMcpServerSource, generateMcpSseServerSource } from "./mcp.js";
 import { exampleFromSchema, exampleInput } from "./mock.js";
 import { buildToolResources } from "./resources.js";
@@ -34,6 +40,21 @@ async function connect(server: ReturnType<typeof buildMcpServer>) {
   return client;
 }
 
+async function availableLoopbackPort(): Promise<number> {
+  const server = createNetServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  const port = address && typeof address === "object" ? address.port : undefined;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  if (!port) throw new Error("failed to reserve a loopback test port");
+  return port;
+}
+
 describe("MCP server entrypoints — two transports, one runtime", () => {
   it("generates a LOCAL stdio server and a REMOTE SSE server from the same AIR", () => {
     const stdio = generateMcpServerSource(air);
@@ -50,8 +71,39 @@ describe("MCP server entrypoints — two transports, one runtime", () => {
     for (const src of [stdio, sse]) {
       expect(src).toContain("buildMcpServer");
       expect(src).toContain("allowedHostsFor");
-      expect(src).toContain("EnvCredentialResolver");
+      // Both now resolve credentials through the fail-closed selector (static env,
+      // Secret Manager sm:// refs, or RFC 8693 OBO) rather than a hardcoded env resolver.
+      expect(src).toContain("resolveCredentials");
     }
+  });
+});
+
+describe("deploy: upstream credential wiring", () => {
+  it("emits the credential contract, env schema keys, and Terraform knobs", () => {
+    const files = generateDeploy(air);
+    // The names-only contract an operator provisions against.
+    expect(files["deploy/credentials.required.yaml"]).toBeDefined();
+    // The env schema documents the coarse override + per-profile credential keys.
+    const schema = JSON.parse(files["deploy/env.schema.json"]);
+    expect(schema.properties.ANVIL_CREDENTIALS).toBeDefined();
+    expect(schema.properties.ANVIL_SECRET_PROJECT).toBeDefined();
+    expect(Object.keys(schema.patternProperties ?? {})).toHaveLength(1);
+    // Terraform exposes the reference + scoped-IAM knobs without holding a value.
+    const tf = files["deploy/terraform/main.tf"];
+    expect(tf).toContain("ANVIL_CREDENTIALS");
+    expect(tf).toContain("credential_secret_refs");
+    expect(tf).toContain("secretmanager.secretAccessor");
+    expect(tf).not.toContain("-auth-token");
+    expect(tf).not.toContain("google_secret_manager_secret.auth_token");
+    const vars = files["deploy/terraform/variables.tf"];
+    expect(vars).toContain('variable "credential_secret_refs"');
+    expect(vars).toContain('variable "credential_secret_ids"');
+    expect(vars).toContain('contains(["", "env", "secret_manager"]');
+    expect(schema.properties.ANVIL_CREDENTIALS.enum).toEqual(["env", "secret_manager"]);
+    const legacy = parseYaml(files["deploy/secrets.required.yaml"]) as {
+      secrets: unknown[];
+    };
+    expect(legacy.secrets).toEqual([]);
   });
 });
 
@@ -60,6 +112,7 @@ describe("MCP server", () => {
     const server = buildMcpServer(air, {
       contextFor: () => ({
         transport: new MockTransport(() => ({ status: 200, headers: {}, body: "{}" })),
+        serviceId: air.service.id,
         baseUrl: "https://payments.internal.example.com",
         allowedHosts: ["payments.internal.example.com"],
         env: "prod",
@@ -96,6 +149,7 @@ describe("MCP server", () => {
     const server = buildMcpServer(air, {
       contextFor: () => ({
         transport,
+        serviceId: air.service.id,
         credentials,
         authProfile: "prod",
         baseUrl: "https://payments.internal.example.com",
@@ -145,6 +199,7 @@ describe("MCP server", () => {
     const server = buildMcpServer(unapproved, {
       contextFor: () => ({
         transport: new MockTransport(() => ({ status: 200, headers: {}, body: "{}" })),
+        serviceId: unapproved.service.id,
         baseUrl: "https://payments.internal.example.com",
         allowedHosts: ["payments.internal.example.com"],
         env: "prod",
@@ -167,6 +222,7 @@ describe("MCP server", () => {
       includeUnapproved: true,
       contextFor: () => ({
         transport,
+        serviceId: unapproved.service.id,
         credentials: {
           async resolve() {
             return { headers: { Authorization: "Bearer t" } };
@@ -199,6 +255,7 @@ describe("MCP server", () => {
     const server = buildMcpServer(air, {
       contextFor: () => ({
         transport: new MockTransport(() => ({ status: 200, headers: {}, body: "{}" })),
+        serviceId: air.service.id,
         baseUrl: "https://payments.internal.example.com",
         allowedHosts: ["payments.internal.example.com"],
         env: "prod",
@@ -267,9 +324,8 @@ describe("capabilities in generated artifacts", () => {
   });
 
   it("gives the skill a valid Agent-Skill name slug", async () => {
-    // With no serviceId, the id derives from the title "Payments API" as
-    // `payments_api`. A skill `name` must be a lowercase-hyphen slug — an
-    // underscore makes the skill unloadable by a harness — so it is kebab-cased.
+    // Canonical identity keeps its established snake-case projection;
+    // provider-specific surfaces derive their own stricter slug.
     const derived = await compile({ spec: read("openapi.yaml") });
     expect(derived.service.id).toBe("payments_api");
     const { files } = generateBundle(derived);
@@ -310,6 +366,10 @@ describe("bundle", () => {
     ]) {
       expect(paths, `missing ${expected}`).toContain(expected);
     }
+    const runtimeServer = files["runtime/server.js"] as string;
+    expect(runtimeServer).toContain(
+      'identity: inboundAuth.mode === "none" ? undefined : inboundIdentityFrom',
+    );
   });
 
   it("compiles only approved operations into the runtime manifest", () => {
@@ -434,18 +494,115 @@ describe("GCP-native deploy (single owner per concern)", () => {
   it("ships a prebuilt runtime image (no in-image Anvil build)", () => {
     const { files } = generateBundle(air);
     const dockerfile = files["deploy/Dockerfile"] as string;
+    const dockerignore = files["deploy/Dockerfile.dockerignore"] as string;
+    const runtime = files["deploy/runtime/server.js"] as string;
+    const runtimePackage = JSON.parse(files["deploy/runtime/package.json"] as string);
     expect(dockerfile).not.toContain("pnpm build");
-    expect(dockerfile).toContain("runtime/server.js");
+    expect(dockerfile).not.toContain("pnpm install");
+    expect(dockerfile).not.toContain("node_modules");
+    expect(dockerfile).toContain("COPY deploy/runtime ./runtime");
+    expect(dockerfile).toContain('CMD ["runtime/server.js"]');
+    expect(files["deploy/.dockerignore"]).toBeUndefined();
+    expect(dockerignore.split("\n")).not.toContain("deploy");
+    expect(runtimePackage).toMatchObject({ private: true, type: "module" });
+    expect(runtime.length).toBeGreaterThan(1_000);
+    expect(runtime).not.toMatch(/^\s*import\s+.*from\s+["']@anvil\//m);
+    expect(runtime).not.toMatch(/^\s*import\s+.*from\s+["']@modelcontextprotocol\//m);
+    const syntax = spawnSync(process.execPath, ["--input-type=module", "--check"], {
+      input: runtime,
+      encoding: "utf8",
+    });
+    expect(syntax.status, syntax.stderr).toBe(0);
   });
 
-  it("grants least-privilege ledger IAM without owning the shared Firestore singleton", () => {
+  it("boots standalone and fails readiness closed without its production ledger", async () => {
+    const { files } = generateBundle(air);
+    const root = mkdtempSync(join(tmpdir(), "anvil-deploy-runtime-"));
+    const runtimeDir = join(root, "runtime");
+    mkdirSync(runtimeDir);
+    for (const name of [
+      "package.json",
+      "server.js",
+      "air.json",
+      "resources.json",
+      "operations.manifest.json",
+    ]) {
+      writeFileSync(join(runtimeDir, name), files[`deploy/runtime/${name}`] as string);
+    }
+
+    const port = await availableLoopbackPort();
+    const child = spawn(process.execPath, [join(runtimeDir, "server.js")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        ANVIL_ENV: "prod",
+        ANVIL_LEDGER: "",
+        ANVIL_INBOUND_AUTH_MODE: "none",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error(`standalone runtime did not listen:\n${output}`));
+        }, 5_000);
+        const capture = (chunk: Buffer) => {
+          output += chunk.toString("utf8");
+          if (output.includes("listening")) {
+            clearTimeout(timer);
+            resolve();
+          }
+        };
+        child.stdout.on("data", capture);
+        child.stderr.on("data", capture);
+        child.once("exit", (code, signal) => {
+          clearTimeout(timer);
+          reject(
+            new Error(
+              `standalone runtime exited before listening (${code ?? signal ?? "unknown"}):\n${output}`,
+            ),
+          );
+        });
+      });
+      const readiness = await fetch(`http://127.0.0.1:${port}/readyz`);
+      expect(readiness.status).toBe(503);
+      await expect(readiness.json()).resolves.toEqual({
+        ready: false,
+        service: "payments",
+        code: "ledger_unavailable",
+      });
+    } finally {
+      child.kill("SIGTERM");
+      if (child.exitCode === null && child.signalCode === null) {
+        await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+    expect(output).toContain("payments listening");
+  });
+
+  it("owns a delete-protected service ledger with database-scoped IAM", () => {
     const { files } = generateBundle(air);
     const tf = files["deploy/terraform/main.tf"] as string;
-    // The SA gets scoped datastore access...
+    // The SA gets datastore access only under a database-level IAM condition.
     expect(tf).toContain("roles/datastore.user");
-    // ...but the (default) Firestore database is a project singleton / prereq —
-    // creating it per-capability would collide across capability modules.
-    expect(tf).not.toContain('resource "google_firestore_database"');
+    expect(tf).toContain('resource "google_firestore_database" "ledger"');
+    expect(tf).toContain('name                    = "payments-ledger"');
+    expect(tf).toContain('delete_protection_state = "DELETE_PROTECTION_ENABLED"');
+    expect(tf).toContain("prevent_destroy = true");
+    expect(tf).toContain('resource "google_firestore_field" "ledger_result_expiry"');
+    expect(tf).toMatch(/collection\s+= "anvil_idempotency_[a-f0-9]{16}"/);
+    expect(tf).toContain('field      = "expires_at"');
+    expect(tf).toContain("ttl_config {}");
+    expect(tf).toContain(
+      "resource.name == 'projects/${var.project_id}/databases/${google_firestore_database.ledger.name}'",
+    );
+    expect(tf).toContain(
+      'value = "firestore://${var.project_id}/${google_firestore_database.ledger.name}/payments"',
+    );
+    expect(tf).not.toContain("firestore://${var.project_id}/(default)");
     // Same for the Artifact Registry repo: a shared platform prereq, not owned here.
     expect(tf).not.toContain('resource "google_artifact_registry_repository"');
     // Secret access is scoped to the one secret resource, not project-wide.
@@ -455,6 +612,24 @@ describe("GCP-native deploy (single owner per concern)", () => {
     expect(tf).not.toContain("roles/editor");
     // Terraform owns ANVIL_LEDGER so the fail-closed contract holds at runtime.
     expect(tf).toContain("ANVIL_LEDGER");
+    expect(tf).toContain("ANVIL_LEDGER_RESULT_TTL_SECONDS");
+    const variables = files["deploy/terraform/variables.tf"] as string;
+    expect(variables).toContain('variable "ledger_result_ttl_seconds"');
+    expect(variables).toContain("default     = 604800");
+    const envSchema = JSON.parse(files["deploy/env.schema.json"] as string);
+    expect(envSchema.properties.ANVIL_LEDGER_RESULT_TTL_SECONDS.default).toBe("604800");
+    expect(files["deploy/README.md"]).toContain("field-masked, non-mutating data-plane lookup");
+    expect(files["deploy/README.md"]).toContain("In-progress reservations never carry a TTL");
+  });
+
+  it("does not provision ledger IAM for mutations outside the approved surface", () => {
+    const hidden = structuredClone(air);
+    for (const operation of hidden.operations) {
+      operation.state = "blocked";
+    }
+    const tf = generateDeploy(hidden)["deploy/terraform/main.tf"];
+    expect(tf).not.toContain("roles/datastore.user");
+    expect(tf).toMatch(/name\s+= "ANVIL_LEDGER"[\s\S]*?value\s+= ""/);
   });
 
   it("uses durable remote state and never auto-applies (plan-only pipeline)", () => {
@@ -465,9 +640,11 @@ describe("GCP-native deploy (single owner per concern)", () => {
     expect(tf).toContain('backend "gcs"');
     expect(cb).toContain("backend-config");
     // Cloud Build produces a plan, never an auto-approved apply.
-    expect(cb).toContain("terraform plan");
+    expect(cb).toContain("-chdir=/workspace/tf-work plan");
     expect(cb).not.toContain("-auto-approve");
     expect(cb).not.toContain("terraform apply");
+    expect(cb).toContain("$BUILD_ID");
+    expect(cb).not.toContain("$SHORT_SHA");
   });
 
   it("has exactly one owner for the image tag and never leaks PROJECT/REGION placeholders", () => {

@@ -62,6 +62,14 @@ export async function gatewayAdapterConformance<TConnection extends GatewayConne
     "inventory APIs carry stable identity and lifecycle",
     inv1.apis.length > 0 && inv1.apis.every((a) => a.id.length > 0),
   );
+  record(
+    "inventory reports contract fidelity without hasSpec ambiguity",
+    inv1.apis.every(
+      (a) =>
+        a.contract !== undefined &&
+        a.hasSpec === (a.contract.kind === "native" && a.contract.fidelity === "full"),
+    ),
+  );
 
   const imp1 = await adapter.extractApi(fixture.connection, fixture.api, context);
   const imp2 = await adapter.extractApi(fixture.connection, fixture.api, context);
@@ -72,6 +80,13 @@ export async function gatewayAdapterConformance<TConnection extends GatewayConne
   );
   record("overlay is deterministic", imp1.overlay.digest === imp2.overlay.digest);
   record("adapter emits a diagnostics channel", Array.isArray(imp1.diagnostics));
+  record(
+    "import contract provenance binds the compiled source",
+    imp1.contract.location.origin.length > 0 &&
+      imp1.contract.source?.snapshotId === imp1.source.snapshotId &&
+      imp1.contract.source?.sourceHash === imp1.source.sourceHash &&
+      imp1.contract.source?.entrypoint === imp1.source.entrypoint.path,
+  );
 
   // Every assertion cites resolvable evidence with a coordinate ref.
   const evidenceById = new Map(imp1.overlay.evidence.map((e) => [e.id, e]));
@@ -104,15 +119,41 @@ export async function gatewayAdapterConformance<TConnection extends GatewayConne
   // The emitted source + overlay feed the one compiler path.
   let feedsPipeline = false;
   let feedDetail: string | undefined;
+  let routeOnlySafe = true;
+  let routeOnlyDetail: string | undefined;
   try {
     const result = await compileContract(imp1.source, [imp1.overlay]);
     const contract = result.status === "resolved" ? result.contract : result.partialContract;
     feedsPipeline = contract.air.operations.length > 0;
     feedDetail = `status=${result.status}, operations=${contract.air.operations.length}`;
+    if (imp1.contract.fidelity === "route_only") {
+      const undeclaredPathParams = contract.air.operations.flatMap((op) => {
+        const declared = new Set(
+          op.input.params
+            .filter((param) => param.in === "path" && param.required)
+            .map((p) => p.name),
+        );
+        return [...(op.sourceRef.path ?? "").matchAll(/\{([^{}]+)\}/g)]
+          .map((match) => match[1])
+          .filter((name): name is string => name !== undefined && !declared.has(name));
+      });
+      routeOnlySafe =
+        contract.air.operations.every((operation) => operation.state === "blocked") &&
+        undeclaredPathParams.length === 0 &&
+        imp1.diagnostics.some((d) => d.code === "gateway/route_only_contract");
+      routeOnlyDetail = `blocked=${contract.air.operations.filter((o) => o.state === "blocked").length}/${contract.air.operations.length}, undeclaredPathParams=${undeclaredPathParams.join(",")}`;
+    }
   } catch (err) {
     feedDetail = String(err);
+    routeOnlySafe = false;
+    routeOnlyDetail = String(err);
   }
   record("source + overlay feed the compiler pipeline", feedsPipeline, feedDetail);
+  record(
+    "route-only contracts declare path inputs and remain blocked",
+    routeOnlySafe,
+    routeOnlyDetail,
+  );
 
   // A read-only adapter must not advertise publish.
   record("read-only adapter does not expose publish", adapter.capabilities.publish === false);

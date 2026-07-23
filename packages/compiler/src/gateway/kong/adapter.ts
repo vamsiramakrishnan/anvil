@@ -19,8 +19,14 @@ import type {
   GatewayRoute,
 } from "../model.js";
 import { asObjects, asStrings } from "../parse-safe.js";
-import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
-import type { KongRoute, KongService } from "./model.js";
+import {
+  buildGatewayApiImport,
+  normalizePath,
+  routeOnlyContract,
+  type SynthOp,
+  synthOperationId,
+} from "../synth.js";
+import type { KongPlugin, KongRoute, KongService } from "./model.js";
 import { parseKongConfig } from "./parse.js";
 import { normalizeServicePlugins } from "./plugins.js";
 
@@ -34,7 +40,7 @@ export interface KongConnection extends GatewayConnection {
 
 const CAPABILITIES: GatewayAdapterCapabilities = {
   inventory: true,
-  apiSpecs: true,
+  apiSpecs: false,
   routes: true,
   authentication: true,
   authorization: false,
@@ -76,6 +82,45 @@ function routesOf(service: KongService): GatewayRoute[] {
   }));
 }
 
+/**
+ * decK exports may attach plugins globally or to individual routes. The current
+ * semantic normalizer only understands service-level placement, so preserving
+ * those effective policies as blockers is safer than silently treating them as
+ * absent.
+ */
+function unmodeledPluginPlacementDiagnostics(
+  config: { plugins?: KongPlugin[] },
+  service: KongService,
+  serviceIndex: number,
+  origin: string,
+): GatewayDiagnostic[] {
+  const diagnostics: GatewayDiagnostic[] = [];
+  asObjects<KongPlugin>(config.plugins).forEach((plugin, pluginIndex) => {
+    if (plugin.enabled === false) return;
+    diagnostics.push({
+      level: "warning",
+      code: "gateway/opaque_policy",
+      message: `Top-level Kong plugin '${String(plugin.name ?? "(unnamed)")}' has unmodelled service/route applicability and must be reviewed.`,
+      coordinate: { origin, pointer: `/plugins/${pluginIndex}` },
+    });
+  });
+  asObjects<KongRoute>(service.routes).forEach((route, routeIndex) => {
+    asObjects<KongPlugin>(route.plugins).forEach((plugin, pluginIndex) => {
+      if (plugin.enabled === false) return;
+      diagnostics.push({
+        level: "warning",
+        code: "gateway/opaque_policy",
+        message: `Route-level Kong plugin '${String(plugin.name ?? "(unnamed)")}' on '${service.name}' is not yet projected with route-scoped semantics and must be reviewed.`,
+        coordinate: {
+          origin,
+          pointer: `/services/${serviceIndex}/routes/${routeIndex}/plugins/${pluginIndex}`,
+        },
+      });
+    });
+  });
+  return diagnostics;
+}
+
 export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
   readonly kind = "kong" as const;
   readonly capabilities = CAPABILITIES;
@@ -111,6 +156,9 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
     const apis: GatewayApiSummary[] = services.map((service, svcIndex) => {
       const operationIds = serviceOps(service).map((o) => o.operationId);
       const norm = normalizeServicePlugins(service, svcIndex, operationIds, origin);
+      norm.diagnostics.push(
+        ...unmodeledPluginPlacementDiagnostics(parsed.config, service, svcIndex, origin),
+      );
       diagnostics.push(...norm.diagnostics);
       return {
         id: service.name,
@@ -119,7 +167,8 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
         lifecycle: "published",
         environmentIds: [],
         routes: routesOf(service),
-        hasSpec: operationIds.length > 0,
+        hasSpec: false,
+        contract: routeOnlyContract({ origin, pointer: `/services/${svcIndex}` }),
         productIds: [],
         owner: asStrings(service.tags)[0],
         authSummary: norm.authSummary,
@@ -147,6 +196,7 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
       buildGatewayApiImport({
         originKind: "kong",
         apiName: api.id,
+        sourceCoordinate: { origin },
         ops: [],
         facts: [],
         diagnostics: [],
@@ -172,11 +222,16 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
       ops.map((o) => o.operationId),
       origin,
     );
+    norm.diagnostics.push(
+      ...unmodeledPluginPlacementDiagnostics(parsed.config, service, svcIndex, origin),
+    );
     return buildGatewayApiImport({
       originKind: "kong",
       apiName: service.name,
+      sourceCoordinate: { origin, pointer: `/services/${svcIndex}` },
       ops,
       facts: norm.facts,
+      authConfigured: Boolean(norm.authSummary),
       diagnostics: norm.diagnostics,
     });
   }

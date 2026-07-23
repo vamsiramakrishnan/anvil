@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AuthRequirement,
   AuthType,
@@ -10,6 +11,7 @@ import type {
   ParamLocation,
   RequestBody,
 } from "@anvil/air";
+import { snakeCase } from "@anvil/air";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
 import { materializeSchema } from "./decycle.js";
 import { deriveNames, singularize } from "./naming.js";
@@ -190,31 +192,210 @@ function errorSpecs(responses?: RawOperation["responses"]): ErrorSpec[] {
   return out;
 }
 
-const SCHEME_TO_AUTH: Record<string, AuthType> = {
-  apiKey: "api_key",
-  oauth2: "oauth2_client_credentials",
-  openIdConnect: "oauth2_authorization_code",
-  mutualTLS: "mtls",
-};
+interface AuthResolution {
+  auth: AuthRequirement;
+  issue?: { code: string; message: string; blocked?: boolean };
+}
+
+function authOf(
+  type: AuthType,
+  scopes: string[],
+  provider?: AuthRequirement["provider"],
+  credentialProfile?: string,
+): AuthRequirement {
+  const { principal, secretSource } = classifyAuth(type);
+  return {
+    type,
+    scopes,
+    principal,
+    secretSource,
+    ...(provider ? { provider } : {}),
+    ...(credentialProfile ? { credentialProfile } : {}),
+  };
+}
+
+function credentialProfileFor(schemeName: string): string {
+  const normalized = snakeCase(schemeName) || "scheme";
+  const rooted = /^[a-z]/.test(normalized) ? normalized : `scheme_${normalized}`;
+  // Always retain a cryptographic suffix. Distinct source names such as
+  // `Partner-OAuth` and `partner_oauth` normalize to the same readable slug;
+  // aliasing those schemes would make them share upstream secrets.
+  const digest = createHash("sha256").update(schemeName).digest("hex").slice(0, 32);
+  const prefix = rooted.slice(0, 31).replace(/_+$/, "") || "scheme";
+  return `${prefix}_${digest}`;
+}
+
+function unresolvedAuth(
+  scopes: string[],
+  code: string,
+  message: string,
+  blocked = false,
+  credentialProfile?: string,
+): AuthResolution {
+  return {
+    auth: authOf("custom_header", scopes, undefined, credentialProfile),
+    issue: { code, message, blocked },
+  };
+}
+
+function oauthAuth(schemeName: string, scheme: SecurityScheme, scopes: string[]): AuthResolution {
+  const credentialProfile = credentialProfileFor(schemeName);
+  const flows = Object.entries(scheme.flows ?? {}).filter(([, flow]) => flow !== undefined);
+  if (flows.length === 0 && scheme.flow) {
+    flows.push([
+      scheme.flow,
+      {
+        tokenUrl: scheme.tokenUrl,
+        authorizationUrl: scheme.authorizationUrl,
+      },
+    ]);
+  }
+  if (flows.length !== 1) {
+    return unresolvedAuth(
+      scopes,
+      "auth/oauth_flow_ambiguous",
+      `OAuth security declares ${flows.length} flows; AIR requires one explicit principal/grant. Select it in the manifest before approval.`,
+      true,
+      credentialProfile,
+    );
+  }
+  const [name, flow] = flows[0] as [string, NonNullable<SecurityScheme["flows"]>[string]];
+  const tokenEndpoint = flow.tokenUrl ?? scheme.tokenUrl;
+  if (name === "clientCredentials" || name === "application") {
+    return {
+      auth: authOf(
+        "oauth2_client_credentials",
+        scopes,
+        {
+          grant: "client_credentials",
+          ...(tokenEndpoint ? { tokenEndpoint } : {}),
+        },
+        credentialProfile,
+      ),
+    };
+  }
+  if (name === "authorizationCode" || name === "accessCode" || name === "implicit") {
+    return {
+      auth: authOf(
+        "oauth2_authorization_code",
+        scopes,
+        tokenEndpoint ? { tokenEndpoint } : undefined,
+        credentialProfile,
+      ),
+      issue: {
+        code: "auth/end_user_flow_unexecutable",
+        message:
+          "End-user OAuth cannot use one shared runtime token. Model per-caller OBO/token acquisition before approval.",
+        blocked: true,
+      },
+    };
+  }
+  return unresolvedAuth(
+    scopes,
+    "auth/oauth_flow_unsupported",
+    `OAuth flow "${name}" is not executable by the runtime. Enrich an explicit supported auth type/provider before approval.`,
+    true,
+    credentialProfile,
+  );
+}
 
 function resolveAuth(
   doc: OpenApiDocument,
   opSecurity: Array<Record<string, string[]>> | undefined,
-): AuthRequirement {
+): AuthResolution {
   const schemes = doc.components?.securitySchemes ?? {};
   const security = opSecurity ?? doc.security ?? [];
+  if (security.length > 1) {
+    return unresolvedAuth(
+      [],
+      "auth/alternatives_unmodeled",
+      `OpenAPI declares ${security.length} alternative security requirements (OR). AIR cannot safely select one implicitly; choose an explicit auth contract in the manifest.`,
+      true,
+    );
+  }
   const first = security[0];
   if (!first || Object.keys(first).length === 0) {
-    const { principal, secretSource } = classifyAuth("none");
-    return { type: "none", scopes: [], principal, secretSource };
+    return { auth: authOf("none", []) };
   }
-  const [schemeName, scopes] = Object.entries(first)[0] as [string, string[]];
+  const entries = Object.entries(first);
+  if (entries.length > 1) {
+    return unresolvedAuth(
+      [...new Set(entries.flatMap(([, scopes]) => scopes))],
+      "auth/composite_unmodeled",
+      `OpenAPI requires ${entries.length} security schemes together (AND). AIR currently models one credential; enrich a composite auth contract before approval.`,
+      true,
+    );
+  }
+  const [schemeName, scopes] = entries[0] as [string, string[]];
+  const credentialProfile = credentialProfileFor(schemeName);
   const scheme: SecurityScheme | undefined = schemes[schemeName];
-  let type: AuthType = "custom_header";
-  if (scheme?.type === "http") type = scheme.scheme === "basic" ? "basic" : "jwt_bearer";
-  else if (scheme?.type) type = SCHEME_TO_AUTH[scheme.type] ?? "custom_header";
-  const { principal, secretSource } = classifyAuth(type);
-  return { type, scopes: scopes ?? [], principal, secretSource };
+  if (!scheme) {
+    return unresolvedAuth(
+      scopes ?? [],
+      "auth/scheme_missing",
+      `Security scheme "${schemeName}" is referenced but not defined.`,
+      false,
+      credentialProfile,
+    );
+  }
+  if (scheme.type === "http") {
+    if (scheme.scheme === "basic") {
+      return { auth: authOf("basic", scopes ?? [], undefined, credentialProfile) };
+    }
+    if (scheme.scheme === "bearer") {
+      return { auth: authOf("jwt_bearer", scopes ?? [], undefined, credentialProfile) };
+    }
+    return unresolvedAuth(
+      scopes ?? [],
+      "auth/http_scheme_unsupported",
+      `HTTP auth scheme "${scheme.scheme ?? "unknown"}" is not modeled.`,
+      false,
+      credentialProfile,
+    );
+  }
+  if (scheme.type === "apiKey") {
+    if ((scheme.in === "header" || scheme.in === "query") && scheme.name) {
+      return {
+        auth: authOf(
+          "api_key",
+          scopes ?? [],
+          {
+            apiKey: { in: scheme.in, name: scheme.name },
+          },
+          credentialProfile,
+        ),
+      };
+    }
+    return unresolvedAuth(
+      scopes ?? [],
+      "auth/api_key_carrier_missing",
+      `API key scheme "${schemeName}" does not declare a supported header/query carrier.`,
+      false,
+      credentialProfile,
+    );
+  }
+  if (scheme.type === "oauth2") return oauthAuth(schemeName, scheme, scopes ?? []);
+  if (scheme.type === "openIdConnect") {
+    return {
+      auth: authOf("oauth2_authorization_code", scopes ?? [], undefined, credentialProfile),
+      issue: {
+        code: "auth/end_user_flow_unexecutable",
+        message:
+          "OpenID Connect end-user auth needs per-caller token propagation/exchange; a shared runtime bearer is forbidden.",
+        blocked: true,
+      },
+    };
+  }
+  if (scheme.type === "mutualTLS") {
+    return { auth: authOf("mtls", scopes ?? [], undefined, credentialProfile) };
+  }
+  return unresolvedAuth(
+    scopes ?? [],
+    "auth/scheme_unsupported",
+    `Security scheme "${schemeName}" has unsupported type "${scheme.type ?? "unknown"}".`,
+    false,
+    credentialProfile,
+  );
 }
 
 export interface NormalizeResult {
@@ -304,6 +485,15 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
 
       const successRes =
         raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;
+      const auth = resolveAuth(doc, raw.security);
+      if (auth.issue) {
+        diagnostics.push({
+          level: "warning",
+          code: auth.issue.code,
+          message: `${method.toUpperCase()} ${path}: ${auth.issue.message}`,
+          operationId: id,
+        });
+      }
 
       operations.push({
         id,
@@ -322,15 +512,15 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         idempotency,
         retries,
         confirmation,
-        auth: resolveAuth(doc, raw.security),
+        auth: auth.auth,
         streaming: false,
         longRunning: false,
         deprecated: Boolean(raw.deprecated),
         cli: { command: names.cliCommand, aliases: [] },
         mcp: { toolName: names.toolName },
         skill: { intentExamples: [] },
-        state: "generated",
-        reviewNotes: [],
+        state: auth.issue?.blocked ? "blocked" : auth.issue ? "review_required" : "generated",
+        reviewNotes: auth.issue ? [auth.issue.message] : [],
         evidence: {
           claims: [
             {

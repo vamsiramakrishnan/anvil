@@ -143,19 +143,21 @@ settings** and undeployable placeholders:
 | Build + push + **plan** | **Cloud Build** (builds the image, passes `image_tag`, runs `terraform plan` — never auto-apply) |
 | Container | **Dockerfile** (prebuilt runtime, no in-image compiler build) |
 | Env contract / secret contract | `env.schema.json`, `secrets.required.yaml` |
-| Shared platform (Artifact Registry repo, Firestore `(default)` DB, TF state bucket) | **Prerequisites** — not generated (singletons a capability must not own) |
+| Shared platform (Artifact Registry repo, TF state bucket) | **Prerequisites** — not generated (shared resources a capability must not own) |
+| Service-scoped Firestore ledger database + TTL policy | **Terraform** — named, delete-protected, and IAM-conditioned to the runtime SA |
 
 **Deleted:** `cloudrun.service.yaml`, `iam.plan.json`, `overlays/*.env.yaml`,
 `artifact-metadata.json`. **Bootstrap fixes (round 2):** the Artifact Registry
-repo and Firestore `(default)` database are no longer *created* by the
-per-capability module (they are project singletons — creating them per capability
-collides and, for AR, made push depend on a not-yet-applied repo). Terraform now
+repo is no longer *created* by the per-capability module (it is a shared
+foundation, and creating it here made push depend on a not-yet-applied repo).
+Each capability now gets a named, delete-protected Firestore ledger database,
+database-scoped IAM, and a TTL policy for completed replay results. Terraform
 declares a **GCS remote-state backend** (bound at `init`), and Cloud Build
 produces a reviewable **plan** rather than `apply -auto-approve`, since a
 capability deploy can change IAM/ingress/secrets. Boundary tests assert no two
 emitted files set the same knob, no `PROJECT`/`REGION` literals survive, the
-singletons are not recreated, remote state is configured, and the pipeline never
-auto-applies.
+shared foundations are not recreated, ledger state is isolated, remote state is
+configured, and the pipeline never auto-applies.
 
 ## 7. Generated package dependencies
 

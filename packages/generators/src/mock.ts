@@ -1,4 +1,12 @@
-import { type AirDocument, type JsonSchema, type Operation, propKey } from "@anvil/air";
+import {
+  type AirDocument,
+  isModeledIdempotencyCarrierInput,
+  type JsonSchema,
+  type Operation,
+  operationInputSchema,
+  propKey,
+  resolveIdempotencyCarrier,
+} from "@anvil/air";
 
 /**
  * Mock generation with provenance (spec: "Mock generation"). Mocks are not
@@ -57,6 +65,8 @@ export function generateScenarios(air: AirDocument): MockScenario[] {
  */
 export function exampleInput(op: Operation): Record<string, unknown> {
   const out: Record<string, unknown> = {};
+  const carrier = resolveIdempotencyCarrier(op);
+  const binding = carrier.ok ? carrier.binding : undefined;
   // A null synthesis result carries no valid value: the tool's zod shape (and
   // the executor) treat optional as ABSENT, never null, so an unsynthesizable
   // optional input must be omitted rather than sent as null.
@@ -65,15 +75,25 @@ export function exampleInput(op: Operation): Record<string, unknown> {
     out[key] = value;
   };
   for (const p of op.input.params) {
+    if (isModeledIdempotencyCarrierInput(binding, p.in, p.name)) continue;
     set(propKey(p.name), p.example ?? exampleFromSchema(p.schema), p.required);
   }
   const body = op.input.body;
   if (body?.projection === "fields") {
-    for (const f of body.fields) set(propKey(f.name), exampleFromSchema(f.schema), f.required);
+    for (const f of body.fields) {
+      if (isModeledIdempotencyCarrierInput(binding, "body", f.name)) continue;
+      set(propKey(f.name), exampleFromSchema(f.schema), f.required);
+    }
   } else if (body) {
     // A required body must synthesize at least {} — a null example would fail
     // the executor's required-input check before a single wire request is made.
-    const example = exampleFromSchema(body.schema);
+    // Use the projected surface schema, which omits a modeled runtime-owned
+    // body carrier while AIR's source schema retains it for wire validation.
+    const surfaceProperties = operationInputSchema(op).properties as
+      | Record<string, JsonSchema>
+      | undefined;
+    const surfaceSchema = surfaceProperties?.body;
+    const example = exampleFromSchema(surfaceSchema ?? body.schema);
     if (example !== null) out.body = example;
     else if (body.required) out.body = {};
   }
@@ -312,7 +332,9 @@ export function generateMockServerSource(air: AirDocument): string {
 // the AIR-derived table in routes.json, validates it against the operation's
 // input contract, and replays recorded scenarios — so the generated MCP/CLI
 // path can be proven end-to-end without the real upstream. Control endpoints
-// live under the reserved /__anvil/ prefix (capture, reset, scenario, fault).
+// live under the reserved /__anvil/ prefix (capture, reset, scenario, fault,
+// oauth/token). The token endpoint is a hermetic dev issuer and is never part
+// of the captured upstream operation stream.
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -459,6 +481,23 @@ function json(res, status, body) {
 }
 
 function control(req, res, url, rawBody) {
+  if (req.method === "POST" && url.pathname === "/__anvil/oauth/token") {
+    const form = new URLSearchParams(rawBody);
+    const grant = form.get("grant_type");
+    const supported = new Set([
+      "client_credentials",
+      "urn:ietf:params:oauth:grant-type:token-exchange",
+      "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    ]);
+    if (!grant || !supported.has(grant)) {
+      return json(res, 400, { error: "unsupported_grant_type" });
+    }
+    return json(res, 200, {
+      access_token: "anvil-hermetic-upstream-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+  }
   const parsed = rawBody ? JSON.parse(rawBody) : {};
   if (req.method === "GET" && url.pathname === "/__anvil/capture") {
     return json(res, 200, { requests: captures });

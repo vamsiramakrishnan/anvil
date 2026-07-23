@@ -13,7 +13,7 @@
           "idempotency": "none",
           "confirmation": true,
           "scopes": ["refunds:write"],
-          "state": "review_required"
+          "state": "blocked"
         },
         {
           "id": "refunds.refunds.get",
@@ -24,7 +24,7 @@
           "idempotency": "natural",
           "confirmation": false,
           "scopes": ["refunds:write"],
-          "state": "generated"
+          "state": "blocked"
         },
         {
           "id": "refunds.refunds.list",
@@ -35,14 +35,14 @@
           "idempotency": "natural",
           "confirmation": false,
           "scopes": ["refunds:write"],
-          "state": "generated"
+          "state": "blocked"
         }
       ],
       "opaque": [
         "gateway/opaque_policy: /services/0/plugins/2",
         "gateway/opaque_policy: /services/0/plugins/3"
       ],
-      "diagnostics": 3
+      "diagnostics": 6
     },
     {
       "id": "reporting",
@@ -56,11 +56,11 @@
           "idempotency": "natural",
           "confirmation": false,
           "scopes": [],
-          "state": "generated"
+          "state": "blocked"
         }
       ],
       "opaque": [],
-      "diagnostics": 0
+      "diagnostics": 3
     }
   ]
 }

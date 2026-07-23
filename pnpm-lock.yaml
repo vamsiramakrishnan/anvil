@@ -199,6 +199,9 @@ importers:
       '@anvil/air':
         specifier: workspace:*
         version: link:../air
+      '@anvil/compiler':
+        specifier: workspace:*
+        version: link:../compiler
       '@anvil/mcp-runtime':
         specifier: workspace:*
         version: link:../mcp-runtime
@@ -211,6 +214,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.22.0
         version: 1.29.0(zod@4.4.3)
+      esbuild:
+        specifier: ^0.27.7
+        version: 0.27.7
       yaml:
         specifier: ^2.8.1
         version: 2.9.0

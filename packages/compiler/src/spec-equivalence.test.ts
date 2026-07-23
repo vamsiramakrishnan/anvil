@@ -202,7 +202,10 @@ describe("Swagger 2.0 long-tail conversion (docstore pair)", () => {
   it("honors root oauth2 security and a per-operation apiKey override", async () => {
     const air = await compile({ spec: docstoreSwagger2, serviceId: "docstore" });
     const list = air.operations.find((o) => o.sourceRef.operationId === "listDocuments");
-    expect(list?.auth.type).toBe("oauth2_client_credentials");
+    expect(list?.auth.type).toBe("oauth2_authorization_code");
+    expect(list?.auth.principal).toBe("end_user");
+    expect(list?.auth.provider?.tokenEndpoint).toBe("https://auth.example.com/token");
+    expect(list?.state).toBe("blocked");
     expect(list?.auth.scopes).toEqual(["docs.read"]);
     const usage = air.operations.find((o) => o.sourceRef.operationId === "getUsage");
     expect(usage?.auth.type).toBe("api_key");

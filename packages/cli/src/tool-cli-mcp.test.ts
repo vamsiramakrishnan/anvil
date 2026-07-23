@@ -47,6 +47,7 @@ function inProcessMcp(): {
   const server = buildMcpServer(air, {
     contextFor: () => ({
       transport,
+      serviceId: air.service.id,
       credentials: {
         async resolve() {
           return { headers: { Authorization: "Bearer t" } };

@@ -56,6 +56,39 @@ describe("naming", () => {
 });
 
 describe("AirDocument", () => {
+  it.each([
+    "../escape",
+    "nested/service",
+    "windows\\service",
+    "UPPER",
+    "has space",
+    "a${danger}",
+    `a${"b".repeat(64)}`,
+    "trailing-",
+  ])("rejects the unsafe or non-portable service id %j", (id) => {
+    expect(() =>
+      loadAirDocument({
+        ...doc,
+        service: { ...doc.service, id },
+      }),
+    ).toThrow(/service id/i);
+  });
+
+  it.each([
+    "a",
+    "payments",
+    "payments-api",
+    "payments_api",
+    `a${"b".repeat(63)}`,
+  ])("accepts the portable service id %j", (id) => {
+    expect(
+      loadAirDocument({
+        ...doc,
+        service: { ...doc.service, id },
+      }).service.id,
+    ).toBe(id);
+  });
+
   it("applies defaults and validates structure", () => {
     const air = loadAirDocument(doc);
     expect(air.anvilVersion).toBe("0.1.0");

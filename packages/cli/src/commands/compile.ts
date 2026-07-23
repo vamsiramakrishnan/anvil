@@ -6,9 +6,10 @@ import {
   type HumanApprovalPolicy,
   type SourceDiagnostic,
 } from "@anvil/compiler";
-import { generateBundle, writeBundle } from "@anvil/generators";
+import { generateBundle } from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
+import { installGeneratedBundle } from "./bundle-transaction.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 import { printDiagnostics, sourceService } from "./source.js";
@@ -124,7 +125,9 @@ async function runCompile(
   });
   const outDir = opts.out ?? join("generated", air.service.id);
   const bundle = generateBundle(air, { mcpEndpoint: opts.endpoint });
-  const written = writeBundle(outDir, bundle);
+  const written = installGeneratedBundle(outDir, bundle, {
+    onCleanupWarning: (message) => io.err(`Warning: ${message}`),
+  });
 
   const errors = air.diagnostics.filter((d) => d.level === "error");
   const warnings = air.diagnostics.filter((d) => d.level === "warning");

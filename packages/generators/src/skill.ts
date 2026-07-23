@@ -428,9 +428,13 @@ ${baseUrl ? `Declared server: \`${baseUrl}\`.` : "_The source spec declares no s
   allowlist permits any host **only in dev**; everywhere else it denies every
   host (fail closed). Supplying \`--base-url\`/\`ANVIL_BASE_URL\` without an
   allowlist pins egress to that URL's host.
-- \`ANVIL_LEDGER\` — durable idempotency ledger URI (e.g. \`firestore://project/db\`).
+- \`ANVIL_LEDGER\` — service-scoped durable idempotency ledger URI
+  (e.g. \`firestore://project/payments-ledger/payments\`).
   Mutations that require an idempotency key need it outside \`dev\`; without it
   they fail closed rather than pretending replay safety.
+- \`ANVIL_LEDGER_RESULT_TTL_SECONDS\` — completed replay-result retention
+  (default seven days; 60 seconds to one year). In-progress reservations never
+  auto-expire.
 `;
 }
 

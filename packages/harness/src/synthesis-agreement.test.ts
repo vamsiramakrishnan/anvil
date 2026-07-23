@@ -154,4 +154,40 @@ describe("synthesis ↔ zod shape agreement", () => {
     expect(exampleInput(op).body).toEqual({});
     expect(accepts(op).success).toBe(true);
   });
+
+  it("projects a required nested idempotency carrier onto one safety input", () => {
+    const op = opWithBody({
+      type: "object",
+      required: ["input"],
+      properties: {
+        input: {
+          type: "object",
+          required: ["cartId", "idempotencyKey"],
+          example: { cartId: "cart-example", idempotencyKey: "source-example-key" },
+          properties: {
+            cartId: { type: "string" },
+            idempotencyKey: { type: "string" },
+          },
+        },
+      },
+    });
+    op.idempotency = {
+      mode: "required",
+      mechanism: "body",
+      key: "/input/idempotencyKey",
+      keyDerivation: "client_supplied",
+    };
+    op.input.schema = operationInputSchema(op);
+
+    const bodySchema = op.input.schema.properties?.body as {
+      properties?: { input?: { properties?: Record<string, unknown>; required?: string[] } };
+    };
+    expect(bodySchema.properties?.input?.properties).not.toHaveProperty("idempotencyKey");
+    expect(bodySchema.properties?.input?.required).not.toContain("idempotencyKey");
+    expect(exampleInput(op)).toEqual({
+      body: { input: { cartId: "cart-example" } },
+      idempotency_key: "create_thing-example-key",
+    });
+    expect(accepts(op).success).toBe(true);
+  });
 });

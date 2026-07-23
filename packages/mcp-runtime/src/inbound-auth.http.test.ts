@@ -36,7 +36,7 @@ function signRs256(claims: Record<string, unknown>): string {
 
 let jwksServer: Server;
 let appServer: Server;
-let jwksUrl: string;
+let localJwksUrl: string;
 let appBase: string;
 let config: InboundAuthConfig;
 
@@ -47,13 +47,15 @@ beforeAll(async () => {
     res.end(JSON.stringify({ keys: [jwkOf(publicKey)] }));
   });
   await new Promise<void>((r) => jwksServer.listen(0, "127.0.0.1", r));
-  jwksUrl = `http://127.0.0.1:${(jwksServer.address() as AddressInfo).port}/jwks`;
+  localJwksUrl = `http://127.0.0.1:${(jwksServer.address() as AddressInfo).port}/jwks`;
 
   config = {
     mode: "oidc",
     issuer: "https://idp.example.com",
     audience: "https://connector.example.com",
-    jwksUri: jwksUrl,
+    // Production requires a public HTTPS URI. The injected fetcher below maps
+    // this test identity to a real loopback server without weakening that guard.
+    jwksUri: "https://jwks.test/keys",
   };
   const meta = protectedResourceMetadata(config);
 
@@ -69,7 +71,12 @@ beforeAll(async () => {
       return meta ? send(200, meta) : send(404, { error: "no_auth" });
     }
     if (url.pathname === "/mcp") {
-      const result = await verifyInboundToken(req.headers.authorization, config);
+      const result = await verifyInboundToken(req.headers.authorization, config, {
+        fetchJwks: async () => {
+          const response = await fetch(localJwksUrl);
+          return (await response.json()) as { keys: Jwk[] };
+        },
+      });
       if (!result.ok) {
         return send(
           result.status,

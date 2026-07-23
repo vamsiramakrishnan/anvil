@@ -13,7 +13,7 @@
           "idempotency": "none",
           "confirmation": true,
           "scopes": ["orders:write"],
-          "state": "review_required"
+          "state": "blocked"
         },
         {
           "id": "order_service.orders.delete",
@@ -24,7 +24,7 @@
           "idempotency": "natural",
           "confirmation": true,
           "scopes": ["orders:admin"],
-          "state": "generated"
+          "state": "blocked"
         },
         {
           "id": "order_service.orders.list",
@@ -35,11 +35,11 @@
           "idempotency": "natural",
           "confirmation": false,
           "scopes": [],
-          "state": "generated"
+          "state": "blocked"
         }
       ],
       "opaque": ["gateway/opaque_policy: /apis/0/mediationPolicies"],
-      "diagnostics": 2
+      "diagnostics": 5
     }
   ]
 }

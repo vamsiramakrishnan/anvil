@@ -57,6 +57,16 @@ describe("verifyInboundToken", () => {
     if (r.ok) expect(r.claims.sub).toBe("user-1");
   });
 
+  it("rejects a signed token without a finite expiration", async () => {
+    const { exp: _exp, ...claims } = goodClaims;
+    const r = await verifyInboundToken(`Bearer ${sign(claims)}`, base, {
+      now: NOW,
+      fetchJwks,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.description).toMatch(/expiration/i);
+  });
+
   it("rejects a missing token with 401 and a WWW-Authenticate challenge", async () => {
     const r = await verifyInboundToken(undefined, base, { now: NOW, fetchJwks });
     expect(r.ok).toBe(false);
@@ -74,6 +84,26 @@ describe("verifyInboundToken", () => {
     const r = await verifyInboundToken(`Bearer ${tampered}`, base, { now: NOW, fetchJwks });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toBe("invalid_token");
+  });
+
+  it.each([
+    { name: "null header", header: null, payload: goodClaims },
+    { name: "array header", header: [], payload: goodClaims },
+    { name: "null payload", header: { alg: "RS256", kid: KID }, payload: null },
+    { name: "primitive payload", header: { alg: "RS256", kid: KID }, payload: 7 },
+    {
+      name: "wrong exp type",
+      header: { alg: "RS256", kid: KID },
+      payload: { ...goodClaims, exp: "never" },
+    },
+  ])("returns 401 for a $name without throwing", async ({ header, payload }) => {
+    const token = `${b64url(header)}.${b64url(payload)}.AA`;
+    const result = await verifyInboundToken(`Bearer ${token}`, base, {
+      now: NOW,
+      fetchJwks,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(401);
   });
 
   it("rejects a wrong issuer", async () => {
@@ -176,6 +206,22 @@ describe("verifyInboundToken", () => {
     if (!r.ok) expect(r.error).toBe("invalid_token");
   });
 
+  it("refreshes a cached JWKS once when a rotated kid is missing", async () => {
+    const cfg = { ...base, jwksUri: "https://idp.example.com/jwks-rotation-test" };
+    let fetches = 0;
+    const rotated = { ...jwkOf(publicKey), kid: "rotated-key" };
+    const token = sign(goodClaims, { kid: "rotated-key" });
+    const r = await verifyInboundToken(`Bearer ${token}`, cfg, {
+      now: NOW,
+      fetchJwks: async () => {
+        fetches += 1;
+        return fetches === 1 ? JWKS : { keys: [rotated] };
+      },
+    });
+    expect(r.ok).toBe(true);
+    expect(fetches).toBe(2);
+  });
+
   it("discovers the JWKS URI from the issuer's OpenID configuration", async () => {
     const cfg: InboundAuthConfig = {
       mode: "oidc",
@@ -196,6 +242,72 @@ describe("verifyInboundToken", () => {
 describe("loadInboundAuthConfig", () => {
   it("defaults to mode 'none'", () => {
     expect(loadInboundAuthConfig({}).mode).toBe("none");
+  });
+
+  it("fails boot on a mistyped auth mode or incomplete enabled profile", () => {
+    expect(() => loadInboundAuthConfig({ ANVIL_INBOUND_AUTH_MODE: "odic" })).toThrow(
+      /invalid ANVIL_INBOUND_AUTH_MODE/i,
+    );
+    expect(() =>
+      loadInboundAuthConfig({
+        ANVIL_INBOUND_AUTH_MODE: "oidc",
+        ANVIL_INBOUND_ISSUER: "https://idp.example.com",
+      }),
+    ).toThrow(/audience/i);
+  });
+
+  it.each([
+    "NaN",
+    "Infinity",
+    "-1",
+    "301",
+    "1.5",
+  ])("fails boot on unsafe clock leeway %s", (leeway) => {
+    expect(() =>
+      loadInboundAuthConfig({
+        ANVIL_INBOUND_AUTH_MODE: "oidc",
+        ANVIL_INBOUND_ISSUER: "https://idp.example.com",
+        ANVIL_INBOUND_AUDIENCE: "https://connector.example.com",
+        ANVIL_INBOUND_LEEWAY_SECONDS: leeway,
+      }),
+    ).toThrow(/0 to 300/i);
+  });
+
+  it("keeps an API-style JWT audience separate from the public MCP resource URL", () => {
+    const cfg = loadInboundAuthConfig({
+      ANVIL_INBOUND_AUTH_MODE: "oidc",
+      ANVIL_INBOUND_ISSUER: "https://idp.example.com",
+      ANVIL_INBOUND_AUDIENCE: "api://anvil-mcp",
+      ANVIL_INBOUND_RESOURCE: "https://connector.example.com/mcp",
+    });
+    expect(cfg.audience).toBe("api://anvil-mcp");
+    expect(cfg.resource).toBe("https://connector.example.com/mcp");
+    expect(protectedResourceMetadata(cfg)?.resource).toBe("https://connector.example.com/mcp");
+  });
+
+  it("advertises the metadata route the generated server actually serves", async () => {
+    const cfg: InboundAuthConfig = {
+      ...base,
+      resource: "https://connector.example.com/mcp",
+    };
+    const denied = await verifyInboundToken(undefined, cfg, { now: NOW, fetchJwks });
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) {
+      expect(denied.wwwAuthenticate).toContain(
+        'resource_metadata="https://connector.example.com/.well-known/oauth-protected-resource"',
+      );
+      expect(denied.wwwAuthenticate).not.toContain("/mcp/.well-known/");
+    }
+  });
+
+  it("requires a public resource URL when the audience is not HTTPS", () => {
+    expect(() =>
+      loadInboundAuthConfig({
+        ANVIL_INBOUND_AUTH_MODE: "oidc",
+        ANVIL_INBOUND_ISSUER: "https://idp.example.com",
+        ANVIL_INBOUND_AUDIENCE: "api://anvil-mcp",
+      }),
+    ).toThrow(/ANVIL_INBOUND_RESOURCE/i);
   });
 
   it("pins Google issuer + certs for the service-account mode", () => {

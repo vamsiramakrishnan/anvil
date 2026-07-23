@@ -18,8 +18,14 @@ import type {
   GatewayProbeResult,
 } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
-import { asObjects, asRecord, asStrings, safeParseYaml } from "../parse-safe.js";
-import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
+import { asObjects, asStrings, parseGatewayDocument } from "../parse-safe.js";
+import {
+  buildGatewayApiImport,
+  normalizePath,
+  routeOnlyContract,
+  type SynthOp,
+  synthOperationId,
+} from "../synth.js";
 
 interface MuleResource {
   method: string;
@@ -54,7 +60,7 @@ const RATE_POLICIES = new Set(["rate-limiting", "rate-limiting-sla", "spike-cont
 
 const CAPABILITIES: GatewayAdapterCapabilities = {
   inventory: true,
-  apiSpecs: true,
+  apiSpecs: false,
   routes: true,
   authentication: true,
   authorization: true,
@@ -68,8 +74,56 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
   publish: false,
 };
 
-function apisOf(config: string): MuleApi[] {
-  return asObjects<MuleApi>(asRecord(safeParseYaml(config)).apis);
+function parseExport(
+  config: string,
+  origin: string,
+): { apis: MuleApi[]; diagnostics: GatewayDiagnostic[] } {
+  const parsed = parseGatewayDocument(config, "mulesoft", origin);
+  if (!parsed.document) return { apis: [], diagnostics: parsed.diagnostics };
+  if (!Array.isArray(parsed.document.apis)) {
+    return {
+      apis: [],
+      diagnostics: [
+        {
+          level: "error",
+          code: "mulesoft/invalid_export",
+          message: "The MuleSoft export must contain an `apis` array.",
+          coordinate: { origin },
+        },
+      ],
+    };
+  }
+  if (parsed.document.apis.length === 0) {
+    return {
+      apis: [],
+      diagnostics: [
+        {
+          level: "error",
+          code: "mulesoft/empty_export",
+          message: "The MuleSoft export contains no APIs.",
+          coordinate: { origin, pointer: "/apis" },
+        },
+      ],
+    };
+  }
+  const apis = asObjects<MuleApi>(parsed.document.apis);
+  if (
+    apis.length !== parsed.document.apis.length ||
+    apis.some((api) => typeof api.assetId !== "string" || api.assetId.length === 0)
+  ) {
+    return {
+      apis: [],
+      diagnostics: [
+        {
+          level: "error",
+          code: "mulesoft/invalid_export",
+          message: "Every MuleSoft API must be an object with a non-empty `assetId`.",
+          coordinate: { origin, pointer: "/apis" },
+        },
+      ],
+    };
+  }
+  return { apis, diagnostics: [] };
 }
 
 function opsOf(api: MuleApi): SynthOp[] {
@@ -135,10 +189,12 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
   readonly capabilities = CAPABILITIES;
 
   async probe(connection: MulesoftConnection, _ctx: AdapterContext): Promise<GatewayProbeResult> {
+    const origin = connection.origin ?? "mulesoft.yaml";
+    const parsed = parseExport(connection.config, origin);
     return {
-      reachable: apisOf(connection.config).length > 0,
+      reachable: parsed.diagnostics.every((d) => d.level !== "error"),
       capabilities: CAPABILITIES,
-      diagnostics: [],
+      diagnostics: parsed.diagnostics,
     };
   }
 
@@ -147,9 +203,9 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
     _ctx: AdapterContext,
   ): Promise<GatewayInventorySnapshot> {
     const origin = connection.origin ?? "mulesoft.yaml";
-    const apis = apisOf(connection.config);
-    const diagnostics: GatewayDiagnostic[] = [];
-    const summaries: GatewayApiSummary[] = apis.map((api, i) => {
+    const parsed = parseExport(connection.config, origin);
+    const diagnostics: GatewayDiagnostic[] = [...parsed.diagnostics];
+    const summaries: GatewayApiSummary[] = parsed.apis.map((api, i) => {
       const norm = normalizeApi(api, i, origin);
       diagnostics.push(...norm.diagnostics);
       return {
@@ -165,7 +221,8 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
           hosts: [],
           protocols: [],
         })),
-        hasSpec: norm.ops.length > 0,
+        hasSpec: false,
+        contract: routeOnlyContract({ origin, pointer: `/apis/${i}` }),
         productIds: [],
         authSummary: norm.authSummary,
         hasQuota: norm.hasQuota,
@@ -187,13 +244,14 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
     _ctx: AdapterContext,
   ): Promise<GatewayApiImport> {
     const origin = connection.origin ?? "mulesoft.yaml";
-    const apis = apisOf(connection.config);
-    const apiIndex = apis.findIndex((a) => a.assetId === api.id);
-    const found = apis[apiIndex];
+    const parsed = parseExport(connection.config, origin);
+    const apiIndex = parsed.apis.findIndex((a) => a.assetId === api.id);
+    const found = parsed.apis[apiIndex];
     if (!found) {
       const empty = buildGatewayApiImport({
         originKind: "mulesoft",
         apiName: api.id,
+        sourceCoordinate: { origin },
         ops: [],
         facts: [],
         diagnostics: [],
@@ -201,6 +259,7 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
       return {
         ...empty,
         diagnostics: [
+          ...parsed.diagnostics,
           {
             level: "error",
             code: "mulesoft/unknown_api",
@@ -214,8 +273,10 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
       originKind: "mulesoft",
       apiName: found.assetId,
       version: found.productVersion,
+      sourceCoordinate: { origin, pointer: `/apis/${apiIndex}` },
       ops: norm.ops,
       facts: norm.facts,
+      authConfigured: Boolean(norm.authSummary),
       diagnostics: norm.diagnostics,
     });
   }

@@ -85,6 +85,17 @@ Options:
 - `--human-approval <policy>` — require explicit human approval on gated mutations: none | unsafe | all (per-op manifest `human_approval` overrides)
 - `--root <ws>` — workspace root for .anvil/sources
 
+### `anvil status`
+`anvil status [options] <path>`
+
+Show source, projection, approval, certification, target, and release status.
+
+Read-only. Resolves the canonical AIR and locked-source coordinate, verifies generated CLI/MCP/catalog/runtime projections against it, checks certification and publication freshness, detects stale target setup signatures, and chooses one deterministic next safe action. Exit is non-zero only when a core projection is missing, corrupt, or misaligned.
+
+Options:
+- `--root <dir>` — workspace root containing .anvil/sources
+- `--json` — emit one StatusReport JSON document
+
 ### `anvil inspect`
 `anvil inspect [options] <path>`
 
@@ -361,9 +372,23 @@ Options:
 - `--vendor <vendor>` — gateway vendor (kong | apigee | wso2 | mulesoft | api_connect)
 - `--api <id>` — API id from `estate inventory` (optional when the estate has one)
 - `--entry <path>` — archive entry holding the config, when the archive has several
+- `--spec <path>` — original OpenAPI/Swagger contract; lock it and apply gateway policies instead of compiling route-only synthesis
+- `--gateway-url <url>` — operator-attested public HTTPS gateway base URL; required with --spec so generated tools cannot bypass the gateway
+- `--root <dir>` — workspace root for the locked source under .anvil/sources
 - `--service <id>` — override the derived service id
 - `--out <dir>` — bundle output directory (default generated/<service-id>)
+- `--replace-derived` — replace a receipt-backed bundle whose output lineage became stale after approval, only after its recorded current digest verifies; verified later lifecycle artifacts are explicitly discarded
 - `--json` — emit a machine-readable import report (for CI oracles)
+
+#### `anvil estate verify`
+`anvil estate verify [options] <import-id>`
+
+Verify an immutable gateway import receipt and its bound evidence.
+
+Options:
+- `--root <dir>` — workspace root for .anvil/imports and .anvil/sources
+- `--bundle <dir>` — also verify the generated output files against the receipt
+- `--json` — emit a machine-readable integrity report
 
 ### `anvil sources`
 `anvil sources [options] [command]`
@@ -393,7 +418,7 @@ Options:
 
 Approve operations so they are exposed by the generated artifacts.
 
-Only approved operations appear in the MCP server, CLI catalog, and compiled runtime manifest. Approve deliberately, after inspecting risk.
+Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together; existing certification records, reports, and target kits are preserved but become stale when the approval state changes.
 
 ### `anvil lint`
 `anvil lint [options] <path>`
@@ -418,11 +443,12 @@ Options:
 
 Model-driven semantic review of a bundle's agent surfaces (MCP/CLI/skill).
 
-Drives a cheap reviewer model (default Haiku via the `claude` CLI) through Anvil's artifact-review SOP over a generated bundle: MCP tool descriptions must be truthful to each operation's effect/risk, the CLI surface must teach confirm/idempotency/dry-run on mutating commands, the skill doc must teach the safety posture and document no phantom operations, and all three surfaces must agree. Every finding must cite verbatim evidence from the bundle; ungrounded findings are discarded mechanically. Writes review.report.json into the bundle. Useful for spec sources with no reference server to backtest against.
+Drives a cheap reviewer model (default Haiku via the `claude` CLI) through Anvil's artifact-review SOP over a generated bundle: MCP tool descriptions must be truthful to each operation's effect/risk, the CLI surface must teach confirm/idempotency/dry-run on mutating commands, the skill doc must teach the safety posture and document no phantom operations, and all three surfaces must agree. Every finding must cite verbatim evidence from the bundle; ungrounded findings are discarded mechanically. Native execution is unsandboxed and therefore fails closed unless --allow-degraded-native is supplied; its HOME is isolated and credentials are delivered only through the Claude credential profile. Writes review.report.json into the bundle.
 
 Options:
 - `--model <model>` — reviewer model passed to the driver
 - `--driver-command <bin>` — headless agent CLI to drive
+- `--allow-degraded-native` — explicitly allow the unsandboxed native reviewer (isolated HOME; host files remain reachable)
 - `--json` — emit the full review report as JSON
 
 ### `anvil certify`  *(mutates)*
@@ -430,7 +456,7 @@ Options:
 
 Run the certification gates over a bundle and write certification.json.
 
-Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates and the MCP tool list, CLI catalog, and runtime manifest expose exactly the same approved operations), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.
+Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates, generated surfaces align, and each persisted target subtree exactly regenerates from its setup config), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.
 
 Options:
 - `--json` — emit the full certification as JSON
@@ -487,7 +513,7 @@ Options:
 
 Print the Cloud Run deployment plan for a bundle.
 
-Anvil generates the deploy artifacts (Dockerfile, service YAML, env/secret contracts); it does not hold cloud credentials.
+Anvil generates the deploy artifacts (Dockerfile, Terraform, env/credential contracts); it does not hold cloud credentials.
 
 #### `anvil deploy cloud-run`
 `anvil deploy cloud-run [options] <dir>`
@@ -497,23 +523,49 @@ The Cloud Run deployment plan (Terraform owns config, Cloud Build the pipeline).
 Options:
 - `--env <env>` — target environment
 
-### `anvil target`
+#### `anvil deploy credentials`
+`anvil deploy credentials [options] <dir>`
+
+The upstream (outbound) credential plan: exact env vars + copy-paste provisioning.
+
+Prints, per auth shape, the exact ANVIL_<PROFILE>_* env vars the runtime resolver reads to reach the upstream — names only — with ready-to-run gcloud/terraform commands and a pre-assembled Secret Manager console link. Nothing here holds or echoes a secret value.
+
+Options:
+- `--env <env>` — auth profile / target environment
+- `--project <id>` — GCP project id for links and sm:// references
+- `--json` — emit one machine-readable credential plan
+- `--tfvars` — emit only Terraform auto-tfvars JSON for an external plan work directory
+
+### `anvil target`  *(mutates)*
 `anvil target [options] <profile> <dir>`
 
 Generate an agent-platform connector kit (e.g. Gemini Enterprise) for a bundle.
 
-Turns a compiled bundle into a platform-ready BYO-MCP connector, with BOTH registration surfaces: (1) a custom-MCP DataConnector — a ready Discovery Engine `setUpDataConnector` request + curl; and (2) the Agent Registry / Agent Gateway path (under `agent-registry/`: a toolspec.json, egress gateway YAML, Terraform, a register script, and a runbook) — the fully programmatic, gateway-governed alternative. Also emits the versioned profile, the inbound-auth (OAuth resource-server) env contract, the per-action selection manifest, the org-policy checklist, an admin runbook, and a compatibility report validated against the platform's transport / auth / action-budget requirements. See the skill's reference/gemini-enterprise.md for which surface to pick. Writes under `<dir>/targets/<profile>/`.
+Validates and generates one explicit Gemini Enterprise registration journey. `custom-mcp` is console-first; its raw setUpDataConnector files are experimental references. `agent-gateway` emits guarded Agent Registry, gateway, engine-binding, and rollback artifacts. `both` is available only when explicitly requested for compatibility. Connector OAuth protects /mcp and is separate from Gemini Enterprise sign-in / Workforce Identity Federation. No files are written when validation fails.
 
 Options:
+- `--surface <surface>` — registration surface
+- `--server-auth <mode>` — MCP resource-server auth mode
 - `--endpoint <url>` — the connector's public HTTPS MCP URL (e.g. https://host/mcp)
 - `--project <id>` — GCP project — fills the registration artifacts + console links
-- `--location <loc>` — Gemini Enterprise app/engine location (default global)
-- `--engine <id>` — the GE engine/app id — used for the console deep links + gateway bind
-- `--gateway-location <region>` — Agent Gateway + registry region (global/us app → us-central1; eu → europe-west1)
-- `--idp <provider>` — GE end-user identity provider (google|entra|okta) — decides where the OAuth client lives
-- `--tenant <id>` — IdP tenant id / Okta domain (for --idp entra|okta)
-- `--wif <pool>` — Workforce Identity Federation pool, if GE sign-in is federated
-- `--out <dir>` — write the kit here instead of into the bundle directory
+- `--project-number <number>` — numeric GCP project identity used in a synthesized canonical engine resource
+- `--location <loc>` — Gemini Enterprise app/engine location
+- `--engine <id-or-resource>` — GE engine id, or full projects/.../locations/.../collections/.../engines/... resource
+- `--gateway-location <region>` — Agent Gateway region (required to match the verified app-location matrix)
+- `--registry-location <region>` — Agent Registry location referenced by the gateway
+- `--idp <provider>` — connector OAuth provider protecting /mcp; not the GE sign-in IdP
+- `--tenant <id>` — connector OAuth tenant id / Okta domain
+- `--oauth-authorization-url <url>` — explicit connector authorization URL (required for --idp other)
+- `--oauth-token-url <url>` — explicit connector token URL (required for --idp other)
+- `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
+- `--inbound-issuer <url>` — issuer the MCP resource server validates
+- `--inbound-audience <audience>` — audience identifying this MCP API
+- `--wif <pool>` — Gemini Enterprise Workforce Identity Federation pool (separate from /mcp auth)
+- `--allow-unauthenticated-mcp` — acknowledge that no-auth leaves the public /mcp endpoint without a bearer-token gate
+- `--confirm-engine-egress-reroute` — acknowledge that Agent Gateway binding reroutes all agent egress for the engine
+- `--agent-identity-principal-set <resource>` — exact principalSet:// identity granted registry, gateway, and runtime access
+- `--gateway-authorization-policy <resource>` — exact authorization-policy resource attached to the Agent Gateway
+- `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
 - `--json` — emit the plan + compatibility report as JSON
 
 ### `anvil sync`  *(mutates)*

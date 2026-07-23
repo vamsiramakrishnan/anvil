@@ -123,6 +123,12 @@ function baseValue(op: Operation, predicate: SemanticPredicate): unknown {
       return op.canonicalName.split("_").slice(1).join("_");
     case "name.verb":
       return op.canonicalName.split("_")[0] ?? "";
+    case "auth.type":
+      return op.auth.type;
+    case "auth.credentialProfile":
+      return op.auth.credentialProfile;
+    case "auth.provider":
+      return op.auth.provider;
     case "auth.principal":
       return op.auth.principal;
     case "auth.audience":

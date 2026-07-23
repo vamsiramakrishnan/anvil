@@ -32,12 +32,34 @@ beforeEach(async () => {
     op.effect.resource = "refund";
     if (op.sourceRef.operationId === "createRefund") {
       op.auth = { ...op.auth, type: "oauth2_client_credentials", scopes: ["refunds:write"] };
-      op.idempotency = { ...op.idempotency, mode: "key_supported" };
+      op.idempotency = {
+        mode: "key_supported",
+        mechanism: "header",
+        key: "Idempotency-Key",
+        keyDerivation: "request_fingerprint",
+      };
     }
   }
 });
 
 describe("static vs executable certification", () => {
+  it("fails closed when an approved keyed operation has no injectable carrier", () => {
+    const invalid = structuredClone(air);
+    const refund = invalid.operations.find((op) => op.sourceRef.operationId === "createRefund");
+    if (!refund) throw new Error("fixture operation missing");
+    refund.idempotency = {
+      mode: "required",
+      mechanism: "query",
+      key: "invented_key",
+      keyDerivation: "client_supplied",
+    };
+    const record = certify(invalid);
+    expect(record.status).toBe("failed");
+    expect(
+      record.checks.find((entry) => entry.id === "static/idempotency_carriers_supported"),
+    ).toMatchObject({ ok: false });
+  });
+
   it("static-only success is static_passed, never certified", () => {
     const record = certify(air);
     expect(record.status).toBe("static_passed");

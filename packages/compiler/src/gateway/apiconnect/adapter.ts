@@ -18,8 +18,14 @@ import type {
   GatewayProduct,
 } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
-import { asObjects, asRecord, asStrings, safeParseYaml } from "../parse-safe.js";
-import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
+import { asObjects, asStrings, parseGatewayDocument } from "../parse-safe.js";
+import {
+  buildGatewayApiImport,
+  joinGatewayPath,
+  routeOnlyContract,
+  type SynthOp,
+  synthOperationId,
+} from "../synth.js";
 
 interface ApicResource {
   method: string;
@@ -54,7 +60,7 @@ export interface ApiConnectConnection extends GatewayConnection {
 
 const CAPABILITIES: GatewayAdapterCapabilities = {
   inventory: true,
-  apiSpecs: true,
+  apiSpecs: false,
   routes: true,
   authentication: true,
   authorization: true,
@@ -73,16 +79,80 @@ interface ApicExport {
   apis?: ApicApi[];
 }
 
-function parseExport(config: string): ApicExport {
-  return asRecord(safeParseYaml(config)) as ApicExport;
+function parseExport(
+  config: string,
+  origin: string,
+): { exp: ApicExport; diagnostics: GatewayDiagnostic[] } {
+  const parsed = parseGatewayDocument(config, "apiconnect", origin);
+  if (!parsed.document) return { exp: {}, diagnostics: parsed.diagnostics };
+  if (!Array.isArray(parsed.document.apis)) {
+    return {
+      exp: {},
+      diagnostics: [
+        {
+          level: "error",
+          code: "apiconnect/invalid_export",
+          message: "The API Connect export must contain an `apis` array.",
+          coordinate: { origin },
+        },
+      ],
+    };
+  }
+  if (parsed.document.apis.length === 0) {
+    return {
+      exp: {},
+      diagnostics: [
+        {
+          level: "error",
+          code: "apiconnect/empty_export",
+          message: "The API Connect export contains no APIs.",
+          coordinate: { origin, pointer: "/apis" },
+        },
+      ],
+    };
+  }
+  const apis = asObjects<ApicApi>(parsed.document.apis);
+  if (
+    apis.length !== parsed.document.apis.length ||
+    apis.some((api) => typeof api.name !== "string" || api.name.length === 0)
+  ) {
+    return {
+      exp: {},
+      diagnostics: [
+        {
+          level: "error",
+          code: "apiconnect/invalid_export",
+          message: "Every API Connect API must be an object with a non-empty `name`.",
+          coordinate: { origin, pointer: "/apis" },
+        },
+      ],
+    };
+  }
+  if (parsed.document.products !== undefined && !Array.isArray(parsed.document.products)) {
+    return {
+      exp: {},
+      diagnostics: [
+        {
+          level: "error",
+          code: "apiconnect/invalid_export",
+          message: "API Connect `products`, when present, must be an array.",
+          coordinate: { origin, pointer: "/products" },
+        },
+      ],
+    };
+  }
+  return { exp: parsed.document as ApicExport, diagnostics: [] };
 }
 
 function opsOf(api: ApicApi): SynthOp[] {
-  return asObjects<ApicResource>(api.resources).map((r) => ({
-    operationId: synthOperationId(api.name, r.method, r.path),
-    method: r.method,
-    path: normalizePath(r.path),
-  }));
+  return asObjects<ApicResource>(api.resources).map((r) => {
+    const path = joinGatewayPath(api.basePath, r.path);
+    return {
+      operationId: synthOperationId(api.name, r.method, path),
+      method: r.method,
+      path,
+    };
+  });
 }
 
 /** Product rate-limit + which product this API belongs to. */
@@ -116,7 +186,10 @@ function normalizeApi(exp: ApicExport, api: ApicApi, apiIndex: number, origin: s
         pointer: `/apis/${apiIndex}/resources/${j}/scopes`,
       };
       facts.push({
-        target: { scope: "operation", ref: synthOperationId(api.name, r.method, r.path) },
+        target: {
+          scope: "operation",
+          ref: synthOperationId(api.name, r.method, joinGatewayPath(api.basePath, r.path)),
+        },
         predicate: "auth.scopes",
         operation: "restrict",
         value: scopes,
@@ -127,11 +200,11 @@ function normalizeApi(exp: ApicExport, api: ApicApi, apiIndex: number, origin: s
   });
 
   asObjects<{ type: string }>(api.assembly?.execute).forEach((action, k) => {
-    if (action.type === "map" || action.type === "gatewayscript" || action.type === "xslt") {
+    if (action.type !== "invoke") {
       diagnostics.push({
         level: "warning",
         code: "gateway/opaque_policy",
-        message: `API Connect assembly action '${action.type}' on '${api.name}' transforms the message and is not modelled.`,
+        message: `API Connect assembly action '${String(action.type ?? "(unnamed)")}' on '${api.name}' is not modelled and may transform, authorize, reject, or reroute the request.`,
         coordinate: { origin, pointer: `/apis/${apiIndex}/assembly/execute/${k}` },
       });
     }
@@ -154,10 +227,12 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
   readonly capabilities = CAPABILITIES;
 
   async probe(connection: ApiConnectConnection, _ctx: AdapterContext): Promise<GatewayProbeResult> {
+    const origin = connection.origin ?? "apiconnect.yaml";
+    const parsed = parseExport(connection.config, origin);
     return {
-      reachable: asObjects(parseExport(connection.config).apis).length > 0,
+      reachable: parsed.diagnostics.every((d) => d.level !== "error"),
       capabilities: CAPABILITIES,
-      diagnostics: [],
+      diagnostics: parsed.diagnostics,
     };
   }
 
@@ -166,8 +241,9 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
     _ctx: AdapterContext,
   ): Promise<GatewayInventorySnapshot> {
     const origin = connection.origin ?? "apiconnect.yaml";
-    const exp = parseExport(connection.config);
-    const diagnostics: GatewayDiagnostic[] = [];
+    const parsed = parseExport(connection.config, origin);
+    const exp = parsed.exp;
+    const diagnostics: GatewayDiagnostic[] = [...parsed.diagnostics];
     const summaries: GatewayApiSummary[] = asObjects<ApicApi>(exp.apis).map((api, i) => {
       const norm = normalizeApi(exp, api, i, origin);
       diagnostics.push(...norm.diagnostics);
@@ -184,7 +260,8 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
           hosts: [],
           protocols: [],
         })),
-        hasSpec: norm.ops.length > 0,
+        hasSpec: false,
+        contract: routeOnlyContract({ origin, pointer: `/apis/${i}` }),
         productIds: norm.productIds,
         authSummary: asStrings(api.oauthProviders).length > 0 ? "OAuth2" : undefined,
         hasQuota: norm.hasQuota,
@@ -211,7 +288,8 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
     _ctx: AdapterContext,
   ): Promise<GatewayApiImport> {
     const origin = connection.origin ?? "apiconnect.yaml";
-    const exp = parseExport(connection.config);
+    const parsed = parseExport(connection.config, origin);
+    const exp = parsed.exp;
     const apis = asObjects<ApicApi>(exp.apis);
     const apiIndex = apis.findIndex((a) => a.name === api.id);
     const found = apis[apiIndex];
@@ -219,6 +297,7 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
       const empty = buildGatewayApiImport({
         originKind: "api_connect",
         apiName: api.id,
+        sourceCoordinate: { origin },
         ops: [],
         facts: [],
         diagnostics: [],
@@ -226,6 +305,7 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
       return {
         ...empty,
         diagnostics: [
+          ...parsed.diagnostics,
           {
             level: "error",
             code: "apiconnect/unknown_api",
@@ -239,8 +319,10 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
       originKind: "api_connect",
       apiName: found.name,
       version: found.version,
+      sourceCoordinate: { origin, pointer: `/apis/${apiIndex}` },
       ops: norm.ops,
       facts: norm.facts,
+      authConfigured: asStrings(found.oauthProviders).length > 0,
       diagnostics: norm.diagnostics,
     });
   }

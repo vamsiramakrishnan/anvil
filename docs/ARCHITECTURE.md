@@ -141,7 +141,11 @@ validate → confirm → idempotency → dry-run? → host-pin → auth → ledg
   process-local ledger gives no protection across instances on a horizontally
   scaled runtime, so the runtime refuses rather than pretend. Dry-run,
   host-pinning, and auth are checked first, so a preview always works and
-  security errors win.
+  security errors win. The built-in Firestore backend stores only hashed ledger
+  keys, gives completed results a configurable expiry (seven days by default),
+  and never auto-expires in-progress reservations. Its `/readyz` check performs
+  a field-masked, non-mutating lookup and fails closed when the named database
+  is unavailable or inaccessible.
 - **auth** — named profiles resolved from approved stores; secrets never reach
   execution records or agents.
 - **policy hooks** — six local enforcement points (pre/post

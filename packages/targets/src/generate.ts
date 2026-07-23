@@ -6,14 +6,26 @@
  */
 import type { AirDocument } from "@anvil/air";
 import { surfaceSignatureFor } from "@anvil/compiler";
-import type { AgentPlatformTargetProfile, TargetKit, TargetKitFile } from "./model.js";
 import {
+  renderAgentGatewayReadinessJson,
+  renderAgentGatewayRollbackScript,
   renderAgentGatewayRunbook,
   renderAgentGatewayYaml,
   renderAgentRegistryScript,
   renderAgentRegistryTf,
   renderToolSpecJson,
 } from "./agent-registry.js";
+import {
+  connectorOAuthEndpoints,
+  connectorScopes,
+  engineResource,
+  engineStateKey,
+  type GeminiEnterpriseTargetConfig,
+  includesSurface,
+  isCanonicalEngineResource,
+  targetStateRelativePath,
+} from "./config.js";
+import type { AgentPlatformTargetProfile, TargetKit, TargetKitFile } from "./model.js";
 import {
   buildRegistrationRequest,
   renderRegistrationCurl,
@@ -23,39 +35,49 @@ import { validateTarget } from "./validate.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const json = (v: unknown) => enc(`${JSON.stringify(v, null, 2)}\n`);
-
-export interface GenerateTargetOptions {
-  endpoint?: string;
-  serverDescription?: string;
-  /** GCP project / GE app location — filled into the registration artifacts and
-   * console deep-links so the operator copy-pastes real values, not placeholders. */
-  project?: string;
-  location?: string;
-  /** The GE engine resource id (the app), for the console link + registry bind. */
-  engine?: string;
-  /** Agent Gateway + registry region (global/us app -> us-central1; eu -> europe-west1). */
-  gatewayLocation?: string;
-}
+const shellQuote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
+const terraformString = (value: string) => JSON.stringify(value).replaceAll("${", () => "$${");
 
 /** Build the target kit for a capability's contract. */
 export function generateTargetKit(
   air: AirDocument,
   profile: AgentPlatformTargetProfile,
-  options: GenerateTargetOptions = {},
+  config: GeminiEnterpriseTargetConfig,
 ): TargetKit {
   const dir = `targets/${profile.id}`;
   const served = air.operations
     .filter((o) => o.state === "approved")
     .sort((a, b) => a.mcp.toolName.localeCompare(b.mcp.toolName));
   const signature = surfaceSignatureFor(air);
-  const compatibility = validateTarget(air, profile, { endpoint: options.endpoint });
-
-  const oauthTemplate = Object.fromEntries(
-    (profile.authRequirements.find((a) => a.kind === "oauth2")?.oauthFields ?? []).map((f) => [
-      f,
-      "",
-    ]),
-  );
+  const compatibility = validateTarget(air, profile, config);
+  const endpoints = connectorOAuthEndpoints(config);
+  const canonicalEngine =
+    isCanonicalEngineResource(config.engine) || config.projectNumber
+      ? engineResource(config)
+      : undefined;
+  const mutableStatePath = includesSurface(config, "agent-gateway")
+    ? targetStateRelativePath(config)
+    : undefined;
+  const oauthTemplate =
+    config.serverAuth === "oauth"
+      ? {
+          serverAuth: "oauth",
+          provider: config.connectorOAuth.provider ?? null,
+          tenant: config.connectorOAuth.tenant ?? null,
+          authorizationUrl: endpoints.authUri,
+          tokenUrl: endpoints.tokenUri,
+          scopes: connectorScopes(config),
+          inboundIssuer: config.connectorOAuth.inboundIssuer ?? null,
+          inboundAudience: config.connectorOAuth.inboundAudience ?? null,
+          inboundResource: config.endpoint,
+          redirectUri: "https://vertexaisearch.cloud.google.com/oauth-redirect",
+          clientId: "",
+          clientSecretRef: "",
+        }
+      : {
+          serverAuth: "no-auth",
+          warning: "The public /mcp endpoint accepts calls without a bearer token.",
+        };
 
   const files: TargetKitFile[] = [
     { path: `${dir}/target-profile.json`, bytes: json(profile) },
@@ -65,20 +87,38 @@ export function generateTargetKit(
         target: profile.id,
         version: profile.version,
         transport: profile.transportRequirements[0]?.kind ?? "streamable-http",
-        endpoint: options.endpoint ?? null,
-        auth: profile.authRequirements[0]?.kind ?? "none",
+        config,
+        engineResource: canonicalEngine ?? null,
+        mutableState: mutableStatePath
+          ? {
+              rootEnvironmentVariable: "ANVIL_STATE_DIR",
+              relativePath: mutableStatePath,
+              externalToBundle: true,
+            }
+          : null,
+        auth: config.serverAuth,
+        inboundAuth:
+          config.serverAuth === "oauth"
+            ? {
+                mode: "oauth",
+                resource: config.endpoint,
+                issuer: config.connectorOAuth.inboundIssuer ?? null,
+                audience: config.connectorOAuth.inboundAudience ?? null,
+                scopes: connectorScopes(config),
+              }
+            : { mode: "no-auth" },
         actionCount: served.length,
         surfaceSignatureDigest: signature.digest,
         // The human-in-the-loop steps that remain after generation (console-only
         // OAuth consent / registry import) — travels with the kit for a harness.
-        interactiveSteps: profile.interactiveSteps,
+        interactiveSteps: selectedInteractiveSteps(profile, config),
       }),
     },
     { path: `${dir}/oauth.template.json`, bytes: json(oauthTemplate) },
-    { path: `${dir}/inbound-auth.env`, bytes: enc(inboundAuthEnv(profile, options.endpoint)) },
+    { path: `${dir}/inbound-auth.env`, bytes: enc(inboundAuthEnv(profile, config)) },
     {
       path: `${dir}/server-description.md`,
-      bytes: enc(serverDescription(air, profile, options.serverDescription)),
+      bytes: enc(serverDescription(air, profile)),
     },
     {
       path: `${dir}/action-selection.json`,
@@ -92,46 +132,60 @@ export function generateTargetKit(
       }),
     },
     { path: `${dir}/organization-policy-checklist.md`, bytes: enc(orgPolicyChecklist(profile)) },
-    { path: `${dir}/admin-runbook.md`, bytes: enc(adminRunbook(air, profile, options.endpoint)) },
+    { path: `${dir}/admin-runbook.md`, bytes: enc(adminRunbook(air, profile, config)) },
     { path: `${dir}/compatibility-report.json`, bytes: json(compatibility) },
-    // A public connector overlays the generic Cloud Run deploy: flip ingress to
-    // public (the server's own OAuth check is the gate) and inject the inbound
-    // env. Copy these into deploy/terraform/ and apply.
+    // A public connector overlays the generic Cloud Run deploy through an
+    // external var-file. Never copy it into compiler-owned deploy/terraform:
+    // target artifacts must be present before certification and remain immutable.
     ...(isPublicConnector(profile)
       ? [
           {
-            path: `${dir}/terraform/connector.auto.tfvars`,
-            bytes: enc(connectorTfvars(profile, options.endpoint)),
+            path: `${dir}/terraform/cloud-run.tfvars`,
+            bytes: enc(connectorTfvars(profile, config)),
           },
-          { path: `${dir}/terraform/connector.tf`, bytes: enc(connectorTf(profile)) },
+          {
+            path: `${dir}/terraform/README.md`,
+            bytes: enc(connectorTerraformReadme(air, profile, config)),
+          },
         ]
       : []),
-    // The programmatic registration: a ready SetUpDataConnector request body and
-    // a curl that POSTs it under the operator's own credentials.
-    ...(isPublicConnector(profile)
+    // Experimental API reference only. The normal Custom MCP journey is console-first;
+    // the script injects runtime secrets into a trap-deleted temporary body.
+    ...(isPublicConnector(profile) && includesSurface(config, "custom-mcp")
       ? (() => {
           const reg = buildRegistrationRequest(air, {
-            endpoint: options.endpoint,
-            project: options.project,
-            location: options.location,
+            endpoint: config.endpoint,
+            project: config.project,
+            location: config.appLocation,
+            authType: config.serverAuth === "no-auth" ? "NO_AUTH" : "OAUTH",
+            authUri: config.serverAuth === "oauth" ? endpoints.authUri : undefined,
+            tokenUri: config.serverAuth === "oauth" ? endpoints.tokenUri : undefined,
+            scopes: config.serverAuth === "oauth" ? connectorScopes(config) : undefined,
           });
           return [
-            { path: `${dir}/registration.request.json`, bytes: enc(renderRegistrationJson(reg)) },
+            {
+              path: `${dir}/registration.request.template.json`,
+              bytes: enc(renderRegistrationJson(reg)),
+            },
             { path: `${dir}/registration.curl.sh`, bytes: enc(renderRegistrationCurl(reg)) },
           ];
         })()
       : []),
-    // The Agent Registry / Agent Gateway surface: the fully-programmatic
-    // alternative to the DataConnector (no interactive OAuth consent). Toolspec is
-    // generated from the same approved operations, so it never drifts.
-    ...(isPublicConnector(profile)
+    // The guarded Agent Registry / Agent Gateway surface. Toolspec is generated
+    // from the same approved operations, so it never drifts.
+    ...(isPublicConnector(profile) && includesSurface(config, "agent-gateway")
       ? (() => {
           const ar = {
-            endpoint: options.endpoint,
-            project: options.project,
-            location: options.location,
-            gatewayLocation: options.gatewayLocation,
-            engine: options.engine,
+            endpoint: config.endpoint,
+            project: config.project,
+            location: config.appLocation,
+            gatewayLocation: config.gatewayLocation,
+            registryLocation: config.registryLocation,
+            engine: canonicalEngine,
+            projectNumber: config.projectNumber,
+            stateKey: engineStateKey(config),
+            agentIdentityPrincipalSet: config.agentIdentityPrincipalSet,
+            gatewayAuthorizationPolicy: config.gatewayAuthorizationPolicy,
           };
           return [
             { path: `${dir}/agent-registry/toolspec.json`, bytes: enc(renderToolSpecJson(air)) },
@@ -144,8 +198,16 @@ export function generateTargetKit(
               bytes: enc(renderAgentRegistryTf(air, ar)),
             },
             {
+              path: `${dir}/agent-registry/readiness.template.json`,
+              bytes: enc(renderAgentGatewayReadinessJson(air, ar)),
+            },
+            {
               path: `${dir}/agent-registry/register.sh`,
               bytes: enc(renderAgentRegistryScript(air, ar)),
+            },
+            {
+              path: `${dir}/agent-registry/rollback.sh`,
+              bytes: enc(renderAgentGatewayRollbackScript(air, ar)),
             },
             {
               path: `${dir}/agent-registry/agent-gateway.md`,
@@ -159,12 +221,7 @@ export function generateTargetKit(
   return { targetId: profile.id, targetVersion: profile.version, files };
 }
 
-function serverDescription(
-  air: AirDocument,
-  profile: AgentPlatformTargetProfile,
-  override?: string,
-): string {
-  if (override) return `${override}\n`;
+function serverDescription(air: AirDocument, profile: AgentPlatformTargetProfile): string {
   const caps = air.capabilities.map((c) => `- ${c.displayName}: ${c.description || c.id}`).sort();
   return `# ${air.service.displayName ?? air.service.id}\n\nRegistered with ${profile.displayName}.\n\n## Capabilities\n${caps.join("\n")}\n`;
 }
@@ -178,41 +235,86 @@ function orgPolicyChecklist(profile: AgentPlatformTargetProfile): string {
 function adminRunbook(
   air: AirDocument,
   profile: AgentPlatformTargetProfile,
-  endpoint?: string,
+  config: GeminiEnterpriseTargetConfig,
 ): string {
-  const url = endpoint ?? "https://<your-connector-host>/mcp";
-  return [
+  const lines = [
     `# Admin runbook — ${air.service.displayName ?? air.service.id} on ${profile.displayName}`,
     "",
-    "The kit builds the Discovery Engine `setUpDataConnector` body",
-    "(registration.request.json). NOTE: the raw API creates the connector record but",
-    "an OAUTH connector reaches ACTIVE only after the console's interactive OAuth",
-    "Authorize step, so the console is the reliable path for step 5, not just an",
-    "alternative.",
-    "",
-    "1. Deploy the generated StreamableHTTP MCP server to a public HTTPS endpoint",
-    `   (${url}). SSE is not supported by ${profile.displayName}. The server is`,
+    "1. Retain terraform/cloud-run.tfvars as the deployment input; do not copy",
+    "   target files into compiler-owned output. Certify the complete bundle,",
+    "   then copy deploy/terraform into an empty external work directory and run",
+    "   init, plan, and apply only there. This keeps .terraform, lockfiles, and",
+    "   tfplan out of the immutable target and deploy trees. Deploy the MCP server",
+    `   (${config.endpoint}). SSE is not supported by ${profile.displayName}. The server is`,
     "   session-based (mints an mcp-session-id on initialize) so the platform can",
     "   fetch the tool list — do not make it stateless.",
-    "2. Configure the server's inbound auth from inbound-auth.env. For auth_type=OAUTH",
-    "   the platform presents the user's IdP token to /mcp; the server validates it",
-    "   as an OIDC resource server (issuer/audience from your IdP).",
-    "3. Prerequisites: grant the admin discoveryengine.editor, ensure the server URL",
+    config.serverAuth === "oauth"
+      ? "2. Verify the applied ANVIL_INBOUND_* contract. RESOURCE is the public MCP URL used for discovery; AUDIENCE is the distinct JWT audience. GE sign-in / Workforce Identity Federation is separate."
+      : "2. WARNING: inbound-auth.env explicitly sets no-auth. The public /mcp endpoint has no bearer-token gate; GE sign-in / Workforce Identity Federation does not protect it.",
+    "3. Grant the registering admin discoveryengine.editor and ensure the server URL",
     "   is reachable (a 'protected' project also requires it allowlisted — 403",
     "   otherwise; the console's Custom MCP flow allowlists it).",
-    "4. Register an OAuth client at your IdP (Entra/Google/Okta) whose redirect URI",
-    "   is https://vertexaisearch.cloud.google.com/oauth-redirect. Put its client_id /",
-    "   client_secret (Secret Manager) and auth_uri / token_uri / scopes into the",
-    "   connector's action_config.action_params. auth_type is OAUTH or NO_AUTH only —",
-    "   the API rejects any other value. (Or use NO_AUTH for an unauthenticated server.)",
-    "5. Create the connector in the console: Data stores → Create data store →",
-    "   Custom MCP Server, using registration.request.json's values, then click",
-    "   Authorize to complete OAuth consent. (registration.curl.sh POSTs the same body,",
-    "   but the API alone cannot finish the consent / BAP-connection provisioning.)",
-    `   The platform then fetches the tool list from the server; keep it under ${profile.actionLimits.maxActions} actions.`,
-    "6. Confirm compatibility-report.json has no errors before enabling for agents.",
+  ];
+  if (includesSurface(config, "custom-mcp")) {
+    lines.push(
+      config.serverAuth === "oauth"
+        ? "4. Create the connector OAuth client at the provider in oauth.template.json. Its redirect URI is https://vertexaisearch.cloud.google.com/oauth-redirect; store its secret outside this kit."
+        : "4. Review and retain the explicit no-auth acknowledgement and compensating controls.",
+      "5. In the Gemini Enterprise console, create a Custom MCP Server data store",
+      "   using the plan's copy fields. This console-first path is the supported",
+      config.serverAuth === "oauth"
+        ? "   path because OAuth authorization is interactive."
+        : "   path; choose No authentication.",
+      "   registration.curl.sh is an opt-in experimental API reference and is not",
+      "   part of the normal plan. It renders a mode-0600 temporary request from",
+      "   runtime env or mounted secret files and deletes it on exit.",
+    );
+  }
+  if (includesSurface(config, "agent-gateway")) {
+    lines.push(
+      "6. Review agent-registry/register.sh, rollback.sh, and the canonical engine",
+      "   resource in setup.json. Then explicitly run:",
+      "   export ANVIL_STATE_DIR=/absolute/path/outside/the/bundle",
+      "   ANVIL_RECONCILE_REGISTRY_GATEWAY=1 ANVIL_CONFIRM_REGISTRY_GATEWAY_RECONCILE=1 bash agent-registry/register.sh",
+      "   With no readiness file, this copies the template to external state and",
+      "   exits before any provider read or mutation.",
+      "7. Provision and independently verify the exact authorization policy, IAM",
+      "   grants, service-agent access, and MCP readiness in readiness.json. Rerun",
+      "   that explicit reconciliation command; it reconciles and readback-verifies",
+      "   the registry/gateway only, without binding the engine.",
+      "8. Separately bind after review; this repeats all read-only preflights and",
+      "   uses engine etag concurrency protection:",
+      "   ANVIL_CONFIRM_ENGINE_EGRESS_REROUTE=1 bash agent-registry/register.sh",
+      "9. Complete the console-only registry import. To restore the previous route:",
+      "   ANVIL_CONFIRM_ENGINE_EGRESS_ROLLBACK=1 bash agent-registry/rollback.sh",
+    );
+  }
+  lines.push(
+    `Final check: keep the enabled surface under ${profile.actionLimits.maxActions} actions and confirm compatibility-report.json has no errors.`,
     "",
-  ].join("\n");
+  );
+  return lines.join("\n");
+}
+
+function selectedInteractiveSteps(
+  profile: AgentPlatformTargetProfile,
+  config: GeminiEnterpriseTargetConfig,
+): AgentPlatformTargetProfile["interactiveSteps"] {
+  return profile.interactiveSteps
+    .filter(
+      (step) =>
+        (step.surface === "data-connector" && includesSurface(config, "custom-mcp")) ||
+        (step.surface === "agent-registry" && includesSurface(config, "agent-gateway")),
+    )
+    .map((step) =>
+      step.surface === "data-connector" && config.serverAuth === "no-auth"
+        ? {
+            ...step,
+            action: "Create the Custom MCP Server data store with No authentication",
+            why: "Creating the Custom MCP data store remains a console-first operation.",
+          }
+        : step,
+    );
 }
 
 /** A connector whose platform reaches the server over the public internet. */
@@ -226,75 +328,119 @@ function isPublicConnector(profile: AgentPlatformTargetProfile): boolean {
  * token to `/mcp`, so the server validates it as an OIDC resource server: the
  * issuer and audience come from YOUR IdP / OAuth client, not from the endpoint.
  */
-function inboundEnvEntries(
-  profile: AgentPlatformTargetProfile,
-  endpoint?: string,
-): Record<string, string> {
-  const primary = profile.authRequirements[0];
-  const mode = profile.authRequirements.find((a) => a.inboundMode)?.inboundMode ?? "oidc";
-  // A profile whose primary scheme is NO_AUTH (kind "none") admits everything.
-  if (primary && primary.kind === "none") {
+function inboundEnvEntries(config: GeminiEnterpriseTargetConfig): Record<string, string> {
+  if (config.serverAuth === "no-auth") {
     return { ANVIL_INBOUND_AUTH_MODE: "none" };
-  }
-  if (mode === "google_service_account") {
-    return {
-      ANVIL_INBOUND_AUTH_MODE: "google_service_account",
-      ANVIL_INBOUND_AUDIENCE: endpoint ?? "<the connector's public URL>",
-    };
   }
   return {
     ANVIL_INBOUND_AUTH_MODE: "oidc",
-    ANVIL_INBOUND_ISSUER: "<your IdP issuer, e.g. https://login.microsoftonline.com/<tenant>/v2.0>",
-    ANVIL_INBOUND_AUDIENCE: "<your OAuth client id / resource audience>",
+    ANVIL_INBOUND_RESOURCE: config.endpoint,
+    ANVIL_INBOUND_ISSUER: config.connectorOAuth.inboundIssuer ?? "<mcp-api-issuer>",
+    ANVIL_INBOUND_AUDIENCE: config.connectorOAuth.inboundAudience ?? "<mcp-api-audience>",
+    ANVIL_INBOUND_REQUIRED_SCOPES: connectorScopes(config).join(" "),
   };
 }
 
 /**
- * The public-connector overlay for the generic Cloud Run deploy: flip ingress to
- * public and inject the inbound-auth env. The server's own OAuth resource-server
- * check is the gate — Cloud Run only admits the request at the edge.
+ * Surface-specific Cloud Run reachability. A direct Custom MCP connector cannot
+ * present Google Cloud Run IAM credentials, so it needs allUsers at the edge and
+ * relies on the generated resource-server contract. Agent Gateway-only traffic
+ * stays IAM-gated to the exact agent principalSet, preventing a direct public
+ * bypass even when the MCP application deliberately uses no-auth.
  */
-function connectorTfvars(profile: AgentPlatformTargetProfile, endpoint?: string): string {
-  const env = inboundEnvEntries(profile, endpoint);
+function connectorTfvars(
+  profile: AgentPlatformTargetProfile,
+  config: GeminiEnterpriseTargetConfig,
+): string {
+  const env = inboundEnvEntries(config);
+  const directCustomMcp = includesSurface(config, "custom-mcp");
+  const gatewayInvoker =
+    includesSurface(config, "agent-gateway") && config.agentIdentityPrincipalSet
+      ? [config.agentIdentityPrincipalSet]
+      : [];
+  const authComment = !directCustomMcp
+    ? "# Agent Gateway-only: Cloud Run invocation is restricted to the exact agent principalSet."
+    : config.serverAuth === "oauth"
+      ? "# The server's ANVIL_INBOUND_* OAuth checks are the application gate."
+      : "# WARNING: direct Custom MCP + no-auth deliberately exposes /mcp; this requires explicit acknowledgement.";
   return `${[
-    `# ${profile.displayName} — public-connector overlay for the generic Cloud Run deploy.`,
-    "# Copy into deploy/terraform/ (auto-loaded) before `terraform apply`.",
-    "# The platform reaches /mcp over the internet; the server's inbound OAuth check",
-    "# (ANVIL_INBOUND_*) is the real gate, never network reachability alone.",
+    `# ${profile.displayName} — surface-specific overlay for the generic Cloud Run deploy.`,
+    "# Pass this file explicitly with -var-file; never copy it into deploy/terraform.",
+    authComment,
     'ingress               = "INGRESS_TRAFFIC_ALL"',
-    "allow_unauthenticated = true",
+    `allow_unauthenticated = ${directCustomMcp}`,
+    `invoker_members       = [${gatewayInvoker.map(terraformString).join(", ")}]`,
     "env = {",
-    ...Object.entries(env).map(([k, v]) => `  ${k} = ${JSON.stringify(v)}`),
+    ...Object.entries(env).map(([k, v]) => `  ${k} = ${terraformString(v)}`),
     "}",
     "",
   ].join("\n")}`;
 }
 
-/** Platform IAM + org-policy overlay Terraform for the connector. */
-function connectorTf(profile: AgentPlatformTargetProfile): string {
-  return `${[
-    `# ${profile.displayName} connector — platform IAM + org-policy overlay.`,
-    "# Copy into deploy/terraform/ and apply alongside the generic module.",
-    "#",
-    "# The admin who registers the custom MCP data store needs discoveryengine.editor",
-    '# (or the "Gemini Enterprise Admin" role). Scope it to a named principal.',
-    'variable "gemini_registrar_member" {',
-    "  type    = string",
-    '  default = ""',
-    "}",
-    'resource "google_project_iam_member" "gemini_registrar" {',
-    '  count   = var.gemini_registrar_member == "" ? 0 : 1',
-    "  project = var.project_id",
-    '  role    = "roles/discoveryengine.editor"',
-    "  member  = var.gemini_registrar_member",
-    "}",
-    "",
-    "# Org policy: the platform requires the FQDNs of the server URL, authorization",
-    "# URL, and token URL to be allowlisted for custom MCP. That is an organization",
-    "# policy set per current Google docs (see organization-policy-checklist.md),",
-    "# not a per-service resource — configure it at the org level.",
-    "",
-  ].join("\n")}`;
+/** No-copy integration instructions for the compiler-owned deployment module. */
+function connectorTerraformReadme(
+  air: AirDocument,
+  profile: AgentPlatformTargetProfile,
+  config: GeminiEnterpriseTargetConfig,
+): string {
+  return `# ${profile.displayName} Cloud Run deployment inputs
+
+\`cloud-run.tfvars\` sets only variables already declared by the generated
+\`deploy/terraform\` module. Keep this target subtree intact and pass the file
+explicitly. Never copy it into compiler-owned deployment output: that changes
+the bundle after targeting and invalidates certification.
+
+\`\`\`bash
+set -euo pipefail
+export ANVIL_BUNDLE_DIR="$(pwd -P)"
+anvil certify "$ANVIL_BUNDLE_DIR"
+export ANVIL_TF_WORK_DIR=/absolute/private/path/outside/the/bundle/terraform-work
+export ANVIL_TF_STATE_BUCKET=REPLACE_WITH_EXISTING_GCS_BUCKET
+export ANVIL_TF_STATE_PREFIX=${shellQuote(`anvil/${air.service.id}-tools`)}
+export TF_VAR_project_id=${shellQuote(config.project)}
+export TF_VAR_image_tag=REPLACE_WITH_IMMUTABLE_IMAGE_TAG
+if [[ "$ANVIL_TF_WORK_DIR" != /* ]]
+then
+  echo "ANVIL_TF_WORK_DIR must be absolute" >&2
+  exit 1
+fi
+if [[ "$ANVIL_TF_STATE_BUCKET" == REPLACE_* || "$TF_VAR_image_tag" == REPLACE_* ]]
+then
+  echo "Set the backend bucket and immutable image tag before planning" >&2
+  exit 1
+fi
+install -d -m 700 "$ANVIL_TF_WORK_DIR"
+export ANVIL_TF_WORK_DIR="$(cd "$ANVIL_TF_WORK_DIR" && pwd -P)"
+if [[ "$ANVIL_TF_WORK_DIR/" == "$ANVIL_BUNDLE_DIR/"* ]]
+then
+  echo "ANVIL_TF_WORK_DIR must be outside the bundle" >&2
+  exit 1
+fi
+if [[ -n "$(find "$ANVIL_TF_WORK_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+then
+  echo "ANVIL_TF_WORK_DIR must be empty" >&2
+  exit 1
+fi
+cp -R "$ANVIL_BUNDLE_DIR/deploy/terraform/." "$ANVIL_TF_WORK_DIR/"
+terraform -chdir="$ANVIL_TF_WORK_DIR" init -input=false \\
+  -backend-config="bucket=$ANVIL_TF_STATE_BUCKET" \\
+  -backend-config="prefix=$ANVIL_TF_STATE_PREFIX"
+terraform -chdir="$ANVIL_TF_WORK_DIR" plan -input=false \\
+  -var-file="$ANVIL_BUNDLE_DIR/targets/gemini-enterprise/terraform/cloud-run.tfvars" \\
+  -out="$ANVIL_TF_WORK_DIR/tfplan"
+# Stop here for plan review and approval before applying.
+terraform -chdir="$ANVIL_TF_WORK_DIR" apply "$ANVIL_TF_WORK_DIR/tfplan"
+\`\`\`
+
+Terraform may create \`.terraform/\`, \`.terraform.lock.hcl\`, and \`tfplan\`;
+all three stay in \`ANVIL_TF_WORK_DIR\`. Do not run Terraform with
+\`-chdir=deploy/terraform\` or \`-chdir=targets/...\`.
+
+Provision the registering administrator's \`roles/discoveryengine.editor\` grant
+through the organization's IAM workflow. This target kit does not guess or own
+that principal. Configure required organization-policy endpoint allowlisting
+outside the per-capability Terraform module.
+`;
 }
 
 /**
@@ -303,39 +449,28 @@ function connectorTf(profile: AgentPlatformTargetProfile): string {
  * server; the actual token is presented by the platform at call time. Defaults
  * to the profile's first auth scheme, with the alternative shown commented.
  */
-function inboundAuthEnv(profile: AgentPlatformTargetProfile, _endpoint?: string): string {
-  const noAuthPrimary = profile.authRequirements[0]?.kind === "none";
+function inboundAuthEnv(
+  profile: AgentPlatformTargetProfile,
+  config: GeminiEnterpriseTargetConfig,
+): string {
+  const env = inboundEnvEntries(config);
   const lines = [
     `# Inbound auth for the ${profile.displayName} connector's MCP server.`,
-    "# The server is an OAuth 2 resource server: it validates the bearer token the",
-    "# platform presents on /mcp. These are non-secret config values, not secrets.",
+    "# These are non-secret resource-server configuration values.",
+    "# GE sign-in / Workforce Identity Federation is separate from this choice.",
     "",
   ];
-  if (noAuthPrimary) {
+  if (config.serverAuth === "no-auth") {
     lines.push(
-      "# auth_type=NO_AUTH — the platform calls /mcp without a token. Only safe",
-      "# behind other controls (private network, mTLS, etc.).",
-      "ANVIL_INBOUND_AUTH_MODE=none",
-      "",
-      "# To require a token instead, switch the connector to auth_type=OAUTH and:",
-      "# ANVIL_INBOUND_AUTH_MODE=oidc",
-      "# ANVIL_INBOUND_ISSUER=<your IdP issuer>",
-      "# ANVIL_INBOUND_AUDIENCE=<your OAuth client id / resource audience>",
+      "# WARNING: explicitly selected NO_AUTH; the public /mcp endpoint accepts",
+      "# requests without a bearer token. Use only with reviewed compensating controls.",
     );
   } else {
     lines.push(
-      "# auth_type=OAUTH — the platform runs a user-delegated OAuth flow with your",
-      "# IdP and presents the user's token to /mcp. The server validates it as an",
-      "# OIDC resource server; issuer + audience come from YOUR IdP / OAuth client.",
-      "ANVIL_INBOUND_AUTH_MODE=oidc",
-      "ANVIL_INBOUND_ISSUER=<your IdP issuer, e.g. https://login.microsoftonline.com/<tenant>/v2.0>",
-      "ANVIL_INBOUND_AUDIENCE=<your OAuth client id / resource audience>",
+      "# OAUTH: validate the connector authorization server's token for this MCP API.",
       "# ANVIL_INBOUND_JWKS_URI=<override; otherwise discovered from the issuer>",
-      "# ANVIL_INBOUND_REQUIRED_SCOPES=<space-separated scopes the token must carry>",
-      "",
-      "# Alternative: auth_type=NO_AUTH (no token presented).",
-      "# ANVIL_INBOUND_AUTH_MODE=none",
     );
   }
+  lines.push(...Object.entries(env).map(([key, value]) => `${key}=${value}`));
   return `${lines.join("\n")}\n`;
 }

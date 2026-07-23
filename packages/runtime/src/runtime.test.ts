@@ -70,6 +70,7 @@ const ok = (body: unknown): HttpResponse => ({
 // Mechanics tests run in `dev`, where the in-memory ledger is a legitimate
 // backend. The prod durable-ledger contract is exercised separately below.
 const baseCtx = {
+  serviceId: "payments",
   baseUrl: "https://payments.internal.example.com",
   allowedHosts: ["payments.internal.example.com"],
   env: "dev",
@@ -122,6 +123,162 @@ describe("idempotency gate", () => {
     );
     expect(res.outcome).toBe("success");
     expect(transport.requests[0]?.headers["Idempotency-Key"]).toMatch(/^anvil-/);
+  });
+
+  it("injects an exact modeled query carrier without requiring a duplicate input", async () => {
+    const queryOp = op({
+      idempotency: {
+        mode: "required",
+        mechanism: "query",
+        key: "request_key",
+        keyDerivation: "client_supplied",
+      },
+      input: {
+        params: [
+          { name: "payment_id", in: "path", required: true, schema: { type: "string" } },
+          { name: "request_key", in: "query", required: true, schema: { type: "string" } },
+        ],
+      },
+    });
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    const res = await execute(
+      queryOp,
+      { input: { payment_id: "pay_1" }, confirm: true, idempotencyKey: "query-key" },
+      { ...baseCtx, transport },
+    );
+    expect(res.outcome).toBe("success");
+    expect(transport.requests[0]?.url).toContain("request_key=query-key");
+  });
+
+  it("injects an exact modeled path carrier and URL-encodes the safety key", async () => {
+    const pathOp = op({
+      sourceRef: { kind: "openapi", path: "/requests/{request_key}", method: "post" },
+      idempotency: {
+        mode: "required",
+        mechanism: "path",
+        key: "request_key",
+        keyDerivation: "client_supplied",
+      },
+      input: {
+        params: [{ name: "request_key", in: "path", required: true, schema: { type: "string" } }],
+      },
+    });
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    const res = await execute(
+      pathOp,
+      { input: {}, confirm: true, idempotencyKey: "path/key" },
+      { ...baseCtx, transport },
+    );
+    expect(res.outcome).toBe("success");
+    expect(transport.requests[0]?.url).toContain("/requests/path%2Fkey");
+  });
+
+  it("injects a nested JSON Pointer body carrier without mutating caller input", async () => {
+    const bodyOp = op({
+      sourceRef: { kind: "graphql", path: "/graphql/Mutation/checkout", method: "post" },
+      idempotency: {
+        mode: "required",
+        mechanism: "body",
+        key: "/input/idempotencyKey",
+        keyDerivation: "client_supplied",
+      },
+      input: {
+        params: [],
+        body: {
+          contentType: "application/json",
+          required: true,
+          projection: "whole",
+          fields: [],
+          schema: {
+            type: "object",
+            properties: {
+              input: {
+                type: "object",
+                properties: {
+                  cartId: { type: "string" },
+                  idempotencyKey: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const body = { input: { cartId: "cart_1" } };
+    const transport = new MockTransport(() => ok({ id: "order_1" }));
+    const res = await execute(
+      bodyOp,
+      { input: { body }, confirm: true, idempotencyKey: "body-key" },
+      { ...baseCtx, transport },
+    );
+    expect(res.outcome).toBe("success");
+    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({
+      input: { cartId: "cart_1", idempotencyKey: "body-key" },
+    });
+    expect(body).toEqual({ input: { cartId: "cart_1" } });
+  });
+
+  it("refuses an unmodeled carrier before a dry-run or retry can claim safety", async () => {
+    const transport = new MockTransport(() => ({ status: 503, headers: {}, body: "" }));
+    const res = await execute(
+      op({
+        idempotency: {
+          mode: "required",
+          mechanism: "query",
+          key: "invented_key",
+          keyDerivation: "client_supplied",
+        },
+      }),
+      {
+        input: { payment_id: "pay_1", amount: 2500 },
+        confirm: true,
+        idempotencyKey: "k1",
+        dryRun: true,
+      },
+      { ...baseCtx, transport },
+    );
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.code).toBe("unsupported_operation");
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("refuses conflicting safety and modeled carrier values", async () => {
+    const bodyOp = op({
+      idempotency: {
+        mode: "required",
+        mechanism: "body",
+        key: "idempotency_key",
+        keyDerivation: "client_supplied",
+      },
+      input: {
+        params: [],
+        body: {
+          contentType: "application/json",
+          required: true,
+          projection: "whole",
+          fields: [],
+          schema: {
+            type: "object",
+            properties: { idempotency_key: { type: "string" } },
+          },
+        },
+      },
+    });
+    const transport = new MockTransport(() => ok({}));
+    const res = await execute(
+      bodyOp,
+      {
+        input: { body: { idempotency_key: "body-key" } },
+        confirm: true,
+        idempotencyKey: "flag-key",
+      },
+      { ...baseCtx, transport },
+    );
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error.code).toBe("validation_error");
+    expect(transport.requests).toHaveLength(0);
   });
 });
 
@@ -395,6 +552,55 @@ describe("auth binding", () => {
     expect(res.outcome).toBe("success");
     expect(transport.requests[0]?.headers.Authorization).toBe("Bearer secret");
   });
+
+  it("routes each source security scheme through its own credential profile", async () => {
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    const seen: string[] = [];
+    const resolver: CredentialResolver = {
+      async resolve(profile) {
+        seen.push(profile);
+        return { headers: { Authorization: "Bearer secret" } };
+      },
+    };
+    const res = await execute(
+      op({
+        auth: {
+          type: "oauth2_client_credentials",
+          scopes: ["payments.write"],
+          credentialProfile: "partner_oauth_11111111111111111111111111111111",
+        },
+      }),
+      { input: { payment_id: "pay_1", amount: 2500 }, confirm: true, idempotencyKey: "k1" },
+      { ...baseCtx, transport, authProfile: "prod", credentials: resolver },
+    );
+    expect(res.outcome).toBe("success");
+    expect(seen).toEqual(["prod_partner_oauth_11111111111111111111111111111111"]);
+  });
+
+  it("threads the inbound caller identity to the resolver as call context (OBO subject)", async () => {
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    const seen: unknown[] = [];
+    const resolver: CredentialResolver = {
+      async resolve(_profile, _auth, callCtx) {
+        seen.push(callCtx);
+        return { headers: { Authorization: "Bearer exchanged" } };
+      },
+    };
+    const inbound = {
+      subjectToken: "USER.JWT.TOKEN",
+      subjectTokenType: "jwt" as const,
+      sub: "user-1",
+      claims: { iss: "https://identity.example.com", sub: "user-1" },
+    };
+    const res = await execute(
+      op({ auth: { type: "oauth2_on_behalf_of", principal: "delegated", scopes: [] } }),
+      { input: { payment_id: "pay_1", amount: 2500 }, confirm: true, idempotencyKey: "k1" },
+      { ...baseCtx, transport, authProfile: "prod", credentials: resolver, inbound },
+    );
+    expect(res.outcome).toBe("success");
+    expect(seen[0]).toEqual({ inbound });
+    expect(transport.requests[0]?.headers.Authorization).toBe("Bearer exchanged");
+  });
 });
 
 describe("host pinning", () => {
@@ -492,6 +698,7 @@ describe("production defaults fail closed (no dev fallback)", () => {
     // No `env`, no `allowedHosts`: a misconfigured context must NOT silently get
     // dev semantics (which would permit any upstream host).
     const res = await execute(op(), args, {
+      serviceId: "payments",
       baseUrl: "https://payments.internal.example.com",
       transport,
       sleep: async () => {},
@@ -509,6 +716,7 @@ describe("production defaults fail closed (no dev fallback)", () => {
     // Allowlist satisfied, but no env and only a process-local ledger: must fail
     // closed on the required-idempotency mutation, not fall through as dev.
     const res = await execute(op(), args, {
+      serviceId: "payments",
       baseUrl: "https://payments.internal.example.com",
       allowedHosts: ["payments.internal.example.com"],
       transport,
@@ -578,5 +786,16 @@ describe("resolveLedger", () => {
 
   it("throws (never boots into false safety) when the scheme is unregistered", () => {
     expect(() => resolveLedger("unregistered://x")).toThrow(/no idempotency ledger backend/i);
+  });
+
+  it("does not replay an idempotency key for a different request fingerprint", async () => {
+    const ledger = new InMemoryLedger();
+    expect(await ledger.reserve("shared-key", "fingerprint-a")).toEqual({
+      outcome: "reserved",
+    });
+    await ledger.complete("shared-key", { id: "first" });
+    expect(await ledger.reserve("shared-key", "fingerprint-b")).toEqual({
+      outcome: "conflict",
+    });
   });
 });

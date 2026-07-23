@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { airToJson, loadAirDocument } from "@anvil/air";
@@ -7,6 +15,7 @@ import { ScriptedAgentDriver } from "../case/driver.js";
 import { DEFICIENCY_CATALOG } from "../deficiency.js";
 import {
   assembleReviewContext,
+  ReviewContextSecurityError,
   ReviewDriverUnavailableError,
   ReviewOutputError,
   reviewFindingsToDeficiencies,
@@ -198,6 +207,34 @@ describe("assembleReviewContext", () => {
     expect(catalog?.truncated).toBe(true);
     expect(catalog?.text).toContain("[truncated by anvil review]");
   });
+
+  it("refuses a symlink before any escaped bytes can enter model context", () => {
+    const bundle = writeFlawedBundle();
+    const outside = join(mkdtempSync(join(tmpdir(), "anvil-review-secret-")), "credential.txt");
+    writeFileSync(outside, "DO_NOT_EXFILTRATE", "utf8");
+    symlinkSync(outside, join(bundle, "docs", "escaped.md"));
+
+    expect(() => assembleReviewContext(bundle, fixtureAir())).toThrow(ReviewContextSecurityError);
+    expect(() => assembleReviewContext(bundle, fixtureAir())).toThrow(/symbolic link/i);
+  });
+
+  it("refuses a non-regular node under an admitted context root", async () => {
+    if (process.platform === "win32") return;
+    const bundle = writeFlawedBundle();
+    const socketPath = join(bundle, "docs", "review.sock");
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    try {
+      expect(() => assembleReviewContext(bundle, fixtureAir())).toThrow(
+        /non-regular filesystem node/i,
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
 
 /* -------------------------------------------------------------------------- */
@@ -226,7 +263,9 @@ describe("runArtifactReview", () => {
   it("materializes the SOP, context, and a review brief for the driver", async () => {
     const bundle = writeFlawedBundle();
     let seen: string[] = [];
+    let workspace = "";
     const driver = scripted((dir) => {
+      workspace = dir;
       seen = [
         join(dir, "CASE.md"),
         join(dir, "sop", "SKILL.md"),
@@ -238,6 +277,7 @@ describe("runArtifactReview", () => {
     const report = await runArtifactReview(bundle, driver, { now: NOW });
     expect(seen).toEqual(["yes", "yes", "yes", "no"]);
     expect(report.findings).toHaveLength(0);
+    expect(existsSync(workspace)).toBe(false);
   });
 
   it("accepts a fenced JSON document (mechanical tolerance, nothing more)", async () => {

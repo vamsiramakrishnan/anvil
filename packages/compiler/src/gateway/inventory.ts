@@ -26,5 +26,25 @@ export function inventoryDigest(draft: InventoryDraft): string {
 
 /** Stamp an inventory draft with its content digest. */
 export function finalizeInventory(draft: InventoryDraft): GatewayInventorySnapshot {
-  return { ...draft, digest: inventoryDigest(draft) };
+  const counts = new Map<string, number>();
+  for (const api of draft.apis) counts.set(api.id, (counts.get(api.id) ?? 0) + 1);
+  const duplicates = [...counts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([id]) => id)
+    .sort();
+  const normalized: InventoryDraft =
+    duplicates.length === 0
+      ? draft
+      : {
+          ...draft,
+          diagnostics: [
+            ...draft.diagnostics,
+            {
+              level: "error",
+              code: "gateway/duplicate_api_id",
+              message: `Gateway inventory contains ambiguous duplicate API id(s): ${duplicates.join(", ")}. Use a vendor export with unique ids or include revision/environment in the adapter identity.`,
+            },
+          ],
+        };
+  return { ...normalized, digest: inventoryDigest(normalized) };
 }

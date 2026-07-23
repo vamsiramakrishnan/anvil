@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { join } from "node:path";
 import type { ExecutionAttestation } from "./execution-policy.js";
 
 /**
@@ -42,18 +43,27 @@ export interface AgentProcessRunner {
 }
 
 /**
- * Build a minimal environment from an allowlist of variable names, always keeping
- * PATH and HOME. Prefer this over inheriting all of `process.env` into an agent
- * subprocess — the investigation should not see the parent's whole secret surface.
+ * Build a minimal environment from an allowlist of variable names. PATH is always
+ * retained. HOME is either retained deliberately or replaced with an isolated,
+ * workspace-owned home. Prefer this over inheriting all of `process.env` into an
+ * agent subprocess — the investigation should not see the parent's secret surface.
  */
 export function allowlistedEnv(
   allow: string[],
   base: NodeJS.ProcessEnv = process.env,
+  options: { isolatedHome?: string } = {},
 ): NodeJS.ProcessEnv {
-  const keep = new Set(["PATH", "HOME", ...allow]);
+  const keep = new Set(["PATH", ...(options.isolatedHome ? [] : ["HOME"]), ...allow]);
   const env: NodeJS.ProcessEnv = {};
   for (const key of Object.keys(base)) {
     if (keep.has(key)) env[key] = base[key];
+  }
+  if (options.isolatedHome) {
+    env.HOME = options.isolatedHome;
+    env.XDG_CONFIG_HOME = join(options.isolatedHome, ".config");
+    env.XDG_CACHE_HOME = join(options.isolatedHome, ".cache");
+    env.XDG_DATA_HOME = join(options.isolatedHome, ".local", "share");
+    env.TMPDIR = join(options.isolatedHome, "tmp");
   }
   return env;
 }

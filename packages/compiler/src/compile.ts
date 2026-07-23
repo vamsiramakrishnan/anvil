@@ -6,6 +6,7 @@ import {
   loadAirDocument,
   type Operation,
   operationInputSchema,
+  resolveIdempotencyCarrier,
   snakeCase,
 } from "@anvil/air";
 import { discoverCapabilities } from "./capabilities.js";
@@ -14,7 +15,14 @@ import type { AppliedOverlay, PolicyOverlay, SemanticConflict } from "./contract
 import { manifestToOverlay } from "./contract/overlay.js";
 import { applyResolved, resolveOverlays } from "./contract/resolution.js";
 import { applyDialectAdjustment, detectNamingDialect } from "./dialect.js";
-import { type AnvilManifest, buildWorkflows, parseManifest } from "./manifest.js";
+import {
+  type AnvilManifest,
+  airAuthProviderToManifest,
+  applyOperationManifest,
+  buildWorkflows,
+  manifestAuthProviderToAir,
+  parseManifest,
+} from "./manifest.js";
 import { critiqueNames, resolveNameCollisions } from "./naming.js";
 import { normalize } from "./normalize.js";
 import { type ParsedSpec, parseSource } from "./parse.js";
@@ -122,6 +130,88 @@ interface BuildAirOptions extends EffectiveCompileOptions {
   provenance: CompilerSource;
 }
 
+function applyServiceAuthDefaults(
+  operations: Operation[],
+  config: NonNullable<AnvilManifest["auth"]> | undefined,
+): { operations: Operation[]; diagnostics: Diagnostic[] } {
+  if (!config) return { operations, diagnostics: [] };
+  const diagnostics: Diagnostic[] = [];
+  const scopes = config.scopes ?? [];
+
+  return {
+    operations: operations.map((operation) => {
+      let next = operation;
+      if (config.type === "oauth2") {
+        if (operation.auth.type === "none") {
+          next = applyOperationManifest(operation, {
+            auth: { type: "custom_header" },
+          });
+          const note =
+            "Legacy service auth type oauth2 is ambiguous; select jwt_bearer, " +
+            "oauth2_client_credentials, oauth2_on_behalf_of, or authorization-code explicitly.";
+          if (!next.reviewNotes.includes(note)) next.reviewNotes.push(note);
+          diagnostics.push({
+            level: "error",
+            code: "auth/service_oauth2_ambiguous",
+            message: note,
+            operationId: operation.id,
+          });
+        }
+      } else if (config.type && operation.auth.type === "none") {
+        const { scopes: _scopes, type: _type, ...auth } = config;
+        next = applyOperationManifest(operation, {
+          auth: { ...auth, type: config.type },
+        });
+      } else if (config.type && operation.auth.type !== config.type) {
+        diagnostics.push({
+          level: "info",
+          code: "auth/service_default_not_applied",
+          message:
+            `Service auth default ${config.type} did not override the source-declared ` +
+            `${operation.auth.type} contract.`,
+          operationId: operation.id,
+        });
+      } else {
+        // Explicit principal/storage fields are service policy and therefore
+        // apply when the declared type is compatible (or omitted). Provider
+        // mechanics remain defaults: preserve source token endpoints/carriers
+        // and fill only fields the source did not supply.
+        const provider = config.provider
+          ? Object.fromEntries(
+              Object.entries(manifestAuthProviderToAir(config.provider)).filter(
+                ([key]) =>
+                  operation.auth.provider?.[
+                    key as keyof NonNullable<Operation["auth"]["provider"]>
+                  ] === undefined,
+              ),
+            )
+          : undefined;
+        const auth = {
+          ...(!operation.auth.credentialProfile && config.credential_profile
+            ? { credential_profile: config.credential_profile }
+            : {}),
+          ...(config.principal ? { principal: config.principal } : {}),
+          ...(config.secret_source ? { secret_source: config.secret_source } : {}),
+          ...(config.audience ? { audience: config.audience } : {}),
+          ...(config.tenant ? { tenant: config.tenant } : {}),
+          ...(config.actor ? { actor: config.actor } : {}),
+          ...(config.subject ? { subject: config.subject } : {}),
+          ...(provider && Object.keys(provider).length > 0
+            ? { provider: airAuthProviderToManifest(provider) }
+            : {}),
+        };
+        if (Object.keys(auth).length > 0) next = applyOperationManifest(operation, { auth });
+      }
+
+      if (next.auth.type !== "none" && next.auth.scopes.length === 0 && scopes.length > 0) {
+        next = { ...next, auth: { ...next.auth, scopes: [...scopes] } };
+      }
+      return next;
+    }),
+    diagnostics,
+  };
+}
+
 /**
  * Apply the coarse human-approval default in place. Only touches confirmation-
  * required operations whose `humanApproval` is still undefined — an explicit
@@ -167,7 +257,8 @@ async function buildAir(
   const serviceId = options.serviceId ?? manifest.service?.name ?? snakeCase(title) ?? "service";
 
   const normalized = normalize(serviceId, parsed);
-  let operations = normalized.operations;
+  const serviceAuthDefaults = applyServiceAuthDefaults(normalized.operations, manifest.auth);
+  let operations = serviceAuthDefaults.operations;
   // Naming pass: resolve any name collisions coherently across id/CLI/tool with
   // meaningful tokens (never a silent `_2`) before enrichment or validation.
   const namingDiagnostics = resolveNameCollisions(operations);
@@ -207,7 +298,7 @@ async function buildAir(
     // and re-resolve collisions if any changed. The resolver is a no-op when
     // nothing moved, so overlays that touch no name stay byte-identical.
     const nameSurface = (op: (typeof operations)[number]) =>
-      `${op.canonicalName} ${op.cli.command} ${op.mcp.toolName}`;
+      `${op.canonicalName}\0${op.cli.command}\0${op.mcp.toolName}`;
     const before = new Map(operations.map((op) => [op.id, nameSurface(op)]));
     const outcome = resolveOverlays(operations, overlays);
     operations = applyResolved(operations, outcome);
@@ -222,6 +313,29 @@ async function buildAir(
       origin: o.origin,
     }));
   }
+
+  // A source-level AND requirement cannot be reduced to one credential by an
+  // operation override: that would silently remove a required factor. Keep it
+  // blocked until AIR grows an explicit composite-auth model.
+  const compositeAuthOperations = new Set(
+    normalized.diagnostics
+      .filter((diagnostic) => diagnostic.code === "auth/composite_unmodeled")
+      .map((diagnostic) => diagnostic.operationId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  for (const operation of operations) {
+    if (!compositeAuthOperations.has(operation.id)) continue;
+    operation.state = "blocked";
+    const note =
+      "Source requires multiple security schemes together; a single-credential manifest override cannot remove a required factor.";
+    if (!operation.reviewNotes.includes(note)) operation.reviewNotes.push(note);
+  }
+  blockedOperationIds = [
+    ...new Set([
+      ...blockedOperationIds,
+      ...operations.filter((op) => compositeAuthOperations.has(op.id)).map((op) => op.id),
+    ]),
+  ].sort();
 
   // Attach the assembled input JSON Schema to each operation.
   for (const op of operations) {
@@ -289,6 +403,7 @@ async function buildAir(
     diagnostics: [
       ...parsed.diagnostics,
       ...normalized.diagnostics,
+      ...serviceAuthDefaults.diagnostics,
       ...diagnostics,
       ...namingDiagnostics,
       ...workflowDiagnostics,
@@ -303,7 +418,15 @@ async function buildAir(
 export function approveOperations(air: AirDocument, ids: string[]): AirDocument {
   const set = new Set(ids);
   for (const op of air.operations) {
-    if (set.has(op.id) && op.state !== "blocked") op.state = "approved";
+    if (!set.has(op.id) || op.state === "blocked") continue;
+    const carrier = resolveIdempotencyCarrier(op);
+    if (!carrier.ok) {
+      op.state = "blocked";
+      const note = `Approval refused: ${carrier.issue}.`;
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+      continue;
+    }
+    op.state = "approved";
   }
   return air;
 }

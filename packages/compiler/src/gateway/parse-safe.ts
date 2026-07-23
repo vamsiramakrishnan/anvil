@@ -12,6 +12,65 @@
  * never move.
  */
 import { parse as parseYaml } from "yaml";
+import type { GatewayDiagnostic } from "./model.js";
+
+export interface ParsedGatewayDocument {
+  document?: Record<string, unknown>;
+  diagnostics: GatewayDiagnostic[];
+}
+
+/**
+ * Parse a vendor export as a root object while preserving why parsing failed.
+ * Adapters still validate their own vendor-specific root collection; this
+ * helper prevents syntax errors, blank files, arrays, and scalars from quietly
+ * collapsing to an empty estate.
+ */
+export function parseGatewayDocument(
+  text: string,
+  vendor: string,
+  origin: string,
+): ParsedGatewayDocument {
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(text);
+  } catch (err) {
+    return {
+      diagnostics: [
+        {
+          level: "error",
+          code: `${vendor}/unparseable_export`,
+          message: `Could not parse ${vendor} gateway export: ${String(err)}`,
+          coordinate: { origin },
+        },
+      ],
+    };
+  }
+  if (parsed === undefined || parsed === null || String(text).trim().length === 0) {
+    return {
+      diagnostics: [
+        {
+          level: "error",
+          code: `${vendor}/empty_export`,
+          message: `The ${vendor} gateway export is empty.`,
+          coordinate: { origin },
+        },
+      ],
+    };
+  }
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {
+      diagnostics: [
+        {
+          level: "error",
+          code: `${vendor}/invalid_export`,
+          message: `The ${vendor} gateway export must be a mapping/object.`,
+          coordinate: { origin },
+        },
+      ],
+    };
+  }
+  return { document: parsed as Record<string, unknown>, diagnostics: [] };
+}
 
 /** Parse YAML/JSON as data; a syntax error becomes `undefined`, never a throw. */
 export function safeParseYaml(text: string): unknown {

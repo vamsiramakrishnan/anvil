@@ -1,16 +1,24 @@
 import {
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { type AirDocument, airFromJson } from "@anvil/air";
 import { type AgentDriver, ClaudeCodeAgentDriver } from "../case/driver.js";
+import { defaultExecutionPolicy } from "../case/execution-policy.js";
+import type { AgentProcessRunner } from "../case/process-runner.js";
 import { compareSeverity, type Deficiency, makeDeficiency } from "../deficiency.js";
 import {
   type DiscardedFinding,
@@ -47,6 +55,15 @@ export class ReviewOutputError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ReviewOutputError";
+  }
+}
+
+/** Bundle context contains a filesystem node that cannot be safely sent to a model. */
+export class ReviewContextSecurityError extends Error {
+  readonly code = "review/unsafe_context";
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ReviewContextSecurityError";
   }
 }
 
@@ -102,17 +119,99 @@ function contextTier(file: string): number | undefined {
   return undefined;
 }
 
-function walkFiles(dir: string): string[] {
+const REVIEW_CONTEXT_ROOTS = ["catalog.json", "air.json", "skill", "docs", "schemas"] as const;
+
+interface ContextRoot {
+  path: string;
+  real: string;
+}
+
+function contextRoot(dir: string): ContextRoot {
+  const path = resolve(dir);
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    throw new ReviewContextSecurityError(`Review bundle cannot be inspected: ${path}`, {
+      cause: error,
+    });
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new ReviewContextSecurityError(
+      `Review bundle must be a real directory, not a symlink or special node: ${path}`,
+    );
+  }
+  return { path, real: realpathSync(path) };
+}
+
+function assertContainedNode(root: ContextRoot, full: string, rel: string): string {
+  const real = realpathSync(full);
+  if (real !== root.real && !real.startsWith(`${root.real}${sep}`)) {
+    throw new ReviewContextSecurityError(
+      `Review context path escapes the bundle through the filesystem: ${rel}`,
+    );
+  }
+  return real;
+}
+
+function walkFiles(root: ContextRoot): string[] {
   const files: string[] = [];
   const walk = (rel: string): void => {
-    for (const entry of readdirSync(join(dir, rel), { withFileTypes: true })) {
+    const full = join(root.path, rel);
+    const stat = lstatSync(full);
+    if (stat.isSymbolicLink()) {
+      throw new ReviewContextSecurityError(`Review context refuses symbolic link: ${rel}`);
+    }
+    assertContainedNode(root, full, rel);
+    if (stat.isFile()) {
+      files.push(rel);
+      return;
+    }
+    if (!stat.isDirectory()) {
+      throw new ReviewContextSecurityError(
+        `Review context refuses non-regular filesystem node: ${rel}`,
+      );
+    }
+    for (const entry of readdirSync(full, { withFileTypes: true })) {
       const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
-      if (entry.isDirectory()) walk(childRel);
-      else files.push(childRel);
+      walk(childRel);
     }
   };
-  walk("");
+  for (const rel of REVIEW_CONTEXT_ROOTS) {
+    if (existsSync(join(root.path, rel))) walk(rel);
+  }
   return files;
+}
+
+function readContextFile(root: ContextRoot, rel: string): string {
+  const full = join(root.path, rel);
+  const before = lstatSync(full);
+  if (!before.isFile() || before.isSymbolicLink()) {
+    throw new ReviewContextSecurityError(
+      `Review context file is not a regular non-symlink file: ${rel}`,
+    );
+  }
+  assertContainedNode(root, full, rel);
+  const noFollow = "O_NOFOLLOW" in constants ? constants.O_NOFOLLOW : 0;
+  let fd: number;
+  try {
+    fd = openSync(full, constants.O_RDONLY | noFollow);
+  } catch (error) {
+    throw new ReviewContextSecurityError(`Review context file could not be opened safely: ${rel}`, {
+      cause: error,
+    });
+  }
+  try {
+    const after = fstatSync(fd);
+    if (!after.isFile() || after.dev !== before.dev || after.ino !== before.ino) {
+      throw new ReviewContextSecurityError(
+        `Review context file changed while it was being admitted: ${rel}`,
+      );
+    }
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
@@ -125,6 +224,7 @@ export function assembleReviewContext(
   air: AirDocument,
   limits: { maxFileChars?: number; maxTotalChars?: number } = {},
 ): ReviewContextFile[] {
+  const root = contextRoot(bundleDir);
   const maxFile = limits.maxFileChars ?? DEFAULT_MAX_FILE_CHARS;
   const maxTotal = limits.maxTotalChars ?? DEFAULT_MAX_TOTAL_CHARS;
   const approved = new Set(
@@ -137,7 +237,7 @@ export function assembleReviewContext(
     return m?.[1] !== undefined && approved.has(m[1]) ? 0 : 1;
   };
 
-  const candidates = walkFiles(bundleDir)
+  const candidates = walkFiles(root)
     .map((file) => ({ file, tier: contextTier(file) }))
     .filter((c): c is { file: string; tier: number } => c.tier !== undefined)
     .sort(
@@ -151,7 +251,7 @@ export function assembleReviewContext(
   let remaining = maxTotal;
   for (const { file } of candidates) {
     if (remaining <= 0) break;
-    const raw = readFileSync(join(bundleDir, file), "utf8");
+    const raw = readContextFile(root, file);
     const allowed = Math.min(maxFile, remaining);
     const truncated = raw.length > allowed;
     const text = truncated ? `${raw.slice(0, allowed)}\n… [truncated by anvil review]\n` : raw;
@@ -201,7 +301,14 @@ function materializeWorkspace(
   context: ReviewContextFile[],
   root?: string,
 ): string {
-  const dir = root ?? mkdtempSync(join(tmpdir(), "anvil-review-"));
+  const dir = root ? resolve(root) : mkdtempSync(join(tmpdir(), "anvil-review-"));
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const stat = lstatSync(dir);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new ReviewContextSecurityError(
+      `Review workspace must be a real directory, not a symlink or special node: ${dir}`,
+    );
+  }
   mkdirSync(join(dir, "output"), { recursive: true });
   for (const [rel, text] of Object.entries(generateReviewSop())) {
     const full = join(dir, "sop", rel);
@@ -273,29 +380,29 @@ function normalizeWs(s: string): string {
  * else is dropped and counted — never silently kept.
  */
 function groundFindings(
-  bundleDir: string,
+  _bundleDir: string,
   air: AirDocument,
   context: ReviewContextFile[],
   findings: ReviewFinding[],
 ): { kept: ReviewFinding[]; discarded: DiscardedFinding[] } {
-  const shown = new Set(context.map((c) => c.file));
+  const shown = new Map(
+    context.map((item) => [
+      item.file,
+      normalizeWs(item.text.replace(/\n… \[truncated by anvil review\]\n$/, "")),
+    ]),
+  );
   const opIds = new Set(air.operations.map((op) => op.id));
-  const fileCache = new Map<string, string>();
   const kept: ReviewFinding[] = [];
   const discarded: DiscardedFinding[] = [];
   for (const f of findings) {
-    if (!shown.has(f.evidence.file)) {
+    const text = shown.get(f.evidence.file);
+    if (text === undefined) {
       discarded.push({ id: f.id, reason: `cites '${f.evidence.file}', not a reviewed file` });
       continue;
     }
     if (f.opId !== undefined && !opIds.has(f.opId)) {
       discarded.push({ id: f.id, reason: `names unknown operation '${f.opId}'` });
       continue;
-    }
-    let text = fileCache.get(f.evidence.file);
-    if (text === undefined) {
-      text = normalizeWs(readFileSync(join(bundleDir, f.evidence.file), "utf8"));
-      fileCache.set(f.evidence.file, text);
     }
     if (!text.includes(normalizeWs(f.evidence.excerpt))) {
       discarded.push({ id: f.id, reason: `excerpt not found in '${f.evidence.file}'` });
@@ -345,48 +452,54 @@ export async function runArtifactReview(
   options: ArtifactReviewOptions = {},
 ): Promise<ReviewReport> {
   const startedAt = (options.now ?? (() => new Date().toISOString()))();
-  const airPath = join(bundleDir, "air.json");
+  const root = contextRoot(bundleDir);
+  const airPath = join(root.path, "air.json");
   if (!existsSync(airPath)) {
     throw new Error(`No air.json in ${bundleDir} — not a generated bundle. Run \`anvil compile\`.`);
   }
-  const air = airFromJson(readFileSync(airPath, "utf8"));
-  const context = assembleReviewContext(bundleDir, air, options);
+  const air = airFromJson(readContextFile(root, "air.json"));
+  const context = assembleReviewContext(root.path, air, options);
   const dir = materializeWorkspace(air, context, options.workspaceRoot);
+  const ownsWorkspace = options.workspaceRoot === undefined;
 
-  await runDriver(driver, dir);
-  let parsed = readModelOutput(dir);
-  if (!parsed.ok) {
-    // One repair pass: tell the model exactly what was wrong, then re-drive.
-    writeRepairBrief(dir, air, context, parsed.error);
-    rmSync(join(dir, OUTPUT_FILE), { force: true });
+  try {
     await runDriver(driver, dir);
-    parsed = readModelOutput(dir);
+    let parsed = readModelOutput(dir);
     if (!parsed.ok) {
-      throw new ReviewOutputError(
-        `reviewer output failed to parse after one repair attempt: ${parsed.error}`,
-      );
+      // One repair pass: tell the model exactly what was wrong, then re-drive.
+      writeRepairBrief(dir, air, context, parsed.error);
+      rmSync(join(dir, OUTPUT_FILE), { force: true });
+      await runDriver(driver, dir);
+      parsed = readModelOutput(dir);
+      if (!parsed.ok) {
+        throw new ReviewOutputError(
+          `reviewer output failed to parse after one repair attempt: ${parsed.error}`,
+        );
+      }
     }
+
+    const { kept, discarded } = groundFindings(root.path, air, context, parsed.output.findings);
+    const findings = kept
+      .slice()
+      .sort((a, b) => compareSeverity(a.severity, b.severity) || a.id.localeCompare(b.id));
+
+    return ReviewReport.parse({
+      schemaVersion: REVIEW_SCHEMA_VERSION,
+      bundle: {
+        dir: bundleDir,
+        serviceId: air.service.id,
+        serviceVersion: air.service.version,
+      },
+      model: options.model ?? driver.name,
+      startedAt,
+      findings,
+      discarded,
+      summary: summarize(findings),
+      reviewerNotes: parsed.output.reviewerNotes,
+    });
+  } finally {
+    if (ownsWorkspace) rmSync(dir, { recursive: true, force: true });
   }
-
-  const { kept, discarded } = groundFindings(bundleDir, air, context, parsed.output.findings);
-  const findings = kept
-    .slice()
-    .sort((a, b) => compareSeverity(a.severity, b.severity) || a.id.localeCompare(b.id));
-
-  return ReviewReport.parse({
-    schemaVersion: REVIEW_SCHEMA_VERSION,
-    bundle: {
-      dir: bundleDir,
-      serviceId: air.service.id,
-      serviceVersion: air.service.version,
-    },
-    model: options.model ?? driver.name,
-    startedAt,
-    findings,
-    discarded,
-    summary: summarize(findings),
-    reviewerNotes: parsed.output.reviewerNotes,
-  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -429,14 +542,18 @@ export interface ReviewDriverOptions {
   command?: string;
   /** The reviewer model flag value (default `haiku` — the cheap class). */
   model?: string;
+  /** Explicit consent to native execution without a filesystem sandbox. */
+  allowDegradedNative?: boolean;
+  /** Test seam; production uses the ordinary async process runner. */
+  runner?: AgentProcessRunner;
 }
 
 /**
- * The default reviewer: the Claude Code CLI on a Haiku-class model. Degraded
- * native execution is accepted here by construction: the review workspace
- * contains only Anvil-authored excerpts of a local bundle, the run is invoked
- * explicitly by `anvil review`, and nothing the reviewer writes is trusted —
- * output is schema-parsed and mechanically re-grounded before use.
+ * The default reviewer: the Claude Code CLI on a Haiku-class model. Native
+ * execution is refused unless the operator explicitly accepts its missing
+ * filesystem containment. Even then, HOME/XDG/TMPDIR are isolated inside the
+ * disposable review workspace and only the named Claude credential variables
+ * are inherited.
  */
 export function haikuReviewDriver(options: ReviewDriverOptions = {}): ClaudeCodeAgentDriver {
   return new ClaudeCodeAgentDriver({
@@ -444,6 +561,8 @@ export function haikuReviewDriver(options: ReviewDriverOptions = {}): ClaudeCode
     // acceptEdits (not skip-permissions): the reviewer must be able to deposit
     // output/review.json headlessly, but gets no blanket execution consent.
     extraArgs: ["--model", options.model ?? "haiku", "--permission-mode", "acceptEdits"],
-    allowDegradedNative: true,
+    policy: { ...defaultExecutionPolicy("claude-code"), home: "isolated" },
+    allowDegradedNative: options.allowDegradedNative === true,
+    runner: options.runner,
   });
 }

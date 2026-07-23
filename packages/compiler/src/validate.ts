@@ -1,4 +1,4 @@
-import type { Diagnostic, Operation } from "@anvil/air";
+import { type Diagnostic, type Operation, resolveIdempotencyCarrier } from "@anvil/air";
 
 export interface ValidationResult {
   operations: Operation[];
@@ -37,6 +37,27 @@ export function validate(operations: Operation[]): ValidationResult {
     if (seenCommands.has(op.cli.command))
       flag("error", "duplicate_cli_command", `Duplicate CLI command '${op.cli.command}'.`);
     seenCommands.add(op.cli.command);
+
+    const carrier = resolveIdempotencyCarrier(op);
+    if (!carrier.ok) {
+      flag(
+        "error",
+        "unsupported_idempotency_carrier",
+        `Operation '${op.id}' cannot prove its upstream idempotency carrier: ${carrier.issue}.`,
+      );
+      notes.push(
+        `Blocked: the declared idempotency key cannot be injected into an exact modeled request coordinate (${carrier.issue}).`,
+      );
+      op.retries = {
+        ...op.retries,
+        mode: "none",
+        basis: "unproven",
+        maxAttempts: 1,
+        backoff: "none",
+        retryOn: [],
+      };
+      op.state = "blocked";
+    }
 
     // Every unsafe operation must have a coherent idempotency + retry posture.
     if (op.effect.kind === "mutation") {

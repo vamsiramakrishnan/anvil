@@ -1,39 +1,30 @@
 /**
  * The connector "plan" — the intuitive, copy-paste-first guide the CLI shows after
  * generating a Gemini Enterprise kit. It turns the profile + what the operator
- * supplied (endpoint, project, engine, IdP) into a sequenced, sectioned plan:
+ * supplied in the validated target config into a sequenced, sectioned plan:
  * what Anvil already did, what the operator RUNS, and what is CONSOLE-only
  * (interactive) — each console step with a pre-assembled deep link and aligned
- * copy-paste fields, plus identity/WIF guidance for where the OAuth client lives.
+ * copy-paste fields, plus separate connector-OAuth and GE Workforce guidance.
  *
  * Pure and deterministic (no I/O, no timestamps) so it is testable and can be
  * rendered as text or JSON.
  */
 import type { AirDocument } from "@anvil/air";
+import {
+  connectorOAuthEndpoints,
+  connectorScopes,
+  type GeminiEnterpriseTargetConfig,
+  type GeminiRegistrationSurface,
+  includesSurface,
+} from "./config.js";
 import type { AgentPlatformTargetProfile } from "./model.js";
-
-export type IdpChoice = "google" | "entra" | "okta" | "other";
-
-export interface ConnectorPlanOptions {
-  endpoint?: string;
-  project?: string;
-  location?: string;
-  engine?: string;
-  gatewayLocation?: string;
-  /** The IdP the GE end users authenticate with — decides where the OAuth client lives. */
-  idp?: IdpChoice;
-  /** Entra/Okta tenant id or Okta domain, when known. */
-  tenant?: string;
-  /** A Workforce Identity Federation pool, when GE sign-in is federated. */
-  wifPool?: string;
-}
 
 export interface CopyField {
   label: string;
   value: string;
 }
 export interface ConsoleStep {
-  surface: "data-connector" | "agent-registry";
+  surface: Exclude<GeminiRegistrationSurface, "both">;
   action: string;
   /** Pre-assembled console deep link (best-effort; the breadcrumb in `where` guides the rest). */
   url: string;
@@ -58,6 +49,7 @@ export interface ConnectorPlan {
   service: string;
   toolCount: number;
   actionBudget: number;
+  selectedSurface: GeminiRegistrationSurface | "";
   surfaces: { id: string; label: string; when: string }[];
   identity: IdentityGuidance;
   run: RunStep[];
@@ -66,68 +58,83 @@ export interface ConnectorPlan {
 
 const REDIRECT_URI = "https://vertexaisearch.cloud.google.com/oauth-redirect";
 
-function slug(air: AirDocument): string {
-  return air.service.id.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-/** The GE console deep link for the app/engine, when we know project + engine. */
-function consoleUrl(o: ConnectorPlanOptions): string {
-  const loc = o.location ?? "global";
-  if (o.project && o.engine) {
-    const engineId = o.engine.split("/").pop();
-    return `https://console.cloud.google.com/gemini-enterprise/locations/${loc}/engines/${engineId}/data?project=${o.project}`;
+/** The GE console deep link for the app/engine. */
+function consoleUrl(config: GeminiEnterpriseTargetConfig): string {
+  if (config.project && config.engine && config.appLocation) {
+    const engineId = config.engine.split("/").pop();
+    return `https://console.cloud.google.com/gemini-enterprise/locations/${config.appLocation}/engines/${engineId}/data?project=${config.project}`;
   }
   return "https://console.cloud.google.com/gemini-enterprise (open your app)";
 }
 
-function identityGuidance(o: ConnectorPlanOptions): IdentityGuidance {
-  const idp = o.idp;
-  const wifNote = o.wifPool
+function identityGuidance(config: GeminiEnterpriseTargetConfig): IdentityGuidance {
+  const provider = config.connectorOAuth.provider;
+  const endpoints = connectorOAuthEndpoints(config);
+  const workforceNote = config.workforcePool
     ? [
-        `GE sign-in is federated via Workforce pool ${o.wifPool}: the OAuth client for the UPSTREAM still lives at the source IdP below, but the token GE presents to /mcp is the federated identity — set the server's ANVIL_INBOUND_ISSUER/AUDIENCE to that federated issuer/audience, not the raw IdP.`,
+        `GE sign-in uses Workforce pool ${config.workforcePool}. This controls access to Gemini Enterprise; it does not choose the OAuth token accepted by /mcp.`,
       ]
     : [
-        "If GE sign-in is federated (Workforce Identity Federation), re-run with --wif <pool>: it changes which issuer/audience the server validates inbound.",
+        "If GE sign-in uses Workforce Identity Federation, record it with --wif <pool>; connector OAuth remains a separate configuration.",
       ];
-  const base = { resolved: idp !== undefined && idp !== "other", redirectUri: REDIRECT_URI };
-  switch (idp) {
+  if (config.serverAuth === "no-auth") {
+    return {
+      resolved: true,
+      summary:
+        "MCP server auth: explicitly unauthenticated. Gemini Enterprise sign-in does not protect the public /mcp endpoint.",
+      redirectUri: "(not used)",
+      authUri: "(not used)",
+      tokenUri: "(not used)",
+      createClientWhere: "(no OAuth client)",
+      notes: workforceNote,
+    };
+  }
+  const base = {
+    resolved:
+      provider !== undefined &&
+      provider !== "google" &&
+      (provider !== "other" ||
+        Boolean(config.connectorOAuth.authorizationUrl && config.connectorOAuth.tokenUrl)),
+    redirectUri: REDIRECT_URI,
+    authUri: endpoints.authUri,
+    tokenUri: endpoints.tokenUri,
+    createClientWhere: endpoints.createClientWhere,
+    notes: workforceNote,
+  };
+  switch (provider) {
     case "google":
       return {
         ...base,
-        summary: "OAuth client: Google Cloud (the GE end users are Google identities).",
-        authUri: "https://accounts.google.com/o/oauth2/v2/auth",
-        tokenUri: "https://oauth2.googleapis.com/token",
-        createClientWhere: `Cloud Console → APIs & Services → Credentials → Create OAuth client ID → Web application${o.project ? ` (project ${o.project})` : ""}`,
-        notes: wifNote,
+        summary:
+          "Unsupported connector OAuth client: Google access tokens may be opaque, but the generated server currently validates JWTs only.",
       };
     case "entra":
       return {
         ...base,
-        summary: "OAuth client: Microsoft Entra app registration (GE users are Entra identities).",
-        authUri: `https://login.microsoftonline.com/${o.tenant ?? "<tenant>"}/oauth2/v2.0/authorize`,
-        tokenUri: `https://login.microsoftonline.com/${o.tenant ?? "<tenant>"}/oauth2/v2.0/token`,
-        createClientWhere: `Entra admin center → App registrations → New registration (single-tenant), redirect URI = ${REDIRECT_URI}, add Graph delegated scopes`,
-        notes: wifNote,
+        summary:
+          "Connector OAuth client: Microsoft Entra. Expose and request a scope for this MCP API, not Microsoft Graph.",
       };
     case "okta":
       return {
         ...base,
-        summary: "OAuth client: Okta application (GE users are Okta identities).",
-        authUri: `https://${o.tenant ?? "<your-okta-domain>"}/oauth2/v1/authorize`,
-        tokenUri: `https://${o.tenant ?? "<your-okta-domain>"}/oauth2/v1/token`,
-        createClientWhere: `Okta admin → Applications → Create App Integration → OIDC Web, redirect URI = ${REDIRECT_URI}`,
-        notes: wifNote,
+        summary: "Connector OAuth client: Okta. Request a scope whose audience is this MCP API.",
+      };
+    case "other":
+      return {
+        ...base,
+        summary:
+          "Connector OAuth client: explicit authorization server. Both HTTPS endpoints must be operator-supplied.",
       };
     default:
       return {
         ...base,
         resolved: false,
         summary:
-          "Identity not specified. Re-run with --idp google|entra|okta (+ --tenant, and --wif <pool> if GE sign-in is federated) so Anvil fills the OAuth endpoints and tells you exactly where to create the client.",
-        authUri: "<your IdP authorize endpoint>",
-        tokenUri: "<your IdP token endpoint>",
-        createClientWhere: "your IdP (decided by how GE end users sign in)",
-        notes: wifNote,
+          "Connector OAuth provider not specified. --idp describes the authorization server protecting /mcp, not how users sign in to Gemini Enterprise.",
       };
   }
 }
@@ -136,67 +143,161 @@ function identityGuidance(o: ConnectorPlanOptions): IdentityGuidance {
 export function buildConnectorPlan(
   air: AirDocument,
   profile: AgentPlatformTargetProfile,
-  o: ConnectorPlanOptions = {},
+  config: GeminiEnterpriseTargetConfig,
 ): ConnectorPlan {
   const dir = `<bundle>/targets/${profile.id}`;
   const toolCount = air.operations.filter((op) => op.state === "approved").length;
-  const id = identityGuidance(o);
-  const server = o.endpoint ?? "<deploy first — anvil deploy cloud-run>";
-  const scopes =
-    o.idp === "entra" ? "User.Read openid profile email offline_access" : "openid email profile";
-
-  const run: RunStep[] = [
-    { step: "Deploy the StreamableHTTP MCP server (public HTTPS)", command: "anvil deploy cloud-run <bundle>" },
-    {
-      step: "Surface B — register into Agent Registry + bind the gateway (programmatic)",
-      command: `bash ${dir}/agent-registry/register.sh`,
-    },
-    {
-      step: "Surface A — POST the DataConnector body (creates the record; finish in console)",
-      command: `bash ${dir}/registration.curl.sh`,
-    },
-  ];
-
-  const url = consoleUrl(o);
-  const console: ConsoleStep[] = [
-    {
-      surface: "data-connector",
-      action: "Create the Custom MCP Server data store, then click Authorize",
-      url,
-      where: "GE app → Data stores → + New data store → Custom MCP Server → (fill) → Authorize",
-      why: "The OAUTH consent is interactive; the API creates the record but cannot complete the user consent.",
-      copy: [
-        { label: "MCP Server URL", value: server },
-        { label: "Auth type", value: "OAuth" },
+  const id = identityGuidance(config);
+  const scopes = connectorScopes(config).join(" ");
+  const oauth = config.serverAuth === "oauth";
+  const authCopy: CopyField[] = oauth
+    ? [
+        { label: "Auth type", value: "OAuth 2.0" },
         { label: "Authorization URL", value: id.authUri },
         { label: "Token URL", value: id.tokenUri },
-        { label: "Authorization params", value: "access_type=offline&prompt=consent" },
         { label: "Scopes", value: scopes },
+        {
+          label: "MCP API audience",
+          value: config.connectorOAuth.inboundAudience ?? "<audience-for-this-mcp-api>",
+        },
+        { label: "Protected resource URL", value: config.endpoint },
         { label: "Redirect URI (register on the client)", value: id.redirectUri },
         { label: "Client ID / secret", value: `create at: ${id.createClientWhere}` },
-      ],
+      ]
+    : [{ label: "Auth type", value: "No authentication (explicitly acknowledged)" }];
+
+  const run: RunStep[] = [
+    {
+      step: "Certify the bundle including its target and deployment inputs",
+      command: "anvil certify <bundle>",
     },
     {
-      surface: "agent-registry",
-      action: "Import the registered MCP server into the app",
-      url,
-      where: "GE app → Connected data stores → + New data store → MCP servers → Show all → Add tool",
-      why: "Importing a registry MCP server into a GE app is console-only (no public API).",
-      copy: [
-        { label: "Find it under", value: `MCP servers → "${air.service.displayName ?? air.service.id} (MCP)"` },
-        { label: "Registered as", value: `${slug(air)}-mcp in ${o.gatewayLocation ?? "us-central1"} (run register.sh first)` },
-        { label: "Auth", value: o.idp ? "OAuth (same values as the DataConnector step)" : "OAuth or No authentication" },
-      ],
+      step: "Validate inputs, copy the module externally, initialize remote state, and create the reviewed plan",
+      command: `set -euo pipefail
+export ANVIL_BUNDLE_DIR="$(cd <bundle> && pwd -P)"
+: "\${ANVIL_TF_WORK_DIR:?Set an absolute empty directory outside the bundle}"
+: "\${ANVIL_TF_STATE_BUCKET:?Set the existing GCS Terraform state bucket}"
+: "\${TF_VAR_image_tag:?Set the immutable container image tag}"
+export ANVIL_TF_STATE_PREFIX=${shellQuote(`anvil/${air.service.id}-tools`)}
+export TF_VAR_project_id=${shellQuote(config.project)}
+if [[ "$ANVIL_TF_WORK_DIR" != /* ]]
+then
+  echo "ANVIL_TF_WORK_DIR must be absolute" >&2
+  exit 1
+fi
+install -d -m 700 "$ANVIL_TF_WORK_DIR"
+export ANVIL_TF_WORK_DIR="$(cd "$ANVIL_TF_WORK_DIR" && pwd -P)"
+if [[ "$ANVIL_TF_WORK_DIR/" == "$ANVIL_BUNDLE_DIR/"* ]]
+then
+  echo "ANVIL_TF_WORK_DIR must be outside the bundle" >&2
+  exit 1
+fi
+if [[ -n "$(find "$ANVIL_TF_WORK_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+then
+  echo "ANVIL_TF_WORK_DIR must be empty" >&2
+  exit 1
+fi
+cp -R "$ANVIL_BUNDLE_DIR/deploy/terraform/." "$ANVIL_TF_WORK_DIR/"
+terraform -chdir="$ANVIL_TF_WORK_DIR" init -input=false \\
+  -backend-config="bucket=$ANVIL_TF_STATE_BUCKET" \\
+  -backend-config="prefix=$ANVIL_TF_STATE_PREFIX"
+terraform -chdir="$ANVIL_TF_WORK_DIR" plan -input=false \\
+  -var-file="$ANVIL_BUNDLE_DIR/targets/gemini-enterprise/terraform/cloud-run.tfvars" \\
+  -out="$ANVIL_TF_WORK_DIR/tfplan"`,
     },
+    {
+      step: "After review, apply the external plan to deploy the StreamableHTTP MCP server",
+      command: `set -euo pipefail
+: "\${ANVIL_TF_WORK_DIR:?Set the external Terraform work directory used for plan}"
+terraform -chdir="$ANVIL_TF_WORK_DIR" apply "$ANVIL_TF_WORK_DIR/tfplan"`,
+    },
+    ...(includesSurface(config, "agent-gateway")
+      ? [
+          {
+            step: "Initialize the external readiness record; this stops before provider reads or mutations",
+            command: `ANVIL_STATE_DIR=/absolute/external/state ANVIL_RECONCILE_REGISTRY_GATEWAY=1 ANVIL_CONFIRM_REGISTRY_GATEWAY_RECONCILE=1 bash ${dir}/agent-registry/register.sh`,
+          },
+          {
+            step: "After independently verifying readiness.json, reconcile and read back the registry/gateway without binding the engine",
+            command: `ANVIL_STATE_DIR=/absolute/external/state ANVIL_RECONCILE_REGISTRY_GATEWAY=1 ANVIL_CONFIRM_REGISTRY_GATEWAY_RECONCILE=1 bash ${dir}/agent-registry/register.sh`,
+          },
+          {
+            step: "After reviewing the reconciliation evidence, bind engine egress as a separate final mutation",
+            command: `ANVIL_STATE_DIR=/absolute/external/state ANVIL_CONFIRM_ENGINE_EGRESS_REROUTE=1 bash ${dir}/agent-registry/register.sh`,
+          },
+        ]
+      : []),
+  ];
+
+  const url = consoleUrl(config);
+  const console: ConsoleStep[] = [
+    ...(includesSurface(config, "custom-mcp")
+      ? [
+          {
+            surface: "custom-mcp" as const,
+            action: oauth
+              ? "Create the Custom MCP Server data store in the console, then authorize"
+              : "Create the Custom MCP Server data store in the console",
+            url,
+            where:
+              "GE app → Data stores → + New data store → Custom MCP Server → Verify Auth → Create",
+            why: oauth
+              ? "The supported happy path is console-first; the reference setUpDataConnector request is experimental and cannot complete OAuth consent."
+              : "The supported happy path is console-first; no-auth leaves the public MCP URL unprotected.",
+            copy: [{ label: "MCP Server URL", value: config.endpoint }, ...authCopy],
+          },
+        ]
+      : []),
+    ...(includesSurface(config, "agent-gateway")
+      ? [
+          {
+            surface: "agent-gateway" as const,
+            action: "Import the registered MCP server into the app",
+            url,
+            where:
+              "GE app → Connected data stores → + New data store → MCP servers → Show all → Add tool",
+            why: oauth
+              ? "Importing a registry MCP server into a GE app is console-only; server OAuth remains separate from gateway IAP."
+              : "Importing a registry MCP server is console-only; gateway governance does not add bearer-token validation at /mcp.",
+            copy: [
+              {
+                label: "Find it under",
+                value: `MCP servers → "${air.service.displayName ?? air.service.id} (MCP)"`,
+              },
+              {
+                label: "Registered as",
+                value: `the SERVICE id recorded in agent-registry/register.sh (${config.registryLocation})`,
+              },
+              {
+                label: "Auth",
+                value: oauth
+                  ? "OAuth 2.0 using the connector values above"
+                  : "No authentication (explicitly acknowledged)",
+              },
+              { label: "MCP Server URL", value: config.endpoint },
+              ...(oauth ? [{ label: "Scopes", value: scopes }] : []),
+            ],
+          },
+        ]
+      : []),
   ];
 
   return {
     service: air.service.displayName ?? air.service.id,
     toolCount,
     actionBudget: profile.actionLimits.maxActions,
+    selectedSurface: config.surface,
     surfaces: [
-      { id: "data-connector", label: "Custom MCP DataConnector", when: "quick, standalone data store; OAuth consent is one console click" },
-      { id: "agent-registry", label: "Agent Registry + Agent Gateway", when: "programmatic + gateway-governed; the import is one console click" },
+      {
+        id: "custom-mcp",
+        label: "Custom MCP DataConnector",
+        when: "quick, standalone data store; OAuth setup is console-first",
+      },
+      {
+        id: "agent-gateway",
+        label: "Agent Registry + Agent Gateway",
+        when: "gateway-governed; engine egress binding requires explicit confirmation",
+      },
     ],
     identity: id,
     run,
@@ -207,12 +308,15 @@ export function buildConnectorPlan(
 /** Render the plan as the intuitive, copy-paste-first CLI output. */
 export function renderConnectorPlanText(plan: ConnectorPlan): string {
   const L: string[] = [];
-  L.push(`\nConnect "${plan.service}" to Gemini Enterprise — ${plan.toolCount} tool(s), budget ${plan.actionBudget}.`);
+  L.push(
+    `\nConnect "${plan.service}" to Gemini Enterprise — ${plan.toolCount} tool(s), budget ${plan.actionBudget}.`,
+  );
 
-  L.push("\nChoose a registration surface:");
+  L.push(`\nSelected registration surface: ${plan.selectedSurface}.`);
+  L.push("Available surfaces:");
   for (const s of plan.surfaces) L.push(`  • ${s.label} — ${s.when}`);
 
-  L.push("\nIdentity (where the OAuth client lives):");
+  L.push("\nMCP server authentication (separate from Gemini Enterprise sign-in identity):");
   L.push(`  ${plan.identity.resolved ? "✓" : "?"} ${plan.identity.summary}`);
   if (plan.identity.resolved) L.push(`      create at: ${plan.identity.createClientWhere}`);
   for (const n of plan.identity.notes) L.push(`      note: ${n}`);
@@ -233,6 +337,8 @@ export function renderConnectorPlanText(plan: ConnectorPlan): string {
     for (const f of c.copy) L.push(`        ${f.label.padEnd(w)}  ${f.value}`);
     L.push(`      why:   ${c.why}`);
   }
-  L.push("\n(Run with --json for this plan as structured data; see the skill's reference/gemini-enterprise.md.)");
+  L.push(
+    "\n(Run with --json for this plan as structured data; see the skill's reference/gemini-enterprise.md.)",
+  );
   return `${L.join("\n")}\n`;
 }

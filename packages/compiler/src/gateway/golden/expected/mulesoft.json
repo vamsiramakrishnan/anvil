@@ -13,7 +13,7 @@
           "idempotency": "none",
           "confirmation": true,
           "scopes": ["customers:write"],
-          "state": "review_required"
+          "state": "blocked"
         },
         {
           "id": "customer_api.customers.list",
@@ -24,11 +24,11 @@
           "idempotency": "natural",
           "confirmation": false,
           "scopes": [],
-          "state": "generated"
+          "state": "blocked"
         }
       ],
       "opaque": ["gateway/opaque_policy: /apis/0/policies/2"],
-      "diagnostics": 2
+      "diagnostics": 5
     }
   ]
 }

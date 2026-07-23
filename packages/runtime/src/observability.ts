@@ -22,7 +22,7 @@ export interface ExecutionRecord {
   policyDecisions: string[];
   confirmationRequired: boolean;
   confirmed: boolean;
-  ledger?: "reserved" | "replay" | "in_progress" | "none";
+  ledger?: "reserved" | "replay" | "in_progress" | "conflict" | "none";
 }
 
 /** Sink for execution records. Wire this to OTel/Cloud Trace in production. */

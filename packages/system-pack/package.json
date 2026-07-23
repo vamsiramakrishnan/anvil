@@ -18,7 +18,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --root ../..",
+    "test": "vitest run --root ../.. packages/system-pack/src",
     "clean": "rm -rf dist"
   },
   "dependencies": {

@@ -6,7 +6,7 @@
  * normalization. A check that has no applicable operation is a pass with a note,
  * so certification generalizes across contracts.
  */
-import { type AirDocument, ErrorCode, type Operation } from "@anvil/air";
+import { type AirDocument, ErrorCode, type Operation, resolveIdempotencyCarrier } from "@anvil/air";
 import { surfaceSignatureFor } from "@anvil/compiler";
 import { type SimResult, Simulator, simulatorDefinitionFor } from "@anvil/simulator";
 import { type AgentSystemPack, type PackContents, verifyPack } from "@anvil/system-pack";
@@ -50,6 +50,30 @@ export function staticChecks(
   // A blocked operation must never be approved.
   const blockedApproved = air.operations.some((o) => o.state === "blocked" && approved.has(o.id));
   checks.push(check("static/no_blocked_approved", "static", !blockedApproved));
+
+  // A keyed retry claim is certifiable only when the runtime can place the key
+  // in an exact modeled upstream request coordinate.
+  const invalidCarriers = air.operations
+    .filter((operation) => operation.state === "approved")
+    .map((operation) => ({ operation, carrier: resolveIdempotencyCarrier(operation) }))
+    .filter(
+      (
+        entry,
+      ): entry is {
+        operation: Operation;
+        carrier: { ok: false; issue: string };
+      } => !entry.carrier.ok,
+    );
+  checks.push(
+    check(
+      "static/idempotency_carriers_supported",
+      "static",
+      invalidCarriers.length === 0,
+      invalidCarriers
+        .map(({ operation, carrier }) => `${operation.id}: ${carrier.issue}`)
+        .join("; "),
+    ),
+  );
 
   if (pack) {
     const verify = verifyPack(pack.pack, pack.contents);

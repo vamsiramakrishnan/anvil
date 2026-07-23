@@ -6,22 +6,26 @@ sidebar:
 ---
 
 **What you'll have at the end:** a clear picture of what `anvil estate` reads
-from a gateway estate — the catalog of APIs behind your gateway — the exact
-document each of the five adapters expects, and a working import you can run
-right now with no gateway account.
+from a gateway estate, the exact document each adapter expects, and a verified
+bundle that locks the original OpenAPI/Swagger contract together with the
+gateway export and public runtime URL.
 
 ## First, the question everyone asks: is Anvil talking to my gateway?
 
-**No.** Anvil never connects to your gateway. There is no URL, no admin-API
-token, no live discovery, no process sitting next to Apigee polling it. `anvil
-estate` reads a **file on disk** — a config document you exported, or a ZIP/JAR
-containing one — parses it offline, and compiles it. The adapters are pure
-parsers; they hold no credentials and open no sockets.
+**No management-plane connection.** Anvil needs no admin URL, admin-API token,
+live discovery, or process sitting next to Apigee polling it. `anvil estate`
+reads a **file on disk** — a config document you exported, or a ZIP/JAR
+containing one — and parses it offline. The adapters are pure parsers; they hold
+no credentials and open no sockets.
 
-So the flow is always two steps, both under your control:
+The production flow has four inputs, all under your control:
 
 1. **Export** your APIs from the gateway, using the gateway's own tooling, to a file.
-2. **Point `anvil estate` at that file.**
+2. **Locate the original OpenAPI/Swagger** for the one API you want to adopt.
+3. **Attest the public HTTPS gateway URL** that generated calls must traverse.
+   This runtime URL is written into the bundle; Anvil does not call it during
+   import.
+4. **Point `anvil estate` at the two files.**
 
 That's the whole model. The rest of this page is what that file has to look
 like, and how to produce it for each vendor.
@@ -53,8 +57,10 @@ mapping gap is never a silent one.
 
 ## Try it now — no gateway required
 
-This is the whole thing end to end: write a tiny Kong estate, list it, and
-import one API into a real, approval-gated bundle. No account, no network.
+This is the whole thing end to end: write a tiny Kong estate and its real API
+contract, list the estate, import one API, find its locked source and private
+receipt, and verify the chain. The example runtime URL is an attestation only:
+no account or network is used.
 
 ```bash
 # [docs-tested]
@@ -66,26 +72,86 @@ services:
     url: https://backend.internal/refunds
     routes:
       - name: refunds-route
-        paths: ["/refunds"]
-        methods: ["GET", "POST"]
+        paths: ["/refunds/{id}"]
+        methods: ["GET"]
     plugins:
       - name: openid-connect
-        config: { scopes: ["refunds:write"] }
+        config: { scopes: ["refunds:read"] }
       - name: rate-limiting
         config: { minute: 100 }
 YAML
+cat > "$WORK/openapi.yaml" <<'YAML'
+openapi: 3.0.3
+info: { title: Refunds, version: 1.0.0 }
+components:
+  securitySchemes:
+    enterprise_oidc:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://idp.example.test/oauth/token
+          scopes:
+            refunds:read: Read refunds
+security:
+  - enterprise_oidc: [refunds:read]
+paths:
+  /refunds/{id}:
+    get:
+      operationId: fetchRefund
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+YAML
 # List the estate — this reads the file, nothing else:
 node packages/cli/dist/bin-anvil.js estate inventory "$WORK/kong.yaml" --vendor kong
-# Import the one API into a normal Anvil bundle (its POST lands review_required):
+# Import the API with its full contract and an attested gateway runtime:
 node packages/cli/dist/bin-anvil.js estate import "$WORK/kong.yaml" \
-  --vendor kong --api refunds --out "$WORK/refunds"
+  --vendor kong --api refunds \
+  --spec "$WORK/openapi.yaml" \
+  --gateway-url https://gateway.example.test \
+  --root "$WORK" \
+  --out "$WORK/refunds" \
+  --json > "$WORK/import.json"
+
+# The report tells you exactly where the locked spec and private receipt live.
+IMPORT_ID="$(node -e 'const r=require(process.argv[1]); process.stdout.write(r.receipt.importId)' "$WORK/import.json")"
+LOCKED_DIR="$(node -e 'const r=require(process.argv[1]); process.stdout.write(r.source.lock.directory)' "$WORK/import.json")"
+ENTRYPOINT="$(node -e 'const r=require(process.argv[1]); process.stdout.write(r.source.lock.entrypoint)' "$WORK/import.json")"
+RECEIPT_DIR="$(node -e 'const r=require(process.argv[1]); process.stdout.write(r.receipt.directory)' "$WORK/import.json")"
+test -f "$LOCKED_DIR/raw/$ENTRYPOINT"
+test -f "$RECEIPT_DIR/import.receipt.json"
+test -f "$RECEIPT_DIR/raw/export.bin"
+
+# Verify the receipt, exact export, locked contract, and receipt-scoped bundle.
+node packages/cli/dist/bin-anvil.js estate verify "$IMPORT_ID" \
+  --root "$WORK" \
+  --bundle "$WORK/refunds"
 test -f "$WORK/refunds/catalog.json"
 rm -rf "$WORK"
 ```
 
-The commands below swap in your real export. Every `import` produces an ordinary
-bundle whose risky operations land `review_required` until you approve them —
-the same gate every spec goes through.
+The commands below swap in your real export. For production onboarding, add the
+same `--spec`, `--gateway-url`, and `--root` flags to every vendor example.
+Without `--spec`, Anvil emits an assessment-only route contract and blocks every
+operation because routes alone do not prove request, response, or authentication
+semantics.
+
+## Where Anvil puts the evidence
+
+For the command above:
+
+| Evidence | Location |
+| --- | --- |
+| Locked OpenAPI/Swagger | `$WORK/.anvil/sources/<snapshot-id>/raw/<entrypoint>` |
+| Immutable private receipt | `$WORK/.anvil/imports/<import-id>/import.receipt.json` |
+| Exact original export bytes | `$WORK/.anvil/imports/<import-id>/raw/export.bin` |
+| Redacted receipt pointer | `$WORK/refunds/import.receipt.json` |
+
+The JSON import report prints the concrete ids, hashes, and directories. Keep
+using the same `--root` when you verify from another working directory. The
+private receipt is secret-free, but `raw/export.bin` is deliberately the exact
+operator-supplied export and can contain customer configuration; protect the
+`.anvil/imports` tree accordingly.
 
 ## Kong
 
@@ -96,7 +162,9 @@ point Anvil straight at the file.
 ```bash
 deck gateway dump -o kong.yaml            # run by you, against your Kong Gateway
 anvil estate inventory kong.yaml --vendor kong
-anvil estate import kong.yaml --vendor kong --api refunds --out generated/refunds
+anvil estate import kong.yaml --vendor kong --api refunds \
+  --spec refunds.openapi.yaml --gateway-url https://api.example.com/refunds \
+  --root "$PWD" --out generated/refunds
 ```
 
 The shape (top-level `services[]`, each with `routes[]` and `plugins[]`):
@@ -130,7 +198,9 @@ WSO2 is the other near-native case. The WSO2 [API Controller](https://apim.docs.
 # Export from your API-M environment (note: `export api`, not the deprecated `export-api`)
 apictl export api --name OrderService --version 1.0.0 --provider platform-team --environment prod
 # Feed the api.yaml, or the whole zip and name the entry:
-anvil estate import OrderService.zip --vendor wso2 --entry api.yaml --api OrderService
+anvil estate import OrderService.zip --vendor wso2 --entry api.yaml --api OrderService \
+  --spec orders.openapi.yaml --gateway-url https://api.example.com/orders \
+  --root "$PWD" --out generated/orders
 ```
 
 Anvil reads these fields (either as a top-level `apis:` array or the single-API
@@ -188,7 +258,9 @@ products:
 
 ```bash
 anvil estate inventory apigee-estate.yaml --vendor apigee
-anvil estate import apigee-estate.yaml --vendor apigee --api payments-proxy --out generated/payments
+anvil estate import apigee-estate.yaml --vendor apigee --api payments-proxy \
+  --spec payments.openapi.yaml --gateway-url https://api.example.com/payments \
+  --root "$PWD" --out generated/payments
 ```
 
 **What maps:** the product's `scopes` → `auth.scopes` on the proxy's operations;
@@ -224,7 +296,9 @@ apis:
 ```
 
 ```bash
-anvil estate import mulesoft-estate.yaml --vendor mulesoft --api customer-api --out generated/customer
+anvil estate import mulesoft-estate.yaml --vendor mulesoft --api customer-api \
+  --spec customer.openapi.yaml --gateway-url https://api.example.com/customers \
+  --root "$PWD" --out generated/customer
 ```
 
 **What maps:** auth policies (`openidconnect`, `jwt-validation`,
@@ -263,7 +337,9 @@ products:
 ```
 
 ```bash
-anvil estate import apiconnect-estate.yaml --vendor api_connect --api claims-api --out generated/claims
+anvil estate import apiconnect-estate.yaml --vendor api_connect --api claims-api \
+  --spec claims.openapi.yaml --gateway-url https://api.example.com/claims \
+  --root "$PWD" --out generated/claims
 ```
 
 **What maps:** `oauthProviders` → OAuth2 auth; resource `scopes` →
@@ -294,23 +370,38 @@ decoded yet; extract them, or pass the config file directly.)
 
 ## After import
 
-An import is a normal bundle, so the normal loop applies:
+Verify the import before entering the normal bundle loop:
 
 ```bash
+anvil estate verify <import-id> --root "$PWD" --bundle generated/refunds
 anvil inspect generated/refunds     # every operation's effect, risk, idempotency
 anvil approve generated/refunds <operation-id>   # expose one, after reading its risk
 ```
 
-Risky operations stay `review_required` until you approve them, and opaque
-policies block certification until reviewed. For a large estate, see
+Risky operations from a full native contract stay `review_required` until you
+approve them, and opaque policies block certification until reviewed. Approval
+intentionally changes compiler output, so the bundled import receipt becomes
+`stale`; `estate verify --bundle`, `status`, and `certify` surface that fact
+instead of pretending the original receipt attests to the changed bundle.
+
+Re-running an unchanged bound import preserves recognized certification,
+publication, report, and exactly regenerable Gemini target artifacts. It refuses
+unknown or tampered files. If you deliberately need to reset a stale approved
+bundle to the clean import baseline, rerun the same import with
+`--replace-derived`. Anvil first verifies the recorded derived bytes, then
+discards approvals and later lifecycle artifacts; this is a reset, not a merge.
+
+For a large estate, see
 [operating at estate scale](/anvil/concepts/gateway-estates/#operating-at-scale) —
 you inventory the whole estate cheaply, then import and approve the few APIs that
 belong in an agent's hands.
 
 ## What Anvil does not do (so nothing surprises you)
 
-- **It does not connect to your gateway** or store credentials. Exports are
-  offline files you produce.
+- **It does not connect to your gateway management plane** or request admin
+  credentials. Exports are offline files you produce. It stores their exact
+  bytes under the private receipt root, so do not put live credentials in an
+  export and protect `.anvil/imports` as evidence.
 - **It does not yet parse native proxy XML, CAR, or JAR internals.** Feed a
   YAML/JSON description; Kong's `deck` dump and WSO2's `api.yaml` already qualify.
 - **It does not import a whole estate at once** — one API per `import`; loop the

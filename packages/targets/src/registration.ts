@@ -102,12 +102,12 @@ const REMOTE_MCP = {
   oauthRedirectUri: "https://vertexaisearch.cloud.google.com/oauth-redirect",
 };
 
-const PLACEHOLDER = {
-  // Clear, non-secret placeholders. The operator substitutes real values at POST
-  // time (see registration.curl.sh); Anvil never holds or commits secrets.
-  oauthAccessToken: "<PRIVATE_APP_ACCESS_TOKEN — inject from Secret Manager; do not commit>",
-  clientId: "<oauth-client-id from your IdP app registration>",
-  clientSecretRef: "<client secret — inject from Secret Manager; do not commit>",
+const TEMPLATE_MARKER = {
+  // The generated artifact is a non-secret template. The experimental script
+  // replaces these markers only in a mode-0600 temporary body and trap-deletes it.
+  oauthAccessToken: "${ANVIL_PRIVATE_APP_ACCESS_TOKEN}",
+  clientId: "${ANVIL_OAUTH_CLIENT_ID}",
+  clientSecretRef: "${ANVIL_OAUTH_CLIENT_SECRET}",
   authUri: "<https://your-idp/authorize>",
   tokenUri: "<https://your-idp/token>",
 };
@@ -142,11 +142,11 @@ export function buildRegistrationRequest(
   };
   if (options.agentInstructions) actionParams.mcp_agent_instructions = options.agentInstructions;
   if (authType === "OAUTH") {
-    actionParams.auth_uri = options.authUri ?? PLACEHOLDER.authUri;
-    actionParams.token_uri = options.tokenUri ?? PLACEHOLDER.tokenUri;
-    actionParams.scopes = (options.scopes ?? ["openid", "email"]).join(" ");
-    actionParams.client_id = options.clientId ?? PLACEHOLDER.clientId;
-    actionParams.client_secret = options.clientSecretRef ?? PLACEHOLDER.clientSecretRef;
+    actionParams.auth_uri = options.authUri ?? TEMPLATE_MARKER.authUri;
+    actionParams.token_uri = options.tokenUri ?? TEMPLATE_MARKER.tokenUri;
+    actionParams.scopes = (options.scopes ?? ["<scope-for-your-mcp-api>"]).join(" ");
+    actionParams.client_id = options.clientId ?? TEMPLATE_MARKER.clientId;
+    actionParams.client_secret = options.clientSecretRef ?? TEMPLATE_MARKER.clientSecretRef;
   }
 
   const body: SetUpDataConnectorBody = {
@@ -158,16 +158,18 @@ export function buildRegistrationRequest(
       refreshInterval: REMOTE_MCP.refreshInterval,
       // The token the platform seeds at create; the tool list is fetched from the
       // server (dynamic_tools is output-only), so no actions are enumerated here.
-      params: { oauth_access_token: options.oauthAccessTokenRef ?? PLACEHOLDER.oauthAccessToken },
+      params: {
+        oauth_access_token: options.oauthAccessTokenRef ?? TEMPLATE_MARKER.oauthAccessToken,
+      },
       actionConfig: { actionParams, createBapConnection: true },
     },
   };
 
   const prerequisites = [
-    "Fill params.oauth_access_token from Secret Manager (the Private App Access Token); never commit it.",
+    "Provide the Private App Access Token to the experimental script through ANVIL_PRIVATE_APP_ACCESS_TOKEN or ANVIL_PRIVATE_APP_ACCESS_TOKEN_FILE; never edit it into the template.",
     ...(authType === "OAUTH"
       ? [
-          `Register an OAuth client at your IdP whose redirect URI is ${REMOTE_MCP.oauthRedirectUri}; put its client_id / client_secret (Secret Manager) and auth_uri / token_uri into the request.`,
+          `Register an OAuth client at your IdP whose redirect URI is ${REMOTE_MCP.oauthRedirectUri}; provide its id and secret at runtime through ANVIL_OAUTH_CLIENT_ID[_FILE] and ANVIL_OAUTH_CLIENT_SECRET[_FILE].`,
           "Reaching ACTIVE requires the interactive OAuth Authorize step: create the connector in the GE console (or complete consent there). The raw API creates the record but cannot finish the OAuth consent / BAP-connection provisioning.",
         ]
       : []),
@@ -185,22 +187,174 @@ export function renderRegistrationJson(req: RegistrationRequest): string {
   return `${JSON.stringify(req.body, null, 2)}\n`;
 }
 
+function shellLiteral(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
 /**
- * A ready-to-run curl that POSTs the request with the operator's own access
- * token. Anvil holds no cloud credentials — this uses `gcloud auth print-access-token`.
+ * An explicitly experimental reference curl. The supported journey is console-first:
+ * the API cannot complete OAuth consent. The script runs under the operator's own
+ * credentials, renders secrets only into a protected temporary body, and skips an
+ * existing collection.
  */
 export function renderRegistrationCurl(req: RegistrationRequest): string {
+  const parentUrl = req.url.replace(/:setUpDataConnector$/, "");
+  const collectionUrl = `${parentUrl}/collections/${encodeURIComponent(req.body.collectionId)}`;
+  const authType = req.body.dataConnector.actionConfig.actionParams.auth_type as McpAuthType;
   return `#!/usr/bin/env bash
-# Register this MCP server as a Gemini Enterprise connector (Discovery Engine
-# setUpDataConnector). Runs under YOUR credentials; Anvil holds none.
+# EXPERIMENTAL REFERENCE: create the connector record with setUpDataConnector.
+# The supported Custom MCP journey is console-first. This API cannot finish
+# interactive OAuth consent / BAP provisioning.
 #
 # Prerequisites:
 ${req.prerequisites.map((p) => `#   - ${p}`).join("\n")}
 set -euo pipefail
-curl -sS -X POST \\
-  "${req.url}" \\
-  -H "Authorization: Bearer $(gcloud auth print-access-token)" \\
+umask 077
+SCRIPT_DIR="$(cd -- "$(dirname -- "\${BASH_SOURCE[0]}")" && pwd)"
+REQUEST_TEMPLATE="$SCRIPT_DIR/registration.request.template.json"
+COLLECTION_URL=${shellLiteral(collectionUrl)}
+SETUP_URL=${shellLiteral(req.url)}
+AUTH_TYPE=${shellLiteral(authType)}
+COLLECTION_ID=${shellLiteral(req.body.collectionId)}
+COLLECTION_DISPLAY_NAME=${shellLiteral(req.body.collectionDisplayName)}
+ENDPOINT=${shellLiteral(
+    String(req.body.dataConnector.actionConfig.actionParams.instance_uri ?? ""),
+  )}
+
+if [[ "\${ANVIL_EXPERIMENTAL_SETUP_DATA_CONNECTOR:-}" != "1" ]]; then
+  echo "This reference API path cannot complete OAuth consent." >&2
+  echo "Use the Gemini Enterprise console-first Custom MCP flow, or explicitly set:" >&2
+  echo "  ANVIL_EXPERIMENTAL_SETUP_DATA_CONNECTOR=1 bash \\"$SCRIPT_DIR/registration.curl.sh\\"" >&2
+  exit 2
+fi
+for required_command in gcloud curl jq; do
+  command -v "$required_command" >/dev/null 2>&1 || {
+    echo "Missing required command: $required_command" >&2
+    exit 1
+  }
+done
+
+TOKEN="$(gcloud auth print-access-token)"
+CHECK_BODY="$(mktemp)"
+TEMP_BODY=""
+SETUP_RESPONSE="$(mktemp)"
+chmod 600 "$CHECK_BODY" "$SETUP_RESPONSE"
+cleanup() {
+  unset TOKEN ANVIL_RENDER_PRIVATE_APP_ACCESS_TOKEN ANVIL_RENDER_OAUTH_CLIENT_ID ANVIL_RENDER_OAUTH_CLIENT_SECRET
+  rm -f "$CHECK_BODY" "$SETUP_RESPONSE"
+  [[ -z "$TEMP_BODY" ]] || rm -f "$TEMP_BODY"
+}
+trap cleanup EXIT
+
+emit_error_summary() {
+  local body="$1"
+  local status="$2"
+  jq -c --arg httpStatus "$status" '
+    {
+      httpStatus: ($httpStatus | tonumber),
+      errorCode: (.error.code // null),
+      errorStatus: (.error.status // null)
+    }
+  ' "$body" 2>/dev/null || printf '{"httpStatus":%s,"errorStatus":"unparseable_response"}\\n' "$status"
+}
+
+emit_success_summary() {
+  local body="$1"
+  jq -c '
+    {
+      operation: (.name // null),
+      done: (.done // null),
+      state: (.state // .dataConnector.state // null)
+    }
+  ' "$body" 2>/dev/null || printf '{"accepted":true,"response":"unparseable"}\\n'
+}
+
+verify_owned_collection() {
+  jq -e \\
+    --arg id "$COLLECTION_ID" \\
+    --arg display "$COLLECTION_DISPLAY_NAME" \\
+    --arg endpoint "$ENDPOINT" '
+      ((.id // .collectionId // (.name | strings | split("/")[-1])) == $id) and
+      ((.displayName // .collectionDisplayName) == $display) and
+      ((.dataConnector.dataSource // .dataSource) == "custom_mcp") and
+      ((.dataConnector.actionConfig.actionParams.instance_uri //
+        .dataConnector.actionConfig.actionParams.instanceUri //
+        .params.instance_uri //
+        .params.instanceUri) == $endpoint)
+    ' "$CHECK_BODY" >/dev/null
+}
+
+HTTP_STATUS="$(curl -sS -o "$CHECK_BODY" -w "%{http_code}" \\
+  "$COLLECTION_URL" \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "X-Goog-User-Project: ${req.url.match(/projects\/([^/]+)/)?.[1] ?? "<project>"}")"
+case "$HTTP_STATUS" in
+  200)
+    if ! verify_owned_collection; then
+      echo "Collection id collision: $COLLECTION_ID exists but its display name, custom_mcp type, or endpoint is not the exact Anvil target." >&2
+      echo "Refusing to reuse or overwrite an unowned collection." >&2
+      exit 1
+    fi
+    echo "Verified existing Anvil collection $COLLECTION_ID; no setup request sent."
+    exit 0
+    ;;
+  404) ;;
+  *)
+    echo "Collection preflight failed with HTTP $HTTP_STATUS; refusing to create." >&2
+    emit_error_summary "$CHECK_BODY" "$HTTP_STATUS" >&2
+    exit 1
+    ;;
+esac
+
+read_secret() {
+  local value_name="$1"
+  local file_name="\${value_name}_FILE"
+  local value="\${!value_name-}"
+  local file_value="\${!file_name-}"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+    return
+  fi
+  if [[ -n "$file_value" ]]; then
+    [[ -f "$file_value" ]] || {
+      echo "$file_name does not name a readable secret file." >&2
+      return 1
+    }
+    cat -- "$file_value"
+    return
+  fi
+  echo "Set $value_name or $file_name (for example, a mounted Secret Manager file)." >&2
+  return 1
+}
+
+export ANVIL_RENDER_PRIVATE_APP_ACCESS_TOKEN="$(read_secret ANVIL_PRIVATE_APP_ACCESS_TOKEN)"
+TEMP_BODY="$(mktemp)"
+chmod 600 "$TEMP_BODY"
+if [[ "$AUTH_TYPE" == "OAUTH" ]]; then
+  export ANVIL_RENDER_OAUTH_CLIENT_ID="$(read_secret ANVIL_OAUTH_CLIENT_ID)"
+  export ANVIL_RENDER_OAUTH_CLIENT_SECRET="$(read_secret ANVIL_OAUTH_CLIENT_SECRET)"
+  jq '
+    .dataConnector.params.oauth_access_token = env.ANVIL_RENDER_PRIVATE_APP_ACCESS_TOKEN |
+    .dataConnector.actionConfig.actionParams.client_id = env.ANVIL_RENDER_OAUTH_CLIENT_ID |
+    .dataConnector.actionConfig.actionParams.client_secret = env.ANVIL_RENDER_OAUTH_CLIENT_SECRET
+  ' "$REQUEST_TEMPLATE" >"$TEMP_BODY"
+else
+  jq '
+    .dataConnector.params.oauth_access_token = env.ANVIL_RENDER_PRIVATE_APP_ACCESS_TOKEN
+  ' "$REQUEST_TEMPLATE" >"$TEMP_BODY"
+fi
+
+SETUP_STATUS="$(curl -sS -o "$SETUP_RESPONSE" -w "%{http_code}" -X POST \\
+  "$SETUP_URL" \\
+  -H "Authorization: Bearer $TOKEN" \\
   -H "Content-Type: application/json" \\
-  -d @registration.request.json
+  -d @"$TEMP_BODY")"
+if [[ "$SETUP_STATUS" != 2?? ]]; then
+  echo "Connector setup failed with HTTP $SETUP_STATUS." >&2
+  emit_error_summary "$SETUP_RESPONSE" "$SETUP_STATUS" >&2
+  exit 1
+fi
+echo "Connector setup request accepted:"
+emit_success_summary "$SETUP_RESPONSE"
 `;
 }

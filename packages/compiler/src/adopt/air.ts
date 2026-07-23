@@ -42,18 +42,21 @@ function inferEffect(tool: McpTool): {
   const risk = a.destructiveHint ? "destructive" : "medium";
   return {
     effect: { kind: "mutation", action: "execute", risk, reversible: !a.destructiveHint },
+    // MCP's idempotentHint says repeated calls are inherently idempotent; it
+    // does not name an upstream key carrier. Model that as natural rather than
+    // fabricating a request key the captured tool contract cannot accept.
     idempotency: a.idempotentHint
-      ? { mode: "key_supported", mechanism: "none", keyDerivation: "request_fingerprint" }
+      ? { mode: "natural", mechanism: "none", keyDerivation: "none" }
       : { mode: "none", mechanism: "none", keyDerivation: "none" },
     basis,
   };
 }
 
 const UNKNOWN_AUTH: AuthRequirement = {
-  type: "none",
+  type: "custom_header",
   scopes: [],
   principal: "service",
-  secretSource: "none",
+  secretSource: "env",
 };
 
 function operationFromTool(serviceId: string, capabilityId: string, tool: McpTool): Operation {

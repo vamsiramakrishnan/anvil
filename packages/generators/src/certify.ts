@@ -2,10 +2,16 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AirDocument, Operation } from "@anvil/air";
-import { AirDocument as AirDocumentSchema } from "@anvil/air";
+import { AirDocument as AirDocumentSchema, authCoherenceIssues } from "@anvil/air";
+import { GatewayImportReceiptView, verifyGatewayImportOutputManifest } from "@anvil/compiler";
 import { runDetectors, targetOperationId } from "@anvil/refinement";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import {
+  GENERATION_METADATA_FILE,
+  generateBundle,
+  resourceOptionsFromGenerationMetadata,
+} from "./bundle.js";
 
 /**
  * Capability certification (Layer 5). A certification is a *judgement over a
@@ -218,9 +224,9 @@ function contractChecks(files: Record<string, string>, air: AirDocument): Certif
       ),
     );
 
-  // The MCP server and CLI entrypoints both project their surface from the
-  // air.json copy they ship with — certify the copy they actually load.
-  for (const rel of ["mcp/air.json", "cli/air.json"]) {
+  // Each executable entrypoint projects its surface from the AIR copy it ships
+  // with. Certify the exact copies loaded by MCP, CLI, and the deployed runtime.
+  for (const rel of ["mcp/air.json", "cli/air.json", "runtime/air.json"]) {
     const copy = parseJson(files, rel);
     const copyParsed = copy === undefined ? undefined : AirDocumentSchema.safeParse(copy);
     if (!copyParsed?.success) drift.push(`${rel} missing or fails AIR schema validation`);
@@ -232,10 +238,89 @@ function contractChecks(files: Record<string, string>, air: AirDocument): Certif
       "contract.surfaces-agree",
       "contract",
       drift,
-      `MCP tools, CLI catalog, and runtime manifest all expose exactly the ${expected.length} approved operation(s)`,
+      `MCP, CLI, deployed runtime AIR, catalog, and runtime manifest all expose exactly the ${expected.length} approved operation(s)`,
     ),
   );
+
+  const generationDrift = generatedProjectionDrift(files, air);
+  checks.push(
+    check(
+      "contract.generated-bytes-agree",
+      "contract",
+      generationDrift,
+      "Every compiler-owned file is the exact deterministic projection of canonical AIR and its persisted generation inputs",
+    ),
+  );
+
+  const gatewayReceipt = parseJson(files, "import.receipt.json");
+  if (gatewayReceipt !== undefined) {
+    const failures: string[] = [];
+    const parsedReceipt = GatewayImportReceiptView.safeParse(gatewayReceipt);
+    if (!parsedReceipt.success) {
+      failures.push(
+        `import.receipt.json fails the gateway receipt-view schema: ${parsedReceipt.error.issues[0]?.message ?? "invalid"}`,
+      );
+    } else if (parsedReceipt.data.lineage.status !== "bound") {
+      failures.push(`gateway import output lineage is stale: ${parsedReceipt.data.lineage.reason}`);
+    } else {
+      const encoded = new Map<string, Uint8Array>();
+      const encoder = new TextEncoder();
+      for (const expected of parsedReceipt.data.output.files) {
+        const contents = files[expected.path];
+        if (contents !== undefined) encoded.set(expected.path, encoder.encode(contents));
+      }
+      failures.push(
+        ...verifyGatewayImportOutputManifest(parsedReceipt.data.output, encoded).diagnostics.map(
+          (diagnostic) => `${diagnostic.path ? `${diagnostic.path}: ` : ""}${diagnostic.message}`,
+        ),
+      );
+    }
+    checks.push(
+      check(
+        "contract.gateway-lineage-current",
+        "contract",
+        failures,
+        "Gateway import receipt view is schema-valid and every recorded output byte still matches its manifest",
+      ),
+    );
+  }
   return checks;
+}
+
+/**
+ * Re-run the deterministic generator and compare every compiler-owned byte.
+ * Generated target kits, receipts, evidence records, and operator top-level
+ * notes are separate lifecycle artifacts; files inside generator-owned roots
+ * may not survive as untracked executable/configuration ghosts.
+ */
+function generatedProjectionDrift(files: Record<string, string>, air: AirDocument): string[] {
+  const options = resourceOptionsFromGenerationMetadata(files[GENERATION_METADATA_FILE]);
+  if (!options) {
+    return [
+      `${GENERATION_METADATA_FILE} is missing or invalid; recompile to persist generator inputs`,
+    ];
+  }
+  const expected = generateBundle(air, options).files;
+  const drift: string[] = [];
+  for (const [path, contents] of Object.entries(expected)) {
+    const actual = files[path];
+    if (actual === undefined) drift.push(`${path}: missing compiler-owned file`);
+    else if (actual !== contents) drift.push(`${path}: bytes differ from deterministic projection`);
+  }
+
+  const ownedRoots = new Set(
+    Object.keys(expected)
+      .filter((path) => path.includes("/"))
+      .map((path) => path.slice(0, path.indexOf("/"))),
+  );
+  for (const path of Object.keys(files).sort()) {
+    const slash = path.indexOf("/");
+    if (slash < 0) continue;
+    if (ownedRoots.has(path.slice(0, slash)) && expected[path] === undefined) {
+      drift.push(`${path}: unexpected file inside compiler-owned root`);
+    }
+  }
+  return drift;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -258,6 +343,11 @@ interface SafetyView {
 }
 
 const HIGH_RISK: ReadonlySet<string> = new Set(["high", "financial", "destructive"]);
+const UNSUPPORTED_AUTH: ReadonlySet<string> = new Set([
+  "mtls",
+  "custom_header",
+  "oauth2_authorization_code",
+]);
 
 function safetyViewFromAir(op: Operation): SafetyView {
   return {
@@ -345,6 +435,17 @@ function safetyChecks(files: Record<string, string>, air: AirDocument): Certific
       (v) =>
         `${at(v)} auth type "${v.authType}" is incoherent with secret source "${v.secretSource}"`,
     );
+  const unsupportedAuth = views
+    .filter((view) => UNSUPPORTED_AUTH.has(view.authType))
+    .map(
+      (view) =>
+        `${at(view)} uses unsupported auth type "${view.authType}"; no safe transport/carrier is modeled`,
+    );
+  const incoherentAuthority = air.operations
+    .filter((operation) => operation.state === "approved")
+    .flatMap((operation) =>
+      authCoherenceIssues(operation.auth).map((issue) => `${operation.id}: ${issue}`),
+    );
 
   return [
     check(
@@ -370,6 +471,18 @@ function safetyChecks(files: Record<string, string>, air: AirDocument): Certific
       "safety",
       secrets,
       "auth type and secret source are coherent on every approved operation",
+    ),
+    check(
+      "safety.auth-runtime-supported",
+      "safety",
+      unsupportedAuth,
+      "every approved operation has an auth scheme the runtime can faithfully enforce",
+    ),
+    check(
+      "safety.auth-authority-coherent",
+      "safety",
+      incoherentAuthority,
+      "every approved operation's auth type, principal, grant, and secret source agree",
     ),
   ];
 }

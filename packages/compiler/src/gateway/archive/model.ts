@@ -26,7 +26,7 @@ export interface NormalizedFile {
 
 /** Decodes a container's bytes into raw entries. Pluggable per format. */
 export interface ArchiveDecoder {
-  decode(bytes: Uint8Array): ArchiveEntry[];
+  decode(bytes: Uint8Array, limits?: ArchiveLimits): ArchiveEntry[];
 }
 
 /** Bounds on what an archive may expand to. */

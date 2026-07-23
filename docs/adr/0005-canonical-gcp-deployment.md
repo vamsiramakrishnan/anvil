@@ -23,11 +23,14 @@ One owner per concern:
 `artifact-metadata.json`.
 
 ### Deployability (must actually apply from a clean project)
-- **Shared singletons are prerequisites, not generated.** The Artifact Registry
-  repo and the Firestore `(default)` database (one per project) are *not* created
-  by the per-capability module — creating them per capability collides, and
-  generating the AR repo created a bootstrap cycle where `docker push` needed a
-  repo a later Terraform step had not applied yet. They are documented prereqs.
+- **Shared foundations are prerequisites, not generated.** The Artifact Registry
+  repo and Terraform state bucket remain project-level prerequisites. Generating
+  the repository here would create a bootstrap cycle where `docker push` needs a
+  resource a later Terraform step has not applied yet.
+- **Replay state is capability-scoped.** A bundle with an approved mutation that
+  requires idempotency owns a named, delete-protected Firestore database, exact
+  database-scoped IAM, and a TTL policy for completed replay results. In-progress
+  reservations never receive an expiry.
 - **Remote state is mandatory.** Terraform declares a `backend "gcs"` bound at
   `init -backend-config=…`, so an ephemeral build container never starts from
   empty state and tries to recreate live resources.
@@ -41,4 +44,4 @@ One owner per concern:
 - No literal `PROJECT`/`REGION` placeholders — everything flows through Terraform
   variables. Tests assert the deleted files stay deleted, Cloud Build sets no
   runtime config and never auto-applies, remote state is configured, and the
-  shared singletons are not recreated.
+  shared foundations are not recreated.

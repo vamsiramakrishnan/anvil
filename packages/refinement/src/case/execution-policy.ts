@@ -1,4 +1,14 @@
 import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
+import { join, sep } from "node:path";
+import {
   type AgentProcessRunner,
   type AgentRunResult,
   allowlistedEnv,
@@ -26,7 +36,13 @@ export type NetworkPolicy = "none" | "host" | "proxy";
 export interface ExecutionPolicy {
   filesystem: { repository: "read-only"; case: "read-write" };
   network: NetworkPolicy;
-  /** Environment variable names the run may see, on top of PATH/HOME. */
+  /**
+   * `isolated` replaces HOME/XDG/TMPDIR with a private directory inside the
+   * invocation workspace. This prevents a reviewer from implicitly inheriting
+   * host CLI state; credentials must arrive through the named profile instead.
+   */
+  home: "host" | "isolated";
+  /** Environment variable names the run may see, on top of PATH and the selected HOME policy. */
   environmentAllowlist: string[];
   timeoutMs: number;
   sandbox: SandboxKind;
@@ -63,6 +79,7 @@ export function defaultExecutionPolicy(
   return {
     filesystem: { repository: "read-only", case: "read-write" },
     network: "host",
+    home: "host",
     environmentAllowlist: [...CREDENTIAL_PROFILES[profile]],
     timeoutMs: DEFAULT_AGENT_TIMEOUT_MS,
     sandbox: "native",
@@ -171,20 +188,28 @@ export class NativeExecutionBackend implements ExecutionBackend {
       );
     }
 
-    const result = await this.runner.run({
-      command: invocation.command,
-      args: invocation.args,
-      cwd: invocation.cwd,
-      env: allowlistedEnv(policy.environmentAllowlist),
-      timeoutMs: policy.timeoutMs,
-      input: invocation.input,
-      signal: invocation.signal,
-      onStdout: invocation.onStdout,
-      onStderr: invocation.onStderr,
-    });
+    const isolatedHome =
+      policy.home === "isolated" ? prepareIsolatedHome(invocation.cwd) : undefined;
+    let result: AgentRunResult;
+    try {
+      result = await this.runner.run({
+        command: invocation.command,
+        args: invocation.args,
+        cwd: invocation.cwd,
+        env: allowlistedEnv(policy.environmentAllowlist, process.env, { isolatedHome }),
+        timeoutMs: policy.timeoutMs,
+        input: invocation.input,
+        signal: invocation.signal,
+        onStdout: invocation.onStdout,
+        onStderr: invocation.onStderr,
+      });
+    } finally {
+      if (isolatedHome) rmSync(isolatedHome, { recursive: true, force: true });
+    }
     if (degraded.length === 0) return result;
 
     const enforced = ["environmentAllowlist", "timeoutMs"];
+    if (isolatedHome) enforced.push("isolatedHome");
     if (policy.network === "host") enforced.push("network");
     const attestation: ExecutionAttestation = {
       requestedSandbox: policy.sandbox,
@@ -194,4 +219,29 @@ export class NativeExecutionBackend implements ExecutionBackend {
     };
     return { ...result, attestation };
   }
+}
+
+function prepareIsolatedHome(cwd: string): string {
+  const home = mkdtempSync(join(cwd, ".agent-home-"));
+  const boundary = realpathSync(cwd);
+  for (const path of [home, join(home, ".config"), join(home, ".cache"), join(home, ".local")]) {
+    ensurePrivateDirectory(path, boundary);
+  }
+  ensurePrivateDirectory(join(home, ".local", "share"), boundary);
+  ensurePrivateDirectory(join(home, "tmp"), boundary);
+  return home;
+}
+
+function ensurePrivateDirectory(path: string, boundary: string): void {
+  if (!existsSync(path)) mkdirSync(path, { mode: 0o700 });
+  const stat = lstatSync(path);
+  const real = realpathSync(path);
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    (real !== boundary && !real.startsWith(`${boundary}${sep}`))
+  ) {
+    throw new Error(`Isolated agent HOME contains an unsafe filesystem node: ${path}`);
+  }
+  chmodSync(path, 0o700);
 }

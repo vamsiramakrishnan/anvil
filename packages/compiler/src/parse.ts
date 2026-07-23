@@ -105,7 +105,20 @@ export interface SecurityScheme {
   scheme?: string;
   in?: string;
   name?: string;
-  flows?: Record<string, { scopes?: Record<string, string> }>;
+  flows?: Record<
+    string,
+    {
+      scopes?: Record<string, string>;
+      authorizationUrl?: string;
+      tokenUrl?: string;
+      refreshUrl?: string;
+    }
+  >;
+  /** Swagger 2 OAuth flow fields (retained by some parser paths). */
+  flow?: string;
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  openIdConnectUrl?: string;
 }
 
 /** EntrypointFormat values that are non-REST protocols lowered by an adapter. */

@@ -18,6 +18,7 @@
  * offline, and keys are cached by URI.
  */
 import { createPublicKey, verify as cryptoVerify } from "node:crypto";
+import { fetchPublicJson } from "@anvil/runtime";
 
 export type InboundAuthMode = "none" | "oidc" | "google_service_account";
 
@@ -27,6 +28,8 @@ export interface InboundAuthConfig {
   issuer?: string;
   /** Expected audience (`aud`) — the connector's public URL / resource id. */
   audience?: string;
+  /** Public HTTPS MCP resource URL used for OAuth protected-resource discovery. */
+  resource?: string;
   /** JWKS endpoint. When absent, derived from the issuer's OIDC discovery. */
   jwksUri?: string;
   /** Scopes the token must ALL carry (from the `scope` / `scp` claim). */
@@ -69,33 +72,40 @@ const GOOGLE_JWKS = "https://www.googleapis.com/oauth2/v3/certs";
 /** Read the inbound-auth contract from the environment (secrets never live here). */
 export function loadInboundAuthConfig(env: NodeJS.ProcessEnv = process.env): InboundAuthConfig {
   const mode = normalizeMode(env.ANVIL_INBOUND_AUTH_MODE);
-  const leeway = env.ANVIL_INBOUND_LEEWAY_SECONDS
-    ? Number(env.ANVIL_INBOUND_LEEWAY_SECONDS)
-    : undefined;
+  const leeway = parseLeeway(env.ANVIL_INBOUND_LEEWAY_SECONDS);
   if (mode === "google_service_account") {
     // Google-issued tokens: fixed issuer + certs unless explicitly overridden.
-    return {
+    const config: InboundAuthConfig = {
       mode,
       issuer: env.ANVIL_INBOUND_ISSUER ?? GOOGLE_ISSUER,
       audience: env.ANVIL_INBOUND_AUDIENCE,
+      resource: env.ANVIL_INBOUND_RESOURCE,
       jwksUri: env.ANVIL_INBOUND_JWKS_URI ?? GOOGLE_JWKS,
       requiredScopes: splitScopes(env.ANVIL_INBOUND_REQUIRED_SCOPES),
       leewaySeconds: leeway,
     };
+    validateEnabledConfig(config);
+    return config;
   }
-  return {
+  const config: InboundAuthConfig = {
     mode,
     issuer: env.ANVIL_INBOUND_ISSUER,
     audience: env.ANVIL_INBOUND_AUDIENCE,
+    resource: env.ANVIL_INBOUND_RESOURCE,
     jwksUri: env.ANVIL_INBOUND_JWKS_URI,
     requiredScopes: splitScopes(env.ANVIL_INBOUND_REQUIRED_SCOPES),
     leewaySeconds: leeway,
   };
+  validateEnabledConfig(config);
+  return config;
 }
 
 function normalizeMode(raw: string | undefined): InboundAuthMode {
+  if (raw === undefined || raw.trim() === "" || raw === "none") return "none";
   if (raw === "oidc" || raw === "google_service_account") return raw;
-  return "none";
+  throw new Error(
+    `Invalid ANVIL_INBOUND_AUTH_MODE=${JSON.stringify(raw)}; expected none, oidc, or google_service_account.`,
+  );
 }
 
 function splitScopes(raw: string | undefined): string[] | undefined {
@@ -104,12 +114,23 @@ function splitScopes(raw: string | undefined): string[] | undefined {
   return scopes.length > 0 ? scopes : undefined;
 }
 
-const jwksCache = new Map<string, { keys: Jwk[] }>();
+function parseLeeway(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 300) {
+    throw new Error("ANVIL_INBOUND_LEEWAY_SECONDS must be an integer from 0 to 300.");
+  }
+  return value;
+}
+
+const JWKS_CACHE_TTL_MS = 5 * 60_000;
+const jwksCache = new Map<string, { keys: Jwk[]; expiresAt: number }>();
 
 const defaultFetchJwks: JwksFetcher = async (uri) => {
-  const res = await fetch(uri);
-  if (!res.ok) throw new Error(`JWKS fetch failed (${res.status}) for ${uri}`);
-  return (await res.json()) as { keys: Jwk[] };
+  const { response, json } = await fetchPublicJson(uri, {}, { maxBytes: 256 * 1024 });
+  if (!response.ok) throw new Error(`JWKS fetch failed (${response.status})`);
+  if (typeof json !== "object" || json === null) throw new Error("JWKS response is not an object");
+  return json as { keys: Jwk[] };
 };
 
 /** Resolve the JWKS URI, discovering it from the issuer's OIDC config if needed. */
@@ -124,11 +145,12 @@ async function resolveJwksUri(config: InboundAuthConfig, fetchJwks: JwksFetcher)
   return doc.jwks_uri;
 }
 
-async function getKeys(uri: string, fetchJwks: JwksFetcher): Promise<Jwk[]> {
+async function getKeys(uri: string, fetchJwks: JwksFetcher, refresh = false): Promise<Jwk[]> {
   const cached = jwksCache.get(uri);
-  if (cached) return cached.keys;
+  if (!refresh && cached && Date.now() < cached.expiresAt) return cached.keys;
   const doc = await fetchJwks(uri);
-  jwksCache.set(uri, doc);
+  if (!doc || !Array.isArray(doc.keys)) throw new Error("JWKS response has no keys array");
+  jwksCache.set(uri, { keys: doc.keys, expiresAt: Date.now() + JWKS_CACHE_TTL_MS });
   return doc.keys;
 }
 
@@ -148,6 +170,14 @@ export async function verifyInboundToken(
   opts: { now?: number; fetchJwks?: JwksFetcher } = {},
 ): Promise<InboundAuthResult> {
   if (config.mode === "none") return { ok: true, claims: {} };
+  if (config.mode !== "oidc" && config.mode !== "google_service_account") {
+    return deny(401, "invalid_token", "Inbound authentication mode is invalid.", config);
+  }
+  try {
+    validateEnabledConfig(config);
+  } catch {
+    return deny(401, "invalid_token", "Inbound authentication is not fully configured.", config);
+  }
   const fetchJwks = opts.fetchJwks ?? defaultFetchJwks;
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   const leeway = config.leewaySeconds ?? 60;
@@ -162,8 +192,20 @@ export async function verifyInboundToken(
   let header: { alg?: string; kid?: string };
   let claims: InboundClaims;
   try {
-    header = JSON.parse(b64urlToString(rawHeader));
-    claims = JSON.parse(b64urlToString(rawPayload));
+    const parsedHeader: unknown = JSON.parse(b64urlToString(rawHeader));
+    const parsedClaims: unknown = JSON.parse(b64urlToString(rawPayload));
+    if (!isPlainRecord(parsedHeader) || !isPlainRecord(parsedClaims)) {
+      return deny(401, "invalid_token", "JWT header/payload must be JSON objects.", config);
+    }
+    if (
+      (parsedHeader.alg !== undefined && typeof parsedHeader.alg !== "string") ||
+      (parsedHeader.kid !== undefined && typeof parsedHeader.kid !== "string") ||
+      !validClaimsShape(parsedClaims)
+    ) {
+      return deny(401, "invalid_token", "JWT header/payload claim types are invalid.", config);
+    }
+    header = parsedHeader;
+    claims = parsedClaims;
   } catch {
     return deny(401, "invalid_token", "JWT header/payload is not valid JSON.", config);
   }
@@ -182,9 +224,26 @@ export async function verifyInboundToken(
   let verified = false;
   try {
     const uri = await resolveJwksUri(config, fetchJwks);
-    const keys = await getKeys(uri, fetchJwks);
-    const jwk = keys.find((k) => k.kid === header.kid) ?? (keys.length === 1 ? keys[0] : undefined);
+    let keys = await getKeys(uri, fetchJwks);
+    let jwk = header.kid
+      ? keys.find((key) => key.kid === header.kid)
+      : keys.length === 1
+        ? keys[0]
+        : undefined;
+    // Key rotation: a new kid must trigger one immediate refresh rather than
+    // failing for the full cache TTL.
+    if (!jwk) {
+      keys = await getKeys(uri, fetchJwks, true);
+      jwk = header.kid
+        ? keys.find((key) => key.kid === header.kid)
+        : keys.length === 1
+          ? keys[0]
+          : undefined;
+    }
     if (!jwk) return deny(401, "invalid_token", "No JWKS key matches the token `kid`.", config);
+    if (jwk.alg && jwk.alg !== header.alg) {
+      return deny(401, "invalid_token", "JWKS key algorithm does not match the token.", config);
+    }
     // Node accepts a JWK directly via `format: "jwk"`; the cast avoids naming the
     // DOM-only `JsonWebKey` type in this node-only package.
     const key = createPublicKey({ key: jwk, format: "jwk" } as unknown as Parameters<
@@ -210,7 +269,10 @@ export async function verifyInboundToken(
   if (config.audience && !audienceMatches(claims.aud, config.audience)) {
     return deny(401, "invalid_token", "Token audience does not match this connector.", config);
   }
-  if (typeof claims.exp === "number" && now >= claims.exp + leeway) {
+  if (typeof claims.exp !== "number" || !Number.isFinite(claims.exp)) {
+    return deny(401, "invalid_token", "Token has no valid expiration.", config);
+  }
+  if (now >= claims.exp + leeway) {
     return deny(401, "invalid_token", "Token has expired.", config);
   }
   if (typeof claims.nbf === "number" && now < claims.nbf - leeway) {
@@ -227,6 +289,68 @@ export async function verifyInboundToken(
   }
 
   return { ok: true, claims };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+  );
+}
+
+function validClaimsShape(claims: Record<string, unknown>): claims is InboundClaims {
+  const optionalStrings = ["iss", "sub", "scope", "email"] as const;
+  if (optionalStrings.some((key) => claims[key] !== undefined && typeof claims[key] !== "string")) {
+    return false;
+  }
+  for (const key of ["exp", "nbf"] as const) {
+    if (
+      claims[key] !== undefined &&
+      (typeof claims[key] !== "number" || !Number.isFinite(claims[key]))
+    ) {
+      return false;
+    }
+  }
+  const validStringArray = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+  if (claims.aud !== undefined && typeof claims.aud !== "string" && !validStringArray(claims.aud)) {
+    return false;
+  }
+  if (claims.scp !== undefined && typeof claims.scp !== "string" && !validStringArray(claims.scp)) {
+    return false;
+  }
+  return true;
+}
+
+function validateEnabledConfig(config: InboundAuthConfig): void {
+  if (config.mode === "none") return;
+  if (!config.issuer) throw new Error("inbound auth requires an issuer");
+  if (!config.audience) throw new Error("inbound auth requires an audience");
+  const resource =
+    config.resource ?? (config.audience.startsWith("https://") ? config.audience : undefined);
+  if (!resource) {
+    throw new Error(
+      "inbound auth requires ANVIL_INBOUND_RESOURCE when the JWT audience is not an HTTPS URL",
+    );
+  }
+  for (const [label, raw] of [
+    ["issuer", config.issuer],
+    ["JWKS URI", config.jwksUri],
+    ["resource", resource],
+  ] as const) {
+    if (!raw) continue;
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new Error(`inbound auth ${label} is invalid`);
+    }
+    if (url.protocol !== "https:" || url.username || url.password || url.hash) {
+      throw new Error(`inbound auth ${label} must be an HTTPS URL without userinfo or fragment`);
+    }
+  }
 }
 
 function bearerToken(header: string | undefined): string | undefined {
@@ -278,9 +402,10 @@ function deny(
  */
 function challenge(config: InboundAuthConfig, error: string, description: string): string {
   const parts = ['Bearer realm="mcp"'];
-  if (config.audience) {
-    const base = config.audience.replace(/\/+$/, "");
-    parts.push(`resource_metadata="${base}/.well-known/oauth-protected-resource"`);
+  const resource = config.resource ?? config.audience;
+  if (resource?.startsWith("https://")) {
+    const metadata = new URL("/.well-known/oauth-protected-resource", resource).toString();
+    parts.push(`resource_metadata="${metadata}"`);
   }
   parts.push(`error="${error}"`, `error_description="${description.replace(/"/g, "'")}"`);
   return parts.join(", ");
@@ -296,8 +421,9 @@ export function protectedResourceMetadata(
   config: InboundAuthConfig,
 ): { resource: string; authorization_servers: string[]; scopes_supported?: string[] } | null {
   if (config.mode === "none" || !config.audience) return null;
+  const resource = config.resource ?? config.audience;
   return {
-    resource: config.audience,
+    resource,
     authorization_servers: config.issuer ? [config.issuer] : [],
     ...(config.requiredScopes ? { scopes_supported: config.requiredScopes } : {}),
   };

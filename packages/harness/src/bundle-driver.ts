@@ -1,10 +1,11 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cliFlag, type Operation, propKey } from "@anvil/air";
+import { cliFlag, type Operation, propKey, resolveIdempotencyCarrier } from "@anvil/air";
 import { exampleInput } from "@anvil/generators";
+import { credentialProfileName, envPrefix } from "@anvil/runtime";
 
 /**
  * Shared machinery for booting a generated bundle and driving its surfaces
@@ -63,6 +64,71 @@ export function argsFor(op: Operation, tag: string): Record<string, unknown> {
   return args;
 }
 
+let assertionKey: string | undefined;
+
+/**
+ * Build non-secret, hermetic credentials for a generated bundle self-test.
+ *
+ * Credential namespaces are operation-specific: `default` is only the outer
+ * deployment profile, while each imported security scheme contributes its
+ * stable `credentialProfile` suffix. OAuth grants point at the generated
+ * mock's reserved token endpoint so the real resolver still performs its grant
+ * exchange without touching the network or contaminating wire captures.
+ */
+export function hermeticCredentialEnv(
+  operations: readonly Operation[],
+  mockBase: string,
+  deploymentProfile = "default",
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const op of operations) {
+    const auth = op.auth;
+    const profile = credentialProfileName(deploymentProfile, auth);
+    const prefix = envPrefix(profile);
+    switch (auth.type) {
+      case "none":
+        break;
+      case "api_key":
+        env[`${prefix}_API_KEY`] = "anvil-hermetic-api-key";
+        break;
+      case "basic":
+        env[`${prefix}_USERNAME`] = "anvil-hermetic-user";
+        env[`${prefix}_PASSWORD`] = "anvil-hermetic-password";
+        break;
+      case "oauth2_client_credentials":
+        env[`${prefix}_TOKEN_ENDPOINT`] = `${mockBase}/__anvil/oauth/token`;
+        env[`${prefix}_CLIENT_ID`] = "anvil-hermetic-client";
+        if (auth.provider?.clientAuth === "private_key_jwt") {
+          assertionKey ??= generateKeyPairSync("rsa", { modulusLength: 2048 })
+            .privateKey.export({ type: "pkcs8", format: "pem" })
+            .toString();
+          env[`${prefix}_CLIENT_ASSERTION_KEY`] = assertionKey;
+        } else {
+          env[`${prefix}_CLIENT_SECRET`] = "anvil-hermetic-client-secret";
+        }
+        break;
+      case "jwt_bearer":
+        if (auth.provider?.grant === "jwt_bearer") {
+          assertionKey ??= generateKeyPairSync("rsa", { modulusLength: 2048 })
+            .privateKey.export({ type: "pkcs8", format: "pem" })
+            .toString();
+          env[`${prefix}_TOKEN_ENDPOINT`] = `${mockBase}/__anvil/oauth/token`;
+          env[`${prefix}_CLIENT_ID`] = "anvil-hermetic-client";
+          env[`${prefix}_CLIENT_ASSERTION_KEY`] = assertionKey;
+        } else {
+          env[`${prefix}_TOKEN`] = "anvil-hermetic-bearer";
+        }
+        break;
+      default:
+        // Authorization-code, OBO, mTLS, custom-header, and workload-identity
+        // calls require caller/platform context that a wire-only self-test must
+        // not fabricate. Their normal auth_required result stays visible.
+        break;
+    }
+  }
+  return env;
+}
+
 /**
  * The CLI flags that carry a seeded input object to the generated tool CLI.
  * This is the exact inverse of the CLI engine's flag→input mapping (tool-cli
@@ -112,6 +178,23 @@ export interface ExpectedWire {
   body: unknown;
 }
 
+function withNestedValue(value: unknown, path: readonly string[], key: string): unknown {
+  const root = isRecord(value) ? structuredClone(value) : {};
+  let current = root;
+  for (const segment of path.slice(0, -1)) {
+    const next = current[segment];
+    if (isRecord(next)) {
+      current = next;
+    } else {
+      const created: Record<string, unknown> = {};
+      current[segment] = created;
+      current = created;
+    }
+  }
+  current[path[path.length - 1] as string] = key;
+  return root;
+}
+
 /**
  * The wire request the AIR contract promises for these args. Derived from AIR
  * here, independently of the executor's own request builder — the self-test is
@@ -148,13 +231,26 @@ export function expectedWire(op: Operation, args: Record<string, unknown>): Expe
     body = args.body;
   }
   if (body === undefined && hasBody) body = fields;
-  if (
-    op.idempotency.mechanism === "header" &&
-    op.idempotency.key &&
-    typeof args.idempotency_key === "string" &&
-    !REDACTED_HEADERS.has(op.idempotency.key.toLowerCase())
-  ) {
-    headers[op.idempotency.key.toLowerCase()] = args.idempotency_key;
+  const carrier = resolveIdempotencyCarrier(op);
+  const key = typeof args.idempotency_key === "string" ? args.idempotency_key : undefined;
+  if (carrier.ok && carrier.binding && key) {
+    const binding = carrier.binding;
+    switch (binding.mechanism) {
+      case "header":
+        if (!REDACTED_HEADERS.has(binding.key.toLowerCase())) {
+          headers[binding.key.toLowerCase()] = key;
+        }
+        break;
+      case "query":
+        query[binding.key] = key;
+        break;
+      case "path":
+        path = path.replace(`{${binding.key}}`, encodeURIComponent(key));
+        break;
+      case "body":
+        body = withNestedValue(body, binding.path, key);
+        break;
+    }
   }
   return { path, query, headers, body };
 }

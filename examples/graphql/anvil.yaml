@@ -42,7 +42,9 @@ operations:
     idempotency:
       strategy: required_request_key
       key_location: body
-      field: idempotencyKey
+      # checkout's request body is { input: CheckoutInput }; name the exact
+      # nested source coordinate as a JSON Pointer so the runtime can inject it.
+      field: /input/idempotencyKey
     confirmation:
       required: true
       risk: financial

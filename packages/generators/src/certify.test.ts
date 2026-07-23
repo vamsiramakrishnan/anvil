@@ -94,11 +94,52 @@ describe("certification: CONTRACT gate", () => {
     expect(failedIds(cert)).toContain("contract.surfaces-agree");
   });
 
+  it("fails when the AIR loaded by the deployed runtime exposes a different surface", () => {
+    const runtimeAir = JSON.parse(files["runtime/air.json"] as string);
+    const hidden = runtimeAir.operations.find(
+      (operation: { state: string }) => operation.state !== "approved",
+    );
+    if (hidden) hidden.state = "approved";
+    else runtimeAir.operations[0].mcp.toolName = "runtime_only_tool";
+    const cert = certifyBundle(
+      { ...files, "runtime/air.json": `${JSON.stringify(runtimeAir, null, 2)}\n` },
+      air,
+    );
+    expect(failedIds(cert)).toContain("contract.surfaces-agree");
+    expect(cert.checks.find((check) => check.id === "contract.surfaces-agree")?.detail).toContain(
+      "runtime/air.json",
+    );
+  });
+
   it("fails when air.json no longer validates through the AIR schema", () => {
     const broken = JSON.parse(files["air.json"] as string);
     broken.operations[0].effect.kind = "yolo";
     const cert = certifyBundle({ ...files, "air.json": JSON.stringify(broken) }, air);
     expect(failedIds(cert)).toContain("contract.air-valid");
+  });
+
+  it.each([
+    "runtime/server.js",
+    "mcp/server.js",
+    "cli/payments.mjs",
+    "deploy/terraform/main.tf",
+  ])("refuses to certify tampered compiler-owned executable/config bytes: %s", (path) => {
+    const cert = certifyBundle(
+      { ...files, [path]: `${files[path] as string}\n// malicious drift\n` },
+      air,
+    );
+    expect(failedIds(cert)).toContain("contract.generated-bytes-agree");
+    expect(
+      cert.checks.find((check) => check.id === "contract.generated-bytes-agree")?.detail,
+    ).toContain(path);
+  });
+
+  it("rejects ghost files inside a compiler-owned executable root", () => {
+    const cert = certifyBundle(
+      { ...files, "runtime/sidecar-bypass.js": "export const bypass = true;\n" },
+      air,
+    );
+    expect(failedIds(cert)).toContain("contract.generated-bytes-agree");
   });
 });
 
@@ -148,6 +189,55 @@ describe("certification: SAFETY gate", () => {
     refund.auth.secretSource = "none";
     const cert = certifyBundle(generateBundle(unsafe).files, unsafe);
     expect(failedIds(cert)).toContain("safety.secret-handling-coherent");
+  });
+
+  it("fails a tampered AIR whose declared principal disagrees with the executed grant", () => {
+    const unsafe = structuredClone(air);
+    const refund = unsafe.operations.find((o) => o.id === "payments.refunds.create");
+    if (!refund) throw new Error("fixture: refund operation missing");
+    refund.auth.type = "oauth2_client_credentials";
+    refund.auth.principal = "end_user";
+    refund.auth.secretSource = "env";
+    refund.auth.provider = { grant: "client_credentials" };
+    const cert = certifyBundle(generateBundle(unsafe).files, unsafe);
+    expect(failedIds(cert)).toContain("safety.auth-authority-coherent");
+  });
+
+  it("fails a tampered AIR whose OAuth type and provider grant disagree", () => {
+    const unsafe = structuredClone(air);
+    const refund = unsafe.operations.find((o) => o.id === "payments.refunds.create");
+    if (!refund) throw new Error("fixture: refund operation missing");
+    refund.auth.type = "oauth2_on_behalf_of";
+    refund.auth.principal = "delegated";
+    refund.auth.secretSource = "env";
+    refund.auth.provider = { grant: "client_credentials" };
+    const cert = certifyBundle(generateBundle(unsafe).files, unsafe);
+    expect(failedIds(cert)).toContain("safety.auth-authority-coherent");
+  });
+
+  it("fails a tampered API-key AIR that smuggles JWT-bearer grant mechanics", () => {
+    const unsafe = structuredClone(air);
+    const refund = unsafe.operations.find((o) => o.id === "payments.refunds.create");
+    if (!refund) throw new Error("fixture: refund operation missing");
+    refund.auth.type = "api_key";
+    refund.auth.principal = "service";
+    refund.auth.secretSource = "env";
+    refund.auth.provider = { grant: "jwt_bearer" };
+    const cert = certifyBundle(generateBundle(unsafe).files, unsafe);
+    expect(failedIds(cert)).toContain("safety.auth-authority-coherent");
+  });
+
+  it.each([
+    "mtls",
+    "custom_header",
+    "oauth2_authorization_code",
+  ] as const)("fails certification for approved but unmodeled %s auth", (type) => {
+    const unsafe = structuredClone(air);
+    const refund = unsafe.operations.find((o) => o.id === "payments.refunds.create");
+    if (!refund) throw new Error("fixture: refund operation missing");
+    refund.auth.type = type;
+    const cert = certifyBundle(generateBundle(unsafe).files, unsafe);
+    expect(failedIds(cert)).toContain("safety.auth-runtime-supported");
   });
 });
 

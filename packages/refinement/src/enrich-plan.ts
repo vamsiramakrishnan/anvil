@@ -293,7 +293,7 @@ export function parseEnrichmentPlan(text: string): EnrichmentPlan {
 /** Human view of the plan. */
 export function renderEnrichmentPlan(plan: EnrichmentPlan): string {
   const lines = [
-    `Enrichment plan — ${plan.targets.length} operation(s) to investigate (of ${plan.total}; ${plan.basisSize} clean basis skipped)`,
+    `Enrichment plan — ${plan.targets.length} operation(s) to investigate (of ${plan.total}; basis size ${plan.basisSize})`,
     "",
   ];
   for (const t of plan.targets) {

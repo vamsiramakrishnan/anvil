@@ -11,6 +11,81 @@ pipeline every other source uses.
 > **What "estate" means here:** everything one gateway export describes — the
 > APIs, their auth, their quotas, and the policies wrapped around them.
 
+## The production import journey
+
+A gateway route table is not an API contract. For an agent-ready import, give
+Anvil both sources of truth:
+
+- the **gateway export**, which supplies the selected API's routes and deployed
+  policy; and
+- the original **OpenAPI or Swagger specification**, which supplies the request,
+  response, and authentication contract.
+
+```bash
+# 1. Find the one API to adopt.
+anvil estate inventory gateway-export.zip --vendor kong --json
+
+# 2. Import it with its real contract and the public runtime URL that must remain
+#    in the request path. Keep source and receipt state under one explicit root.
+mkdir -p generated
+anvil estate import gateway-export.zip \
+  --vendor kong \
+  --api payments \
+  --spec specs/payments.swagger.yaml \
+  --gateway-url https://api.example.com/payments \
+  --root "$PWD" \
+  --out generated/payments \
+  --json > generated/payments.import.json
+
+# 3. Use the content-derived id printed in the JSON report to verify every input
+#    and the receipt-scoped output from any working directory.
+IMPORT_ID="$(
+  node -e 'const r=require("./generated/payments.import.json"); process.stdout.write(r.receipt.importId)'
+)"
+anvil estate verify "$IMPORT_ID" \
+  --root "$PWD" \
+  --bundle generated/payments
+
+# 4. Only then inspect the operation-level safety posture.
+anvil inspect generated/payments
+anvil lint generated/payments
+```
+
+`--gateway-url` is not a management connection. It is an operator attestation of
+the credential-free public HTTPS base URL through which generated calls must
+travel. It is mandatory with `--spec`, rejects embedded credentials, query
+strings, and fragments, and replaces the contract's server list so tools cannot
+silently bypass the gateway.
+
+Before compilation, Anvil compares the full normalized method/path multiset in
+the selected gateway API with the supplied contract. Missing, extra, duplicate,
+or ambiguous routes block every supplied operation. Gateway policies are then
+retargeted by that method/path identity, not by coincidentally matching
+`operationId` text.
+
+### Where the Swagger, export, and proof live
+
+With `--root <workspace>`, the durable evidence layout is:
+
+| Artifact | Location | Purpose |
+| --- | --- | --- |
+| Locked OpenAPI/Swagger | `<workspace>/.anvil/sources/<snapshot-id>/raw/<entrypoint>` | Exact content-addressed compiler source; the import report prints the snapshot id, entrypoint, hash, and directory. |
+| Private import receipt | `<workspace>/.anvil/imports/<import-id>/import.receipt.json` | Immutable binding of export digest, inventory, contract provenance, overlays, blockers, and output manifest. |
+| Original gateway export | `<workspace>/.anvil/imports/<import-id>/raw/export.bin` | Exact original bytes, including the outer ZIP when one was supplied. |
+| Bundle receipt view | `<bundle>/import.receipt.json` | Redacted pointer to the private receipt plus output-lineage status; never the authoritative receipt. |
+| Runtime coordinate | `<bundle>/air.yaml` and `air.json` | The operator-attested gateway URL pinned as the service server. |
+
+Treat `.anvil/imports` as private evidence storage: the receipt is secret-free,
+but `raw/export.bin` deliberately preserves the exact export and can therefore
+contain customer configuration. The bundle view uses `$WORKSPACE` coordinates
+and does not publish the operator's absolute paths.
+
+`anvil estate verify <id> --root <workspace>` checks the immutable receipt,
+stored export, and locked source. Add `--bundle <dir>` to check every
+receipt-scoped output byte, the exact file set, and the redacted receipt view.
+Re-running the same import is content-idempotent: it reuses the same receipt
+without rewriting it.
+
 ## One rule: no vendor detail escapes
 
 Each adapter emits exactly one thing — `GatewayApiImport { source, overlay }`
@@ -69,11 +144,14 @@ Each adapter also declares a **capability matrix** (`capabilityMatrix` /
 `capabilityGaps`): what it supports fully, partially, or not at all, rendered as
 rows so partial support is never invisible.
 
-## How you feed it: an offline export, not a live connection
+## How you feed it: an offline export, not a live management connection
 
-Anvil never connects to your gateway — no URL, no management-API token, no live
-discovery. `anvil estate` reads a **file** you export (a config document, or a
-ZIP/JAR the archive harness unpacks) and parses it offline.
+Anvil never connects to the gateway management plane — no admin URL, no
+management-API token, and no live discovery. `anvil estate` reads a **file** you
+export (a config document, or a ZIP/JAR the archive harness unpacks) and parses
+it offline. The `--gateway-url` used in a production import is only the
+operator-attested runtime coordinate written into generated tools; Anvil does
+not call it during import.
 
 What the adapter reads is a YAML/JSON *description* of the estate, not the
 vendor's raw binary:
@@ -111,12 +189,12 @@ adopt** — two different problems, scaled differently.
   800 APIs in the export
         │
         ▼  anvil estate inventory   (whole estate, no compiling)
-  triage with jq → pick the handful that matter
+  triage with jq → pick the handful that matter and locate their real specs
         │
-        ▼  anvil estate import --api <id>   (one at a time)
-  each import → a normal bundle, operations held for review
+        ▼  anvil estate import --api <id> --spec <contract> --gateway-url <url>
+  each import → a normal bundle, contract + gateway evidence locked together
         │
-        ▼  anvil approve   (after reading each operation's risk)
+        ▼  anvil inspect / lint / verify
   the agent sees a few coherent capabilities
 ```
 
@@ -138,24 +216,27 @@ anvil estate inventory prod-estate.zip --vendor wso2 --json \
 
 You import the APIs you chose, one at a time; `--api` names a single id. There is
 no `--all`, and that's the point: at scale the goal is *fewer* agent tools, not a
-faithful mirror of an 800-API estate. To onboard the handful that matter, loop
-the import over the ids you triaged:
+faithful mirror of an 800-API estate. Each production import also needs that
+API's native contract and public gateway URL:
 
 ```bash
-for api in payments refunds payouts; do
-  anvil estate import prod-estate.zip --vendor wso2 --api "$api" \
-    --out "generated/$api"
-done
+anvil estate import prod-estate.zip \
+  --vendor wso2 \
+  --api payments \
+  --spec contracts/payments.openapi.yaml \
+  --gateway-url https://api.example.com/payments \
+  --root "$PWD" \
+  --out generated/payments
 ```
 
-Each import produces an ordinary bundle whose operations land `review_required`
-(held for review) until a human approves them. To keep that review tractable,
-Anvil groups operations into **capabilities** by tag or resource and enforces a
+Without `--spec`, Anvil can still synthesize an OpenAPI-shaped route inventory
+for assessment, but every operation is `blocked`: a path and method do not prove
+request bodies, responses, authentication, or runtime routing. The CLI prints
+the recovery command. To keep native-contract review tractable, Anvil groups
+operations into **capabilities** by tag or resource and enforces a
 tool-disclosure budget: a capability of 5–15 tools is the sweet spot, and one
 that floods past 20 is blocked until you split it (`--allow-large` to override).
-So you never face 800 undifferentiated operations — you review coherent,
-right-sized capabilities, and expose operations through `anvil approve` only
-after reading their risk.
+So you never face 800 undifferentiated operations.
 
 > **The net shape:** inventory scales to the whole estate; compilation, review,
 > and approval stay granular. Of 800 APIs, the 795 you never import aren't
@@ -168,6 +249,31 @@ management API (the adapters read offline exports). See
 [ADR-0013](/anvil/reference/adr/0013-gateway-adapters-emit-snapshot-plus-overlay/)
 for why inventory and per-API compilation are separated by design.
 
+## Receipt lineage after import
+
+The receipt proves the exact import boundary; it does not pretend that later
+intentional mutations are the same output.
+
+- A bound re-import verifies the old receipt before replacement and preserves
+  recognized lifecycle records (`certification.json`, `publication.json`, and
+  top-level `*.report.json`). A Gemini Enterprise target is preserved only when
+  it regenerates exactly from its persisted setup and the candidate AIR.
+  Unknown files and missing, extra, or changed target files stop replacement.
+- `anvil approve` changes compiler projections, so it marks the bundled receipt
+  view `stale` and records the complete derived-state manifest. `estate verify
+  --bundle`, `status`, and `certify` then fail visibly. Editing the view back to
+  `bound` does not work because the recorded hashes still disagree.
+- Re-import without a flag refuses a stale derived state. `--replace-derived` is
+  an explicit reset, not a merge: it first verifies every recorded derived byte,
+  then discards the approval-derived state and any later recognized lifecycle
+  artifacts and installs a fresh bound import.
+
+That last operation does **not** preserve approvals. Use it only when resetting
+to the imported baseline is the intended recovery. A failed staged install
+leaves the prior bundle intact; if only old-backup cleanup fails after a
+successful swap, the command reports success and tells you where the retained
+backup is.
+
 ## Using it today, honestly
 
 - **Library** — every adapter is exported from `@anvil/compiler`'s gateway module
@@ -178,12 +284,14 @@ for why inventory and per-API compilation are separated by design.
   hooks, simulator, and certification all apply.
 - **CLI** — `anvil estate inventory <export> --vendor <v>` lists an estate's APIs
   without compiling anything, and `anvil estate import <export> --vendor <v>
-  [--api <id>]` compiles one API into a normal bundle. The export may be a bare
-  config document or a ZIP/JAR archive, which is decoded through the hardened
-  harness (rejections printed, never silent) with the real fflate backend. Opaque
-  policies are surfaced in the import summary. Separately, `anvil source add
-  --origin <vendor>` records gateway provenance on locked snapshots. tar/gzip
-  containers are refused by name until their thin decoders land.
+  [--api <id>] --spec <contract> --gateway-url <url> --root <workspace>` locks a
+  native contract and gateway evidence into one normal bundle. `anvil estate
+  verify <import-id> --root <workspace> [--bundle <dir>]` verifies that chain.
+  The export may be a bare config document or a ZIP/JAR archive, which is decoded
+  through the hardened harness (rejections printed, never silent) with the real
+  fflate backend. Opaque policies and contract-fidelity blockers are surfaced in
+  the import summary. tar/gzip containers are refused by name until their thin
+  decoders land.
 - **Deferred per-vendor depth** (recorded in ADR-0021) — Kong
   consumers/credentials/workspaces, WSO2 mediation-sequence semantics, MuleSoft
   Exchange metadata and client apps, and API Connect subscription analytics.

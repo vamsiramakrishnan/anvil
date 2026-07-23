@@ -16,12 +16,12 @@ import {
   AnvilError,
   allowedHostsFor,
   type CredentialResolver,
-  EnvCredentialResolver,
   type ErrorEnvelope,
   type ExecuteContext,
   execute,
   FetchTransport,
   loadRuntimeConfig,
+  resolveCredentials,
   resolveLedger,
   type Transport,
   unapprovedOperationError,
@@ -401,11 +401,16 @@ async function invoke(
 
   const ctx: ExecuteContext = {
     transport: deps.transport ?? new FetchTransport(),
-    credentials: deps.credentials ?? new EnvCredentialResolver(env),
+    serviceId: air.service.id,
+    credentials: deps.credentials ?? resolveCredentials(config, { env }),
     // Wire the idempotency ledger so replay protection actually works from the
     // CLI. ANVIL_LEDGER selects a durable backend; without one the executor
     // fails closed on required-idempotency mutations outside dev.
-    ledger: deps.ledger ?? resolveLedger(config.ledger),
+    ledger:
+      deps.ledger ??
+      resolveLedger(config.ledger, {
+        resultTtlMs: config.ledgerResultTtlSeconds * 1000,
+      }),
     baseUrl,
     authProfile: (flags["auth-profile"] as string) ?? config.authProfile,
     allowedHosts,

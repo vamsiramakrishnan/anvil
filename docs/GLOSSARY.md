@@ -175,7 +175,11 @@ own past calls on its own, so this external store does the remembering.
 The ledger is a plugin, selected by `resolveLedger(ANVIL_LEDGER)`. Outside
 `dev`, an operation that *requires* an idempotency key fails closed with
 `idempotency_ledger_unavailable` when no durable backend is configured — the
-runtime refuses rather than pretend it has protection it doesn't.
+runtime refuses rather than pretend it has protection it doesn't. The generated
+Firestore backend expires completed replay results after a bounded retention
+window, while in-progress reservations never expire automatically. Its live,
+non-mutating readiness probe keeps `/readyz` closed when the named database
+cannot be reached.
 
 ## Manifest (enrichment)
 

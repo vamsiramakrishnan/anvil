@@ -9,6 +9,7 @@ import {
   diff,
   ensureBundleNodeModules,
   expectedWire,
+  hermeticCredentialEnv,
   MockControl,
   parseJson,
   startMockServer,
@@ -98,6 +99,7 @@ export async function runLoopback(
   let source: McpSource | undefined;
   try {
     const base = `http://127.0.0.1:${mock.port}`;
+    const credentialEnv = hermeticCredentialEnv(approved, base);
     source = await connectSource({
       id: "loopback",
       system: "generic",
@@ -107,9 +109,9 @@ export async function runLoopback(
         args: [join(dir, "mcp", "server.js")],
         // Hermetic child env: point the generated server at the mock, force dev
         // semantics, and neutralize any ambient ANVIL_* that would change the
-        // safety posture under test. Dummy default-profile credentials let
-        // authenticated operations execute; the mock redacts auth headers, so
-        // the dummy value is never recorded anywhere.
+        // safety posture under test. Hermetic credentials are generated for
+        // every concrete scheme/profile; OAuth grants use the mock's reserved
+        // token endpoint, which is excluded from upstream wire captures.
         env: {
           ANVIL_BASE_URL: base,
           ANVIL_ENV: "dev",
@@ -117,10 +119,7 @@ export async function runLoopback(
           ANVIL_AUTH_PROFILE: "default",
           ANVIL_LEDGER: "",
           ANVIL_MOCK_SCENARIO: "",
-          ANVIL_DEFAULT_TOKEN: "loopback-selftest",
-          ANVIL_DEFAULT_API_KEY: "loopback-selftest",
-          ANVIL_DEFAULT_USERNAME: "loopback",
-          ANVIL_DEFAULT_PASSWORD: "loopback-selftest",
+          ...credentialEnv,
           ...options.env,
         },
       },

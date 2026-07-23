@@ -4,8 +4,8 @@
  * Gemini Enterprise registers a *custom MCP server* (`data_source = custom_mcp`,
  * connector_type REMOTE_MCP) as an agent's tool source over a public HTTPS
  * StreamableHTTP endpoint, with an action-selection budget. The MCP server must
- * **self-enforce** auth and safety — the platform does not assume an external
- * gateway in front of it.
+ * **self-enforce** auth and safety — platform action confirmation defaults do
+ * not replace contract-level defense in depth.
  *
  * The connector authenticates to the server one of exactly two ways — the ONLY
  * `auth_type` values the platform accepts for a custom MCP server:
@@ -60,7 +60,7 @@ export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
   ],
   unsupportedAssumptions: [
     "The platform does not enforce the API's auth for you — the MCP server must self-enforce it.",
-    "The platform does not confirm irreversible actions for you — confirmation must be in the contract.",
+    "Platform action confirmation defaults do not replace contract-level confirmation for irreversible actions.",
     "An external gateway in front of the server is not assumed; controls travel in the pack.",
     "The raw setUpDataConnector API cannot finish OAUTH consent — the connector reaches ACTIVE only after the console's interactive Authorize step.",
   ],
@@ -76,7 +76,8 @@ export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
     {
       surface: "agent-registry",
       action: "Import the registered MCP server into the app",
-      where: "GE console → Connected data stores → + New data store → MCP servers → Show all → Add tool",
+      where:
+        "GE console → Connected data stores → + New data store → MCP servers → Show all → Add tool",
       why: "Importing a registry MCP server into a GE app is console-only — there is no public API for the import step.",
     },
   ],
@@ -87,5 +88,5 @@ export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
   // token. See docs/backtesting/GEMINI_ENTERPRISE_VALIDATION.md.
   verificationStatus: "verified",
   verifiedAgainst:
-    "Live GE app end-to-end, 2026-07-21 (a real GE project, location global, v1alpha). data_source=custom_mcp; create shape params{oauth_access_token} + action_config.action_params{auth_type, auth_uri, token_uri, scopes, instance_uri, mcp_server_source=BYO_MCP, client_id, client_secret} + create_bap_connection (confirmed by creating connectors + reading back 7 live ones); auth_type is OAUTH or NO_AUTH only. Connector reached ACTIVE and GE fetched+enabled the tool after the console's interactive OAuth Authorize step (raw API create alone hits INITIALIZATION_FAILED — OAuth consent is interactive by design). GE calls /mcp (POST+GET, one session) with the user's OAuth access token: iss=the IdP, aud=the scope's resource (not the server). See docs/backtesting/GEMINI_ENTERPRISE_VALIDATION.md",
+    "Live GE app end-to-end, 2026-07-21 (a real GE project, location global, v1alpha). data_source=custom_mcp; create shape params{oauth_access_token} + action_config.action_params{auth_type, auth_uri, token_uri, scopes, instance_uri, mcp_server_source=BYO_MCP, client_id, client_secret} + create_bap_connection (confirmed by creating connectors + reading back 7 live ones); auth_type is OAUTH or NO_AUTH only. Connector reached ACTIVE and GE fetched+enabled the tool after the console's interactive OAuth Authorize step (raw API create alone hits INITIALIZATION_FAILED — OAuth consent is interactive by design). GE calls /mcp (POST+GET, one session) with the user's OAuth access token: iss=the IdP, aud=the scope's resource (not the server). Current platform action defaults may confirm actions, while Anvil retains contract-level confirmation as defense in depth. See docs/backtesting/GEMINI_ENTERPRISE_VALIDATION.md",
 };

@@ -19,5 +19,6 @@ export * from "./kong/index.js";
 export * from "./model.js";
 export * from "./mulesoft/index.js";
 export * from "./overlay.js";
+export * from "./receipt.js";
 export * from "./synth.js";
 export * from "./wso2/index.js";

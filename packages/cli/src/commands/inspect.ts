@@ -35,7 +35,7 @@ function runInspect(path: string, opts: { json?: boolean }, io: CliIO): number {
   for (const op of air.operations) {
     const tag = op.effect.kind === "mutation" ? `mutation/${op.effect.risk}` : "read";
     io.out(
-      `  ${op.cli.command.padEnd(34)} ${tag.padEnd(18)} ${op.state}${op.confirmation.required ? " ⚠" : ""}`,
+      `  ${op.cli.command.padEnd(34)} ${tag.padEnd(18)} ${op.state}${op.confirmation.required ? " ⚠" : ""}  id=${op.id}`,
     );
   }
   return 0;

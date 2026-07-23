@@ -87,6 +87,27 @@ describe("MCP adoption — capture and validation", () => {
 });
 
 describe("MCP adoption — bridge to the pipeline", () => {
+  it("treats MCP idempotentHint as natural idempotency without inventing a key carrier", async () => {
+    const server = sampleRefundServer(ENDPOINT);
+    const create = server.capture.tools.find((tool) => tool.name === "create_refund");
+    if (!create) throw new Error("fixture tool missing");
+    create.annotations = { ...create.annotations, idempotentHint: true };
+    const out = await adoptMcp(ENDPOINT, probeFor(server), {
+      mode: "adopt",
+      serviceId: "refunds",
+    });
+    if (!out.ok) throw new Error("expected ok");
+    const adopted = out.result.air.operations.find(
+      (operation) => operation.mcp.toolName === "create_refund",
+    );
+    expect(adopted?.idempotency).toMatchObject({
+      mode: "natural",
+      mechanism: "none",
+      keyDerivation: "none",
+    });
+    expect(adopted?.retries.mode).toBe("safe");
+  });
+
   it("bridges tools into AIR and derives a signature over only the adopted tools", async () => {
     const out = await adoptMcp(ENDPOINT, probeFor(sampleRefundServer(ENDPOINT)), {
       mode: "adopt",

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   type AgentDriver,
   haikuReviewDriver,
+  ReviewContextSecurityError,
   ReviewDriverUnavailableError,
   ReviewOutputError,
   type ReviewReport,
@@ -34,11 +35,15 @@ export function registerReview(parent: Command, ctx: CommandContext): void {
       .command("review")
       .summary("Model-driven semantic review of a bundle's agent surfaces (MCP/CLI/skill).")
       .description(
-        "Drives a cheap reviewer model (default Haiku via the `claude` CLI) through Anvil's artifact-review SOP over a generated bundle: MCP tool descriptions must be truthful to each operation's effect/risk, the CLI surface must teach confirm/idempotency/dry-run on mutating commands, the skill doc must teach the safety posture and document no phantom operations, and all three surfaces must agree. Every finding must cite verbatim evidence from the bundle; ungrounded findings are discarded mechanically. Writes review.report.json into the bundle. Useful for spec sources with no reference server to backtest against.",
+        "Drives a cheap reviewer model (default Haiku via the `claude` CLI) through Anvil's artifact-review SOP over a generated bundle: MCP tool descriptions must be truthful to each operation's effect/risk, the CLI surface must teach confirm/idempotency/dry-run on mutating commands, the skill doc must teach the safety posture and document no phantom operations, and all three surfaces must agree. Every finding must cite verbatim evidence from the bundle; ungrounded findings are discarded mechanically. Native execution is unsandboxed and therefore fails closed unless --allow-degraded-native is supplied; its HOME is isolated and credentials are delivered only through the Claude credential profile. Writes review.report.json into the bundle.",
       )
       .argument("<dir>", "generated bundle directory (or its air.yaml/air.json)")
       .option("--model <model>", "reviewer model passed to the driver", "haiku")
       .option("--driver-command <bin>", "headless agent CLI to drive", "claude")
+      .option(
+        "--allow-degraded-native",
+        "explicitly allow the unsandboxed native reviewer (isolated HOME; host files remain reachable)",
+      )
       .option("--json", "emit the full review report as JSON")
       .action(async (dir: string, opts: ReviewOptions) => {
         ctx.code = await runReview(dir, opts, ctx.io, { driver: ctx.deps.reviewDriver });
@@ -50,6 +55,7 @@ export function registerReview(parent: Command, ctx: CommandContext): void {
 export interface ReviewOptions {
   model?: string;
   driverCommand?: string;
+  allowDegradedNative?: boolean;
   json?: boolean;
 }
 
@@ -62,7 +68,18 @@ export async function runReview(
 ): Promise<number> {
   const dir = resolveBundleDir(path);
   const driver =
-    deps.driver ?? haikuReviewDriver({ command: opts.driverCommand, model: opts.model });
+    deps.driver ??
+    haikuReviewDriver({
+      command: opts.driverCommand,
+      model: opts.model,
+      allowDegradedNative: opts.allowDegradedNative,
+    });
+
+  if (!deps.driver && opts.allowDegradedNative === true) {
+    io.err(
+      "WARNING: native model review has host network and cannot enforce a workspace-only filesystem. HOME is isolated and only the Claude credential profile is inherited.",
+    );
+  }
 
   let report: ReviewReport;
   try {
@@ -72,9 +89,17 @@ export async function runReview(
       io.err(`anvil: error ${err.code} — ${err.message}`);
       io.err("  The review needs a headless agent CLI. Check:");
       io.err(`  - \`${opts.driverCommand ?? "claude"}\` is installed and on PATH`);
-      io.err("  - it is authenticated (run it once interactively)");
+      io.err(
+        "  - ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is exported (review uses an isolated HOME)",
+      );
       io.err("  - or point --driver-command at another headless agent CLI");
+      io.err("  - native execution also requires --allow-degraded-native; omit it to fail closed");
       io.err("  No report was written; this is not a pass.");
+      return 1;
+    }
+    if (err instanceof ReviewContextSecurityError) {
+      io.err(`anvil: error ${err.code} — ${err.message}`);
+      io.err("  No model was invoked and no report was written.");
       return 1;
     }
     if (err instanceof ReviewOutputError) {

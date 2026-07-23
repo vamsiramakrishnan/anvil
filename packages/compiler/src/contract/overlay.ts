@@ -9,7 +9,13 @@
  * share both resolution and application — there is no second mechanism.
  */
 import type { IdempotencyMode } from "@anvil/air";
-import type { AnvilManifest, OperationManifest } from "../manifest.js";
+import {
+  type AnvilManifest,
+  airAuthProviderToManifest,
+  manifestAuthProviderToAir,
+  manifestIdempotencyKey,
+  type OperationManifest,
+} from "../manifest.js";
 import { overlayDigest } from "./digest.js";
 import type {
   OverlayOrigin,
@@ -89,6 +95,9 @@ export const CONTRACT_SAFETY_PREDICATES: ReadonlySet<SemanticPredicate> =
     "confirmation.human_approval",
     "retries.mode",
     "auth.principal",
+    "auth.type",
+    "auth.credentialProfile",
+    "auth.provider",
     "auth.scopes",
   ]);
 
@@ -160,6 +169,13 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     if (m.name?.resource) assertions.push(set(ref, "name.resource", m.name.resource));
     if (m.name?.verb) assertions.push(set(ref, "name.verb", m.name.verb));
 
+    if (m.auth?.type) assertions.push(set(ref, "auth.type", m.auth.type));
+    if (m.auth?.credential_profile) {
+      assertions.push(set(ref, "auth.credentialProfile", m.auth.credential_profile));
+    }
+    if (m.auth?.provider) {
+      assertions.push(set(ref, "auth.provider", manifestAuthProviderToAir(m.auth.provider)));
+    }
     if (m.auth?.principal) assertions.push(set(ref, "auth.principal", m.auth.principal));
     if (m.auth?.audience) assertions.push(set(ref, "auth.audience", m.auth.audience));
     if (m.auth?.secret_source) assertions.push(set(ref, "auth.secretSource", m.auth.secret_source));
@@ -172,7 +188,8 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
       if (m.idempotency.key_location) {
         assertions.push(set(ref, "idempotency.mechanism", m.idempotency.key_location));
       }
-      if (m.idempotency.header) assertions.push(set(ref, "idempotency.key", m.idempotency.header));
+      const key = manifestIdempotencyKey(m.idempotency);
+      if (key) assertions.push(set(ref, "idempotency.key", key));
     }
 
     if (m.confirmation?.required !== undefined) {
@@ -236,6 +253,12 @@ export function projectOperationManifest(
   }
 
   const auth: NonNullable<OperationManifest["auth"]> = {};
+  const authType = v<NonNullable<OperationManifest["auth"]>["type"]>("auth.type");
+  if (authType) auth.type = authType;
+  const credentialProfile = v<string>("auth.credentialProfile");
+  if (credentialProfile) auth.credential_profile = credentialProfile;
+  const provider = v<Parameters<typeof airAuthProviderToManifest>[0]>("auth.provider");
+  if (provider) auth.provider = airAuthProviderToManifest(provider);
   const principal = v<NonNullable<OperationManifest["auth"]>["principal"]>("auth.principal");
   if (principal) auth.principal = principal;
   const audience = v<string>("auth.audience");
@@ -258,7 +281,11 @@ export function projectOperationManifest(
       v<NonNullable<OperationManifest["idempotency"]>["key_location"]>("idempotency.mechanism");
     if (mechanism) m.idempotency.key_location = mechanism;
     const key = v<string>("idempotency.key");
-    if (key) m.idempotency.header = key;
+    if (key) {
+      if (mechanism === "body") m.idempotency.field = key;
+      else if (mechanism === "query" || mechanism === "path") m.idempotency.parameter = key;
+      else m.idempotency.header = key;
+    }
   }
 
   const confRequired = v<boolean>("confirmation.required");

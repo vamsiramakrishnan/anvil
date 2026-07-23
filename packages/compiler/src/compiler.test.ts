@@ -190,7 +190,7 @@ describe("semantic vocabulary (effect action / retry basis / auth principal)", (
     expect(refund?.auth.principal).toBe("service");
   });
 
-  it("lets the manifest override principal / action / audience", async () => {
+  it("applies descriptive overrides but blocks a principal that conflicts with the grant", async () => {
     const m = `service: { name: payments }
 operations:
   getPayment:
@@ -204,6 +204,7 @@ operations:
     expect(getPayment?.effect.action).toBe("export");
     expect(getPayment?.auth.principal).toBe("end_user");
     expect(getPayment?.auth.audience).toBe("https://payments.example.com");
+    expect(getPayment?.state).toBe("blocked");
   });
 });
 

@@ -11,6 +11,7 @@ import {
   diff,
   ensureBundleNodeModules,
   expectedWire,
+  hermeticCredentialEnv,
   MockControl,
   parseJson,
   startMockServer,
@@ -205,6 +206,7 @@ export async function runConformance(
   try {
     const base = `http://127.0.0.1:${mock.port}`;
     const ctl = new MockControl(base);
+    const credentialEnv = hermeticCredentialEnv(approved, base);
     source = await connectSource({
       id: "conformance",
       system: "generic",
@@ -219,7 +221,7 @@ export async function runConformance(
           ANVIL_AUTH_PROFILE: "default",
           ANVIL_LEDGER: "",
           ANVIL_MOCK_SCENARIO: "",
-          ...DUMMY_CREDS,
+          ...credentialEnv,
         },
       },
       hints: { scope: [] },
@@ -228,7 +230,11 @@ export async function runConformance(
     const mcpCall = (tool: string, args: Record<string, unknown>) =>
       withTimeout(src.callRaw(tool, args), timeoutMs, `mcp ${tool}`);
     const cli = (op: Operation, args: Record<string, unknown>, confirm: boolean) =>
-      withTimeout(driveCli(dir, base, op, args, confirm), timeoutMs, `cli ${op.cli.command}`);
+      withTimeout(
+        driveCli(dir, base, op, args, confirm, credentialEnv),
+        timeoutMs,
+        `cli ${op.cli.command}`,
+      );
 
     for (const op of approved) {
       if (!wireable(op)) {
@@ -247,13 +253,6 @@ export async function runConformance(
 
   return finish(dir, startedAt, surfaces, checks);
 }
-
-const DUMMY_CREDS: Record<string, string> = {
-  ANVIL_DEFAULT_TOKEN: "conformance",
-  ANVIL_DEFAULT_API_KEY: "conformance",
-  ANVIL_DEFAULT_USERNAME: "conformance",
-  ANVIL_DEFAULT_PASSWORD: "conformance",
-};
 
 function finish(
   dir: string,
@@ -662,6 +661,7 @@ function driveCli(
   op: Operation,
   args: Record<string, unknown>,
   confirm: boolean,
+  credentialEnv: Record<string, string>,
 ): Promise<CliResult> {
   const serviceId = op.cli.command.split(" ")[0] as string;
   const rest = op.cli.command.split(" ").slice(1); // <resource> <action>
@@ -680,8 +680,9 @@ function driveCli(
         ...process.env,
         ANVIL_ENV: "dev",
         ANVIL_ALLOWED_HOSTS: "127.0.0.1",
+        ANVIL_AUTH_PROFILE: "default",
         ANVIL_LEDGER: "",
-        ...DUMMY_CREDS,
+        ...credentialEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

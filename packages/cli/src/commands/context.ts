@@ -10,6 +10,8 @@ export interface AnvilCliDeps extends ToolCliDeps {
   transportFactory?: TransportFactory;
   /** Injectable reviewer driver so `review` can be tested without a real agent CLI. */
   reviewDriver?: AgentDriver;
+  /** Injectable cleanup seam for gateway bundle transaction backup tests. */
+  cleanupGatewayBundleBackup?: (path: string) => void;
 }
 
 /**

@@ -1,25 +1,63 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import {
   type AgentPlatformTargetProfile,
   buildConnectorPlan,
-  type ConnectorPlanOptions,
+  type ConnectorOAuthProvider,
+  createGeminiEnterpriseTargetConfig,
   GEMINI_ENTERPRISE_PROFILE,
+  GEMINI_GATEWAY_LOCATIONS,
+  GEMINI_REGISTRATION_SURFACES,
+  GEMINI_REGISTRY_LOCATIONS,
+  type GeminiEnterpriseTargetConfigInput,
+  type GeminiGatewayLocation,
+  type GeminiRegistrationSurface,
+  type GeminiRegistryLocation,
   generateTargetKit,
-  type IdpChoice,
+  MCP_SERVER_AUTH_MODES,
+  type McpServerAuthMode,
   renderConnectorPlanText,
+  type TargetKitFile,
+  targetStateRelativePath,
   validateTarget,
 } from "@anvil/targets";
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
+import { loadAir, resolveAirPath } from "./shared.js";
 
 /** The target platforms Anvil can generate a connector kit for. */
 const PROFILES: Record<string, AgentPlatformTargetProfile> = {
   "gemini-enterprise": GEMINI_ENTERPRISE_PROFILE,
 };
+
+/** Filesystem commit seam used to prove rollback without monkeypatching node:fs. */
+export interface TargetDeps {
+  installStagedTarget?: (stageDir: string, targetDir: string) => void;
+  cleanupTargetBackup?: (backupDir: string) => void;
+  env?: NodeJS.ProcessEnv;
+}
+
+interface TargetWriteResult {
+  targetDir: string;
+  warnings: string[];
+  retainedBackupDir?: string;
+}
 
 /**
  * `anvil target <profile> <dir>` — generate the connector kit for an agent
@@ -35,91 +73,214 @@ export function registerTarget(parent: Command, ctx: CommandContext): void {
       .command("target")
       .summary("Generate an agent-platform connector kit (e.g. Gemini Enterprise) for a bundle.")
       .description(
-        "Turns a compiled bundle into a platform-ready BYO-MCP connector, with BOTH registration surfaces: (1) a custom-MCP DataConnector — a ready Discovery Engine `setUpDataConnector` request + curl; and (2) the Agent Registry / Agent Gateway path (under `agent-registry/`: a toolspec.json, egress gateway YAML, Terraform, a register script, and a runbook) — the fully programmatic, gateway-governed alternative. Also emits the versioned profile, the inbound-auth (OAuth resource-server) env contract, the per-action selection manifest, the org-policy checklist, an admin runbook, and a compatibility report validated against the platform's transport / auth / action-budget requirements. See the skill's reference/gemini-enterprise.md for which surface to pick. Writes under `<dir>/targets/<profile>/`.",
+        "Validates and generates one explicit Gemini Enterprise registration journey. `custom-mcp` is console-first; its raw setUpDataConnector files are experimental references. `agent-gateway` emits guarded Agent Registry, gateway, engine-binding, and rollback artifacts. `both` is available only when explicitly requested for compatibility. Connector OAuth protects /mcp and is separate from Gemini Enterprise sign-in / Workforce Identity Federation. No files are written when validation fails.",
       )
       .argument("<profile>", `target platform: ${Object.keys(PROFILES).join(", ")}`)
       .argument("<dir>", "generated bundle directory or air.yaml")
+      .addOption(
+        new Option("--surface <surface>", "registration surface")
+          .choices([...GEMINI_REGISTRATION_SURFACES])
+          .makeOptionMandatory(),
+      )
+      .addOption(
+        new Option("--server-auth <mode>", "MCP resource-server auth mode")
+          .choices([...MCP_SERVER_AUTH_MODES])
+          .makeOptionMandatory(),
+      )
       .option("--endpoint <url>", "the connector's public HTTPS MCP URL (e.g. https://host/mcp)")
       .option("--project <id>", "GCP project — fills the registration artifacts + console links")
-      .option("--location <loc>", "Gemini Enterprise app/engine location (default global)")
-      .option("--engine <id>", "the GE engine/app id — used for the console deep links + gateway bind")
       .option(
-        "--gateway-location <region>",
-        "Agent Gateway + registry region (global/us app → us-central1; eu → europe-west1)",
+        "--project-number <number>",
+        "numeric GCP project identity used in a synthesized canonical engine resource",
+      )
+      .option("--location <loc>", "Gemini Enterprise app/engine location")
+      .option(
+        "--engine <id-or-resource>",
+        "GE engine id, or full projects/.../locations/.../collections/.../engines/... resource",
+      )
+      .addOption(
+        new Option(
+          "--gateway-location <region>",
+          "Agent Gateway region (required to match the verified app-location matrix)",
+        ).choices([...GEMINI_GATEWAY_LOCATIONS]),
+      )
+      .addOption(
+        new Option(
+          "--registry-location <region>",
+          "Agent Registry location referenced by the gateway",
+        ).choices([...GEMINI_REGISTRY_LOCATIONS]),
+      )
+      .addOption(
+        new Option(
+          "--idp <provider>",
+          "connector OAuth provider protecting /mcp; not the GE sign-in IdP",
+        ).choices(["google", "entra", "okta", "other"]),
+      )
+      .option("--tenant <id>", "connector OAuth tenant id / Okta domain")
+      .option(
+        "--oauth-authorization-url <url>",
+        "explicit connector authorization URL (required for --idp other)",
+      )
+      .option("--oauth-token-url <url>", "explicit connector token URL (required for --idp other)")
+      .option("--oauth-scope <scope...>", "one or more scopes whose resource is this MCP API")
+      .option("--inbound-issuer <url>", "issuer the MCP resource server validates")
+      .option("--inbound-audience <audience>", "audience identifying this MCP API")
+      .option(
+        "--wif <pool>",
+        "Gemini Enterprise Workforce Identity Federation pool (separate from /mcp auth)",
       )
       .option(
-        "--idp <provider>",
-        "GE end-user identity provider (google|entra|okta) — decides where the OAuth client lives",
+        "--allow-unauthenticated-mcp",
+        "acknowledge that no-auth leaves the public /mcp endpoint without a bearer-token gate",
       )
-      .option("--tenant <id>", "IdP tenant id / Okta domain (for --idp entra|okta)")
-      .option("--wif <pool>", "Workforce Identity Federation pool, if GE sign-in is federated")
-      .option("--out <dir>", "write the kit here instead of into the bundle directory")
+      .option(
+        "--confirm-engine-egress-reroute",
+        "acknowledge that Agent Gateway binding reroutes all agent egress for the engine",
+      )
+      .option(
+        "--agent-identity-principal-set <resource>",
+        "exact principalSet:// identity granted registry, gateway, and runtime access",
+      )
+      .option(
+        "--gateway-authorization-policy <resource>",
+        "exact authorization-policy resource attached to the Agent Gateway",
+      )
+      .option(
+        "--out <dir>",
+        "compatibility flag; must resolve to the bundle root because target kits are certified in place",
+      )
       .option("--json", "emit the plan + compatibility report as JSON")
       .action((profile: string, dir: string, opts: TargetOptions) => {
-        ctx.code = runTarget(profile, dir, opts, ctx.io);
+        ctx.code = runTarget(profile, dir, opts, ctx.io, ctx.deps as TargetDeps);
       }),
-    { mutates: false },
+    { mutates: true },
   );
 }
 
 interface TargetOptions {
+  surface: GeminiRegistrationSurface;
+  serverAuth: McpServerAuthMode;
+  allowUnauthenticatedMcp?: boolean;
   endpoint?: string;
   project?: string;
+  projectNumber?: string;
   location?: string;
   engine?: string;
-  gatewayLocation?: string;
-  idp?: string;
+  gatewayLocation?: GeminiGatewayLocation;
+  registryLocation?: GeminiRegistryLocation;
+  idp?: ConnectorOAuthProvider;
   tenant?: string;
+  oauthAuthorizationUrl?: string;
+  oauthTokenUrl?: string;
+  oauthScope?: string[];
+  inboundIssuer?: string;
+  inboundAudience?: string;
   wif?: string;
+  confirmEngineEgressReroute?: boolean;
+  agentIdentityPrincipalSet?: string;
+  gatewayAuthorizationPolicy?: string;
   out?: string;
   json?: boolean;
 }
 
-function runTarget(profileId: string, dir: string, opts: TargetOptions, io: CliIO): number {
+function runTarget(
+  profileId: string,
+  dir: string,
+  opts: TargetOptions,
+  io: CliIO,
+  deps: TargetDeps = {},
+): number {
   const profile = PROFILES[profileId];
   if (!profile) {
     io.err(`Unknown target '${profileId}'. Known targets: ${Object.keys(PROFILES).join(", ")}.`);
     return 1;
   }
 
-  const idp = normalizeIdp(opts.idp);
-  if (opts.idp && !idp) {
-    io.err(`Unknown --idp '${opts.idp}'. Use one of: google, entra, okta.`);
-    return 1;
-  }
-  const planOpts: ConnectorPlanOptions = {
+  const config = createGeminiEnterpriseTargetConfig({
+    surface: opts.surface,
+    serverAuth: opts.serverAuth,
+    allowUnauthenticatedMcp: opts.allowUnauthenticatedMcp,
     endpoint: opts.endpoint,
     project: opts.project,
-    location: opts.location,
+    projectNumber: opts.projectNumber,
+    appLocation: opts.location,
     engine: opts.engine,
     gatewayLocation: opts.gatewayLocation,
-    idp,
-    tenant: opts.tenant,
-    wifPool: opts.wif,
-  };
+    registryLocation: opts.registryLocation,
+    agentIdentityPrincipalSet: opts.agentIdentityPrincipalSet,
+    gatewayAuthorizationPolicy: opts.gatewayAuthorizationPolicy,
+    connectorOAuth: {
+      provider: opts.idp,
+      tenant: opts.tenant,
+      authorizationUrl: opts.oauthAuthorizationUrl,
+      tokenUrl: opts.oauthTokenUrl,
+      scopes: opts.oauthScope,
+      inboundIssuer: opts.inboundIssuer,
+      inboundAudience: opts.inboundAudience,
+    },
+    workforcePool: opts.wif,
+    confirmEngineEgressReroute: opts.confirmEngineEgressReroute,
+  });
 
   const air = loadAir(dir);
-  const kit = generateTargetKit(air, profile, {
-    endpoint: opts.endpoint,
-    project: opts.project,
-    location: opts.location,
-    engine: opts.engine,
-    gatewayLocation: opts.gatewayLocation,
-  });
-  const report = validateTarget(air, profile, { endpoint: opts.endpoint });
-  const plan = buildConnectorPlan(air, profile, planOpts);
+  const bundleRoot = dirname(resolveAirPath(dir));
+  const requestedOut = resolve(opts.out ?? bundleRoot);
+  if (requestedOut !== resolve(bundleRoot)) {
+    io.err(
+      `Target kits must attach to their bundle for certification. Omit --out (bundle root: ${bundleRoot}); external output ${requestedOut} is not supported.`,
+    );
+    return 1;
+  }
+  const report = validateTarget(air, profile, config);
+  const plan = buildConnectorPlan(air, profile, config);
 
-  if (opts.json === true) {
-    // The full guided plan + compatibility report — structured for a harness.
-    io.out(JSON.stringify({ report, plan }, null, 2));
+  if (!report.ok) {
+    if (opts.json === true) {
+      io.err(JSON.stringify({ config, report, plan, written: null }, null, 2));
+    } else {
+      for (const finding of report.findings) {
+        io.out(`  [${finding.level.toUpperCase()}] ${finding.code}: ${finding.message}`);
+      }
+      const errors = report.findings.filter((finding) => finding.level === "error").length;
+      io.err(`${errors} target validation error(s); no files were written.`);
+    }
+    return 1;
   }
 
-  // Write every kit file (paths are pack-relative, e.g. targets/<id>/...).
-  const outRoot = opts.out ?? dir;
-  for (const file of kit.files) {
-    const dest = join(outRoot, file.path);
-    mkdirSync(dirname(dest), { recursive: true });
-    writeFileSync(dest, file.bytes);
+  const kit = generateTargetKit(air, profile, config);
+  const outRoot = resolve(bundleRoot);
+  const mutableStatePath =
+    config.surface === "agent-gateway" || config.surface === "both"
+      ? targetStateRelativePath(config)
+      : undefined;
+  const writeResult = writeTargetKitAtomically(
+    outRoot,
+    profile.id,
+    kit.files,
+    deps,
+    mutableStatePath,
+    deps.env ?? process.env,
+  );
+  const { targetDir } = writeResult;
+
+  if (opts.json === true) {
+    io.out(
+      JSON.stringify(
+        {
+          config,
+          report,
+          plan,
+          written: {
+            targetDir,
+            files: kit.files.map((file) => file.path),
+            warnings: writeResult.warnings,
+            retainedBackupDir: writeResult.retainedBackupDir,
+          },
+        },
+        null,
+        2,
+      ),
+    );
   }
 
   if (opts.json !== true) {
@@ -130,26 +291,203 @@ function runTarget(profileId: string, dir: string, opts: TargetOptions, io: CliI
     io.out(
       `  ${approved} approved action(s); platform budget is ${profile.actionLimits.maxActions}.`,
     );
-    if (opts.endpoint) io.out(`  endpoint: ${opts.endpoint}`);
-    else io.out("  no --endpoint given; the kit uses placeholders for the server URL.");
-
-    const errors = report.findings.filter((f) => f.level === "error");
-    const warnings = report.findings.filter((f) => f.level === "warning");
     for (const f of report.findings) io.out(`  [${f.level.toUpperCase()}] ${f.code}: ${f.message}`);
-    if (!report.ok) {
-      io.out(`\n${errors.length} error(s), ${warnings.length} warning(s). Resolve the errors before registering.`);
-    }
-
-    // The guided, copy-paste-first plan: what to run, and the console-only steps
-    // with pre-assembled deep links + paste-ready fields + identity guidance.
+    for (const warning of writeResult.warnings) io.err(`Warning: ${warning}`);
     io.out(renderConnectorPlanText(plan));
   }
 
-  return report.ok ? 0 : 1;
+  return 0;
 }
 
-/** Validate the --idp flag into the plan's IdP choice. */
-function normalizeIdp(raw: string | undefined): IdpChoice | undefined {
-  if (raw === undefined) return undefined;
-  return raw === "google" || raw === "entra" || raw === "okta" ? raw : undefined;
+/**
+ * Build the complete target subtree in a hidden sibling, then swap it into
+ * place. A failed write leaves the previous generated target intact.
+ */
+function writeTargetKitAtomically(
+  outRoot: string,
+  profileId: string,
+  files: TargetKitFile[],
+  deps: TargetDeps,
+  mutableStatePath?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): TargetWriteResult {
+  const targetsRoot = join(outRoot, "targets");
+  const targetDir = join(targetsRoot, profileId);
+  mkdirSync(targetsRoot, { recursive: true });
+  const stageDir = mkdtempSync(join(targetsRoot, `.${profileId}.stage-`));
+  const backupDir = `${stageDir}.previous`;
+  const expectedPrefix = `targets/${profileId}/`;
+  const stageRoot = `${resolve(stageDir)}${sep}`;
+
+  try {
+    for (const file of files) {
+      if (!file.path.startsWith(expectedPrefix)) {
+        throw new Error(`Target kit file escapes ${expectedPrefix}: ${file.path}`);
+      }
+      const dest = resolve(stageDir, file.path.slice(expectedPrefix.length));
+      if (!dest.startsWith(stageRoot)) {
+        throw new Error(`Target kit file escapes its staging directory: ${file.path}`);
+      }
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, file.bytes);
+    }
+    if (mutableStatePath) {
+      migrateLegacyTargetState(targetDir, outRoot, mutableStatePath, env);
+    }
+  } catch (error) {
+    rmSync(stageDir, { recursive: true, force: true });
+    throw error;
+  }
+
+  const hadPrevious = existsSync(targetDir);
+  try {
+    if (hadPrevious) renameSync(targetDir, backupDir);
+    (deps.installStagedTarget ?? renameSync)(stageDir, targetDir);
+  } catch (error) {
+    if (existsSync(stageDir)) rmSync(stageDir, { recursive: true, force: true });
+    // An injectable/custom installer may have created some or all of targetDir
+    // before throwing. That candidate is never authoritative: remove it before
+    // restoring the exact previous subtree (or leave no target on first install).
+    if (existsSync(targetDir)) rmSync(targetDir, { recursive: true, force: true });
+    if (hadPrevious && existsSync(backupDir)) {
+      renameSync(backupDir, targetDir);
+    }
+    throw error;
+  }
+  const warnings: string[] = [];
+  let retainedBackupDir: string | undefined;
+  if (hadPrevious) {
+    try {
+      (
+        deps.cleanupTargetBackup ??
+        ((path: string) => rmSync(path, { recursive: true, force: true }))
+      )(backupDir);
+    } catch (error) {
+      if (existsSync(backupDir)) retainedBackupDir = backupDir;
+      const detail = error instanceof Error ? error.message : String(error);
+      warnings.push(
+        retainedBackupDir
+          ? `The new target was installed successfully, but the previous target backup could not be removed and was retained at ${retainedBackupDir}: ${detail}`
+          : `The new target was installed successfully, but backup cleanup reported an error: ${detail}`,
+      );
+    }
+  }
+  return { targetDir, warnings, retainedBackupDir };
+}
+
+/** Preserve pre-P0 in-target state without overwriting divergent stable evidence. */
+function migrateLegacyTargetState(
+  targetDir: string,
+  outRoot: string,
+  fallbackStatePath: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  const legacyStateDir = join(targetDir, "agent-registry", ".state");
+  if (!existsSync(legacyStateDir)) return;
+  const setupPath = join(targetDir, "setup.json");
+  let statePath = fallbackStatePath;
+  if (existsSync(setupPath)) {
+    let setup: {
+      mutableState?: { relativePath?: unknown };
+      mutableStatePath?: unknown;
+      config?: unknown;
+    };
+    try {
+      setup = JSON.parse(readFileSync(setupPath, "utf8")) as typeof setup;
+    } catch (error) {
+      throw new Error(
+        `Cannot migrate legacy rollback evidence because ${setupPath} is invalid: ${(error as Error).message}`,
+      );
+    }
+    if (typeof setup.mutableState?.relativePath === "string") {
+      statePath = setup.mutableState.relativePath;
+    } else if (isRecord(setup.config)) {
+      statePath = targetStateRelativePath(
+        createGeminiEnterpriseTargetConfig(setup.config as GeminiEnterpriseTargetConfigInput),
+      );
+    } else if (
+      typeof setup.mutableStatePath === "string" &&
+      setup.mutableStatePath.startsWith(".anvil/target-state/")
+    ) {
+      statePath = setup.mutableStatePath.slice(".anvil/target-state/".length);
+    }
+  }
+  if (!statePath.startsWith("gemini-enterprise/")) {
+    throw new Error(`Refusing unsafe mutable target state path: ${statePath}`);
+  }
+  const stableStateDir = resolveExternalStateDirectory(outRoot, statePath, env);
+  mergeStateDirectory(legacyStateDir, stableStateDir);
+}
+
+function resolveExternalStateDirectory(
+  outRoot: string,
+  relativeStatePath: string,
+  env: NodeJS.ProcessEnv,
+): string {
+  const configuredRoot = env.ANVIL_STATE_DIR?.trim();
+  if (!configuredRoot) {
+    throw new Error(
+      "Legacy gateway rollback evidence exists inside the target. Set ANVIL_STATE_DIR to an existing absolute directory outside the bundle, then rerun target generation.",
+    );
+  }
+  if (
+    !isAbsolute(configuredRoot) ||
+    !existsSync(configuredRoot) ||
+    !statSync(configuredRoot).isDirectory()
+  ) {
+    throw new Error(
+      `ANVIL_STATE_DIR must name an existing absolute directory before legacy evidence can be migrated: ${configuredRoot}`,
+    );
+  }
+  const stateRoot = realpathSync(configuredRoot);
+  const stableStateDir = resolve(stateRoot, relativeStatePath);
+  if (!stableStateDir.startsWith(`${stateRoot}${sep}`)) {
+    throw new Error(`Target state path escapes ANVIL_STATE_DIR: ${relativeStatePath}`);
+  }
+  const resolvedOutputRoot = realpathSync(outRoot);
+  if (
+    stableStateDir === resolvedOutputRoot ||
+    stableStateDir.startsWith(`${resolvedOutputRoot}${sep}`)
+  ) {
+    throw new Error("ANVIL_STATE_DIR must keep mutable gateway state outside the bundle.");
+  }
+  return stableStateDir;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function mergeStateDirectory(sourceDir: string, destinationDir: string): void {
+  mkdirSync(destinationDir, { recursive: true, mode: 0o700 });
+  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+    const source = join(sourceDir, entry.name);
+    const destination = join(destinationDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Refusing symlink in mutable target state: ${source}`);
+    }
+    if (entry.isDirectory()) {
+      if (existsSync(destination) && !lstatSync(destination).isDirectory()) {
+        throw new Error(`Mutable target state type conflict at ${destination}.`);
+      }
+      mergeStateDirectory(source, destination);
+      continue;
+    }
+    if (!entry.isFile()) {
+      throw new Error(`Refusing unsupported mutable target state entry: ${source}`);
+    }
+    if (existsSync(destination)) {
+      if (
+        !lstatSync(destination).isFile() ||
+        !readFileSync(source).equals(readFileSync(destination))
+      ) {
+        throw new Error(
+          `Mutable target state conflict at ${destination}; reconcile it before retargeting.`,
+        );
+      }
+      continue;
+    }
+    copyFileSync(source, destination);
+    chmodSync(destination, 0o600);
+  }
 }

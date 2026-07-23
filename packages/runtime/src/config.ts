@@ -1,3 +1,5 @@
+import { DEFAULT_LEDGER_RESULT_TTL_SECONDS } from "./idempotency.js";
+
 /**
  * The Cloud Run runtime contract (spec: "Cloud Run runtime contract"). The
  * generated, stateless runtime reads exactly these env vars — no spec parsing,
@@ -13,12 +15,27 @@ export interface RuntimeConfig {
   policyBundle?: string;
   otelExporter?: string;
   /**
-   * Durable idempotency ledger backend URI (e.g. `firestore://project/db`).
+   * Durable idempotency ledger backend URI
+   * (`firestore://project/database/service_namespace`).
    * Selects a registered ledger backend via `resolveLedger`. Absent → the
    * process-local in-memory ledger, which fails closed for required-idempotency
    * mutations outside `dev`.
    */
   ledger?: string;
+  /**
+   * How long a completed mutation result remains replayable before the
+   * Firestore TTL boundary. Defaults to seven days.
+   */
+  ledgerResultTtlSeconds: number;
+  /**
+   * Static secret-storage override (`env` | `secret_manager`). Grant acquisition
+   * remains per-operation so this setting can never collapse OBO/client-credential
+   * principal semantics into a static bearer. Absent defaults to the pass-through
+   * Secret Manager decorator (literal env values remain unchanged).
+   */
+  credentials?: string;
+  /** Default GCP project for shorthand `sm://<secret>` credential references. */
+  secretProject?: string;
 }
 
 /** The environments the runtime recognizes. Anything else is treated as prod. */
@@ -54,6 +71,7 @@ export function loadRuntimeConfig(
       `[anvil] ANVIL_ENV="${env.ANVIL_ENV}" is not one of dev|staging|prod; treating it as "prod" (fail closed). Fix the value to silence this.`,
     );
   }
+  const ledgerResultTtlSeconds = parseLedgerResultTtlSeconds(env.ANVIL_LEDGER_RESULT_TTL_SECONDS);
   return {
     serviceId: env.ANVIL_SERVICE_ID,
     artifactVersion: env.ANVIL_ARTIFACT_VERSION,
@@ -66,7 +84,22 @@ export function loadRuntimeConfig(
     policyBundle: env.ANVIL_POLICY_BUNDLE,
     otelExporter: env.ANVIL_OTEL_EXPORTER,
     ledger: env.ANVIL_LEDGER,
+    ledgerResultTtlSeconds,
+    credentials: env.ANVIL_CREDENTIALS,
+    secretProject: env.ANVIL_SECRET_PROJECT,
   };
+}
+
+function parseLedgerResultTtlSeconds(raw: string | undefined): number {
+  if (raw === undefined || raw === "") return DEFAULT_LEDGER_RESULT_TTL_SECONDS;
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new Error("ANVIL_LEDGER_RESULT_TTL_SECONDS must be an integer from 60 to 31536000.");
+  }
+  const seconds = Number(raw);
+  if (!Number.isSafeInteger(seconds) || seconds < 60 || seconds > 365 * 24 * 60 * 60) {
+    throw new Error("ANVIL_LEDGER_RESULT_TTL_SECONDS must be an integer from 60 to 31536000.");
+  }
+  return seconds;
 }
 
 /** The hostname of a URL, or undefined when it does not parse as one. */

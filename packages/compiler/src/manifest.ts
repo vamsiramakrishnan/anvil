@@ -1,9 +1,70 @@
-import type { Capability, Diagnostic, Operation, RetryCondition, Workflow } from "@anvil/air";
-import { snakeCase } from "@anvil/air";
+import {
+  type AuthProvider,
+  AuthType,
+  authCoherenceIssues,
+  type Capability,
+  type Diagnostic,
+  type Operation,
+  type RetryCondition,
+  snakeCase,
+  type Workflow,
+} from "@anvil/air";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { classifyConfirmation, classifyRetry } from "./classify.js";
+import { classifyAuth, classifyConfirmation, classifyRetry } from "./classify.js";
 import { projectRoutingNames, singularize } from "./naming.js";
+
+const ManifestAuthProvider = z.object({
+  token_endpoint: z.string().url().optional(),
+  grant: z.enum(["token_exchange", "client_credentials", "jwt_bearer"]).optional(),
+  client_auth: z.enum(["client_secret_basic", "client_secret_post", "private_key_jwt"]).optional(),
+  resource: z.string().optional(),
+  subject_token_type: z.enum(["access_token", "jwt", "id_token"]).optional(),
+  requested_token_type: z.enum(["access_token", "jwt", "id_token"]).optional(),
+  api_key: z.object({ in: z.enum(["header", "query"]), name: z.string() }).optional(),
+});
+type ManifestAuthProvider = z.infer<typeof ManifestAuthProvider>;
+
+const ManifestOperationAuth = z.object({
+  type: AuthType.optional(),
+  credential_profile: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z](?:[a-z0-9_]{0,62}[a-z0-9])?$/)
+    .optional(),
+  principal: z.enum(["anonymous", "service", "end_user", "delegated", "impersonation"]).optional(),
+  audience: z.string().optional(),
+  secret_source: z.enum(["none", "env", "secret_manager", "workload_identity", "vault"]).optional(),
+  tenant: z.string().optional(),
+  actor: z.string().optional(),
+  subject: z.string().optional(),
+  provider: ManifestAuthProvider.optional(),
+});
+
+export function manifestAuthProviderToAir(provider: ManifestAuthProvider): AuthProvider {
+  return {
+    ...(provider.token_endpoint ? { tokenEndpoint: provider.token_endpoint } : {}),
+    ...(provider.grant ? { grant: provider.grant } : {}),
+    ...(provider.client_auth ? { clientAuth: provider.client_auth } : {}),
+    ...(provider.resource ? { resource: provider.resource } : {}),
+    ...(provider.subject_token_type ? { subjectTokenType: provider.subject_token_type } : {}),
+    ...(provider.requested_token_type ? { requestedTokenType: provider.requested_token_type } : {}),
+    ...(provider.api_key ? { apiKey: provider.api_key } : {}),
+  };
+}
+
+export function airAuthProviderToManifest(provider: AuthProvider): ManifestAuthProvider {
+  return {
+    ...(provider.tokenEndpoint ? { token_endpoint: provider.tokenEndpoint } : {}),
+    ...(provider.grant ? { grant: provider.grant } : {}),
+    ...(provider.clientAuth ? { client_auth: provider.clientAuth } : {}),
+    ...(provider.resource ? { resource: provider.resource } : {}),
+    ...(provider.subjectTokenType ? { subject_token_type: provider.subjectTokenType } : {}),
+    ...(provider.requestedTokenType ? { requested_token_type: provider.requestedTokenType } : {}),
+    ...(provider.apiKey ? { api_key: provider.apiKey } : {}),
+  };
+}
 
 /**
  * The supplemental Anvil manifest (spec §4). Specs are incomplete; this is how
@@ -22,7 +83,15 @@ export const OperationManifest = z.object({
         .enum(["natural", "required_request_key", "key_supported", "client_id", "none"])
         .optional(),
       key_location: z.enum(["header", "query", "body", "path"]).optional(),
+      /** Exact HTTP header name when key_location is header. */
       header: z.string().optional(),
+      /** Exact source parameter name when key_location is query or path. */
+      parameter: z.string().optional(),
+      /**
+       * Exact JSON body field. A leading slash is a JSON Pointer for a nested
+       * field (for example /input/idempotencyKey).
+       */
+      field: z.string().optional(),
     })
     .optional(),
   confirmation: z
@@ -78,20 +147,7 @@ export const OperationManifest = z.object({
     })
     .optional(),
   /** Whose authority the call runs under, and how it is credentialed. */
-  auth: z
-    .object({
-      principal: z
-        .enum(["anonymous", "service", "end_user", "delegated", "impersonation"])
-        .optional(),
-      audience: z.string().optional(),
-      secret_source: z
-        .enum(["none", "env", "secret_manager", "workload_identity", "vault"])
-        .optional(),
-      tenant: z.string().optional(),
-      actor: z.string().optional(),
-      subject: z.string().optional(),
-    })
-    .optional(),
+  auth: ManifestOperationAuth.optional(),
   retries: z
     .object({
       enabled: z.boolean().optional(),
@@ -102,6 +158,23 @@ export const OperationManifest = z.object({
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
 });
 export type OperationManifest = z.infer<typeof OperationManifest>;
+
+/** Project the carrier-specific manifest spelling onto AIR's single key field. */
+export function manifestIdempotencyKey(
+  idempotency: NonNullable<OperationManifest["idempotency"]>,
+): string | undefined {
+  switch (idempotency.key_location) {
+    case "header":
+      return idempotency.header;
+    case "query":
+    case "path":
+      return idempotency.parameter;
+    case "body":
+      return idempotency.field;
+    default:
+      return idempotency.header ?? idempotency.parameter ?? idempotency.field;
+  }
+}
 
 /**
  * A workflow authored in the manifest. Anvil never *guesses* multi-step
@@ -139,12 +212,12 @@ export const AnvilManifest = z.object({
       environment: z.string().optional(),
     })
     .optional(),
-  auth: z
-    .object({
-      type: z.string().optional(),
-      scopes: z.array(z.string()).optional(),
-    })
-    .optional(),
+  auth: ManifestOperationAuth.extend({
+    // `oauth2` is retained only as a legacy, scope-only declaration. It is too
+    // ambiguous to select client credentials versus end-user/OBO authority.
+    type: z.union([AuthType, z.literal("oauth2")]).optional(),
+    scopes: z.array(z.string()).optional(),
+  }).optional(),
   operations: z.record(z.string(), OperationManifest).default({}),
   workflows: z.record(z.string(), WorkflowManifest).default({}),
 });
@@ -187,6 +260,45 @@ export function operationMatchesKey(op: Operation, key: string): boolean {
   return op.id === key || op.canonicalName === key || op.sourceRef.operationId === key;
 }
 const matches = operationMatchesKey;
+
+function providerAfterTypeChange(
+  current: AuthProvider | undefined,
+  type: Operation["auth"]["type"],
+): AuthProvider | undefined {
+  switch (type) {
+    case "oauth2_client_credentials":
+      return {
+        ...(current?.tokenEndpoint ? { tokenEndpoint: current.tokenEndpoint } : {}),
+        ...(current?.clientAuth ? { clientAuth: current.clientAuth } : {}),
+        ...(current?.resource ? { resource: current.resource } : {}),
+        grant: "client_credentials",
+      };
+    case "oauth2_on_behalf_of":
+      return {
+        ...(current?.tokenEndpoint ? { tokenEndpoint: current.tokenEndpoint } : {}),
+        ...(current?.clientAuth ? { clientAuth: current.clientAuth } : {}),
+        ...(current?.resource ? { resource: current.resource } : {}),
+        ...(current?.subjectTokenType ? { subjectTokenType: current.subjectTokenType } : {}),
+        ...(current?.requestedTokenType ? { requestedTokenType: current.requestedTokenType } : {}),
+        grant: "token_exchange",
+      };
+    case "oauth2_authorization_code":
+      return current?.tokenEndpoint ? { tokenEndpoint: current.tokenEndpoint } : undefined;
+    case "api_key":
+      return current?.apiKey ? { apiKey: current.apiKey } : undefined;
+    case "jwt_bearer":
+      return current?.grant === "jwt_bearer"
+        ? {
+            ...(current.tokenEndpoint ? { tokenEndpoint: current.tokenEndpoint } : {}),
+            ...(current.clientAuth ? { clientAuth: current.clientAuth } : {}),
+            ...(current.resource ? { resource: current.resource } : {}),
+            grant: "jwt_bearer",
+          }
+        : undefined;
+    default:
+      return undefined;
+  }
+}
 
 /**
  * Apply one operation's manifest entry, returning a new enriched operation.
@@ -235,6 +347,24 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
   }
 
   if (m.auth) {
+    const typeChanged = Boolean(m.auth.type && m.auth.type !== op.auth.type);
+    if (m.auth.type) {
+      op.auth.type = m.auth.type;
+      const defaults = classifyAuth(m.auth.type);
+      op.auth.principal = m.auth.principal ?? defaults.principal;
+      op.auth.secretSource = m.auth.secret_source ?? defaults.secretSource;
+      if (typeChanged) {
+        op.auth.provider = providerAfterTypeChange(op.auth.provider, m.auth.type);
+        if (m.auth.type === "none") {
+          op.auth.audience = undefined;
+          op.auth.delegation = undefined;
+          op.auth.tenant = undefined;
+        } else if (m.auth.type !== "oauth2_on_behalf_of") {
+          op.auth.delegation = undefined;
+        }
+      }
+    }
+    if (m.auth.credential_profile) op.auth.credentialProfile = m.auth.credential_profile;
     if (m.auth.principal) op.auth.principal = m.auth.principal;
     if (m.auth.audience) op.auth.audience = m.auth.audience;
     if (m.auth.secret_source) op.auth.secretSource = m.auth.secret_source;
@@ -242,12 +372,19 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     if (m.auth.actor || m.auth.subject) {
       op.auth.delegation = { actor: m.auth.actor, subject: m.auth.subject };
     }
+    if (m.auth.provider) {
+      op.auth.provider = {
+        ...op.auth.provider,
+        ...manifestAuthProviderToAir(m.auth.provider),
+      };
+    }
   }
 
   if (m.idempotency?.strategy) {
     op.idempotency.mode = STRATEGY_TO_MODE[m.idempotency.strategy];
     if (m.idempotency.key_location) op.idempotency.mechanism = m.idempotency.key_location;
-    if (m.idempotency.header) op.idempotency.key = m.idempotency.header;
+    const key = manifestIdempotencyKey(m.idempotency);
+    if (key) op.idempotency.key = key;
     if (op.idempotency.mode === "required" || op.idempotency.mode === "key_supported") {
       op.idempotency.keyDerivation = "request_fingerprint";
     }
@@ -292,6 +429,22 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
   }
 
   if (m.state) op.state = m.state;
+
+  const authIssues = authCoherenceIssues(op.auth);
+  if (
+    op.auth.type === "oauth2_authorization_code" ||
+    op.auth.type === "mtls" ||
+    op.auth.type === "custom_header"
+  ) {
+    authIssues.push(`${op.auth.type} is not executable by the current runtime`);
+  }
+  if (authIssues.length > 0) {
+    op.state = "blocked";
+    for (const issue of authIssues) {
+      const note = `Auth contract blocked: ${issue}.`;
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    }
+  }
 
   op.evidence.claims.push({
     subject: op.id,

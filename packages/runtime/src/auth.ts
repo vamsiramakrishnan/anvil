@@ -1,4 +1,5 @@
 import type { AuthRequirement } from "@anvil/air";
+import type { InboundIdentity } from "./inbound-identity.js";
 import type { HttpRequest } from "./transport.js";
 
 /**
@@ -13,12 +14,26 @@ export interface AuthMaterial {
 }
 
 /**
+ * Per-call context a resolver may need beyond the static profile: the validated
+ * inbound caller identity, for delegated / on-behalf-of (RFC 8693) exchange.
+ * Optional and additive — static resolvers ignore it, so the interface stays
+ * backward compatible.
+ */
+export interface CredentialCallContext {
+  inbound?: InboundIdentity;
+}
+
+/**
  * Resolves a named auth profile into material. Implementations read from
  * approved stores only (Secret Manager, workload identity) — never from
  * agent-provided input, and never returning the raw secret to the caller.
  */
 export interface CredentialResolver {
-  resolve(profileName: string, auth: AuthRequirement): Promise<AuthMaterial | null>;
+  resolve(
+    profileName: string,
+    auth: AuthRequirement,
+    callCtx?: CredentialCallContext,
+  ): Promise<AuthMaterial | null>;
   /**
    * Optional: the credential *locations* this resolver would read for a
    * profile (env var names, secret ids) — NAMES ONLY, never values. Surfaced
@@ -45,6 +60,10 @@ export class EnvCredentialResolver implements CredentialResolver {
         return [`${prefix}_API_KEY`];
       case "basic":
         return [`${prefix}_USERNAME`, `${prefix}_PASSWORD`];
+      case "mtls":
+      case "custom_header":
+      case "oauth2_authorization_code":
+        return [];
       default:
         return [`${prefix}_TOKEN`];
     }
@@ -58,7 +77,7 @@ export class EnvCredentialResolver implements CredentialResolver {
       case "none":
         return {};
       case "api_key":
-        return apiKey ? { headers: { "X-API-Key": apiKey } } : null;
+        return apiKey ? apiKeyMaterial(apiKey, auth, prefix, this.env) : null;
       case "basic": {
         const user = this.env[`${prefix}_USERNAME`];
         const pass = this.env[`${prefix}_PASSWORD`];
@@ -66,6 +85,12 @@ export class EnvCredentialResolver implements CredentialResolver {
         const b64 = Buffer.from(`${user}:${pass}`).toString("base64");
         return { headers: { Authorization: `Basic ${b64}` } };
       }
+      case "mtls":
+      case "custom_header":
+      case "oauth2_authorization_code":
+        // These schemes need explicit transport/carrier models that AIR does
+        // not yet express. Never collapse them into a bearer token.
+        return null;
       default:
         // All OAuth2 / JWT / bearer variants use a resolved bearer token here;
         // token acquisition/refresh is the resolver's responsibility upstream.
@@ -75,8 +100,44 @@ export class EnvCredentialResolver implements CredentialResolver {
 }
 
 /** ANVIL_<PROFILE> env prefix for a profile name (shared by resolve/expectedCredentials). */
-function envPrefix(profileName: string): string {
+export function envPrefix(profileName: string): string {
   return `ANVIL_${profileName.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
+}
+
+/**
+ * Select the concrete credential namespace for one operation. The deployment
+ * profile remains the outer boundary (`prod`, `staging`, ...); a source security
+ * scheme adds a stable suffix so two upstream identities cannot alias the same
+ * secret variables.
+ */
+export function credentialProfileName(deploymentProfile: string, auth: AuthRequirement): string {
+  return auth.credentialProfile
+    ? `${deploymentProfile}_${auth.credentialProfile}`
+    : deploymentProfile;
+}
+
+/**
+ * Place an API key on the wire under the correct carrier. Real gateways vary
+ * (Apigee/Kong `apikey` often as a QUERY param, Azure `Ocp-Apim-Subscription-Key`,
+ * AWS `x-api-key`, …), so the carrier is configurable: `auth.provider.apiKey`
+ * from AIR, or per-profile env overrides `ANVIL_<PFX>_API_KEY_HEADER` /
+ * `_API_KEY_QUERY`. Default stays `X-API-Key` header so existing kits are
+ * byte-identical.
+ */
+export function apiKeyMaterial(
+  key: string,
+  auth: AuthRequirement,
+  prefix: string,
+  env: NodeJS.ProcessEnv,
+): AuthMaterial {
+  const headerName = env[`${prefix}_API_KEY_HEADER`];
+  const queryName = env[`${prefix}_API_KEY_QUERY`];
+  if (queryName) return { query: { [queryName]: key } };
+  if (headerName) return { headers: { [headerName]: key } };
+  const carrier = auth.provider?.apiKey;
+  if (carrier?.in === "query") return { query: { [carrier.name]: key } };
+  if (carrier?.in === "header") return { headers: { [carrier.name]: key } };
+  return { headers: { "X-API-Key": key } };
 }
 
 /** Apply resolved material to a request. Never logs the material. */

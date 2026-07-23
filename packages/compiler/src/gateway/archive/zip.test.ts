@@ -77,4 +77,40 @@ describe("ZipArchiveDecoder", () => {
     // Keep the magic so it sniffs as zip, then fail inflation.
     expect(() => decoder.decode(corrupt)).toThrow(ArchiveDecodeError);
   });
+
+  it("enforces advertised expansion limits before inflating an entry", () => {
+    const bytes = zipSync({ "large.txt": strToU8("0123456789abcdef") });
+    expect(() =>
+      decoder.decode(bytes, {
+        maxFiles: 10,
+        maxFileBytes: 4,
+        maxExpandedBytes: 32,
+        maxDepth: 4,
+      }),
+    ).toThrow(/advertises 16 expanded bytes/);
+  });
+
+  it("preserves conflicting duplicate ZIP members for the normalizer to reject", () => {
+    const bytes = zipSync({
+      "a.txt": strToU8("one"),
+      "b.txt": strToU8("two"),
+    });
+    const duplicate = bytes.slice();
+    const from = strToU8("b.txt");
+    const to = strToU8("a.txt");
+    let replacements = 0;
+    for (let offset = 0; offset <= duplicate.length - from.length; offset += 1) {
+      if (from.every((byte, index) => duplicate[offset + index] === byte)) {
+        duplicate.set(to, offset);
+        replacements += 1;
+      }
+    }
+    expect(replacements).toBe(2); // local header + central-directory record
+
+    const result = readArchive(duplicate, decoder);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "archive/duplicate_path" })]),
+    );
+  });
 });

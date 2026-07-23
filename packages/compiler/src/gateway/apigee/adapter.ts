@@ -18,8 +18,14 @@ import type {
   GatewayProduct,
 } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
-import { asObjects, asRecord, asStrings, safeParseYaml } from "../parse-safe.js";
-import { buildGatewayApiImport, normalizePath, type SynthOp, synthOperationId } from "../synth.js";
+import { asObjects, asStrings, parseGatewayDocument } from "../parse-safe.js";
+import {
+  buildGatewayApiImport,
+  joinGatewayPath,
+  routeOnlyContract,
+  type SynthOp,
+  synthOperationId,
+} from "../synth.js";
 
 interface ApigeeFlow {
   name?: string;
@@ -61,10 +67,17 @@ const TRANSFORM_POLICIES = new Set([
   "JSONToXML",
   "XMLToJSON",
 ]);
+const AUTH_POLICIES = new Set([
+  "OAuthV2",
+  "VerifyAPIKey",
+  "VerifyJWT",
+  "SAMLAssertion",
+  "AccessControl",
+]);
 
 const CAPABILITIES: GatewayAdapterCapabilities = {
   inventory: true,
-  apiSpecs: true,
+  apiSpecs: false,
   routes: true,
   authentication: true,
   authorization: true,
@@ -78,16 +91,82 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
   publish: false,
 };
 
-function parseExport(config: string): ApigeeExport {
-  return asRecord(safeParseYaml(config)) as ApigeeExport;
+function parseExport(
+  config: string,
+  origin: string,
+): { exp: ApigeeExport; diagnostics: GatewayDiagnostic[] } {
+  const parsed = parseGatewayDocument(config, "apigee", origin);
+  if (!parsed.document) return { exp: {}, diagnostics: parsed.diagnostics };
+  const proxies = parsed.document.proxies;
+  if (!Array.isArray(proxies)) {
+    return {
+      exp: {},
+      diagnostics: [
+        {
+          level: "error",
+          code: "apigee/invalid_export",
+          message: "The Apigee export must contain a `proxies` array.",
+          coordinate: { origin },
+        },
+      ],
+    };
+  }
+  if (proxies.length === 0) {
+    return {
+      exp: {},
+      diagnostics: [
+        {
+          level: "error",
+          code: "apigee/empty_export",
+          message: "The Apigee export contains no API proxies.",
+          coordinate: { origin, pointer: "/proxies" },
+        },
+      ],
+    };
+  }
+  if (
+    asObjects<ApigeeProxy>(proxies).length !== proxies.length ||
+    asObjects<ApigeeProxy>(proxies).some(
+      (proxy) => typeof proxy.name !== "string" || proxy.name.length === 0,
+    )
+  ) {
+    return {
+      exp: {},
+      diagnostics: [
+        {
+          level: "error",
+          code: "apigee/invalid_export",
+          message: "Every Apigee proxy must be an object with a non-empty `name`.",
+          coordinate: { origin, pointer: "/proxies" },
+        },
+      ],
+    };
+  }
+  if (parsed.document.products !== undefined && !Array.isArray(parsed.document.products)) {
+    return {
+      exp: {},
+      diagnostics: [
+        {
+          level: "error",
+          code: "apigee/invalid_export",
+          message: "Apigee `products`, when present, must be an array.",
+          coordinate: { origin, pointer: "/products" },
+        },
+      ],
+    };
+  }
+  return { exp: parsed.document as ApigeeExport, diagnostics: [] };
 }
 
 function opsOf(proxy: ApigeeProxy): SynthOp[] {
-  return asObjects<ApigeeFlow>(proxy.flows).map((f) => ({
-    operationId: synthOperationId(proxy.name, f.method, f.path),
-    method: f.method,
-    path: normalizePath(f.path),
-  }));
+  return asObjects<ApigeeFlow>(proxy.flows).map((f) => {
+    const path = joinGatewayPath(proxy.basePath, f.path);
+    return {
+      operationId: synthOperationId(proxy.name, f.method, path),
+      method: f.method,
+      path,
+    };
+  });
 }
 
 /** The product(s) fronting a proxy provide its scopes + quota. */
@@ -112,6 +191,7 @@ function normalizeProxy(exp: ApigeeExport, proxy: ApigeeProxy, proxyIndex: numbe
   const ops = opsOf(proxy);
   const facts: GatewayFact[] = [];
   const diagnostics: GatewayDiagnostic[] = [];
+  let authConfigured = false;
 
   const { scopes, hasQuota, productIds } = productFor(exp, proxy.name);
   if (scopes.length > 0) {
@@ -139,7 +219,9 @@ function normalizeProxy(exp: ApigeeExport, proxy: ApigeeProxy, proxyIndex: numbe
       origin,
       pointer: `/proxies/${proxyIndex}/policies/${k}`,
     };
-    if (TRANSFORM_POLICIES.has(policy.type)) {
+    if (AUTH_POLICIES.has(policy.type)) {
+      authConfigured = true;
+    } else if (TRANSFORM_POLICIES.has(policy.type)) {
       diagnostics.push({
         level: "warning",
         code: "gateway/opaque_policy",
@@ -153,10 +235,17 @@ function normalizeProxy(exp: ApigeeExport, proxy: ApigeeProxy, proxyIndex: numbe
         message: `Apigee traffic policy '${policy.type}' on '${proxy.name}' applies but is not an operation semantic.`,
         coordinate,
       });
+    } else {
+      diagnostics.push({
+        level: "warning",
+        code: "gateway/opaque_policy",
+        message: `Apigee policy '${String(policy.type ?? "(unnamed)")}' on '${proxy.name}' is not modelled and may change effective request behavior.`,
+        coordinate,
+      });
     }
   });
 
-  return { ops, facts, diagnostics, hasQuota, productIds };
+  return { ops, facts, diagnostics, hasQuota, productIds, authConfigured };
 }
 
 export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
@@ -164,10 +253,12 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
   readonly capabilities = CAPABILITIES;
 
   async probe(connection: ApigeeConnection, _ctx: AdapterContext): Promise<GatewayProbeResult> {
+    const origin = connection.origin ?? "apigee.yaml";
+    const parsed = parseExport(connection.config, origin);
     return {
-      reachable: asObjects(parseExport(connection.config).proxies).length > 0,
+      reachable: parsed.diagnostics.every((d) => d.level !== "error"),
       capabilities: CAPABILITIES,
-      diagnostics: [],
+      diagnostics: parsed.diagnostics,
     };
   }
 
@@ -176,8 +267,9 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
     _ctx: AdapterContext,
   ): Promise<GatewayInventorySnapshot> {
     const origin = connection.origin ?? "apigee.yaml";
-    const exp = parseExport(connection.config);
-    const diagnostics: GatewayDiagnostic[] = [];
+    const parsed = parseExport(connection.config, origin);
+    const exp = parsed.exp;
+    const diagnostics: GatewayDiagnostic[] = [...parsed.diagnostics];
     const environments = new Set<string>();
     const summaries: GatewayApiSummary[] = asObjects<ApigeeProxy>(exp.proxies).map((proxy, i) => {
       const norm = normalizeProxy(exp, proxy, i, origin);
@@ -196,9 +288,13 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
           hosts: [],
           protocols: [],
         })),
-        hasSpec: norm.ops.length > 0,
+        hasSpec: false,
+        contract: routeOnlyContract({ origin, pointer: `/proxies/${i}` }),
         productIds: norm.productIds,
-        authSummary: norm.facts.length > 0 ? "OAuth2 (product scopes)" : undefined,
+        authSummary:
+          norm.authConfigured || norm.facts.length > 0
+            ? "Gateway authentication policy (details require supplied contract)"
+            : undefined,
         hasQuota: norm.hasQuota,
       };
     });
@@ -223,7 +319,8 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
     _ctx: AdapterContext,
   ): Promise<GatewayApiImport> {
     const origin = connection.origin ?? "apigee.yaml";
-    const exp = parseExport(connection.config);
+    const parsed = parseExport(connection.config, origin);
+    const exp = parsed.exp;
     const proxies = asObjects<ApigeeProxy>(exp.proxies);
     const proxyIndex = proxies.findIndex((p) => p.name === api.id);
     const proxy = proxies[proxyIndex];
@@ -231,6 +328,7 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
       const empty = buildGatewayApiImport({
         originKind: "apigee",
         apiName: api.id,
+        sourceCoordinate: { origin },
         ops: [],
         facts: [],
         diagnostics: [],
@@ -238,6 +336,7 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
       return {
         ...empty,
         diagnostics: [
+          ...parsed.diagnostics,
           { level: "error", code: "apigee/unknown_proxy", message: `No Apigee proxy '${api.id}'.` },
         ],
       };
@@ -247,8 +346,11 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
       originKind: "apigee",
       apiName: proxy.name,
       version: proxy.revision,
+      sourceCoordinate: { origin, pointer: `/proxies/${proxyIndex}` },
       ops: norm.ops,
       facts: norm.facts,
+      authConfigured:
+        norm.authConfigured || norm.facts.some((fact) => fact.predicate.startsWith("auth.")),
       diagnostics: norm.diagnostics,
     });
   }

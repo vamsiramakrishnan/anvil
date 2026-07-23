@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { type Operation, propKey } from "@anvil/air";
-import { applyAuth, type CredentialResolver } from "./auth.js";
+import {
+  type IdempotencyCarrierBinding,
+  isModeledIdempotencyCarrierInput,
+  type Operation,
+  propKey,
+  resolveIdempotencyCarrier,
+} from "@anvil/air";
+import { applyAuth, type CredentialResolver, credentialProfileName } from "./auth.js";
 import { hostIsAllowed, normalizeEnv } from "./config.js";
 import {
   AnvilError,
@@ -13,6 +19,7 @@ import {
   requestFingerprint,
   resolveIdempotencyKey,
 } from "./idempotency.js";
+import type { InboundIdentity } from "./inbound-identity.js";
 import { type ExecutionRecord, noopObserver, type Observer } from "./observability.js";
 import type { PolicyContext, PolicyHook, PolicyHooks } from "./policy.js";
 import {
@@ -41,9 +48,17 @@ export type ExecuteResult =
 
 export interface ExecuteContext {
   transport: Transport;
+  /** Stable AIR service identity used to namespace replay protection. */
+  serviceId: string;
   baseUrl: string;
   credentials?: CredentialResolver;
   authProfile?: string;
+  /**
+   * The validated inbound caller identity for THIS request, when the serving
+   * entrypoint verified a bearer token. Threaded to the credential resolver as
+   * the `subject_token` for delegated / on-behalf-of (RFC 8693) exchange.
+   */
+  inbound?: InboundIdentity;
   policy?: PolicyHooks;
   observer?: Observer;
   ledger?: IdempotencyLedger;
@@ -98,8 +113,142 @@ function byteLen(s: string): number {
   return Buffer.byteLength(s, "utf8");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function valueAtPath(value: unknown, path: readonly string[]): unknown {
+  let current = value;
+  for (const segment of path) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
+}
+
+function carrierInputValue(
+  op: Operation,
+  input: Record<string, unknown>,
+  binding: IdempotencyCarrierBinding | undefined,
+): unknown {
+  if (!binding) return undefined;
+  if (binding.mechanism !== "body") return input[propKey(binding.key)];
+
+  const legacyOrProjected =
+    binding.path.length === 1 &&
+    (op.input.params.some(
+      (parameter) =>
+        parameter.in === "body" &&
+        isModeledIdempotencyCarrierInput(binding, "body", parameter.name),
+    ) ||
+      op.input.body?.projection === "fields");
+  return legacyOrProjected
+    ? input[propKey(binding.path[0] as string)]
+    : valueAtPath(input.body, binding.path);
+}
+
+function bodyCarrierContainerIssue(
+  op: Operation,
+  input: Record<string, unknown>,
+  binding: IdempotencyCarrierBinding | undefined,
+): string | undefined {
+  if (binding?.mechanism !== "body" || op.input.body?.projection !== "whole") return undefined;
+  const current = input.body;
+  if (current === undefined || current === null) return undefined;
+  if (!isRecord(current)) return "The request body must be an object to carry the idempotency key.";
+  let container: Record<string, unknown> = current;
+  for (const segment of binding.path.slice(0, -1)) {
+    const next = container[segment];
+    if (next === undefined || next === null) return undefined;
+    if (!isRecord(next)) {
+      return `Body field '${segment}' must be an object to carry the idempotency key.`;
+    }
+    container = next;
+  }
+  return undefined;
+}
+
+function withBodyCarrier(
+  value: unknown,
+  path: readonly string[],
+  key: string,
+): Record<string, unknown> {
+  const root = isRecord(value) ? structuredClone(value) : {};
+  let current = root;
+  for (const segment of path.slice(0, -1)) {
+    const next = current[segment];
+    if (isRecord(next)) {
+      current = next;
+    } else {
+      const created: Record<string, unknown> = {};
+      current[segment] = created;
+      current = created;
+    }
+  }
+  current[path[path.length - 1] as string] = key;
+  return root;
+}
+
+function removeNestedCarrier(root: Record<string, unknown>, path: readonly string[]): void {
+  let current = root;
+  for (const segment of path.slice(0, -1)) {
+    const next = current[segment];
+    if (!isRecord(next)) return;
+    current = next;
+  }
+  delete current[path[path.length - 1] as string];
+}
+
+/**
+ * Fingerprints business input, not the surface-specific safety controls used to
+ * deliver the same request. A CLI flag and an MCP/HTTP modeled carrier must
+ * therefore resolve to one replay identity.
+ */
+function replayFingerprintInput(
+  op: Operation,
+  input: Record<string, unknown>,
+  binding: IdempotencyCarrierBinding | undefined,
+): Record<string, unknown> {
+  const normalized = structuredClone(input);
+  delete normalized.confirm;
+  delete normalized.idempotency_key;
+  if (!binding) return normalized;
+
+  if (binding.mechanism !== "body") {
+    delete normalized[propKey(binding.key)];
+    return normalized;
+  }
+
+  const usesFlatInput =
+    binding.path.length === 1 &&
+    (op.input.params.some(
+      (parameter) =>
+        parameter.in === "body" &&
+        isModeledIdempotencyCarrierInput(binding, "body", parameter.name),
+    ) ||
+      op.input.body?.projection === "fields");
+  if (usesFlatInput) {
+    delete normalized[propKey(binding.path[0] as string)];
+    return normalized;
+  }
+
+  // A whole-body carrier always creates an object on the wire, even when the
+  // caller supplied the key through a CLI flag. Retain that empty container so
+  // `{--idempotency-key K}` and `{body:{carrier:K}}` normalize identically.
+  const body = isRecord(normalized.body) ? normalized.body : {};
+  normalized.body = body;
+  removeNestedCarrier(body, binding.path);
+  return normalized;
+}
+
 /** Build the upstream HTTP request from AIR + snake_cased input. */
-function buildRequest(op: Operation, input: Record<string, unknown>, baseUrl: string): HttpRequest {
+function buildRequest(
+  op: Operation,
+  input: Record<string, unknown>,
+  baseUrl: string,
+  binding: IdempotencyCarrierBinding | undefined,
+  idempotencyKey: string | undefined,
+): HttpRequest {
   let path = op.sourceRef.path ?? "/";
   const query = new URLSearchParams();
   const headers: Record<string, string> = { accept: "application/json" };
@@ -107,7 +256,10 @@ function buildRequest(op: Operation, input: Record<string, unknown>, baseUrl: st
   let hasBody = false;
 
   for (const p of op.input.params) {
-    const value = input[propKey(p.name)];
+    const value =
+      idempotencyKey && isModeledIdempotencyCarrierInput(binding, p.in, p.name)
+        ? idempotencyKey
+        : input[propKey(p.name)];
     if (value === undefined || value === null) continue;
     switch (p.in) {
       case "path":
@@ -139,15 +291,36 @@ function buildRequest(op: Operation, input: Record<string, unknown>, baseUrl: st
   if (op.input.body) {
     if (op.input.body.projection === "fields") {
       for (const f of op.input.body.fields) {
-        const value = input[propKey(f.name)];
+        const value =
+          idempotencyKey && isModeledIdempotencyCarrierInput(binding, "body", f.name)
+            ? idempotencyKey
+            : input[propKey(f.name)];
         if (value === undefined || value === null) continue;
         body[f.name] = value;
         hasBody = true;
       }
       if (hasBody) bodyValue = body;
     } else if (input.body !== undefined && input.body !== null) {
-      bodyValue = input.body;
+      bodyValue = structuredClone(input.body);
       hasBody = true;
+    }
+  }
+
+  if (binding && idempotencyKey) {
+    switch (binding.mechanism) {
+      case "header":
+        headers[binding.key] = idempotencyKey;
+        break;
+      case "query":
+        query.set(binding.key, idempotencyKey);
+        break;
+      case "path":
+        path = path.replace(`{${binding.key}}`, encodeURIComponent(idempotencyKey));
+        break;
+      case "body":
+        bodyValue = withBodyCarrier(bodyValue, binding.path, idempotencyKey);
+        hasBody = true;
+        break;
     }
   }
 
@@ -161,6 +334,48 @@ function buildRequest(op: Operation, input: Record<string, unknown>, baseUrl: st
     req.body = JSON.stringify(bodyValue);
   }
   return req;
+}
+
+function canonicalUpstream(baseUrl: string): string {
+  try {
+    const url = new URL(baseUrl);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    url.pathname = url.pathname === "/" ? "/" : url.pathname.replace(/\/+$/, "");
+    return url.toString();
+  } catch {
+    // Request construction and host pinning will reject an invalid URL later.
+    // Keeping the exact value here still gives that malformed target a stable,
+    // isolated fingerprint rather than collapsing it into another upstream.
+    return baseUrl;
+  }
+}
+
+function textClaim(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Stable replay scope from verified identity claims. Raw bearer bytes, email,
+ * and other mutable/display claims are deliberately excluded.
+ */
+function ledgerPrincipalScope(inbound: InboundIdentity | undefined): unknown | undefined {
+  if (!inbound) return { kind: "anonymous" };
+  const claims = inbound.claims ?? {};
+  const issuer = textClaim(claims.iss);
+  const subject = textClaim(claims.sub) ?? textClaim(inbound.sub);
+  const objectId = textClaim(claims.oid);
+  const authorizedParty = textClaim(claims.azp) ?? textClaim(claims.client_id);
+  if (!issuer || (!subject && !objectId && !authorizedParty)) return undefined;
+  return {
+    issuer,
+    subject: subject ?? null,
+    objectId: objectId ?? null,
+    authorizedParty: authorizedParty ?? null,
+    tenant: textClaim(claims.tid) ?? textClaim(claims.tenant) ?? null,
+  };
 }
 
 /** Execute a single AIR operation with all safety guarantees applied. */
@@ -228,13 +443,40 @@ export async function execute(
       return fail(unapprovedOperationError(op, traceId));
     }
 
+    const carrierResolution = resolveIdempotencyCarrier(op);
+    if (!carrierResolution.ok) {
+      return fail(
+        new AnvilError({
+          code: "unsupported_operation",
+          message:
+            `Operation '${op.id}' has an idempotency contract the runtime cannot honor: ` +
+            `${carrierResolution.issue}. Recompile with an exact modeled carrier before approval.`,
+          operation: op.id,
+          traceId,
+          retryable: false,
+          details: { idempotency_carrier: carrierResolution.issue },
+        }),
+      );
+    }
+    const carrier = carrierResolution.binding;
+
     await runHook(ctx.policy?.preValidate);
 
     // 1. Required inputs present (params + projected body fields / whole body).
-    const requiredKeys = op.input.params.filter((p) => p.required).map((p) => propKey(p.name));
+    const requiredKeys = op.input.params
+      .filter(
+        (parameter) =>
+          parameter.required &&
+          !isModeledIdempotencyCarrierInput(carrier, parameter.in, parameter.name),
+      )
+      .map((parameter) => propKey(parameter.name));
     if (op.input.body) {
       if (op.input.body.projection === "fields") {
-        for (const f of op.input.body.fields) if (f.required) requiredKeys.push(propKey(f.name));
+        for (const field of op.input.body.fields) {
+          if (field.required && !isModeledIdempotencyCarrierInput(carrier, "body", field.name)) {
+            requiredKeys.push(propKey(field.name));
+          }
+        }
       } else if (op.input.body.required) {
         requiredKeys.push("body");
       }
@@ -272,14 +514,89 @@ export async function execute(
     }
 
     // 3. Idempotency resolution.
+    const containerIssue = bodyCarrierContainerIssue(op, input, carrier);
+    if (containerIssue) {
+      return fail(
+        new AnvilError({
+          code: "validation_error",
+          message: containerIssue,
+          operation: op.id,
+          traceId,
+        }),
+      );
+    }
+    const modeledCarrierValue = carrierInputValue(op, input, carrier);
+    if (modeledCarrierValue !== undefined && typeof modeledCarrierValue !== "string") {
+      return fail(
+        new AnvilError({
+          code: "validation_error",
+          message: "The modeled idempotency carrier must contain a string key.",
+          operation: op.id,
+          traceId,
+        }),
+      );
+    }
+    const suppliedKeys = [
+      args.idempotencyKey,
+      typeof input.idempotency_key === "string" ? input.idempotency_key : undefined,
+      typeof modeledCarrierValue === "string" ? modeledCarrierValue : undefined,
+    ].filter((value): value is string => value !== undefined && value.length > 0);
+    if (new Set(suppliedKeys).size > 1) {
+      return fail(
+        new AnvilError({
+          code: "validation_error",
+          message:
+            "Conflicting idempotency keys were supplied through the safety input and modeled request carrier.",
+          operation: op.id,
+          traceId,
+        }),
+      );
+    }
+    const providedIdempotencyKey = suppliedKeys[0];
+    const principalScope = ledgerPrincipalScope(ctx.inbound);
+    const serviceId = typeof ctx.serviceId === "string" ? ctx.serviceId.trim() : "";
+    if (!serviceId) {
+      return fail(
+        new AnvilError({
+          code: "validation_error",
+          message:
+            "Execution context serviceId is required to isolate idempotency keys between services.",
+          operation: op.id,
+          traceId,
+        }),
+      );
+    }
+    const replayScope = {
+      serviceId,
+      environment: normalizeEnv(ctx.env),
+      upstream: canonicalUpstream(ctx.baseUrl),
+      authProfile: ctx.authProfile ?? "default",
+      credentialProfile: credentialProfileName(ctx.authProfile ?? "default", op.auth),
+      principal: principalScope ?? null,
+    };
+    const fingerprintInput = replayFingerprintInput(op, input, carrier);
+    const idempotencyFingerprint = requestFingerprint(op.id, fingerprintInput, replayScope);
     const key = resolveIdempotencyKey({
-      provided:
-        args.idempotencyKey ??
-        (typeof input.idempotency_key === "string" ? input.idempotency_key : undefined),
+      provided: providedIdempotencyKey,
       keyDerivation: op.idempotency.keyDerivation,
       operationId: op.id,
       input,
+      fingerprint: idempotencyFingerprint,
     });
+    const ledgerKey = key
+      ? requestFingerprint("anvil.idempotency.ledger-key", key, replayScope)
+      : undefined;
+    if (key && ctx.inbound && !principalScope) {
+      return fail(
+        new AnvilError({
+          code: "auth_required",
+          message:
+            "Replay protection requires a stable verified caller principal; the inbound identity has no issuer/subject, object id, or authorized party.",
+          operation: op.id,
+          traceId,
+        }),
+      );
+    }
     if (op.idempotency.mode === "required" && !key) {
       return fail(
         new AnvilError({
@@ -294,10 +611,7 @@ export async function execute(
     record.idempotencyKeyPresent = Boolean(key);
 
     // 4. Build the request (used by dry-run and execution).
-    const baseRequest = buildRequest(op, input, ctx.baseUrl);
-    if (op.idempotency.mechanism === "header" && key && op.idempotency.key) {
-      baseRequest.headers[op.idempotency.key] = key;
-    }
+    const baseRequest = buildRequest(op, input, ctx.baseUrl, carrier, key);
     if (ctx.timeoutMs) baseRequest.timeoutMs = ctx.timeoutMs;
 
     // 5. Dry-run short-circuits before any auth or side effect.
@@ -346,8 +660,10 @@ export async function execute(
     let request = baseRequest;
     await runHook(ctx.policy?.preAuth, request);
     if (op.auth.type !== "none") {
-      const profile = ctx.authProfile ?? "default";
-      const material = ctx.credentials ? await ctx.credentials.resolve(profile, op.auth) : null;
+      const profile = credentialProfileName(ctx.authProfile ?? "default", op.auth);
+      const material = ctx.credentials
+        ? await ctx.credentials.resolve(profile, op.auth, { inbound: ctx.inbound })
+        : null;
       if (!material) {
         // Name the credential LOCATIONS the resolver would read (env var names,
         // secret ids) so the caller knows the next action. Names only — values
@@ -390,7 +706,7 @@ export async function execute(
           message:
             `This operation requires idempotency, but no durable ledger is configured in env "${env}". ` +
             "A process-local ledger cannot protect against duplicate execution across instances. " +
-            "Configure ANVIL_LEDGER (e.g. firestore://…) before invoking unsafe mutations.",
+            "Configure ANVIL_LEDGER (firestore://PROJECT/DATABASE/SERVICE_NAMESPACE) before invoking unsafe mutations.",
           operation: op.id,
           traceId,
         }),
@@ -398,9 +714,19 @@ export async function execute(
     }
 
     // 8. Idempotency ledger for unsafe idempotent mutations.
-    if (op.effect.kind === "mutation" && key && ctx.ledger) {
-      const fp = requestFingerprint(op.id, input);
-      const reservation = await ctx.ledger.reserve(key, fp);
+    if (op.effect.kind === "mutation" && ledgerKey && ctx.ledger) {
+      const reservation = await ctx.ledger.reserve(ledgerKey, idempotencyFingerprint);
+      if (reservation.outcome === "conflict") {
+        record.ledger = "conflict";
+        return fail(
+          new AnvilError({
+            code: "conflict",
+            message: "This idempotency key was already used for a different request.",
+            operation: op.id,
+            traceId,
+          }),
+        );
+      }
       if (reservation.outcome === "replay") {
         record.outcome = "success";
         record.ledger = "replay";
@@ -440,8 +766,8 @@ export async function execute(
         record.responseBytes = byteLen(res.body);
         if (res.status >= 200 && res.status < 300) {
           const data = res.body ? safeJson(res.body) : null;
-          if (key && ctx.ledger && op.effect.kind === "mutation")
-            await ctx.ledger.complete(key, data);
+          if (ledgerKey && ctx.ledger && op.effect.kind === "mutation")
+            await ctx.ledger.complete(ledgerKey, data);
           record.outcome = "success";
           await runHook(ctx.policy?.postResponse, request);
           await runHook(ctx.policy?.postExecute, request);
@@ -495,7 +821,8 @@ export async function execute(
     }
 
     // Execution failed — release the ledger reservation so a later retry can proceed.
-    if (key && ctx.ledger && op.effect.kind === "mutation") await ctx.ledger.release(key);
+    if (ledgerKey && ctx.ledger && op.effect.kind === "mutation")
+      await ctx.ledger.release(ledgerKey);
     await runHook(ctx.policy?.postError, request);
     await runHook(ctx.policy?.postExecute, request);
     return fail(finalError ?? unknownError(op.id, traceId));

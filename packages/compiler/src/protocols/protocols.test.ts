@@ -965,6 +965,9 @@ describe("end-to-end compile through the protocol adapters", () => {
     expect(checkout?.effect.risk).toBe("financial");
     expect(checkout?.confirmation.required).toBe(true);
     expect(checkout?.idempotency.mode).toBe("required");
+    expect(checkout?.idempotency.mechanism).toBe("body");
+    expect(checkout?.idempotency.key).toBe("/input/idempotencyKey");
+    expect(checkout?.state).toBe("approved");
   });
 
   it("compiles gRPC: reads are safe, PlaceOrder is a confirmed financial mutation", async () => {
@@ -982,6 +985,12 @@ describe("end-to-end compile through the protocol adapters", () => {
     const place = air.operations.find((o) => o.sourceRef.operationId === "PlaceOrder");
     expect(place?.effect.risk).toBe("financial");
     expect(place?.confirmation.required).toBe(true);
+    expect(place?.idempotency).toMatchObject({
+      mode: "required",
+      mechanism: "body",
+      key: "idempotency_key",
+    });
+    expect(place?.state).toBe("approved");
   });
 
   it("compiles SOAP: TransferFunds is financial+confirmed, CloseAccount is destructive", async () => {
@@ -996,6 +1005,12 @@ describe("end-to-end compile through the protocol adapters", () => {
     expect(transfer?.effect.kind).toBe("mutation");
     expect(transfer?.effect.risk).toBe("financial");
     expect(transfer?.confirmation.required).toBe(true);
+    expect(transfer?.idempotency).toMatchObject({
+      mode: "required",
+      mechanism: "body",
+      key: "idempotencyKey",
+    });
+    expect(transfer?.state).toBe("approved");
     const close = air.operations.find((o) => o.sourceRef.operationId === "CloseAccount");
     expect(close?.effect.risk).toBe("destructive");
   });

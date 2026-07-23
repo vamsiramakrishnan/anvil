@@ -4,11 +4,13 @@ import { airFromJson, airFromYaml } from "@anvil/air";
 import {
   CERTIFICATION_FILE,
   type Certification,
+  type CertificationCheck,
   type CertificationGate,
   type Clock,
   certifyBundle,
   readBundleDir,
 } from "@anvil/generators";
+import { GEMINI_ENTERPRISE_PROFILE, verifyTargetKit } from "@anvil/targets";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
@@ -26,7 +28,7 @@ export function registerCertify(parent: Command, ctx: CommandContext): void {
       .command("certify")
       .summary("Run the certification gates over a bundle and write certification.json.")
       .description(
-        "Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates and the MCP tool list, CLI catalog, and runtime manifest expose exactly the same approved operations), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.",
+        "Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates, generated surfaces align, and each persisted target subtree exactly regenerates from its setup config), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.",
       )
       .argument("<path>", "bundle directory or its air.yaml")
       .option("--json", "emit the full certification as JSON")
@@ -53,6 +55,9 @@ export function runCertify(
   const air = loadBundleAir(dir, files);
 
   const cert = certifyBundle(files, air, { now: deps.now });
+  const targetChecks = targetCertificationChecks(files, air);
+  cert.checks.push(...targetChecks);
+  if (targetChecks.some((check) => check.status === "failed")) cert.status = "failed";
   writeFileSync(join(dir, CERTIFICATION_FILE), `${JSON.stringify(cert, null, 2)}\n`, "utf8");
 
   if (opts.json === true) {
@@ -61,6 +66,26 @@ export function runCertify(
     io.out(renderCertificationSummary(cert, dir));
   }
   return cert.status === "passed" ? 0 : 1;
+}
+
+function targetCertificationChecks(
+  files: Record<string, string>,
+  air: ReturnType<typeof loadBundleAir>,
+): CertificationCheck[] {
+  const prefix = `targets/${GEMINI_ENTERPRISE_PROFILE.id}/`;
+  if (!Object.keys(files).some((path) => path.startsWith(prefix))) return [];
+
+  const result = verifyTargetKit(air, GEMINI_ENTERPRISE_PROFILE, files);
+  return [
+    {
+      id: `contract.target-kit-exact.${GEMINI_ENTERPRISE_PROFILE.id}`,
+      gate: "contract",
+      status: result.ok ? "passed" : "failed",
+      detail: result.ok
+        ? `${GEMINI_ENTERPRISE_PROFILE.id} exactly regenerates from persisted setup config and canonical AIR (${result.expectedFiles.length} files, ${result.expectedDigest?.slice(0, 12)}…).`
+        : result.findings.map((finding) => finding.detail).join("; "),
+    },
+  ];
 }
 
 /** The gate-by-gate summary `anvil certify` prints (details live behind --json). */

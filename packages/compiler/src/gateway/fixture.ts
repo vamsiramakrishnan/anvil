@@ -13,6 +13,7 @@ import type {
   GatewayAdapterCapabilities,
   GatewayApiImport,
   GatewayApiRef,
+  GatewayContractProvenance,
   GatewayDiagnostic,
   GatewayInventorySnapshot,
   GatewayProbeResult,
@@ -108,6 +109,13 @@ export class FakeGatewayAdapter implements GatewayAdapter {
             },
           ],
           hasSpec: true,
+          contract: {
+            kind: "native",
+            fidelity: "full",
+            format: "openapi",
+            version: "3.0.3",
+            location: { origin: EXPORT, pointer: "/apis/refunds/spec" },
+          },
           productIds: ["gold"],
           owner: "payments-team",
           authSummary: "OAuth2 (openid-connect)",
@@ -130,6 +138,13 @@ export class FakeGatewayAdapter implements GatewayAdapter {
             },
           ],
           hasSpec: true,
+          contract: {
+            kind: "native",
+            fidelity: "full",
+            format: "openapi",
+            version: "3.0.3",
+            location: { origin: EXPORT, pointer: "/apis/reporting/spec" },
+          },
           productIds: ["gold"],
           owner: "analytics-team",
           authSummary: "API key",
@@ -149,9 +164,11 @@ export class FakeGatewayAdapter implements GatewayAdapter {
   ): Promise<GatewayApiImport> {
     const spec = SPECS[api.id];
     if (!spec) {
+      const source = sourceFor("reporting", REPORTING_SPEC);
       return {
-        source: sourceFor("reporting", REPORTING_SPEC),
+        source,
         overlay: buildGatewayOverlay([]),
+        contract: nativeContract("reporting", source),
         diagnostics: [
           { level: "error", code: "gateway/unknown_api", message: `No fixture API '${api.id}'.` },
         ],
@@ -162,6 +179,7 @@ export class FakeGatewayAdapter implements GatewayAdapter {
     return {
       source,
       overlay: buildGatewayOverlay(facts, `overlay_gateway_${api.id}`),
+      contract: nativeContract(api.id, source),
       diagnostics,
     };
   }
@@ -242,4 +260,22 @@ function reportingFacts(): { facts: GatewayFact[]; diagnostics: GatewayDiagnosti
 function sourceFor(apiId: string, spec: string) {
   const base = ephemeralCompilerSource(spec, `${apiId}.openapi.yaml`);
   return { ...base, origin: { kind: "fixture" as const, uri: `fixture://${apiId}` } };
+}
+
+function nativeContract(
+  apiId: string,
+  source: ReturnType<typeof sourceFor>,
+): GatewayContractProvenance {
+  return {
+    kind: "native",
+    fidelity: "full",
+    format: source.entrypoint.format,
+    version: source.entrypoint.version,
+    location: { origin: EXPORT, pointer: `/apis/${apiId}/spec` },
+    source: {
+      snapshotId: source.snapshotId,
+      sourceHash: source.sourceHash,
+      entrypoint: source.entrypoint.path,
+    },
+  };
 }

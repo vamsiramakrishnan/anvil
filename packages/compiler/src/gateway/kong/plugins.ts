@@ -28,14 +28,7 @@ const TRANSFORM_PLUGINS = new Set([
   "response-transformer",
   "response-transformer-advanced",
 ]);
-const KNOWN_OTHER = new Set([
-  "cors",
-  "proxy-cache",
-  "acl",
-  "ip-restriction",
-  "request-termination",
-  "bot-detection",
-]);
+const INFORMATIONAL_PLUGINS = new Set(["cors"]);
 
 export interface PluginNormalization {
   facts: GatewayFact[];
@@ -108,7 +101,7 @@ export function normalizeServicePlugins(
       return;
     }
 
-    if (KNOWN_OTHER.has(plugin.name)) {
+    if (INFORMATIONAL_PLUGINS.has(plugin.name)) {
       diagnostics.push({
         level: "info",
         code: "kong/policy_noted",
@@ -118,7 +111,10 @@ export function normalizeServicePlugins(
       return;
     }
 
-    // Unknown plugin — stays visible as an opaque policy.
+    // Authorization, termination, cache, bot/IP controls, and unknown plugins
+    // change effective request behavior. Until their semantics and placement are
+    // represented in AIR they must block a full-contract import rather than
+    // disappearing behind an informational note.
     diagnostics.push({
       level: "warning",
       code: "gateway/opaque_policy",

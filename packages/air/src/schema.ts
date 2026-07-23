@@ -424,9 +424,38 @@ export const Confirmation = z.object({
 });
 export type Confirmation = z.infer<typeof Confirmation>;
 
-export const AuthRequirement = z.object({
+export const AuthProvider = z.object({
+  /** STS / OAuth token endpoint the grant POSTs to. */
+  tokenEndpoint: z.string().url().optional(),
+  /** The grant family to run (default inferred from `type`). */
+  grant: z.enum(["token_exchange", "client_credentials", "jwt_bearer"]).optional(),
+  /** How the runtime authenticates ITSELF to the token endpoint. */
+  clientAuth: z.enum(["client_secret_basic", "client_secret_post", "private_key_jwt"]).optional(),
+  /** RFC 8707 upstream resource URI (paired with / instead of `audience`). */
+  resource: z.string().optional(),
+  /** RFC 8693 subject-token type of the inbound token being exchanged. */
+  subjectTokenType: z.enum(["access_token", "jwt", "id_token"]).optional(),
+  /** RFC 8693 requested-token type for the exchanged result. */
+  requestedTokenType: z.enum(["access_token", "jwt", "id_token"]).optional(),
+  /** On-wire API-key carrier (name + location) when it is not `X-API-Key`. */
+  apiKey: z.object({ in: z.enum(["header", "query"]), name: z.string() }).optional(),
+});
+export type AuthProvider = z.infer<typeof AuthProvider>;
+
+const AuthRequirementBase = z.object({
   type: AuthType,
   scopes: z.array(z.string()).default([]),
+  /**
+   * Stable, non-secret credential namespace derived from the source security
+   * scheme (for example `partner_oauth`). Operations with different upstream
+   * identities must not collapse onto the same ANVIL_<PROFILE>_* variables.
+   */
+  credentialProfile: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z](?:[a-z0-9_]{0,62}[a-z0-9])?$/)
+    .optional(),
   /** Whose authority the call runs under — the decisive question for agents. */
   principal: AuthPrincipal.default("service"),
   /** Intended token audience / resource, when known. */
@@ -444,8 +473,94 @@ export const AuthRequirement = z.object({
     .optional(),
   /** Tenant/isolation boundary the call is scoped to, when multi-tenant. */
   tenant: z.string().optional(),
+  /**
+   * How the credential grant is *mechanically* driven, when the runtime must
+   * acquire a token rather than replay a static one (OAuth2 client-credentials,
+   * RFC 8693 token exchange / OBO, RFC 7523 assertion) or send an API key under
+   * a non-default carrier. Every field is optional so an operation that never
+   * needs a grant serializes byte-identically. Env vars (ANVIL_<PROFILE>_*)
+   * always override these at runtime, so operators can wire endpoints without
+   * recompiling AIR. Populated by enrich/import or an operator manifest — never
+   * carries a secret (only endpoints, grant/carrier shapes).
+   */
+  provider: AuthProvider.optional(),
 });
-export type AuthRequirement = z.infer<typeof AuthRequirement>;
+export type AuthRequirement = z.infer<typeof AuthRequirementBase>;
+
+/** Cross-field authority invariants shared by loaders, compiler, and certification. */
+export function authCoherenceIssues(auth: AuthRequirement): string[] {
+  const issues: string[] = [];
+  const sharedCredential =
+    auth.type !== "none" &&
+    auth.type !== "oauth2_on_behalf_of" &&
+    auth.type !== "oauth2_authorization_code";
+
+  if (auth.type === "none") {
+    if (auth.principal !== "anonymous" || auth.secretSource !== "none") {
+      issues.push("auth type none must use anonymous authority and no secret source");
+    }
+    if (auth.provider) issues.push("auth type none cannot declare provider mechanics");
+  } else if (auth.type === "oauth2_on_behalf_of") {
+    if (auth.principal !== "delegated" && auth.principal !== "impersonation") {
+      issues.push("on-behalf-of auth must declare delegated or impersonation authority");
+    }
+    if (auth.provider?.grant && auth.provider.grant !== "token_exchange") {
+      issues.push("on-behalf-of auth cannot use a non-token-exchange grant");
+    }
+  } else if (auth.type === "oauth2_authorization_code") {
+    if (auth.principal !== "end_user") {
+      issues.push("authorization-code auth must declare end_user authority");
+    }
+  } else if (sharedCredential && auth.principal !== "service") {
+    issues.push(`${auth.type} uses a shared runtime credential and must declare service authority`);
+  }
+
+  if (
+    auth.type === "oauth2_client_credentials" &&
+    auth.provider?.grant &&
+    auth.provider.grant !== "client_credentials"
+  ) {
+    issues.push("oauth2_client_credentials cannot use a non-client-credentials grant");
+  }
+  if (auth.type === "jwt_bearer" && auth.provider?.grant && auth.provider.grant !== "jwt_bearer") {
+    issues.push("jwt_bearer cannot use an unrelated OAuth grant");
+  }
+  if (auth.provider?.grant) {
+    const expectedGrant =
+      auth.type === "oauth2_client_credentials"
+        ? "client_credentials"
+        : auth.type === "oauth2_on_behalf_of"
+          ? "token_exchange"
+          : auth.type === "jwt_bearer"
+            ? "jwt_bearer"
+            : undefined;
+    if (!expectedGrant) {
+      issues.push(`${auth.type} cannot declare OAuth grant ${auth.provider.grant}`);
+    }
+  }
+  if (auth.provider?.apiKey && auth.type !== "api_key") {
+    issues.push(`${auth.type} cannot declare API-key carrier mechanics`);
+  }
+  if (
+    auth.type === "api_key" &&
+    auth.provider &&
+    Object.keys(auth.provider).some((key) => key !== "apiKey")
+  ) {
+    issues.push("api_key cannot declare token-acquisition provider mechanics");
+  }
+  if (auth.type === "workload_identity" && auth.secretSource !== "workload_identity") {
+    issues.push("workload_identity auth must use the workload_identity secret source");
+  }
+  if (auth.type !== "none" && auth.secretSource === "none") {
+    issues.push(`${auth.type} cannot use secret source none`);
+  }
+  return issues;
+}
+
+// Keep blocked/review AIR loadable so the compiler can explain an incoherent
+// imported declaration. Certification calls authCoherenceIssues for approved
+// operations and fails closed; the loader remains a structural parser.
+export const AuthRequirement = AuthRequirementBase;
 
 export const ErrorSpec = z.object({
   code: ErrorCode,
@@ -618,8 +733,24 @@ export const Server = z.object({
 });
 export type Server = z.infer<typeof Server>;
 
+/**
+ * Canonical service identifier. It is safe as one path/CLI segment; generators
+ * project it into stricter provider-specific slugs (npm, Skills, GCP) without
+ * changing this identity, because changing an established id breaks overlays,
+ * approval history, and drift lineage.
+ */
+export const ServiceId = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(
+    /^[a-z](?:[a-z0-9_-]{0,62}[a-z0-9])?$/,
+    "service id must be a safe lowercase slug (1-64 chars), start with a letter, and end with a letter or digit",
+  );
+export type ServiceId = z.infer<typeof ServiceId>;
+
 export const Service = z.object({
-  id: z.string(),
+  id: ServiceId,
   version: z.string(),
   displayName: z.string().optional(),
   owner: z.string().optional(),

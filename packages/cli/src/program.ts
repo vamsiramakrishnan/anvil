@@ -27,6 +27,7 @@ import { registerSimulate } from "./commands/simulate.js";
 import { registerSkill } from "./commands/skill.js";
 import { registerSource } from "./commands/source.js";
 import { registerSources } from "./commands/sources.js";
+import { registerStatus } from "./commands/status.js";
 import { registerSync } from "./commands/sync.js";
 import { registerTarget } from "./commands/target.js";
 import { processIO } from "./io.js";
@@ -71,6 +72,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerSource(program, ctx);
   registerAgentify(program, ctx);
   registerCompile(program, ctx);
+  registerStatus(program, ctx);
   registerInspect(program, ctx);
   registerAssess(program, ctx);
   registerDistill(program, ctx);

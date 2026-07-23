@@ -22,6 +22,7 @@ import { linkGlossaryTerms, parseGlossary } from "./lib/glossary.mjs";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
 const CONTENT = join(HERE, "..", "src", "content", "docs");
+const ASTRO_CONTENT_CACHE = join(HERE, "..", "node_modules", ".astro", "data-store.json");
 const DRY_RUN = process.argv.includes("--dry-run");
 
 // The canonical glossary: every synced page gets its first mention of each
@@ -141,11 +142,42 @@ function adrPages() {
     .map((f, i) => ({ src: `docs/adr/${f}`, dest: `reference/adr/${f}`, order: i + 1 }));
 }
 
+/**
+ * Remove generated pages that no longer have a canonical source, while leaving
+ * desired paths in place for an in-place rewrite. Deleting and recreating every
+ * page before Astro starts causes its persistent content loader to observe two
+ * entries for one id and emit misleading duplicate-id warnings.
+ */
+function removeStalePages(directory, prefix, desired) {
+  let entries;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      removeStalePages(path, relative, desired);
+      if (readdirSync(path).length === 0) rmSync(path);
+    } else if (!desired.has(relative)) {
+      rmSync(path);
+    }
+  }
+}
+
 function run() {
   const pages = [...PAGES, ...adrPages()];
   if (!DRY_RUN) {
+    // These pages are generated immediately before Astro starts. Its persistent
+    // content store can otherwise retain the previous digest while the files are
+    // rewritten and report one path twice as a duplicate content id.
+    rmSync(ASTRO_CONTENT_CACHE, { force: true });
+    const desired = new Set(pages.map((page) => page.dest));
     for (const section of SYNCED_SECTIONS) {
-      rmSync(join(CONTENT, section), { recursive: true, force: true });
+      removeStalePages(join(CONTENT, section), section, desired);
     }
   }
   for (const page of pages) {

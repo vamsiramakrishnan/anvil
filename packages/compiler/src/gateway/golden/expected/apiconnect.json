@@ -13,7 +13,7 @@
           "idempotency": "none",
           "confirmation": true,
           "scopes": ["claims:write"],
-          "state": "review_required"
+          "state": "blocked"
         },
         {
           "id": "claims_api.claims.list",
@@ -24,14 +24,14 @@
           "idempotency": "natural",
           "confirmation": false,
           "scopes": [],
-          "state": "generated"
+          "state": "blocked"
         }
       ],
       "opaque": [
         "gateway/opaque_policy: /apis/0/assembly/execute/0",
         "gateway/opaque_policy: /apis/0/assembly/execute/1"
       ],
-      "diagnostics": 3
+      "diagnostics": 6
     }
   ]
 }

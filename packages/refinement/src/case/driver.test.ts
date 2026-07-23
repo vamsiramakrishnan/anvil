@@ -1,4 +1,7 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { haikuReviewDriver } from "../review/review.js";
 import {
   type AgentProcessRunner,
   type AgentRunResult,
@@ -71,6 +74,30 @@ describe("allowlistedEnv", () => {
     expect(env.HOME).toBe("/h");
     expect(env.FOO).toBe("1");
     expect(env.SECRET).toBeUndefined();
+  });
+
+  it("can replace host HOME/XDG/TMPDIR with one isolated workspace home", () => {
+    const env = allowlistedEnv(
+      ["ANTHROPIC_API_KEY"],
+      {
+        PATH: "/bin",
+        HOME: "/host-home",
+        ANTHROPIC_API_KEY: "scoped",
+        SECRET: "drop-me",
+      },
+      { isolatedHome: "/review/.agent-home" },
+    );
+    expect(env).toMatchObject({
+      PATH: "/bin",
+      HOME: "/review/.agent-home",
+      XDG_CONFIG_HOME: "/review/.agent-home/.config",
+      XDG_CACHE_HOME: "/review/.agent-home/.cache",
+      XDG_DATA_HOME: "/review/.agent-home/.local/share",
+      TMPDIR: "/review/.agent-home/tmp",
+      ANTHROPIC_API_KEY: "scoped",
+    });
+    expect(env.SECRET).toBeUndefined();
+    expect(Object.values(env)).not.toContain("/host-home");
   });
 });
 
@@ -146,6 +173,67 @@ describe("ClaudeCodeAgentDriver configures the runner", () => {
     expect(att?.degraded.some((d) => d.includes("filesystem.repository"))).toBe(true);
     expect(att?.degraded.some((d) => d.includes("filesystem.case"))).toBe(true);
   });
+
+  it("the default review driver refuses native launch until the operator opts in", async () => {
+    let launched = false;
+    const driver = haikuReviewDriver({
+      runner: {
+        run: async () => {
+          launched = true;
+          return {
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            startedAt: "t0",
+            endedAt: "t1",
+            durationMs: 1,
+            timedOut: false,
+            canceled: false,
+          };
+        },
+      },
+    });
+    const dir = await minimalCaseDir();
+    await expect(driver.run(dir)).rejects.toThrow(/allow-degraded-native/i);
+    expect(launched).toBe(false);
+  });
+
+  it("an opted-in review isolates HOME and records that enforcement", async () => {
+    let sawEnv: NodeJS.ProcessEnv | undefined;
+    const driver = haikuReviewDriver({
+      allowDegradedNative: true,
+      runner: {
+        run: async (request) => {
+          sawEnv = request.env;
+          return {
+            exitCode: 0,
+            signal: null,
+            stdout: "",
+            stderr: "",
+            startedAt: "t0",
+            endedAt: "t1",
+            durationMs: 1,
+            timedOut: false,
+            canceled: false,
+          };
+        },
+      },
+    });
+    const dir = await minimalCaseDir();
+    await driver.run(dir);
+    expect(sawEnv?.HOME?.startsWith(join(dir, ".agent-home-"))).toBe(true);
+    expect(sawEnv?.HOME).not.toBe(process.env.HOME);
+    expect(sawEnv?.XDG_CONFIG_HOME).toBe(join(sawEnv?.HOME ?? "", ".config"));
+    expect(existsSync(sawEnv?.HOME ?? "")).toBe(false);
+    expect(driver.lastResult?.attestation?.enforced).toContain("isolatedHome");
+    expect(driver.lastResult?.attestation?.degraded).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("filesystem.repository"),
+        expect.stringContaining("filesystem.case"),
+      ]),
+    );
+  });
 });
 
 describe("execution policy + native backend", () => {
@@ -153,6 +241,7 @@ describe("execution policy + native backend", () => {
     const policy = defaultExecutionPolicy("claude-code");
     expect(policy.sandbox).toBe("native");
     expect(policy.filesystem).toEqual({ repository: "read-only", case: "read-write" });
+    expect(policy.home).toBe("host");
     expect(policy.environmentAllowlist).toContain("ANTHROPIC_API_KEY");
     expect(policy.environmentAllowlist).not.toContain("SECRET");
   });
