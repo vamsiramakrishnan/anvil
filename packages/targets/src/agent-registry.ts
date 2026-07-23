@@ -83,20 +83,21 @@ export function renderToolSpecJson(air: AirDocument): string {
 /** The egress Agent Gateway config (imported with `network-services agent-gateways import`). */
 export function renderAgentGatewayYaml(air: AirDocument, options: AgentRegistryOptions = {}): string {
   const project = options.project ?? "<project>";
-  const location = options.location ?? "global";
+  const gwLoc = options.gatewayLocation ?? "us-central1";
   return `# Gemini Enterprise Agent Gateway — egress (Agent-to-Anywhere) mode.
 # Import with:
 #   gcloud network-services agent-gateways import ${gatewayName(air)} \\
-#     --source=agent-gateway.yaml --location=${options.gatewayLocation ?? "<gateway-region>"}
+#     --source=agent-gateway.yaml --location=${gwLoc}
 # GE supports egress mode only; the gateway blocks agent traffic to any host not
-# registered in the referenced Agent Registry.
+# registered in the referenced Agent Registry. The gateway, its registry, and the
+# MCP server registration MUST share a location (${gwLoc}); the GE app is separate.
 name: ${gatewayName(air)}
 protocols:
   - MCP
 googleManaged:
   governedAccessPath: AGENT_TO_ANYWHERE
 registries:
-  - //agentregistry.googleapis.com/projects/${project}/locations/${location}
+  - //agentregistry.googleapis.com/projects/${project}/locations/${gwLoc}
 `;
 }
 
@@ -106,7 +107,8 @@ registries:
  * `network-services agent-gateways import` in register.sh.
  */
 export function renderAgentRegistryTf(air: AirDocument, options: AgentRegistryOptions = {}): string {
-  const location = options.location ?? "global";
+  // The registry Service lives WITH the gateway (same location), not the GE app.
+  const location = options.gatewayLocation ?? "us-central1";
   const endpoint = options.endpoint ?? "https://<your-connector-host>/mcp";
   return `# Agent Registry Service for this MCP server + the agent-identity IAM.
 # The tool spec (toolspec.json) is uploaded out-of-band via register.sh; here we
@@ -172,31 +174,45 @@ export function renderAgentRegistryScript(air: AirDocument, options: AgentRegist
 # roles/networkservices.agentGateways.create, and project edit on the GE engine.
 set -euo pipefail
 PROJECT="${project}"
-LOCATION="${location}"            # Agent Registry + GE app location
-GATEWAY_LOCATION="${gwLoc}"       # gateway region (global/us app -> us-central1; eu -> europe-west1)
+APP_LOCATION="${location}"        # Gemini Enterprise app/engine location
+GATEWAY_LOCATION="${gwLoc}"       # gateway + registry region (global/us app -> us-central1; eu -> europe-west1)
+GATEWAY="${gw}"                   # reused if it already exists
+ENGINE="${engine}"
 
-# 1) Register the MCP server + its tools in Agent Registry (toolspec.json here).
+# 1) Register the MCP server + tools in Agent Registry — in the GATEWAY's location
+#    (the gateway governs only its own region's registry; alignment is required).
 gcloud agent-registry services create ${svc} \\
-  --project="$PROJECT" --location="$LOCATION" \\
+  --project="$PROJECT" --location="$GATEWAY_LOCATION" \\
   --display-name="${air.service.displayName ?? air.service.id} (MCP)" \\
   --interfaces="url=${endpoint},protocolBinding=JSONRPC" \\
   --mcp-server-spec-type=tool-spec --mcp-server-spec-content=toolspec.json
 
-# 2) Create the governed Agent Gateway (egress mode, referencing the registry).
-gcloud network-services agent-gateways import ${gw} \\
-  --source=agent-gateway.yaml --location="$GATEWAY_LOCATION"
+# 2) Reuse an existing egress gateway, or create one that references this registry.
+if gcloud network-services agent-gateways describe "$GATEWAY" \\
+     --location="$GATEWAY_LOCATION" --project="$PROJECT" >/dev/null 2>&1; then
+  echo "Reusing existing gateway $GATEWAY (must be AGENT_TO_ANYWHERE + reference the $GATEWAY_LOCATION registry)."
+else
+  gcloud network-services agent-gateways import "$GATEWAY" \\
+    --source=agent-gateway.yaml --location="$GATEWAY_LOCATION" --project="$PROJECT"
+fi
 
-# 3) Bind the gateway to the Gemini Enterprise app (routes agent egress through it).
+# 3) Bind the gateway to the GE engine (routes the app's agent egress through it).
+#    NOTE: this reroutes ALL of the engine's agent traffic; unset to revert.
 curl -sS -X PATCH \\
-  "https://discoveryengine.googleapis.com/v1alpha/${engine}?updateMask=agentGatewaySetting.defaultEgressAgentGateway.name" \\
+  "https://discoveryengine.googleapis.com/v1alpha/$ENGINE?updateMask=agentGatewaySetting.defaultEgressAgentGateway.name" \\
   -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" \\
-  -d '{"agentGatewaySetting":{"defaultEgressAgentGateway":{"name":"projects/'"$PROJECT"'/locations/'"$GATEWAY_LOCATION"'/agentGateways/${gw}"}}}'
+  -H "X-Goog-User-Project: $PROJECT" \\
+  -d '{"agentGatewaySetting":{"defaultEgressAgentGateway":{"name":"projects/'"$PROJECT"'/locations/'"$GATEWAY_LOCATION"'/agentGateways/'"$GATEWAY"'"}}}'
 
-# 4) Grant the deployed agents' identity egress through the gateway to this server.
-#    Replace AGENT_PRINCIPAL_SET with your agent-identity principalSet.
+# 4) Grant the deployed agents' identity egress + resolve + invoke (see agent-registry.tf
+#    for agentregistry.viewer/run.invoker; iap.egressor is bound on the gateway):
 #    gcloud beta iap web add-iam-policy-binding --resource-type=agent-gateway \\
-#      --member="AGENT_PRINCIPAL_SET" --role="roles/iap.egressor" ...
-echo "Registered ${svc}; gateway ${gw} bound. Import agents/endpoints as needed."
+#      --service="$GATEWAY" --member="AGENT_PRINCIPAL_SET" --role="roles/iap.egressor"
+
+# 5) FINAL STEP IS CONSOLE-ONLY: import the server into the app —
+#    Connected data stores -> + New data store -> MCP servers -> Show all -> Add tool.
+echo "Registered ${svc} in $GATEWAY_LOCATION; gateway $GATEWAY bound to the engine."
+echo "Now import it in the console: Connected data stores -> MCP servers -> Show all -> Add tool."
 `;
 }
 

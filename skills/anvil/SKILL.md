@@ -29,6 +29,7 @@ aligned MCP server + CLI + skill bundle.
 4. Enrich: write an Anvil manifest to declare idempotency, confirmation, retry policy, and routing names for unsafe or weakly-named operations. `anvil distill <dir> --as-enrich-plan` targets the residue for `anvil enrich --plan` (see reference/workflow.md).
 5. `anvil approve <dir> <operation-id...>` — expose operations only after inspecting risk.
 6. `anvil package skill <dir>` and `anvil deploy cloud-run <dir> --env prod`.
+7. Connect to an agent platform: `anvil target gemini-enterprise <dir> --endpoint <url>` — emit the BYO-MCP connector kit. It generates BOTH registration surfaces (a custom-MCP DataConnector and the Agent Registry / Agent Gateway path) plus the inbound-auth contract and an admin runbook. See reference/gemini-enterprise.md for which surface to use and the end-to-end steps.
 
 ## Safety rules
 - **Never approve an operation you have not inspected.** Only approved operations are exposed.
@@ -39,6 +40,7 @@ aligned MCP server + CLI + skill bundle.
 ## Where to look
 - `reference/commands.md` — every command and what it does.
 - `reference/workflow.md` — the enrich → approve workflow and manifest shape.
+- `reference/gemini-enterprise.md` — connect the bundle to Gemini Enterprise (the two BYO-MCP surfaces + end-to-end steps).
 - `evals/operate_anvil.yaml` — behavior checks for operating Anvil.
 
 Run `anvil --help` before guessing.

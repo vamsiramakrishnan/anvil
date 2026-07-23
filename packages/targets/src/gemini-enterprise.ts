@@ -64,6 +64,22 @@ export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
     "An external gateway in front of the server is not assumed; controls travel in the pack.",
     "The raw setUpDataConnector API cannot finish OAUTH consent — the connector reaches ACTIVE only after the console's interactive Authorize step.",
   ],
+  // The human-in-the-loop steps neither Anvil nor a script can perform — the CLI
+  // surfaces these as "open steps" so the operator/harness knows what is left.
+  interactiveSteps: [
+    {
+      surface: "data-connector",
+      action: "Create the Custom MCP Server data store and click Authorize",
+      where: "GE console → Data stores → Create data store → Custom MCP Server",
+      why: "The OAUTH authorization-code consent is interactive; the setUpDataConnector API creates the record but cannot complete the user consent (it stops at INITIALIZATION_FAILED).",
+    },
+    {
+      surface: "agent-registry",
+      action: "Import the registered MCP server into the app",
+      where: "GE console → Connected data stores → + New data store → MCP servers → Show all → Add tool",
+      why: "Importing a registry MCP server into a GE app is console-only — there is no public API for the import step.",
+    },
+  ],
   // VERIFIED end to end against a live GE app: an Anvil-generated StreamableHTTP
   // server was deployed to Cloud Run, registered as a custom_mcp connector
   // (auth_type=OAUTH), driven to ACTIVE via the console Authorize step, and GE

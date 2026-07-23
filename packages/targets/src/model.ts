@@ -48,6 +48,24 @@ export const NetworkingRequirement = z.object({
 });
 export type NetworkingRequirement = z.infer<typeof NetworkingRequirement>;
 
+/**
+ * A step in the registration flow that a HUMAN must perform interactively — it
+ * cannot be scripted (e.g. an OAuth consent click, or a console-only import with
+ * no public API). Surfaced first-class so the CLI and a driving harness show the
+ * operator exactly what is left open after `anvil target` has done all it can.
+ */
+export const InteractiveStep = z.object({
+  /** Which registration surface this step belongs to, when there is a choice. */
+  surface: z.enum(["data-connector", "agent-registry"]).optional(),
+  /** Short imperative label, e.g. "Authorize the OAuth connection". */
+  action: z.string(),
+  /** Where to do it, e.g. the console path. */
+  where: z.string(),
+  /** Why it cannot be automated — the honest reason a human is required. */
+  why: z.string(),
+});
+export type InteractiveStep = z.infer<typeof InteractiveStep>;
+
 /** A versioned target profile. `version` is bound into a pack's target manifest. */
 export const AgentPlatformTargetProfile = z.object({
   id: z.string(),
@@ -59,6 +77,8 @@ export const AgentPlatformTargetProfile = z.object({
   networkingRequirements: z.array(NetworkingRequirement).default([]),
   /** Requirements the platform does NOT satisfy — the honest "don't assume" list. */
   unsupportedAssumptions: z.array(z.string()).default([]),
+  /** Steps a human must perform interactively (console-only / OAuth consent). */
+  interactiveSteps: z.array(InteractiveStep).default([]),
   /**
    * Structured provenance status so a consumer can *gate* on it rather than parse
    * prose: `verified` (checked against current platform docs), `provisional`

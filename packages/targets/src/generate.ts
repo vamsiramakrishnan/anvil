@@ -61,6 +61,9 @@ export function generateTargetKit(
         auth: profile.authRequirements[0]?.kind ?? "none",
         actionCount: served.length,
         surfaceSignatureDigest: signature.digest,
+        // The human-in-the-loop steps that remain after generation (console-only
+        // OAuth consent / registry import) — travels with the kit for a harness.
+        interactiveSteps: profile.interactiveSteps,
       }),
     },
     { path: `${dir}/oauth.template.json`, bytes: json(oauthTemplate) },

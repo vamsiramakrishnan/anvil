@@ -502,7 +502,7 @@ Options:
 
 Generate an agent-platform connector kit (e.g. Gemini Enterprise) for a bundle.
 
-Turns a compiled bundle into a platform-ready BYO-MCP connector: the versioned target profile, the inbound-auth (OAuth resource-server) env contract, the OAuth setup template, the per-action selection manifest, the org-policy + FQDN-allowlist checklist, an admin runbook, a ready-to-run Discovery Engine `setUpDataConnector` registration request, and a compatibility report validated against the platform's transport / auth / action-budget requirements. Writes under `<dir>/targets/<profile>/`.
+Turns a compiled bundle into a platform-ready BYO-MCP connector, with BOTH registration surfaces: (1) a custom-MCP DataConnector — a ready Discovery Engine `setUpDataConnector` request + curl; and (2) the Agent Registry / Agent Gateway path (under `agent-registry/`: a toolspec.json, egress gateway YAML, Terraform, a register script, and a runbook) — the fully programmatic, gateway-governed alternative. Also emits the versioned profile, the inbound-auth (OAuth resource-server) env contract, the per-action selection manifest, the org-policy checklist, an admin runbook, and a compatibility report validated against the platform's transport / auth / action-budget requirements. See the skill's reference/gemini-enterprise.md for which surface to pick. Writes under `<dir>/targets/<profile>/`.
 
 Options:
 - `--endpoint <url>` — the connector's public HTTPS MCP URL (e.g. https://host/mcp)

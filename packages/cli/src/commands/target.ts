@@ -31,7 +31,7 @@ export function registerTarget(parent: Command, ctx: CommandContext): void {
       .command("target")
       .summary("Generate an agent-platform connector kit (e.g. Gemini Enterprise) for a bundle.")
       .description(
-        "Turns a compiled bundle into a platform-ready BYO-MCP connector: the versioned target profile, the inbound-auth (OAuth resource-server) env contract, the OAuth setup template, the per-action selection manifest, the org-policy + FQDN-allowlist checklist, an admin runbook, a ready-to-run Discovery Engine `setUpDataConnector` registration request, and a compatibility report validated against the platform's transport / auth / action-budget requirements. Writes under `<dir>/targets/<profile>/`.",
+        "Turns a compiled bundle into a platform-ready BYO-MCP connector, with BOTH registration surfaces: (1) a custom-MCP DataConnector — a ready Discovery Engine `setUpDataConnector` request + curl; and (2) the Agent Registry / Agent Gateway path (under `agent-registry/`: a toolspec.json, egress gateway YAML, Terraform, a register script, and a runbook) — the fully programmatic, gateway-governed alternative. Also emits the versioned profile, the inbound-auth (OAuth resource-server) env contract, the per-action selection manifest, the org-policy checklist, an admin runbook, and a compatibility report validated against the platform's transport / auth / action-budget requirements. See the skill's reference/gemini-enterprise.md for which surface to pick. Writes under `<dir>/targets/<profile>/`.",
       )
       .argument("<profile>", `target platform: ${Object.keys(PROFILES).join(", ")}`)
       .argument("<dir>", "generated bundle directory or air.yaml")
@@ -63,7 +63,8 @@ function runTarget(profileId: string, dir: string, opts: TargetOptions, io: CliI
   const report = validateTarget(air, profile, { endpoint: opts.endpoint });
 
   if (opts.json === true) {
-    io.out(JSON.stringify(report, null, 2));
+    // Include the interactive/open steps so a driving harness can prompt for them.
+    io.out(JSON.stringify({ ...report, interactiveSteps: profile.interactiveSteps }, null, 2));
   }
 
   // Write every kit file (paths are pack-relative, e.g. targets/<id>/...).
@@ -90,9 +91,22 @@ function runTarget(profileId: string, dir: string, opts: TargetOptions, io: CliI
     for (const f of report.findings) io.out(`  [${f.level.toUpperCase()}] ${f.code}: ${f.message}`);
     io.out(
       report.ok
-        ? "\nCompatible. Next: deploy the server, set inbound-auth.env, then follow admin-runbook.md."
+        ? "\nCompatible. Next: deploy the server (anvil deploy cloud-run), set inbound-auth.env, then follow admin-runbook.md."
         : `\n${errors.length} error(s), ${warnings.length} warning(s). Resolve the errors before registering.`,
     );
+
+    // The human-in-the-loop steps Anvil cannot perform — call them out plainly so
+    // the operator (or a harness) knows exactly what is left to do by hand.
+    if (profile.interactiveSteps.length > 0) {
+      io.out("\nOpen steps — interactive, cannot be automated (do these yourself):");
+      for (const step of profile.interactiveSteps) {
+        const tag = step.surface ? `[${step.surface}] ` : "";
+        io.out(`  • ${tag}${step.action}`);
+        io.out(`      where: ${step.where}`);
+        io.out(`      why:   ${step.why}`);
+      }
+      io.out("  (Run with --json to get these as structured data for a harness.)");
+    }
   }
 
   return report.ok ? 0 : 1;
