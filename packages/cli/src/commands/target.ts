@@ -2,8 +2,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type AgentPlatformTargetProfile,
+  buildConnectorPlan,
+  type ConnectorPlanOptions,
   GEMINI_ENTERPRISE_PROFILE,
   generateTargetKit,
+  type IdpChoice,
+  renderConnectorPlanText,
   validateTarget,
 } from "@anvil/targets";
 import type { Command } from "commander";
@@ -36,8 +40,21 @@ export function registerTarget(parent: Command, ctx: CommandContext): void {
       .argument("<profile>", `target platform: ${Object.keys(PROFILES).join(", ")}`)
       .argument("<dir>", "generated bundle directory or air.yaml")
       .option("--endpoint <url>", "the connector's public HTTPS MCP URL (e.g. https://host/mcp)")
+      .option("--project <id>", "GCP project — fills the registration artifacts + console links")
+      .option("--location <loc>", "Gemini Enterprise app/engine location (default global)")
+      .option("--engine <id>", "the GE engine/app id — used for the console deep links + gateway bind")
+      .option(
+        "--gateway-location <region>",
+        "Agent Gateway + registry region (global/us app → us-central1; eu → europe-west1)",
+      )
+      .option(
+        "--idp <provider>",
+        "GE end-user identity provider (google|entra|okta) — decides where the OAuth client lives",
+      )
+      .option("--tenant <id>", "IdP tenant id / Okta domain (for --idp entra|okta)")
+      .option("--wif <pool>", "Workforce Identity Federation pool, if GE sign-in is federated")
       .option("--out <dir>", "write the kit here instead of into the bundle directory")
-      .option("--json", "emit the compatibility report as JSON")
+      .option("--json", "emit the plan + compatibility report as JSON")
       .action((profile: string, dir: string, opts: TargetOptions) => {
         ctx.code = runTarget(profile, dir, opts, ctx.io);
       }),
@@ -47,6 +64,13 @@ export function registerTarget(parent: Command, ctx: CommandContext): void {
 
 interface TargetOptions {
   endpoint?: string;
+  project?: string;
+  location?: string;
+  engine?: string;
+  gatewayLocation?: string;
+  idp?: string;
+  tenant?: string;
+  wif?: string;
   out?: string;
   json?: boolean;
 }
@@ -58,13 +82,36 @@ function runTarget(profileId: string, dir: string, opts: TargetOptions, io: CliI
     return 1;
   }
 
+  const idp = normalizeIdp(opts.idp);
+  if (opts.idp && !idp) {
+    io.err(`Unknown --idp '${opts.idp}'. Use one of: google, entra, okta.`);
+    return 1;
+  }
+  const planOpts: ConnectorPlanOptions = {
+    endpoint: opts.endpoint,
+    project: opts.project,
+    location: opts.location,
+    engine: opts.engine,
+    gatewayLocation: opts.gatewayLocation,
+    idp,
+    tenant: opts.tenant,
+    wifPool: opts.wif,
+  };
+
   const air = loadAir(dir);
-  const kit = generateTargetKit(air, profile, { endpoint: opts.endpoint });
+  const kit = generateTargetKit(air, profile, {
+    endpoint: opts.endpoint,
+    project: opts.project,
+    location: opts.location,
+    engine: opts.engine,
+    gatewayLocation: opts.gatewayLocation,
+  });
   const report = validateTarget(air, profile, { endpoint: opts.endpoint });
+  const plan = buildConnectorPlan(air, profile, planOpts);
 
   if (opts.json === true) {
-    // Include the interactive/open steps so a driving harness can prompt for them.
-    io.out(JSON.stringify({ ...report, interactiveSteps: profile.interactiveSteps }, null, 2));
+    // The full guided plan + compatibility report — structured for a harness.
+    io.out(JSON.stringify({ report, plan }, null, 2));
   }
 
   // Write every kit file (paths are pack-relative, e.g. targets/<id>/...).
@@ -89,25 +136,20 @@ function runTarget(profileId: string, dir: string, opts: TargetOptions, io: CliI
     const errors = report.findings.filter((f) => f.level === "error");
     const warnings = report.findings.filter((f) => f.level === "warning");
     for (const f of report.findings) io.out(`  [${f.level.toUpperCase()}] ${f.code}: ${f.message}`);
-    io.out(
-      report.ok
-        ? "\nCompatible. Next: deploy the server (anvil deploy cloud-run), set inbound-auth.env, then follow admin-runbook.md."
-        : `\n${errors.length} error(s), ${warnings.length} warning(s). Resolve the errors before registering.`,
-    );
-
-    // The human-in-the-loop steps Anvil cannot perform — call them out plainly so
-    // the operator (or a harness) knows exactly what is left to do by hand.
-    if (profile.interactiveSteps.length > 0) {
-      io.out("\nOpen steps — interactive, cannot be automated (do these yourself):");
-      for (const step of profile.interactiveSteps) {
-        const tag = step.surface ? `[${step.surface}] ` : "";
-        io.out(`  • ${tag}${step.action}`);
-        io.out(`      where: ${step.where}`);
-        io.out(`      why:   ${step.why}`);
-      }
-      io.out("  (Run with --json to get these as structured data for a harness.)");
+    if (!report.ok) {
+      io.out(`\n${errors.length} error(s), ${warnings.length} warning(s). Resolve the errors before registering.`);
     }
+
+    // The guided, copy-paste-first plan: what to run, and the console-only steps
+    // with pre-assembled deep links + paste-ready fields + identity guidance.
+    io.out(renderConnectorPlanText(plan));
   }
 
   return report.ok ? 0 : 1;
+}
+
+/** Validate the --idp flag into the plan's IdP choice. */
+function normalizeIdp(raw: string | undefined): IdpChoice | undefined {
+  if (raw === undefined) return undefined;
+  return raw === "google" || raw === "entra" || raw === "okta" ? raw : undefined;
 }

@@ -6,6 +6,8 @@
  * generator, so a platform change is a new profile version and never leaks into
  * AIR, capability contracts, or the runtime-neutral pack identity. See ADR-0019.
  */
+export * from "./agent-registry.js";
+export * from "./connector-plan.js";
 export * from "./gemini-enterprise.js";
 export * from "./generate.js";
 export * from "./model.js";

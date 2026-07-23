@@ -506,8 +506,15 @@ Turns a compiled bundle into a platform-ready BYO-MCP connector, with BOTH regis
 
 Options:
 - `--endpoint <url>` — the connector's public HTTPS MCP URL (e.g. https://host/mcp)
+- `--project <id>` — GCP project — fills the registration artifacts + console links
+- `--location <loc>` — Gemini Enterprise app/engine location (default global)
+- `--engine <id>` — the GE engine/app id — used for the console deep links + gateway bind
+- `--gateway-location <region>` — Agent Gateway + registry region (global/us app → us-central1; eu → europe-west1)
+- `--idp <provider>` — GE end-user identity provider (google|entra|okta) — decides where the OAuth client lives
+- `--tenant <id>` — IdP tenant id / Okta domain (for --idp entra|okta)
+- `--wif <pool>` — Workforce Identity Federation pool, if GE sign-in is federated
 - `--out <dir>` — write the kit here instead of into the bundle directory
-- `--json` — emit the compatibility report as JSON
+- `--json` — emit the plan + compatibility report as JSON
 
 ### `anvil sync`  *(mutates)*
 `anvil sync [options] <spec-path> <path>`

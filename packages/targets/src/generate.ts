@@ -27,6 +27,14 @@ const json = (v: unknown) => enc(`${JSON.stringify(v, null, 2)}\n`);
 export interface GenerateTargetOptions {
   endpoint?: string;
   serverDescription?: string;
+  /** GCP project / GE app location — filled into the registration artifacts and
+   * console deep-links so the operator copy-pastes real values, not placeholders. */
+  project?: string;
+  location?: string;
+  /** The GE engine resource id (the app), for the console link + registry bind. */
+  engine?: string;
+  /** Agent Gateway + registry region (global/us app -> us-central1; eu -> europe-west1). */
+  gatewayLocation?: string;
 }
 
 /** Build the target kit for a capability's contract. */
@@ -102,10 +110,11 @@ export function generateTargetKit(
     // a curl that POSTs it under the operator's own credentials.
     ...(isPublicConnector(profile)
       ? (() => {
-          const reg = buildRegistrationRequest(
-            air,
-            options.endpoint ? { endpoint: options.endpoint } : {},
-          );
+          const reg = buildRegistrationRequest(air, {
+            endpoint: options.endpoint,
+            project: options.project,
+            location: options.location,
+          });
           return [
             { path: `${dir}/registration.request.json`, bytes: enc(renderRegistrationJson(reg)) },
             { path: `${dir}/registration.curl.sh`, bytes: enc(renderRegistrationCurl(reg)) },
@@ -117,7 +126,13 @@ export function generateTargetKit(
     // generated from the same approved operations, so it never drifts.
     ...(isPublicConnector(profile)
       ? (() => {
-          const ar = options.endpoint ? { endpoint: options.endpoint } : {};
+          const ar = {
+            endpoint: options.endpoint,
+            project: options.project,
+            location: options.location,
+            gatewayLocation: options.gatewayLocation,
+            engine: options.engine,
+          };
           return [
             { path: `${dir}/agent-registry/toolspec.json`, bytes: enc(renderToolSpecJson(air)) },
             {

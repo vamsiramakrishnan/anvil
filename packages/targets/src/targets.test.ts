@@ -1,6 +1,7 @@
 import type { AirDocument } from "@anvil/air";
 import { approveOperations, compile } from "@anvil/compiler";
 import { beforeEach, describe, expect, it } from "vitest";
+import { buildConnectorPlan, renderConnectorPlanText } from "./connector-plan.js";
 import { GEMINI_ENTERPRISE_PROFILE } from "./gemini-enterprise.js";
 import { generateTargetKit } from "./generate.js";
 import { buildRegistrationRequest, renderRegistrationCurl } from "./registration.js";
@@ -169,6 +170,37 @@ describe("target kit generation", () => {
     expect(read("agent-registry/agent-gateway.yaml")).toContain("AGENT_TO_ANYWHERE");
     expect(read("agent-registry/register.sh")).toContain("gcloud agent-registry services create");
     expect(read("agent-registry/agent-registry.tf")).toContain("google_agent_registry_service");
+  });
+
+  it("builds a guided connector plan with identity + pre-assembled console links", () => {
+    const plan = buildConnectorPlan(air, GEMINI_ENTERPRISE_PROFILE, {
+      endpoint: "https://x.example/mcp",
+      project: "acme",
+      engine: "eng_1",
+      location: "global",
+      idp: "entra",
+      tenant: "tid",
+    });
+    // Identity resolves the IdP endpoints from --idp/--tenant.
+    expect(plan.identity.resolved).toBe(true);
+    expect(plan.identity.authUri).toContain("login.microsoftonline.com/tid");
+    // Console step carries a pre-assembled deep link + paste-ready fields.
+    const dc = plan.console.find((c) => c.surface === "data-connector")!;
+    expect(dc.url).toContain("engines/eng_1");
+    expect(dc.url).toContain("project=acme");
+    const fields = Object.fromEntries(dc.copy.map((f) => [f.label, f.value]));
+    expect(fields["MCP Server URL"]).toBe("https://x.example/mcp");
+    expect(fields["Redirect URI (register on the client)"]).toContain("vertexaisearch");
+    // Renders to text without throwing and includes the sections.
+    const text = renderConnectorPlanText(plan);
+    expect(text).toContain("Console-only");
+    expect(text).toContain("paste:");
+  });
+
+  it("connector plan flags unresolved identity when --idp is omitted", () => {
+    const plan = buildConnectorPlan(air, GEMINI_ENTERPRISE_PROFILE, { endpoint: "https://x/mcp" });
+    expect(plan.identity.resolved).toBe(false);
+    expect(plan.identity.summary).toContain("--idp");
   });
 
   it("lists every approved action for selection", () => {

@@ -6,11 +6,28 @@ description: Connect an Anvil bundle to Gemini Enterprise as a BYO-MCP connector
 # Connect a bundle to Gemini Enterprise (BYO-MCP)
 
 `anvil target gemini-enterprise <dir> --endpoint <https://host/mcp>` writes a kit
-under `<dir>/targets/gemini-enterprise/`. The MCP server it points at is the
-generated StreamableHTTP server (`runtime/server.js`) — deploy it first
-(`anvil deploy cloud-run <dir>`), publicly reachable over HTTPS. SSE is not
-supported. The server is session-based (it mints an `mcp-session-id` on
-`initialize`), which the platform requires to fetch the tool list.
+under `<dir>/targets/gemini-enterprise/` AND prints a guided, copy-paste-first
+plan: choose a surface → identity → commands to run → console-only steps (each
+with a pre-assembled console deep link and paste-ready fields). Pass more context
+to fill it in — `--project`, `--engine`, `--location`, `--idp google|entra|okta`,
+`--tenant`, `--wif <pool>`, `--gateway-location` — so the emitted artifacts and
+the printed steps carry real values, not placeholders. `--json` emits the whole
+plan for a harness. The MCP server it points at is the generated StreamableHTTP
+server (`runtime/server.js`) — deploy it first (`anvil deploy cloud-run <dir>`),
+publicly reachable over HTTPS. SSE is not supported. The server is session-based
+(it mints an `mcp-session-id` on `initialize`), which the platform requires.
+
+## First decide identity (where the OAuth client lives)
+Ask the operator how GE end users sign in — it decides which IdP hosts the OAuth
+client and the auth/token URLs + the server's inbound issuer/audience:
+- **Google** identities → OAuth client in Google Cloud (APIs & Services → Credentials).
+- **Microsoft Entra** → an Entra app registration (`--idp entra --tenant <id>`).
+- **Okta / other OIDC** → an app there (`--idp okta --tenant <domain>`).
+- **Workforce Identity Federation** (GE sign-in federated into a Google Workforce
+  pool): pass `--wif <pool>` — the OAuth client still lives at the source IdP, but
+  the token GE presents is the federated identity, so set the server's
+  `ANVIL_INBOUND_ISSUER/AUDIENCE` to that federated issuer/audience.
+Every OAuth client's redirect URI must be `https://vertexaisearch.cloud.google.com/oauth-redirect`.
 
 ## Two registration surfaces — pick one
 
