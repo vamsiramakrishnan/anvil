@@ -1,9 +1,16 @@
 import { join } from "node:path";
 import {
   type AddEvidenceInput,
+  BATTERY_SCENARIOS,
   buildRefinementPlan,
   caseService,
   createAgentDriver,
+  EFFECTIVENESS_CASES,
+  type EffectivenessMetrics,
+  type EffectivenessRow,
+  effectivenessMetrics,
+  runBattery,
+  runEffectivenessCase,
   skillFor,
   targetKey,
 } from "@anvil/refinement";
@@ -53,6 +60,22 @@ export function registerCase(parent: Command, ctx: CommandContext): void {
     .option("--executor <executor>", "executor identity recorded in the case", "cli")
     .action((path: string, key: string, opts: CaseOpenOptions) => {
       ctx.code = runCaseOpen(path, key, opts, ctx.io);
+    });
+
+  caseCmd
+    .command("battery")
+    .summary("Run the investigator benchmark battery.")
+    .description(
+      "Run either the deterministic baseline-vs-investigation battery (default, scripted, fast) or, when explicitly enabled, the real-agent investigator effectiveness battery. The default mode is deterministic and does not invoke an external agent.",
+    )
+    .option("--real", "invoke a real coding agent for the effectiveness battery")
+    .option("--json", "emit JSON report")
+    .option("--command <command>", "agent CLI to drive (default: claude)")
+    .option("--model <model>", "model passed through to the agent CLI")
+    .option("--check", "fail on scripted battery expectation mismatches")
+    .option("--allow-degraded-native", "proceed even when native execution cannot enforce split")
+    .action(async (opts: CaseBatteryOptions) => {
+      ctx.code = await runCaseBattery(opts, ctx.io);
     });
 
   caseCmd
@@ -170,6 +193,15 @@ interface CaseOpenOptions {
   executor?: string;
 }
 
+interface CaseBatteryOptions {
+  real?: boolean;
+  json?: boolean;
+  command?: string;
+  model?: string;
+  check?: boolean;
+  allowDegradedNative?: boolean;
+}
+
 interface CaseAddEvidenceOptions {
   predicate: string;
   source: string;
@@ -254,6 +286,123 @@ function runCaseOpen(path: string, key: string, opts: CaseOpenOptions, io: CliIO
     `  read CASE.md, then use \`anvil case ...\` helpers or \`anvil case investigate ${c.dir}\`.`,
   );
   return 0;
+}
+
+async function runCaseBattery(opts: CaseBatteryOptions, io: CliIO): Promise<number> {
+  if (opts.real !== true) {
+    const report = await runBattery(BATTERY_SCENARIOS);
+    if (opts.json === true) {
+      io.out(JSON.stringify(report, null, 2));
+    } else {
+      io.out(renderScriptedBatteryReport(report));
+    }
+    if (opts.check === true && report.totals.mismatches > 0) {
+      io.err(
+        `investigator battery mismatched ${report.totals.mismatches} scenario(s); add fixes or use --real.`,
+      );
+      return 1;
+    }
+    return 0;
+  }
+
+  const extraArgs = opts.model !== undefined ? ["--model", opts.model] : [];
+  const driver = createAgentDriver({
+    command: opts.command,
+    extraArgs,
+    allowDegradedNative: opts.allowDegradedNative === true,
+  });
+  io.err(`anvil: running effectiveness battery with ${driver.name}…`);
+
+  const rows: EffectivenessRow[] = [];
+  for (const c of EFFECTIVENESS_CASES) {
+    rows.push(await runEffectivenessCase(c, driver));
+  }
+  const metrics = effectivenessMetrics(rows);
+
+  if (opts.json === true) {
+    io.out(JSON.stringify({ rows, metrics }, null, 2));
+    return 0;
+  }
+  io.out(renderEffectivenessBatteryReport(rows, metrics));
+  return 0;
+}
+
+function renderScriptedBatteryReport({
+  totals,
+  byClass,
+  rows,
+}: Awaited<ReturnType<typeof runBattery>>): string {
+  const lines: string[] = [];
+  const t = totals;
+  lines.push("Investigation battery — deterministic baseline vs case investigation");
+  lines.push(
+    `  runs=${t.runs} baselineClosed=${t.baselineClosed} investigationClosed=${t.investigationClosed}`,
+  );
+  lines.push(
+    `  investigationOnly=${t.investigationOnly} conflicts=${t.conflictsFound} declined=${t.declined}`,
+  );
+  if (t.mismatches > 0) lines.push(`  mismatches=${t.mismatches}`);
+  lines.push("");
+
+  lines.push("By class:");
+  for (const row of byClass) {
+    lines.push(
+      `  ${row.class.padEnd(20)} runs=${String(row.runs).padStart(4)} base=${String(
+        row.baselineClosed,
+      ).padStart(4)} inv=${String(row.investigationClosed).padStart(5)} only=${String(
+        row.investigationOnly,
+      ).padStart(4)} decline=${String(row.declined).padStart(4)}`,
+    );
+  }
+
+  lines.push("\nPer scenario:");
+  for (const row of rows) {
+    const flag = row.matchedExpectation ? " " : "⚠";
+    lines.push(
+      `${flag} ${row.id.padEnd(28)} base=${String(row.baselineProposed).padStart(5)} inv=${row.investigationStatus.padEnd(17)}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function renderEffectivenessBatteryReport(
+  rows: readonly EffectivenessRow[],
+  metrics: EffectivenessMetrics,
+): string {
+  const lines: string[] = [];
+  lines.push("Investigator effectiveness battery (real agent)");
+  lines.push(`  cases=${metrics.cases}`);
+  lines.push(`  outcomeAccuracy=${metrics.outcomeAccuracy.toFixed(3)}`);
+  lines.push(`  groundedProposalPrecision=${metrics.groundedProposalPrecision.toFixed(3)}`);
+  lines.push(`  correctDeclineRate=${metrics.correctDeclineRate.toFixed(3)}`);
+  lines.push(`  conflictDetectionRecall=${metrics.conflictDetectionRecall.toFixed(3)}`);
+  lines.push(`  unsupportedClaimRate=${metrics.unsupportedClaimRate.toFixed(3)}`);
+  lines.push(`  meanEvidenceRecall=${metrics.meanEvidenceRecall.toFixed(3)}`);
+
+  lines.push("\nPer category:");
+  const byCategory = new Map<string, { cases: number; outcomes: number }>();
+  for (const row of rows) {
+    const bucket = byCategory.get(row.category) ?? { cases: 0, outcomes: 0 };
+    bucket.cases++;
+    if (row.outcomeCorrect) bucket.outcomes++;
+    byCategory.set(row.category, bucket);
+  }
+  for (const [category, bucket] of byCategory.entries()) {
+    lines.push(
+      `  ${category.padEnd(18)} cases=${String(bucket.cases).padStart(2)} correct=${String(
+        bucket.outcomes,
+      ).padStart(2)}`,
+    );
+  }
+
+  lines.push("\nPer scenario:");
+  for (const row of rows) {
+    const mark = row.outcomeCorrect ? "✓" : "⚠";
+    lines.push(
+      `${mark} ${row.id.padEnd(28)} exp=${row.expected.toString().padEnd(11)} obs=${row.observed.toString().padEnd(11)} grounded=${row.grounded.toString().padEnd(5)} unsupported=${row.unsupportedClaims}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 async function runCaseAddEvidence(

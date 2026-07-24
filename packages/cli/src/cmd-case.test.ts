@@ -29,14 +29,12 @@ beforeEach(() => {
     fakeCodex,
     [
       "#!/usr/bin/env node",
-      'const { writeFileSync } = require("node:fs");',
-      'let input = "";',
-      'process.stdin.setEncoding("utf8");',
-      'process.stdin.on("data", (chunk) => { input += chunk; });',
-      'process.stdin.on("end", () => {',
-      '  writeFileSync("cli-invocation.json",',
-      "    JSON.stringify({ args: process.argv.slice(2), input }));",
-      "});",
+      'const { readFileSync, writeFileSync } = require("node:fs");',
+      'const input = readFileSync(0, "utf8");',
+      "writeFileSync(",
+      '  "cli-invocation.json",',
+      "  JSON.stringify({ args: process.argv.slice(2), input }),",
+      ");",
     ].join("\n"),
     "utf8",
   );
@@ -100,5 +98,26 @@ describe("anvil case investigate", () => {
     const io = bufferIO();
     expect(await runAnvilCli(["case", "investigate", "--help"], { io })).toBe(0);
     expect(io.text()).toMatch(/codex is\s+protocol-aware/);
+  });
+
+  it("runs the scripted investigator battery quickly", async () => {
+    const io = bufferIO();
+    expect(await runAnvilCli(["case", "battery"], { io })).toBe(0);
+    expect(io.text()).toContain(
+      "Investigation battery — deterministic baseline vs case investigation",
+    );
+  });
+
+  it("emits scripted battery as JSON", async () => {
+    const io = bufferIO();
+    expect(await runAnvilCli(["case", "battery", "--json"], { io })).toBe(0);
+    const payload = JSON.parse(io.text()) as { totals: { runs: number } };
+    expect(payload.totals.runs).toBeGreaterThan(0);
+  });
+
+  it("warns about scripted expectation drift only when --check is set", async () => {
+    const io = bufferIO();
+    expect(await runAnvilCli(["case", "battery", "--check"], { io })).toBe(0);
+    expect(io.stderr.join("\n")).toBe("");
   });
 });
