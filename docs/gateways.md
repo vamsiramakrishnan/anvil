@@ -461,6 +461,9 @@ skill. A reviewed candidate remains `reviewed_plan_only`,
 input. Exact local evidence and review requirements are documented in
 `skills/anvil/reference/composing-capabilities.md`.
 
+For recurring estate-quality overlap sweeps across many bundles, use the harness
+guide: `skills/anvil-composition-audit/SKILL.md`.
+
 Release configuration follows only the separately approved single-bundle
 build, never the `capability compose` report. It binds the environment, Gemini
 Enterprise location/surface and connector IdP, upstream credentials, and
