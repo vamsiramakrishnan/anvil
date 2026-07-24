@@ -449,7 +449,16 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
       const endsWithParam =
         segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
       const signal = `${raw.operationId ?? ""} ${raw.summary ?? ""} ${path}`;
-      const { effect, idempotency } = classifyEffect(method, signal, endsWithParam, effectHint);
+      const declaredIntentSignals = [raw.operationId, raw.summary].filter(
+        (value): value is string => Boolean(value),
+      );
+      const { effect, idempotency } = classifyEffect(
+        method,
+        signal,
+        endsWithParam,
+        effectHint,
+        declaredIntentSignals,
+      );
       effect.resource = singularize(names.resource);
       // `x-idempotent: true` is a spec-level declaration (Swagger 2.0 and 3.x
       // alike) that repeating the call is a no-op. Honor it as natural

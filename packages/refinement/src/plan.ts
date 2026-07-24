@@ -2,6 +2,7 @@ import type { AirDocument } from "@anvil/air";
 import type { Deficiency, DeficiencyCategory, DeficiencyCode, Severity } from "./deficiency.js";
 import { DEFICIENCY_CATALOG } from "./deficiency.js";
 import { DETECTORS, type Detector, runDetectors } from "./detect.js";
+import { skillByName } from "./skills/registry.js";
 import { describeTarget, targetOperationId } from "./target.js";
 
 /**
@@ -101,6 +102,15 @@ export function summarizeRefinementPlan(plan: RefinementPlan): string {
     lines.push(`  ${describeTarget(d.target).padEnd(40)} ${d.code}`);
   }
 
+  const humanDecisions = plan.deficiencies.filter(
+    (d) => DEFICIENCY_CATALOG[d.code].readinessDisposition === "humanDecisionRequired",
+  );
+  lines.push("");
+  lines.push(`Human-decision gaps: ${humanDecisions.length}`);
+  for (const d of humanDecisions) {
+    lines.push(`  ${describeTarget(d.target).padEnd(40)} ${d.message}`);
+  }
+
   lines.push("");
   lines.push("By severity:");
   for (const [sev, n] of rankedEntries(plan.bySeverity)) {
@@ -116,7 +126,8 @@ export function summarizeRefinementPlan(plan: RefinementPlan): string {
   lines.push("");
   lines.push("Proposed skills:");
   for (const [skill, n] of rankedEntries(plan.bySkill)) {
-    lines.push(`  ${skill.padEnd(26)} ${n}`);
+    const availability = skillByName(skill) ? "" : " [not yet implemented]";
+    lines.push(`  ${skill.padEnd(26)} ${n}${availability}`);
   }
 
   lines.push("");

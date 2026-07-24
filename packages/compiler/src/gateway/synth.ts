@@ -116,6 +116,19 @@ export function normalizePath(path: string): string {
   return clean.startsWith("/") ? clean : `/${clean}`;
 }
 
+/**
+ * Operation-scoped gateway evidence selector that survives a supplied
+ * contract's different operationId. Parameter names are erased because route
+ * attestation already treats `/items/{id}` and `/items/{itemId}` as the same
+ * callable coordinate.
+ */
+export function gatewayOperationRef(method: string, path: string): string {
+  const normalizedPath = normalizePath(path)
+    .replace(/\{\+?[^/{]+\}/g, "{}")
+    .replace(/(^|\/):[^/]+/g, "$1{}");
+  return `${String(method ?? "").toUpperCase()} ${normalizedPath}`;
+}
+
 /** Join a vendor base/context path to an operation path without losing templates. */
 export function joinGatewayPath(base: string | undefined, path: string): string {
   const left = String(base ?? "")
@@ -135,7 +148,10 @@ export function joinGatewayPath(base: string | undefined, path: string): string 
 export function buildGatewayApiImport(input: {
   originKind: SourceOriginKind;
   apiName: string;
+  /** Semantic API version used in the synthesized contract. */
   version?: string;
+  /** Distinct gateway deployment revision, when the source exposes one. */
+  revision?: string;
   sourceCoordinate: EvidenceCoordinate;
   ops: readonly SynthOp[];
   facts: readonly GatewayFact[];
@@ -160,6 +176,22 @@ export function buildGatewayApiImport(input: {
       entrypoint: source.entrypoint.path,
     },
   };
+  const apiSubject = {
+    api: {
+      id: apiName,
+      ...(input.revision
+        ? {
+            ...(input.version ? { apiVersion: input.version } : {}),
+            revision: input.revision,
+          }
+        : input.version && input.version !== "0.0.0"
+          ? { revision: input.version }
+          : {}),
+    },
+  };
+  // Adapter diagnostics already own their source scope. In particular, an
+  // unscoped diagnostic is deliberately estate/global and must not become
+  // API-local merely because this helper is synthesizing one selected API.
   const diagnostics = [...input.diagnostics];
   if (input.ops.length > 0) {
     diagnostics.push(
@@ -168,12 +200,14 @@ export function buildGatewayApiImport(input: {
         code: "gateway/route_only_contract",
         message: `Only gateway routes were available for '${apiName}'; the generated OpenAPI has no authoritative schemas, bodies, responses, or security schemes. ${ROUTE_ONLY_REMEDIATION}`,
         coordinate: input.sourceCoordinate,
+        subject: apiSubject,
       },
       {
         level: "warning",
         code: "gateway/missing_runtime_coordinate",
         message: `No public gateway server/base URL was available for '${apiName}'; generated operations have no runtime coordinate and remain blocked.`,
         coordinate: input.sourceCoordinate,
+        subject: apiSubject,
       },
     );
     if (
@@ -185,6 +219,7 @@ export function buildGatewayApiImport(input: {
         code: "gateway/auth_contract_incomplete",
         message: `Gateway authentication is configured for '${apiName}', but the route export does not prove the credential carrier, identity provider, token endpoint, audience, or security scheme. Operations remain blocked.`,
         coordinate: input.sourceCoordinate,
+        subject: apiSubject,
       });
     }
   }

@@ -99,6 +99,7 @@ export class HeuristicSkillExecutor implements SkillExecutor {
     switch (skill.name) {
       case "describe-field":
       case "describe-operation":
+      case "investigate-ui-projection":
         return this.describe(skill, context);
       case "generate-examples":
         return this.examples(skill, context);

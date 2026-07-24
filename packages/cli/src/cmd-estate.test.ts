@@ -165,6 +165,61 @@ describe("anvil estate inventory", () => {
     expect(err).toMatch(/kong.*apigee|apigee.*kong/i);
   });
 
+  it("keeps early --json failures machine-readable", async () => {
+    const cfg = join(work, "kong.yaml");
+    writeFileSync(cfg, KONG_ONE_SERVICE);
+    const unknown = await estate("inventory", cfg, "--vendor", "nginx", "--json");
+    expect(unknown.code).toBe(1);
+    expect(unknown.err).toBe("");
+    expect(JSON.parse(unknown.out)).toMatchObject({
+      reportType: "anvil.gateway-estate-error",
+      code: "estate/unknown_vendor",
+    });
+
+    const missing = await estate(
+      "inventory",
+      join(work, "missing.yaml"),
+      "--vendor",
+      "kong",
+      "--json",
+    );
+    expect(missing.code).toBe(1);
+    expect(missing.err).toBe("");
+    expect(JSON.parse(missing.out)).toMatchObject({
+      reportType: "anvil.gateway-estate-error",
+      code: "estate/export_unreadable",
+      diagnostics: expect.any(Array),
+    });
+  });
+
+  it("offers bounded, filterable, summary-first inventory views", async () => {
+    const cfg = join(work, "kong.yaml");
+    writeFileSync(cfg, KONG_TWO_SERVICES);
+    const summary = await estate("inventory", cfg, "--vendor", "kong", "--summary", "--json");
+    expect(summary.code).toBe(0);
+    expect(JSON.parse(summary.out)).toMatchObject({
+      reportType: "anvil.gateway-estate-inventory-summary",
+      summary: { apis: 2, matched: 2, returned: 0 },
+    });
+
+    const filtered = await estate(
+      "inventory",
+      cfg,
+      "--vendor",
+      "kong",
+      "--query",
+      "report",
+      "--limit",
+      "1",
+      "--json",
+    );
+    expect(filtered.code).toBe(0);
+    expect(JSON.parse(filtered.out)).toMatchObject({
+      view: { sourceApis: 2, matched: 1, returned: 1 },
+      apis: [{ id: "reporting" }],
+    });
+  });
+
   it("reports route synthesis as degraded contract provenance, never hasSpec", async () => {
     const cfg = join(work, "kong.yaml");
     writeFileSync(cfg, KONG_ONE_SERVICE);
@@ -225,14 +280,88 @@ describe("anvil estate inventory", () => {
   });
 });
 
+describe("anvil estate audit", () => {
+  it("emits a deterministic adoption report with ownership and CI thresholds", async () => {
+    const cfg = join(work, "kong.yaml");
+    writeFileSync(cfg, KONG_ONE_SERVICE);
+
+    const first = await estate("audit", cfg, "--vendor", "kong", "--json");
+    const second = await estate("audit", cfg, "--vendor", "kong", "--json");
+    expect(first.code).toBe(0);
+    expect(second.code).toBe(0);
+    expect(second.out).toBe(first.out);
+
+    const report = JSON.parse(first.out);
+    expect(report).toMatchObject({
+      schemaVersion: 1,
+      reportType: "anvil.gateway-estate-audit",
+      vendor: "kong",
+      gate: "blocked",
+      summary: {
+        apis: 1,
+        routes: 1,
+        candidates: 0,
+        needsEvidence: 0,
+        blocked: 1,
+        fullContracts: 0,
+        routeOnlyContracts: 1,
+      },
+    });
+    expect(report.adapter.capabilities).toEqual(
+      expect.arrayContaining([
+        { dimension: "routes", support: "yes" },
+        { dimension: "transformations", support: "partial" },
+      ]),
+    );
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "gateway/route_only_contract",
+          owner: "api_owner",
+          action: expect.stringContaining("--spec"),
+        }),
+        expect.objectContaining({
+          code: "gateway/opaque_policy",
+          owner: "gateway_owner",
+        }),
+      ]),
+    );
+
+    const blockersOnly = await estate("audit", cfg, "--vendor", "kong", "--check");
+    expect(blockersOnly.code).toBe(1);
+    const reviewGate = await estate(
+      "audit",
+      cfg,
+      "--vendor",
+      "kong",
+      "--check",
+      "--fail-on",
+      "review-required",
+    );
+    expect(reviewGate.code).toBe(1);
+  });
+
+  it("keeps the human view bounded and points to the complete JSON report", async () => {
+    const cfg = join(work, "kong.yaml");
+    writeFileSync(cfg, KONG_TWO_SERVICES);
+    const { code, out } = await estate("audit", cfg, "--vendor", "kong");
+    expect(code).toBe(0);
+    expect(out).toContain("Estate audit: kong");
+    expect(out).toContain("owner:");
+    expect(out).toContain("Use --json for the complete per-API report");
+  });
+});
+
 describe("anvil estate import", () => {
   it("imports the single API of a bare config into a normal bundle", async () => {
     const cfg = join(work, "kong.yaml");
     writeFileSync(cfg, KONG_ONE_SERVICE);
     const out = join(work, "bundle");
     const res = await estate("import", cfg, "--vendor", "kong", "--out", out);
-    expect(res.code).toBe(0);
-    expect(res.out).toContain("Imported refunds");
+    expect(res.code, `${res.out}\n${res.err}`).toBe(0);
+    expect(res.out).toContain("Created a guarded bundle for refunds");
+    expect(res.out).toContain("no blocked operation is exposed");
+    expect(res.out).not.toContain("Imported refunds");
     // The bundle is a NORMAL bundle: catalog + skill + hooks all present.
     expect(existsSync(join(out, "catalog.json"))).toBe(true);
     expect(existsSync(join(out, "skill/SKILL.md"))).toBe(true);
@@ -442,6 +571,7 @@ services:
     );
     expect(baseline.code, baseline.err).toBe(0);
     const baselineReport = JSON.parse(baseline.out);
+    const capabilityId = `${baselineReport.serviceId}.refund`;
     const baselineReceiptPath = join(baselineReport.receipt.directory, "import.receipt.json");
     const baselineReceiptBytes = readFileSync(baselineReceiptPath);
     const baselineReceiptStat = statSync(baselineReceiptPath);
@@ -449,21 +579,21 @@ services:
     const interactiveApproval = bufferIO();
     expect(
       await runAnvilCli(
-        ["capability", "approve", out, "refunds.refund", "--note", "Initial interactive review."],
+        ["capability", "approve", out, capabilityId, "--note", "Initial interactive review."],
         { io: interactiveApproval },
       ),
       interactiveApproval.text(),
-    ).toBe(0);
-    const staleReceiptViewBytes = readFileSync(join(out, "import.receipt.json"));
-    expect(JSON.parse(staleReceiptViewBytes.toString("utf8")).lineage).toMatchObject({
-      status: "stale",
-      reason: expect.stringContaining("Capability approval"),
+    ).toBe(1);
+    expect(interactiveApproval.text()).toContain("immutable gateway receipt");
+    const boundReceiptViewBytes = readFileSync(join(out, "import.receipt.json"));
+    expect(JSON.parse(boundReceiptViewBytes.toString("utf8")).lineage).toEqual({
+      status: "bound",
     });
 
     writeFileSync(
       manifest,
       `${operationManifest}capabilities:
-  refunds.refund:
+  ${capabilityId}:
     state: approved
     note: Reviewed with the gateway export and locked OpenAPI contract.
 `,
@@ -486,16 +616,7 @@ services:
       out,
       "--json",
     ];
-    const refusedWithoutReplace = await estate(...reviewedImportArgs);
-    expect(refusedWithoutReplace.code).toBe(1);
-    expect(JSON.parse(refusedWithoutReplace.out).diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: "gateway_receipt/stale_output_requires_replace" }),
-      ]),
-    );
-    expect(readFileSync(join(out, "import.receipt.json"))).toEqual(staleReceiptViewBytes);
-
-    const imported = await estate(...reviewedImportArgs, "--replace-derived");
+    const imported = await estate(...reviewedImportArgs);
     expect(imported.code, imported.err).toBe(0);
     const importedAir = parseYaml(readFileSync(join(out, "air.yaml"), "utf8"));
     const operation = importedAir.operations.find(
@@ -510,7 +631,7 @@ services:
     });
     expect(
       importedAir.capabilities.find(
-        (candidate: { id: string }) => candidate.id === "refunds.refund",
+        (candidate: { id: string }) => candidate.id === capabilityId,
       ),
     ).toMatchObject({
       lifecycle: "approved",
@@ -530,7 +651,7 @@ services:
         digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
         decisions: [
           {
-            capabilityId: "refunds.refund",
+            capabilityId,
             state: "approved",
             allowLarge: false,
             note: "Reviewed with the gateway export and locked OpenAPI contract.",
@@ -547,7 +668,7 @@ services:
           digest: privateReceipt.compilerInput.capabilityReviews.digest,
           decisions: [
             {
-              capabilityId: "refunds.refund",
+              capabilityId,
               state: "approved",
               allowLarge: false,
               noteDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
@@ -593,7 +714,7 @@ services:
     const capabilityOut = join(work, "refunds-capability");
     const buildIo = bufferIO();
     expect(
-      await runAnvilCli(["build", out, "refunds.refund", "--out", capabilityOut], {
+      await runAnvilCli(["build", out, capabilityId, "--out", capabilityOut], {
         io: buildIo,
       }),
       buildIo.text(),
@@ -658,6 +779,8 @@ services:
       "https://gateway.example.test",
       "--root",
       work,
+      "--service",
+      "refunds",
       "--out",
       out,
     );
@@ -810,7 +933,10 @@ services:
     expect(inventory.code).toBe(1);
     expect(JSON.parse(inventory.out).diagnostics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ level: "error", code: "gateway/duplicate_api_id" }),
+        expect.objectContaining({
+          level: "error",
+          code: "gateway/duplicate_api_coordinate",
+        }),
       ]),
     );
 
@@ -825,7 +951,8 @@ services:
       out,
     );
     expect(imported.code).toBe(1);
-    expect(imported.err).toContain("ambiguous or invalid");
+    expect(imported.err).toContain("[gateway_selection/ambiguous]");
+    expect(imported.err).toContain("still resolves to 2 inventory rows");
     expect(existsSync(out)).toBe(false);
   });
 
@@ -923,11 +1050,14 @@ paths:
       out,
       "--json",
     );
-    expect(res.code).toBe(0);
+    expect(res.code).toBe(1);
     const report = JSON.parse(res.out);
     expect(report.operations.blocked).toBe(1);
     expect(report.diagnostics.map((d: { code: string }) => d.code)).toEqual(
-      expect.arrayContaining(["gateway/auth_contract_incomplete"]),
+      expect.arrayContaining([
+        "gateway/auth_contract_incomplete",
+        "gateway/identity_contradictory",
+      ]),
     );
     expect(report.diagnostics.map((d: { code: string }) => d.code)).not.toContain(
       "gateway/missing_runtime_coordinate",
@@ -1247,7 +1377,7 @@ paths:
     expect(afterReimport.code, afterReimport.out).toBe(0);
   });
 
-  it("marks approval lineage stale, exposes it to verify/status/certify, and rebases only explicitly", async () => {
+  it("refuses in-place approval before touching receipt-bound output or later artifacts", async () => {
     const cfg = join(work, "kong-post.yaml");
     const spec = join(work, "refunds-post.openapi.yaml");
     const out = join(work, "bundle-post");
@@ -1326,145 +1456,27 @@ services:
     }
     writeFileSync(join(out, "publication.json"), '{"existing":"record"}\n');
 
+    const boundViewBytes = readFileSync(join(out, "import.receipt.json"));
+    const airBytes = readFileSync(join(out, "air.json"));
     const approveIo = bufferIO();
     expect(
       await runAnvilCli(["approve", out, operation.id], { io: approveIo }),
       approveIo.stderr.join("\n"),
-    ).toBe(0);
-    const staleView = JSON.parse(readFileSync(join(out, "import.receipt.json"), "utf8"));
-    expect(staleView.lineage).toMatchObject({
-      status: "stale",
-      currentOutputDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
-      currentOutputFiles: expect.arrayContaining([
-        expect.objectContaining({ path: "targets/gemini-enterprise/setup.json" }),
-        expect.objectContaining({ path: "publication.json" }),
-      ]),
-    });
-    expect(existsSync(join(out, "targets/gemini-enterprise/setup.json"))).toBe(true);
-    expect(readFileSync(join(out, "publication.json"), "utf8")).toBe('{"existing":"record"}\n');
-
-    const targetIo = bufferIO();
-    expect(
-      await runAnvilCli(
-        [
-          "target",
-          "gemini-enterprise",
-          out,
-          "--surface",
-          "custom-mcp",
-          "--server-auth",
-          "oauth",
-          "--endpoint",
-          "https://mcp.example.test/mcp",
-          "--project",
-          "acme-proj",
-          "--location",
-          "global",
-          "--engine",
-          "eng-1",
-          "--idp",
-          "entra",
-          "--tenant",
-          "tenant-123",
-          "--oauth-scope",
-          "api://anvil-mcp/mcp.invoke",
-          "--inbound-issuer",
-          "https://login.microsoftonline.com/tenant-123/v2.0",
-          "--inbound-audience",
-          "api://anvil-mcp",
-          "--wif",
-          "locations/global/workforcePools/ge-users",
-        ],
-        { io: targetIo },
-      ),
-      targetIo.text(),
-    ).toBe(0);
-
-    const verified = await estate(
-      "verify",
-      report.receipt.importId,
-      "--root",
-      work,
-      "--bundle",
-      out,
-      "--json",
+    ).toBe(1);
+    expect(approveIo.stderr.join("\n")).toContain("immutable gateway receipt");
+    expect(approveIo.stderr.join("\n")).toContain("--manifest <review.yaml>");
+    expect(approveIo.stderr.join("\n")).toContain(
+      join(work, ".anvil", "imports", report.receipt.importId, "raw", "export.bin"),
     );
-    expect(verified.code).toBe(1);
-    expect(JSON.parse(verified.out).output.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: "gateway_receipt/output_lineage_stale" }),
-      ]),
-    );
-    expect(JSON.parse(verified.out).output.diagnostics).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "gateway_receipt/output_added",
-          path: expect.stringMatching(/^targets\//),
-        }),
-      ]),
-    );
-
-    const statusIo = bufferIO();
-    expect(await runAnvilCli(["status", out, "--json"], { io: statusIo })).toBe(1);
-    expect(JSON.parse(statusIo.stdout.join("\n")).core.contractChecks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "contract.gateway-lineage-current",
-          state: "failed",
-        }),
-      ]),
-    );
-
-    const certifyIo = bufferIO();
-    expect(await runAnvilCli(["certify", out, "--json"], { io: certifyIo })).toBe(1);
-    expect(JSON.parse(certifyIo.stdout.join("\n")).checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "contract.gateway-lineage-current",
-          status: "failed",
-        }),
-      ]),
-    );
-
-    const forgedBoundView = { ...staleView, lineage: { status: "bound" } };
-    writeFileSync(
-      join(out, "import.receipt.json"),
-      `${JSON.stringify(forgedBoundView, null, 2)}\n`,
-    );
-    const forgedCertifyIo = bufferIO();
-    expect(await runAnvilCli(["certify", out, "--json"], { io: forgedCertifyIo })).toBe(1);
-    const forgedLineageCheck = JSON.parse(forgedCertifyIo.stdout.join("\n")).checks.find(
-      (check: { id: string }) => check.id === "contract.gateway-lineage-current",
-    );
-    expect(forgedLineageCheck).toMatchObject({ status: "failed" });
-    expect(forgedLineageCheck.detail).toMatch(/no longer matches|does not match/i);
-    writeFileSync(join(out, "import.receipt.json"), `${JSON.stringify(staleView, null, 2)}\n`);
-
-    const refused = await estate(...importArgs);
-    expect(refused.code).toBe(1);
-    expect(JSON.parse(refused.out).diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: "gateway_receipt/stale_output_requires_replace" }),
-      ]),
-    );
-
-    const rebased = await estate(...importArgs, "--replace-derived");
-    expect(rebased.code, `${rebased.err}\n${rebased.out}`).toBe(0);
-    expect(JSON.parse(readFileSync(join(out, "import.receipt.json"), "utf8")).lineage).toEqual({
+    expect(approveIo.stderr.join("\n")).toContain(`--root ${JSON.stringify(work)}`);
+    expect(approveIo.stderr.join("\n")).not.toContain("<workspace-root>");
+    expect(readFileSync(join(out, "import.receipt.json"))).toEqual(boundViewBytes);
+    expect(JSON.parse(boundViewBytes.toString("utf8")).lineage).toEqual({
       status: "bound",
     });
-    expect(existsSync(join(out, "targets/gemini-enterprise/setup.json"))).toBe(false);
-    expect(existsSync(join(out, "publication.json"))).toBe(false);
-    const finalVerify = await estate(
-      "verify",
-      report.receipt.importId,
-      "--root",
-      work,
-      "--bundle",
-      out,
-      "--json",
-    );
-    expect(finalVerify.code).toBe(0);
+    expect(readFileSync(join(out, "air.json"))).toEqual(airBytes);
+    expect(existsSync(join(out, "targets/gemini-enterprise/setup.json"))).toBe(true);
+    expect(readFileSync(join(out, "publication.json"), "utf8")).toBe('{"existing":"record"}\n');
   });
 
   it("imports the same config from inside a real ZIP archive", async () => {

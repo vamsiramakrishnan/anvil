@@ -106,9 +106,31 @@ to the first report that must be run again.
 ## 5. Generate a deployment plan
 
 ```bash
+pnpm anvil deploy ledger "$ANVIL_BUNDLE" \
+  --project example-project-123 \
+  --database example-shared-ledger \
+  --database-mode shared
 pnpm anvil publish "$ANVIL_BUNDLE" --env dev
 pnpm anvil status "$ANVIL_BUNDLE"
 ```
+
+`deploy ledger` is an offline inspection: it verifies the generated managed
+store contract, lists every approved write, and resolves the Firestore
+database, collection group, and `ANVIL_LEDGER` URI. It labels live readiness
+`UNVERIFIED`; only the deployed `/readyz` data-plane probe can prove the
+database and runtime IAM after apply. See
+[Prove durable idempotency](/anvil/cookbooks/prove-durable-idempotency/) for the
+Terraform input and guarantee boundaries.
+
+Shared mode expects an existing platform-owned database in the capability's
+reviewed trust domain. Choose dedicated mode only when you need a separate
+database IAM boundary; it additionally requires `--location`.
+
+Generated Terraform and Cloud Build default `ANVIL_ENV` from
+`air.service.environment`; when AIR has no environment, the default is `prod`.
+Review that value in the plan because it also selects the outbound credential
+profile. Unknown runtime values retain production safety behavior and emit a
+diagnostic; fix the source value instead of relying on that fallback.
 
 Despite its compatibility name, `publish` prepares a gated deployment plan; it
 does not publish or deploy anything. Cloud Run is the only target, so it is the

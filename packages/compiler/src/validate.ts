@@ -1,4 +1,10 @@
-import { type Diagnostic, type Operation, resolveIdempotencyCarrier } from "@anvil/air";
+import {
+  type Diagnostic,
+  idempotencyAuthCarrierIssue,
+  type Operation,
+  operationIdempotencyKeySchemaIssue,
+  resolveIdempotencyCarrier,
+} from "@anvil/air";
 
 export interface ValidationResult {
   operations: Operation[];
@@ -48,6 +54,43 @@ export function validate(operations: Operation[]): ValidationResult {
       notes.push(
         `Blocked: the declared idempotency key cannot be injected into an exact modeled request coordinate (${carrier.issue}).`,
       );
+      op.retries = {
+        ...op.retries,
+        mode: "none",
+        basis: "unproven",
+        maxAttempts: 1,
+        backoff: "none",
+        retryOn: [],
+      };
+      op.state = "blocked";
+    } else {
+      const schemaIssue = operationIdempotencyKeySchemaIssue(op);
+      if (schemaIssue) {
+        flag(
+          "error",
+          "unsupported_idempotency_carrier_schema",
+          `Operation '${op.id}' cannot enforce its upstream idempotency carrier: ${schemaIssue}.`,
+        );
+        notes.push(`Blocked: ${schemaIssue}.`);
+        op.retries = {
+          ...op.retries,
+          mode: "none",
+          basis: "unproven",
+          maxAttempts: 1,
+          backoff: "none",
+          retryOn: [],
+        };
+        op.state = "blocked";
+      }
+    }
+    const authCarrierIssue = carrier.ok ? idempotencyAuthCarrierIssue(op) : undefined;
+    if (authCarrierIssue) {
+      flag(
+        "error",
+        "idempotency_auth_carrier_conflict",
+        `Operation '${op.id}' cannot preserve its idempotency key: ${authCarrierIssue}.`,
+      );
+      notes.push(`Blocked: ${authCarrierIssue}.`);
       op.retries = {
         ...op.retries,
         mode: "none",

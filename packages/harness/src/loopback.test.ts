@@ -28,6 +28,34 @@ async function buildBundle(spec: string, manifest: string, serviceId: string): P
   return dir;
 }
 
+const OBO_MANIFEST = `operations:
+  getPayment:
+    state: approved
+    auth:
+      type: oauth2_on_behalf_of
+      principal: delegated
+      issuer: https://id.example.com/
+      audience: api://payments
+      carrier: { in: header, name: Authorization, scheme: Bearer }
+      provider:
+        grant: token_exchange
+        token_endpoint: https://sts.example.com/oauth/token
+        subject_token_type: jwt
+        requested_token_type: access_token
+`;
+
+async function buildOboBundle(serviceId: string): Promise<string> {
+  const air = await compile({
+    spec: read("payments/openapi.yaml"),
+    manifest: OBO_MANIFEST,
+    serviceId,
+  });
+  const dir = mkdtempSync(join(tmpdir(), `anvil-loopback-${serviceId}-`));
+  dirs.push(dir);
+  writeBundle(dir, generateBundle(air));
+  return dir;
+}
+
 afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
@@ -131,6 +159,23 @@ describe("loopback self-test (empty approved surface)", () => {
     expect(report.checks[0]?.detail).toMatch(/no approved operations/);
     expect(report.checks[0]?.detail).toMatch(/manifest/);
     expect(report.summary).toEqual({ pass: 0, fail: 1, skipped: 0 });
+  }, 60_000);
+});
+
+describe("loopback self-test (delegated identity)", () => {
+  it("proves the hermetic RFC 8693 bridge without claiming live IdP readiness", async () => {
+    const dir = await buildOboBundle("payments_obo");
+    const report = await runLoopback(dir);
+    expect(byId(report, "auth-obo-token-exchange")[0]?.status).toBe("pass");
+    expect(byId(report, "fidelity")[0]?.status).toBe("skipped");
+    expect(report.identity).toMatchObject({
+      delegatedOperations: 1,
+      virtualWiring: "passed",
+      proof: "virtual_wiring_only",
+      liveIdpReadiness: "unverified",
+    });
+    expect(report.identity.detail).toMatch(/Live issuer discovery.*remain unverified/);
+    expect(report.summary.fail).toBe(0);
   }, 60_000);
 });
 

@@ -466,6 +466,11 @@ function connectorTerraformReadme(
 explicitly. Never copy it into compiler-owned deployment output: that changes
 the bundle after targeting and invalidates certification.
 
+The base module already carries \`air.service.environment\` into Terraform
+\`anvil_env\` and Cloud Build \`_ANVIL_ENV\` (defaulting to \`prod\` only when AIR
+omits it). Review that value because it also selects the outbound credential
+profile; do not hardcode a different environment in this overlay.
+
 \`\`\`bash
 set -euo pipefail
 export ANVIL_BUNDLE_DIR="$(pwd -P)"
@@ -474,17 +479,40 @@ export ANVIL_TF_WORK_DIR=/absolute/private/path/outside/the/bundle/terraform-wor
 export ANVIL_TF_STATE_BUCKET=REPLACE_WITH_EXISTING_GCS_BUCKET
 export ANVIL_TF_STATE_PREFIX=${shellQuote(`anvil/${air.service.id}-tools`)}
 export TF_VAR_project_id=${shellQuote(config.project)}
+export TF_VAR_region=REPLACE_WITH_CLOUD_RUN_REGION
+# Estate-scale default: use one existing platform-owned Firestore database per
+# reviewed trust/regulatory domain. Capability Terraform does not create it.
+export TF_VAR_ledger_database_mode=shared
+export TF_VAR_ledger_database_id=REPLACE_WITH_TRUST_DOMAIN_FIRESTORE_DATABASE
+# Dedicated mode only: change the mode and set a reviewed immutable location.
+# export TF_VAR_ledger_database_mode=dedicated
+# export TF_VAR_ledger_location=REPLACE_WITH_FIRESTORE_LOCATION
 export TF_VAR_image_tag=REPLACE_WITH_IMMUTABLE_IMAGE_TAG
 if [[ "$ANVIL_TF_WORK_DIR" != /* ]]
 then
   echo "ANVIL_TF_WORK_DIR must be absolute" >&2
   exit 1
 fi
-if [[ "$ANVIL_TF_STATE_BUCKET" == REPLACE_* || "$TF_VAR_image_tag" == REPLACE_* ]]
+if [[ "$ANVIL_TF_STATE_BUCKET" == REPLACE_* || "$TF_VAR_region" == REPLACE_* || "$TF_VAR_ledger_database_id" == REPLACE_* || "$TF_VAR_image_tag" == REPLACE_* ]]
 then
-  echo "Set the backend bucket and immutable image tag before planning" >&2
+  echo "Set the backend bucket, Cloud Run region, ledger database, and immutable image tag before planning" >&2
   exit 1
 fi
+ANVIL_LEDGER_ARGS=( \\
+  --project "$TF_VAR_project_id" \\
+  --database "$TF_VAR_ledger_database_id" \\
+  --database-mode "$TF_VAR_ledger_database_mode" \\
+)
+if [[ "$TF_VAR_ledger_database_mode" == dedicated ]]
+then
+  : "\${TF_VAR_ledger_location:?Set TF_VAR_ledger_location for dedicated mode}"
+  ANVIL_LEDGER_ARGS+=(--location "$TF_VAR_ledger_location")
+elif [[ "$TF_VAR_ledger_database_mode" != shared ]]
+then
+  echo "TF_VAR_ledger_database_mode must be shared or dedicated" >&2
+  exit 1
+fi
+anvil deploy ledger "$ANVIL_BUNDLE_DIR" "\${ANVIL_LEDGER_ARGS[@]}"
 install -d -m 700 "$ANVIL_TF_WORK_DIR"
 export ANVIL_TF_WORK_DIR="$(cd "$ANVIL_TF_WORK_DIR" && pwd -P)"
 if [[ "$ANVIL_TF_WORK_DIR/" == "$ANVIL_BUNDLE_DIR/"* ]]
@@ -511,6 +539,18 @@ terraform -chdir="$ANVIL_TF_WORK_DIR" apply "$ANVIL_TF_WORK_DIR/tfplan"
 Terraform may create \`.terraform/\`, \`.terraform.lock.hcl\`, and \`tfplan\`;
 all three stay in \`ANVIL_TF_WORK_DIR\`. Do not run Terraform with
 \`-chdir=deploy/terraform\` or \`-chdir=targets/...\`.
+
+Firestore IAM conditions stop at the database boundary; they do not isolate
+collection groups. A shared database may contain only capabilities in the same
+reviewed trust/regulatory domain. Use dedicated mode for a separate boundary.
+Google Cloud console access does not enforce database IAM conditions, so
+restrict console users separately and use condition-aware APIs/client libraries
+for ledger administration.
+
+\`/readyz\` proves only ledger data-plane access. It does not prove the Gemini
+connector issuer/audience, delegated token exchange, or upstream write
+semantics. Require the separate opted-in live-read identity gate; conformance
+never sends a live mutation.
 
 Provision the registering administrator's \`roles/discoveryengine.editor\` grant
 through the organization's IAM workflow. This target kit does not guess or own

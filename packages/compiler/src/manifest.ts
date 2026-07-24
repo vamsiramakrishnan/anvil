@@ -4,6 +4,7 @@ import {
   authCoherenceIssues,
   type Capability,
   type Diagnostic,
+  MAX_RETRY_ATTEMPTS,
   type Operation,
   type RetryCondition,
   snakeCase,
@@ -11,7 +12,7 @@ import {
 } from "@anvil/air";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { classifyAuth, classifyConfirmation, classifyRetry } from "./classify.js";
+import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
 import { projectRoutingNames, singularize } from "./naming.js";
 
 const ManifestAuthProvider = z.object({
@@ -34,7 +35,17 @@ const ManifestOperationAuth = z.object({
     .regex(/^[a-z](?:[a-z0-9_]{0,62}[a-z0-9])?$/)
     .optional(),
   principal: z.enum(["anonymous", "service", "end_user", "delegated", "impersonation"]).optional(),
+  /** Expected token issuer. This is deliberately distinct from provider.token_endpoint. */
+  issuer: z.string().url().optional(),
   audience: z.string().optional(),
+  /** Exact on-wire credential carrier after any token acquisition/exchange. */
+  carrier: z
+    .object({
+      in: z.enum(["header", "query"]),
+      name: z.string().min(1),
+      scheme: z.string().min(1).optional(),
+    })
+    .optional(),
   secret_source: z.enum(["none", "env", "secret_manager", "workload_identity", "vault"]).optional(),
   tenant: z.string().optional(),
   actor: z.string().optional(),
@@ -152,7 +163,7 @@ export const OperationManifest = z.object({
     .object({
       enabled: z.boolean().optional(),
       only_on: z.array(z.string()).optional(),
-      max_attempts: z.number().int().optional(),
+      max_attempts: z.number().int().min(1).max(MAX_RETRY_ATTEMPTS).optional(),
     })
     .optional(),
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
@@ -345,7 +356,51 @@ function providerAfterTypeChange(
 export function applyOperationManifest(original: Operation, m: OperationManifest): Operation {
   const op: Operation = structuredClone(original);
 
-  if (m.side_effect) op.effect.kind = m.side_effect;
+  if (m.side_effect && m.side_effect !== op.effect.kind) {
+    const resource = op.effect.resource;
+    const method = op.sourceRef.method;
+    if (method) {
+      const path = op.sourceRef.path ?? "";
+      const segments = path.split("/").filter(Boolean);
+      const endsWithParam =
+        segments.length > 0 && (segments[segments.length - 1] as string).startsWith("{");
+      const declaredIntentSignals = [op.sourceRef.operationId, op.displayName].filter(
+        (value): value is string => Boolean(value),
+      );
+      const signal =
+        `${op.sourceRef.operationId ?? ""} ${op.displayName} ${op.description} ${path}`.trim();
+      const reclassified = classifyEffect(
+        method,
+        signal,
+        endsWithParam,
+        m.side_effect,
+        declaredIntentSignals,
+      );
+      op.effect = { ...reclassified.effect, resource };
+      op.idempotency = reclassified.idempotency;
+    } else if (m.side_effect === "read") {
+      // Imported/manual AIR may lack an HTTP method. Still move every safety
+      // derivative to the conservative read baseline instead of retaining a
+      // mutation action/risk/idempotency tuple under a flipped kind.
+      op.effect = {
+        ...op.effect,
+        kind: "read",
+        action: "list",
+        risk: "none",
+        reversible: true,
+      };
+      op.idempotency = { mode: "natural", mechanism: "none", keyDerivation: "none" };
+    } else {
+      op.effect = {
+        ...op.effect,
+        kind: "mutation",
+        action: "other",
+        risk: "medium",
+        reversible: true,
+      };
+      op.idempotency = { mode: "none", mechanism: "none", keyDerivation: "none" };
+    }
+  }
   if (m.risk) op.effect.risk = m.risk;
   if (m.reversible !== undefined) op.effect.reversible = m.reversible;
   if (m.action) op.effect.action = m.action;
@@ -386,6 +441,8 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
       op.auth.secretSource = m.auth.secret_source ?? defaults.secretSource;
       if (typeChanged) {
         op.auth.provider = providerAfterTypeChange(op.auth.provider, m.auth.type);
+        op.auth.issuer = undefined;
+        op.auth.carrier = undefined;
         if (m.auth.type === "none") {
           op.auth.audience = undefined;
           op.auth.delegation = undefined;
@@ -397,7 +454,9 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     }
     if (m.auth.credential_profile) op.auth.credentialProfile = m.auth.credential_profile;
     if (m.auth.principal) op.auth.principal = m.auth.principal;
+    if (m.auth.issuer) op.auth.issuer = m.auth.issuer;
     if (m.auth.audience) op.auth.audience = m.auth.audience;
+    if (m.auth.carrier) op.auth.carrier = m.auth.carrier;
     if (m.auth.secret_source) op.auth.secretSource = m.auth.secret_source;
     if (m.auth.tenant) op.auth.tenant = m.auth.tenant;
     if (m.auth.actor || m.auth.subject) {
@@ -416,7 +475,18 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     if (m.idempotency.key_location) op.idempotency.mechanism = m.idempotency.key_location;
     const key = manifestIdempotencyKey(m.idempotency);
     if (key) op.idempotency.key = key;
-    if (op.idempotency.mode === "required" || op.idempotency.mode === "key_supported") {
+    // Keep the public contract honest:
+    // - required_request_key means the caller must choose and reuse the
+    //   business-operation key surfaced by CLI/MCP/hooks;
+    // - key_supported may safely fall back to a deterministic request
+    //   fingerprint when the caller does not provide the optional key.
+    //
+    // Treating both modes as request_fingerprint made direct CLI execution
+    // silently derive a key while every other generated surface called the
+    // same field required.
+    if (op.idempotency.mode === "required") {
+      op.idempotency.keyDerivation = "client_supplied";
+    } else if (op.idempotency.mode === "key_supported") {
       op.idempotency.keyDerivation = "request_fingerprint";
     }
   }
@@ -508,9 +578,13 @@ export function enrich(operations: Operation[], manifest: AnvilManifest): Operat
 /**
  * Build first-class workflows from the manifest, resolving each step's operation
  * reference to an AIR operation id and attaching the workflow to a capability.
- * Steps that reference an unknown operation are dropped with a diagnostic — a
- * workflow is only as trustworthy as the operations it names. Returns the
- * workflows plus any diagnostics, and mutates capabilities to record ownership.
+ * A workflow is only as trustworthy as the operations it names. Unknown steps
+ * cannot be represented as executable AIR references, so resolved steps remain
+ * available for audit but the workflow is forced `blocked`. A mutation step is
+ * likewise unusable until that operation is approved; it blocks the workflow
+ * instead of leaving apparently runnable guidance that crosses the approval
+ * boundary. Returns the workflows plus diagnostics, and mutates capabilities to
+ * record ownership.
  */
 export function buildWorkflows(
   manifest: AnvilManifest,
@@ -523,13 +597,16 @@ export function buildWorkflows(
 
   for (const [name, wf] of Object.entries(manifest.workflows)) {
     const steps: Workflow["steps"] = [];
+    const blockerNotes: string[] = [];
     for (const step of wf.steps) {
       const op = operations.find((o) => matches(o, step.operation));
       if (!op) {
+        const note = `unknown operation "${step.operation}"`;
+        blockerNotes.push(note);
         diagnostics.push({
-          level: "warning",
+          level: "error",
           code: "workflow_step_unresolved",
-          message: `Workflow "${name}" references unknown operation "${step.operation}"; step dropped.`,
+          message: `Workflow "${name}" references ${note}; the workflow is blocked until the reference is repaired.`,
         });
         continue;
       }
@@ -539,6 +616,16 @@ export function buildWorkflows(
         optional: step.optional ?? false,
         bindings: step.bindings ?? {},
       });
+      if (op.effect.kind === "mutation" && op.state !== "approved") {
+        const note = `mutation "${step.operation}" resolves to ${op.id} in state "${op.state}"`;
+        blockerNotes.push(note);
+        diagnostics.push({
+          level: "warning",
+          code: "workflow_mutation_unapproved",
+          operationId: op.id,
+          message: `Workflow "${name}" ${note}; the workflow is blocked until the mutation is approved.`,
+        });
+      }
     }
 
     // Resolve the owning capability: explicit, else the first step's capability.
@@ -556,6 +643,7 @@ export function buildWorkflows(
     }
 
     const id = `${capabilityId}.${snakeCase(name)}`;
+    const blocked = blockerNotes.length > 0;
     workflows.push({
       id,
       capabilityId,
@@ -565,7 +653,7 @@ export function buildWorkflows(
       steps,
       humanApproval: wf.human_approval ?? false,
       rollbackStrategy: wf.rollback,
-      state: wf.state ?? "generated",
+      state: blocked ? "blocked" : (wf.state ?? "generated"),
       evidence: {
         claims: [
           {
@@ -579,6 +667,21 @@ export function buildWorkflows(
             confidence: 0.95,
             review: "accepted",
           },
+          ...(blocked
+            ? [
+                {
+                  subject: id,
+                  predicate: "workflow.executable",
+                  value: false,
+                  source: "inferred" as const,
+                  sourceRef: "anvil-manifest",
+                  method: "workflow_dependency_gate",
+                  note: `Blocked: ${blockerNotes.join("; ")}.`,
+                  confidence: 1,
+                  review: "accepted" as const,
+                },
+              ]
+            : []),
         ],
       },
     });

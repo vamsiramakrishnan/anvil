@@ -1,15 +1,17 @@
 ---
 title: Anvil
-description: Anvil compiles the API specs an enterprise already has — OpenAPI, SOAP, gRPC, GraphQL, Postman, and gateway exports from Apigee, Kong, WSO2, MuleSoft, and IBM API Connect — into a CLI, an MCP server, an agent skill, and enforcement hooks that define each operation identically. Risk, idempotency, and human approval are set once and enforced on every surface.
+description: Anvil compiles enterprise API specs and explicitly tiered gateway-assessment inputs into a CLI, an MCP server, an agent skill, and enforcement hooks. WSO2 estates and one Kong declarative state are native inputs; Apigee, MuleSoft, and IBM API Connect currently use documented normalized interchange.
 template: splash
 hero:
   tagline: >-
     Anvil compiles an API spec into four artifacts that stay in sync: a CLI,
     an MCP server, an agent skill, and enforcement hooks. It reads the specs
-    you already have — OpenAPI, SOAP, gRPC, GraphQL, Postman, and exports from
-    Apigee, Kong, WSO2, MuleSoft, and IBM API Connect gateways. Every operation
-    carries the same risk, idempotency, and approval rules on every surface,
-    and none reaches an agent until a person approves it.
+    you already have — OpenAPI, SOAP, gRPC, GraphQL, and Postman — plus
+    explicitly tiered gateway-assessment inputs. WSO2 estates and one Kong
+    declarative state are native inputs; Apigee, MuleSoft, and IBM API Connect
+    currently require documented normalized interchange. Every operation carries
+    the same risk, idempotency, and approval rules on every surface, and none
+    reaches an agent until a person approves it.
   actions:
     - text: Quickstart
       link: /anvil/start/quickstart/
@@ -37,12 +39,15 @@ the gateway holds details the spec leaves out: which auth plugin fronts an
 operation, which scopes a product grants, where quotas apply, and which requests
 get rewritten in flight.
 
-Anvil imports the whole catalog of APIs behind your gateway — its *estate* — not
-just one spec. Five adapters read a file you export from the gateway (offline,
-never a live connection) and compile it through the same approval-gated steps as
-a hand-written OpenAPI file.
+Anvil inventories the catalog of APIs behind your gateway — its *estate* — then
+lets you adopt selected APIs through the same approval-gated compiler path as a
+hand-written OpenAPI file. Five offline adapters read explicitly documented
+interchange shapes. Kong declarative config is direct; WSO2 accepts its native
+`apictl export apis` directory, per-API ZIP/project, or standalone `api.yaml`.
+Apigee, MuleSoft, and API Connect currently require the normalized documents
+described in the import guide.
 
-<div class="ge-vendor-row" aria-label="Supported API gateways">
+<div class="ge-vendor-row" aria-label="Gateway assessment inputs with different support tiers">
   <a class="ge-vendor" href="/anvil/concepts/gateway-estates/"><i class="ge-vendor-mark" style="--m:url('/anvil/assets/icons/apigee.svg')" aria-hidden="true"></i>Apigee</a>
   <a class="ge-vendor" href="/anvil/concepts/gateway-estates/"><i class="ge-vendor-mark" style="--m:url('/anvil/assets/icons/kong.svg')" aria-hidden="true"></i>Kong</a>
   <a class="ge-vendor" href="/anvil/concepts/gateway-estates/"><i class="ge-vendor-mark" style="--m:url('/anvil/assets/icons/wso2.svg')" aria-hidden="true"></i>WSO2</a>
@@ -51,35 +56,49 @@ a hand-written OpenAPI file.
 </div>
 
 ```bash
-# 1. List every API in the estate — without compiling a single one
-anvil estate inventory payments-estate.zip --vendor apigee
+# 0. Verify the accepted bytes and proof tier before preparing an export
+anvil estate support apigee
 
-# 2. Bring one API in as a normal, approval-gated Anvil bundle
-anvil estate import payments-estate.zip --vendor apigee --api payments
+# 1. Inventory, audit, and create a triage plan — without compiling an API
+anvil estate inventory payments.apigee.normalized.yaml --vendor apigee
+anvil estate audit payments.apigee.normalized.yaml --vendor apigee
+anvil estate plan payments.apigee.normalized.yaml --vendor apigee \
+  --gateway-id apigee-org-prod --init-selection estate-selection.yaml \
+  --out estate-adoption-plan.json
+
+# 2. Pair one selected API with its real contract and gateway URL
+anvil estate import payments.apigee.normalized.yaml --vendor apigee --api payments \
+  --gateway-id apigee-org-prod --strict-identity \
+  --revision 12 --environment prod \
+  --spec payments.openapi.yaml --gateway-url https://api.example.com/payments
 ```
 
-Exports arrive as archives — Kong `deck` dumps, Apigee bundles, WSO2 CAR/ZIPs,
-MuleSoft JARs, API Connect archives. Anvil decodes each one safely: it refuses
-path traversal, symlinks, and decompression bombs, and reports every rejection
-instead of dropping it silently.
+Anvil safely opens supported ZIP/JAR containers: it refuses path traversal,
+symlinks, and decompression bombs. The archive reader is not a semantic
+translator—native Apigee proxy XML, Mule application JAR internals, and IBM
+`x-ibm-configuration` OpenAPI are not decoded by those adapters today.
 
 If the adapter can't fully read a gateway policy, it flags that policy for a
-human and holds the bundle back from shipping until someone reviews it. Nothing
-is ignored. What lands is an ordinary bundle, and the approval gate still stands
-between the API and the agent. New to this? [Export your gateway, vendor by
-vendor →](/anvil/cookbooks/import-a-gateway-estate/)
+human and holds the affected API back from shipping. Findings are owned by an
+API, route, or content-addressed artifact when the export proves that boundary,
+so one bad WSO2 project does not poison an unrelated selected API; genuinely
+estate-global parse or archive failures still fail closed. Nothing is ignored.
+What lands is an ordinary bundle, and the approval gate still stands between
+the API and the agent. New to this? [Export your gateway, vendor by vendor
+→](/anvil/cookbooks/import-a-gateway-estate/)
 
 ### An estate has 800 APIs. An agent should see five.
 
 <EstateFunnelDiagram />
 
 A production gateway holds hundreds of APIs, and almost none of them belong in
-an agent's hands. Anvil is built for that ratio. One cheap `inventory` command
-lists every API without compiling anything, so you triage first and adopt
-deliberately: import the handful that matter, group their operations into
-review-sized *capabilities* (a capability is a set of related operations, like
-*Refunds* or *Payments*), and leave the other 795 where they are, behind the
-gate. [How Anvil operates at scale →](/anvil/concepts/gateway-estates/#operating-at-scale)
+an agent's hands. Anvil is built for that ratio. `inventory` gives a bounded,
+filterable operator view; `audit` evaluates the complete estate; and `plan`
+creates a resumable, coordinate-aware triage queue. You then import the handful
+that matter, group their operations into review-sized *capabilities* (a
+capability is a set of related operations, like *Refunds* or *Payments*), and
+leave the other 795 where they are, behind the gate. [How Anvil operates at
+scale →](/anvil/concepts/gateway-estates/#operating-at-scale)
 
 ## Any spec in. Aligned tools out.
 
@@ -239,7 +258,10 @@ anvil selftest <dir>
 anvil conformance <dir>
 anvil simulate <dir>
 
-# 5. Prepare the gated deployment plan; this makes no cloud call
+# 5. Verify the generated durable-write contract offline
+anvil deploy ledger <dir> --project <project-id> --database <firestore-database>
+
+# 6. Prepare the gated deployment plan; this makes no cloud call
 anvil publish <dir> --env prod
 anvil status <dir>  # planned · operator-action-required
 ```

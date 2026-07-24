@@ -1,4 +1,18 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+
+export const MAX_IDEMPOTENCY_KEY_BYTES = 255;
+
+/**
+ * Portable caller-key contract shared by every carrier. Visible ASCII avoids
+ * header/control ambiguity and the byte bound matches common provider limits.
+ */
+export function idempotencyKeyIsTransportSafe(value: string): boolean {
+  return (
+    value.length > 0 &&
+    Buffer.byteLength(value, "utf8") <= MAX_IDEMPOTENCY_KEY_BYTES &&
+    /^[\x21-\x7e]+$/.test(value)
+  );
+}
 
 /** Deterministic canonical JSON: object keys sorted, so equal inputs hash equal. */
 export function canonicalJson(value: unknown): string {
@@ -40,7 +54,14 @@ export function resolveIdempotencyKey(params: {
   /** Precomputed request + service/principal scope for derived keys. */
   fingerprint?: string;
 }): string | undefined {
-  if (params.provided && params.provided.length > 0) return params.provided;
+  if (params.provided && params.provided.length > 0) {
+    if (!idempotencyKeyIsTransportSafe(params.provided)) {
+      throw new Error(
+        "An idempotency key must be 1 to 255 bytes of visible ASCII with no spaces or control characters.",
+      );
+    }
+    return params.provided;
+  }
   if (params.keyDerivation === "request_fingerprint") {
     return `anvil-${(params.fingerprint ?? requestFingerprint(params.operationId, params.input)).slice(0, 32)}`;
   }
@@ -58,6 +79,8 @@ export interface LedgerEntry {
   fingerprint: string;
   /** Cached result once completed, replayed for duplicate keys. */
   result?: unknown;
+  /** Original successful upstream status. Legacy entries replay as 200. */
+  responseStatus?: number;
 }
 
 export type LedgerReadinessCode =
@@ -78,6 +101,28 @@ export interface LedgerReadiness {
    */
   code: LedgerReadinessCode;
 }
+
+export interface LedgerReservationMetadata {
+  /**
+   * Optional deterministic, non-secret backend row locator. It must never
+   * contain a raw caller key, backend URI, project/database id, or credential.
+   */
+  reference?: string;
+}
+
+export interface LedgerReservationContext {
+  /** Non-secret correlation metadata persisted with the reservation when safe. */
+  operationId?: string;
+  traceId?: string;
+}
+
+export type LedgerReserveResult = (
+  | { outcome: "reserved" }
+  | { outcome: "replay"; result: unknown; status?: number }
+  | { outcome: "in_progress" }
+  | { outcome: "conflict" }
+) &
+  LedgerReservationMetadata;
 
 /**
  * The idempotency ledger contract (spec: "Idempotency on Cloud Run"). Prod
@@ -107,13 +152,14 @@ export interface IdempotencyLedger {
   reserve(
     key: string,
     fingerprint: string,
-  ): Promise<
-    | { outcome: "reserved" }
-    | { outcome: "replay"; result: unknown }
-    | { outcome: "in_progress" }
-    | { outcome: "conflict" }
-  >;
-  complete(key: string, result: unknown): Promise<void>;
+    context?: LedgerReservationContext,
+  ): Promise<LedgerReserveResult>;
+  /**
+   * Persist a successful result before acknowledging it to the caller.
+   * `status` is optional for backwards-compatible custom ledgers; new runtimes
+   * always supply the original 2xx status so replay preserves wire semantics.
+   */
+  complete(key: string, result: unknown, status?: number): Promise<void>;
   release(key: string): Promise<void>;
 }
 
@@ -129,7 +175,11 @@ export class InMemoryLedger implements IdempotencyLedger {
         return { outcome: "conflict" as const };
       }
       if (existing.status === "completed") {
-        return { outcome: "replay" as const, result: existing.result };
+        return {
+          outcome: "replay" as const,
+          result: existing.result,
+          ...(existing.responseStatus === undefined ? {} : { status: existing.responseStatus }),
+        };
       }
       return { outcome: "in_progress" as const };
     }
@@ -137,17 +187,22 @@ export class InMemoryLedger implements IdempotencyLedger {
     return { outcome: "reserved" as const };
   }
 
-  async complete(key: string, result: unknown) {
+  async complete(key: string, result: unknown, status = 200) {
     const existing = this.store.get(key);
+    if (existing?.status !== "in_progress") {
+      throw new Error("Cannot complete an in-memory reservation that is not in progress.");
+    }
+    assertSuccessfulResponseStatus(status);
     this.store.set(key, {
       status: "completed",
-      fingerprint: existing?.fingerprint ?? "",
+      fingerprint: existing.fingerprint,
       result,
+      responseStatus: status,
     });
   }
 
   async release(key: string) {
-    this.store.delete(key);
+    if (this.store.get(key)?.status === "in_progress") this.store.delete(key);
   }
 }
 
@@ -194,6 +249,10 @@ export interface FirestoreLedgerOptions {
   resultTtlMs?: number;
   /** Cache window for the non-mutating readiness lookup (0 disables caching). */
   readinessCacheMs?: number;
+  /** Test seam for bounded transient Firestore retries. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Test seam for reservation ownership tokens. */
+  reservationId?: () => string;
 }
 
 interface FirestoreDocument {
@@ -201,6 +260,7 @@ interface FirestoreDocument {
   fields?: Record<
     string,
     {
+      integerValue?: string;
       stringValue?: string;
       timestampValue?: string;
     }
@@ -210,6 +270,7 @@ interface FirestoreDocument {
 
 interface OwnedReservation {
   fingerprint: string;
+  reservationId: string;
   updateTime: string;
 }
 
@@ -217,14 +278,36 @@ const FIRESTORE_API = "https://firestore.googleapis.com/v1";
 const METADATA_TOKEN_URL =
   "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 const FIRESTORE_COLLECTION_PREFIX = "anvil_idempotency";
-const DEFAULT_FIRESTORE_TIMEOUT_MS = 10_000;
+/** Generated-runtime deadline for each metadata or Firestore HTTP exchange. */
+export const DEFAULT_FIRESTORE_TIMEOUT_MS = 10_000;
 export const DEFAULT_LEDGER_RESULT_TTL_SECONDS = 7 * 24 * 60 * 60;
 const DEFAULT_LEDGER_RESULT_TTL_MS = DEFAULT_LEDGER_RESULT_TTL_SECONDS * 1000;
 const MAX_LEDGER_RESULT_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 const DEFAULT_LEDGER_READINESS_CACHE_MS = 30_000;
 const FAILED_LEDGER_READINESS_CACHE_MS = 5_000;
-const MAX_FIRESTORE_RESPONSE_BYTES = 1024 * 1024;
-const MAX_LEDGER_RESULT_BYTES = 800 * 1024;
+// Firestore stores `result_json` as a string. Its REST representation JSON-
+// escapes that already-serialized result a second time, so a valid 800 KiB row
+// can approach 1.6 MiB on the wire when it is quote/backslash-heavy. Two MiB is
+// a bounded envelope for at most 2x string escaping plus document metadata.
+const MAX_FIRESTORE_RESPONSE_BYTES = 2 * 1024 * 1024;
+/** Maximum serialized replay result stored in one Firestore ledger document. */
+export const MAX_LEDGER_RESULT_BYTES = 800 * 1024;
+export const MAX_FIRESTORE_ATTEMPTS = 3;
+export const FIRESTORE_RETRY_BASE_MS = 50;
+const MAX_RESERVATION_CREATE_READ_CYCLES = 3;
+/** Worst bounded duration of one retried Firestore request, including backoff. */
+export const MAX_FIRESTORE_REQUEST_SEGMENT_MS =
+  MAX_FIRESTORE_ATTEMPTS * DEFAULT_FIRESTORE_TIMEOUT_MS +
+  FIRESTORE_RETRY_BASE_MS * (2 ** (MAX_FIRESTORE_ATTEMPTS - 1) - 1);
+/**
+ * A reservation can lose a fixed-id create response, observe a concurrent
+ * release, and repeat three create/read cycles. This is deliberately
+ * conservative and excludes the one cached metadata-token acquisition.
+ */
+export const MAX_FIRESTORE_RESERVE_SEGMENT_MS =
+  MAX_RESERVATION_CREATE_READ_CYCLES * 2 * MAX_FIRESTORE_REQUEST_SEGMENT_MS;
+/** Completion may need one conditional patch plus one exact-state readback. */
+export const MAX_FIRESTORE_COMPLETE_SEGMENT_MS = 2 * MAX_FIRESTORE_REQUEST_SEGMENT_MS;
 
 /**
  * Durable, dependency-light Firestore ledger used by generated Cloud Run
@@ -243,6 +326,8 @@ export class FirestoreLedger implements IdempotencyLedger {
   private readonly timeoutMs: number;
   private readonly resultTtlMs: number;
   private readonly readinessCacheMs: number;
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly reservationId: () => string;
   private readonly documentsBase: string;
   private readonly collection: string;
   private readonly owned = new Map<string, OwnedReservation>();
@@ -258,6 +343,8 @@ export class FirestoreLedger implements IdempotencyLedger {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_FIRESTORE_TIMEOUT_MS;
     this.resultTtlMs = options.resultTtlMs ?? DEFAULT_LEDGER_RESULT_TTL_MS;
     this.readinessCacheMs = options.readinessCacheMs ?? DEFAULT_LEDGER_READINESS_CACHE_MS;
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.reservationId = options.reservationId ?? randomUUID;
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 100 || this.timeoutMs > 60_000) {
       throw new Error("Firestore ledger timeoutMs must be an integer from 100 to 60000.");
     }
@@ -309,23 +396,27 @@ export class FirestoreLedger implements IdempotencyLedger {
   async reserve(
     key: string,
     fingerprint: string,
-  ): Promise<
-    | { outcome: "reserved" }
-    | { outcome: "replay"; result: unknown }
-    | { outcome: "in_progress" }
-    | { outcome: "conflict" }
-  > {
+    context?: LedgerReservationContext,
+  ): Promise<LedgerReserveResult> {
     const documentId = ledgerDocumentId(key);
+    const reference = this.reference(documentId);
+    const reservationId = this.reservationId();
+    if (!/^[\x21-\x7e]{1,128}$/.test(reservationId)) {
+      throw new Error("Firestore reservation id is invalid.");
+    }
     const createUrl =
       `${this.documentsBase}/${this.collection}` + `?documentId=${encodeURIComponent(documentId)}`;
 
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const created = await this.request(createUrl, {
+    for (let attempt = 0; attempt < MAX_RESERVATION_CREATE_READ_CYCLES; attempt += 1) {
+      const created = await this.requestWithTransientRetry(createUrl, {
         method: "POST",
         body: JSON.stringify({
           fields: {
             status: { stringValue: "in_progress" },
             fingerprint: { stringValue: fingerprint },
+            reservation_id: { stringValue: reservationId },
+            started_at: { timestampValue: new Date(this.now()).toISOString() },
+            ...firestoreReservationMetadata(context),
           },
         }),
       });
@@ -333,15 +424,18 @@ export class FirestoreLedger implements IdempotencyLedger {
         const document = requireFirestoreDocument(created.json);
         this.owned.set(key, {
           fingerprint,
+          reservationId,
           updateTime: requireUpdateTime(document),
         });
-        return { outcome: "reserved" };
+        return { outcome: "reserved", reference };
       }
       if (created.response.status !== 409) {
         throw firestoreFailure("reserve", created.response.status);
       }
 
-      const current = await this.request(this.documentUrl(documentId), { method: "GET" });
+      const current = await this.requestWithTransientRetry(this.documentUrl(documentId), {
+        method: "GET",
+      });
       // The document can disappear between create and read when a failed owner
       // releases it. Retry the atomic create rather than treating that race as
       // an error.
@@ -364,7 +458,11 @@ export class FirestoreLedger implements IdempotencyLedger {
         if (serialized === undefined) {
           throw new Error("Firestore ledger completed entry has no result.");
         }
-        return { outcome: "replay", result: JSON.parse(serialized) };
+        return {
+          outcome: "replay",
+          result: JSON.parse(serialized),
+          status: completedResponseStatus(fields),
+        };
       }
       if (fields.status?.stringValue !== "in_progress") {
         throw new Error("Firestore ledger entry has an invalid status.");
@@ -372,39 +470,87 @@ export class FirestoreLedger implements IdempotencyLedger {
       if (fields.fingerprint?.stringValue !== fingerprint) {
         return { outcome: "conflict" };
       }
-      return { outcome: "in_progress" };
+      // A fixed-document create is idempotent, but its response can be lost
+      // after Firestore committed it. Only the invocation whose unguessable
+      // ownership token is stored may recover that reservation and execute.
+      if (fields.reservation_id?.stringValue === reservationId) {
+        this.owned.set(key, {
+          fingerprint,
+          reservationId,
+          updateTime: requireUpdateTime(document),
+        });
+        return { outcome: "reserved", reference };
+      }
+      return { outcome: "in_progress", reference };
     }
-    return { outcome: "in_progress" };
+    return { outcome: "in_progress", reference };
   }
 
-  async complete(key: string, result: unknown): Promise<void> {
+  async complete(key: string, result: unknown, status = 200): Promise<void> {
     const reservation = this.owned.get(key);
     if (!reservation) {
       throw new Error("Cannot complete a Firestore reservation not owned by this process.");
     }
+    assertSuccessfulResponseStatus(status);
     const serialized = JSON.stringify(result) ?? "null";
     if (Buffer.byteLength(serialized, "utf8") > MAX_LEDGER_RESULT_BYTES) {
       throw new Error("Idempotency result exceeds the Firestore ledger byte limit.");
     }
-    const completed = await this.request(
-      this.patchUrl(
-        ledgerDocumentId(key),
-        ["status", "fingerprint", "result_json", "expires_at"],
-        reservation.updateTime,
-      ),
-      {
-        method: "PATCH",
-        body: JSON.stringify({
-          fields: {
-            status: { stringValue: "completed" },
-            fingerprint: { stringValue: reservation.fingerprint },
-            result_json: { stringValue: serialized },
-            expires_at: { timestampValue: new Date(this.now() + this.resultTtlMs).toISOString() },
-          },
-        }),
-      },
-    );
+    const expiresAt = new Date(this.now() + this.resultTtlMs).toISOString();
+    let completed: { response: Response; json: unknown };
+    try {
+      completed = await this.requestWithTransientRetry(
+        this.patchUrl(
+          ledgerDocumentId(key),
+          [
+            "status",
+            "fingerprint",
+            "result_json",
+            "response_status",
+            "expires_at",
+            "reservation_id",
+          ],
+          reservation.updateTime,
+        ),
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            fields: {
+              status: { stringValue: "completed" },
+              fingerprint: { stringValue: reservation.fingerprint },
+              result_json: { stringValue: serialized },
+              response_status: { integerValue: String(status) },
+              expires_at: { timestampValue: expiresAt },
+            },
+          }),
+        },
+      );
+    } catch {
+      // Every attempted conditional PATCH can have committed immediately before
+      // the connection failed. Reconcile the exact intended state before
+      // reporting failure; never release the reservation on an unknown result.
+      if (await this.completedExactly(key, reservation, serialized, status, expiresAt)) {
+        this.deleteOwnedIfCurrent(key, reservation);
+        return;
+      }
+      throw new Error("Firestore completion could not be confirmed after bounded retries.");
+    }
     if (!completed.response.ok) {
+      // A conditional PATCH can commit while its response is lost. A retry
+      // then correctly fails its old update-time precondition. Reconcile after
+      // every terminal response, because a proxy can also surface a generic
+      // transient status after Firestore accepted the write.
+      const reconciled = await this.completedExactly(
+        key,
+        reservation,
+        serialized,
+        status,
+        expiresAt,
+      );
+      if (reconciled) {
+        this.deleteOwnedIfCurrent(key, reservation);
+        return;
+      }
       if (isPreconditionFailure(completed)) {
         throw new Error("Firestore reservation ownership changed before completion.");
       }
@@ -419,7 +565,7 @@ export class FirestoreLedger implements IdempotencyLedger {
     const url =
       `${this.documentUrl(ledgerDocumentId(key))}` +
       `?currentDocument.updateTime=${encodeURIComponent(reservation.updateTime)}`;
-    const released = await this.request(url, { method: "DELETE" });
+    const released = await this.requestWithTransientRetry(url, { method: "DELETE" });
     this.deleteOwnedIfCurrent(key, reservation);
     if (
       !released.response.ok &&
@@ -432,6 +578,10 @@ export class FirestoreLedger implements IdempotencyLedger {
 
   private documentUrl(documentId: string): string {
     return `${this.documentsBase}/${this.collection}/${encodeURIComponent(documentId)}`;
+  }
+
+  private reference(documentId: string): string {
+    return `firestore/${this.collection}/${documentId}`;
   }
 
   private patchUrl(documentId: string, fields: string[], updateTime: string): string {
@@ -449,9 +599,12 @@ export class FirestoreLedger implements IdempotencyLedger {
     query.append("mask.fieldPaths", "status");
     let result: { response: Response; json: unknown };
     try {
-      result = await this.request(`${this.documentsBase}/${this.collection}?${query}`, {
-        method: "GET",
-      });
+      result = await this.requestWithTransientRetry(
+        `${this.documentsBase}/${this.collection}?${query}`,
+        {
+          method: "GET",
+        },
+      );
     } catch {
       return { ready: false, code: "unavailable" };
     }
@@ -474,7 +627,7 @@ export class FirestoreLedger implements IdempotencyLedger {
     const url =
       `${this.documentUrl(documentId)}` +
       `?currentDocument.updateTime=${encodeURIComponent(updateTime)}`;
-    const deleted = await this.request(url, { method: "DELETE" });
+    const deleted = await this.requestWithTransientRetry(url, { method: "DELETE" });
     if (
       !deleted.response.ok &&
       deleted.response.status !== 404 &&
@@ -509,6 +662,64 @@ export class FirestoreLedger implements IdempotencyLedger {
       }
     }
     return { response, json };
+  }
+
+  /**
+   * Firestore calls here are safe to retry: reads are side-effect free, creates
+   * use a fixed document id, and mutations carry an update-time precondition.
+   * A lost successful PATCH is reconciled by `complete`; a lost DELETE becomes
+   * 404/precondition-failed and is already treated as success by its caller.
+   */
+  private async requestWithTransientRetry(
+    url: string,
+    init: RequestInit,
+  ): Promise<{ response: Response; json: unknown }> {
+    let lastResponse: { response: Response; json: unknown } | undefined;
+    for (let attempt = 1; attempt <= MAX_FIRESTORE_ATTEMPTS; attempt += 1) {
+      try {
+        const result = await this.request(url, init);
+        lastResponse = result;
+        if (
+          !isTransientFirestoreStatus(result.response.status) ||
+          attempt === MAX_FIRESTORE_ATTEMPTS
+        ) {
+          return result;
+        }
+      } catch {
+        if (attempt === MAX_FIRESTORE_ATTEMPTS) {
+          throw new Error("Firestore ledger request failed after bounded retries.");
+        }
+      }
+      await this.sleep(FIRESTORE_RETRY_BASE_MS * 2 ** (attempt - 1));
+    }
+    if (lastResponse) return lastResponse;
+    throw new Error("Firestore ledger request failed after bounded retries.");
+  }
+
+  private async completedExactly(
+    key: string,
+    reservation: OwnedReservation,
+    serialized: string,
+    status: number,
+    expiresAt: string,
+  ): Promise<boolean> {
+    let current: { response: Response; json: unknown };
+    try {
+      current = await this.requestWithTransientRetry(this.documentUrl(ledgerDocumentId(key)), {
+        method: "GET",
+      });
+    } catch {
+      return false;
+    }
+    if (!current.response.ok) return false;
+    const fields = requireFirestoreDocument(current.json).fields ?? {};
+    return (
+      fields.status?.stringValue === "completed" &&
+      fields.fingerprint?.stringValue === reservation.fingerprint &&
+      fields.result_json?.stringValue === serialized &&
+      completedResponseStatus(fields) === status &&
+      fields.expires_at?.timestampValue === expiresAt
+    );
   }
 
   private deleteOwnedIfCurrent(key: string, reservation: OwnedReservation): void {
@@ -595,6 +806,21 @@ function ledgerDocumentId(key: string): string {
   return createHash("sha256").update(key).digest("hex");
 }
 
+function firestoreReservationMetadata(
+  context: LedgerReservationContext | undefined,
+): Record<string, { stringValue: string }> {
+  const operationId = safeCorrelationValue(context?.operationId);
+  const traceId = safeCorrelationValue(context?.traceId);
+  return {
+    ...(operationId ? { operation_id: { stringValue: operationId } } : {}),
+    ...(traceId ? { trace_id: { stringValue: traceId } } : {}),
+  };
+}
+
+function safeCorrelationValue(value: string | undefined): string | undefined {
+  return value && /^[\x21-\x7e]{1,200}$/.test(value) ? value : undefined;
+}
+
 /** Collection group name shared by the runtime and generated Terraform TTL policy. */
 export function firestoreLedgerCollection(namespace: string): string {
   if (!/^[a-zA-Z0-9_.~-]{1,128}$/.test(namespace)) {
@@ -622,6 +848,22 @@ function requireCompletedExpiry(fields: NonNullable<FirestoreDocument["fields"]>
     throw new Error("Firestore ledger completed entry has no valid expiry.");
   }
   return epochMs;
+}
+
+function completedResponseStatus(fields: NonNullable<FirestoreDocument["fields"]>): number {
+  const raw = fields.response_status?.integerValue;
+  // Rows written by runtimes before response-status persistence are safe to
+  // replay with the historical behavior (200). New malformed rows fail closed.
+  if (raw === undefined) return 200;
+  const status = Number(raw);
+  assertSuccessfulResponseStatus(status);
+  return status;
+}
+
+function assertSuccessfulResponseStatus(status: number): void {
+  if (!Number.isSafeInteger(status) || status < 200 || status >= 300) {
+    throw new Error("Idempotency ledger response status must be an integer from 200 to 299.");
+  }
 }
 
 function isFirestoreListResponse(value: unknown): boolean {
@@ -678,6 +920,18 @@ function isPreconditionFailure(result: { response: Response; json: unknown }): b
   return error?.status === "FAILED_PRECONDITION" || error?.code === 9;
 }
 
+function isTransientFirestoreStatus(status: number): boolean {
+  return (
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Ledger selection (Firestore built in; other durable backends are plugins)   */
 /* -------------------------------------------------------------------------- */
@@ -703,7 +957,7 @@ export function registerLedgerBackend(scheme: string, factory: LedgerFactory): v
  *      into a false-safety state).
  *   2. no ledger configured → in-memory (durable=false). Safe for `dev` and
  *      single-instance use; the executor fails closed on required-idempotency
- *      mutations outside `dev` (see `assertLedgerDurability`).
+ *      mutations outside `dev` (see the durable-ledger gate in `execute`).
  */
 export function resolveLedger(
   uri?: string,

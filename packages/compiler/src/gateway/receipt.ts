@@ -23,8 +23,11 @@ import { z } from "zod";
 import type { AnvilManifest } from "../manifest.js";
 import { sha256Hex } from "../source/hash.js";
 import { SourceDiagnostic, SourceEntrypoint, SourceFile } from "../source/model.js";
+import { GatewayImportIdentity, verifyGatewayImportIdentity } from "./identity.js";
 import {
   type EvidenceCoordinate,
+  GATEWAY_MAX_ARTIFACT_EVIDENCE,
+  GatewayArtifactEvidence,
   GatewayContractProvenance,
   GatewayDiagnostic,
   GatewayKind,
@@ -88,6 +91,85 @@ const GatewayCapabilityReviewView = z.object({
   ),
 });
 
+/**
+ * Receipt-bound relationship between a user-supplied contract and the native
+ * WSO2 Definitions member(s) discovered for the selected API project.
+ *
+ * Exact byte equality is the default. An override is deliberately possible
+ * only through an explicit operator attestation retained by the private
+ * receipt; it is never inferred from route compatibility.
+ */
+export const GatewayFormalDefinitionLineage = z
+  .object({
+    mode: z.enum(["embedded_digest_match", "operator_override"]),
+    candidates: z.array(GatewayArtifactEvidence).max(GATEWAY_MAX_ARTIFACT_EVIDENCE),
+    supplied: z.object({
+      path: z.string().min(1),
+      digest: Sha256Digest,
+    }),
+    override: z
+      .object({
+        attestation: z.literal("operator"),
+        reason: z.string().trim().min(1).max(2_000),
+      })
+      .optional(),
+  })
+  .superRefine((lineage, ctx) => {
+    lineage.candidates.forEach((candidate, index) => {
+      if (candidate.role !== "formal_definition") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["candidates", index, "role"],
+          message: "formal-definition lineage candidates must have role formal_definition",
+        });
+      }
+    });
+    if (lineage.mode === "embedded_digest_match") {
+      if (lineage.candidates.length !== 1) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["candidates"],
+          message: "embedded digest match requires exactly one native definition candidate",
+        });
+      } else if (lineage.candidates[0]?.digest !== lineage.supplied.digest) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["supplied", "digest"],
+          message: "supplied definition digest must match the native candidate digest",
+        });
+      }
+      if (lineage.override !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["override"],
+          message: "an exact embedded digest match cannot also claim an override",
+        });
+      }
+    } else if (lineage.override === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["override"],
+        message: "operator_override requires an explicit operator attestation and reason",
+      });
+    }
+  });
+export type GatewayFormalDefinitionLineage = z.infer<typeof GatewayFormalDefinitionLineage>;
+
+const GatewayFormalDefinitionLineageView = z.object({
+  mode: z.enum(["embedded_digest_match", "operator_override"]),
+  candidates: z.array(GatewayArtifactEvidence).max(GATEWAY_MAX_ARTIFACT_EVIDENCE),
+  supplied: z.object({
+    path: z.string().min(1),
+    digest: Sha256Digest,
+  }),
+  override: z
+    .object({
+      attestation: z.literal("operator"),
+      reasonDigest: Sha256Digest,
+    })
+    .optional(),
+});
+
 export const GatewayImportReceipt = z.object({
   schemaVersion: z.literal(1),
   receiptType: z.literal("anvil.gateway-import"),
@@ -96,13 +178,21 @@ export const GatewayImportReceipt = z.object({
   selection: z.object({
     vendor: GatewayKind,
     apiId: z.string(),
+    /**
+     * Added to v1 receipts without making legacy v1 records unparsable. Every
+     * new import writes it; absence identifies a legacy, non-coordinate-aware
+     * lineage that must never be used to replace a new one.
+     */
+    identity: GatewayImportIdentity.optional(),
     export: z.object({
-      format: z.enum(["text", "zip"]),
+      format: z.enum(["text", "zip", "wso2_apictl_collection"]),
       sha256: Sha256Digest,
       bytes: z.number().int().nonnegative(),
       storedAs: z.literal("raw/export.bin"),
     }),
     archiveEntry: z.string().optional(),
+    /** Exact selected native project/container members; optional on legacy receipts. */
+    artifacts: z.array(GatewayArtifactEvidence).max(GATEWAY_MAX_ARTIFACT_EVIDENCE).optional(),
   }),
   inventory: z.object({
     digest: z.string(),
@@ -114,6 +204,8 @@ export const GatewayImportReceipt = z.object({
       sourceHash: z.string(),
       entrypoint: z.string(),
     }),
+    /** Present for WSO2 --spec imports that have native formal-definition evidence. */
+    formalDefinitionLineage: GatewayFormalDefinitionLineage.optional(),
   }),
   /** Runtime coordinate is accepted only as an explicit operator attestation. */
   runtime: z
@@ -183,12 +275,14 @@ export const GatewayImportReceiptView = z.object({
   selection: z.object({
     vendor: GatewayKind,
     apiId: z.string(),
+    identity: GatewayImportIdentity.optional(),
     export: z.object({
-      format: z.enum(["text", "zip"]),
+      format: z.enum(["text", "zip", "wso2_apictl_collection"]),
       sha256: Sha256Digest,
       bytes: z.number().int().nonnegative(),
     }),
     archiveEntry: z.string().optional(),
+    artifacts: z.array(GatewayArtifactEvidence).max(GATEWAY_MAX_ARTIFACT_EVIDENCE).optional(),
   }),
   inventoryDigest: z.string(),
   contract: z.object({
@@ -198,6 +292,7 @@ export const GatewayImportReceiptView = z.object({
       sourceHash: z.string(),
       entrypoint: z.string(),
     }),
+    formalDefinitionLineage: GatewayFormalDefinitionLineageView.optional(),
   }),
   runtime: z
     .object({
@@ -394,6 +489,32 @@ export function verifyGatewayImportReceipt(
       message: `Receipt id ${receipt.importId} does not match content-derived ${importId}.`,
     });
   }
+  const identity = receipt.selection.identity;
+  if (identity) {
+    const identityVerification = verifyGatewayImportIdentity(identity);
+    if (!identityVerification.ok) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_receipt/identity_digest_mismatch",
+        message:
+          `Gateway import identity digest ${identity.digest}/${identity.lineageDigest} does not match ` +
+          `recomputed ${identityVerification.expectedDigest}/${identityVerification.expectedLineageDigest}.`,
+      });
+    }
+    const mismatches = [
+      identity.vendor !== receipt.selection.vendor ? "vendor" : undefined,
+      identity.apiId !== receipt.selection.apiId ? "apiId" : undefined,
+      identity.exportDigest !== receipt.selection.export.sha256 ? "exportDigest" : undefined,
+      identity.inventoryDigest !== receipt.inventory.digest ? "inventoryDigest" : undefined,
+    ].filter((value): value is string => value !== undefined);
+    if (mismatches.length > 0) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_receipt/identity_coordinate_mismatch",
+        message: `Gateway import identity disagrees with receipt field(s): ${mismatches.join(", ")}.`,
+      });
+    }
+  }
   const canonicalOutputDigest = `sha256:${hashCanonical(receipt.output.files)}`;
   if (receipt.output.digest !== canonicalOutputDigest) {
     diagnostics.push({
@@ -502,6 +623,57 @@ export function verifyGatewayImportReceipt(
       });
     }
   }
+  const formalDefinitionLineage = receipt.contract.formalDefinitionLineage;
+  if (formalDefinitionLineage) {
+    if (receipt.selection.vendor !== "wso2") {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_receipt/formal_definition_vendor_mismatch",
+        message: "Native formal-definition lineage is currently valid only for WSO2 imports.",
+      });
+    }
+    const byCoordinate = (
+      left: z.infer<typeof GatewayArtifactEvidence>,
+      right: z.infer<typeof GatewayArtifactEvidence>,
+    ): number =>
+      left.origin.localeCompare(right.origin) ||
+      left.path.localeCompare(right.path) ||
+      left.digest.localeCompare(right.digest);
+    const selectedCandidates = (receipt.selection.artifacts ?? [])
+      .filter((artifact) => artifact.role === "formal_definition")
+      .sort(byCoordinate);
+    const recordedCandidates = [...formalDefinitionLineage.candidates].sort(byCoordinate);
+    if (hashCanonical(selectedCandidates) !== hashCanonical(recordedCandidates)) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_receipt/formal_definition_candidates_mismatch",
+        message:
+          "Contract formal-definition candidates do not match the selected native artifact evidence.",
+      });
+    }
+    const entrypointFile = receipt.lockedSource?.files.find(
+      (file) => file.path === receipt.contract.compilerSource.entrypoint,
+    );
+    const lockedEntrypointDigest = entrypointFile
+      ? `sha256:${entrypointFile.sha256.replace(/^sha256:/, "")}`
+      : undefined;
+    if (!lockedEntrypointDigest) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_receipt/formal_definition_source_missing",
+        message:
+          "Formal-definition lineage requires the supplied compiler entrypoint in the locked source manifest.",
+      });
+    } else if (lockedEntrypointDigest !== formalDefinitionLineage.supplied.digest) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_receipt/formal_definition_source_mismatch",
+        message:
+          `Locked compiler entrypoint digest ${lockedEntrypointDigest} does not match the ` +
+          `formal-definition lineage digest ${formalDefinitionLineage.supplied.digest}.`,
+      });
+    }
+  }
   return { ok: diagnostics.length === 0, receipt, diagnostics };
 }
 
@@ -581,12 +753,23 @@ export function redactGatewayImportReceipt(
     selection: {
       vendor: receipt.selection.vendor,
       apiId: receipt.selection.apiId,
+      identity: receipt.selection.identity,
       export: {
         format: receipt.selection.export.format,
         sha256: receipt.selection.export.sha256,
         bytes: receipt.selection.export.bytes,
       },
       archiveEntry: receipt.selection.archiveEntry,
+      artifacts: receipt.selection.artifacts?.map((artifact) => ({
+        ...artifact,
+        origin: redactOrigin(artifact.origin),
+        parent: artifact.parent
+          ? {
+              ...artifact.parent,
+              origin: redactOrigin(artifact.parent.origin),
+            }
+          : undefined,
+      })),
     },
     inventoryDigest: receipt.inventory.digest,
     contract: {
@@ -595,6 +778,34 @@ export function redactGatewayImportReceipt(
         ...receipt.contract.provenance,
         location: redactCoordinate(receipt.contract.provenance.location),
       },
+      formalDefinitionLineage: receipt.contract.formalDefinitionLineage
+        ? {
+            mode: receipt.contract.formalDefinitionLineage.mode,
+            candidates: receipt.contract.formalDefinitionLineage.candidates.map((artifact) => ({
+              ...artifact,
+              origin: redactOrigin(artifact.origin),
+              parent: artifact.parent
+                ? {
+                    ...artifact.parent,
+                    origin: redactOrigin(artifact.parent.origin),
+                  }
+                : undefined,
+            })),
+            supplied: receipt.contract.formalDefinitionLineage.supplied,
+            ...(receipt.contract.formalDefinitionLineage.override
+              ? {
+                  override: {
+                    attestation: "operator" as const,
+                    reasonDigest: gatewaySha256(
+                      new TextEncoder().encode(
+                        receipt.contract.formalDefinitionLineage.override.reason,
+                      ),
+                    ),
+                  },
+                }
+              : {}),
+          }
+        : undefined,
     },
     runtime: receipt.runtime,
     lockedSource: receipt.lockedSource

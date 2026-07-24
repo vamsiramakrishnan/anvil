@@ -22,6 +22,23 @@ paths:
       responses: { "201": { description: created } }
 `;
 
+const API_KEY_SPEC = `openapi: "3.0.3"
+info: { title: Jobs, version: "1.0.0" }
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+security:
+  - ApiKeyAuth: []
+paths:
+  /jobs:
+    post:
+      operationId: createJob
+      responses: { "201": { description: created } }
+`;
+
 describe("idempotency carrier validation", () => {
   it("keeps an exact modeled query carrier approved and projects one safety input", async () => {
     const air = await compile({
@@ -92,6 +109,93 @@ describe("idempotency carrier validation", () => {
       key: "body_key",
     });
     expect(air.operations[0]?.state).toBe("approved");
+  });
+
+  it("blocks derived keys when a modeled carrier requires an incompatible format", async () => {
+    const constrained = SPEC.replace(
+      "schema: { type: string }",
+      "schema: { type: string, format: uuid }",
+    );
+    const air = await compile({
+      spec: constrained,
+      serviceId: "jobs",
+      manifest: `operations:
+  createJob:
+    idempotency:
+      strategy: key_supported
+      key_location: query
+      parameter: request_key
+    state: approved
+`,
+    });
+
+    expect(air.operations[0]?.state).toBe("blocked");
+    expect(air.diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        code: "unsupported_idempotency_carrier",
+      }),
+    );
+    expect(air.diagnostics.map((diagnostic) => diagnostic.message).join("\n")).toMatch(
+      /request-fingerprint keys cannot be proven/i,
+    );
+  });
+
+  it("blocks an idempotency carrier that aliases the declared API-key credential", async () => {
+    const air = await compile({
+      spec: API_KEY_SPEC,
+      serviceId: "jobs",
+      manifest: `operations:
+  createJob:
+    idempotency:
+      strategy: required_request_key
+      key_location: header
+      header: X-API-Key
+    state: approved
+`,
+    });
+
+    expect(air.operations[0]?.state).toBe("blocked");
+    expect(air.operations[0]?.retries).toMatchObject({ mode: "none", maxAttempts: 1 });
+    expect(air.diagnostics).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        code: "idempotency_auth_carrier_conflict",
+      }),
+    );
+  });
+
+  it("advertises the source constraint for an explicit caller-supplied key", async () => {
+    const constrained = SPEC.replace(
+      "schema: { type: string }",
+      "schema: { type: string, format: uuid, maxLength: 36 }",
+    );
+    const air = await compile({
+      spec: constrained,
+      serviceId: "jobs",
+      manifest: `operations:
+  createJob:
+    idempotency:
+      strategy: required_request_key
+      key_location: query
+      parameter: request_key
+    state: approved
+`,
+    });
+
+    const operation = air.operations[0];
+    if (!operation) throw new Error("fixture operation missing");
+    expect(operation.state).toBe("approved");
+    const properties = operation.input.schema?.properties as
+      | Record<string, Record<string, unknown>>
+      | undefined;
+    const keySchema = properties?.idempotency_key;
+    expect(keySchema?.allOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "string", format: "uuid", maxLength: 36 }),
+        expect.objectContaining({ type: "string", minLength: 1, maxLength: 255 }),
+      ]),
+    );
   });
 
   it("refuses a later approval when imported AIR has an unprovable carrier", async () => {

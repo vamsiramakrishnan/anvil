@@ -12,7 +12,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { generateBundle } from "./bundle.js";
-import { generateDeploy } from "./deploy.js";
+import {
+  GENERATED_WRITE_PATH_MARGIN_MS,
+  generateDeploy,
+  idempotencyStoreContract,
+  MAX_GENERATED_WRITE_PATH_MS,
+  parseIdempotencyStoreContract,
+} from "./deploy.js";
 import { buildMcpServer, generateMcpServerSource, generateMcpSseServerSource } from "./mcp.js";
 import { exampleFromSchema, exampleInput } from "./mock.js";
 import { buildToolResources } from "./resources.js";
@@ -71,6 +77,7 @@ describe("MCP server entrypoints — two transports, one runtime", () => {
     for (const src of [stdio, sse]) {
       expect(src).toContain("buildMcpServer");
       expect(src).toContain("allowedHostsFor");
+      expect(src).toContain("timeoutMs: config.upstreamTimeoutMs");
       // Both now resolve credentials through the fail-closed selector (static env,
       // Secret Manager sm:// refs, or RFC 8693 OBO) rather than a hardcoded env resolver.
       expect(src).toContain("resolveCredentials");
@@ -313,6 +320,41 @@ describe("capabilities in generated artifacts", () => {
     expect(workflows).toMatch(/human approval/i);
   });
 
+  it("omits blocked workflows from skill, catalog, and MCP discovery while retaining AIR", () => {
+    const blocked = structuredClone(air);
+    const workflow = blocked.workflows[0];
+    if (!workflow) throw new Error("reference workflow missing");
+    workflow.state = "blocked";
+
+    const { files } = generateBundle(blocked);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const refunds = catalog.capabilities.find(
+      (capability: { id: string }) => capability.id === "payments.refunds",
+    );
+    expect(refunds.workflows).not.toContain(workflow.id);
+
+    const skillManifest = parseYaml(files["skill/manifest.yaml"] as string) as {
+      workflows: number;
+    };
+    expect(skillManifest.workflows).toBe(0);
+    expect(files["skill/reference/capabilities.md"]).not.toContain("refund_customer");
+    expect(files["skill/reference/workflows.md"]).toContain("No runnable workflows");
+    expect(files["skill/reference/workflows.md"]).not.toContain("Refund a customer");
+
+    const resources = buildToolResources(blocked);
+    const mcpCatalog = resources.find((resource) => resource.uri === "anvil://catalog/payments");
+    const mcpWorkflows = resources.find(
+      (resource) => resource.uri === "anvil://skill/payments/reference/workflows.md",
+    );
+    expect(mcpCatalog?.text).not.toContain("refund_customer");
+    expect(mcpWorkflows?.text).not.toContain("Refund a customer");
+
+    const preserved = JSON.parse(files["air.json"] as string);
+    expect(preserved.workflows).toContainEqual(
+      expect.objectContaining({ id: workflow.id, state: "blocked" }),
+    );
+  });
+
   it("never advertises unapproved operations in the capability skill docs", async () => {
     // No manifest → nothing is approved. The skill is the exposed surface, so
     // its capability docs must not list any operation command.
@@ -373,6 +415,7 @@ describe("bundle", () => {
     expect(runtimeServer).toContain(
       'identity: inboundAuth.mode === "none" ? undefined : inboundIdentityFrom',
     );
+    expect(runtimeServer).toContain("upstreamTimeoutMs");
   });
 
   it("compiles only approved operations into the runtime manifest", () => {
@@ -611,25 +654,72 @@ describe("GCP-native deploy (single owner per concern)", () => {
     expect(output).toContain("payments listening");
   });
 
-  it("owns a delete-protected service ledger with database-scoped IAM", () => {
+  it("defaults to a shared estate ledger and retains an explicit dedicated mode", () => {
     const { files } = generateBundle(air);
     const tf = files["deploy/terraform/main.tf"] as string;
     // The SA gets datastore access only under a database-level IAM condition.
     expect(tf).toContain("roles/datastore.user");
     expect(tf).toContain('resource "google_firestore_database" "ledger"');
-    expect(tf).toContain('name                    = "payments-ledger"');
+    expect(tf).toContain(
+      'count                   = var.ledger_database_mode == "dedicated" ? 1 : 0',
+    );
+    expect(tf).toContain("name                    = var.ledger_database_id");
     expect(tf).toContain('delete_protection_state = "DELETE_PROTECTION_ENABLED"');
+    expect(tf).toMatch(
+      /resource "google_firestore_database" "ledger"[\s\S]*?deletion_policy\s+= "ABANDON"/,
+    );
     expect(tf).toContain("prevent_destroy = true");
     expect(tf).toContain('resource "google_firestore_field" "ledger_result_expiry"');
+    expect(tf).toContain('resource "google_firestore_field" "ledger_no_single_field_indexes"');
     expect(tf).toMatch(/collection\s+= "anvil_idempotency_[a-f0-9]{16}"/);
+    expect(tf).toMatch(
+      /resource "google_firestore_field" "ledger_no_single_field_indexes"[\s\S]*?field\s+= "\*"[\s\S]*?deletion_policy\s+= "ABANDON"[\s\S]*?index_config \{\}/,
+    );
     expect(tf).toContain('field      = "expires_at"');
+    expect(tf).toContain("depends_on = [google_firestore_field.ledger_no_single_field_indexes]");
+    expect(tf).toContain("index_config {}");
     expect(tf).toContain("ttl_config {}");
+    expect(tf).toMatch(
+      /resource "google_firestore_field" "ledger_result_expiry"[\s\S]*?deletion_policy\s+= "ABANDON"/,
+    );
+    expect(tf).toContain("location_id             = var.ledger_location");
+    expect(tf).toContain('condition     = var.ledger_database_id != "(default)"');
     expect(tf).toContain(
-      "resource.name == 'projects/${var.project_id}/databases/${google_firestore_database.ledger.name}'",
+      "depends_on = [google_project_iam_member.runtime_ledger, google_firestore_field.ledger_result_expiry]",
+    );
+    expect(tf).toMatch(
+      /startup_probe \{[\s\S]*?timeout_seconds\s+= 12[\s\S]*?period_seconds\s+= 15[\s\S]*?failure_threshold\s+= 16[\s\S]*?path = "\/readyz"[\s\S]*?port = 8080/,
+    );
+    expect(tf).not.toContain("liveness_probe");
+    expect(tf).toContain(
+      "resource.name == 'projects/${var.project_id}/databases/${local.ledger_database_id}'",
     );
     expect(tf).toContain(
-      'value = "firestore://${var.project_id}/${google_firestore_database.ledger.name}/payments"',
+      'value = "firestore://${var.project_id}/${local.ledger_database_id}/payments"',
     );
+    expect(tf).toMatch(
+      /runtime_uri\s+= "firestore:\/\/\$\{var\.project_id\}\/\$\{local\.ledger_database_id\}\/payments"/,
+    );
+    expect(tf).toContain("anvil_compiler_owned_runtime_env_names");
+    expect(tf).toContain(
+      'error_message = "var.env may not redefine compiler-owned ANVIL runtime settings."',
+    );
+    expect(tf).toContain(
+      'error_message = "credential_secret_refs may not redefine compiler-owned ANVIL runtime settings."',
+    );
+    expect(tf).toContain(
+      'error_message = "One runtime environment variable may not be supplied by both var.env and credential_secret_refs."',
+    );
+    expect(tf).toContain("var.anvil_expected_project_id == var.project_id");
+    expect(tf).toContain(
+      "var.anvil_ledger_input_digest == local.ledger_deployment_input_digest",
+    );
+    expect(tf).toContain("bundle_hash           = var.anvil_bundle_hash");
+    expect(tf).toContain('input_digest             = var.anvil_ledger_input_digest');
+    expect(tf).toContain('deployment_artifact_hash = "');
+    expect(tf).toContain('store_contract_digest    = "');
+    expect(tf).toContain("location                 = var.ledger_location");
+    expect(tf).toContain("result_ttl_seconds       = var.ledger_result_ttl_seconds");
     expect(tf).not.toContain("firestore://${var.project_id}/(default)");
     // Same for the Artifact Registry repo: a shared platform prereq, not owned here.
     expect(tf).not.toContain('resource "google_artifact_registry_repository"');
@@ -638,16 +728,199 @@ describe("GCP-native deploy (single owner per concern)", () => {
     // No project owner/editor anywhere.
     expect(tf).not.toContain("roles/owner");
     expect(tf).not.toContain("roles/editor");
+    expect(tf).toContain('version = ">= 7.33.0, < 8.0.0"');
     // Terraform owns ANVIL_LEDGER so the fail-closed contract holds at runtime.
     expect(tf).toContain("ANVIL_LEDGER");
     expect(tf).toContain("ANVIL_LEDGER_RESULT_TTL_SECONDS");
+    expect(tf).toContain("ANVIL_UPSTREAM_TIMEOUT_MS");
+    expect(tf).toContain('timeout = "600s"');
+    expect(tf).toContain("retains more than 100s");
+    expect(MAX_GENERATED_WRITE_PATH_MS).toBe(481_200);
+    expect(GENERATED_WRITE_PATH_MARGIN_MS).toBe(118_800);
     const variables = files["deploy/terraform/variables.tf"] as string;
+    expect(variables).toContain('variable "anvil_bundle_hash"');
+    expect(variables).toContain('variable "anvil_expected_project_id"');
+    expect(variables).toContain('variable "anvil_ledger_input_digest"');
+    expect(variables).toContain('variable "ledger_database_mode"');
+    expect(variables).toContain('default     = "shared"');
+    expect(variables).toContain('variable "ledger_database_id"');
+    expect(variables).toContain('variable "ledger_location"');
+    expect(variables).toContain("required only when ledger_database_mode is dedicated");
     expect(variables).toContain('variable "ledger_result_ttl_seconds"');
     expect(variables).toContain("default     = 604800");
+    expect(variables).toContain('variable "upstream_timeout_ms"');
+    expect(variables).toContain("default     = 20000");
+    expect(variables).toContain("<= 30000");
     const envSchema = JSON.parse(files["deploy/env.schema.json"] as string);
     expect(envSchema.properties.ANVIL_LEDGER_RESULT_TTL_SECONDS.default).toBe("604800");
+    expect(envSchema.properties.ANVIL_UPSTREAM_TIMEOUT_MS.default).toBe("20000");
+    expect(envSchema.properties.ANVIL_UPSTREAM_TIMEOUT_MS.description).toContain("100..30000");
     expect(files["deploy/README.md"]).toContain("field-masked, non-mutating data-plane lookup");
     expect(files["deploy/README.md"]).toContain("In-progress reservations never carry a TTL");
+    expect(files["deploy/README.md"]).toContain(
+      'default `ledger_database_mode = "shared"`',
+    );
+    expect(files["deploy/README.md"]).toContain(
+      "Capability Terraform must not create or import that",
+    );
+    expect(files["deploy/README.md"]).toContain(
+      "Firestore IAM conditions do **not** isolate",
+    );
+    expect(files["deploy/README.md"]).toContain(
+      "Google Cloud console access",
+    );
+    expect(files["deploy/README.md"]).toContain(
+      "Actual data deletion is a",
+    );
+    expect(files["deploy/README.md"]).toContain(
+      "import google_firestore_field.ledger_result_expiry",
+    );
+    expect(files["deploy/README.md"]).toContain(
+      "gcloud builds submit --project YOUR_PROJECT",
+    );
+    expect(files["deploy/README.md"]).toContain("It is plan evidence, not an apply receipt");
+    expect(files["deploy/README.md"]).toContain(
+      "External input cannot shadow runtime safety controls",
+    );
+  });
+
+  it("emits one machine-readable managed-store contract aligned to AIR and Terraform", () => {
+    const files = generateDeploy(air);
+    const contract = parseIdempotencyStoreContract(
+      files["deploy/idempotency-store.json"] as string,
+    );
+    expect(contract).toEqual(idempotencyStoreContract(air));
+    expect(contract.required).toBe(true);
+    expect(contract.requirement.operationIds).toEqual(["payments.refunds.create"]);
+    expect(contract.backend).toBe("firestore");
+    if (contract.backend !== "firestore") throw new Error("expected Firestore store contract");
+    expect(contract.firestore.database).toEqual({
+      idTerraformVariable: "ledger_database_id",
+      provisioningModeTerraformVariable: "ledger_database_mode",
+      provisioningModeDefault: "shared",
+      supportedProvisioningModes: ["shared", "dedicated"],
+      required: true,
+      trustBoundary: "database",
+    });
+    expect(contract.firestore.collectionGroup).toMatch(/^anvil_idempotency_[a-f0-9]{16}$/);
+    expect(contract.firestore.runtimeUri).toEqual({
+      environmentVariable: "ANVIL_LEDGER",
+      terraformExpression:
+        "firestore://${var.project_id}/${local.ledger_database_id}/payments",
+      resolvedTemplate: "firestore://{project_id}/{database_id}/payments",
+    });
+    expect(contract.firestore.indexing).toEqual({
+      defaultSingleFieldIndexes: false,
+      wildcardFieldOverride: "*",
+      queryPattern: "document_id_only",
+    });
+    expect(contract.firestore.location).toEqual({
+      terraformVariable: "ledger_location",
+      requiredFor: "dedicated",
+      ignoredFor: "shared",
+      immutable: true,
+    });
+    expect(contract.firestore.provisioning).toEqual({
+      databaseManagedByCapabilityTerraform: "dedicated_only",
+      sharedApiEnablementManagedByCapabilityTerraform: false,
+      requiredSharedApis: ["firestore.googleapis.com"],
+      googleProviderConstraint: ">= 7.33.0, < 8.0.0",
+      sharedIsolation: "deployment_namespace_hashed_collection_group",
+      dedicatedIsolation: "database",
+      databaseQuotaSlotsPerCapability: { shared: 0, dedicated: 1 },
+      sharedDatabaseQuotaSlots: 1,
+      iamIsolation: "database_not_collection_group",
+      collectionMaterialization: "first_atomic_reservation",
+      decommissionPolicy: "abandon_service_field_policies_and_data",
+    });
+    expect(contract.firestore.retention).toMatchObject({
+      ttlField: "expires_at",
+      resultTtlSecondsDefault: 604800,
+      logicalExpiryBeforeReplay: true,
+      providerDeletionAsynchronous: true,
+      inProgressExpires: false,
+      ttlFieldIndexed: false,
+      maxReplayResultBytes: 819_200,
+    });
+    expect(contract.firestore.iam).toEqual({
+      role: "roles/datastore.user",
+      scope: "database",
+      resourceTerraformExpression:
+        "projects/${var.project_id}/databases/${local.ledger_database_id}",
+    });
+    expect(contract.firestore.readiness).toEqual({
+      path: "/readyz",
+      method: "field_masked_list",
+      fieldMask: ["status"],
+      mutates: false,
+      deploymentStartupGate: true,
+      livenessRestartOnProviderFailure: false,
+    });
+    const tf = files["deploy/terraform/main.tf"] as string;
+    expect(tf).toContain("name                    = var.ledger_database_id");
+    expect(tf).toContain(`collection = "${contract.firestore.collectionGroup}"`);
+    expect(tf).toContain(`value = "${contract.firestore.runtimeUri.terraformExpression}"`);
+  });
+
+  it("keeps the AIR service id while isolating deployment resources by persisted namespace", () => {
+    const first = generateBundle(air, {
+      deploymentNamespace: "wso2-prod-payments-v1",
+    }).files;
+    const second = generateBundle(air, {
+      deploymentNamespace: "wso2-test-payments-v1",
+    }).files;
+    const firstContract = parseIdempotencyStoreContract(
+      first["deploy/idempotency-store.json"] as string,
+    );
+    const secondContract = parseIdempotencyStoreContract(
+      second["deploy/idempotency-store.json"] as string,
+    );
+    if (firstContract.backend !== "firestore" || secondContract.backend !== "firestore") {
+      throw new Error("expected Firestore contracts");
+    }
+
+    expect(JSON.parse(first["generation.json"] as string).resourceOptions).toMatchObject({
+      deploymentNamespace: "wso2-prod-payments-v1",
+    });
+    expect(firstContract.serviceId).toBe("payments");
+    expect(firstContract.firestore.namespace).toBe("wso2-prod-payments-v1");
+    expect(firstContract.firestore.runtimeUri.resolvedTemplate).toBe(
+      "firestore://{project_id}/{database_id}/wso2-prod-payments-v1",
+    );
+    expect(firstContract.firestore.collectionGroup).not.toBe(
+      secondContract.firestore.collectionGroup,
+    );
+    expect(first["deploy/terraform/main.tf"]).toContain(
+      'name     = "wso2-prod-payments-v1-tools"',
+    );
+    expect(first["deploy/terraform/main.tf"]).toContain('value = "payments"');
+    expect(first["deploy/cloudbuild.yaml"]).toContain("wso2-prod-payments-v1-tools:");
+    expect(first["deploy/cloudbuild.yaml"]).toContain(
+      "anvil/wso2-prod-payments-v1-tools",
+    );
+    expect(() =>
+      generateDeploy(air, { deploymentNamespace: "unsafe/namespace" }),
+    ).toThrow(/deploymentNamespace/);
+  });
+
+  it("rejects partial or malformed managed-store contracts", () => {
+    expect(() => parseIdempotencyStoreContract("{")).toThrow(/not valid JSON/);
+    expect(() =>
+      parseIdempotencyStoreContract(
+        JSON.stringify({
+          ...idempotencyStoreContract(air),
+          schemaVersion: 2,
+        }),
+      ),
+    ).toThrow(/schema version 1/);
+    expect(() =>
+      parseIdempotencyStoreContract(
+        JSON.stringify({
+          ...idempotencyStoreContract(air),
+          silentlyIgnoredBackendOverride: "spanner",
+        }),
+      ),
+    ).toThrow(/schema version 1/);
   });
 
   it("does not provision ledger IAM for mutations outside the approved surface", () => {
@@ -655,9 +928,43 @@ describe("GCP-native deploy (single owner per concern)", () => {
     for (const operation of hidden.operations) {
       operation.state = "blocked";
     }
-    const tf = generateDeploy(hidden)["deploy/terraform/main.tf"];
+    const deploy = generateDeploy(hidden);
+    const tf = deploy["deploy/terraform/main.tf"] as string;
+    const variables = deploy["deploy/terraform/variables.tf"] as string;
+    const readme = deploy["deploy/README.md"] as string;
     expect(tf).not.toContain("roles/datastore.user");
     expect(tf).toMatch(/name\s+= "ANVIL_LEDGER"[\s\S]*?value\s+= ""/);
+    expect(tf).not.toContain('output "idempotency_store"');
+    expect(tf).not.toContain("startup_probe");
+    expect(tf).toContain(
+      'error_message = "var.env may not redefine compiler-owned ANVIL runtime settings."',
+    );
+    expect(tf).toContain(
+      'error_message = "credential_secret_refs may not redefine compiler-owned ANVIL runtime settings."',
+    );
+    expect(tf).not.toContain("var.anvil_expected_project_id");
+    expect(tf).not.toContain("var.anvil_ledger_input_digest");
+    expect(variables).not.toContain('variable "ledger_database_mode"');
+    expect(variables).not.toContain('variable "ledger_database_id"');
+    expect(variables).not.toContain('variable "ledger_location"');
+    expect(tf).not.toContain("var.ledger_database_id");
+    expect(readme).toContain("No managed ledger is required by this surface");
+    expect(readme).not.toContain("firestore, secretmanager");
+    expect(readme).not.toContain("ledger_database_id");
+    const contract = parseIdempotencyStoreContract(
+      deploy["deploy/idempotency-store.json"] as string,
+    );
+    expect(contract).toEqual({
+      schemaVersion: 1,
+      serviceId: "payments",
+      required: false,
+      requirement: {
+        predicate: "approved_required_key_mutation_requires_durable_ledger",
+        operationIds: [],
+      },
+      backend: "none",
+      firestore: null,
+    });
   });
 
   it("uses durable remote state and never auto-applies (plan-only pipeline)", () => {
@@ -674,6 +981,32 @@ describe("GCP-native deploy (single owner per concern)", () => {
     expect(cb).toContain("$BUILD_ID");
     expect(cb).not.toContain("$SHORT_SHA");
   });
+
+  it.each(["prod", "test"])(
+    "propagates the AIR %s environment into every deployment default",
+    (environment) => {
+      const scoped = structuredClone(air);
+      scoped.service.environment = environment;
+      const deploy = generateDeploy(scoped);
+      const cloudBuild = deploy["deploy/cloudbuild.yaml"] as string;
+      const variables = deploy["deploy/terraform/variables.tf"] as string;
+      const readme = deploy["deploy/README.md"] as string;
+      const env = JSON.parse(deploy["deploy/env.schema.json"] as string);
+
+      expect(cloudBuild).toContain(`_ANVIL_ENV: ${environment}`);
+      expect(variables).toMatch(
+        new RegExp(`variable "anvil_env" \\{[\\s\\S]*?default = "${environment}"`),
+      );
+      expect(readme).toContain(`--env ${environment} --project YOUR_PROJECT`);
+      expect(readme).toContain(`_ANVIL_ENV=${environment}`);
+      expect(readme).toContain("That value also selects the outbound credential");
+      expect(readme).toContain("Proof gates stay separate");
+      expect(readme).toContain("Conformance never performs");
+      expect(readme).toContain("a live mutation");
+      expect(env.properties.ANVIL_ENV.default).toBe(environment);
+      expect(env.properties.ANVIL_ENV.enum).toContain(environment);
+    },
+  );
 
   it("has exactly one owner for the image tag and never leaks PROJECT/REGION placeholders", () => {
     const { files } = generateBundle(air);
@@ -748,6 +1081,14 @@ describe("example synthesis (mock + loopback inputs)", () => {
     expect(exampleFromSchema({ properties: { id: { type: "string" } } })).toEqual({
       id: "example",
     });
+  });
+
+  it("synthesizes format-valid strings without changing the familiar default", () => {
+    expect(exampleFromSchema({ type: "string" })).toBe("example");
+    expect(exampleFromSchema({ type: "string", format: "date" })).toBe("2026-07-09");
+    expect(exampleFromSchema({ type: "string", format: "date-time" })).toBe("2026-07-09T00:00:00Z");
+    expect(exampleFromSchema({ type: "string", minLength: 9 })).toBe("examplexx");
+    expect(exampleFromSchema({ type: "string", maxLength: 3 })).toBe("exa");
   });
 
   it("always synthesizes at least {} for a required whole-projection body", () => {

@@ -28,6 +28,7 @@ import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
+import { locateGatewayWorkspace } from "./gateway-workspace.js";
 import { annotate } from "./meta.js";
 import { loadAir, resolveAirPath } from "./shared.js";
 
@@ -73,7 +74,7 @@ export function registerApprove(parent: Command, ctx: CommandContext): void {
       .command("approve")
       .summary("Approve operations so they are exposed by the generated artifacts.")
       .description(
-        "Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together; existing certification records, reports, and target kits are preserved but become stale when the approval state changes.",
+        "Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together. Receipt-bound gateway imports refuse in-place approval and provide the exact manifest re-import command so import-to-approval lineage stays immutable.",
       )
       .argument("<path>", "generated bundle directory or air.yaml")
       .argument("<operation-ids...>", "operation ids to approve")
@@ -101,6 +102,9 @@ export function runApprove(path: string, ids: string[], io: CliIO, deps: Approve
   const newlyApproved = requested.filter(
     (id) => air.operations.find((op) => op.id === id)?.state !== "approved",
   );
+  if (newlyApproved.length > 0) {
+    assertImmutableGatewayLineage(existingFiles, bundleDir, "Operation approval", newlyApproved);
+  }
 
   approveOperations(air, requested);
   const result = reprojectBundleAtomically(
@@ -131,6 +135,85 @@ export function runApprove(path: string, ids: string[], io: CliIO, deps: Approve
 }
 
 /**
+ * A gateway receipt is an immutable compile input/output proof. Approval is a
+ * compile input, so it must arrive through the manifest and produce a new
+ * receipt; mutating receipt-bound output would turn provenance into a stale
+ * after-the-fact annotation.
+ */
+function assertImmutableGatewayLineage(
+  files: Record<string, string>,
+  bundleDir: string,
+  action: string,
+  operationIds: readonly string[] = [],
+): void {
+  const text = files["import.receipt.json"];
+  if (text === undefined) return;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new Error(
+      `${action} refused: gateway import.receipt.json is not valid JSON. Verify or re-import the bundle before changing approval state.`,
+    );
+  }
+  const parsed = GatewayImportReceiptView.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(
+      `${action} refused: gateway import.receipt.json is not a valid receipt view. Verify or re-import the bundle before changing approval state.`,
+    );
+  }
+
+  const view = parsed.data;
+  const identity = view.selection.identity;
+  const quote = (value: string): string => JSON.stringify(value);
+  const workspaceRoot = locateGatewayWorkspace(bundleDir, view.importId);
+  const root = workspaceRoot ?? "<workspace-root>";
+  const rawExport = join(root, ".anvil", "imports", view.importId, "raw", "export.bin");
+  const flags = [
+    `--vendor ${quote(view.selection.vendor)}`,
+    `--api ${quote(view.selection.apiId)}`,
+    ...(identity && identity.gatewayIdSource !== "unscoped"
+      ? [`--gateway-id ${quote(identity.gatewayId)}`, "--strict-identity"]
+      : []),
+    ...(identity ? [`--revision ${quote(identity.revision)}`] : []),
+    ...(identity ? [`--environment ${quote(identity.environment)}`] : []),
+    ...(identity ? [`--service ${quote(identity.serviceId)}`] : []),
+    ...(view.selection.archiveEntry ? [`--entry ${quote(view.selection.archiveEntry)}`] : []),
+    ...(view.lockedSource
+      ? [
+          `--spec ${quote(
+            join(
+              root,
+              ".anvil",
+              "sources",
+              view.lockedSource.snapshotId,
+              "raw",
+              view.contract.compilerSource.entrypoint,
+            ),
+          )}`,
+        ]
+      : []),
+    ...(view.runtime ? [`--gateway-url ${quote(view.runtime.gatewayUrl)}`] : []),
+    "--manifest <review.yaml>",
+    `--root ${quote(root)}`,
+    `--out ${quote(identity ? bundleDir : `${bundleDir}.reviewed`)}`,
+  ];
+  const operations =
+    operationIds.length > 0 ? ` Requested operation(s): ${operationIds.join(", ")}.` : "";
+  throw new Error(
+    `${action} refused: ${bundleDir} is bound to immutable gateway receipt ${view.importId}; in-place approval would sever its import-to-approval lineage.${operations}\n` +
+      "Record the reviewed operation/capability state and any required confirmation, idempotency, and auth semantics in a supplemental manifest, then re-import the preserved export so those decisions are receipt-bound:\n" +
+      `  anvil estate import ${quote(rawExport)} ${flags.join(" ")}\n` +
+      (workspaceRoot
+        ? `Anvil located the receipt workspace at ${quote(workspaceRoot)}.\n`
+        : "Anvil could not locate the private receipt workspace from this bundle; replace <workspace-root> with the root originally passed to estate import.\n") +
+      (identity
+        ? "The verified bundle at the same stable gateway coordinate can then transition atomically."
+        : "This is a legacy receipt without first-class identity, so use the new output directory shown above."),
+  );
+}
+
+/**
  * Persist any AIR mutation through the one safe reprojection path. The caller
  * mutates an in-memory AIR document; this function regenerates every
  * compiler-owned projection, verifies exact bytes and surface agreement, then
@@ -153,6 +236,9 @@ export function reprojectBundleAtomically(
   const projectionsChanged = Object.entries(generated.files).some(
     ([rel, contents]) => existingFiles[rel] !== contents,
   );
+  if (projectionsChanged) {
+    assertImmutableGatewayLineage(existingFiles, bundleDir, "Bundle reprojection");
+  }
 
   const stageDir = makeHiddenSibling(bundleDir, "reproject-stage");
   let retainedBackup: string | undefined;

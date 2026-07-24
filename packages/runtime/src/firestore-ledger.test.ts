@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { loadRuntimeConfig } from "./config.js";
+import { DEFAULT_UPSTREAM_TIMEOUT_MS, loadRuntimeConfig } from "./config.js";
 import {
   DEFAULT_LEDGER_RESULT_TTL_SECONDS,
   FirestoreLedger,
   InMemoryLedger,
+  MAX_LEDGER_RESULT_BYTES,
   probeLedgerReadiness,
   resolveLedger,
 } from "./idempotency.js";
@@ -25,7 +26,7 @@ function conflictResponse(status = 409): Response {
 }
 
 function document(
-  fields: Record<string, { stringValue?: string; timestampValue?: string }>,
+  fields: Record<string, { integerValue?: string; stringValue?: string; timestampValue?: string }>,
   updateTime = UPDATE_1,
 ) {
   return { fields, updateTime };
@@ -64,9 +65,12 @@ describe("FirestoreLedger", () => {
       now: () => Date.parse(NOW),
     });
 
-    await expect(ledger.reserve("same key", "fingerprint-a")).resolves.toEqual({
-      outcome: "reserved",
-    });
+    await expect(
+      ledger.reserve("same key", "fingerprint-a", {
+        operationId: "payments.refund.create",
+        traceId: "trace_123",
+      }),
+    ).resolves.toMatchObject({ outcome: "reserved" });
     await expect(ledger.complete("same key", { id: "result-1" })).resolves.toBeUndefined();
 
     expect(calls).toHaveLength(2);
@@ -74,11 +78,19 @@ describe("FirestoreLedger", () => {
       /firestore\.googleapis\.com\/v1\/projects\/my-project\/databases\/payments-ledger\/documents\/anvil_idempotency_[a-f0-9]{16}\?documentId=[a-f0-9]{64}$/,
     );
     expect(new Headers(calls[0]?.init?.headers).get("authorization")).toBe("Bearer access-token");
+    const reservation = JSON.parse(String(calls[0]?.init?.body));
+    expect(reservation.fields.status.stringValue).toBe("in_progress");
+    expect(reservation.fields.reservation_id.stringValue).toMatch(/^[\x21-\x7e]{1,128}$/);
+    expect(reservation.fields.started_at.timestampValue).toBe(NOW);
+    expect(reservation.fields.operation_id.stringValue).toBe("payments.refund.create");
+    expect(reservation.fields.trace_id.stringValue).toBe("trace_123");
     expect(calls[1]?.url).toContain(`currentDocument.updateTime=${encodeURIComponent(UPDATE_1)}`);
     const completion = JSON.parse(String(calls[1]?.init?.body));
     expect(completion.fields.result_json.stringValue).toBe('{"id":"result-1"}');
+    expect(completion.fields.response_status.integerValue).toBe("200");
     expect(completion.fields.expires_at.timestampValue).toBe("2026-07-30T10:00:00.000Z");
     expect(calls[1]?.url).toContain("updateMask.fieldPaths=expires_at");
+    expect(calls[1]?.url).toContain("updateMask.fieldPaths=response_status");
     expect(JSON.stringify(calls)).not.toContain("same key");
   });
 
@@ -104,7 +116,247 @@ describe("FirestoreLedger", () => {
     await expect(ledger.reserve("key", "fingerprint-a")).resolves.toEqual({
       outcome: "replay",
       result: { id: "result-1" },
+      status: 200,
     });
+  });
+
+  it("preserves the original successful status in a completed replay", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(conflictResponse())
+      .mockResolvedValueOnce(
+        jsonResponse(
+          document({
+            status: { stringValue: "completed" },
+            fingerprint: { stringValue: "fingerprint-a" },
+            result_json: { stringValue: '{"id":"result-1"}' },
+            response_status: { integerValue: "201" },
+            expires_at: { timestampValue: FUTURE_EXPIRY },
+          }),
+        ),
+      ) as typeof fetch;
+    const ledger = new FirestoreLedger("firestore://my-project/payments-ledger/payments", {
+      fetchImpl,
+      metadataToken: async () => "access-token",
+    });
+
+    await expect(ledger.reserve("key", "fingerprint-a")).resolves.toEqual({
+      outcome: "replay",
+      result: { id: "result-1" },
+      status: 201,
+    });
+  });
+
+  it("completes and replays a maximum-size quote-heavy result through the REST envelope", async () => {
+    const quoteHeavy = '"'.repeat((MAX_LEDGER_RESULT_BYTES - 2) / 2);
+    expect(Buffer.byteLength(JSON.stringify(quoteHeavy), "utf8")).toBe(MAX_LEDGER_RESULT_BYTES);
+    let completionFields: Record<
+      string,
+      { integerValue?: string; stringValue?: string; timestampValue?: string }
+    > = {};
+    let call = 0;
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      call += 1;
+      if (call === 1) return jsonResponse(document({}, UPDATE_1));
+      if (call === 2) {
+        completionFields = JSON.parse(String(init?.body)).fields;
+        const responseDocument = document(completionFields, UPDATE_2);
+        expect(Buffer.byteLength(JSON.stringify(responseDocument), "utf8")).toBeGreaterThan(
+          1024 * 1024,
+        );
+        return jsonResponse(responseDocument);
+      }
+      if (call === 3) return conflictResponse();
+      if (call === 4) return jsonResponse(document(completionFields, UPDATE_2));
+      throw new Error("unexpected request");
+    }) as typeof fetch;
+    const ledger = new FirestoreLedger("firestore://my-project/payments-ledger/payments", {
+      fetchImpl,
+      metadataToken: async () => "access-token",
+      now: () => Date.parse(NOW),
+    });
+
+    await ledger.reserve("key", "fingerprint-a");
+    await expect(ledger.complete("key", quoteHeavy, 201)).resolves.toBeUndefined();
+    await expect(ledger.reserve("key", "fingerprint-a")).resolves.toEqual({
+      outcome: "replay",
+      result: quoteHeavy,
+      status: 201,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it("fails closed on a malformed completed response status", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(conflictResponse())
+      .mockResolvedValueOnce(
+        jsonResponse(
+          document({
+            status: { stringValue: "completed" },
+            fingerprint: { stringValue: "fingerprint-a" },
+            result_json: { stringValue: '{"id":"result-1"}' },
+            response_status: { integerValue: "503" },
+            expires_at: { timestampValue: FUTURE_EXPIRY },
+          }),
+        ),
+      ) as typeof fetch;
+    const ledger = new FirestoreLedger("firestore://my-project/payments-ledger/payments", {
+      fetchImpl,
+      metadataToken: async () => "access-token",
+    });
+
+    await expect(ledger.reserve("key", "fingerprint-a")).rejects.toThrow(/200 to 299/);
+  });
+
+  it("recovers ownership when a fixed-id create commits but its response is lost", async () => {
+    let reservationId = "";
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      calls.push(init?.method ?? "GET");
+      if (calls.length === 1) {
+        const body = JSON.parse(String(init?.body));
+        reservationId = body.fields.reservation_id.stringValue;
+        throw new Error("connection reset after commit");
+      }
+      if (calls.length === 2) return conflictResponse();
+      if (calls.length === 3) {
+        return jsonResponse(
+          document({
+            status: { stringValue: "in_progress" },
+            fingerprint: { stringValue: "fingerprint-a" },
+            reservation_id: { stringValue: reservationId },
+          }),
+        );
+      }
+      throw new Error("unexpected request");
+    }) as typeof fetch;
+    const ledger = new FirestoreLedger("firestore://my-project/payments-ledger/payments", {
+      fetchImpl,
+      metadataToken: async () => "access-token",
+      reservationId: () => "reservation-1",
+      sleep: async () => {},
+    });
+
+    const recovered = await ledger.reserve("key", "fingerprint-a");
+    expect(recovered).toMatchObject({
+      outcome: "reserved",
+    });
+    expect(recovered.reference).toMatch(
+      /^firestore\/anvil_idempotency_[a-f0-9]{16}\/[a-f0-9]{64}$/,
+    );
+    expect(recovered.reference).not.toContain("key");
+    expect(recovered.reference).not.toContain("my-project");
+    expect(reservationId).toBe("reservation-1");
+    expect(calls).toEqual(["POST", "POST", "GET"]);
+  });
+
+  it("never claims another invocation's in-progress reservation", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(conflictResponse())
+      .mockResolvedValueOnce(
+        jsonResponse(
+          document({
+            status: { stringValue: "in_progress" },
+            fingerprint: { stringValue: "fingerprint-a" },
+            reservation_id: { stringValue: "another-reservation" },
+          }),
+        ),
+      ) as typeof fetch;
+    const ledger = new FirestoreLedger("firestore://my-project/payments-ledger/payments", {
+      fetchImpl,
+      metadataToken: async () => "access-token",
+      reservationId: () => "reservation-1",
+    });
+
+    await expect(ledger.reserve("key", "fingerprint-a")).resolves.toMatchObject({
+      outcome: "in_progress",
+    });
+  });
+
+  it("reconciles an exact completion whose PATCH response was lost", async () => {
+    let completionFields: Record<
+      string,
+      { integerValue?: string; stringValue?: string; timestampValue?: string }
+    > = {};
+    const methods: string[] = [];
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      methods.push(method);
+      if (methods.length === 1) return jsonResponse(document({}, UPDATE_1));
+      if (methods.length === 2) {
+        completionFields = JSON.parse(String(init?.body)).fields;
+        throw new Error("connection reset after commit");
+      }
+      if (methods.length === 3) {
+        return jsonResponse({ error: { code: 9, status: "FAILED_PRECONDITION" } }, 400);
+      }
+      if (methods.length === 4) return jsonResponse(document(completionFields, UPDATE_2));
+      throw new Error("unexpected request");
+    }) as typeof fetch;
+    const ledger = new FirestoreLedger("firestore://my-project/payments-ledger/payments", {
+      fetchImpl,
+      metadataToken: async () => "access-token",
+      now: () => Date.parse(NOW),
+      reservationId: () => "reservation-1",
+      sleep: async () => {},
+    });
+
+    await ledger.reserve("key", "fingerprint-a");
+    await expect(ledger.complete("key", { id: "result-1" }, 201)).resolves.toBeUndefined();
+    expect(methods).toEqual(["POST", "PATCH", "PATCH", "GET"]);
+  });
+
+  it("reconciles after every bounded PATCH attempt loses its response", async () => {
+    let completionFields: Record<
+      string,
+      { integerValue?: string; stringValue?: string; timestampValue?: string }
+    > = {};
+    let call = 0;
+    const fetchImpl = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      call += 1;
+      if (call === 1) return jsonResponse(document({}, UPDATE_1));
+      if (call >= 2 && call <= 4) {
+        completionFields = JSON.parse(String(init?.body)).fields;
+        throw new Error("connection reset after commit");
+      }
+      if (call === 5) return jsonResponse(document(completionFields, UPDATE_2));
+      throw new Error("unexpected request");
+    }) as typeof fetch;
+    const ledger = new FirestoreLedger("firestore://my-project/payments-ledger/payments", {
+      fetchImpl,
+      metadataToken: async () => "access-token",
+      now: () => Date.parse(NOW),
+      reservationId: () => "reservation-1",
+      sleep: async () => {},
+    });
+
+    await ledger.reserve("key", "fingerprint-a");
+    await expect(ledger.complete("key", { id: "result-1" }, 202)).resolves.toBeUndefined();
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+  });
+
+  it("bounds and backs off transient Firestore retries", async () => {
+    const sleeps: number[] = [];
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({}, 503))
+      .mockResolvedValueOnce(jsonResponse({}, 503))
+      .mockResolvedValueOnce(jsonResponse(document({}, UPDATE_1))) as typeof fetch;
+    const ledger = new FirestoreLedger("firestore://my-project/payments-ledger/payments", {
+      fetchImpl,
+      metadataToken: async () => "access-token",
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await expect(ledger.reserve("key", "fingerprint-a")).resolves.toMatchObject({
+      outcome: "reserved",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(sleeps).toEqual([50, 100]);
   });
 
   it("fails closed when an idempotency key belongs to a different request", async () => {
@@ -153,7 +405,7 @@ describe("FirestoreLedger", () => {
       now: () => Date.parse("2026-07-23T10:00:00.000Z"),
     });
 
-    await expect(ledger.reserve("key", "fingerprint-a")).resolves.toEqual({
+    await expect(ledger.reserve("key", "fingerprint-a")).resolves.toMatchObject({
       outcome: "in_progress",
     });
     expect(calls).toHaveLength(2);
@@ -188,7 +440,7 @@ describe("FirestoreLedger", () => {
       now: () => Date.parse(NOW),
     });
 
-    await expect(ledger.reserve("reusable-key", "new-fingerprint")).resolves.toEqual({
+    await expect(ledger.reserve("reusable-key", "new-fingerprint")).resolves.toMatchObject({
       outcome: "reserved",
     });
     expect(calls.map((call) => call.method)).toEqual(["POST", "GET", "DELETE", "POST"]);
@@ -411,5 +663,23 @@ describe("FirestoreLedger", () => {
         ANVIL_LEDGER_RESULT_TTL_SECONDS: "0",
       } as NodeJS.ProcessEnv),
     ).toThrow(/ANVIL_LEDGER_RESULT_TTL_SECONDS/);
+  });
+
+  it("loads a bounded upstream deadline and rejects ambiguous numeric input", () => {
+    expect(loadRuntimeConfig({} as NodeJS.ProcessEnv).upstreamTimeoutMs).toBe(
+      DEFAULT_UPSTREAM_TIMEOUT_MS,
+    );
+    expect(
+      loadRuntimeConfig({
+        ANVIL_UPSTREAM_TIMEOUT_MS: "1234",
+      } as NodeJS.ProcessEnv).upstreamTimeoutMs,
+    ).toBe(1_234);
+    for (const invalid of ["0", "99", "30001", "NaN", "-1", "1.5"]) {
+      expect(() =>
+        loadRuntimeConfig({
+          ANVIL_UPSTREAM_TIMEOUT_MS: invalid,
+        } as NodeJS.ProcessEnv),
+      ).toThrow(/ANVIL_UPSTREAM_TIMEOUT_MS/);
+    }
   });
 });

@@ -59,8 +59,11 @@
           "state": "blocked"
         }
       ],
-      "opaque": [],
-      "diagnostics": 3
+      "opaque": [
+        "gateway/opaque_policy: /services/1/routes/1",
+        "gateway/opaque_policy: /services/1/routes/2/expression"
+      ],
+      "diagnostics": 5
     }
   ]
 }

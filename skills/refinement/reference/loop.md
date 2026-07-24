@@ -45,6 +45,7 @@ it, and whether that skill is implemented today.
 | `indistinct_operation_descriptions` | usability | medium | disambiguate-operations | — |
 | `operation_lacks_intent_examples` | usability | low | author-intent-examples | — |
 | `schema_too_large_for_disclosure` | usability | info | reduce-schema-disclosure | — |
+| `ui_projection_contract` | usability | high | investigate-ui-projection | yes |
 | `weak_operation_name` | usability | low | rename-operation | — |
 
 ## A refinement pack

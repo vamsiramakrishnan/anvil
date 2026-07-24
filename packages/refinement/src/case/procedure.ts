@@ -194,11 +194,61 @@ const enrichErrors: InvestigationProcedure = {
   ],
 };
 
+const investigateUiProjection: InvestigationProcedure = {
+  skill: "investigate-ui-projection",
+  question: (t) =>
+    `Investigate whether ${targetNoun(t)} is a stable business capability or transient screen plumbing.`,
+  searchHints: [
+    "frontend call sites and the user actions that trigger this operation",
+    "the server handler, serializer, downstream calls, and persistence writes",
+    "contract and integration tests that define behavior independently of one screen",
+    "API ownership, versioning, and any direct domain API serving the same intent",
+  ],
+  steps: [
+    {
+      phase: "research",
+      instruction:
+        "Trace every supplied frontend caller to the handler and record the user intent separately from the screen layout.",
+    },
+    {
+      phase: "research",
+      instruction:
+        "Trace the handler through serializers, downstream calls, persistence writes, authorization checks, and idempotency handling.",
+    },
+    {
+      phase: "research",
+      instruction:
+        "Inspect contract/integration tests, ownership, versioning, and sibling domain APIs to learn whether behavior is stable outside this view.",
+    },
+    {
+      phase: "extract",
+      instruction:
+        "Record separate claims for business intent, UI-only composition, hidden writes, authority, ownership, and lifecycle; preserve contradictions.",
+    },
+    {
+      phase: "synthesize",
+      instruction:
+        "Only when verified evidence proves a stable capability, propose a precise description grounded by that evidence. Otherwise emit no proposal and state what evidence or owner decision is missing.",
+    },
+    {
+      phase: "critique",
+      instruction:
+        "Try to falsify stability: look for screen-specific fields, per-view branching, duplicate domain APIs, undocumented persistence, and frontend-only version coupling.",
+    },
+    {
+      phase: "test",
+      instruction:
+        "Record contract, authorization, write-safety, and routing checks that would prove the retained capability; never invent a replacement facade.",
+    },
+  ],
+};
+
 const PROCEDURES: Record<string, InvestigationProcedure> = {
   "describe-field": describeField,
   "describe-operation": describeOperation,
   "generate-examples": generateExamples,
   "enrich-errors": enrichErrors,
+  "investigate-ui-projection": investigateUiProjection,
 };
 
 /**

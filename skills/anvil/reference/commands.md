@@ -182,6 +182,19 @@ Options:
 
 Report drift between a stored capability and fresh discovery.
 
+#### `anvil capability compose`  *(mutates)*
+`anvil capability compose [options] <bundles...>`
+
+Audit cross-source output overlap and initialize a bound review.
+
+Deterministic and offline. Accepts two or more verified generated bundle directories without modifying them, then writes new audit/review artifacts outside those inputs. It extracts output data-point signatures and reports evidence candidates with auth and safety constraints intersected rather than weakened. Structural similarity never selects an authoritative source. `--init-review` writes an unresolved manifest; edit it with local digest-bound evidence and rerun using `--review`. The command never approves, builds, deploys, or generates a multi-source MCP server.
+
+Options:
+- `--out <file>` — write the versioned composition audit JSON here
+- `--init-review <file>` — write a new unresolved review-manifest scaffold; refuses an existing file
+- `--review <file>` — apply an edited, digest-bound review manifest on a deterministic rerun
+- `--json` — also emit the complete audit report as JSON on stdout
+
 ### `anvil refine`  *(mutates)*
 `anvil refine [options] [command]`
 
@@ -306,7 +319,7 @@ Deterministically validate the case's proposal against AIR.
 Drive a live coding agent against the case.
 
 Options:
-- `--command <command>` — agent CLI to drive (default: claude)
+- `--command <command>` — agent CLI to drive (default: claude; codex is protocol-aware)
 - `--model <model>` — model passed through to the agent CLI
 - `--allow-degraded-native` — proceed even when native tooling is degraded
 
@@ -349,9 +362,19 @@ Options:
 ### `anvil estate`
 `anvil estate [options] [command]`
 
-Inventory and import gateway estates (Apigee, Kong, WSO2, MuleSoft, API Connect).
+Assess explicitly tiered gateway inputs and adopt selected APIs.
 
-Reads a vendor gateway export — a bare config document, or a ZIP/JAR archive (decoded through the hardened archive harness: zip-slip, symlink, and bomb defences with every rejection reported) — and normalizes it through the vendor adapter into the one compiler pipeline. `inventory` lists the estate's APIs without compiling anything; `import` compiles one API into a normal Anvil bundle, where the usual approval gate applies: risky operations land review_required and are not exposed until approved.
+Run `estate support [vendor]` first: WSO2 supports native estates, Kong one native declarative state, and Apigee/MuleSoft/API Connect normalized interchange. Reads an adapter-supported offline gateway artifact: a bare document, a ZIP/JAR decoded through the hardened archive harness, or a native WSO2 apictl collection directory. The container reader is not a general native-artifact translator; run `estate audit` and read the gateway skill reference for each adapter's exact input boundary. `inventory`, `audit`, and `plan` assess the estate without exposing it; `import` resolves one exact API/version/revision/environment coordinate into a receipt-bound bundle. Risky operations remain unexposed. Review accepted semantics in a supplemental manifest and re-import; receipt-bound output cannot be approved in place.
+
+#### `anvil estate support`
+`anvil estate support [options] [vendor]`
+
+Show the versioned native-vs-normalized gateway support contract.
+
+Reports what artifact shapes Anvil actually accepts, separately from the semantics an adapter models and the fixtures/scale proof behind that claim. Mashery is research-only and is not selectable by inventory/import.
+
+Options:
+- `--json` — emit the stable machine-readable support registry
 
 #### `anvil estate inventory`
 `anvil estate inventory [options] <export>`
@@ -361,7 +384,48 @@ List the APIs in a gateway export without compiling anything.
 Options:
 - `--vendor <vendor>` — gateway vendor (kong | apigee | wso2 | mulesoft | api_connect)
 - `--entry <path>` — archive entry holding the config, when the archive has several
+- `--gateway-id <id>` — stable gateway control-plane/org/instance id included in the inventory digest (default unscoped)
+- `--query <text>` — filter the view by API id or name (case-insensitive)
+- `--owner <owner>` — filter the view by exact API owner
+- `--lifecycle <state>` — filter the view by exact lifecycle state
+- `--limit <count>` — maximum API rows in the view (default 50)
+- `--all` — return every matching API instead of applying --limit
+- `--summary` — emit counts and diagnostics without per-API rows
 - `--json` — emit the inventory snapshot as JSON
+
+#### `anvil estate audit`
+`anvil estate audit [options] <export>`
+
+Audit a whole gateway estate without compiling or exposing any API.
+
+Builds a deterministic, machine-readable adoption report over the complete inventory: adapter capability gaps, contract fidelity, route ambiguity, authentication evidence, opaque policy findings, accountable owners, and exact next actions. A completed audit exits zero by default even when it finds blockers; use --check to make it a CI gate.
+
+Options:
+- `--vendor <vendor>` — gateway vendor (kong | apigee | wso2 | mulesoft | api_connect)
+- `--entry <path>` — archive entry holding the config, when the archive has several
+- `--gateway-id <id>` — stable gateway control-plane/org/instance id included in the audit baseline (default unscoped)
+- `--json` — emit the complete audit report as one JSON document
+- `--check` — exit non-zero when findings meet --fail-on
+- `--fail-on <level>` — CI threshold: blocked | review-required (used with --check)
+
+#### `anvil estate plan`  *(mutates)*
+`anvil estate plan [options] <export>`
+
+Build a resumable, baseline-aware adoption plan for a gateway estate.
+
+Inventories and audits the complete adapter-supported document, then emits one deterministic adoption-plan artifact for bulk triage while import remains API-by-API. Use --init-selection to create an overwrite-safe coordinate queue whose rows all start in triage; reviewers may mix deterministic_only, agent_assisted, and manual_review per API. The plan captures explicit triage/selected/deferred decisions, accountable owners, dispositions, baseline fingerprints, owner workstreams, stage status, and concrete next actions. Ready rows include an import command template with every reviewed coordinate filled; replace only <export> with the local path. Optional CASE/distill investigation lanes are proposal-only; inspect, lint, receipt-bound import, and verify remain authoritative. Pass a reviewed prior plan with --baseline and --check to fail on re-export, adapter, finding, API, or selection drift.
+
+Options:
+- `--vendor <vendor>` — gateway vendor (kong | apigee | wso2 | mulesoft | api_connect)
+- `--entry <path>` — archive entry holding the config, when the archive has several
+- `--gateway-id <id>` — stable gateway control-plane/org/instance id used by every strict import command
+- `--selection <path>` — versioned YAML/JSON selection file with API decisions, intent, owner, contract, and gateway URL
+- `--init-selection <path>` — write a new coordinate-aware triage selection file (never auto-selects; refuses existing files)
+- `--select <id>` — select one exact inventory API id (repeatable; ambiguous revisions/environments require --selection)
+- `--baseline <path>` — reviewed prior adoption-plan JSON; selections are inherited when no new selection is supplied
+- `--out <path>` — write the complete deterministic adoption-plan JSON here
+- `--check` — require --baseline and exit non-zero when source, API, finding, adapter, or selection state changed
+- `--json` — emit the complete adoption plan as JSON instead of the bounded human view
 
 #### `anvil estate import`  *(mutates)*
 `anvil estate import [options] <export>`
@@ -371,14 +435,20 @@ Import one API from a gateway export and compile it into a bundle.
 Options:
 - `--vendor <vendor>` — gateway vendor (kong | apigee | wso2 | mulesoft | api_connect)
 - `--api <id>` — API id from `estate inventory` (optional when the estate has one)
+- `--gateway-id <id>` — stable gateway control-plane/org/instance id when the export does not carry one
+- `--strict-identity` — require --gateway-id and block unproven required issuer/audience/carrier/principal dimensions
+- `--environment <id>` — deployment environment; required when the selected API exists in several
+- `--api-version <version>` — semantic API version; required when a gateway exposes several versions independently of revisions
+- `--revision <revision>` — gateway revision; required when the selected API has several (for native WSO2: working-copy or revision-N)
 - `--entry <path>` — archive entry holding the config, when the archive has several
 - `--spec <path>` — original OpenAPI/Swagger contract; lock it and apply gateway policies instead of compiling route-only synthesis
+- `--attest-spec-override <reason>` — explicit WSO2 attestation when --spec cannot exactly match one embedded Definitions contract; recorded in the private receipt
 - `--manifest <path>` — supplemental Anvil manifest, including exact-id capability reviews, applied in the receipt-bound compile
 - `--gateway-url <url>` — operator-attested public HTTPS gateway base URL; required with --spec so generated tools cannot bypass the gateway
 - `--root <dir>` — workspace root for the locked source under .anvil/sources
-- `--service <id>` — override the derived service id
-- `--out <dir>` — bundle output directory (default generated/<service-id>)
-- `--replace-derived` — replace a receipt-backed bundle whose output lineage became stale after approval, only after its recorded current digest verifies; verified later lifecycle artifacts are explicitly discarded
+- `--service <id>` — reviewed agent-facing service id (default derives from gateway/API/revision/environment)
+- `--out <dir>` — bundle output directory (default generated/<service-id>/<environment-revision-identity>)
+- `--replace-derived` — replace verified derived output for the same stable gateway coordinate when approval made it stale or export/inventory evidence changed; verified later lifecycle artifacts are explicitly discarded
 - `--json` — emit a machine-readable import report (for CI oracles)
 
 #### `anvil estate verify`
@@ -419,7 +489,7 @@ Options:
 
 Approve operations so they are exposed by the generated artifacts.
 
-Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together; existing certification records, reports, and target kits are preserved but become stale when the approval state changes.
+Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together. Receipt-bound gateway imports refuse in-place approval and provide the exact manifest re-import command so import-to-approval lineage stays immutable.
 
 ### `anvil lint`
 `anvil lint [options] <path>`
@@ -436,7 +506,7 @@ Compile one approved capability into an aligned CLI + MCP + skill bundle.
 Narrows the AIR document to the capability's approved operations and reachable schemas, then reuses the whole-service generator, so the capability bundle is the same aligned projection of a smaller model. Refuses (with a structured error) a capability that is missing, not lifecycle-approved, or would build empty. Stamps a content-addressed bundle.json (capabilityHash + contractHash shared by every surface); rebuilding unchanged input reproduces identical hashes.
 
 Options:
-- `--out <dir>` — bundle output directory (default generated/<capability-artifact-id>)
+- `--out <dir>` — bundle output directory (default generated/<capability-artifact-id>/<deployment-namespace>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
 
 ### `anvil review`  *(mutates)*
@@ -479,7 +549,7 @@ Prove the CLI, MCP, and skill surfaces agree on every operation, end-to-end.
 
 Tri-surface conformance for a generated bundle. Boots the bundle's mock upstream, then drives every approved operation through BOTH the generated MCP server (mcp/server.js, over the real MCP transport) and the generated CLI entrypoint (cli/<svc>.mjs, as a child process) against that mock. Checks: the skill, CLI catalog, and MCP tool list name the same operations with the same public handles (surface-agreement); the skill documents the exact confirmation/idempotency/retry posture the runtime enforces (skill-claim); the same input reaches the wire identically on both surfaces and matches the AIR contract (wire-agreement); and a confirmation-gated mutation refuses without --confirm, before any side effect, on both surfaces (gate-agreement). Writes conformance.report.json into the bundle. Exit 0 only when no check fails.
 
-With --live <config.json>, probes a REAL deployed MCP endpoint instead of the mock: it verifies the deployed server serves exactly the certified surface and that its confirmation gate refuses in production, and invokes only the reads the config opts into — it never drives a real mutation. The config names the endpoint (mcpUrl) and auth headers, whose ${VAR} values resolve from the environment; the onus of correct config is on the operator. Writes conformance.live.report.json.
+With --live <config.json>, probes a REAL deployed MCP endpoint instead of the mock. Before any tool call, the endpoint must attest the exact SHA-256 of the local deploy/runtime artifact. It then verifies the certified surface and production confirmation gate, and invokes only reads explicitly opted into by the operator — never a real mutation. For delegated/OBO identity, at least one successful read is required for every distinct identity and credential contract group; a write-only group remains unverified and the separate identity-live gate fails. /readyz, OIDC discovery, JWKS reachability, and matching tool names alone never prove readiness. The config names the endpoint (mcpUrl) and auth headers, whose ${VAR} values resolve from the environment; the onus of correct config is on the operator. Writes conformance.live.report.json.
 
 Options:
 - `--live <config>` — probe a real deployed MCP endpoint named in this JSON config
@@ -513,9 +583,9 @@ Options:
 ### `anvil deploy`
 `anvil deploy [options] [command]`
 
-Print the Cloud Run deployment plan for a bundle.
+Inspect Cloud Run, credentials, and durable idempotency deployment plans.
 
-Plan only: Anvil prints generated Dockerfile/Terraform/env instructions. It does not call Cloud Run, apply Terraform, or hold cloud credentials.
+Plan and inspection only: Anvil prints generated Dockerfile/Terraform/env instructions and verifies the generated durable idempotency-store contract. It does not call Cloud Run, Firestore, apply Terraform, or hold cloud credentials.
 
 #### `anvil deploy cloud-run`
 `anvil deploy cloud-run [options] <dir>`
@@ -537,6 +607,22 @@ Options:
 - `--project <id>` — GCP project id for links and sm:// references
 - `--json` — emit one machine-readable credential plan
 - `--tfvars` — emit only Terraform auto-tfvars JSON for an external plan work directory
+
+#### `anvil deploy ledger`
+`anvil deploy ledger [options] <dir>`
+
+Inspect durable-write coverage and the generated Firestore ledger contract.
+
+Read-only and offline. Lists every approved write and its idempotency posture, verifies deploy/idempotency-store.json plus every compiler-owned generated byte against canonical AIR and persisted generator inputs, and prints the selected Firestore database/collection/ANVIL_LEDGER coordinate. Shared mode (default) uses an existing platform-owned trust-domain database; dedicated mode creates one capability-owned database. Static wiring is not live readiness: after applying the reviewed Terraform plan, require the deployed /readyz probe to return 200. Firestore Native is the built-in managed backend; Firebase client SDKs, AlloyDB, and Spanner are not silently substituted.
+
+Options:
+- `--project <id>` — resolve {project_id} in the planned ledger URI
+- `--database <id>` — exact Firestore Native database id, including (default)
+- `--database-mode <mode>` — shared (existing trust-domain database) or dedicated (create one database)
+- `--location <location>` — reviewed immutable Firestore location; required only in dedicated mode
+- `--ttl-seconds <seconds>` — completed replay-result retention (60..31536000; defaults from the generated contract)
+- `--json` — emit one machine-readable offline readiness report
+- `--tfvars` — emit only Terraform input JSON (requires --project and --database; dedicated also requires --location)
 
 ### `anvil target`  *(mutates)*
 `anvil target [options] <profile> <dir>`

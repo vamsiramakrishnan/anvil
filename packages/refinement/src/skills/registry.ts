@@ -138,12 +138,64 @@ const enrichErrors: RefinementSkill = {
   ],
 };
 
+/**
+ * Investigate whether a screen-shaped endpoint is a durable agent capability.
+ *
+ * This skill is deliberately asymmetric: it may turn verified behavioral
+ * evidence into a precise operation description, but it cannot approve,
+ * exclude, regroup, or invent a replacement facade. A view-specific result is
+ * still valuable as an evidence-bearing case with no proposal; the API owner
+ * makes the exposure decision in the receipt-bound manifest.
+ */
+const investigateUiProjection: RefinementSkill = {
+  name: "investigate-ui-projection",
+  version: 1,
+  triggers: ["ui_projection_contract"],
+  targetKind: "operation",
+  context: ["parent_operation", "capability", "source_evidence"],
+  evidence: {
+    allowed: [
+      "source_impl",
+      "test_fixture",
+      "spec",
+      "doc_example",
+      "postman",
+      "recorded_traffic",
+      "incident",
+    ],
+    minimumStrength: "authoritative",
+    minimumVerification: "verified",
+  },
+  output: {
+    predicates: ["operation.description"],
+    supportingPredicates: [
+      "operation.agent_capability",
+      "operation.ui_projection",
+      "operation.behavior",
+      "operation.ownership",
+    ],
+    fields: ["description"],
+  },
+  constraints: ["do_not_invent_business_rules", "preserve_domain_terms"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+    "description_nonempty",
+    "description_not_tautological",
+  ],
+};
+
 /** Every skill Anvil ships today. Executors are separate; these are semantics only. */
 export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   describeField,
   describeOperation,
   generateExamples,
   enrichErrors,
+  investigateUiProjection,
 ];
 
 /** Discover the available skills (stable order). */

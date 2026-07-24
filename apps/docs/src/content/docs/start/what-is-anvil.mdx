@@ -39,11 +39,14 @@ Every format lands in the same shared model and the same aligned outputs:
 - SOAP / WSDL (multi-file)
 - Postman Collections
 
-When the API lives behind a gateway instead of a spec file, Anvil imports the
-whole catalog of APIs behind it — its *estate*. [Apigee, Kong, WSO2, MuleSoft,
-and IBM API Connect](/anvil/concepts/gateway-estates/) exports are read by a
-vendor adapter and compiled through the same model, so auth plugins, product
-scopes, and quotas arrive as facts in the contract instead of tribal knowledge.
+When the API lives behind a gateway, Anvil can assess its *estate*, but the
+accepted bytes differ by vendor. WSO2 `apictl` collections are native
+estate input; Kong accepts one native declarative state file. Apigee, MuleSoft,
+and IBM API Connect currently require Anvil's documented normalized
+interchange—native proxy bundles, Mule JARs, and `x-ibm-configuration` are not
+decoded. Run `anvil estate support --json` for the versioned input, semantic,
+authority, fixture, and scale-proof contract before preparing a capture.
+[Read the exact boundaries →](/anvil/concepts/gateway-estates/)
 
 ## What it produces
 

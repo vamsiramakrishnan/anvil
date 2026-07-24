@@ -4,11 +4,17 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Operation } from "@anvil/air";
 import { compile } from "@anvil/compiler";
-import { generateBundle, writeBundle } from "@anvil/generators";
+import {
+  deploymentArtifactHash,
+  generateBundle,
+  readBundleDir,
+  writeBundle,
+} from "@anvil/generators";
 import { afterAll, describe, expect, it } from "vitest";
 import { ensureBundleNodeModules } from "./bundle-driver.js";
-import { LiveReport, runLiveConformance } from "./live.js";
+import { LiveReport, liveIdentityGate, liveIdentityReadiness, runLiveConformance } from "./live.js";
 
 /**
  * The live lane runs against a REAL HTTP MCP endpoint. In production that is a
@@ -29,12 +35,16 @@ afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 
-async function buildBundle(): Promise<string> {
+async function buildBundle(variant?: string): Promise<string> {
   const air = await compile({
     spec: read("payments/openapi.yaml"),
     manifest: read("payments/anvil.yaml"),
     serviceId: "payments",
   });
+  if (variant) {
+    const operation = air.operations[0];
+    if (operation) operation.description = `${operation.description} ${variant}`;
+  }
   const dir = mkdtempSync(join(tmpdir(), "anvil-live-"));
   dirs.push(dir);
   writeBundle(dir, generateBundle(air));
@@ -75,10 +85,10 @@ function startMock(dir: string): Promise<string> {
   });
 }
 
-/** Boot the generated Cloud Run server (runtime/server.js) and wait for /healthz. */
+/** Boot the exact bundled Cloud Run artifact and wait for /healthz. */
 async function startRuntime(dir: string, mockBase: string): Promise<string> {
   const port = await freePort();
-  const child = spawn(process.execPath, [join(dir, "runtime", "server.js")], {
+  const child = spawn(process.execPath, [join(dir, "deploy", "runtime", "server.js")], {
     env: {
       ...process.env,
       PORT: String(port),
@@ -104,6 +114,169 @@ async function startRuntime(dir: string, mockBase: string): Promise<string> {
 }
 
 describe("live conformance (against the generated Cloud Run server)", () => {
+  it("upgrades only a successful explicitly evidenced delegated read", async () => {
+    const air = await compile({
+      spec: read("payments/openapi.yaml"),
+      manifest: `operations:
+  getPayment:
+    state: approved
+    auth:
+      type: oauth2_on_behalf_of
+      principal: delegated
+      provider: { grant: token_exchange }
+`,
+      serviceId: "payments_live_obo",
+    });
+    const delegated = air.operations.filter((operation) => operation.state === "approved");
+    const operationId = delegated[0]?.id;
+    if (!operationId) throw new Error("fixture: no delegated operation");
+    const artifactCheck = {
+      id: "artifact-live",
+      status: "pass" as const,
+      expectedArtifactHash: "a".repeat(64),
+      observedArtifactHash: "a".repeat(64),
+    };
+
+    const structuredError = liveIdentityReadiness(delegated, [
+      artifactCheck,
+      {
+        id: "read-live",
+        operationId,
+        status: "pass",
+        outcome: "structured_error",
+        detail: "auth_required",
+      },
+    ]);
+    expect(structuredError.liveIdpReadiness).toBe("unverified");
+    expect(structuredError.verifiedOperationIds).toEqual([]);
+    expect(
+      liveIdentityGate(delegated, [
+        artifactCheck,
+        {
+          id: "read-live",
+          operationId,
+          status: "pass",
+          outcome: "structured_error",
+        },
+      ]),
+    ).toMatchObject({ id: "identity-live", status: "fail" });
+
+    const success = liveIdentityReadiness(delegated, [
+      artifactCheck,
+      {
+        id: "read-live",
+        operationId,
+        status: "pass",
+        outcome: "success",
+        identityProof: "real_inbound_jwt_sts_upstream",
+      },
+    ]);
+    expect(success).toMatchObject({
+      liveIdpReadiness: "verified_for_opted_in_reads",
+      proof: "real_inbound_jwt_sts_upstream",
+      verifiedOperationIds: [operationId],
+      unverifiedOperationIds: [],
+    });
+    expect(
+      liveIdentityGate(delegated, [
+        artifactCheck,
+        {
+          id: "read-live",
+          operationId,
+          status: "pass",
+          outcome: "success",
+          identityProof: "real_inbound_jwt_sts_upstream",
+        },
+      ]),
+    ).toMatchObject({ id: "identity-live", status: "pass" });
+  });
+
+  it("requires one successful safe read per distinct delegated identity contract group", async () => {
+    const air = await compile({
+      spec: read("payments/openapi.yaml"),
+      manifest: `operations:
+  getPayment:
+    state: approved
+    auth:
+      type: oauth2_on_behalf_of
+      principal: delegated
+      issuer: https://identity.example.com/
+      audience: api://payments-a
+      credential_profile: payments_a
+      provider: { grant: token_exchange, token_endpoint: https://sts.example.com/token }
+`,
+      serviceId: "payments_live_groups",
+    });
+    const seed = air.operations.find((operation) => operation.state === "approved");
+    if (!seed) throw new Error("fixture: no delegated operation");
+    const clone = (id: string): Operation => ({ ...structuredClone(seed), id });
+    const groupARead = clone("payments.group_a.read");
+    const groupAWrite = clone("payments.group_a.write");
+    groupAWrite.effect = { ...groupAWrite.effect, kind: "mutation" };
+    const groupBRead = clone("payments.group_b.read");
+    groupBRead.auth = {
+      ...groupBRead.auth,
+      issuer: "https://other-identity.example.com/",
+      audience: "api://payments-b",
+      credentialProfile: "payments_b",
+      scopes: ["payments.b"],
+    };
+    const groupCWrite = clone("payments.group_c.write");
+    groupCWrite.effect = { ...groupCWrite.effect, kind: "mutation" };
+    groupCWrite.auth = {
+      ...groupCWrite.auth,
+      audience: "api://payments-c",
+      credentialProfile: "payments_c",
+      scopes: ["payments.c"],
+    };
+    const artifactCheck = {
+      id: "artifact-live",
+      status: "pass" as const,
+      expectedArtifactHash: "b".repeat(64),
+      observedArtifactHash: "b".repeat(64),
+    };
+    const proof = (operationId: string) => ({
+      id: "read-live",
+      operationId,
+      status: "pass" as const,
+      outcome: "success" as const,
+      identityProof: "real_inbound_jwt_sts_upstream" as const,
+    });
+    const operations = [groupARead, groupAWrite, groupBRead, groupCWrite];
+    const partialChecks = [artifactCheck, proof(groupARead.id), proof(groupBRead.id)];
+    const partial = liveIdentityReadiness(operations, partialChecks);
+    expect(partial).toMatchObject({
+      delegatedOperations: 4,
+      delegatedContractGroups: 3,
+      liveIdpReadiness: "unverified",
+      verifiedOperationIds: [groupARead.id, groupBRead.id],
+      unverifiedOperationIds: [groupCWrite.id],
+    });
+    expect(partial.verifiedContractGroupIds).toHaveLength(2);
+    expect(partial.unverifiedContractGroupIds).toHaveLength(1);
+    expect(liveIdentityGate(operations, partialChecks)).toMatchObject({
+      id: "identity-live",
+      status: "fail",
+      detail: expect.stringMatching(/no approved read/i),
+    });
+
+    const groupCRead = clone("payments.group_c.read");
+    groupCRead.auth = structuredClone(groupCWrite.auth);
+    const coveredOperations = [...operations, groupCRead];
+    const coveredChecks = [...partialChecks, proof(groupCRead.id)];
+    expect(liveIdentityReadiness(coveredOperations, coveredChecks)).toMatchObject({
+      delegatedOperations: 5,
+      delegatedContractGroups: 3,
+      liveIdpReadiness: "verified_for_opted_in_reads",
+      unverifiedOperationIds: [],
+      unverifiedContractGroupIds: [],
+    });
+    expect(liveIdentityGate(coveredOperations, coveredChecks)).toMatchObject({
+      id: "identity-live",
+      status: "pass",
+    });
+  });
+
   it("verifies surface parity, the production confirmation gate, and an opt-in read", async () => {
     const dir = await buildBundle();
     const mockBase = await startMock(dir);
@@ -117,9 +290,29 @@ describe("live conformance (against the generated Cloud Run server)", () => {
     });
 
     expect(LiveReport.parse(report)).toEqual(report);
+    expect(report.schemaVersion).toBe(2);
     expect(report.summary.fail).toBe(0);
+    expect(report.artifact).toEqual({
+      algorithm: "sha256",
+      expectedHash: deploymentArtifactHash(readBundleDir(dir)),
+      observedHash: deploymentArtifactHash(readBundleDir(dir)),
+      matched: true,
+    });
+    expect(report.identity).toEqual({
+      delegatedOperations: 0,
+      delegatedContractGroups: 0,
+      verifiedContractGroupIds: [],
+      unverifiedContractGroupIds: [],
+      contractGroups: [],
+      liveIdpReadiness: "not_applicable",
+      proof: "not_applicable",
+      verifiedOperationIds: [],
+      unverifiedOperationIds: [],
+      detail: "No approved delegated operations.",
+    });
 
     // The deployed server serves exactly the certified surface.
+    expect(report.checks.find((c) => c.id === "artifact-live")?.status).toBe("pass");
     expect(report.checks.find((c) => c.id === "surface-live")?.status).toBe("pass");
 
     // Both financial mutations refuse without confirm — in production.
@@ -134,6 +327,31 @@ describe("live conformance (against the generated Cloud Run server)", () => {
     expect(report.checks.find((c) => c.id === "read-live")?.status).toBe("pass");
   }, 120_000);
 
+  it("rejects a stale deployment even when it serves the same tool names", async () => {
+    const deployed = await buildBundle("deployed revision");
+    const local = await buildBundle("new local revision with the same operation names");
+    const mockBase = await startMock(deployed);
+    const base = await startRuntime(deployed, mockBase);
+
+    const report = await runLiveConformance(local, {
+      mcpUrl: `${base}/mcp`,
+      headers: {},
+      probeReads: ["payments.customers.get"],
+      inputs: { "payments.customers.get": { customer_id: "cus_live" } },
+    });
+
+    expect(report.artifact.matched).toBe(false);
+    expect(report.artifact.expectedHash).not.toBe(report.artifact.observedHash);
+    expect(report.checks).toEqual([
+      expect.objectContaining({
+        id: "artifact-live",
+        status: "fail",
+        detail: expect.stringMatching(/stale or different deployment/i),
+      }),
+    ]);
+    expect(report.summary.fail).toBe(1);
+  }, 120_000);
+
   it("fails closed when the endpoint is unreachable", async () => {
     const dir = await buildBundle();
     const unused = await freePort();
@@ -144,6 +362,8 @@ describe("live conformance (against the generated Cloud Run server)", () => {
       inputs: {},
     });
     expect(report.summary.fail).toBeGreaterThan(0);
-    expect(report.checks[0]?.detail).toMatch(/could not connect/);
+    expect(report.checks[0]).toMatchObject({ id: "artifact-live", status: "fail" });
+    expect(report.checks[0]?.detail).toMatch(/could not attest/);
+    expect(report.identity.liveIdpReadiness).toBe("not_applicable");
   }, 60_000);
 });

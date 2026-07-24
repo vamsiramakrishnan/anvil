@@ -1,6 +1,6 @@
 import type { Diagnostic, HttpMethod, NameWeakness, Operation } from "@anvil/air";
 import { nameWeaknesses, snakeCase } from "@anvil/air";
-import { actionVerbFor, isReadIntentWriteMethod } from "./classify.js";
+import { actionHasReadIntent, actionVerbFor, isReadIntentWriteMethod } from "./classify.js";
 
 /**
  * The naming pass. Operation names are the agent-facing surface — a CLI that
@@ -28,7 +28,10 @@ export interface DerivedNames {
 export const singularize = (s: string): string => {
   if (/ies$/.test(s)) return s.replace(/ies$/, "y");
   if (/ses$/.test(s)) return s.replace(/ses$/, "s");
-  if (/s$/.test(s) && !/ss$/.test(s)) return s.replace(/s$/, "");
+  // Singular nouns ending in `-us` (status, bus, virus) must retain the final
+  // `s`. Their regular plurals (`statuses`, `buses`, `viruses`) are already
+  // handled by the `-ses` branch above.
+  if (/s$/.test(s) && !/(?:ss|us)$/.test(s)) return s.replace(/s$/, "");
   return s;
 };
 
@@ -241,8 +244,26 @@ export function deriveNames(
     !snakeCase(lastConcrete).includes("_")
       ? actionVerbFor(lastConcrete)
       : undefined;
+  const declaredIntentSignals = [raw.operationId, raw.summary].filter((value): value is string =>
+    Boolean(value),
+  );
+  const semanticSignal = `${raw.operationId ?? ""} ${raw.summary ?? ""} ${path}`;
+  // Read-family path words are also frequently persisted sub-resources:
+  // `PUT .../status`, `POST .../filter`. On a write method they name an action
+  // only when the narrow effect classifier also proved a read (POST search
+  // without declared persistence intent). Otherwise the HTTP write action wins
+  // and the last segment remains the resource, keeping CLI routing aligned
+  // with the final effect instead of emitting `orders poll` for
+  // `replaceOrderStatus`.
+  const effectiveTrailingVerb =
+    trailingVerb !== undefined &&
+    actionHasReadIntent(trailingVerb) &&
+    !["get", "head"].includes(method) &&
+    !isReadIntentWriteMethod(method, semanticSignal, declaredIntentSignals)
+      ? undefined
+      : trailingVerb;
   const resource =
-    trailingVerb && concrete.length > 1
+    effectiveTrailingVerb && concrete.length > 1
       ? decomposeSegment(concrete[concrete.length - 2] as string).resource
       : hasResource
         ? (lastConcrete as string)
@@ -256,16 +277,16 @@ export function deriveNames(
   // A write-method endpoint with a readIntent verb (see classify.ts) is
   // reclassified to a read; the action verb must agree, or the CLI/MCP surface
   // would call a read "create" while its own safety posture says otherwise.
-  const readIntentSignal = `${raw.operationId ?? ""} ${raw.summary ?? ""}`;
+  const readIntentSignal = semanticSignal;
   // Priority: an RPC method name (Slack `postMessage`) names the action
   // directly; then a verb-trailing segment; then a read-intent write; then the
   // HTTP-method default. An RPC action is snake_cased so it reads as one CLI
   // token (`post_message`) that matches the operationId-derived tool name.
   const action = decomposed?.rpcAction
     ? snakeCase(decomposed.rpcAction)
-    : trailingVerb
-      ? trailingVerb
-      : isReadIntentWriteMethod(method, readIntentSignal)
+    : effectiveTrailingVerb
+      ? effectiveTrailingVerb
+      : isReadIntentWriteMethod(method, readIntentSignal, declaredIntentSignals)
         ? (actionVerbFor(readIntentSignal) as string)
         : method === "post"
           ? (postVerbFromOperationId(raw.operationId) ?? actionFor(method, endsWithParam))

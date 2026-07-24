@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  AuthRequirement,
   airFromYaml,
   airToJson,
   airToYaml,
+  authCoherenceIssues,
   cliFlag,
+  effectiveAuthCarrier,
   evidenceConfidence,
   kebabCase,
   loadAirDocument,
   type Operation,
+  operationBusinessInputCliFlag,
   operationInputSchema,
+  operationSafetyInputKeys,
   propKey,
   snakeCase,
 } from "./index.js";
@@ -174,6 +179,45 @@ describe("AirDocument", () => {
   });
 });
 
+describe("auth identity contract", () => {
+  it("keeps issuer, token endpoint, and credential carrier as distinct coordinates", () => {
+    const auth = AuthRequirement.parse({
+      type: "oauth2_on_behalf_of",
+      principal: "delegated",
+      issuer: "https://issuer.example.com/",
+      audience: "api://payments",
+      carrier: { in: "header", name: "Authorization", scheme: "Bearer" },
+      provider: {
+        grant: "token_exchange",
+        tokenEndpoint: "https://sts.example.com/oauth/token",
+      },
+    });
+    expect(auth.issuer).toBe("https://issuer.example.com/");
+    expect(auth.provider?.tokenEndpoint).toBe("https://sts.example.com/oauth/token");
+    expect(effectiveAuthCarrier(auth)).toEqual({
+      in: "header",
+      name: "Authorization",
+      scheme: "Bearer",
+    });
+  });
+
+  it("fails closed on a contradictory bearer carrier", () => {
+    const auth = AuthRequirement.parse({
+      type: "jwt_bearer",
+      carrier: { in: "query", name: "access_token" },
+    });
+    expect(authCoherenceIssues(auth)).toContain(
+      "jwt_bearer requires the Authorization header with the Bearer scheme",
+    );
+  });
+
+  it("derives protocol carriers without claiming issuer evidence", () => {
+    const auth = AuthRequirement.parse({ type: "api_key" });
+    expect(effectiveAuthCarrier(auth)).toEqual({ in: "header", name: "X-API-Key" });
+    expect(auth.issuer).toBeUndefined();
+  });
+});
+
 describe("operationInputSchema", () => {
   it("synthesizes idempotency_key and confirm as required for unsafe ops", () => {
     const air = loadAirDocument(doc);
@@ -187,5 +231,86 @@ describe("operationInputSchema", () => {
     const props = schema.properties as Record<string, Record<string, unknown>>;
     expect(props.confirm?.const).toBe(true);
     expect(props.idempotency_key?.type).toBe("string");
+    expect(props.idempotency_key).toMatchObject({
+      minLength: 1,
+      maxLength: 255,
+      pattern: "^[\\u0021-\\u007E]+$",
+    });
+    const keyPattern = new RegExp(String(props.idempotency_key?.pattern));
+    expect(keyPattern.test("business-operation_123")).toBe(true);
+    expect(keyPattern.test("has spaces")).toBe(false);
+    expect(keyPattern.test("unicode-é")).toBe(false);
+  });
+
+  it.each([
+    "required",
+    "key_supported",
+  ] as const)("keeps a derivable idempotency key optional for %s operations", (mode) => {
+    const air = loadAirDocument({
+      ...doc,
+      operations: [
+        {
+          ...refundOp,
+          idempotency: {
+            ...refundOp.idempotency,
+            mode,
+            keyDerivation: "request_fingerprint",
+          },
+        },
+      ],
+    });
+    const schema = operationInputSchema(air.operations[0] as Operation);
+    expect(schema.properties).toHaveProperty("idempotency_key");
+    expect(schema.required).not.toContain("idempotency_key");
+  });
+
+  it("preserves business fields that collide with both synthesized safety controls", () => {
+    const air = loadAirDocument({
+      ...doc,
+      operations: [
+        {
+          ...refundOp,
+          input: {
+            params: [
+              ...refundOp.input.params,
+              {
+                name: "idempotency_key",
+                in: "query",
+                required: true,
+                schema: { type: "string" },
+              },
+              { name: "confirm", in: "query", required: true, schema: { type: "string" } },
+            ],
+          },
+        },
+      ],
+    });
+    const operation = air.operations[0] as Operation;
+    const safety = operationSafetyInputKeys(operation);
+    expect(safety).toEqual({
+      idempotencyKey: "anvil_idempotency_key",
+      confirm: "anvil_confirm",
+    });
+
+    const schema = operationInputSchema(operation);
+    expect(schema.properties).toMatchObject({
+      idempotency_key: { type: "string" },
+      confirm: { type: "string" },
+      anvil_idempotency_key: { type: "string" },
+      anvil_confirm: { type: "boolean", const: true },
+    });
+    expect(schema.required).toEqual(
+      expect.arrayContaining([
+        "idempotency_key",
+        "confirm",
+        "anvil_idempotency_key",
+        "anvil_confirm",
+      ]),
+    );
+    expect(new Set(schema.required as string[]).size).toBe((schema.required as string[]).length);
+    expect(operationBusinessInputCliFlag(operation, "query", "idempotency_key")).toBe(
+      "--input-idempotency-key",
+    );
+    expect(operationBusinessInputCliFlag(operation, "query", "confirm")).toBe("--input-confirm");
   });
 });

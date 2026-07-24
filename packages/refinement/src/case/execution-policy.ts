@@ -54,12 +54,14 @@ export const DEFAULT_AGENT_TIMEOUT_MS = 20 * 60 * 1000;
 
 /**
  * Named credential profiles: the minimal environment a backend resolves for an agent.
- * A driver asks for a profile by name (`credentialProfile: "claude-code"`); it never
- * enumerates raw provider variables. This is what lets credential *delivery* become
- * runner-owned later (Cloud Run + Secret Manager) without touching the driver.
+ * A driver asks for a profile by name (`credentialProfile: "claude-code"` or
+ * `"codex"`); it never enumerates raw provider variables. This is what lets credential
+ * *delivery* become runner-owned later (Cloud Run + Secret Manager) without touching
+ * the driver.
  */
 export const CREDENTIAL_PROFILES = {
   "claude-code": ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "HTTPS_PROXY"],
+  codex: ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_HOME", "HTTPS_PROXY"],
 } as const;
 export type CredentialProfile = keyof typeof CREDENTIAL_PROFILES;
 

@@ -28,9 +28,10 @@ One owner per concern:
   the repository here would create a bootstrap cycle where `docker push` needs a
   resource a later Terraform step has not applied yet.
 - **Replay state is capability-scoped.** A bundle with an approved mutation that
-  requires idempotency owns a named, delete-protected Firestore database, exact
-  database-scoped IAM, and a TTL policy for completed replay results. In-progress
-  reservations never receive an expiry.
+  requires idempotency owns its field policies, exact database-scoped IAM, and a
+  TTL policy for completed replay results. Shared mode uses an existing
+  platform-owned trust-domain database; dedicated mode owns a named,
+  delete-protected database. In-progress reservations never receive an expiry.
 - **Remote state is mandatory.** Terraform declares a `backend "gcs"` bound at
   `init -backend-config=…`, so an ephemeral build container never starts from
   empty state and tries to recreate live resources.

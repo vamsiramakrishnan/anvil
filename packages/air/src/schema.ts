@@ -396,14 +396,22 @@ export const Idempotency = z.object({
 });
 export type Idempotency = z.infer<typeof Idempotency>;
 
+/**
+ * Runtime-safe retry ceilings. The worst permitted upstream segment is
+ * 5 * 30s attempts + 4 * 20s backoffs = 230s; deployment generation also
+ * budgets the durable-ledger path before choosing its request deadline.
+ */
+export const MAX_RETRY_ATTEMPTS = 5;
+export const MAX_RETRY_DELAY_MS = 20_000;
+
 export const RetryPolicy = z.object({
   mode: RetryMode,
   /** Descriptive justification for the posture (auditable; does not gate). */
   basis: RetryBasis.default("unproven"),
-  maxAttempts: z.number().int().min(1).default(1),
+  maxAttempts: z.number().int().min(1).max(MAX_RETRY_ATTEMPTS).default(1),
   backoff: BackoffStrategy.default("none"),
-  baseDelayMs: z.number().int().min(0).default(200),
-  maxDelayMs: z.number().int().min(0).default(20_000),
+  baseDelayMs: z.number().int().min(0).max(MAX_RETRY_DELAY_MS).default(200),
+  maxDelayMs: z.number().int().min(0).max(MAX_RETRY_DELAY_MS).default(MAX_RETRY_DELAY_MS),
   retryOn: z.array(RetryCondition).default([]),
 });
 export type RetryPolicy = z.infer<typeof RetryPolicy>;
@@ -442,6 +450,19 @@ export const AuthProvider = z.object({
 });
 export type AuthProvider = z.infer<typeof AuthProvider>;
 
+/**
+ * Exact on-wire credential carrier. This is separate from an OAuth token
+ * endpoint and issuer: those identify token acquisition/trust, while the
+ * carrier identifies how the resulting credential reaches the API.
+ */
+export const AuthCredentialCarrier = z.object({
+  in: z.enum(["header", "query"]),
+  name: z.string().min(1),
+  /** Authorization scheme prefix when the carrier is a header (`Bearer`, `Basic`). */
+  scheme: z.string().min(1).optional(),
+});
+export type AuthCredentialCarrier = z.infer<typeof AuthCredentialCarrier>;
+
 const AuthRequirementBase = z.object({
   type: AuthType,
   scopes: z.array(z.string()).default([]),
@@ -458,8 +479,15 @@ const AuthRequirementBase = z.object({
     .optional(),
   /** Whose authority the call runs under — the decisive question for agents. */
   principal: AuthPrincipal.default("service"),
+  /**
+   * Token issuer asserted by the contract/gateway identity evidence. An issuer
+   * is a trust identity, not the OAuth token endpoint used to acquire a token.
+   */
+  issuer: z.string().url().optional(),
   /** Intended token audience / resource, when known. */
   audience: z.string().optional(),
+  /** Exact credential carrier when evidence declares one. */
+  carrier: AuthCredentialCarrier.optional(),
   /** Where the runtime sources the credential (never the secret itself). */
   secretSource: SecretSource.default("env"),
   /** Delegation / impersonation chain for on-behalf-of calls. */
@@ -487,6 +515,25 @@ const AuthRequirementBase = z.object({
 });
 export type AuthRequirement = z.infer<typeof AuthRequirementBase>;
 
+/** Runtime's effective carrier, including conservative protocol defaults. */
+export function effectiveAuthCarrier(auth: AuthRequirement): AuthCredentialCarrier | undefined {
+  if (auth.carrier) return auth.carrier;
+  if (auth.type === "api_key") {
+    return auth.provider?.apiKey ?? { in: "header", name: "X-API-Key" };
+  }
+  if (auth.type === "basic") return { in: "header", name: "Authorization", scheme: "Basic" };
+  if (
+    auth.type === "oauth2_client_credentials" ||
+    auth.type === "oauth2_authorization_code" ||
+    auth.type === "oauth2_on_behalf_of" ||
+    auth.type === "jwt_bearer" ||
+    auth.type === "workload_identity"
+  ) {
+    return { in: "header", name: "Authorization", scheme: "Bearer" };
+  }
+  return undefined;
+}
+
 /** Cross-field authority invariants shared by loaders, compiler, and certification. */
 export function authCoherenceIssues(auth: AuthRequirement): string[] {
   const issues: string[] = [];
@@ -500,6 +547,8 @@ export function authCoherenceIssues(auth: AuthRequirement): string[] {
       issues.push("auth type none must use anonymous authority and no secret source");
     }
     if (auth.provider) issues.push("auth type none cannot declare provider mechanics");
+    if (auth.issuer) issues.push("auth type none cannot declare an issuer");
+    if (auth.carrier) issues.push("auth type none cannot declare a credential carrier");
   } else if (auth.type === "oauth2_on_behalf_of") {
     if (auth.principal !== "delegated" && auth.principal !== "impersonation") {
       issues.push("on-behalf-of auth must declare delegated or impersonation authority");
@@ -553,6 +602,30 @@ export function authCoherenceIssues(auth: AuthRequirement): string[] {
   }
   if (auth.type !== "none" && auth.secretSource === "none") {
     issues.push(`${auth.type} cannot use secret source none`);
+  }
+  const carrier = auth.carrier;
+  if (carrier) {
+    const header = carrier.in === "header" && carrier.name.toLowerCase() === "authorization";
+    const scheme = carrier.scheme?.toLowerCase();
+    if (auth.type === "api_key") {
+      if (carrier.scheme) issues.push("api_key carrier cannot declare an authorization scheme");
+    } else if (auth.type === "basic") {
+      if (!header || scheme !== "basic") {
+        issues.push("basic auth requires the Authorization header with the Basic scheme");
+      }
+    } else if (
+      auth.type === "oauth2_client_credentials" ||
+      auth.type === "oauth2_authorization_code" ||
+      auth.type === "oauth2_on_behalf_of" ||
+      auth.type === "jwt_bearer" ||
+      auth.type === "workload_identity"
+    ) {
+      if (!header || scheme !== "bearer") {
+        issues.push(`${auth.type} requires the Authorization header with the Bearer scheme`);
+      }
+    } else {
+      issues.push(`${auth.type} cannot declare a credential carrier`);
+    }
   }
   return issues;
 }

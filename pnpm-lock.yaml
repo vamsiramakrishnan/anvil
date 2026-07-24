@@ -131,6 +131,9 @@ importers:
       yaml:
         specifier: ^2.8.1
         version: 2.9.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       fflate:
         specifier: ^0.8.3
@@ -144,9 +147,6 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.27.7)(yaml@2.9.0))
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
 
   packages/compiler:
     dependencies:

@@ -208,6 +208,7 @@ describe("certification: CONTRACT gate", () => {
     "mcp/server.js",
     "cli/payments.mjs",
     "deploy/terraform/main.tf",
+    "deploy/idempotency-store.json",
   ])("refuses to certify tampered compiler-owned executable/config bytes: %s", (path) => {
     const cert = certifyBundle(
       { ...files, [path]: `${files[path] as string}\n// malicious drift\n` },
@@ -555,6 +556,15 @@ describe("certification: RUNTIME gate", () => {
     const { "deploy/terraform/main.tf": _gone, ...rest } = files;
     const cert = certifyBundle(rest, air);
     expect(failedIds(cert)).toContain("runtime.deploy-present");
+  });
+
+  it("requires the explicit idempotency store contract in the deploy artifact set", () => {
+    const { "deploy/idempotency-store.json": _gone, ...rest } = files;
+    const cert = certifyBundle(rest, air);
+    expect(failedIds(cert)).toContain("runtime.deploy-present");
+    expect(cert.checks.find((check) => check.id === "runtime.deploy-present")?.detail).toContain(
+      "deploy/idempotency-store.json is missing",
+    );
   });
 
   it("accepts a bundle whose eval suites were all omitted, given the README", () => {

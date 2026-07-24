@@ -38,8 +38,11 @@
           "state": "blocked"
         }
       ],
-      "opaque": ["gateway/opaque_policy: /apis/0/mediationPolicies"],
-      "diagnostics": 5
+      "opaque": [
+        "gateway/opaque_policy: /apis/0/mediationPolicies",
+        "gateway/opaque_policy: /apis/0/operations/1/operationPolicies"
+      ],
+      "diagnostics": 6
     }
   ]
 }

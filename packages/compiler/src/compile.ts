@@ -5,6 +5,7 @@ import {
   type JsonSchema,
   loadAirDocument,
   type Operation,
+  operationIdempotencyKeySchemaIssue,
   operationInputSchema,
   resolveIdempotencyCarrier,
   snakeCase,
@@ -193,7 +194,9 @@ function applyServiceAuthDefaults(
             : {}),
           ...(config.principal ? { principal: config.principal } : {}),
           ...(config.secret_source ? { secret_source: config.secret_source } : {}),
+          ...(!operation.auth.issuer && config.issuer ? { issuer: config.issuer } : {}),
           ...(config.audience ? { audience: config.audience } : {}),
+          ...(!operation.auth.carrier && config.carrier ? { carrier: config.carrier } : {}),
           ...(config.tenant ? { tenant: config.tenant } : {}),
           ...(config.actor ? { actor: config.actor } : {}),
           ...(config.subject ? { subject: config.subject } : {}),
@@ -443,9 +446,10 @@ export function approveOperations(air: AirDocument, ids: string[]): AirDocument 
   for (const op of air.operations) {
     if (!set.has(op.id) || op.state === "blocked") continue;
     const carrier = resolveIdempotencyCarrier(op);
-    if (!carrier.ok) {
+    const schemaIssue = carrier.ok ? operationIdempotencyKeySchemaIssue(op) : undefined;
+    if (!carrier.ok || schemaIssue) {
       op.state = "blocked";
-      const note = `Approval refused: ${carrier.issue}.`;
+      const note = `Approval refused: ${carrier.ok ? schemaIssue : carrier.issue}.`;
       if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
       continue;
     }

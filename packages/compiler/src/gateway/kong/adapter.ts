@@ -21,6 +21,7 @@ import type {
 import { asObjects, asStrings } from "../parse-safe.js";
 import {
   buildGatewayApiImport,
+  gatewayOperationRef,
   normalizePath,
   routeOnlyContract,
   type SynthOp,
@@ -48,28 +49,74 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
   transformations: "partial",
   faultPolicies: false,
   products: false,
-  consumers: true,
+  consumers: false,
   trafficAnalytics: false,
   drift: false,
   publish: false,
 };
 
-/** The (path, method) operations a service exposes, deduped and sorted. */
-function serviceOps(service: KongService): SynthOp[] {
+interface ServiceRouteProjection {
+  ops: SynthOp[];
+  diagnostics: GatewayDiagnostic[];
+}
+
+/**
+ * Project only routes whose method and path coordinates are explicit.
+ *
+ * A missing Kong `methods` field means "any method", and a missing `paths`
+ * field means the route may match by another predicate. Choosing GET or `/`
+ * would invent a callable contract. Expressions-router predicates are opaque
+ * for the same reason: Anvil does not interpret Kong's expression grammar.
+ */
+function projectServiceRoutes(
+  service: KongService,
+  serviceIndex: number,
+  origin: string,
+): ServiceRouteProjection {
   const ops = new Map<string, SynthOp>();
-  for (const route of asObjects<KongRoute>(service.routes)) {
+  const diagnostics: GatewayDiagnostic[] = [];
+  asObjects<KongRoute>(service.routes).forEach((route, routeIndex) => {
+    const routePointer = `/services/${serviceIndex}/routes/${routeIndex}`;
+    const routeName = route.name ?? `${service.name}-route-${routeIndex}`;
+    if (typeof route.expression === "string" && route.expression.trim().length > 0) {
+      diagnostics.push({
+        level: "warning",
+        code: "gateway/opaque_policy",
+        message: `Kong route '${routeName}' uses an expressions-router predicate that Anvil does not interpret; no callable operation was synthesized.`,
+        coordinate: { origin, pointer: `${routePointer}/expression` },
+        subject: { api: { id: service.name }, route: { id: routeName } },
+      });
+      return;
+    }
+
     const routePaths = asStrings(route.paths);
     const routeMethods = asStrings(route.methods);
-    const paths = routePaths.length ? routePaths : ["/"];
-    const methods = routeMethods.length ? routeMethods : ["GET"];
-    for (const path of paths) {
-      for (const method of methods) {
+    if (routeMethods.length === 0 || routePaths.length === 0) {
+      const missing = [
+        ...(routeMethods.length === 0 ? ["HTTP methods"] : []),
+        ...(routePaths.length === 0 ? ["paths"] : []),
+      ].join(" and ");
+      diagnostics.push({
+        level: "warning",
+        code: "gateway/opaque_policy",
+        message: `Kong route '${routeName}' does not explicitly constrain ${missing}; Anvil will not invent GET or /, so no callable operation was synthesized.`,
+        coordinate: { origin, pointer: routePointer },
+        subject: { api: { id: service.name }, route: { id: routeName } },
+      });
+      return;
+    }
+
+    for (const path of routePaths) {
+      for (const method of routeMethods) {
         const operationId = synthOperationId(service.name, method, path);
         ops.set(operationId, { operationId, method, path: normalizePath(path) });
       }
     }
-  }
-  return [...ops.values()].sort((a, b) => a.operationId.localeCompare(b.operationId));
+  });
+  return {
+    ops: [...ops.values()].sort((a, b) => a.operationId.localeCompare(b.operationId)),
+    diagnostics,
+  };
 }
 
 function routesOf(service: KongService): GatewayRoute[] {
@@ -88,10 +135,8 @@ function routesOf(service: KongService): GatewayRoute[] {
  * those effective policies as blockers is safer than silently treating them as
  * absent.
  */
-function unmodeledPluginPlacementDiagnostics(
+function unmodeledTopLevelPluginDiagnostics(
   config: { plugins?: KongPlugin[] },
-  service: KongService,
-  serviceIndex: number,
   origin: string,
 ): GatewayDiagnostic[] {
   const diagnostics: GatewayDiagnostic[] = [];
@@ -104,6 +149,15 @@ function unmodeledPluginPlacementDiagnostics(
       coordinate: { origin, pointer: `/plugins/${pluginIndex}` },
     });
   });
+  return diagnostics;
+}
+
+function unmodeledRoutePluginDiagnostics(
+  service: KongService,
+  serviceIndex: number,
+  origin: string,
+): GatewayDiagnostic[] {
+  const diagnostics: GatewayDiagnostic[] = [];
   asObjects<KongRoute>(service.routes).forEach((route, routeIndex) => {
     asObjects<KongPlugin>(route.plugins).forEach((plugin, pluginIndex) => {
       if (plugin.enabled === false) return;
@@ -114,6 +168,10 @@ function unmodeledPluginPlacementDiagnostics(
         coordinate: {
           origin,
           pointer: `/services/${serviceIndex}/routes/${routeIndex}/plugins/${pluginIndex}`,
+        },
+        subject: {
+          api: { id: service.name },
+          route: { id: route.name ?? `${service.name}-route-${routeIndex}` },
         },
       });
     });
@@ -152,12 +210,22 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
       });
     }
     const services = asObjects<KongService>(parsed.config.services);
-    const diagnostics: GatewayDiagnostic[] = [];
+    const diagnostics: GatewayDiagnostic[] = [
+      ...unmodeledTopLevelPluginDiagnostics(parsed.config, origin),
+    ];
     const apis: GatewayApiSummary[] = services.map((service, svcIndex) => {
-      const operationIds = serviceOps(service).map((o) => o.operationId);
-      const norm = normalizeServicePlugins(service, svcIndex, operationIds, origin);
+      const projected = projectServiceRoutes(service, svcIndex, origin);
+      const operationIds = projected.ops.map((o) => o.operationId);
+      const norm = normalizeServicePlugins(
+        service,
+        svcIndex,
+        operationIds,
+        origin,
+        projected.ops.map((op) => gatewayOperationRef(op.method, op.path)),
+      );
       norm.diagnostics.push(
-        ...unmodeledPluginPlacementDiagnostics(parsed.config, service, svcIndex, origin),
+        ...projected.diagnostics,
+        ...unmodeledRoutePluginDiagnostics(service, svcIndex, origin),
       );
       diagnostics.push(...norm.diagnostics);
       return {
@@ -172,6 +240,7 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
         productIds: [],
         owner: asStrings(service.tags)[0],
         authSummary: norm.authSummary,
+        ...(norm.identityEvidence.length > 0 ? { identityEvidence: norm.identityEvidence } : {}),
         hasQuota: norm.hasQuota,
       };
     });
@@ -210,29 +279,47 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
       return {
         ...empty(),
         diagnostics: [
-          { level: "error", code: "kong/unknown_service", message: `No Kong service '${api.id}'.` },
+          {
+            level: "error",
+            code: "kong/unknown_service",
+            message: `No Kong service '${api.id}'.`,
+            subject: {
+              api: {
+                id: api.id,
+                ...(api.version ? { revision: api.version } : {}),
+                ...(api.environmentId ? { environment: api.environmentId } : {}),
+              },
+            },
+          },
         ],
       };
     }
 
-    const ops = serviceOps(service);
+    const projected = projectServiceRoutes(service, svcIndex, origin);
+    const ops = projected.ops;
     const norm = normalizeServicePlugins(
       service,
       svcIndex,
       ops.map((o) => o.operationId),
       origin,
+      ops.map((op) => gatewayOperationRef(op.method, op.path)),
     );
     norm.diagnostics.push(
-      ...unmodeledPluginPlacementDiagnostics(parsed.config, service, svcIndex, origin),
+      ...projected.diagnostics,
+      ...unmodeledTopLevelPluginDiagnostics(parsed.config, origin),
+      ...unmodeledRoutePluginDiagnostics(service, svcIndex, origin),
     );
-    return buildGatewayApiImport({
-      originKind: "kong",
-      apiName: service.name,
-      sourceCoordinate: { origin, pointer: `/services/${svcIndex}` },
-      ops,
-      facts: norm.facts,
-      authConfigured: Boolean(norm.authSummary),
-      diagnostics: norm.diagnostics,
-    });
+    return {
+      ...buildGatewayApiImport({
+        originKind: "kong",
+        apiName: service.name,
+        sourceCoordinate: { origin, pointer: `/services/${svcIndex}` },
+        ops,
+        facts: norm.facts,
+        authConfigured: Boolean(norm.authSummary),
+        diagnostics: norm.diagnostics,
+      }),
+      ...(norm.identityEvidence.length > 0 ? { identityEvidence: norm.identityEvidence } : {}),
+    };
   }
 }

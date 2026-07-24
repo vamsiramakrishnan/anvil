@@ -5,6 +5,10 @@
  * overlay/inventory; `map`/custom assembly actions are classified **opaque**.
  */
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
+import {
+  type ExplicitGatewayIdentityConfiguration,
+  projectExplicitIdentityConfiguration,
+} from "../identity-evidence.js";
 import { finalizeInventory } from "../inventory.js";
 import type {
   EvidenceCoordinate,
@@ -13,14 +17,17 @@ import type {
   GatewayApiRef,
   GatewayApiSummary,
   GatewayDiagnostic,
+  GatewayIdentityEvidence,
   GatewayInventorySnapshot,
   GatewayProbeResult,
   GatewayProduct,
 } from "../model.js";
+import { withGatewayDiagnosticSubject } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
 import { asObjects, asStrings, parseGatewayDocument } from "../parse-safe.js";
 import {
   buildGatewayApiImport,
+  gatewayOperationRef,
   joinGatewayPath,
   routeOnlyContract,
   type SynthOp,
@@ -31,6 +38,7 @@ interface ApicResource {
   method: string;
   path: string;
   scopes?: string[];
+  identity?: ExplicitGatewayIdentityConfiguration;
 }
 interface ApicAssembly {
   execute?: { type: string }[];
@@ -42,6 +50,7 @@ interface ApicApi {
   resources?: ApicResource[];
   assembly?: ApicAssembly;
   oauthProviders?: string[];
+  identity?: ExplicitGatewayIdentityConfiguration;
 }
 interface ApicPlan {
   name: string;
@@ -68,7 +77,7 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
   transformations: "partial",
   faultPolicies: false,
   products: true,
-  consumers: true,
+  consumers: false,
   trafficAnalytics: false,
   drift: false,
   publish: false,
@@ -177,8 +186,33 @@ function normalizeApi(exp: ApicExport, api: ApicApi, apiIndex: number, origin: s
   const ops = opsOf(api);
   const facts: GatewayFact[] = [];
   const diagnostics: GatewayDiagnostic[] = [];
+  const identityEvidence: GatewayIdentityEvidence[] = [];
+  const operationIdentityRefs = ops.map((op) => gatewayOperationRef(op.method, op.path));
+  const apiSubject = {
+    api: {
+      id: api.name,
+      ...(api.version ? { revision: api.version } : {}),
+    },
+  };
+
+  const apiIdentity = projectExplicitIdentityConfiguration({
+    configuration: api.identity,
+    coordinate: { origin, pointer: `/apis/${apiIndex}/identity` },
+    operationRefs: operationIdentityRefs,
+  });
+  identityEvidence.push(...apiIdentity.evidence);
+  diagnostics.push(...withGatewayDiagnosticSubject(apiIdentity.diagnostics, apiSubject));
 
   asObjects<ApicResource>(api.resources).forEach((r, j) => {
+    const operationRef = synthOperationId(
+      api.name,
+      r.method,
+      joinGatewayPath(api.basePath, r.path),
+    );
+    const operationIdentityRef = gatewayOperationRef(
+      r.method,
+      joinGatewayPath(api.basePath, r.path),
+    );
     const scopes = asStrings(r.scopes);
     if (scopes.length > 0) {
       const coordinate: EvidenceCoordinate = {
@@ -188,7 +222,7 @@ function normalizeApi(exp: ApicExport, api: ApicApi, apiIndex: number, origin: s
       facts.push({
         target: {
           scope: "operation",
-          ref: synthOperationId(api.name, r.method, joinGatewayPath(api.basePath, r.path)),
+          ref: operationRef,
         },
         predicate: "auth.scopes",
         operation: "restrict",
@@ -197,6 +231,39 @@ function normalizeApi(exp: ApicExport, api: ApicApi, apiIndex: number, origin: s
         note: "API Connect OAuth scopes",
       });
     }
+    const resourceScopes = projectExplicitIdentityConfiguration({
+      configuration: { ...(r.scopes === undefined ? {} : { scopes: r.scopes }) },
+      coordinate: { origin, pointer: `/apis/${apiIndex}/resources/${j}` },
+      operationRefs: [operationIdentityRef],
+      fields: ["scopes"],
+    });
+    identityEvidence.push(...resourceScopes.evidence);
+    diagnostics.push(
+      ...withGatewayDiagnosticSubject(resourceScopes.diagnostics, {
+        ...apiSubject,
+        route: {
+          method: r.method,
+          path: joinGatewayPath(api.basePath, r.path),
+          operationRef: operationIdentityRef,
+        },
+      }),
+    );
+    const resourceIdentity = projectExplicitIdentityConfiguration({
+      configuration: r.identity,
+      coordinate: { origin, pointer: `/apis/${apiIndex}/resources/${j}/identity` },
+      operationRefs: [operationIdentityRef],
+    });
+    identityEvidence.push(...resourceIdentity.evidence);
+    diagnostics.push(
+      ...withGatewayDiagnosticSubject(resourceIdentity.diagnostics, {
+        ...apiSubject,
+        route: {
+          method: r.method,
+          path: joinGatewayPath(api.basePath, r.path),
+          operationRef: operationIdentityRef,
+        },
+      }),
+    );
   });
 
   asObjects<{ type: string }>(api.assembly?.execute).forEach((action, k) => {
@@ -206,6 +273,7 @@ function normalizeApi(exp: ApicExport, api: ApicApi, apiIndex: number, origin: s
         code: "gateway/opaque_policy",
         message: `API Connect assembly action '${String(action.type ?? "(unnamed)")}' on '${api.name}' is not modelled and may transform, authorize, reject, or reroute the request.`,
         coordinate: { origin, pointer: `/apis/${apiIndex}/assembly/execute/${k}` },
+        subject: apiSubject,
       });
     }
   });
@@ -217,9 +285,10 @@ function normalizeApi(exp: ApicExport, api: ApicApi, apiIndex: number, origin: s
       code: "apiconnect/plan_rate_limit",
       message: `A plan rate limit applies to '${api.name}' but is not an operation semantic.`,
       coordinate: { origin, pointer: `/apis/${apiIndex}` },
+      subject: apiSubject,
     });
   }
-  return { ops, facts, diagnostics, hasQuota, productIds };
+  return { ops, facts, diagnostics, identityEvidence, hasQuota, productIds };
 }
 
 export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnection> {
@@ -264,6 +333,7 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
         contract: routeOnlyContract({ origin, pointer: `/apis/${i}` }),
         productIds: norm.productIds,
         authSummary: asStrings(api.oauthProviders).length > 0 ? "OAuth2" : undefined,
+        ...(norm.identityEvidence.length > 0 ? { identityEvidence: norm.identityEvidence } : {}),
         hasQuota: norm.hasQuota,
       };
     });
@@ -291,7 +361,11 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
     const parsed = parseExport(connection.config, origin);
     const exp = parsed.exp;
     const apis = asObjects<ApicApi>(exp.apis);
-    const apiIndex = apis.findIndex((a) => a.name === api.id);
+    const apiIndex = apis.findIndex(
+      (candidate) =>
+        candidate.name === api.id &&
+        (!api.version || !candidate.version || candidate.version === api.version),
+    );
     const found = apis[apiIndex];
     if (!found) {
       const empty = buildGatewayApiImport({
@@ -310,20 +384,30 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
             level: "error",
             code: "apiconnect/unknown_api",
             message: `No API Connect API '${api.id}'.`,
+            subject: {
+              api: {
+                id: api.id,
+                ...(api.version ? { revision: api.version } : {}),
+                ...(api.environmentId ? { environment: api.environmentId } : {}),
+              },
+            },
           },
         ],
       };
     }
     const norm = normalizeApi(exp, found, apiIndex, origin);
-    return buildGatewayApiImport({
-      originKind: "api_connect",
-      apiName: found.name,
-      version: found.version,
-      sourceCoordinate: { origin, pointer: `/apis/${apiIndex}` },
-      ops: norm.ops,
-      facts: norm.facts,
-      authConfigured: asStrings(found.oauthProviders).length > 0,
-      diagnostics: norm.diagnostics,
-    });
+    return {
+      ...buildGatewayApiImport({
+        originKind: "api_connect",
+        apiName: found.name,
+        version: found.version,
+        sourceCoordinate: { origin, pointer: `/apis/${apiIndex}` },
+        ops: norm.ops,
+        facts: norm.facts,
+        authConfigured: asStrings(found.oauthProviders).length > 0,
+        diagnostics: norm.diagnostics,
+      }),
+      ...(norm.identityEvidence.length > 0 ? { identityEvidence: norm.identityEvidence } : {}),
+    };
   }
 }

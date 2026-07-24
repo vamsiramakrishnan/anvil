@@ -113,12 +113,16 @@ anvil run generated/payments refunds create --payment-id pay_123 --amount 500 --
 
 Pin the idempotency key yourself and make it meaningful
 (`refund-<payment>-<date>` beats a random UUID in an audit log). Reusing the
-same key is safe — the backend deduplicates, so a timeout-and-retry cannot
-double-refund. A *new* key is a *new* refund. If you omit
-`--idempotency-key` on an operation whose strategy supports derivation, Anvil
-derives a deterministic request-fingerprint key; an explicit key is still
-better whenever a human might re-run the command with slightly different
-wording.
+same key lets the durable ledger detect the same request and lets the upstream
+carrier enforce its own idempotency contract. A completed replay returns the
+stored result while its retention window is active; a concurrent replay is
+refused as `in_progress`. This is deliberately not an exactly-once claim: if the
+upstream succeeds and the runtime crashes before recording completion, Anvil
+leaves the reservation in progress for operator reconciliation instead of
+guessing that a retry is safe. A *new* key is a *new* refund. A
+`required_request_key` operation refuses when the key is absent; Anvil only
+derives a deterministic request-fingerprint key for the separate
+`key_supported` strategy, where the caller key is optional.
 
 **If it refuses again:** read the new envelope — the code will have moved on.
 `idempotency_required` means the operation demands a key and none was supplied

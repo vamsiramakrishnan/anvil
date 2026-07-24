@@ -1,8 +1,13 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import {
+  GENERATION_METADATA_FILE,
+  resourceOptionsFromGenerationMetadata,
+} from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
+import { registerDeployLedger } from "./idempotency-store.js";
 import { annotate } from "./meta.js";
 import { loadAir } from "./shared.js";
 
@@ -11,9 +16,9 @@ export function registerDeploy(parent: Command, ctx: CommandContext): void {
   const deploy = annotate(
     parent
       .command("deploy")
-      .summary("Print the Cloud Run deployment plan for a bundle.")
+      .summary("Inspect Cloud Run, credentials, and durable idempotency deployment plans.")
       .description(
-        "Plan only: Anvil prints generated Dockerfile/Terraform/env instructions. It does not call Cloud Run, apply Terraform, or hold cloud credentials.",
+        "Plan and inspection only: Anvil prints generated Dockerfile/Terraform/env instructions and verifies the generated durable idempotency-store contract. It does not call Cloud Run, Firestore, apply Terraform, or hold cloud credentials.",
       ),
     { mutates: false },
   );
@@ -46,6 +51,7 @@ export function registerDeploy(parent: Command, ctx: CommandContext): void {
         ctx.code = await runDeployCredentials(dir, opts, ctx.io);
       },
     );
+  registerDeployLedger(deploy, ctx);
 }
 
 function runDeployCloudRun(dir: string, opts: { env: string }, io: CliIO): number {
@@ -67,14 +73,20 @@ export function printCloudRunPlan(dir: string, env: string, io: CliIO): void {
   io.out(`Deployment plan only for '${env}' (artifacts in ${deployDir}):`);
   io.out("No cloud call is made by this command; the operator must review and apply the plan.");
   io.out("Prereqs (shared, once per project): Artifact Registry repo and Terraform");
-  io.out("  state bucket. When a durable ledger is needed, this bundle's Terraform");
-  io.out("  creates its delete-protected named Firestore database. See deploy/README.md.");
+  io.out("  state bucket. When a durable ledger is needed, shared mode uses an existing");
+  io.out("  trust-domain Firestore database; dedicated mode creates one protected database.");
+  io.out("  See deploy/README.md for the IAM boundary and console caveat.");
+  io.out("  Inspect its exact write/store contract before apply:");
+  io.out(
+    "     `anvil deploy ledger <dir> --project <PROJECT_ID> --database <DATABASE_ID>`",
+  );
   io.out("  1. Generate/review the external operator var-file (credentials + target");
   io.out("     settings), resolve every scaffold entry, then upload it to a private GCS URI.");
-  io.out("  2. gcloud builds submit --config deploy/cloudbuild.yaml \\");
+  io.out("  2. gcloud builds submit --project <PROJECT_ID> --config deploy/cloudbuild.yaml \\");
   io.out(
     `       --substitutions _REGION=<region>,_AR_REPO=<repo>,_ANVIL_ENV=${env},_TF_STATE_BUCKET=<state-bucket>,_TF_STATE_PREFIX=<state-prefix>,_TFVARS_URI=gs://<private-input-bucket>/operator.auto.tfvars.json`,
   );
+  io.out("     Terraform refuses a reviewed ledger project that differs from this build project.");
   io.out("     → builds + pushes the image, then runs `terraform plan` (no auto-apply).");
   io.out("  3. Review the emitted plan; secrets are declared in");
   io.out("     deploy/credentials.required.yaml; secret values remain in operator-owned stores.");
@@ -120,10 +132,22 @@ async function runDeployCredentials(
   const contract = credentialContract(air, opts.env);
   const project = opts.project;
   const bundleRoot = resolveBundleRoot(dir);
+  const generationPath = join(bundleRoot, GENERATION_METADATA_FILE);
+  const generationOptions = existsSync(generationPath)
+    ? resourceOptionsFromGenerationMetadata(readFileSync(generationPath, "utf8"))
+    : {};
+  if (existsSync(generationPath) && !generationOptions) {
+    io.err(
+      `${generationPath} is invalid; refusing to infer a Secret Manager namespace from derived output.`,
+    );
+    return 1;
+  }
+  const credentialNamespace =
+    generationOptions?.deploymentNamespace ?? contract.service;
   const requirements = contract.requirements.map((requirement) => ({
     ...requirement,
     secrets: [...new Set(requirement.required.filter(isSecretKey))].map((envKey) => {
-      const secretId = secretIdFor(contract.service, envKey);
+      const secretId = secretIdFor(credentialNamespace, envKey);
       return {
         env: envKey,
         secretId,
@@ -188,6 +212,7 @@ async function runDeployCredentials(
           schemaVersion: 1,
           project,
           bundleRoot,
+          credentialNamespace,
           contract,
           requirements,
           terraform: {
@@ -212,6 +237,7 @@ async function runDeployCredentials(
 
   const prefix = `ANVIL_${opts.env.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
   io.out(`Upstream credential plan for '${contract.service}'`);
+  io.out(`  secret namespace: ${credentialNamespace}`);
   io.out(`  profile: ${contract.profileEnvVar}=${opts.env}  →  ${prefix}_*`);
   io.out("");
   io.out(contract.secretReferences);
@@ -276,13 +302,13 @@ function isSecretKey(name: string): boolean {
   return /_(CLIENT_SECRET|CLIENT_ASSERTION_KEY|TOKEN|PASSWORD|API_KEY)$/.test(name);
 }
 
-/** A stable Secret Manager secret id for an env key: ANVIL_PROD_CLIENT_SECRET → svc-prod-client-secret. */
-function secretIdFor(service: string, envKey: string): string {
+/** A stable Secret Manager id scoped to the physical deployment namespace. */
+function secretIdFor(deploymentNamespace: string, envKey: string): string {
   const suffix = envKey
     .replace(/^ANVIL_/, "")
     .toLowerCase()
     .replace(/_/g, "-");
-  return `${service}-${suffix}`;
+  return `${deploymentNamespace}-${suffix}`;
 }
 
 function isGcpProjectId(value: string): boolean {

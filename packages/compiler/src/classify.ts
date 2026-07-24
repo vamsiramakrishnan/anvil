@@ -42,6 +42,16 @@ const FINANCIAL = /(refund|charge|payment|payout|transfer|invoice|capture|debit|
 const DESTRUCTIVE = /(delete|remove|destroy|purge|revoke|terminate|cancel|drop)/;
 const COMMS = /(send|email|notify|message|dispatch|publish|sms)/;
 
+/**
+ * Strong, declared evidence that a POST persists state. These are deliberately
+ * matched only as the LEADING verb of an operationId/summary (see
+ * `hasDeclaredMutationIntent`), not anywhere in a path-shaped signal:
+ * `searchStoreInventory` still searches a store, while `createSavedFilter`
+ * plainly creates state even when its route ends in `/filter`.
+ */
+const DECLARED_MUTATION_PREFIX =
+  /^(create|creates|creating|save|saves|saving|persist|persists|persisting|store|stores|storing|upsert|upserts|upserting|update|updates|updating|delete|deletes|deleting|remove|removes|removing|replace|replaces|replacing|register|registers|registering|submit|submits|submitting|set)(_|$)/;
+
 /** Infer blast radius from method + operation naming/path. */
 export function classifyRisk(method: HttpMethod, effect: EffectKind, signal: string): RiskLevel {
   if (effect === "read") return "none";
@@ -158,6 +168,11 @@ export function actionVerbFor(signal: string): OperationAction | undefined {
   return matchActionVerb(signal)?.action;
 }
 
+/** Whether an already-normalized action belongs to the shared read-intent vocabulary. */
+export function actionHasReadIntent(action: OperationAction): boolean {
+  return ACTION_VERBS.some((verb) => verb.action === action && verb.readIntent);
+}
+
 /**
  * True when a POST's naming signal carries a SEARCH-family verb — the one
  * documented exception where the verb overrides the HTTP-method default
@@ -175,8 +190,20 @@ export function actionVerbFor(signal: string): OperationAction | undefined {
  * endpoint outside this rule is what the manifest's `side_effect: read`
  * override is for — explicit, reviewable evidence instead of a verb guess.
  */
-export function isReadIntentWriteMethod(method: HttpMethod, signal: string): boolean {
-  return method === "post" && matchActionVerb(signal, true)?.action === "search";
+function hasDeclaredMutationIntent(declaredIntentSignals: readonly string[]): boolean {
+  return declaredIntentSignals.some((signal) => DECLARED_MUTATION_PREFIX.test(snakeCase(signal)));
+}
+
+export function isReadIntentWriteMethod(
+  method: HttpMethod,
+  signal: string,
+  declaredIntentSignals: readonly string[] = [signal],
+): boolean {
+  return (
+    method === "post" &&
+    matchActionVerb(signal, true)?.action === "search" &&
+    !hasDeclaredMutationIntent(declaredIntentSignals)
+  );
 }
 
 /**
@@ -185,9 +212,13 @@ export function isReadIntentWriteMethod(method: HttpMethod, signal: string): boo
  * still a read. This never loosens safety — it corrects a false positive that
  * would otherwise gate a pure read behind `review_required` and confirmation.
  */
-export function classifyEffectKind(method: HttpMethod, signal = ""): EffectKind {
+export function classifyEffectKind(
+  method: HttpMethod,
+  signal = "",
+  declaredIntentSignals: readonly string[] = [signal],
+): EffectKind {
   if (READ_METHODS.includes(method)) return "read";
-  if (isReadIntentWriteMethod(method, signal)) return "read";
+  if (isReadIntentWriteMethod(method, signal, declaredIntentSignals)) return "read";
   return "mutation";
 }
 
@@ -247,13 +278,14 @@ export function classifyEffect(
   signal: string,
   endsWithParam = false,
   effectHint?: EffectKind,
+  declaredIntentSignals: readonly string[] = [signal],
 ): { effect: Effect; idempotency: Idempotency } {
   // `effectHint` is an authoritative adapter assertion (`x-anvil-effect`): a
   // protocol adapter that lowers everything to its one truthful wire method
   // (SOAP/GraphQL/gRPC are all POST) states the effect explicitly instead of
   // smuggling it through a fake GET. When present it decides the kind
   // regardless of HTTP method; unhinted operations classify exactly as before.
-  const kind = effectHint ?? classifyEffectKind(method, signal);
+  const kind = effectHint ?? classifyEffectKind(method, signal, declaredIntentSignals);
   const risk = classifyRisk(method, kind, signal);
   const reversible = !(risk === "financial" || risk === "destructive");
   // A write-method search endpoint reclassified to `read` above is inherently

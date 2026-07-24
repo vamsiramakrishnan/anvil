@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AirDocument } from "@anvil/air";
+import { type AirDocument, operationInputSchema } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { exampleInput } from "@anvil/generators";
 import { type HttpResponse, MockTransport } from "@anvil/runtime";
@@ -48,6 +49,27 @@ const baseDeps = (transport: MockTransport) => ({
   } as NodeJS.ProcessEnv,
   sleep: async () => {},
 });
+
+async function validateInput(
+  doc: AirDocument,
+  operation: string,
+  input: unknown,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const dir = mkdtempSync(join(tmpdir(), "anvil-validate-input-"));
+  try {
+    const path = join(dir, "input.json");
+    writeFileSync(path, JSON.stringify(input));
+    const io = bufferIO();
+    const code = await runToolCli(doc, ["validate-input", operation, "--input", path], { io });
+    return {
+      code,
+      stdout: io.stdout.join("\n"),
+      stderr: io.stderr.join("\n"),
+    };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 /** The payments AIR with the refund operation pushed back below the approval line. */
 function withUnapprovedRefund(): AirDocument {
@@ -181,6 +203,245 @@ paths:
     expect(envelope.error.message).toContain("--examples");
     expect(envelope.error.details.flag).toBe("--body");
     expect(typeof envelope.error.details.parse_error).toBe("string");
+  });
+});
+
+describe("validate-input uses the complete shared operation schema", () => {
+  const refundInput = {
+    payment_id: "pay_1",
+    amount: 2500,
+    currency: "USD",
+  };
+
+  it("reports synthesized idempotency and confirmation fields when both are missing", async () => {
+    const result = await validateInput(air, "payments.refunds.create", refundInput);
+    expect(result.code).toBe(1);
+    const validation = JSON.parse(result.stderr);
+    expect(validation.valid).toBe(false);
+    expect(validation.missing).toEqual(expect.arrayContaining(["idempotency_key", "confirm"]));
+    expect(validation.issues.map((issue: { path: string[] }) => issue.path)).toEqual(
+      expect.arrayContaining([["idempotency_key"], ["confirm"]]),
+    );
+  });
+
+  it("enforces const, minLength, and additionalProperties instead of only presence", async () => {
+    const result = await validateInput(air, "payments.refunds.create", {
+      ...refundInput,
+      idempotency_key: "",
+      confirm: false,
+      unexpected: true,
+    });
+    expect(result.code).toBe(1);
+    const validation = JSON.parse(result.stderr);
+    expect(validation.missing).toEqual([]);
+    expect(validation.issues.map((issue: { code: string }) => issue.code)).toEqual(
+      expect.arrayContaining(["too_small", "invalid_value", "unrecognized_keys"]),
+    );
+  });
+
+  it.each([
+    ["spaces", "business operation"],
+    ["Unicode", "business-é"],
+    ["more than 255 characters", "x".repeat(256)],
+  ])("rejects non-portable idempotency keys with %s", async (_case, idempotencyKey) => {
+    const result = await validateInput(air, "payments.refunds.create", {
+      ...refundInput,
+      idempotency_key: idempotencyKey,
+      confirm: true,
+    });
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.stderr).issues).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: ["idempotency_key"] })]),
+    );
+  });
+
+  it("accepts the complete contract, including a 255-character visible-ASCII key", async () => {
+    const result = await validateInput(air, "payments.refunds.create", {
+      ...refundInput,
+      idempotency_key: "x".repeat(255),
+      confirm: true,
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ valid: true });
+  });
+
+  it("projects a modeled carrier onto idempotency_key and rejects the raw carrier coordinate", async () => {
+    const modeled = structuredClone(air);
+    const refund = modeled.operations.find(
+      (operation) => operation.id === "payments.refunds.create",
+    );
+    if (!refund) throw new Error("fixture: payments.refunds.create not found");
+    refund.input.params.push({
+      name: "request_key",
+      in: "query",
+      required: true,
+      schema: { type: "string" },
+      inferred: false,
+    });
+    refund.idempotency = {
+      mode: "required",
+      mechanism: "query",
+      key: "request_key",
+      keyDerivation: "client_supplied",
+    };
+    refund.input.schema = operationInputSchema(refund);
+
+    const valid = await validateInput(modeled, refund.id, {
+      ...refundInput,
+      idempotency_key: "business-operation-1",
+      confirm: true,
+    });
+    expect(valid.code).toBe(0);
+
+    const rawCarrier = await validateInput(modeled, refund.id, {
+      ...refundInput,
+      request_key: "business-operation-1",
+      confirm: true,
+    });
+    expect(rawCarrier.code).toBe(1);
+    const validation = JSON.parse(rawCarrier.stderr);
+    expect(validation.missing).toContain("idempotency_key");
+    expect(validation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "unrecognized_keys",
+          keys: ["request_key"],
+        }),
+      ]),
+    );
+  });
+});
+
+describe("idempotency-key flag collisions", () => {
+  it("keeps a non-keyed source field on the wire without treating it as a safety key", async () => {
+    const doc = await compile({
+      spec: `openapi: 3.0.0
+info: { title: widgets, version: 1.0.0 }
+paths:
+  /widgets:
+    get:
+      operationId: listWidgets
+      tags: [widgets]
+      parameters:
+        - name: idempotency_key
+          in: query
+          required: true
+          schema: { type: string }
+      responses: { '200': { description: ok } }
+`,
+      serviceId: "widgets",
+    });
+    for (const operation of doc.operations) operation.state = "approved";
+    const operation = doc.operations[0];
+    if (!operation) throw new Error("fixture: listWidgets not compiled");
+    expect(operation.idempotency.mode).not.toMatch(/required|key_supported/);
+
+    const transport = new MockTransport(() => ok({ items: [] }));
+    const io = bufferIO();
+    const code = await runToolCli(
+      doc,
+      [
+        ...operation.cli.command.split(" ").slice(1),
+        "--idempotency-key",
+        "ordinary-source-value",
+        "--base-url",
+        "https://widgets.local",
+      ],
+      {
+        transport,
+        env: {
+          ANVIL_ENV: "dev",
+          ANVIL_ALLOWED_HOSTS: "widgets.local",
+        } as NodeJS.ProcessEnv,
+        io,
+      },
+    );
+    expect(code, io.text()).toBe(0);
+    expect(transport.requests).toHaveLength(1);
+    expect(new URL(transport.requests[0]?.url ?? "").searchParams.get("idempotency_key")).toBe(
+      "ordinary-source-value",
+    );
+  });
+
+  it("gives colliding business inputs distinct CLI flags from both safety controls", async () => {
+    const doc = await compile({
+      spec: `openapi: 3.0.0
+info: { title: widgets, version: 1.0.0 }
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      tags: [widgets]
+      parameters:
+        - { name: idempotency_key, in: query, required: true, schema: { type: string } }
+        - { name: confirm, in: query, required: true, schema: { type: string } }
+      responses: { '201': { description: created } }
+`,
+      manifest: `operations:
+  createWidget:
+    state: approved
+    idempotency:
+      strategy: required_request_key
+      key_location: header
+      header: Idempotency-Key
+    confirmation:
+      required: true
+      risk: high
+`,
+      serviceId: "widgets",
+    });
+    const operation = doc.operations[0];
+    if (!operation) throw new Error("fixture: createWidget not compiled");
+    expect(operation.input.schema?.properties).toMatchObject({
+      idempotency_key: { type: "string" },
+      confirm: { type: "string" },
+      anvil_idempotency_key: { type: "string" },
+      anvil_confirm: { const: true },
+    });
+
+    const help = bufferIO();
+    expect(
+      await runToolCli(doc, [...operation.cli.command.split(" ").slice(1), "--help"], {
+        io: help,
+      }),
+    ).toBe(0);
+    expect(help.text()).toContain("--input-idempotency-key");
+    expect(help.text()).toContain("--input-confirm");
+    expect(help.text()).toContain("--idempotency-key (required)");
+    expect(help.text()).toContain("--confirm (required)");
+
+    const transport = new MockTransport(() => ({ ...ok({ id: "wid_1" }), status: 201 }));
+    const io = bufferIO();
+    const code = await runToolCli(
+      doc,
+      [
+        ...operation.cli.command.split(" ").slice(1),
+        "--input-idempotency-key",
+        "business-query-value",
+        "--input-confirm",
+        "business-confirm-value",
+        "--idempotency-key",
+        "write-key-1",
+        "--confirm",
+        "--base-url",
+        "https://widgets.local",
+      ],
+      {
+        transport,
+        env: {
+          ANVIL_ENV: "dev",
+          ANVIL_ALLOWED_HOSTS: "widgets.local",
+        } as NodeJS.ProcessEnv,
+        io,
+      },
+    );
+
+    expect(code, io.text()).toBe(0);
+    expect(transport.requests).toHaveLength(1);
+    expect(transport.requests[0]?.headers["Idempotency-Key"]).toBe("write-key-1");
+    const url = new URL(transport.requests[0]?.url ?? "");
+    expect(url.searchParams.get("idempotency_key")).toBe("business-query-value");
+    expect(url.searchParams.get("confirm")).toBe("business-confirm-value");
   });
 });
 

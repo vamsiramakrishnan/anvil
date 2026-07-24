@@ -3,9 +3,23 @@ import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cliFlag, type Operation, propKey, resolveIdempotencyCarrier } from "@anvil/air";
+import {
+  type Operation,
+  operationBusinessInputCliFlag,
+  operationSafetyInputKeys,
+  propKey,
+  resolveIdempotencyCarrier,
+} from "@anvil/air";
 import { exampleInput } from "@anvil/generators";
-import { credentialProfileName, envPrefix } from "@anvil/runtime";
+import {
+  credentialProfileName,
+  envPrefix,
+  execute,
+  FetchTransport,
+  InMemoryLedger,
+  loadRuntimeConfig,
+  resolveCredentials,
+} from "@anvil/runtime";
 
 /**
  * Shared machinery for booting a generated bundle and driving its surfaces
@@ -23,6 +37,8 @@ export interface CaptureRecord {
   path: string;
   query: Record<string, string>;
   headers: Record<string, string>;
+  /** Secret-free proof of which credential family reached the mock. */
+  credentialKind?: "none" | "hermetic_exchanged_bearer" | "redacted_other";
   contentType: string | null;
   body: unknown;
   matchedOpId: string | null;
@@ -31,6 +47,24 @@ export interface CaptureRecord {
   validation: { ok: boolean; missing: string[]; invalid: string[] };
   /** What the mock answered — carries the NAME of the scenario it served. */
   response: { status: number; kind: string; scenario?: string } | null;
+}
+
+/** Secret-free RFC 8693 request metadata recorded by the hermetic mock STS. */
+export interface TokenExchangeCapture {
+  grantType: string;
+  subjectTokenPresent: boolean;
+  subjectTokenType: string | null;
+  requestedTokenType: string | null;
+  audience: string | null;
+  resource: string | null;
+  scopes: string[];
+  actorTokenPresent: boolean;
+  clientAuth: "client_secret_basic" | "client_secret_post" | "private_key_jwt" | "unknown";
+}
+
+export interface MockEvidence {
+  requests: CaptureRecord[];
+  tokenExchanges: TokenExchangeCapture[];
 }
 
 /** A structural divergence between what was sent and what the wire received. */
@@ -58,10 +92,25 @@ export const REDACTED_HEADERS = new Set([
  */
 export function argsFor(op: Operation, tag: string): Record<string, unknown> {
   const args = exampleInput(op);
-  if (typeof args.idempotency_key === "string") {
-    args.idempotency_key = `${tag}-${randomUUID()}`;
+  const key = operationSafetyInputKeys(op).idempotencyKey;
+  if (typeof args[key] === "string") {
+    args[key] = `${tag}-${randomUUID()}`;
   }
   return args;
+}
+
+/**
+ * Copy an invocation while removing only Anvil's confirmation control. A real
+ * business field named `confirm` must survive a gate probe; when it exists the
+ * safety control is namespaced (for example `anvil_confirm`).
+ */
+export function withoutConfirmationInput(
+  op: Operation,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const unconfirmed = { ...args };
+  delete unconfirmed[operationSafetyInputKeys(op).confirm];
+  return unconfirmed;
 }
 
 let assertionKey: string | undefined;
@@ -107,6 +156,21 @@ export function hermeticCredentialEnv(
           env[`${prefix}_CLIENT_SECRET`] = "anvil-hermetic-client-secret";
         }
         break;
+      case "oauth2_on_behalf_of":
+        env[`${prefix}_TOKEN_ENDPOINT`] = `${mockBase}/__anvil/oauth/token`;
+        env[`${prefix}_CLIENT_ID`] = "anvil-hermetic-client";
+        if (auth.provider?.clientAuth === "private_key_jwt") {
+          assertionKey ??= generateKeyPairSync("rsa", { modulusLength: 2048 })
+            .privateKey.export({ type: "pkcs8", format: "pem" })
+            .toString();
+          env[`${prefix}_CLIENT_ASSERTION_KEY`] = assertionKey;
+        } else {
+          env[`${prefix}_CLIENT_SECRET`] = "anvil-hermetic-client-secret";
+        }
+        if (auth.delegation?.actor) {
+          env[`${prefix}_ACTOR_TOKEN`] = "anvil-hermetic-actor-token";
+        }
+        break;
       case "jwt_bearer":
         if (auth.provider?.grant === "jwt_bearer") {
           assertionKey ??= generateKeyPairSync("rsa", { modulusLength: 2048 })
@@ -120,13 +184,118 @@ export function hermeticCredentialEnv(
         }
         break;
       default:
-        // Authorization-code, OBO, mTLS, custom-header, and workload-identity
+        // Authorization-code, mTLS, custom-header, and workload-identity
         // calls require caller/platform context that a wire-only self-test must
         // not fabricate. Their normal auth_required result stays visible.
         break;
     }
   }
   return env;
+}
+
+export interface VirtualOboProbe {
+  status: "pass" | "fail";
+  proof: "virtual_wiring_only";
+  liveIdpReadiness: "unverified";
+  detail: string;
+}
+
+/**
+ * Prove the delegated bridge through the real runtime without weakening the
+ * serving surfaces: a synthetic identity is treated as already validated,
+ * exchanged at the loopback STS, and the exchanged bearer reaches the mock
+ * upstream. This is intentionally NOT a live issuer/discovery/JWKS proof.
+ */
+export async function probeVirtualOboWiring(
+  op: Operation,
+  mockBase: string,
+  ctl: MockControl,
+): Promise<VirtualOboProbe> {
+  const proof = "virtual_wiring_only" as const;
+  const liveIdpReadiness = "unverified" as const;
+  if (op.auth.type !== "oauth2_on_behalf_of") {
+    return {
+      status: "fail",
+      proof,
+      liveIdpReadiness,
+      detail: `${op.id} does not declare oauth2_on_behalf_of.`,
+    };
+  }
+  const env: NodeJS.ProcessEnv = {
+    ANVIL_ENV: "dev",
+    ANVIL_ALLOWED_HOSTS: "127.0.0.1",
+    ANVIL_AUTH_PROFILE: "default",
+    ...hermeticCredentialEnv([op], mockBase),
+  };
+  const config = loadRuntimeConfig(env, () => undefined);
+  await ctl.reset();
+  const result = await execute(
+    op,
+    { input: argsFor(op, "virtual-obo") },
+    {
+      serviceId: op.id.split(".")[0] ?? "anvil-virtual",
+      baseUrl: mockBase,
+      transport: new FetchTransport(),
+      credentials: resolveCredentials(config, { env, allowLoopbackHttp: true }),
+      authProfile: "default",
+      inbound: {
+        subjectToken: "eyJhbGciOiJub25lIn0.eyJzdWIiOiJhbnZpbC12aXJ0dWFsLXVzZXIifQ.",
+        subjectTokenType: op.auth.provider?.subjectTokenType ?? "jwt",
+        sub: "anvil-virtual-user",
+        claims: {
+          iss: op.auth.issuer ?? "https://virtual-idp.anvil.invalid/",
+          sub: "anvil-virtual-user",
+        },
+      },
+      ledger: new InMemoryLedger(),
+      allowedHosts: ["127.0.0.1"],
+      env: "dev",
+      retries: false,
+    },
+  );
+  const evidence = await ctl.evidence();
+  const exchange = evidence.tokenExchanges[0];
+  const upstream = evidence.requests[0];
+  const expectedScopes = [...new Set(op.auth.scopes)].sort();
+  const observedScopes = [...new Set(exchange?.scopes ?? [])].sort();
+  const problems: string[] = [];
+  if (result.outcome !== "success") {
+    problems.push(
+      result.outcome === "error"
+        ? `runtime returned ${result.envelope.error.code}`
+        : `runtime returned ${result.outcome}`,
+    );
+  }
+  if (evidence.tokenExchanges.length !== 1) {
+    problems.push(`mock STS recorded ${evidence.tokenExchanges.length} exchanges, expected 1`);
+  }
+  if (
+    exchange?.grantType !== "urn:ietf:params:oauth:grant-type:token-exchange" ||
+    exchange.subjectTokenPresent !== true
+  ) {
+    problems.push("mock STS did not receive a redacted RFC 8693 subject-token exchange");
+  }
+  if (exchange?.audience !== (op.auth.audience ?? null)) {
+    problems.push("exchange audience disagrees with AIR");
+  }
+  if (exchange?.resource !== (op.auth.provider?.resource ?? null)) {
+    problems.push("exchange resource disagrees with AIR");
+  }
+  if (JSON.stringify(observedScopes) !== JSON.stringify(expectedScopes)) {
+    problems.push("exchange scopes disagree with AIR");
+  }
+  if (evidence.requests.length !== 1 || upstream?.credentialKind !== "hermetic_exchanged_bearer") {
+    problems.push("exchanged bearer did not reach exactly one upstream request");
+  }
+  return {
+    status: problems.length === 0 ? "pass" : "fail",
+    proof,
+    liveIdpReadiness,
+    detail:
+      problems.length === 0
+        ? "Synthetic validated identity exchanged through the mock STS and the exchanged bearer reached the upstream; live IdP readiness remains unverified."
+        : `${problems.join("; ")}. Live IdP readiness remains unverified.`,
+  };
 }
 
 /**
@@ -139,7 +308,9 @@ export function hermeticCredentialEnv(
  */
 export function cliFlagsFor(op: Operation, args: Record<string, unknown>): string[] {
   const out: string[] = [];
-  const emit = (name: string) => {
+  const emit = (location: Parameters<typeof operationBusinessInputCliFlag>[1], name: string) => {
+    const flag = operationBusinessInputCliFlag(op, location, name);
+    if (!flag) return;
     const value = args[propKey(name)];
     if (value === undefined || value === null) return;
     // Use @anvil/air's real cliFlag, never a local re-implementation — the CLI
@@ -149,14 +320,18 @@ export function cliFlagsFor(op: Operation, args: Record<string, unknown>): strin
     // not a bare toggle — the tool CLI coerces it back; only the injected
     // `confirm`/`dry-run` control toggles are bare, and those are never fields
     // iterated here.
-    out.push(cliFlag(name), String(value));
+    out.push(flag, String(value));
   };
-  for (const p of op.input.params) emit(p.name);
-  if (op.input.body?.projection === "fields") for (const f of op.input.body.fields) emit(f.name);
-  else if (op.input.body && args.body !== undefined && args.body !== null) {
+  for (const p of op.input.params) emit(p.in, p.name);
+  if (op.input.body?.projection === "fields") {
+    for (const f of op.input.body.fields) emit("body", f.name);
+  } else if (op.input.body && args.body !== undefined && args.body !== null) {
     out.push("--body", JSON.stringify(args.body));
   }
-  if (typeof args.idempotency_key === "string") out.push("--idempotency-key", args.idempotency_key);
+  const idempotencyKey = args[operationSafetyInputKeys(op).idempotencyKey];
+  if (typeof idempotencyKey === "string") {
+    out.push("--idempotency-key", idempotencyKey);
+  }
   return out;
 }
 
@@ -232,7 +407,8 @@ export function expectedWire(op: Operation, args: Record<string, unknown>): Expe
   }
   if (body === undefined && hasBody) body = fields;
   const carrier = resolveIdempotencyCarrier(op);
-  const key = typeof args.idempotency_key === "string" ? args.idempotency_key : undefined;
+  const safetyKey = operationSafetyInputKeys(op).idempotencyKey;
+  const key = typeof args[safetyKey] === "string" ? args[safetyKey] : undefined;
   if (carrier.ok && carrier.binding && key) {
     const binding = carrier.binding;
     switch (binding.mechanism) {
@@ -316,10 +492,17 @@ export class MockControl {
   constructor(private readonly base: string) {}
 
   async capture(): Promise<CaptureRecord[]> {
+    return (await this.evidence()).requests;
+  }
+
+  async evidence(): Promise<MockEvidence> {
     const res = await fetch(`${this.base}/__anvil/capture`);
     if (!res.ok) throw new Error(`mock capture failed with ${res.status}`);
-    const data = (await res.json()) as { requests: CaptureRecord[] };
-    return data.requests;
+    const data = (await res.json()) as Partial<MockEvidence>;
+    return {
+      requests: data.requests ?? [],
+      tokenExchanges: data.tokenExchanges ?? [],
+    };
   }
 
   reset(): Promise<void> {

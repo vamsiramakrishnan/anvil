@@ -181,6 +181,7 @@ describe("anvil publish (gated)", () => {
     expect(record.env).toBe("prod");
     expect(record.target).toBe("cloud-run");
     expect(record.recordKind).toBe("deployment_plan");
+    expect(record.artifacts).toContain("deploy/idempotency-store.json");
     expect(record.plannedAt).toBe("2026-07-10T01:00:00Z");
     expect(record.publishedAt).toBeUndefined();
     expect(record.cloudCallsMade).toBe(false);

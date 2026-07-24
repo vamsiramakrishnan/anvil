@@ -181,6 +181,17 @@ describe("target kit generation", () => {
     expect(terraformReadme).toContain('backend-config="bucket=$ANVIL_TF_STATE_BUCKET"');
     expect(terraformReadme).toContain('backend-config="prefix=$ANVIL_TF_STATE_PREFIX"');
     expect(terraformReadme).toContain("TF_VAR_project_id='acme-proj'");
+    expect(terraformReadme).toContain("TF_VAR_region=REPLACE_WITH_CLOUD_RUN_REGION");
+    expect(terraformReadme).toContain("TF_VAR_ledger_database_mode=shared");
+    expect(terraformReadme).toContain(
+      "TF_VAR_ledger_database_id=REPLACE_WITH_TRUST_DOMAIN_FIRESTORE_DATABASE",
+    );
+    expect(terraformReadme).toContain("--database-mode");
+    expect(terraformReadme).toContain("Firestore IAM conditions stop at the database boundary");
+    expect(terraformReadme).toContain("air.service.environment");
+    expect(terraformReadme).toContain("/readyz` proves only ledger data-plane access");
+    expect(terraformReadme).toContain("never sends a live mutation");
+    expect(terraformReadme).toContain('anvil deploy ledger "$ANVIL_BUNDLE_DIR"');
     expect(terraformReadme).toContain("TF_VAR_image_tag");
     expect(terraformReadme).toContain("must be absolute");
     expect(terraformReadme).toContain("must be outside the bundle");

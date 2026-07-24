@@ -49,36 +49,8 @@ export function reservedSafetyShape(_op: Operation): z.ZodRawShape {
 }
 
 function jsonSchemaToZod(schema: JsonSchema): z.ZodType {
-  if (schema.const !== undefined) return z.literal(schema.const as z.core.util.Literal);
-  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
-    // A JSON Schema enum is a set of literal VALUES, not names — a numeric
-    // enum member must be accepted as the number the wire carries, never its
-    // stringified spelling (which would reject every synthesized example).
-    const values = schema.enum;
-    if (values.every((v) => typeof v === "string")) {
-      return z.enum(values as [string, ...string[]]);
-    }
-    const literals: z.ZodType[] = values.map((v) => z.literal(v as z.core.util.Literal));
-    return literals.length === 1
-      ? (literals[0] as z.ZodType)
-      : z.union(literals as [z.ZodType, z.ZodType, ...z.ZodType[]]);
-  }
-  switch (schema.type) {
-    case "string":
-      return z.string();
-    case "integer":
-      return z.number().int();
-    case "number":
-      return z.number();
-    case "boolean":
-      return z.boolean();
-    case "array": {
-      const items = (schema.items as JsonSchema | undefined) ?? {};
-      return z.array(jsonSchemaToZod(items));
-    }
-    case "object":
-      return z.record(z.string(), z.unknown());
-    default:
-      return z.unknown();
-  }
+  // Zod's JSON-Schema converter preserves intersections, nested object rules,
+  // formats, patterns, and additionalProperties. A hand-written type switch
+  // would silently discard source constraints on an idempotency carrier.
+  return z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
 }

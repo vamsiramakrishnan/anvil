@@ -12,6 +12,7 @@ import {
 import { type Command, Option } from "commander";
 import type { CliIO } from "../io.js";
 import { reportPreservedStaleArtifacts, reprojectBundleAtomically } from "./approve.js";
+import { registerCapabilityCompose } from "./capability-compose.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 import { loadAir } from "./shared.js";
@@ -104,6 +105,8 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
     .action((path: string, id: string) => {
       ctx.code = runDiff(path, id, ctx.io);
     });
+
+  registerCapabilityCompose(capability, ctx);
 }
 
 interface ShowOptions {

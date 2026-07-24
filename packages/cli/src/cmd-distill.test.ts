@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseEnrichmentPlan } from "@anvil/refinement";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAnvilCli } from "./anvil-cli.js";
 import { bufferIO } from "./io.js";
@@ -43,5 +44,16 @@ describe("anvil distill", () => {
       "Enrichment plan — 1 operation(s) to investigate (of 4; basis size 4)",
     );
     expect(io.text()).not.toContain("clean basis skipped");
+
+    const planPath = join(root, "enrich-plan.json");
+    const writeIo = bufferIO();
+    expect(
+      await runAnvilCli(
+        ["distill", bundle, "--as-enrich-plan", "--write", planPath],
+        { io: writeIo },
+      ),
+      writeIo.text(),
+    ).toBe(0);
+    expect(() => parseEnrichmentPlan(readFileSync(planPath, "utf8"))).not.toThrow();
   });
 });

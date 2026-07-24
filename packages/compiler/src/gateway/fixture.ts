@@ -170,7 +170,12 @@ export class FakeGatewayAdapter implements GatewayAdapter {
         overlay: buildGatewayOverlay([]),
         contract: nativeContract("reporting", source),
         diagnostics: [
-          { level: "error", code: "gateway/unknown_api", message: `No fixture API '${api.id}'.` },
+          {
+            level: "error",
+            code: "gateway/unknown_api",
+            message: `No fixture API '${api.id}'.`,
+            subject: { api: { id: api.id } },
+          },
         ],
       };
     }
@@ -235,6 +240,7 @@ function refundsFacts(): { facts: GatewayFact[]; diagnostics: GatewayDiagnostic[
       message:
         "Custom 'pre-function' Lua plugin on /refunds is opaque; its request transformation is not modelled and blocks automatic certification.",
       coordinate: { origin: EXPORT, pointer: "/services/refunds/plugins/pre-function" },
+      subject: { api: { id: "refunds", revision: "1.0.0", environment: "prod" } },
     },
   ];
   return { facts, diagnostics };

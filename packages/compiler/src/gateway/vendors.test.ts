@@ -24,6 +24,11 @@ const VENDORS: {
   name: refunds
   version: "1.0.0"
   securityScheme: ["oauth2"]
+  identity:
+    issuer: https://identity.example.com/
+    audience: api://refunds
+    principal: service
+    carrier: { in: header, name: Authorization, scheme: Bearer }
   apiThrottlingPolicy: "10PerMin"
   operations:
     - { target: "/refunds", verb: "POST", scopes: ["refunds:write"] }
@@ -35,6 +40,11 @@ const VENDORS: {
     config: `apis:
   - assetId: refunds
     productVersion: v1
+    identity:
+      issuer: https://identity.example.com/
+      audience: api://refunds
+      principal: service
+      carrier: { in: header, name: Authorization, scheme: Bearer }
     resources:
       - { method: "POST", path: "/refunds", scopes: ["refunds:write"] }
     policies:
@@ -52,6 +62,11 @@ const VENDORS: {
 apis:
   - name: refunds
     oauthProviders: ["default"]
+    identity:
+      issuer: https://identity.example.com/
+      audience: api://refunds
+      principal: service
+      carrier: { in: header, name: Authorization, scheme: Bearer }
     resources:
       - { method: "POST", path: "/refunds", scopes: ["refunds:write"] }
     assembly:
@@ -66,6 +81,11 @@ apis:
   - name: refunds
     revision: "2"
     environments: ["prod"]
+    identity:
+      issuer: https://identity.example.com/
+      audience: api://refunds
+      principal: service
+      carrier: { in: header, name: Authorization, scheme: Bearer }
     flows:
       - { method: "POST", path: "/refunds" }
     policies:
@@ -103,6 +123,41 @@ describe.each(VENDORS)("$name adapter", (vendor) => {
 
   it("feeds the compiler and applies the required scope", async () => {
     expect(await effectiveScopes(vendor)).toContain("refunds:write");
+  });
+
+  it("emits the same cited operation identity through inventory and extract", async () => {
+    const inventory = await vendor.adapter.inventory(connection, ctx);
+    const imported = await vendor.adapter.extractApi(connection, { id: "refunds" }, ctx);
+    expect(inventory.apis[0]?.identityEvidence).toEqual(imported.identityEvidence);
+    expect(imported.identityEvidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          basis: "explicit_configuration",
+          operationRef: "POST /refunds",
+          issuer: "https://identity.example.com/",
+        }),
+        expect.objectContaining({
+          basis: "explicit_configuration",
+          operationRef: "POST /refunds",
+          audience: "api://refunds",
+        }),
+        expect.objectContaining({
+          basis: "explicit_configuration",
+          operationRef: "POST /refunds",
+          principal: "service",
+        }),
+        expect.objectContaining({
+          basis: "explicit_configuration",
+          operationRef: "POST /refunds",
+          carrier: { in: "header", name: "Authorization", scheme: "Bearer" },
+        }),
+        expect.objectContaining({
+          basis: "explicit_configuration",
+          operationRef: "POST /refunds",
+          scopes: ["refunds:write"],
+        }),
+      ]),
+    );
   });
 
   it("passes the gateway adapter conformance battery", async () => {

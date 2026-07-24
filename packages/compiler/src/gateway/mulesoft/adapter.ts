@@ -6,6 +6,11 @@
  * understand them.
  */
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
+import {
+  type ExplicitGatewayIdentityConfiguration,
+  projectConfiguredAuthType,
+  projectExplicitIdentityConfiguration,
+} from "../identity-evidence.js";
 import { finalizeInventory } from "../inventory.js";
 import type {
   EvidenceCoordinate,
@@ -14,13 +19,16 @@ import type {
   GatewayApiRef,
   GatewayApiSummary,
   GatewayDiagnostic,
+  GatewayIdentityEvidence,
   GatewayInventorySnapshot,
   GatewayProbeResult,
 } from "../model.js";
+import { withGatewayDiagnosticSubject } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
 import { asObjects, asStrings, parseGatewayDocument } from "../parse-safe.js";
 import {
   buildGatewayApiImport,
+  gatewayOperationRef,
   normalizePath,
   routeOnlyContract,
   type SynthOp,
@@ -31,6 +39,7 @@ interface MuleResource {
   method: string;
   path: string;
   scopes?: string[];
+  identity?: ExplicitGatewayIdentityConfiguration;
 }
 interface MulePolicy {
   policyId: string;
@@ -42,6 +51,7 @@ interface MuleApi {
   instanceLabel?: string;
   resources?: MuleResource[];
   policies?: MulePolicy[];
+  identity?: ExplicitGatewayIdentityConfiguration;
 }
 
 export interface MulesoftConnection extends GatewayConnection {
@@ -67,8 +77,8 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
   trafficPolicies: true,
   transformations: "partial",
   faultPolicies: false,
-  products: true,
-  consumers: true,
+  products: false,
+  consumers: false,
   trafficAnalytics: false,
   drift: false,
   publish: false,
@@ -138,10 +148,29 @@ function normalizeApi(api: MuleApi, apiIndex: number, origin: string) {
   const ops = opsOf(api);
   const facts: GatewayFact[] = [];
   const diagnostics: GatewayDiagnostic[] = [];
+  const identityEvidence: GatewayIdentityEvidence[] = [];
   let hasQuota = false;
   let authSummary: string | undefined;
+  const operationIdentityRefs = ops.map((op) => gatewayOperationRef(op.method, op.path));
+  const apiSubject = {
+    api: {
+      id: api.assetId,
+      ...(api.productVersion ? { revision: api.productVersion } : {}),
+      ...(api.instanceLabel ? { environment: api.instanceLabel } : {}),
+    },
+  };
+
+  const apiIdentity = projectExplicitIdentityConfiguration({
+    configuration: api.identity,
+    coordinate: { origin, pointer: `/apis/${apiIndex}/identity` },
+    operationRefs: operationIdentityRefs,
+  });
+  identityEvidence.push(...apiIdentity.evidence);
+  diagnostics.push(...withGatewayDiagnosticSubject(apiIdentity.diagnostics, apiSubject));
 
   asObjects<MuleResource>(api.resources).forEach((r, j) => {
+    const operationRef = synthOperationId(api.assetId, r.method, r.path);
+    const operationIdentityRef = gatewayOperationRef(r.method, r.path);
     const scopes = asStrings(r.scopes);
     if (scopes.length > 0) {
       const coordinate: EvidenceCoordinate = {
@@ -149,7 +178,7 @@ function normalizeApi(api: MuleApi, apiIndex: number, origin: string) {
         pointer: `/apis/${apiIndex}/resources/${j}/scopes`,
       };
       facts.push({
-        target: { scope: "operation", ref: synthOperationId(api.assetId, r.method, r.path) },
+        target: { scope: "operation", ref: operationRef },
         predicate: "auth.scopes",
         operation: "restrict",
         value: scopes,
@@ -157,18 +186,75 @@ function normalizeApi(api: MuleApi, apiIndex: number, origin: string) {
         note: "MuleSoft resource scopes",
       });
     }
+    const resourceScopes = projectExplicitIdentityConfiguration({
+      configuration: { ...(r.scopes === undefined ? {} : { scopes: r.scopes }) },
+      coordinate: { origin, pointer: `/apis/${apiIndex}/resources/${j}` },
+      operationRefs: [operationIdentityRef],
+      fields: ["scopes"],
+    });
+    identityEvidence.push(...resourceScopes.evidence);
+    diagnostics.push(
+      ...withGatewayDiagnosticSubject(resourceScopes.diagnostics, {
+        ...apiSubject,
+        route: {
+          method: r.method,
+          path: normalizePath(r.path),
+          operationRef: operationIdentityRef,
+        },
+      }),
+    );
+    const resourceIdentity = projectExplicitIdentityConfiguration({
+      configuration: r.identity,
+      coordinate: { origin, pointer: `/apis/${apiIndex}/resources/${j}/identity` },
+      operationRefs: [operationIdentityRef],
+    });
+    identityEvidence.push(...resourceIdentity.evidence);
+    diagnostics.push(
+      ...withGatewayDiagnosticSubject(resourceIdentity.diagnostics, {
+        ...apiSubject,
+        route: {
+          method: r.method,
+          path: normalizePath(r.path),
+          operationRef: operationIdentityRef,
+        },
+      }),
+    );
   });
 
   asObjects<MulePolicy>(api.policies).forEach((p, k) => {
     const coordinate: EvidenceCoordinate = { origin, pointer: `/apis/${apiIndex}/policies/${k}` };
-    if (AUTH_POLICIES.has(p.policyId)) authSummary = p.policyId;
-    else if (RATE_POLICIES.has(p.policyId)) {
+    if (AUTH_POLICIES.has(p.policyId)) {
+      authSummary = p.policyId;
+      const type =
+        p.policyId === "client-id-enforcement"
+          ? "api_key"
+          : p.policyId === "jwt-validation"
+            ? "jwt_bearer"
+            : undefined;
+      if (type) {
+        identityEvidence.push(
+          ...projectConfiguredAuthType({
+            type,
+            coordinate: { origin, pointer: `${coordinate.pointer}/policyId` },
+            operationRefs: operationIdentityRefs,
+          }),
+        );
+      }
+      const policyIdentity = projectExplicitIdentityConfiguration({
+        configuration: p.config,
+        coordinate: { origin, pointer: `${coordinate.pointer}/config` },
+        operationRefs: operationIdentityRefs,
+      });
+      identityEvidence.push(...policyIdentity.evidence);
+      diagnostics.push(...withGatewayDiagnosticSubject(policyIdentity.diagnostics, apiSubject));
+    } else if (RATE_POLICIES.has(p.policyId)) {
       hasQuota = true;
       diagnostics.push({
         level: "info",
         code: "mulesoft/sla_present",
         message: `SLA/rate policy '${p.policyId}' on '${api.assetId}' applies but is not an operation semantic.`,
         coordinate,
+        subject: apiSubject,
       });
     } else {
       // DataWeave / custom flow logic — classified opaque, not interpreted.
@@ -177,11 +263,12 @@ function normalizeApi(api: MuleApi, apiIndex: number, origin: string) {
         code: "gateway/opaque_policy",
         message: `MuleSoft policy '${p.policyId}' on '${api.assetId}' is opaque (flow/DataWeave logic is not deterministically understood).`,
         coordinate,
+        subject: apiSubject,
       });
     }
   });
 
-  return { ops, facts, diagnostics, hasQuota, authSummary };
+  return { ops, facts, diagnostics, identityEvidence, hasQuota, authSummary };
 }
 
 export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection> {
@@ -225,6 +312,7 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
         contract: routeOnlyContract({ origin, pointer: `/apis/${i}` }),
         productIds: [],
         authSummary: norm.authSummary,
+        ...(norm.identityEvidence.length > 0 ? { identityEvidence: norm.identityEvidence } : {}),
         hasQuota: norm.hasQuota,
       };
     });
@@ -245,7 +333,14 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
   ): Promise<GatewayApiImport> {
     const origin = connection.origin ?? "mulesoft.yaml";
     const parsed = parseExport(connection.config, origin);
-    const apiIndex = parsed.apis.findIndex((a) => a.assetId === api.id);
+    const apiIndex = parsed.apis.findIndex(
+      (candidate) =>
+        candidate.assetId === api.id &&
+        (!api.version || !candidate.productVersion || candidate.productVersion === api.version) &&
+        (!api.environmentId ||
+          !candidate.instanceLabel ||
+          candidate.instanceLabel === api.environmentId),
+    );
     const found = parsed.apis[apiIndex];
     if (!found) {
       const empty = buildGatewayApiImport({
@@ -264,20 +359,30 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
             level: "error",
             code: "mulesoft/unknown_api",
             message: `No MuleSoft asset '${api.id}'.`,
+            subject: {
+              api: {
+                id: api.id,
+                ...(api.version ? { revision: api.version } : {}),
+                ...(api.environmentId ? { environment: api.environmentId } : {}),
+              },
+            },
           },
         ],
       };
     }
     const norm = normalizeApi(found, apiIndex, origin);
-    return buildGatewayApiImport({
-      originKind: "mulesoft",
-      apiName: found.assetId,
-      version: found.productVersion,
-      sourceCoordinate: { origin, pointer: `/apis/${apiIndex}` },
-      ops: norm.ops,
-      facts: norm.facts,
-      authConfigured: Boolean(norm.authSummary),
-      diagnostics: norm.diagnostics,
-    });
+    return {
+      ...buildGatewayApiImport({
+        originKind: "mulesoft",
+        apiName: found.assetId,
+        version: found.productVersion,
+        sourceCoordinate: { origin, pointer: `/apis/${apiIndex}` },
+        ops: norm.ops,
+        facts: norm.facts,
+        authConfigured: Boolean(norm.authSummary),
+        diagnostics: norm.diagnostics,
+      }),
+      ...(norm.identityEvidence.length > 0 ? { identityEvidence: norm.identityEvidence } : {}),
+    };
   }
 }

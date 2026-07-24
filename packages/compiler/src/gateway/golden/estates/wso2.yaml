@@ -1,5 +1,6 @@
 # Golden estate: a WSO2 API-export shape — operation scopes + security scheme
-# map to auth, throttling to quota, mediation sequences stay opaque.
+# map to auth, throttling to quota, while mediation and operation policies stay
+# opaque and block automatic import.
 apis:
   - name: OrderService
     context: /orders
@@ -14,6 +15,13 @@ apis:
       - target: /orders
         verb: POST
         scopes: ["orders:write"]
+        operationPolicies:
+          request:
+            - policyName: addHeader
+              policyVersion: v1
+              parameters:
+                headerName: x-business-unit
+                headerValue: retail
       - target: /orders/{id}
         verb: DELETE
         scopes: ["orders:admin"]

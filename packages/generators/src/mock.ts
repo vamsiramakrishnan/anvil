@@ -4,6 +4,7 @@ import {
   type JsonSchema,
   type Operation,
   operationInputSchema,
+  operationSafetyInputKeys,
   propKey,
   resolveIdempotencyCarrier,
 } from "@anvil/air";
@@ -67,6 +68,7 @@ export function exampleInput(op: Operation): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const carrier = resolveIdempotencyCarrier(op);
   const binding = carrier.ok ? carrier.binding : undefined;
+  const safetyKeys = operationSafetyInputKeys(op);
   // A null synthesis result carries no valid value: the tool's zod shape (and
   // the executor) treat optional as ABSENT, never null, so an unsynthesizable
   // optional input must be omitted rather than sent as null.
@@ -97,8 +99,10 @@ export function exampleInput(op: Operation): Record<string, unknown> {
     if (example !== null) out.body = example;
     else if (body.required) out.body = {};
   }
-  if (op.idempotency.mode === "required") out.idempotency_key = `${op.canonicalName}-example-key`;
-  if (op.confirmation.required) out.confirm = true;
+  if (op.idempotency.mode === "required") {
+    out[safetyKeys.idempotencyKey] = `${op.canonicalName}-example-key`;
+  }
+  if (op.confirmation.required) out[safetyKeys.confirm] = true;
   return out;
 }
 
@@ -178,9 +182,7 @@ export function exampleFromSchema(
 function ownExample(schema: JsonSchema, cache: Map<JsonSchema, unknown>, depth: number): unknown {
   switch (schema.type) {
     case "string":
-      return typeof schema.format === "string" && schema.format.includes("date")
-        ? "2026-07-09T00:00:00Z"
-        : "example";
+      return stringExample(schema);
     case "integer":
       return typeof schema.minimum === "number" ? schema.minimum : 1;
     case "number":
@@ -202,6 +204,43 @@ function ownExample(schema: JsonSchema, cache: Map<JsonSchema, unknown>, depth: 
       }
       if (Object.keys(schema).every((k) => ANNOTATION_KEYS.has(k))) return {};
       return null;
+    }
+  }
+}
+
+function stringExample(schema: JsonSchema): string {
+  switch (schema.format) {
+    case "date":
+      return "2026-07-09";
+    case "date-time":
+      return "2026-07-09T00:00:00Z";
+    case "time":
+      return "00:00:00Z";
+    case "uuid":
+      return "550e8400-e29b-41d4-a716-446655440000";
+    case "email":
+      return "user@example.com";
+    case "uri":
+    case "url":
+      return "https://example.com/resource";
+    case "hostname":
+      return "api.example.com";
+    case "ipv4":
+      return "192.0.2.1";
+    case "ipv6":
+      return "2001:db8::1";
+    default: {
+      const base = "example";
+      const minimum =
+        typeof schema.minLength === "number" && Number.isSafeInteger(schema.minLength)
+          ? Math.max(0, schema.minLength)
+          : 0;
+      const maximum =
+        typeof schema.maxLength === "number" && Number.isSafeInteger(schema.maxLength)
+          ? Math.max(0, schema.maxLength)
+          : Number.POSITIVE_INFINITY;
+      const length = Math.max(minimum, Math.min(maximum, base.length));
+      return length <= base.length ? base.slice(0, length) : base.padEnd(length, "x");
     }
   }
 }
@@ -334,7 +373,8 @@ export function generateMockServerSource(air: AirDocument): string {
 // path can be proven end-to-end without the real upstream. Control endpoints
 // live under the reserved /__anvil/ prefix (capture, reset, scenario, fault,
 // oauth/token). The token endpoint is a hermetic dev issuer and is never part
-// of the captured upstream operation stream.
+// of the captured upstream operation stream. Its redacted grant metadata proves
+// local wiring only; it can never establish live IdP readiness.
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -357,6 +397,7 @@ const redactHeaders = (raw) => {
 // Mutable mock state, all resettable via POST /__anvil/reset.
 const CAPTURE_LIMIT = 500;
 let captures = [];
+let tokenExchanges = [];
 let scenarioOverride = process.env.ANVIL_MOCK_SCENARIO ?? null;
 let faults = new Map(); // operationId -> { status, times }
 
@@ -492,6 +533,29 @@ function control(req, res, url, rawBody) {
     if (!grant || !supported.has(grant)) {
       return json(res, 400, { error: "unsupported_grant_type" });
     }
+    if (grant === "urn:ietf:params:oauth:grant-type:token-exchange") {
+      const authorization = req.headers.authorization;
+      const clientAuth =
+        typeof authorization === "string" && authorization.startsWith("Basic ")
+          ? "client_secret_basic"
+          : form.has("client_secret")
+            ? "client_secret_post"
+            : form.has("client_assertion")
+              ? "private_key_jwt"
+              : "unknown";
+      tokenExchanges.push({
+        grantType: grant,
+        subjectTokenPresent: form.has("subject_token"),
+        subjectTokenType: form.get("subject_token_type"),
+        requestedTokenType: form.get("requested_token_type"),
+        audience: form.get("audience"),
+        resource: form.get("resource"),
+        scopes: (form.get("scope") ?? "").split(/\\s+/).filter(Boolean),
+        actorTokenPresent: form.has("actor_token"),
+        clientAuth,
+      });
+      if (tokenExchanges.length > CAPTURE_LIMIT) tokenExchanges.shift();
+    }
     return json(res, 200, {
       access_token: "anvil-hermetic-upstream-token",
       token_type: "Bearer",
@@ -500,10 +564,11 @@ function control(req, res, url, rawBody) {
   }
   const parsed = rawBody ? JSON.parse(rawBody) : {};
   if (req.method === "GET" && url.pathname === "/__anvil/capture") {
-    return json(res, 200, { requests: captures });
+    return json(res, 200, { requests: captures, tokenExchanges });
   }
   if (req.method === "POST" && url.pathname === "/__anvil/reset") {
     captures = [];
+    tokenExchanges = [];
     faults = new Map();
     scenarioOverride = process.env.ANVIL_MOCK_SCENARIO ?? null;
     return json(res, 200, { ok: true });
@@ -570,6 +635,12 @@ createServer((req, res) => {
       path: url.pathname,
       query: Object.fromEntries(query.entries()),
       headers: redactHeaders(req.headers),
+      credentialKind:
+        req.headers.authorization === "Bearer anvil-hermetic-upstream-token"
+          ? "hermetic_exchanged_bearer"
+          : req.headers.authorization
+            ? "redacted_other"
+            : "none",
       contentType: req.headers["content-type"] ?? null,
       body: body ?? (rawBody.length > 0 ? rawBody : null),
       matchedOpId: route?.operationId ?? null,

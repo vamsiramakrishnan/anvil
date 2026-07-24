@@ -5,6 +5,11 @@
  * into the overlay/inventory; message-mutating policies are classified **opaque**.
  */
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
+import {
+  type ExplicitGatewayIdentityConfiguration,
+  projectConfiguredAuthType,
+  projectExplicitIdentityConfiguration,
+} from "../identity-evidence.js";
 import { finalizeInventory } from "../inventory.js";
 import type {
   EvidenceCoordinate,
@@ -13,14 +18,17 @@ import type {
   GatewayApiRef,
   GatewayApiSummary,
   GatewayDiagnostic,
+  GatewayIdentityEvidence,
   GatewayInventorySnapshot,
   GatewayProbeResult,
   GatewayProduct,
 } from "../model.js";
+import { withGatewayDiagnosticSubject } from "../model.js";
 import type { GatewayFact } from "../overlay.js";
 import { asObjects, asStrings, parseGatewayDocument } from "../parse-safe.js";
 import {
   buildGatewayApiImport,
+  gatewayOperationRef,
   joinGatewayPath,
   routeOnlyContract,
   type SynthOp,
@@ -31,10 +39,14 @@ interface ApigeeFlow {
   name?: string;
   method: string;
   path: string;
+  /** Exact operation identity fields in Anvil's normalized Apigee document. */
+  identity?: ExplicitGatewayIdentityConfiguration;
 }
 interface ApigeePolicy {
   type: string;
   name?: string;
+  /** Exact policy configuration; never inferred from the policy name/type. */
+  identity?: ExplicitGatewayIdentityConfiguration;
 }
 interface ApigeeProxy {
   name: string;
@@ -43,6 +55,8 @@ interface ApigeeProxy {
   environments?: string[];
   flows?: ApigeeFlow[];
   policies?: ApigeePolicy[];
+  /** Exact proxy-wide identity fields in Anvil's normalized Apigee document. */
+  identity?: ExplicitGatewayIdentityConfiguration;
 }
 interface ApigeeProduct {
   name: string;
@@ -83,9 +97,9 @@ const CAPABILITIES: GatewayAdapterCapabilities = {
   authorization: true,
   trafficPolicies: true,
   transformations: "partial",
-  faultPolicies: true,
+  faultPolicies: false,
   products: true,
-  consumers: true,
+  consumers: false,
   trafficAnalytics: false,
   drift: false,
   publish: false,
@@ -191,7 +205,52 @@ function normalizeProxy(exp: ApigeeExport, proxy: ApigeeProxy, proxyIndex: numbe
   const ops = opsOf(proxy);
   const facts: GatewayFact[] = [];
   const diagnostics: GatewayDiagnostic[] = [];
+  const identityEvidence: GatewayIdentityEvidence[] = [];
   let authConfigured = false;
+  const operationIdentityRefs = ops.map((op) => gatewayOperationRef(op.method, op.path));
+  const environments = asStrings(proxy.environments);
+  const apiSubject = {
+    api: {
+      id: proxy.name,
+      ...(proxy.revision ? { revision: proxy.revision } : {}),
+      ...(environments.length === 1 ? { environment: environments[0] } : {}),
+    },
+  };
+
+  const proxyIdentity = projectExplicitIdentityConfiguration({
+    configuration: proxy.identity,
+    coordinate: { origin, pointer: `/proxies/${proxyIndex}/identity` },
+    operationRefs: operationIdentityRefs,
+  });
+  identityEvidence.push(...proxyIdentity.evidence);
+  diagnostics.push(...withGatewayDiagnosticSubject(proxyIdentity.diagnostics, apiSubject));
+
+  asObjects<ApigeeFlow>(proxy.flows).forEach((flow, flowIndex) => {
+    const operationIdentityRef = gatewayOperationRef(
+      flow.method,
+      joinGatewayPath(proxy.basePath, flow.path),
+    );
+    const flowIdentity = projectExplicitIdentityConfiguration({
+      configuration: flow.identity,
+      coordinate: {
+        origin,
+        pointer: `/proxies/${proxyIndex}/flows/${flowIndex}/identity`,
+      },
+      operationRefs: [operationIdentityRef],
+    });
+    identityEvidence.push(...flowIdentity.evidence);
+    diagnostics.push(
+      ...withGatewayDiagnosticSubject(flowIdentity.diagnostics, {
+        ...apiSubject,
+        route: {
+          ...(flow.name ? { id: flow.name } : {}),
+          method: flow.method,
+          path: joinGatewayPath(proxy.basePath, flow.path),
+          operationRef: operationIdentityRef,
+        },
+      }),
+    );
+  });
 
   const { scopes, hasQuota, productIds } = productFor(exp, proxy.name);
   if (scopes.length > 0) {
@@ -213,6 +272,17 @@ function normalizeProxy(exp: ApigeeExport, proxy: ApigeeProxy, proxyIndex: numbe
       });
     }
   }
+  asObjects<ApigeeProduct>(exp.products).forEach((product, productIndex) => {
+    if (!asStrings(product.proxies).includes(proxy.name) || product.scopes === undefined) return;
+    const productIdentity = projectExplicitIdentityConfiguration({
+      configuration: { scopes: product.scopes },
+      coordinate: { origin, pointer: `/products/${productIndex}` },
+      operationRefs: operationIdentityRefs,
+      fields: ["scopes"],
+    });
+    identityEvidence.push(...productIdentity.evidence);
+    diagnostics.push(...withGatewayDiagnosticSubject(productIdentity.diagnostics, apiSubject));
+  });
 
   asObjects<ApigeePolicy>(proxy.policies).forEach((policy, k) => {
     const coordinate: EvidenceCoordinate = {
@@ -221,12 +291,35 @@ function normalizeProxy(exp: ApigeeExport, proxy: ApigeeProxy, proxyIndex: numbe
     };
     if (AUTH_POLICIES.has(policy.type)) {
       authConfigured = true;
+      const type =
+        policy.type === "VerifyAPIKey"
+          ? "api_key"
+          : policy.type === "VerifyJWT"
+            ? "jwt_bearer"
+            : undefined;
+      if (type) {
+        identityEvidence.push(
+          ...projectConfiguredAuthType({
+            type,
+            coordinate: { origin, pointer: `${coordinate.pointer}/type` },
+            operationRefs: operationIdentityRefs,
+          }),
+        );
+      }
+      const policyIdentity = projectExplicitIdentityConfiguration({
+        configuration: policy.identity,
+        coordinate: { origin, pointer: `${coordinate.pointer}/identity` },
+        operationRefs: operationIdentityRefs,
+      });
+      identityEvidence.push(...policyIdentity.evidence);
+      diagnostics.push(...withGatewayDiagnosticSubject(policyIdentity.diagnostics, apiSubject));
     } else if (TRANSFORM_POLICIES.has(policy.type)) {
       diagnostics.push({
         level: "warning",
         code: "gateway/opaque_policy",
         message: `Apigee policy '${policy.type}' on '${proxy.name}' mutates the message and is not modelled.`,
         coordinate,
+        subject: apiSubject,
       });
     } else if (policy.type === "Quota" || policy.type === "SpikeArrest") {
       diagnostics.push({
@@ -234,6 +327,7 @@ function normalizeProxy(exp: ApigeeExport, proxy: ApigeeProxy, proxyIndex: numbe
         code: "apigee/traffic_policy",
         message: `Apigee traffic policy '${policy.type}' on '${proxy.name}' applies but is not an operation semantic.`,
         coordinate,
+        subject: apiSubject,
       });
     } else {
       diagnostics.push({
@@ -241,11 +335,20 @@ function normalizeProxy(exp: ApigeeExport, proxy: ApigeeProxy, proxyIndex: numbe
         code: "gateway/opaque_policy",
         message: `Apigee policy '${String(policy.type ?? "(unnamed)")}' on '${proxy.name}' is not modelled and may change effective request behavior.`,
         coordinate,
+        subject: apiSubject,
       });
     }
   });
 
-  return { ops, facts, diagnostics, hasQuota, productIds, authConfigured };
+  return {
+    ops,
+    facts,
+    diagnostics,
+    identityEvidence,
+    hasQuota,
+    productIds,
+    authConfigured,
+  };
 }
 
 export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
@@ -295,6 +398,7 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
           norm.authConfigured || norm.facts.length > 0
             ? "Gateway authentication policy (details require supplied contract)"
             : undefined,
+        ...(norm.identityEvidence.length > 0 ? { identityEvidence: norm.identityEvidence } : {}),
         hasQuota: norm.hasQuota,
       };
     });
@@ -322,7 +426,14 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
     const parsed = parseExport(connection.config, origin);
     const exp = parsed.exp;
     const proxies = asObjects<ApigeeProxy>(exp.proxies);
-    const proxyIndex = proxies.findIndex((p) => p.name === api.id);
+    const proxyIndex = proxies.findIndex(
+      (proxy) =>
+        proxy.name === api.id &&
+        (!api.version || !proxy.revision || proxy.revision === api.version) &&
+        (!api.environmentId ||
+          asStrings(proxy.environments).length === 0 ||
+          asStrings(proxy.environments).includes(api.environmentId)),
+    );
     const proxy = proxies[proxyIndex];
     if (!proxy) {
       const empty = buildGatewayApiImport({
@@ -337,21 +448,35 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
         ...empty,
         diagnostics: [
           ...parsed.diagnostics,
-          { level: "error", code: "apigee/unknown_proxy", message: `No Apigee proxy '${api.id}'.` },
+          {
+            level: "error",
+            code: "apigee/unknown_proxy",
+            message: `No Apigee proxy '${api.id}'.`,
+            subject: {
+              api: {
+                id: api.id,
+                ...(api.version ? { revision: api.version } : {}),
+                ...(api.environmentId ? { environment: api.environmentId } : {}),
+              },
+            },
+          },
         ],
       };
     }
     const norm = normalizeProxy(exp, proxy, proxyIndex, origin);
-    return buildGatewayApiImport({
-      originKind: "apigee",
-      apiName: proxy.name,
-      version: proxy.revision,
-      sourceCoordinate: { origin, pointer: `/proxies/${proxyIndex}` },
-      ops: norm.ops,
-      facts: norm.facts,
-      authConfigured:
-        norm.authConfigured || norm.facts.some((fact) => fact.predicate.startsWith("auth.")),
-      diagnostics: norm.diagnostics,
-    });
+    return {
+      ...buildGatewayApiImport({
+        originKind: "apigee",
+        apiName: proxy.name,
+        version: proxy.revision,
+        sourceCoordinate: { origin, pointer: `/proxies/${proxyIndex}` },
+        ops: norm.ops,
+        facts: norm.facts,
+        authConfigured:
+          norm.authConfigured || norm.facts.some((fact) => fact.predicate.startsWith("auth.")),
+        diagnostics: norm.diagnostics,
+      }),
+      ...(norm.identityEvidence.length > 0 ? { identityEvidence: norm.identityEvidence } : {}),
+    };
   }
 }

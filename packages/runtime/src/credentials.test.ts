@@ -179,6 +179,19 @@ describe("SecretManagerCredentialResolver", () => {
     expect(mat).toEqual({ query: { "subscription-key": "k" } });
   });
 
+  it("honors the first-class AIR credential carrier before the legacy provider carrier", async () => {
+    const r = new SecretManagerCredentialResolver({ env: { ANVIL_PROD_API_KEY: "k" } });
+    const mat = await r.resolve(
+      "prod",
+      auth({
+        type: "api_key",
+        carrier: { in: "header", name: "X-Tenant-Key" },
+        provider: { apiKey: { in: "query", name: "legacy-key" } },
+      }),
+    );
+    expect(mat).toEqual({ headers: { "X-Tenant-Key": "k" } });
+  });
+
   it("dereferences an sm:// basic password", async () => {
     const { fn } = fakeFetch(smRoutes("p@ss"));
     const r = new SecretManagerCredentialResolver({

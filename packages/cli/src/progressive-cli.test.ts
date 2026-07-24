@@ -101,6 +101,24 @@ describe("per-operation disclosure flags", () => {
     expect(schema.type).toBe("object");
     expect(schema.required).toContain("idempotency_key");
     expect(Object.keys(schema.properties)).toContain("amount");
+    expect(Object.keys(schema.properties)).toContain("idempotency_key");
+  });
+
+  it("--schema keeps a derived idempotency key optional", async () => {
+    const derivedAir = structuredClone(air);
+    const refund = derivedAir.operations.find(
+      (operation) => operation.canonicalName === "create_refund",
+    );
+    if (!refund) throw new Error("payments fixture has no create_refund operation");
+    refund.idempotency.mode = "key_supported";
+    refund.idempotency.keyDerivation = "request_fingerprint";
+    delete refund.input.schema;
+
+    const io = bufferIO();
+    expect(await runToolCli(derivedAir, ["refunds", "create", "--schema"], { io })).toBe(0);
+    const schema = JSON.parse(io.stdout.join("\n"));
+    expect(schema.required).not.toContain("idempotency_key");
+    expect(schema.properties.idempotency_key).toBeDefined();
   });
 
   it("--examples prints a ready-to-adapt invocation", async () => {
@@ -134,6 +152,11 @@ describe("per-operation disclosure flags", () => {
       reversible: false,
     });
     expect(view.idempotency.mode).toBe("required");
+    expect(view.idempotency).toMatchObject({
+      key_derivation: "client_supplied",
+      explicit_key_required: true,
+      explicit_key_recommended: true,
+    });
     expect(view.confirmation.required).toBe(true);
     expect(view.required_flags).toEqual(["--confirm", "--idempotency-key"]);
   });
@@ -142,6 +165,36 @@ describe("per-operation disclosure flags", () => {
     const io = bufferIO();
     expect(await runToolCli(air, ["refunds", "create", "--explain"], { io })).toBe(0);
     expect(io.text()).toContain("Safety:");
+    expect(io.text()).toContain("--idempotency-key (required)");
+  });
+
+  it("--policy and --explain recommend, but do not require, a key_supported key", async () => {
+    const derivedAir = structuredClone(air);
+    const refund = derivedAir.operations.find(
+      (operation) => operation.canonicalName === "create_refund",
+    );
+    if (!refund) throw new Error("payments fixture has no create_refund operation");
+    refund.idempotency.mode = "key_supported";
+    refund.idempotency.keyDerivation = "request_fingerprint";
+
+    const policyIo = bufferIO();
+    expect(await runToolCli(derivedAir, ["refunds", "create", "--policy"], { io: policyIo })).toBe(
+      0,
+    );
+    const view = JSON.parse(policyIo.stdout.join("\n"));
+    expect(view.idempotency).toMatchObject({
+      key_derivation: "request_fingerprint",
+      explicit_key_required: false,
+      explicit_key_recommended: true,
+    });
+    expect(view.required_flags).toEqual(["--confirm"]);
+
+    const explainIo = bufferIO();
+    expect(
+      await runToolCli(derivedAir, ["refunds", "create", "--explain"], { io: explainIo }),
+    ).toBe(0);
+    expect(explainIo.text()).toContain("deterministic request-fingerprint fallback");
+    expect(explainIo.text()).not.toContain("--idempotency-key (required)");
   });
 });
 

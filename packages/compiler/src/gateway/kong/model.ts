@@ -13,6 +13,8 @@ export interface KongPlugin {
 
 export interface KongRoute {
   name?: string;
+  /** Kong expressions-router predicate. Opaque until Anvil models its grammar. */
+  expression?: string;
   paths?: string[];
   methods?: string[];
   hosts?: string[];

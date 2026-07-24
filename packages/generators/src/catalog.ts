@@ -1,5 +1,5 @@
 import type { AirDocument, Operation } from "@anvil/air";
-import { evidenceConfidence, operationInputSchema } from "@anvil/air";
+import { evidenceConfidence, operationInputSchema, operationSafetyInputKeys } from "@anvil/air";
 
 export interface CatalogEntry {
   id: string;
@@ -13,8 +13,11 @@ export interface CatalogEntry {
   risk: string;
   reversible: boolean;
   idempotency: string;
+  idempotencyKeyRequired: boolean;
+  idempotencyKeyInput: string;
   retrySafe: boolean;
   confirmationRequired: boolean;
+  confirmationInput: string;
   /** Why confirmation is gated — carried so a harness hook can cite the reason. */
   confirmationReason?: string;
   /** True when the gate needs explicit HUMAN approval, not just a model `confirm`. */
@@ -45,6 +48,9 @@ export function operationCatalog(air: AirDocument): {
   capabilities: CapabilityCatalogEntry[];
   operations: CatalogEntry[];
 } {
+  const publicWorkflowIds = new Set(
+    air.workflows.filter((workflow) => workflow.state !== "blocked").map((workflow) => workflow.id),
+  );
   return {
     service: {
       id: air.service.id,
@@ -57,33 +63,44 @@ export function operationCatalog(air: AirDocument): {
       description: c.description,
       source: c.source,
       operations: c.operationIds,
-      workflows: c.workflowIds,
+      // Blocked workflows stay in AIR + diagnostics as audit evidence, but the
+      // catalog is served over MCP as a discovery surface and must not advertise
+      // them as runnable.
+      workflows: c.workflowIds.filter((id) => publicWorkflowIds.has(id)),
       state: c.state,
       confidence: evidenceConfidence(c.evidence),
     })),
-    operations: air.operations.map((op) => ({
-      id: op.id,
-      canonicalName: op.canonicalName,
-      displayName: op.displayName,
-      description: op.description,
-      capability: op.capabilityId,
-      effect: op.effect.kind,
-      action: op.effect.action,
-      principal: op.auth.principal,
-      risk: op.effect.risk,
-      reversible: op.effect.reversible,
-      idempotency: op.idempotency.mode,
-      retrySafe: op.retries.mode === "safe",
-      confirmationRequired: op.confirmation.required,
-      confirmationReason: op.confirmation.reason,
-      humanApproval: op.confirmation.humanApproval === true,
-      auth: { type: op.auth.type, scopes: op.auth.scopes },
-      cli: op.cli.command,
-      mcpTool: op.mcp.toolName,
-      state: op.state,
-      intentExamples: op.skill.intentExamples,
-      confidence: evidenceConfidence(op.evidence),
-    })),
+    operations: air.operations.map((op) => {
+      const safety = operationSafetyInputKeys(op);
+      return {
+        id: op.id,
+        canonicalName: op.canonicalName,
+        displayName: op.displayName,
+        description: op.description,
+        capability: op.capabilityId,
+        effect: op.effect.kind,
+        action: op.effect.action,
+        principal: op.auth.principal,
+        risk: op.effect.risk,
+        reversible: op.effect.reversible,
+        idempotency: op.idempotency.mode,
+        idempotencyKeyRequired:
+          op.idempotency.mode === "required" &&
+          op.idempotency.keyDerivation !== "request_fingerprint",
+        idempotencyKeyInput: safety.idempotencyKey,
+        retrySafe: op.retries.mode === "safe",
+        confirmationRequired: op.confirmation.required,
+        confirmationInput: safety.confirm,
+        confirmationReason: op.confirmation.reason,
+        humanApproval: op.confirmation.humanApproval === true,
+        auth: { type: op.auth.type, scopes: op.auth.scopes },
+        cli: op.cli.command,
+        mcpTool: op.mcp.toolName,
+        state: op.state,
+        intentExamples: op.skill.intentExamples,
+        confidence: evidenceConfidence(op.evidence),
+      };
+    }),
   };
 }
 

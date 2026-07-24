@@ -30,16 +30,15 @@ export interface AgentDriver {
 
 /**
  * The live driver: configures the reusable async `AgentProcessRunner` to shell out to
- * the Claude Code CLI in headless print mode against the case directory. This is
- * build-time only — never on Anvil's serving hot path — and invoked solely by
- * `anvil case investigate`, never by the tests. The command is configurable so Codex
- * or any other headless coding agent can stand in, and the runner is injectable so
- * the driver can be tested without a real agent binary.
+ * a supported coding-agent CLI against the case directory. This is build-time only —
+ * never on Anvil's serving hot path — and invoked solely by `anvil case investigate`.
+ * Provider adapters own their CLI grammar so a Codex invocation can never accidentally
+ * receive Claude's `-p` print flag (which Codex interprets as a config profile).
  */
-export interface ClaudeCodeDriverOptions {
-  /** The headless coding-agent command (default `claude`). */
+export interface AgentCliDriverOptions {
+  /** The headless coding-agent command. Its provider supplies the default. */
   command?: string;
-  /** Extra CLI flags, e.g. `["--model", "claude-opus-4-8", "--permission-mode", "plan"]`. */
+  /** Extra provider CLI flags, e.g. `["--model", "gpt-5"]`. */
   extraArgs?: string[];
   /**
    * The credential profile the run needs. The backend resolves the minimal
@@ -69,16 +68,81 @@ export interface ClaudeCodeDriverOptions {
   runner?: AgentProcessRunner;
 }
 
-export class ClaudeCodeAgentDriver implements AgentDriver {
-  readonly name = "claude-code";
+/** Backwards-compatible options name for the explicitly Claude-compatible driver. */
+export type ClaudeCodeDriverOptions = AgentCliDriverOptions;
+
+export type AgentProvider = "claude-code" | "codex";
+export type AgentOutputMode = "text" | "jsonl";
+
+interface ProviderAdapter {
+  name: AgentProvider;
+  defaultCommand: string;
+  credentialProfile: CredentialProfile;
+  outputMode: AgentOutputMode;
+  invocation(prompt: string, extraArgs: string[]): { args: string[]; input?: string };
+}
+
+const PROVIDER_ADAPTERS: Record<AgentProvider, ProviderAdapter> = {
+  "claude-code": {
+    name: "claude-code",
+    defaultCommand: "claude",
+    credentialProfile: "claude-code",
+    outputMode: "text",
+    invocation: (prompt, extraArgs) => ({
+      // Claude's `-p` is a boolean print-mode flag; the prompt is its positional.
+      args: ["-p", prompt, ...extraArgs],
+    }),
+  },
+  codex: {
+    name: "codex",
+    defaultCommand: "codex",
+    credentialProfile: "codex",
+    outputMode: "jsonl",
+    invocation: (prompt, extraArgs) => ({
+      // Codex's `-p` means "profile", not "prompt". `exec -` reads the prompt from
+      // stdin, while JSONL keeps process output machine-observable. The Codex-owned
+      // sandbox is additive to Anvil's backend policy; it never replaces the explicit
+      // `--allow-degraded-native` acknowledgement required by the native backend.
+      args: [
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        ...extraArgs,
+        "-",
+      ],
+      input: prompt,
+    }),
+  },
+};
+
+/**
+ * Shared live coding-agent implementation. Provider adapters configure only command
+ * grammar, prompt transport, credentials, and output mode; the backend still owns
+ * containment, environment narrowing, timeout, and cancellation.
+ */
+export class CodingAgentDriver implements AgentDriver {
+  readonly name: AgentProvider;
+  readonly outputMode: AgentOutputMode;
   /** The structured execution log of the last run, for observability. */
   lastResult?: AgentRunResult;
   private readonly backend: ExecutionBackend;
   private readonly policy: ExecutionPolicy;
+  private readonly command: string;
 
-  constructor(private readonly options: ClaudeCodeDriverOptions = {}) {
+  constructor(
+    readonly provider: AgentProvider,
+    private readonly options: AgentCliDriverOptions = {},
+  ) {
+    const adapter = PROVIDER_ADAPTERS[provider];
+    this.name = adapter.name;
+    this.outputMode = adapter.outputMode;
+    this.command = options.command ?? adapter.defaultCommand;
     this.backend = options.backend ?? new NativeExecutionBackend(options.runner);
-    const base = options.policy ?? defaultExecutionPolicy(options.credentialProfile);
+    const profile = options.credentialProfile ?? adapter.credentialProfile;
+    const base = options.policy ?? defaultExecutionPolicy(profile);
     this.policy =
       options.allowDegradedNative !== undefined
         ? { ...base, allowDegradedNative: options.allowDegradedNative }
@@ -97,7 +161,6 @@ export class ClaudeCodeAgentDriver implements AgentDriver {
           "Use a sandboxed backend or pass --allow-degraded-native to acknowledge the reduced containment.",
       );
     }
-    const command = this.options.command ?? "claude";
     const brief = readFileSync(join(caseDir, CASE_FILES.brief), "utf8");
     const prompt = [
       brief,
@@ -109,14 +172,19 @@ export class ClaudeCodeAgentDriver implements AgentDriver {
       "including when the honest outcome is no proposal. Do not edit any file outside",
       "this case directory.",
     ].join("\n");
+    const invocation = PROVIDER_ADAPTERS[this.provider].invocation(
+      prompt,
+      this.options.extraArgs ?? [],
+    );
 
     let result: AgentRunResult;
     try {
       result = await this.backend.execute(
         {
-          command,
-          args: ["-p", prompt, ...(this.options.extraArgs ?? [])],
+          command: this.command,
+          args: invocation.args,
           cwd: caseDir,
+          input: invocation.input,
           onStdout: (s) => process.stdout.write(s),
           onStderr: (s) => process.stderr.write(s),
         },
@@ -125,18 +193,54 @@ export class ClaudeCodeAgentDriver implements AgentDriver {
     } catch (err) {
       const hint =
         (err as NodeJS.ErrnoException).code === "ENOENT"
-          ? ` — is '${command}' installed and on PATH?`
+          ? ` — is '${this.command}' installed and on PATH?`
           : "";
       throw new Error(
-        `Agent driver '${command}' failed to launch: ${(err as Error).message}${hint}`,
+        `Agent driver '${this.command}' failed to launch: ${(err as Error).message}${hint}`,
       );
     }
     this.lastResult = result;
-    if (result.timedOut) throw new Error(`Agent driver '${command}' timed out.`);
-    if (result.canceled) throw new Error(`Agent driver '${command}' was canceled.`);
+    if (result.timedOut) throw new Error(`Agent driver '${this.command}' timed out.`);
+    if (result.canceled) throw new Error(`Agent driver '${this.command}' was canceled.`);
     if (result.exitCode !== 0)
-      throw new Error(`Agent driver '${command}' exited ${result.exitCode}.`);
+      throw new Error(`Agent driver '${this.command}' exited ${result.exitCode}.`);
   }
+}
+
+/** Explicit Claude/generic-Claude-compatible driver retained for existing callers. */
+export class ClaudeCodeAgentDriver extends CodingAgentDriver {
+  constructor(options: ClaudeCodeDriverOptions = {}) {
+    super("claude-code", options);
+  }
+}
+
+/** Codex's non-interactive `exec` protocol (stdin prompt + JSONL events). */
+export class CodexAgentDriver extends CodingAgentDriver {
+  constructor(options: AgentCliDriverOptions = {}) {
+    super("codex", options);
+  }
+}
+
+export interface AgentDriverFactoryOptions extends AgentCliDriverOptions {
+  /** Override command-name inference when driving a wrapper executable. */
+  provider?: AgentProvider;
+}
+
+/**
+ * Select the smallest provider adapter needed by a command. Exact `codex` executable
+ * basenames use Codex's protocol; every other command preserves the existing
+ * Claude-compatible protocol. Wrappers can opt in explicitly with `provider`.
+ */
+export function createAgentDriver(options: AgentDriverFactoryOptions = {}): CodingAgentDriver {
+  const { provider = inferAgentProvider(options.command), ...driverOptions } = options;
+  return provider === "codex"
+    ? new CodexAgentDriver(driverOptions)
+    : new ClaudeCodeAgentDriver(driverOptions);
+}
+
+export function inferAgentProvider(command = "claude"): AgentProvider {
+  const executable = command.trim().split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  return /^codex(?:\.exe|\.cmd)?$/.test(executable) ? "codex" : "claude-code";
 }
 
 /**

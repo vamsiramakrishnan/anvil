@@ -46,6 +46,7 @@ export type DeficiencyCode =
   | "capability_missing_routing_phrases"
   | "operation_lacks_intent_examples"
   | "schema_too_large_for_disclosure"
+  | "ui_projection_contract"
   // safety
   | "mutation_effect_unproven"
   | "retry_basis_unproven"
@@ -256,6 +257,23 @@ export const DEFICIENCY_CATALOG: Record<DeficiencyCode, DeficiencyDef> = {
     "schema too large for initial disclosure",
     "none",
     "the agent pays a large context cost before it can call this",
+  ),
+  // A route and response that are both explicitly UI-shaped are not necessarily
+  // bad, but neither are they automatically a durable agent capability. The
+  // deterministic layer can identify that contract smell; only an evidence-led
+  // investigation of callers, handlers, tests, and ownership can decide whether
+  // it is a stable service contract or transient screen plumbing. Keep this a
+  // human decision. The implemented investigation skill gathers evidence and
+  // may clarify the operation description, but it cannot approve, exclude, or
+  // invent a replacement facade from schema shape alone.
+  ui_projection_contract: def(
+    "ui_projection_contract",
+    "usability",
+    "high",
+    "investigate-ui-projection",
+    "UI projection contract needs investigation",
+    "humanDecisionRequired",
+    "the agent may depend on screen-specific plumbing as though it were a stable business capability",
   ),
   // Whether repeating a mutation duplicates its effect is a trust decision:
   // a skill can gather evidence, but a person approves the classification.

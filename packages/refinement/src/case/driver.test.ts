@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { haikuReviewDriver } from "../review/review.js";
@@ -7,7 +7,9 @@ import {
   type AgentRunResult,
   allowlistedEnv,
   ClaudeCodeAgentDriver,
+  createAgentDriver,
   defaultExecutionPolicy,
+  inferAgentProvider,
   NativeExecutionBackend,
   NodeAgentProcessRunner,
 } from "./index.js";
@@ -236,6 +238,108 @@ describe("ClaudeCodeAgentDriver configures the runner", () => {
   });
 });
 
+describe("provider-aware coding-agent invocation", () => {
+  async function minimalCaseDir(): Promise<string> {
+    const { mkdtempSync, mkdirSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(join(tmpdir(), "anvil-provider-driver-"));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "CASE.md"), "# Case\ninvestigate the source.", "utf8");
+    return dir;
+  }
+
+  it("keeps unknown commands on the existing Claude-compatible protocol", async () => {
+    let request: Parameters<AgentProcessRunner["run"]>[0] | undefined;
+    const runner: AgentProcessRunner = {
+      run: async (next) => {
+        request = next;
+        return {
+          exitCode: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          startedAt: "t0",
+          endedAt: "t1",
+          durationMs: 1,
+          timedOut: false,
+          canceled: false,
+        };
+      },
+    };
+    const driver = createAgentDriver({
+      command: "claude-compatible-wrapper",
+      extraArgs: ["--model", "test-model"],
+      runner,
+      allowDegradedNative: true,
+    });
+
+    await driver.run(await minimalCaseDir());
+
+    expect(driver.name).toBe("claude-code");
+    expect(driver.outputMode).toBe("text");
+    expect(request?.args[0]).toBe("-p");
+    expect(request?.args[1]).toContain("# Case");
+    expect(request?.args.slice(-2)).toEqual(["--model", "test-model"]);
+    expect(request?.input).toBeUndefined();
+  });
+
+  it("drives a fake Codex executable with exec, stdin prompt, JSONL, and workspace sandbox", async () => {
+    const dir = await minimalCaseDir();
+    const executable = join(dir, "codex");
+    writeFileSync(
+      executable,
+      [
+        "#!/usr/bin/env node",
+        'const { writeFileSync } = require("node:fs");',
+        'let input = "";',
+        'process.stdin.setEncoding("utf8");',
+        'process.stdin.on("data", (chunk) => { input += chunk; });',
+        'process.stdin.on("end", () => {',
+        '  writeFileSync("fake-codex-invocation.json",',
+        "    JSON.stringify({ args: process.argv.slice(2), input }));",
+        "});",
+      ].join("\n"),
+      "utf8",
+    );
+    chmodSync(executable, 0o755);
+    const driver = createAgentDriver({
+      command: executable,
+      extraArgs: ["--model", "test-model"],
+      allowDegradedNative: true,
+    });
+
+    await driver.run(dir);
+
+    const invocation = JSON.parse(
+      readFileSync(join(dir, "fake-codex-invocation.json"), "utf8"),
+    ) as { args: string[]; input: string };
+    expect(driver.name).toBe("codex");
+    expect(driver.outputMode).toBe("jsonl");
+    expect(invocation.args).toEqual([
+      "exec",
+      "--json",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "workspace-write",
+      "--model",
+      "test-model",
+      "-",
+    ]);
+    expect(invocation.args).not.toContain("-p");
+    expect(invocation.args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(invocation.input).toContain("# Case\ninvestigate the source.");
+    expect(invocation.input).toContain("Do not edit any file outside");
+  });
+
+  it("recognizes direct and path-qualified Codex executables only", () => {
+    expect(inferAgentProvider("codex")).toBe("codex");
+    expect(inferAgentProvider("/opt/tools/codex")).toBe("codex");
+    expect(inferAgentProvider("C:\\tools\\codex.exe")).toBe("codex");
+    expect(inferAgentProvider("agent-wrapper")).toBe("claude-code");
+  });
+});
+
 describe("execution policy + native backend", () => {
   it("resolves the claude-code credential profile into a minimal env allowlist", () => {
     const policy = defaultExecutionPolicy("claude-code");
@@ -243,6 +347,14 @@ describe("execution policy + native backend", () => {
     expect(policy.filesystem).toEqual({ repository: "read-only", case: "read-write" });
     expect(policy.home).toBe("host");
     expect(policy.environmentAllowlist).toContain("ANTHROPIC_API_KEY");
+    expect(policy.environmentAllowlist).not.toContain("SECRET");
+  });
+
+  it("resolves Codex credentials without inheriting provider-unrelated secrets", () => {
+    const policy = defaultExecutionPolicy("codex");
+    expect(policy.environmentAllowlist).toContain("OPENAI_API_KEY");
+    expect(policy.environmentAllowlist).toContain("CODEX_HOME");
+    expect(policy.environmentAllowlist).not.toContain("ANTHROPIC_API_KEY");
     expect(policy.environmentAllowlist).not.toContain("SECRET");
   });
 

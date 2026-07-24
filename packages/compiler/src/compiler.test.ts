@@ -51,6 +51,24 @@ describe("classifier", () => {
     expect(classifyConfirmation(effect, idempotency).required).toBe(false);
   });
 
+  it("does not mistake a persisted view filter for a POST search", () => {
+    // View/BFF APIs often overload `/filter`: this endpoint saves a reusable
+    // UI filter, so the declared persistence verb must beat the route-shaped
+    // search heuristic.
+    const { effect, idempotency } = classifyEffect(
+      "post",
+      "createSavedFilter Save a reusable application filter /applications/filter",
+    );
+    expect(effect).toMatchObject({
+      kind: "mutation",
+      action: "create",
+      risk: "medium",
+      reversible: true,
+    });
+    expect(idempotency.mode).toBe("none");
+    expect(classifyConfirmation(effect, idempotency).required).toBe(true);
+  });
+
   it("does not reclassify a POST that merely mentions an unrelated verb substring", () => {
     // "research" contains "search" as a substring but is not the search verb —
     // word-boundary matching must not false-positive on it.
@@ -127,6 +145,101 @@ describe("compile pipeline (spec only)", () => {
     expect(refund?.retries.mode).toBe("none");
     expect(air.diagnostics.some((d) => d.code === "unproven_idempotency")).toBe(true);
   });
+
+  it("projects a persisted view filter as create, never as search", async () => {
+    const viewApi = `openapi: 3.0.3
+info: { title: Application Views, version: 1.0.0 }
+paths:
+  /applications/filter:
+    post:
+      operationId: createSavedFilter
+      summary: Save a reusable application filter
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { name: { type: string }, query: { type: string } }
+      responses: { "201": { description: saved } }
+`;
+    const air = await compile({ spec: viewApi, serviceId: "application_views" });
+    const op = air.operations[0];
+    expect(op?.effect).toMatchObject({ kind: "mutation", action: "create", resource: "filter" });
+    expect(op?.cli.command).toBe("application_views filter create");
+    expect(op?.idempotency.mode).toBe("none");
+    expect(op?.state).toBe("review_required");
+  });
+});
+
+describe("side_effect override coherence", () => {
+  const searchSpec = `openapi: 3.0.3
+info: { title: Applications, version: 1.0.0 }
+paths:
+  /applications/filter:
+    post:
+      operationId: searchApplications
+      summary: Search applications with a complex filter
+      responses: { "200": { description: matches } }
+`;
+
+  it("reclassifies every derived safety field when a POST-read is declared a mutation", async () => {
+    const air = await compile({
+      spec: searchSpec,
+      serviceId: "applications",
+      manifest: `operations:
+  searchApplications:
+    side_effect: mutation
+`,
+    });
+    const op = air.operations[0];
+    expect(op?.effect).toMatchObject({
+      kind: "mutation",
+      action: "create",
+      risk: "medium",
+      reversible: true,
+    });
+    expect(op?.idempotency).toMatchObject({
+      mode: "none",
+      mechanism: "none",
+      keyDerivation: "none",
+    });
+    expect(op?.retries).toMatchObject({ mode: "none", basis: "unproven", maxAttempts: 1 });
+    expect(op?.confirmation).toMatchObject({ required: true, risk: "medium" });
+    expect(op?.state).toBe("review_required");
+  });
+
+  it("lets explicit safety fields refine the recomputed side-effect baseline", async () => {
+    const air = await compile({
+      spec: searchSpec,
+      serviceId: "applications",
+      manifest: `operations:
+  searchApplications:
+    side_effect: mutation
+    action: reserve
+    risk: financial
+    reversible: false
+    idempotency:
+      strategy: required_request_key
+      key_location: header
+      header: Idempotency-Key
+`,
+    });
+    const op = air.operations[0];
+    expect(op?.effect).toMatchObject({
+      kind: "mutation",
+      action: "reserve",
+      risk: "financial",
+      reversible: false,
+    });
+    expect(op?.idempotency).toMatchObject({
+      mode: "required",
+      mechanism: "header",
+      key: "Idempotency-Key",
+      keyDerivation: "client_supplied",
+    });
+    expect(op?.retries).toMatchObject({ mode: "safe", basis: "idempotency_key" });
+    expect(op?.confirmation).toMatchObject({ required: true, risk: "financial" });
+  });
 });
 
 describe("compile pipeline (with manifest enrichment)", () => {
@@ -135,7 +248,7 @@ describe("compile pipeline (with manifest enrichment)", () => {
     const refund = air.operations.find((o) => o.canonicalName === "create_refund");
     expect(refund?.idempotency.mode).toBe("required");
     expect(refund?.idempotency.key).toBe("Idempotency-Key");
-    expect(refund?.idempotency.keyDerivation).toBe("request_fingerprint");
+    expect(refund?.idempotency.keyDerivation).toBe("client_supplied");
     expect(refund?.retries.mode).toBe("safe");
     expect(refund?.retries.maxAttempts).toBe(3);
     expect(refund?.retries.retryOn).toContain("http_429");
@@ -146,6 +259,23 @@ describe("compile pipeline (with manifest enrichment)", () => {
     const enriched = refund?.evidence.claims.find((c) => c.predicate === "enriched");
     expect(enriched?.review).toBe("accepted");
     expect(confidenceFor(refund?.evidence ?? { claims: [] }, "enriched")).toBeGreaterThan(0.6);
+  });
+
+  it("derives a fingerprint only for an optional key-supported contract", async () => {
+    const keySupported = `service: { name: payments }
+operations:
+  createRefund:
+    idempotency:
+      strategy: key_supported
+      key_location: header
+      header: Idempotency-Key
+    state: approved`;
+    const air = await compile({ spec, manifest: keySupported, serviceId: "payments" });
+    const refund = air.operations.find((o) => o.canonicalName === "create_refund");
+    expect(refund?.idempotency).toMatchObject({
+      mode: "key_supported",
+      keyDerivation: "request_fingerprint",
+    });
   });
 
   it("requires the write scope for every financial mutation in the reference API", async () => {
@@ -282,6 +412,27 @@ paths:
     expect(op?.effect.kind).toBe("read");
     expect(op?.cli.command).toBe("jira jql search");
     expect(op?.confirmation.required).toBe(false);
+  });
+
+  it("does not route a write to a read-family CLI verb merely because its resource is status", async () => {
+    const statusApi = `openapi: 3.0.0
+info: { title: orders, version: 1.0.0 }
+paths:
+  /orders/{orderId}/status:
+    put:
+      operationId: replaceOrderStatus
+      summary: Replace an order status
+      parameters:
+        - { name: orderId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: replaced } }
+`;
+    const air = await compile({ spec: statusApi, serviceId: "orders" });
+    const op = air.operations[0];
+    expect(op?.effect).toMatchObject({ kind: "mutation", action: "replace", resource: "status" });
+    expect(op?.canonicalName).toBe("replace_order_status");
+    expect(op?.mcp.toolName).toBe("orders_replace_order_status");
+    expect(op?.cli.command).toBe("orders status replace");
+    expect(op?.cli.command).not.toContain("poll");
   });
 
   it("strips a REST format suffix from the resource name (Twilio's .json)", async () => {
@@ -734,7 +885,7 @@ describe("authored workflows", () => {
     expect(refunds?.workflowIds).toContain(wf?.id);
   });
 
-  it("drops a step referencing an unknown operation with a diagnostic", async () => {
+  it("blocks a workflow with an unresolved step and preserves audit evidence", async () => {
     const badManifest = `${manifest}
   broken_flow:
     capability: refunds
@@ -742,7 +893,44 @@ describe("authored workflows", () => {
       - operation: doesNotExist
 `;
     const air = await compile({ spec, manifest: badManifest, serviceId: "payments" });
-    expect(air.diagnostics.some((d) => d.code === "workflow_step_unresolved")).toBe(true);
+    const broken = air.workflows.find((workflow) => workflow.id.endsWith(".broken_flow"));
+    expect(broken?.state).toBe("blocked");
+    expect(broken?.steps).toEqual([]);
+    expect(
+      broken?.evidence.claims.find((claim) => claim.predicate === "workflow.executable"),
+    ).toMatchObject({ value: false, method: "workflow_dependency_gate" });
+    expect(
+      air.diagnostics.find((diagnostic) => diagnostic.code === "workflow_step_unresolved"),
+    ).toMatchObject({ level: "error" });
+  });
+
+  it("blocks a workflow until every mutation step is approved", async () => {
+    const unsafeWorkflow = `operations:
+  getPayment:
+    state: approved
+workflows:
+  refund_without_approval:
+    capability: refunds
+    steps:
+      - operation: getPayment
+      - operation: createRefund
+`;
+    const air = await compile({ spec, manifest: unsafeWorkflow, serviceId: "payments" });
+    const workflow = air.workflows.find((candidate) =>
+      candidate.id.endsWith(".refund_without_approval"),
+    );
+    const mutation = air.operations.find(
+      (operation) => operation.sourceRef.operationId === "createRefund",
+    );
+    expect(mutation?.state).toBe("review_required");
+    expect(workflow?.state).toBe("blocked");
+    expect(workflow?.steps).toHaveLength(2);
+    expect(
+      air.diagnostics.find((diagnostic) => diagnostic.code === "workflow_mutation_unapproved"),
+    ).toMatchObject({
+      level: "warning",
+      operationId: mutation?.id,
+    });
   });
 });
 

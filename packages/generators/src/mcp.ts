@@ -65,6 +65,7 @@ const server = buildMcpServer(air, {
     authProfile: config.authProfile,
     allowedHosts,
     env: config.env,
+    timeoutMs: config.upstreamTimeoutMs,
   }),
 });
 
@@ -139,6 +140,7 @@ const mcpContext = () => ({
   authProfile: config.authProfile,
   allowedHosts,
   env: config.env,
+  timeoutMs: config.upstreamTimeoutMs,
 });
 
 // One live SSE transport per session, keyed by its sessionId. POST /messages

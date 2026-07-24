@@ -2,8 +2,8 @@ import { join } from "node:path";
 import {
   type AddEvidenceInput,
   buildRefinementPlan,
-  ClaudeCodeAgentDriver,
   caseService,
+  createAgentDriver,
   skillFor,
   targetKey,
 } from "@anvil/refinement";
@@ -111,7 +111,7 @@ export function registerCase(parent: Command, ctx: CommandContext): void {
     .command("investigate")
     .summary("Drive a live coding agent against the case.")
     .argument("<case-dir>", "a materialized case run directory")
-    .option("--command <command>", "agent CLI to drive (default: claude)")
+    .option("--command <command>", "agent CLI to drive (default: claude; codex is protocol-aware)")
     .option("--model <model>", "model passed through to the agent CLI")
     .option("--allow-degraded-native", "proceed even when native tooling is degraded")
     .action(async (dir: string, opts: CaseInvestigateOptions) => {
@@ -293,7 +293,7 @@ async function runCaseInvestigate(
   io: CliIO,
 ): Promise<number> {
   const extraArgs = opts.model !== undefined ? ["--model", opts.model] : [];
-  const driver = new ClaudeCodeAgentDriver({
+  const driver = createAgentDriver({
     command: opts.command,
     extraArgs,
     allowDegradedNative: opts.allowDegradedNative === true,

@@ -188,8 +188,8 @@ export function bareToolName(toolName) {
   return i >= 0 ? toolName.slice(i + 2) : toolName;
 }
 
-function hasIdempotencyKey(input) {
-  const k = input && input.idempotency_key;
+function hasIdempotencyKey(input, field) {
+  const k = input && input[field || "idempotency_key"];
   return typeof k === "string" && k.length > 0;
 }
 
@@ -232,22 +232,27 @@ export function decide(toolName, toolInput = {}, catalog = loadCatalog()) {
         context: "Preview with dryRun: true first; a human must approve this effect.",
       };
     }
-    if (!toolInput || toolInput.confirm !== true) {
+    const confirmationInput = op.confirmationInput || "confirm";
+    if (!toolInput || toolInput[confirmationInput] !== true) {
       return {
         decision: "deny",
-        reason: \`\${why} — re-invoke with confirm: true if the user intends the effect.\`,
-        context: "Preview with dryRun: true first, then re-invoke with confirm: true.",
+        reason: \`\${why} — re-invoke with \${confirmationInput}: true if the user intends the effect.\`,
+        context: \`Preview with dryRun: true first, then re-invoke with \${confirmationInput}: true.\`,
       };
     }
   }
 
   // 4. Idempotency key required — mirrors the executor's idempotency refusal,
   //    denied pre-flight with the exact required flag.
-  if (op.idempotency === "required" && !hasIdempotencyKey(toolInput)) {
+  if (
+    (op.idempotencyKeyRequired ?? op.idempotency === "required") &&
+    !hasIdempotencyKey(toolInput, op.idempotencyKeyInput)
+  ) {
+    const idempotencyInput = op.idempotencyKeyInput || "idempotency_key";
     return {
       decision: "deny",
       reason:
-        \`"\${name}" requires an idempotency key — supply idempotency_key. \` +
+        \`"\${name}" requires an idempotency key — supply \${idempotencyInput}. \` +
         "Reusing the same key is safe; a new key is a new operation.",
     };
   }

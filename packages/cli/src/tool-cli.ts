@@ -3,12 +3,13 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import {
   type AirDocument,
-  cliFlag,
   type ErrorCode,
   evidenceConfidence,
+  idempotencyModeUsesCarrier,
   type JsonSchema,
   type Operation,
   operationInputSchema,
+  operationSafetyInputKeys,
   propKey,
 } from "@anvil/air";
 import { exampleInput, MCP_RESERVED } from "@anvil/generators";
@@ -21,12 +22,22 @@ import {
   execute,
   FetchTransport,
   loadRuntimeConfig,
+  parseUpstreamTimeoutMs,
   resolveCredentials,
   resolveLedger,
   type Transport,
   unapprovedOperationError,
 } from "@anvil/runtime";
-import { discover, explain, riskSummary } from "./explain.js";
+import { z } from "zod";
+import {
+  businessInputCliFlag,
+  cliFlagForInputKey,
+  discover,
+  explain,
+  recommendsExplicitIdempotencyKey,
+  requiresExplicitIdempotencyKey,
+  riskSummary,
+} from "./explain.js";
 import { type CliIO, processIO } from "./io.js";
 
 /*
@@ -241,9 +252,10 @@ export async function runToolCli(
         if (err instanceof JsonFlagError) return jsonFlagRefusal(io, op, err);
         throw err;
       }
-      const missing = requiredMissing(op, input);
-      if (missing.length) {
-        io.err(JSON.stringify({ valid: false, missing }, null, 2));
+      const schema = op.input.schema ?? operationInputSchema(op);
+      const validation = validateInputSchema(schema, input);
+      if (!validation.valid) {
+        io.err(JSON.stringify(validation, null, 2));
         return 1;
       }
       io.out(JSON.stringify({ valid: true }, null, 2));
@@ -252,7 +264,9 @@ export async function runToolCli(
     case "capabilities": {
       const which = positionals[1];
       if (!which) {
-        io.out(flags.json ? JSON.stringify(air.capabilities, null, 2) : capabilitiesTable(air));
+        io.out(
+          flags.json ? JSON.stringify(publicCapabilities(air), null, 2) : capabilitiesTable(air),
+        );
         return 0;
       }
       const cap = findCapability(air, which);
@@ -260,18 +274,29 @@ export async function runToolCli(
         io.err(`No capability "${which}". Try \`${svc} capabilities\`.`);
         return 1;
       }
-      io.out(flags.json ? JSON.stringify(cap, null, 2) : capabilityDetail(air, cap));
+      io.out(
+        flags.json
+          ? JSON.stringify(publicCapability(air, cap), null, 2)
+          : capabilityDetail(air, cap),
+      );
       return 0;
     }
     case "workflows": {
       const which = positionals[1];
       if (!which) {
-        io.out(flags.json ? JSON.stringify(air.workflows, null, 2) : workflowsTable(air));
+        const workflows = publicWorkflows(air);
+        io.out(flags.json ? JSON.stringify(workflows, null, 2) : workflowsTable(air));
         return 0;
       }
       const wf = findWorkflow(air, which);
       if (!wf) {
         io.err(`No workflow "${which}". Try \`${svc} workflows\`.`);
+        return 1;
+      }
+      if (wf.state === "blocked") {
+        io.err(
+          `Workflow "${which}" is blocked and cannot be used. Inspect the bundle's AIR diagnostics to repair its operation references and approval dependencies.`,
+        );
         return 1;
       }
       io.out(flags.json ? JSON.stringify(wf, null, 2) : workflowDetail(air, wf));
@@ -391,6 +416,24 @@ async function invoke(
   // ANVIL_MCP_TARGET can still do a one-off direct (or differently-targeted) call.
   // A bare `--mcp` (no value) means "route locally" — the common intent.
   const mcpTarget = resolveMcpTarget(flags.mcp, (deps.env ?? process.env).ANVIL_MCP_TARGET);
+  let timeoutMs = config.upstreamTimeoutMs;
+  if (flags.timeout !== undefined) {
+    try {
+      timeoutMs = parseUpstreamTimeoutMs(flags.timeout, "--timeout");
+    } catch (err) {
+      return cliValidationError(io, op.id, err instanceof Error ? err.message : String(err), {
+        flag: "--timeout",
+      });
+    }
+  }
+  if (mcpTarget && flags.timeout !== undefined) {
+    return cliValidationError(
+      io,
+      op.id,
+      "`--timeout` controls direct upstream calls only. Configure ANVIL_UPSTREAM_TIMEOUT_MS on the MCP server instead.",
+      { flag: "--timeout", mcp_target: mcpTarget },
+    );
+  }
   const explicitMcpTokenEnv = flags["mcp-token-env"];
   if (explicitMcpTokenEnv === true) {
     return cliValidationError(
@@ -498,7 +541,7 @@ async function invoke(
     allowedHosts,
     env: config.env,
     retries: flags["no-retries"] === true ? false : undefined,
-    timeoutMs: flags.timeout ? Number(flags.timeout) : undefined,
+    timeoutMs,
     sleep: deps.sleep,
     now: deps.now,
   };
@@ -507,8 +550,10 @@ async function invoke(
     op,
     {
       input,
-      confirm: flags.confirm === true,
-      idempotencyKey: (flags["idempotency-key"] as string) ?? undefined,
+      confirm: flags.confirm === true ? true : undefined,
+      idempotencyKey: idempotencyModeUsesCarrier(op.idempotency.mode)
+        ? ((flags["idempotency-key"] as string) ?? undefined)
+        : undefined,
       dryRun: flags["dry-run"] === true,
     },
     ctx,
@@ -544,7 +589,7 @@ function resolveMcpTarget(
 }
 
 interface McpSafety {
-  confirm: boolean;
+  confirm?: boolean;
   dryRun: boolean;
   idempotencyKey?: string;
 }
@@ -576,9 +621,10 @@ async function invokeViaMcp(
   // an unknown field on a read.
   const args: Record<string, unknown> = { ...input };
   if (safety.dryRun) args[MCP_RESERVED.dryRun] = true;
-  if (safety.confirm && op.confirmation.required) args.confirm = true;
-  if (safety.idempotencyKey && op.idempotency.mode === "required")
-    args.idempotency_key = safety.idempotencyKey;
+  const safetyKeys = operationSafetyInputKeys(op);
+  if (safety.confirm && op.confirmation.required) args[safetyKeys.confirm] = true;
+  if (safety.idempotencyKey && idempotencyModeUsesCarrier(op.idempotency.mode))
+    args[safetyKeys.idempotencyKey] = safety.idempotencyKey;
 
   let client: McpToolClient;
   try {
@@ -752,7 +798,7 @@ function renderMissingFlags(envelope: ErrorEnvelope, op: Operation): void {
     | { missing?: unknown; missing_flags?: string[] }
     | undefined;
   if (!details || !Array.isArray(details.missing)) return;
-  const flagNames = details.missing.map((k) => cliFlag(String(k)));
+  const flagNames = details.missing.map((k) => cliFlagForInputKey(op, String(k)));
   details.missing_flags = flagNames;
   envelope.error.message = `Missing required flag(s): ${flagNames.join(", ")}. See \`${op.cli.command} --examples\` for a complete invocation.`;
 }
@@ -897,12 +943,18 @@ const GLOBAL_OPERATION_FLAGS = [
 
 function knownFlagsFor(op: Operation): Set<string> {
   const known = new Set<string>(GLOBAL_OPERATION_FLAGS);
-  for (const p of op.input.params) known.add(cliFlag(p.name).slice(2));
+  for (const p of op.input.params) {
+    const flag = businessInputCliFlag(op, p.in, p.name);
+    if (flag) known.add(flag.slice(2));
+  }
   const body = op.input.body;
   if (body?.projection === "fields") {
     // `fields` bodies are supplied per-field; --body would be silently ignored,
     // so it is deliberately NOT known here and gets refused with a suggestion.
-    for (const f of body.fields) known.add(cliFlag(f.name).slice(2));
+    for (const f of body.fields) {
+      const flag = businessInputCliFlag(op, "body", f.name);
+      if (flag) known.add(flag.slice(2));
+    }
   } else if (body) {
     known.add("body");
   }
@@ -971,7 +1023,8 @@ function buildInput(
 ): Record<string, unknown> {
   const base = readInput(flags, deps);
   for (const p of op.input.params) {
-    const flagName = cliFlag(p.name).slice(2);
+    const flagName = businessInputCliFlag(op, p.in, p.name)?.slice(2);
+    if (!flagName) continue;
     if (flags[flagName] !== undefined)
       base[propKey(p.name)] = coerce(flags[flagName] as string, p.schema);
   }
@@ -980,7 +1033,8 @@ function buildInput(
   const body = op.input.body;
   if (body?.projection === "fields") {
     for (const f of body.fields) {
-      const flagName = cliFlag(f.name).slice(2);
+      const flagName = businessInputCliFlag(op, "body", f.name)?.slice(2);
+      if (!flagName) continue;
       if (flags[flagName] !== undefined)
         base[propKey(f.name)] = coerce(flags[flagName] as string, f.schema);
     }
@@ -1000,15 +1054,61 @@ function readInput(
   return parseJsonFlag(readFileSync(file, "utf8"), "--input") as Record<string, unknown>;
 }
 
-function requiredMissing(op: Operation, input: Record<string, unknown>): string[] {
-  const keys = op.input.params.filter((p) => p.required).map((p) => propKey(p.name));
-  const body = op.input.body;
-  if (body?.projection === "fields") {
-    for (const f of body.fields) if (f.required) keys.push(propKey(f.name));
-  } else if (body?.required) {
-    keys.push("body");
+type InputSchemaValidation =
+  | { valid: true }
+  | {
+      valid: false;
+      missing: string[];
+      issues: Array<Record<string, unknown>>;
+    };
+
+/**
+ * Validate the exact schema shared by CLI disclosure, MCP, and the generated
+ * skill. Zod's JSON-Schema converter preserves the constraints the old
+ * hand-written required-field check skipped: safety fields, const, lengths,
+ * patterns, nested body shapes, and additionalProperties.
+ */
+function validateInputSchema(schema: JsonSchema, input: unknown): InputSchemaValidation {
+  let validator: z.ZodType;
+  try {
+    validator = z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
+  } catch (err) {
+    return {
+      valid: false,
+      missing: [],
+      issues: [
+        {
+          code: "invalid_schema",
+          path: [],
+          message: err instanceof Error ? err.message : String(err),
+        },
+      ],
+    };
   }
-  return keys.filter((k) => input[k] === undefined || input[k] === null || input[k] === "");
+
+  const parsed = validator.safeParse(input);
+  if (parsed.success) return { valid: true };
+
+  const required = Array.isArray(schema.required)
+    ? schema.required.filter((key): key is string => typeof key === "string")
+    : [];
+  const record =
+    input !== null && typeof input === "object" && !Array.isArray(input)
+      ? (input as Record<string, unknown>)
+      : undefined;
+  const missing = required.filter((key) => record === undefined || !Object.hasOwn(record, key));
+  const issues = parsed.error.issues.map((issue) => {
+    const { code, path, message, ...details } = issue;
+    return {
+      code,
+      path: path.map((segment) =>
+        typeof segment === "symbol" ? (segment.description ?? String(segment)) : segment,
+      ),
+      message,
+      ...details,
+    };
+  });
+  return { valid: false, missing, issues };
 }
 
 /** Operations whose command tail begins with the given positionals (a resource group). */
@@ -1058,7 +1158,7 @@ function errorsView(op: Operation) {
 function policyView(op: Operation) {
   const requiredFlags: string[] = [];
   if (op.confirmation.required) requiredFlags.push("--confirm");
-  if (op.idempotency.mode === "required") requiredFlags.push("--idempotency-key");
+  if (requiresExplicitIdempotencyKey(op)) requiredFlags.push("--idempotency-key");
   return {
     operation: op.id,
     state: op.state,
@@ -1069,7 +1169,14 @@ function policyView(op: Operation) {
       risk: op.effect.risk,
       reversible: op.effect.reversible,
     },
-    idempotency: { mode: op.idempotency.mode, key: op.idempotency.key },
+    idempotency: {
+      mode: op.idempotency.mode,
+      mechanism: op.idempotency.mechanism,
+      key: op.idempotency.key,
+      key_derivation: op.idempotency.keyDerivation,
+      explicit_key_required: requiresExplicitIdempotencyKey(op),
+      explicit_key_recommended: recommendsExplicitIdempotencyKey(op),
+    },
     retries: {
       mode: op.retries.mode,
       basis: op.retries.basis,
@@ -1099,12 +1206,13 @@ function approvedIds(air: AirDocument): Set<string> {
 
 function catalog(air: AirDocument) {
   const exposed = approvedIds(air);
+  const workflowIds = new Set(publicWorkflows(air).map((workflow) => workflow.id));
   return {
     capabilities: air.capabilities.map((c) => ({
       id: c.id,
       displayName: c.displayName,
       operations: c.operationIds.filter((id) => exposed.has(id)).length,
-      workflows: c.workflowIds.length,
+      workflows: c.workflowIds.filter((id) => workflowIds.has(id)).length,
       state: c.state,
     })),
     operations: air.operations
@@ -1134,15 +1242,37 @@ function findWorkflow(air: AirDocument, key: string) {
   );
 }
 
+/** Blocked workflows are audit evidence, never part of the executable CLI index. */
+function publicWorkflows(air: AirDocument): AirDocument["workflows"] {
+  return air.workflows.filter((workflow) => workflow.state !== "blocked");
+}
+
+function publicCapability(
+  air: AirDocument,
+  capability: AirDocument["capabilities"][number],
+): AirDocument["capabilities"][number] {
+  const workflowIds = new Set(publicWorkflows(air).map((workflow) => workflow.id));
+  return {
+    ...capability,
+    workflowIds: capability.workflowIds.filter((id) => workflowIds.has(id)),
+  };
+}
+
+function publicCapabilities(air: AirDocument): AirDocument["capabilities"] {
+  return air.capabilities.map((capability) => publicCapability(air, capability));
+}
+
 function capabilitiesTable(air: AirDocument): string {
   if (air.capabilities.length === 0) return "  (no capabilities)";
   const exposed = approvedIds(air);
+  const workflowIds = new Set(publicWorkflows(air).map((workflow) => workflow.id));
   return air.capabilities
     .map((c) => {
       const name = c.id.split(".").slice(1).join(".") || c.id;
-      const wf = c.workflowIds.length ? `, ${c.workflowIds.length} workflow(s)` : "";
-      const count = c.operationIds.filter((id) => exposed.has(id)).length;
-      return `  ${name.padEnd(20)} ${String(count).padStart(2)} op(s)${wf}  —  ${c.displayName}`;
+      const workflowCount = c.workflowIds.filter((id) => workflowIds.has(id)).length;
+      const wf = workflowCount ? `, ${workflowCount} workflow(s)` : "";
+      const operationCount = c.operationIds.filter((id) => exposed.has(id)).length;
+      return `  ${name.padEnd(20)} ${String(operationCount).padStart(2)} op(s)${wf}  —  ${c.displayName}`;
     })
     .join("\n");
 }
@@ -1157,7 +1287,7 @@ function capabilityDetail(air: AirDocument, cap: AirDocument["capabilities"][num
     );
   const wfs = cap.workflowIds
     .map((id) => air.workflows.find((w) => w.id === id))
-    .filter((w): w is AirDocument["workflows"][number] => Boolean(w))
+    .filter((w): w is AirDocument["workflows"][number] => Boolean(w) && w?.state !== "blocked")
     .map((w) => `  ${w.id.split(".").pop()}  —  ${w.displayName} (${w.steps.length} steps)`);
   return [
     `${cap.displayName} — ${cap.id}`,
@@ -1171,10 +1301,13 @@ function capabilityDetail(air: AirDocument, cap: AirDocument["capabilities"][num
 }
 
 function workflowsTable(air: AirDocument): string {
-  if (air.workflows.length === 0) {
-    return "  (no workflows authored — declare them in the Anvil manifest)";
+  const workflows = publicWorkflows(air);
+  if (workflows.length === 0) {
+    return air.workflows.length > 0
+      ? "  (no runnable workflows — inspect AIR diagnostics for blocked authored workflows)"
+      : "  (no workflows authored — declare them in the Anvil manifest)";
   }
-  return air.workflows
+  return workflows
     .map((w) => {
       const name = w.id.split(".").pop() ?? w.id;
       return `  ${name.padEnd(24)} ${String(w.steps.length).padStart(2)} steps  —  ${w.displayName}`;
@@ -1230,6 +1363,7 @@ function serviceHelp(air: AirDocument): string {
     `\nPer-operation flags:`,
     `  --help --schema --examples --errors --policy --explain --dry-run --json --trace`,
     `  --confirm --idempotency-key <k> --auth-profile <p> --timeout <ms> --no-retries`,
+    `            (an explicit key is recommended; required only when --policy lists it)`,
     `  --body '<json>'  (for operations whose body is not a flat object)`,
     `  --mcp stdio | <http-url> | sse:<url> | direct`,
     `                     (local MCP, remote Streamable HTTP, explicit legacy SSE,`,

@@ -65,9 +65,31 @@ interface CaptureView {
   headers: Record<string, string>;
 }
 
-const capture = async (): Promise<CaptureView[]> => {
+interface TokenExchangeView {
+  grantType: string;
+  subjectTokenPresent: boolean;
+  subjectTokenType: string | null;
+  requestedTokenType: string | null;
+  audience: string | null;
+  resource: string | null;
+  scopes: string[];
+  actorTokenPresent: boolean;
+  clientAuth: string;
+}
+
+const evidence = async (): Promise<{
+  requests: CaptureView[];
+  tokenExchanges: TokenExchangeView[];
+}> => {
   const res = await fetch(`${base}/__anvil/capture`);
-  return ((await res.json()) as { requests: CaptureView[] }).requests;
+  return (await res.json()) as {
+    requests: CaptureView[];
+    tokenExchanges: TokenExchangeView[];
+  };
+};
+
+const capture = async (): Promise<CaptureView[]> => {
+  return (await evidence()).requests;
 };
 const reset = () => fetch(`${base}/__anvil/reset`, { method: "POST" });
 
@@ -182,6 +204,46 @@ describe("generated mock server", () => {
       token_type: "Bearer",
     });
     expect(await capture()).toEqual([]);
+  });
+
+  it("records only redacted OBO exchange metadata", async () => {
+    await reset();
+    const subjectToken = "header.private-subject.signature";
+    const clientSecret = "private-client-secret";
+    const res = await fetch(`${base}/__anvil/oauth/token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: `Basic ${Buffer.from(`client:${clientSecret}`).toString("base64")}`,
+      },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        subject_token: subjectToken,
+        subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+        requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+        audience: "api://payments",
+        scope: "payments.read payments.write",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const recorded = await evidence();
+    expect(recorded.requests).toEqual([]);
+    expect(recorded.tokenExchanges).toEqual([
+      {
+        grantType: "urn:ietf:params:oauth:grant-type:token-exchange",
+        subjectTokenPresent: true,
+        subjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+        requestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
+        audience: "api://payments",
+        resource: null,
+        scopes: ["payments.read", "payments.write"],
+        actorTokenPresent: false,
+        clientAuth: "client_secret_basic",
+      },
+    ]);
+    const serialized = JSON.stringify(recorded);
+    expect(serialized).not.toContain(subjectToken);
+    expect(serialized).not.toContain(clientSecret);
   });
 
   it("serves an activated error scenario via the control endpoint", async () => {

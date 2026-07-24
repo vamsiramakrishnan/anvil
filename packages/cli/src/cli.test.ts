@@ -87,6 +87,30 @@ describe("tool CLI: discovery", () => {
     expect(detail.text()).toMatch(/human approval/i);
   });
 
+  it("keeps blocked workflows out of discovery and refuses direct use", async () => {
+    const blocked = structuredClone(air);
+    const workflow = blocked.workflows[0];
+    if (!workflow) throw new Error("reference workflow missing");
+    workflow.state = "blocked";
+
+    const list = bufferIO();
+    expect(await runToolCli(blocked, ["workflows"], { io: list })).toBe(0);
+    expect(list.text()).toContain("no runnable workflows");
+    expect(list.text()).not.toContain("refund_customer");
+
+    const json = bufferIO();
+    expect(await runToolCli(blocked, ["workflows", "--json"], { io: json })).toBe(0);
+    expect(JSON.parse(json.stdout.join("\n"))).toEqual([]);
+
+    const direct = bufferIO();
+    expect(await runToolCli(blocked, ["workflows", "refund_customer"], { io: direct })).toBe(1);
+    expect(direct.text()).toMatch(/blocked and cannot be used/i);
+
+    const capability = bufferIO();
+    expect(await runToolCli(blocked, ["capabilities", "refunds"], { io: capability })).toBe(0);
+    expect(capability.text()).not.toContain("refund_customer");
+  });
+
   it("returns non-zero for an unknown capability", async () => {
     const io = bufferIO();
     expect(await runToolCli(air, ["capabilities", "nope"], { io })).toBe(1);
@@ -103,6 +127,7 @@ describe("tool CLI: discovery", () => {
     await runToolCli(air, ["refunds", "create", "--schema"], { io });
     const schema = JSON.parse(io.stdout.join("\n"));
     expect(schema.required).toContain("idempotency_key");
+    expect(schema.properties.idempotency_key).toBeDefined();
   });
 });
 
@@ -188,6 +213,77 @@ describe("tool CLI: invocation", () => {
     const body = JSON.parse(transport.requests[0]?.body ?? "{}");
     expect(body.amount).toBe(2500); // coerced to integer
     expect(transport.requests[0]?.headers["Idempotency-Key"]).toBe("k1");
+  });
+
+  it("propagates the bounded env default and lets a validated --timeout override it", async () => {
+    const envTransport = new MockTransport(() => ok({ id: "env-timeout" }));
+    const args = [
+      "refunds",
+      "create",
+      "--payment-id",
+      "pay_1",
+      "--amount",
+      "2500",
+      "--currency",
+      "USD",
+      "--idempotency-key",
+      "timeout-env",
+      "--confirm",
+    ];
+    const envDeps = baseDeps(envTransport);
+    const envCode = await runToolCli(air, args, {
+      ...envDeps,
+      env: { ...envDeps.env, ANVIL_UPSTREAM_TIMEOUT_MS: "2345" },
+      io: bufferIO(),
+    });
+    expect(envCode).toBe(0);
+    expect(envTransport.requests[0]?.timeoutMs).toBe(2_345);
+
+    const flagTransport = new MockTransport(() => ok({ id: "flag-timeout" }));
+    const flagDeps = baseDeps(flagTransport);
+    const flagCode = await runToolCli(air, [...args, "--timeout", "1234"], {
+      ...flagDeps,
+      env: { ...flagDeps.env, ANVIL_UPSTREAM_TIMEOUT_MS: "2345" },
+      io: bufferIO(),
+    });
+    expect(flagCode).toBe(0);
+    expect(flagTransport.requests[0]?.timeoutMs).toBe(1_234);
+  });
+
+  it.each([
+    "0",
+    "99",
+    "30001",
+    "NaN",
+    "-1",
+    "1.5",
+  ])("rejects invalid --timeout %s before transport", async (timeout) => {
+    const transport = new MockTransport(() => ok({ id: "must-not-run" }));
+    const io = bufferIO();
+    const code = await runToolCli(
+      air,
+      [
+        "refunds",
+        "create",
+        "--payment-id",
+        "pay_1",
+        "--amount",
+        "2500",
+        "--currency",
+        "USD",
+        "--idempotency-key",
+        "invalid-timeout",
+        "--confirm",
+        "--timeout",
+        timeout,
+      ],
+      { ...baseDeps(transport), io },
+    );
+
+    expect(code).toBe(2);
+    expect(io.text()).toContain("validation_error");
+    expect(io.text()).toContain("--timeout");
+    expect(transport.requests).toHaveLength(0);
   });
 
   it("accepts a whole (nested) body via --body JSON and sends it verbatim", async () => {

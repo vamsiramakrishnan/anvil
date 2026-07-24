@@ -96,6 +96,96 @@ function inputSurfaceSize(op: Operation): number {
   return n;
 }
 
+/**
+ * Path words that explicitly name a screen/view projection. Matching whole
+ * words (including camelCase and kebab/snake separators) keeps ordinary domain
+ * resources such as `/reviews` or `/tablets` out of this detector.
+ */
+const UI_PROJECTION_PATH_WORDS = new Set([
+  "dashboard",
+  "dashboards",
+  "table",
+  "tables",
+  "view",
+  "views",
+]);
+
+/**
+ * Response-envelope fields that describe presentation composition rather than
+ * only domain data. Two independent signals are required below: a lone `href`
+ * or `actions` field is normal hypermedia and must not turn a domain API into a
+ * UI-projection finding.
+ */
+const UI_ENVELOPE_FIELDS = new Set([
+  "actions",
+  "breadcrumbs",
+  "bulkactions",
+  "columns",
+  "component",
+  "componenttype",
+  "emptystate",
+  "featureflags",
+  "href",
+  "layout",
+  "pagetitle",
+  "rowactions",
+  "tabs",
+  "widgets",
+]);
+
+const MIN_UI_ENVELOPE_SIGNALS = 2;
+
+function normalizedWords(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
+    .map((word) => word.toLowerCase())
+    .filter(Boolean);
+}
+
+function normalizeFieldName(value: string): string {
+  return normalizedWords(value).join("");
+}
+
+/** Collect only declared JSON-Schema property names, never keys from examples. */
+function responseEnvelopeFields(schema: unknown): string[] {
+  const found = new Map<string, string>();
+  const seen = new WeakSet<object>();
+
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    if (seen.has(node)) return;
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      for (const entry of node) visit(entry);
+      return;
+    }
+
+    const record = node as Record<string, unknown>;
+    const properties = record.properties;
+    if (properties && typeof properties === "object" && !Array.isArray(properties)) {
+      for (const [name, propertySchema] of Object.entries(properties as Record<string, unknown>)) {
+        const normalized = normalizeFieldName(name);
+        if (UI_ENVELOPE_FIELDS.has(normalized)) {
+          const existing = found.get(normalized);
+          if (!existing || name.localeCompare(existing) < 0) found.set(normalized, name);
+        }
+        visit(propertySchema);
+      }
+    }
+
+    visit(record.items);
+    visit(record.additionalProperties);
+    visit(record.oneOf);
+    visit(record.anyOf);
+    visit(record.allOf);
+  };
+
+  visit(schema);
+  return [...found.values()].sort((a, b) => a.localeCompare(b));
+}
+
 /* -------------------------------------------------------------------------- */
 /* Detectors — each is pure `(air) => Deficiency[]`.                           */
 /* -------------------------------------------------------------------------- */
@@ -401,6 +491,57 @@ const schemaDisclosure: Detector = {
   },
 };
 
+/**
+ * A conservative signal for view/BFF contracts: BOTH the HTTP path and the
+ * response envelope must look presentation-specific. This detector does not
+ * classify, exclude, rename, or synthesize an operation. It asks an evidence
+ * question that a coding harness must answer from real callers and handlers.
+ */
+const uiProjectionContract: Detector = {
+  name: "ui-projection-contract",
+  detect(air) {
+    const out: Deficiency[] = [];
+    for (const op of air.operations) {
+      const path = op.sourceRef.path;
+      if (!path) continue;
+
+      const pathMarkers = [
+        ...new Set(normalizedWords(path).filter((word) => UI_PROJECTION_PATH_WORDS.has(word))),
+      ].sort();
+      if (pathMarkers.length === 0) continue;
+
+      const envelopeFields = responseEnvelopeFields(op.output.schema);
+      if (envelopeFields.length < MIN_UI_ENVELOPE_SIGNALS) continue;
+
+      const decisionQuestion =
+        "Is this screen plumbing a stable agent capability, or a view-specific projection " +
+        "that should stay out of the exposed tool surface?";
+      out.push(
+        makeDeficiency(
+          "ui_projection_contract",
+          { kind: "operation", operationId: op.id },
+          `Operation '${op.id}' combines UI-shaped path '${path}' with response envelope fields ${envelopeFields.map((field) => `'${field}'`).join(", ")}. ${decisionQuestion}`,
+          {
+            sourcePath: path,
+            pathMarkers,
+            envelopeFields,
+            minimumEnvelopeSignals: MIN_UI_ENVELOPE_SIGNALS,
+            decisionQuestion,
+            evidenceRequired: [
+              "frontend_callers",
+              "handler_or_serializer",
+              "contract_tests",
+              "ownership_and_versioning",
+            ],
+            proposedFacade: false,
+          },
+        ),
+      );
+    }
+    return out;
+  },
+};
+
 /* --- safety --------------------------------------------------------------- */
 
 const idempotencyUnproven: Detector = {
@@ -577,6 +718,7 @@ export const DETECTORS: readonly Detector[] = [
   capabilityRouting,
   operationIntentExamples,
   schemaDisclosure,
+  uiProjectionContract,
   idempotencyUnproven,
   retryBasisUnproven,
   confirmationPosture,

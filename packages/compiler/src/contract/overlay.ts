@@ -99,6 +99,9 @@ export const CONTRACT_SAFETY_PREDICATES: ReadonlySet<SemanticPredicate> =
     "auth.credentialProfile",
     "auth.provider",
     "auth.scopes",
+    "auth.issuer",
+    "auth.audience",
+    "auth.carrier",
   ]);
 
 type ManifestStrategy = NonNullable<NonNullable<OperationManifest["idempotency"]>["strategy"]>;
@@ -177,7 +180,9 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
       assertions.push(set(ref, "auth.provider", manifestAuthProviderToAir(m.auth.provider)));
     }
     if (m.auth?.principal) assertions.push(set(ref, "auth.principal", m.auth.principal));
+    if (m.auth?.issuer) assertions.push(set(ref, "auth.issuer", m.auth.issuer));
     if (m.auth?.audience) assertions.push(set(ref, "auth.audience", m.auth.audience));
+    if (m.auth?.carrier) assertions.push(set(ref, "auth.carrier", m.auth.carrier));
     if (m.auth?.secret_source) assertions.push(set(ref, "auth.secretSource", m.auth.secret_source));
     if (m.auth?.tenant) assertions.push(set(ref, "auth.tenant", m.auth.tenant));
     if (m.auth?.actor) assertions.push(set(ref, "auth.actor", m.auth.actor));
@@ -261,8 +266,12 @@ export function projectOperationManifest(
   if (provider) auth.provider = airAuthProviderToManifest(provider);
   const principal = v<NonNullable<OperationManifest["auth"]>["principal"]>("auth.principal");
   if (principal) auth.principal = principal;
+  const issuer = v<string>("auth.issuer");
+  if (issuer) auth.issuer = issuer;
   const audience = v<string>("auth.audience");
   if (audience) auth.audience = audience;
+  const carrier = v<NonNullable<OperationManifest["auth"]>["carrier"]>("auth.carrier");
+  if (carrier) auth.carrier = carrier;
   const secretSource =
     v<NonNullable<OperationManifest["auth"]>["secret_source"]>("auth.secretSource");
   if (secretSource) auth.secret_source = secretSource;

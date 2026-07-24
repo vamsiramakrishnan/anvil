@@ -144,14 +144,17 @@ settings** and undeployable placeholders:
 | Container | **Dockerfile** (prebuilt runtime, no in-image compiler build) |
 | Env contract / secret contract | `env.schema.json`, `secrets.required.yaml` |
 | Shared platform (Artifact Registry repo, TF state bucket) | **Prerequisites** — not generated (shared resources a capability must not own) |
-| Service-scoped Firestore ledger database + TTL policy | **Terraform** — named, delete-protected, and IAM-conditioned to the runtime SA |
+| Capability Firestore field policies + ledger IAM | **Terraform** — shared database by default; optional dedicated database |
+| Shared Firestore trust-domain database | **Platform prerequisite** — never imported into each capability state |
 
 **Deleted:** `cloudrun.service.yaml`, `iam.plan.json`, `overlays/*.env.yaml`,
 `artifact-metadata.json`. **Bootstrap fixes (round 2):** the Artifact Registry
 repo is no longer *created* by the per-capability module (it is a shared
 foundation, and creating it here made push depend on a not-yet-applied repo).
-Each capability now gets a named, delete-protected Firestore ledger database,
-database-scoped IAM, and a TTL policy for completed replay results. Terraform
+Each capability now gets an explicit Firestore database input, database-scoped
+IAM, and a TTL policy for completed replay results. Shared mode uses a
+platform-owned database per trust domain; dedicated mode creates a named,
+delete-protected database. Terraform
 declares a **GCS remote-state backend** (bound at `init`), and Cloud Build
 produces a reviewable **plan** rather than `apply -auto-approve`, since a
 capability deploy can change IAM/ingress/secrets. Boundary tests assert no two

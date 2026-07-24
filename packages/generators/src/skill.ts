@@ -48,6 +48,7 @@ function frontmatter(name: string, description: string): string {
 export function generateSkill(air: AirDocument): Record<string, string> {
   const svc = air.service;
   const exposed = air.operations.filter((op) => op.state === "approved");
+  const workflows = publicWorkflows(air);
   const name = skillName(air);
   const files: Record<string, string> = {};
 
@@ -65,7 +66,7 @@ export function generateSkill(air: AirDocument): Record<string, string> {
     // a capability with no approved member is not part of this skill.
     capabilities: air.capabilities.filter((cap) => approvedMembers(air, cap).length > 0).length,
     operations: exposed.length,
-    workflows: air.workflows.length,
+    workflows: workflows.length,
   });
   files["reference/capabilities.md"] =
     frontmatter(
@@ -249,20 +250,28 @@ function approvedMembers(air: AirDocument, cap: AirDocument["capabilities"][numb
     .filter((o): o is Operation => Boolean(o) && o?.state === "approved");
 }
 
+/** Blocked workflows remain in AIR for audit, but never enter a runnable skill surface. */
+function publicWorkflows(air: AirDocument): AirDocument["workflows"] {
+  return air.workflows.filter((workflow) => workflow.state !== "blocked");
+}
+
 /** A compact capability list for SKILL.md — the primary index (approved only). */
 function capabilitiesList(air: AirDocument): string {
+  const workflowIds = new Set(publicWorkflows(air).map((workflow) => workflow.id));
   const rows = air.capabilities
     .map((c) => ({ c, ops: approvedMembers(air, c) }))
     .filter(({ ops }) => ops.length > 0)
     .map(({ c, ops }) => {
       const name = c.id.split(".").slice(1).join(".") || c.id;
-      const wf = c.workflowIds.length ? `, ${c.workflowIds.length} workflow(s)` : "";
+      const count = c.workflowIds.filter((id) => workflowIds.has(id)).length;
+      const wf = count ? `, ${count} workflow(s)` : "";
       return `- **${name}** — ${c.displayName} (${ops.length} op(s)${wf})`;
     });
   return rows.length ? `Capabilities:\n${rows.join("\n")}` : "";
 }
 
 function capabilitiesRef(air: AirDocument): string {
+  const workflowIds = new Set(publicWorkflows(air).map((workflow) => workflow.id));
   const visible = air.capabilities
     .map((cap) => ({ cap, ops: approvedMembers(air, cap) }))
     .filter(({ ops }) => ops.length > 0);
@@ -273,6 +282,7 @@ function capabilitiesRef(air: AirDocument): string {
         `- \`${o.cli.command}\` — ${o.effect.kind}${o.confirmation.required ? " (confirm)" : ""}`,
     );
     const wfs = cap.workflowIds
+      .filter((id) => workflowIds.has(id))
       .map((id) => air.workflows.find((w) => w.id === id))
       .filter((w): w is AirDocument["workflows"][number] => Boolean(w))
       .map((w) => `- \`${w.id.split(".").pop()}\` — ${w.displayName} (${w.steps.length} steps)`);
@@ -481,10 +491,11 @@ ${baseUrl ? `Declared server: \`${baseUrl}\`.` : "_The source spec declares no s
 
 function workflowsRef(air: AirDocument, ops: Operation[]): string {
   const serviceId = air.service.id;
+  const workflows = publicWorkflows(air);
 
   // Authored workflows are first-class — render them as the ordered steps.
-  if (air.workflows.length > 0) {
-    const sections = air.workflows.map((wf) => {
+  if (workflows.length > 0) {
+    const sections = workflows.map((wf) => {
       const steps = wf.steps.map((s, i) => {
         const op = air.operations.find((o) => o.id === s.operationId);
         const cmd = op ? op.cli.command : s.operationId;
@@ -501,6 +512,15 @@ ${wf.rollbackStrategy ? `\nRollback: ${wf.rollbackStrategy}` : ""}`;
 Authored multi-step flows — run \`${serviceId} workflows <name>\` to see steps.
 
 ${sections.join("\n\n")}
+`;
+  }
+
+  if (air.workflows.length > 0) {
+    return `# Workflows
+
+_No runnable workflows are available. Blocked authored workflows are preserved
+in AIR and compiler diagnostics for audit, but intentionally omitted from this
+executable skill surface._
 `;
   }
 

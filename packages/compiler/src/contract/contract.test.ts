@@ -137,6 +137,38 @@ describe("manifest ⇄ overlay migration", () => {
     // The one application path stamps the same manifest-enriched claim.
     expect(o?.evidence.claims.some((c) => c.predicate === "enriched")).toBe(true);
   });
+
+  it("round-trips issuer and carrier without conflating the token endpoint", async () => {
+    const manifestText = `operations:
+  refundPayment:
+    auth:
+      type: oauth2_on_behalf_of
+      principal: delegated
+      issuer: https://issuer.example.com/
+      audience: api://payments
+      carrier: { in: header, name: Authorization, scheme: Bearer }
+      provider:
+        grant: token_exchange
+        token_endpoint: https://sts.example.com/oauth/token
+`;
+    const viaManifest = await compile({
+      spec: SPEC,
+      manifest: manifestText,
+      serviceId: "payments",
+    });
+    const viaOverlay = await compileContract(
+      source(),
+      [manifestToOverlay(parseManifest(manifestText))],
+      { serviceId: "payments" },
+    );
+    const left = viaManifest.operations.find(
+      (operation) => operation.sourceRef.operationId === "refundPayment",
+    )?.auth;
+    const right = op(viaOverlay, "refundPayment")?.auth;
+    expect(right).toEqual(left);
+    expect(right?.issuer).toBe("https://issuer.example.com/");
+    expect(right?.provider?.tokenEndpoint).toBe("https://sts.example.com/oauth/token");
+  });
 });
 
 describe("name override — re-homing a weakly-named operation (#A)", () => {

@@ -12,9 +12,11 @@ import {
   hermeticCredentialEnv,
   MockControl,
   parseJson,
+  probeVirtualOboWiring,
   startMockServer,
   trim,
   wireable,
+  withoutConfirmationInput,
   withTimeout,
 } from "./bundle-driver.js";
 import { connectSource, type McpSource } from "./mcp-source.js";
@@ -52,6 +54,13 @@ export const LoopbackReport = z.object({
   bundle: z.string(),
   startedAt: z.string(),
   checks: z.array(LoopbackCheck),
+  identity: z.object({
+    delegatedOperations: z.number().int(),
+    virtualWiring: z.enum(["not_applicable", "passed", "failed"]),
+    proof: z.enum(["not_applicable", "virtual_wiring_only"]),
+    liveIdpReadiness: z.enum(["not_applicable", "unverified"]),
+    detail: z.string(),
+  }),
   summary: z.object({
     pass: z.number().int(),
     fail: z.number().int(),
@@ -90,6 +99,7 @@ export async function runLoopback(
       bundle: dir,
       startedAt,
       checks: [{ id: "surface", status: "fail", detail: EMPTY_SURFACE_DETAIL }],
+      identity: identityReadiness([], []),
       summary: { pass: 0, fail: 1, skipped: 0 },
     });
   }
@@ -131,8 +141,29 @@ export async function runLoopback(
       withTimeout(src.callRaw(tool, args), timeoutMs, `call ${tool}`);
 
     checks.push(await checkSurface(src, approved));
-    for (const op of approved) checks.push(await checkFidelity(call, ctl, op, scenarios));
-    for (const op of approved.filter((o) => o.confirmation.required)) {
+    for (const op of approved) {
+      if (op.auth.type === "oauth2_on_behalf_of") {
+        checks.push({
+          id: "fidelity",
+          operationId: op.id,
+          status: "skipped",
+          detail:
+            "stdio MCP has no validated inbound identity; delegated execution is proven by auth-obo-token-exchange instead.",
+        });
+        const probe = await probeVirtualOboWiring(op, base, ctl);
+        checks.push({
+          id: "auth-obo-token-exchange",
+          operationId: op.id,
+          status: probe.status,
+          detail: probe.detail,
+        });
+      } else {
+        checks.push(await checkFidelity(call, ctl, op, scenarios));
+      }
+    }
+    for (const op of approved.filter(
+      (o) => o.confirmation.required && o.auth.type !== "oauth2_on_behalf_of",
+    )) {
       checks.push(await checkConfirmationGate(call, ctl, op));
     }
     checks.push(await checkErrorMapping(call, ctl, approved, scenarios));
@@ -150,8 +181,38 @@ export async function runLoopback(
     bundle: dir,
     startedAt,
     checks,
+    identity: identityReadiness(approved, checks),
     summary: { pass: count("pass"), fail: count("fail"), skipped: count("skipped") },
   });
+}
+
+function identityReadiness(
+  approved: readonly Operation[],
+  checks: readonly LoopbackCheck[],
+): LoopbackReport["identity"] {
+  const delegatedOperations = approved.filter(
+    (operation) => operation.auth.type === "oauth2_on_behalf_of",
+  ).length;
+  if (delegatedOperations === 0) {
+    return {
+      delegatedOperations,
+      virtualWiring: "not_applicable",
+      proof: "not_applicable",
+      liveIdpReadiness: "not_applicable",
+      detail: "No approved delegated operations.",
+    };
+  }
+  const proofs = checks.filter((check) => check.id === "auth-obo-token-exchange");
+  const passed =
+    proofs.length === delegatedOperations && proofs.every((check) => check.status === "pass");
+  return {
+    delegatedOperations,
+    virtualWiring: passed ? "passed" : "failed",
+    proof: "virtual_wiring_only",
+    liveIdpReadiness: "unverified",
+    detail:
+      "Hermetic exchange validates runtime wiring only. Live issuer discovery, JWKS, claims, client policy, consent, and STS reachability remain unverified.",
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -318,7 +379,7 @@ async function checkConfirmationGate(
   const id = "confirmation-gate";
   try {
     await ctl.reset();
-    const { confirm: _omitted, ...unconfirmed } = argsFor(op, "confirm-refusal");
+    const unconfirmed = withoutConfirmationInput(op, argsFor(op, "confirm-refusal"));
     const refused = await call(op.mcp.toolName, unconfirmed);
     const leaked = await ctl.capture();
     if (!refused.isError) {
@@ -379,7 +440,9 @@ async function checkErrorMapping(
   const byId = new Map(approved.map((op) => [op.id, op]));
   const candidates = scenarios.flatMap((s) => {
     const op = byId.get(s.operationId);
-    return op && s.status >= 400 && wireable(op) ? [{ scenario: s, op }] : [];
+    return op && op.auth.type !== "oauth2_on_behalf_of" && s.status >= 400 && wireable(op)
+      ? [{ scenario: s, op }]
+      : [];
   });
   // Prefer a read whose error status the runtime will not retry, so the check
   // observes the mapping (one attempt), not the retry engine.
@@ -440,7 +503,9 @@ async function checkRetryOnRead(
   approved: Operation[],
 ): Promise<LoopbackCheck> {
   const id = "retry-read";
-  const reads = approved.filter((op) => op.effect.kind === "read");
+  const reads = approved.filter(
+    (op) => op.effect.kind === "read" && op.auth.type !== "oauth2_on_behalf_of",
+  );
   const op = reads.find(wireable);
   if (!op) {
     return {
@@ -480,7 +545,11 @@ async function checkRetryMutationGuard(
 ): Promise<LoopbackCheck> {
   const id = "retry-mutation-guard";
   const op = approved.find(
-    (o) => o.effect.kind === "mutation" && o.idempotency.mode === "none" && wireable(o),
+    (o) =>
+      o.auth.type !== "oauth2_on_behalf_of" &&
+      o.effect.kind === "mutation" &&
+      o.idempotency.mode === "none" &&
+      wireable(o),
   );
   if (!op) {
     return {

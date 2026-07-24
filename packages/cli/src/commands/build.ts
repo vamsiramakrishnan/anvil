@@ -1,7 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { GatewayImportReceiptView, GatewayKind } from "@anvil/compiler";
-import { CapabilityBuildError, generateCapabilityBundle } from "@anvil/generators";
+import {
+  CapabilityBuildError,
+  GENERATION_METADATA_FILE,
+  generateCapabilityBundle,
+  resourceOptionsFromGenerationMetadata,
+} from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import { installGeneratedBundle } from "./bundle-transaction.js";
@@ -30,7 +35,10 @@ export function registerBuild(parent: Command, ctx: CommandContext): void {
       )
       .argument("<path>", "generated bundle directory or air.yaml")
       .argument("<capability-id>", "an approved capability id")
-      .option("--out <dir>", "bundle output directory (default generated/<capability-artifact-id>)")
+      .option(
+        "--out <dir>",
+        "bundle output directory (default generated/<capability-artifact-id>/<deployment-namespace>)",
+      )
       .option("--endpoint <url>", "MCP endpoint recorded in the generated artifacts")
       .action((path: string, capabilityId: string, opts: BuildOptions) => {
         ctx.code = runBuild(path, capabilityId, opts, ctx.io);
@@ -48,13 +56,27 @@ function runBuild(path: string, capabilityId: string, opts: BuildOptions, io: Cl
   const air = loadAir(path);
   let built: ReturnType<typeof generateCapabilityBundle>;
   try {
-    const receiptPath = join(resolveBundleDir(path), "import.receipt.json");
+    const parentBundle = resolveBundleDir(path);
+    const receiptPath = join(parentBundle, "import.receipt.json");
     const receiptText = existsSync(receiptPath) ? readFileSync(receiptPath, "utf8") : undefined;
+    const generationPath = join(parentBundle, GENERATION_METADATA_FILE);
+    const parentResourceOptions = resourceOptionsFromGenerationMetadata(
+      existsSync(generationPath) ? readFileSync(generationPath, "utf8") : undefined,
+    );
     const gatewayOrigin = GatewayKind.safeParse(air.service.source.origin?.kind);
     if (gatewayOrigin.success && receiptText === undefined) {
       throw new CapabilityBuildError(
         "capability_parent_gateway_receipt_missing",
         `The parent AIR records gateway origin '${gatewayOrigin.data}', but import.receipt.json is missing. Refusing to build a capability without its gateway lineage; restore or re-import the parent bundle.`,
+      );
+    }
+    if (
+      gatewayOrigin.success &&
+      (!parentResourceOptions?.deploymentNamespace || !existsSync(generationPath))
+    ) {
+      throw new CapabilityBuildError(
+        "capability_contract_invalid",
+        `The gateway parent bundle's ${GENERATION_METADATA_FILE} is missing, invalid, or has no deployment namespace. Re-import the parent before building so revision/environment identity cannot be dropped.`,
       );
     }
     let parentGatewayReceipt: ReturnType<typeof GatewayImportReceiptView.parse> | undefined;
@@ -78,7 +100,8 @@ function runBuild(path: string, capabilityId: string, opts: BuildOptions, io: Cl
       parentGatewayReceipt = parsed.data;
     }
     built = generateCapabilityBundle(air, capabilityId, {
-      mcpEndpoint: opts.endpoint,
+      ...parentResourceOptions,
+      ...(opts.endpoint ? { mcpEndpoint: opts.endpoint } : {}),
       ...(parentGatewayReceipt ? { parentGatewayReceipt } : {}),
     });
   } catch (err) {
@@ -90,7 +113,16 @@ function runBuild(path: string, capabilityId: string, opts: BuildOptions, io: Cl
   }
 
   const { manifest, view } = built;
-  const outDir = opts.out ?? join("generated", manifest.artifactId);
+  const generatedOptions = resourceOptionsFromGenerationMetadata(
+    built.bundle.files[GENERATION_METADATA_FILE],
+  );
+  const outDir =
+    opts.out ??
+    join(
+      "generated",
+      manifest.artifactId,
+      generatedOptions?.deploymentNamespace ?? manifest.artifactId,
+    );
   const written = installGeneratedBundle(outDir, built.bundle, {
     onCleanupWarning: (message) => io.err(`Warning: ${message}`),
   });

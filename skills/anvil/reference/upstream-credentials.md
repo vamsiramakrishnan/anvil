@@ -50,3 +50,29 @@ anvil deploy credentials <dir> --env prod --project <PROJECT_ID>
 That command prints required variable names and Secret Manager provisioning
 steps; it never needs secret values. Resolver failures become `auth_required`
 with names only, and credentials are not written to execution records.
+
+## Delegated proof boundary
+
+`anvil selftest` and hermetic `anvil conformance` exercise the complete local
+bridge: a synthetic already-validated subject token is exchanged at the
+generated mock STS and the exchanged bearer must reach the mock upstream. Their
+reports label this proof `virtual_wiring_only` and keep live IdP readiness
+`unverified`.
+
+The only readiness upgrade is an explicitly opted-in delegated **read** through
+`anvil conformance <bundle> --live <config.json>`. Before any tool is called,
+the endpoint's `/healthz` attestation must match the SHA-256 of the exact local
+`deploy/runtime` payload; matching tool names are not proof that the intended
+artifact was deployed.
+
+Anvil groups delegated operations by their effective identity and credential
+contract (issuer, audience, carrier, scopes, tenant/delegation, credential
+profile, and non-secret token-exchange settings). It marks
+`verified_for_opted_in_reads` only after at least one approved read in **every**
+distinct group succeeds through real inbound JWT validation, live STS exchange,
+and the real upstream. A write-only group therefore remains unverified: live
+conformance never drives a mutation merely to manufacture proof. OIDC discovery,
+JWKS reachability, tool listing, and `/readyz` are useful diagnostics but are
+never accepted as IdP/OBO readiness proof. Any unattested artifact or uncovered
+group makes the separate `identity-live` gate fail and live conformance exit
+nonzero.

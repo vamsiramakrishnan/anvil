@@ -1,4 +1,4 @@
-import type { AuthRequirement } from "@anvil/air";
+import { type AuthRequirement, effectiveAuthCarrier } from "@anvil/air";
 import type { InboundIdentity } from "./inbound-identity.js";
 import type { HttpRequest } from "./transport.js";
 
@@ -267,7 +267,7 @@ export function apiKeyMaterial(
   const queryName = env[`${prefix}_API_KEY_QUERY`];
   if (queryName) return { query: { [queryName]: key } };
   if (headerName) return { headers: { [headerName]: key } };
-  const carrier = auth.provider?.apiKey;
+  const carrier = effectiveAuthCarrier(auth);
   if (carrier?.in === "query") return { query: { [carrier.name]: key } };
   if (carrier?.in === "header") return { headers: { [carrier.name]: key } };
   return { headers: { "X-API-Key": key } };

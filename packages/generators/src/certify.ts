@@ -6,6 +6,7 @@ import { AirDocument as AirDocumentSchema, authCoherenceIssues, hashCanonical } 
 import {
   GatewayImportReceiptView,
   GatewayKind,
+  verifyGatewayImportIdentity,
   verifyGatewayImportOutputManifest,
 } from "@anvil/compiler";
 import { runDetectors, targetOperationId } from "@anvil/refinement";
@@ -656,6 +657,20 @@ function contractChecks(files: Record<string, string>, air: AirDocument): Certif
         failures.push(detail);
         blockerFailures.push(`gateway blockers cannot be verified: ${detail}`);
       } else {
+        const identity = parsedReceipt.data.selection.identity;
+        if (identity) {
+          const identityIntegrity = verifyGatewayImportIdentity(identity);
+          if (!identityIntegrity.ok) {
+            failures.push(
+              `gateway import identity digest is invalid: recorded ${identity.digest}/${identity.lineageDigest}, expected ${identityIntegrity.expectedDigest}/${identityIntegrity.expectedLineageDigest}`,
+            );
+          }
+          if (identity.serviceId !== air.service.id) {
+            failures.push(
+              `gateway import identity belongs to service ${identity.serviceId}, not canonical AIR service ${air.service.id}`,
+            );
+          }
+        }
         for (const blocker of parsedReceipt.data.blockers) {
           const coordinate = blocker.coordinate
             ? ` at ${blocker.coordinate.origin}${blocker.coordinate.pointer ? `#${blocker.coordinate.pointer}` : ""}`
@@ -990,6 +1005,7 @@ const DEPLOY_FILES = [
   "deploy/cloudbuild.yaml",
   "deploy/terraform/main.tf",
   "deploy/terraform/variables.tf",
+  "deploy/idempotency-store.json",
   "deploy/env.schema.json",
   "deploy/secrets.required.yaml",
   "deploy/README.md",

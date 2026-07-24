@@ -219,6 +219,49 @@ describe("tri-surface conformance (payments, OpenAPI)", () => {
   }, 120_000);
 });
 
+describe("tri-surface conformance (delegated identity)", () => {
+  it("reports virtual wiring separately from live IdP readiness", async () => {
+    const manifest = `operations:
+  getPayment:
+    state: approved
+    auth:
+      type: oauth2_on_behalf_of
+      principal: delegated
+      issuer: https://id.example.com/
+      audience: api://payments
+      carrier: { in: header, name: Authorization, scheme: Bearer }
+      provider:
+        grant: token_exchange
+        token_endpoint: https://sts.example.com/oauth/token
+  getCustomer:
+    state: approved
+  createRefund:
+    state: approved
+  capturePayment:
+    state: approved
+`;
+    const air = await compile({
+      spec: read("payments/openapi.yaml"),
+      manifest,
+      serviceId: "payments_obo_conformance",
+    });
+    const dir = mkdtempSync(join(tmpdir(), "anvil-conformance-obo-"));
+    dirs.push(dir);
+    writeBundle(dir, generateBundle(air));
+
+    const report = await runConformance(dir);
+    expect(byId(report, "auth-obo-token-exchange")[0]?.status).toBe("pass");
+    expect(byId(report, "wire-agreement")[0]?.status).toBe("skipped");
+    expect(report.identity).toMatchObject({
+      delegatedOperations: 1,
+      virtualWiring: "passed",
+      proof: "virtual_wiring_only",
+      liveIdpReadiness: "unverified",
+    });
+    expect(report.summary.fail, JSON.stringify(report.checks, null, 2)).toBe(0);
+  }, 60_000);
+});
+
 describe("tri-surface conformance (banking, WSDL)", () => {
   it("proves WSDL-lowered surfaces agree across CLI, MCP, and skill", async () => {
     const dir = await buildBundle("soap/bank.wsdl", "soap/anvil.yaml", "banking");

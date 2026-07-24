@@ -267,6 +267,7 @@ const DEPLOY_ARTIFACTS = [
   "deploy/cloudbuild.yaml",
   "deploy/terraform/main.tf",
   "deploy/terraform/variables.tf",
+  "deploy/idempotency-store.json",
   "deploy/env.schema.json",
   "deploy/secrets.required.yaml",
   "deploy/README.md",

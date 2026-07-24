@@ -177,9 +177,26 @@ The ledger is a plugin, selected by `resolveLedger(ANVIL_LEDGER)`. Outside
 `idempotency_ledger_unavailable` when no durable backend is configured — the
 runtime refuses rather than pretend it has protection it doesn't. The generated
 Firestore backend expires completed replay results after a bounded retention
-window, while in-progress reservations never expire automatically. Its live,
-non-mutating readiness probe keeps `/readyz` closed when the named database
-cannot be reached.
+window and caps one serialized replay result at 819,200 bytes, while in-progress
+reservations never expire automatically. Its live, non-mutating readiness probe
+keeps `/readyz` closed when the selected database cannot be reached.
+
+`anvil deploy ledger <dir>` verifies the generator-owned
+`deploy/idempotency-store.json` and shows the explicit shared/dedicated
+provisioning mode, database input, collection group, location rule, and runtime
+URI without contacting a provider. Shared mode uses a platform-owned database
+per trust/regulatory domain and consumes no per-capability database quota;
+dedicated mode creates one database for a separate IAM boundary. Firestore IAM
+does not isolate collection groups, and Google Cloud console access does not
+enforce database IAM conditions. A fresh
+contract proves static wiring only; `/readyz` after apply proves live data-plane
+access. The ledger is bounded deduplication, not exactly-once execution: a crash
+after upstream success but before ledger completion remains `in_progress` for
+operator reconciliation. Its hashed document namespace follows the
+service/environment/upstream credential-profile boundary. When inbound identity
+is verified, the request fingerprint separately binds that principal so
+cross-caller raw-key reuse conflicts instead of leaking a replay; without it,
+the raw key is a shared operation coordinate.
 
 ## Manifest (enrichment)
 

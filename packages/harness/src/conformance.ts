@@ -14,10 +14,12 @@ import {
   hermeticCredentialEnv,
   MockControl,
   parseJson,
+  probeVirtualOboWiring,
   startMockServer,
   trim,
   type WireLoss,
   wireable,
+  withoutConfirmationInput,
   withTimeout,
 } from "./bundle-driver.js";
 import { connectSource, type McpSource } from "./mcp-source.js";
@@ -66,6 +68,13 @@ export const ConformanceReport = z.object({
   /** The surfaces actually exercised (cli is dropped when it cannot be driven). */
   surfaces: z.array(z.enum(SURFACES)),
   checks: z.array(ConformanceCheck),
+  identity: z.object({
+    delegatedOperations: z.number().int(),
+    virtualWiring: z.enum(["not_applicable", "passed", "failed"]),
+    proof: z.enum(["not_applicable", "virtual_wiring_only"]),
+    liveIdpReadiness: z.enum(["not_applicable", "unverified"]),
+    detail: z.string(),
+  }),
   summary: z.object({
     pass: z.number().int(),
     fail: z.number().int(),
@@ -180,15 +189,21 @@ export async function runConformance(
   const checks: ConformanceCheck[] = [];
 
   if (approved.length === 0) {
-    return finish(dir, startedAt, surfaces, [
-      {
-        id: "surface-agreement",
-        surfaces,
-        status: "fail",
-        detail:
-          "no approved operations — nothing to prove. Approve operations via an Anvil manifest and recompile.",
-      },
-    ]);
+    return finish(
+      dir,
+      startedAt,
+      surfaces,
+      [],
+      [
+        {
+          id: "surface-agreement",
+          surfaces,
+          status: "fail",
+          detail:
+            "no approved operations — nothing to prove. Approve operations via an Anvil manifest and recompile.",
+        },
+      ],
+    );
   }
 
   // --- Static: the three surfaces document the same operations & posture. -----
@@ -237,6 +252,35 @@ export async function runConformance(
       );
 
     for (const op of approved) {
+      if (op.auth.type === "oauth2_on_behalf_of") {
+        checks.push(
+          skip(
+            "wire-agreement",
+            op,
+            surfaces,
+            "CLI/stdio MCP cannot fabricate validated inbound identity; delegated wiring is proven separately.",
+          ),
+        );
+        const probe = await probeVirtualOboWiring(op, base, ctl);
+        checks.push({
+          id: "auth-obo-token-exchange",
+          operationId: op.id,
+          surfaces: cliEnabled ? ["mcp", "cli"] : ["mcp"],
+          status: probe.status,
+          detail: probe.detail,
+        });
+        if (op.confirmation.required) {
+          checks.push(
+            skip(
+              "gate-agreement",
+              op,
+              surfaces,
+              "Delegated surface calls require a real validated inbound identity; runtime execution remains fail-closed.",
+            ),
+          );
+        }
+        continue;
+      }
       if (!wireable(op)) {
         checks.push(skip("wire-agreement", op, surfaces, "operation is not wire-executable"));
         continue;
@@ -251,13 +295,14 @@ export async function runConformance(
     mock.child.kill("SIGKILL");
   }
 
-  return finish(dir, startedAt, surfaces, checks);
+  return finish(dir, startedAt, surfaces, approved, checks);
 }
 
 function finish(
   dir: string,
   startedAt: string,
   surfaces: Surface[],
+  approved: readonly Operation[],
   checks: ConformanceCheck[],
 ): ConformanceReport {
   const count = (status: ConformanceCheck["status"]) =>
@@ -268,8 +313,38 @@ function finish(
     startedAt,
     surfaces,
     checks,
+    identity: identityReadiness(approved, checks),
     summary: { pass: count("pass"), fail: count("fail"), skipped: count("skipped") },
   });
+}
+
+function identityReadiness(
+  approved: readonly Operation[],
+  checks: readonly ConformanceCheck[],
+): ConformanceReport["identity"] {
+  const delegatedOperations = approved.filter(
+    (operation) => operation.auth.type === "oauth2_on_behalf_of",
+  ).length;
+  if (delegatedOperations === 0) {
+    return {
+      delegatedOperations,
+      virtualWiring: "not_applicable",
+      proof: "not_applicable",
+      liveIdpReadiness: "not_applicable",
+      detail: "No approved delegated operations.",
+    };
+  }
+  const proofs = checks.filter((check) => check.id === "auth-obo-token-exchange");
+  const passed =
+    proofs.length === delegatedOperations && proofs.every((check) => check.status === "pass");
+  return {
+    delegatedOperations,
+    virtualWiring: passed ? "passed" : "failed",
+    proof: "virtual_wiring_only",
+    liveIdpReadiness: "unverified",
+    detail:
+      "Hermetic exchange validates the shared runtime beneath CLI/MCP only. Live issuer discovery, JWKS, claims, client policy, consent, and STS reachability remain unverified.",
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -511,7 +586,7 @@ async function checkWireAgreement(
   try {
     // MCP surface.
     await ctl.reset();
-    const mcpArgs = confirm ? { ...args, confirm: true } : args;
+    const mcpArgs = confirm ? args : withoutConfirmationInput(op, args);
     const mcpResult = await mcpCall(op.mcp.toolName, mcpArgs);
     const mcpWire = await ctl.capture();
     if (mcpResult.isError) return fail(id, op, s, `MCP surface errored: ${trim(mcpResult.text)}`);
@@ -583,7 +658,7 @@ async function checkGateAgreement(
   // `exampleInput` bakes in `confirm: true` for gated operations; strip it so
   // the refusal call genuinely omits confirmation (the CLI driver omits
   // `--confirm` independently, and `cliFlagsFor` skips the boolean field).
-  const { confirm: _dropped, ...args } = argsFor(op, "conformance-gate");
+  const args = withoutConfirmationInput(op, argsFor(op, "conformance-gate"));
   try {
     // MCP: refuse without confirm (zero wire), execute with confirm (one wire).
     await ctl.reset();

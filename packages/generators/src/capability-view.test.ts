@@ -102,6 +102,21 @@ describe("capabilityView", () => {
     }
   });
 
+  it("refuses a capability build when an audited workflow is blocked", async () => {
+    const air = await paymentsAir();
+    approveCapability(air, "payments.refunds");
+    const workflow = air.workflows.find((candidate) => candidate.id.endsWith(".refund_customer"));
+    if (!workflow) throw new Error("reference workflow missing");
+    workflow.state = "blocked";
+    try {
+      capabilityView(air, "payments.refunds");
+      expect.unreachable();
+    } catch (error) {
+      expect((error as CapabilityBuildError).code).toBe("capability_workflow_blocked");
+      expect((error as Error).message).toContain(workflow.id);
+    }
+  });
+
   it("projects long capability ids to stable, service-safe artifact identities", () => {
     const id = `payments.${"very_long_capability_name_".repeat(4)}`;
     const projected = capabilityArtifactId(id);
@@ -171,6 +186,30 @@ describe("capability bundle (acceptance)", () => {
     for (const surface of Object.values(manifest.surfaces)) {
       expect(surface.operations).toEqual(surface.operations.filter((name) => name.includes("get")));
     }
+  });
+
+  it("derives a capability deployment namespace from the parent estate namespace", async () => {
+    const air = await paymentsAir();
+    approveCapability(air, "payments.refunds");
+    const prod = generateCapabilityBundle(air, "payments.refunds", {
+      deploymentNamespace: "payments-prod-coordinate",
+    });
+    const test = generateCapabilityBundle(air, "payments.refunds", {
+      deploymentNamespace: "payments-test-coordinate",
+    });
+    const prodMetadata = JSON.parse(prod.bundle.files["generation.json"] as string);
+    const testMetadata = JSON.parse(test.bundle.files["generation.json"] as string);
+    const prodNamespace = prodMetadata.resourceOptions.deploymentNamespace as string;
+    const testNamespace = testMetadata.resourceOptions.deploymentNamespace as string;
+
+    expect(prod.view.service.id).toBe("payments-refunds");
+    expect(test.view.service.id).toBe(prod.view.service.id);
+    expect(prodNamespace).toMatch(/^payments-prod-coordinate-[a-f0-9]{24}$/);
+    expect(testNamespace).toMatch(/^payments-test-coordinate-[a-f0-9]{24}$/);
+    expect(prodNamespace).not.toBe(testNamespace);
+    expect(prod.bundle.files["deploy/terraform/main.tf"]).toContain(
+      `firestore://\${var.project_id}/\${local.ledger_database_id}/${prodNamespace}`,
+    );
   });
 
   it("shares one contract hash across surfaces and rebuilds reproducibly", async () => {

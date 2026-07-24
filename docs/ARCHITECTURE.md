@@ -144,8 +144,10 @@ validate → confirm → idempotency → dry-run? → host-pin → auth → ledg
   security errors win. The built-in Firestore backend stores only hashed ledger
   keys, gives completed results a configurable expiry (seven days by default),
   and never auto-expires in-progress reservations. Its `/readyz` check performs
-  a field-masked, non-mutating lookup and fails closed when the named database
-  is unavailable or inaccessible.
+  a field-masked, non-mutating lookup and fails closed when the selected
+  database is unavailable or inaccessible. Shared mode uses an existing
+  platform-owned database per trust domain; dedicated mode creates one database
+  for a stronger IAM boundary. Collection groups are not IAM boundaries.
 - **auth** — named profiles resolved from approved stores; secrets never reach
   execution records or agents.
 - **policy hooks** — six local enforcement points (pre/post

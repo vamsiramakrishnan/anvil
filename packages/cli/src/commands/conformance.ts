@@ -28,7 +28,11 @@ import { annotate } from "./meta.js";
  * mock, it probes a deployed MCP endpoint named in the config file. That lane
  * is production-safe (it lists tools and proves the confirmation gate refuses,
  * but never drives a real mutation) and config-gated — credentials come from
- * the environment, never the file.
+ * the environment, never the file. It first attests that the endpoint runs the
+ * exact local deploy/runtime artifact. For OBO, every distinct identity and
+ * credential contract group then needs a successful explicitly opted-in read
+ * through the real inbound-JWT → STS → upstream path; write-only groups remain
+ * unverified. `/readyz`, discovery, and JWKS reachability do not prove this.
  */
 export function registerConformance(parent: Command, ctx: CommandContext): void {
   annotate(
@@ -36,7 +40,7 @@ export function registerConformance(parent: Command, ctx: CommandContext): void 
       .command("conformance")
       .summary("Prove the CLI, MCP, and skill surfaces agree on every operation, end-to-end.")
       .description(
-        "Tri-surface conformance for a generated bundle. Boots the bundle's mock upstream, then drives every approved operation through BOTH the generated MCP server (mcp/server.js, over the real MCP transport) and the generated CLI entrypoint (cli/<svc>.mjs, as a child process) against that mock. Checks: the skill, CLI catalog, and MCP tool list name the same operations with the same public handles (surface-agreement); the skill documents the exact confirmation/idempotency/retry posture the runtime enforces (skill-claim); the same input reaches the wire identically on both surfaces and matches the AIR contract (wire-agreement); and a confirmation-gated mutation refuses without --confirm, before any side effect, on both surfaces (gate-agreement). Writes conformance.report.json into the bundle. Exit 0 only when no check fails.\n\nWith --live <config.json>, probes a REAL deployed MCP endpoint instead of the mock: it verifies the deployed server serves exactly the certified surface and that its confirmation gate refuses in production, and invokes only the reads the config opts into — it never drives a real mutation. The config names the endpoint (mcpUrl) and auth headers, whose ${VAR} values resolve from the environment; the onus of correct config is on the operator. Writes conformance.live.report.json.",
+        "Tri-surface conformance for a generated bundle. Boots the bundle's mock upstream, then drives every approved operation through BOTH the generated MCP server (mcp/server.js, over the real MCP transport) and the generated CLI entrypoint (cli/<svc>.mjs, as a child process) against that mock. Checks: the skill, CLI catalog, and MCP tool list name the same operations with the same public handles (surface-agreement); the skill documents the exact confirmation/idempotency/retry posture the runtime enforces (skill-claim); the same input reaches the wire identically on both surfaces and matches the AIR contract (wire-agreement); and a confirmation-gated mutation refuses without --confirm, before any side effect, on both surfaces (gate-agreement). Writes conformance.report.json into the bundle. Exit 0 only when no check fails.\n\nWith --live <config.json>, probes a REAL deployed MCP endpoint instead of the mock. Before any tool call, the endpoint must attest the exact SHA-256 of the local deploy/runtime artifact. It then verifies the certified surface and production confirmation gate, and invokes only reads explicitly opted into by the operator — never a real mutation. For delegated/OBO identity, at least one successful read is required for every distinct identity and credential contract group; a write-only group remains unverified and the separate identity-live gate fails. /readyz, OIDC discovery, JWKS reachability, and matching tool names alone never prove readiness. The config names the endpoint (mcpUrl) and auth headers, whose ${VAR} values resolve from the environment; the onus of correct config is on the operator. Writes conformance.live.report.json.",
       )
       .argument("<dir>", "generated bundle directory (or its air.yaml)")
       .option("--live <config>", "probe a real deployed MCP endpoint named in this JSON config")
@@ -99,7 +103,20 @@ async function runLiveLane(
 
 /** The check-by-check summary the live lane prints. */
 export function renderLiveSummary(report: LiveReport, dir: string): string {
-  const lines: string[] = [`Live conformance — ${report.target}`, ""];
+  const lines: string[] = [`Live conformance — ${report.target}`];
+  lines.push(
+    `  artifact: ${report.artifact.matched ? "matched" : "MISMATCH"} ` +
+      `(local ${report.artifact.expectedHash.slice(0, 12)}…; deployed ${
+        report.artifact.observedHash?.slice(0, 12) ?? "unavailable"
+      }${report.artifact.observedHash ? "…" : ""})`,
+  );
+  if (report.identity.delegatedOperations > 0) {
+    lines.push(
+      `  identity: ${report.identity.liveIdpReadiness} (${report.identity.proof}; ` +
+        `${report.identity.verifiedContractGroupIds.length}/${report.identity.delegatedContractGroups} contract groups)`,
+    );
+  }
+  lines.push("");
   for (const check of report.checks) {
     const op = check.operationId ? ` ${check.operationId}` : "";
     lines.push(`  ${liveMarker(check)} ${check.id}${op}`);
@@ -126,6 +143,11 @@ export function renderConformanceSummary(report: ConformanceReport, dir: string)
   const lines: string[] = [
     `Tri-surface conformance — ${dir}`,
     `  surfaces: ${report.surfaces.join(" + ")}`,
+    ...(report.identity.delegatedOperations > 0
+      ? [
+          `  identity: ${report.identity.proof}=${report.identity.virtualWiring}; live IdP readiness=UNVERIFIED`,
+        ]
+      : []),
     "",
   ];
   for (const check of report.checks) {

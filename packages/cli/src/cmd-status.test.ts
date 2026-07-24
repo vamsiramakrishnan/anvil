@@ -81,76 +81,117 @@ function writePassingExecutableEvidence(bundle: string): void {
 }
 
 describe("anvil status", () => {
-  it("shows a planned journey without claiming a cloud deployment completed", async () => {
-    const { bundle, root } = await compileApprovedBundle();
-    const sourceRoot = join(root, "workspace");
-    const certify = bufferIO();
-    expect(await runAnvilCli(["certify", bundle], { io: certify }), certify.text()).toBe(0);
-    writePassingExecutableEvidence(bundle);
-    const publish = bufferIO();
-    expect(
-      await runAnvilCli(["publish", bundle, "--env", "dev"], {
-        io: publish,
-      }),
-      publish.text(),
-    ).toBe(0);
+  it(
+    "shows a planned journey without claiming a cloud deployment completed",
+    async () => {
+      const { bundle, root } = await compileApprovedBundle();
+      const sourceRoot = join(root, "workspace");
+      const certify = bufferIO();
+      expect(await runAnvilCli(["certify", bundle], { io: certify }), certify.text()).toBe(0);
+      writePassingExecutableEvidence(bundle);
+      const publish = bufferIO();
+      expect(
+        await runAnvilCli(["publish", bundle, "--env", "dev"], {
+          io: publish,
+        }),
+        publish.text(),
+      ).toBe(0);
 
-    const io = bufferIO();
-    expect(await runAnvilCli(["status", bundle], { io })).toBe(0);
-    expect(io.text()).toContain("Core projections — ALIGNED");
-    expect(io.text()).toContain("static assurance: fresh");
-    expect(io.text()).toContain("selftest:         fresh");
-    expect(io.text()).toContain("conformance:      fresh");
-    expect(io.text()).toContain("simulation:       fresh");
-    expect(io.text()).toContain("deployment plan:  planned");
-    expect(io.text()).toContain("Next safe action — operator-action-required");
-    expect(io.text()).toContain("Anvil made no cloud call");
+      const io = bufferIO();
+      expect(await runAnvilCli(["status", bundle], { io })).toBe(0);
+      expect(io.text()).toContain("Core projections — ALIGNED");
+      expect(io.text()).toContain("static assurance: fresh");
+      expect(io.text()).toContain("selftest:         fresh");
+      expect(io.text()).toContain("conformance:      fresh");
+      expect(io.text()).toContain("simulation:       fresh");
+      expect(io.text()).toContain("deployment plan:  planned");
+      expect(io.text()).toContain("Writes & idempotency");
+      expect(io.text()).toContain("store contract: fresh · firestore");
+      expect(io.text()).toContain("live readiness: unverified · /readyz");
+      expect(io.text()).toContain("anvil deploy ledger");
+      expect(io.text()).toContain("Next safe action — operator-action-required");
+      expect(io.text()).toContain("Anvil made no cloud call");
 
-    const { report } = await jsonStatus(bundle, sourceRoot);
-    expect(report.paths.bundle).toBe(bundle);
-    expect(report.paths.canonicalAir).toBe(join(bundle, "air.yaml"));
-    expect(report.source.snapshotId).toMatch(/^src-/);
-    expect(report.source.sourceHash).toBeTruthy();
-    expect(report.source.origin).toEqual({
-      kind: "filesystem",
-      uri: join(examples, "openapi.yaml"),
-    });
-    expect(report.source.entrypoint).toBe("openapi.yaml");
-    expect(report.source.root).toBe(sourceRoot);
-    expect(report.source.integrity.state).toBe("fresh");
-    expect(report.source.expectedLockedSource.snapshotRecord).toBe(
-      join(sourceRoot, ".anvil", "sources", report.source.snapshotId, "source.json"),
-    );
-    expect(report.source.expectedLockedSource.entrypointBytes).toBe(
-      join(sourceRoot, ".anvil", "sources", report.source.snapshotId, "raw", "openapi.yaml"),
-    );
-    expect(report.operations).toMatchObject({
-      total: 4,
-      generated: 0,
-      approved: 4,
-      review_required: 0,
-      deprecated: 0,
-      blocked: 0,
-    });
-    expect(
-      report.core.projections.every(
-        (projection: { state: string }) => projection.state === "fresh",
-      ),
-    ).toBe(true);
-    expect(report.certification.state).toBe("fresh");
-    expect(report.executableEvidence.selftest).toMatchObject({
-      state: "fresh",
-      fresh: true,
-      passed: true,
-      bundleHash: report.core.bundleHash,
-    });
-    expect(report.executableEvidence.conformance.state).toBe("fresh");
-    expect(report.executableEvidence.simulation.state).toBe("fresh");
-    expect(report.publication.state).toBe("planned");
-    expect(report.publication.cloudCallsMade).toBe(false);
-    expect(report.publication.operatorActionRequired).toBe(true);
-    expect(report.nextAction.code).toBe("operator-action-required");
-  });
+      const { report } = await jsonStatus(bundle, sourceRoot);
+      expect(report.paths.bundle).toBe(bundle);
+      expect(report.paths.canonicalAir).toBe(join(bundle, "air.yaml"));
+      expect(report.source.snapshotId).toMatch(/^src-/);
+      expect(report.source.sourceHash).toBeTruthy();
+      expect(report.source.origin).toEqual({
+        kind: "filesystem",
+        uri: join(examples, "openapi.yaml"),
+      });
+      expect(report.source.entrypoint).toBe("openapi.yaml");
+      expect(report.source.root).toBe(sourceRoot);
+      expect(report.source.integrity.state).toBe("fresh");
+      expect(report.source.expectedLockedSource.snapshotRecord).toBe(
+        join(sourceRoot, ".anvil", "sources", report.source.snapshotId, "source.json"),
+      );
+      expect(report.source.expectedLockedSource.entrypointBytes).toBe(
+        join(sourceRoot, ".anvil", "sources", report.source.snapshotId, "raw", "openapi.yaml"),
+      );
+      expect(report.operations).toMatchObject({
+        total: 4,
+        generated: 0,
+        approved: 4,
+        review_required: 0,
+        deprecated: 0,
+        blocked: 0,
+      });
+      expect(report.idempotency).toMatchObject({
+        writes: expect.arrayContaining([
+          {
+            id: "payments.refunds.create",
+            command: "payments refunds create",
+            mode: "required",
+            keyDerivation: "client_supplied",
+            explicitKeyRequired: true,
+            explicitKeyRecommended: true,
+            managedStoreRequired: true,
+          },
+        ]),
+        store: {
+          contractState: "fresh",
+          required: true,
+          backend: "firestore",
+          databaseId: null,
+          databaseTerraformVariable: "ledger_database_id",
+          provisioningModeTerraformVariable: "ledger_database_mode",
+          provisioningModeDefault: "shared",
+          collectionGroup: expect.stringMatching(/^anvil_idempotency_[a-f0-9]{16}$/),
+          runtimeUriTemplate: "firestore://{project_id}/{database_id}/payments",
+          locationTerraformVariable: "ledger_location",
+          locationImmutable: true,
+          contractPath: join(bundle, "deploy", "idempotency-store.json"),
+          detail: expect.stringContaining("every compiler-owned bundle byte"),
+        },
+        liveReadiness: {
+          state: "unverified",
+          path: "/readyz",
+          mutates: false,
+        },
+      });
+      expect(
+        report.core.projections.every(
+          (projection: { state: string }) => projection.state === "fresh",
+        ),
+      ).toBe(true);
+      expect(report.certification.state).toBe("fresh");
+      expect(report.executableEvidence.selftest).toMatchObject({
+        state: "fresh",
+        fresh: true,
+        passed: true,
+        bundleHash: report.core.bundleHash,
+      });
+      expect(report.executableEvidence.conformance.state).toBe("fresh");
+      expect(report.executableEvidence.simulation.state).toBe("fresh");
+      expect(report.publication.state).toBe("planned");
+      expect(report.publication.cloudCallsMade).toBe(false);
+      expect(report.publication.operatorActionRequired).toBe(true);
+      expect(report.nextAction.code).toBe("operator-action-required");
+    },
+    20_000,
+  );
 
   it("anchors --root, validates locked source bytes, and propagates it to recovery", async () => {
     const { bundle, root } = await compileApprovedBundle();
@@ -192,6 +233,126 @@ describe("anvil status", () => {
     );
     expect(report.nextAction.code).toBe("repair-core");
     expect(readFileSync(cliPath, "utf8")).toBe(`${JSON.stringify(cliAir, null, 2)}\n`);
+  });
+
+  it("routes healthy gateway projections with opaque policy to the policy owner, not source repair", async () => {
+    const root = mkdtempSync(join(tmpdir(), "anvil-status-gateway-"));
+    roots.push(root);
+    const gateway = join(root, "kong.yaml");
+    const bundle = join(root, "bundle");
+    writeFileSync(
+      gateway,
+      `_format_version: "3.0"
+services:
+  - name: refunds
+    routes:
+      - name: refunds
+        paths: ["/refunds"]
+        methods: ["POST"]
+    plugins:
+      - name: custom-request-transformer
+        config: { add: { headers: ["x-tenant:example"] } }
+`,
+    );
+    const imported = bufferIO();
+    expect(
+      await runAnvilCli(
+        [
+          "estate",
+          "import",
+          gateway,
+          "--vendor",
+          "kong",
+          "--api",
+          "refunds",
+          "--out",
+          bundle,
+          "--root",
+          root,
+        ],
+        { io: imported },
+      ),
+      imported.text(),
+    ).toBe(0);
+
+    const { code, report } = await jsonStatus(bundle);
+    expect(code).toBe(0);
+    expect(report.core.state).toBe("aligned");
+    expect(report.gatewayImport).toMatchObject({
+      state: "bound",
+      verifyCommand: expect.stringContaining(`--root ${root}`),
+    });
+    expect(
+      report.core.projections.every(
+        (projection: { state: string }) => projection.state === "fresh",
+      ),
+    ).toBe(true);
+    expect(report.core.contractChecks).toContainEqual(
+      expect.objectContaining({
+        code: "contract.gateway-blockers-resolved",
+        state: "failed",
+      }),
+    );
+    expect(report.nextAction).toMatchObject({
+      code: "resolve-gateway-policy",
+      command: `anvil inspect ${bundle}`,
+      reason: expect.stringContaining("gateway policy evidence is unresolved"),
+    });
+    expect(report.nextAction.reason).not.toContain("verify the locked source");
+  });
+
+  it("fails core status when the generated idempotency-store contract is stale", async () => {
+    const { bundle } = await compileApprovedBundle();
+    const path = join(bundle, "deploy", "idempotency-store.json");
+    const contract = JSON.parse(readFileSync(path, "utf8"));
+    contract.firestore.runtimeUri.resolvedTemplate =
+      "firestore://{project_id}/{database_id}/forged";
+    writeFileSync(path, `${JSON.stringify(contract, null, 2)}\n`, "utf8");
+
+    const { code, report } = await jsonStatus(bundle);
+    expect(code).toBe(1);
+    expect(report.core.state).toBe("misaligned");
+    expect(report.idempotency.store.contractState).toBe("stale");
+    expect(report.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "status.idempotency.contract_stale",
+        severity: "error",
+        path,
+      }),
+    );
+    expect(report.nextAction.code).toBe("repair-core");
+  });
+
+  it("marks the store projection stale when the generated Terraform ledger URI is tampered", async () => {
+    const { bundle } = await compileApprovedBundle();
+    const path = join(bundle, "deploy", "terraform", "main.tf");
+    const original = readFileSync(path, "utf8");
+    const expectedUri =
+      "firestore://${var.project_id}/${local.ledger_database_id}/payments";
+    expect(original).toContain(expectedUri);
+    writeFileSync(path, original.replace(expectedUri, `${expectedUri}-forged`), "utf8");
+
+    const { code, report } = await jsonStatus(bundle);
+    expect(code).toBe(1);
+    expect(report.core.state).toBe("misaligned");
+    expect(report.idempotency.store.contractState).toBe("stale");
+    expect(report.idempotency.store.detail).toContain(
+      "deploy/terraform/main.tf: bytes differ from deterministic projection",
+    );
+    expect(report.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "status.idempotency.contract_stale",
+        severity: "error",
+        path: join(bundle, "deploy", "idempotency-store.json"),
+      }),
+    );
+    expect(report.core.contractChecks).toContainEqual(
+      expect.objectContaining({
+        code: "contract.generated-bytes-agree",
+        state: "failed",
+      }),
+    );
+    expect(report.nextAction.code).toBe("repair-core");
   });
 
   it("fails closed when the AIR loaded by the deployed runtime is tampered", async () => {

@@ -190,6 +190,7 @@ describe("deficiency catalog", () => {
       "describe-operation",
       "generate-examples",
       "enrich-errors",
+      "investigate-ui-projection",
     ]);
     expect(implemented).toEqual(expectedImplemented);
     for (const def of Object.values(DEFICIENCY_CATALOG)) {

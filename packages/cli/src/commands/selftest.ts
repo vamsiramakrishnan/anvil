@@ -56,6 +56,12 @@ export async function runSelftest(path: string, opts: SelftestOptions, io: CliIO
 /** The check-by-check summary `anvil selftest` prints (details behind --json). */
 export function renderLoopbackSummary(report: LoopbackReport, dir: string): string {
   const lines: string[] = [`Loopback self-test — ${dir}`];
+  if (report.identity.delegatedOperations > 0) {
+    lines.push(
+      `  identity: ${report.identity.proof}=${report.identity.virtualWiring}; live IdP readiness=UNVERIFIED`,
+      "",
+    );
+  }
   for (const check of report.checks) {
     lines.push(`  ${marker(check)} ${check.id}${check.operationId ? ` ${check.operationId}` : ""}`);
     if (check.status !== "pass" && check.detail) lines.push(`      ${check.detail}`);

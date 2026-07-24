@@ -27,10 +27,12 @@ export class CapabilityBuildError extends Error {
     | "capability_not_found"
     | "capability_not_approved"
     | "capability_empty"
+    | "capability_workflow_blocked"
     | "capability_workflow_incomplete"
     | "capability_workflow_dependency_unapproved"
     | "capability_parent_gateway_receipt_missing"
-    | "capability_parent_gateway_receipt_invalid";
+    | "capability_parent_gateway_receipt_invalid"
+    | "capability_contract_invalid";
 
   constructor(code: CapabilityBuildError["code"], message: string) {
     super(message);
@@ -82,6 +84,14 @@ export function capabilityView(air: AirDocument, capabilityId: string): AirDocum
   // silently drops the workflow merely because one step is owned by another
   // discovery grouping. Missing or unapproved dependencies fail loudly.
   const workflows = air.workflows.filter((wf) => wf.capabilityId === capabilityId);
+  const blockedWorkflow = workflows.find((workflow) => workflow.state === "blocked");
+  if (blockedWorkflow) {
+    throw new CapabilityBuildError(
+      "capability_workflow_blocked",
+      `Capability '${capabilityId}' workflow '${blockedWorkflow.id}' is blocked. ` +
+        "Inspect the parent AIR diagnostics and repair its operation references or approval dependencies before building.",
+    );
+  }
   const workflowDependencyIds = new Set(
     workflows.flatMap((wf) => wf.steps.map((step) => step.operationId)),
   );
@@ -282,6 +292,33 @@ export interface CapabilityBundleOptions extends ResourceOptions {
 }
 
 /**
+ * Bind a capability deployment to both its parent estate coordinate and its
+ * capability identity without changing the AIR service id agents invoke.
+ */
+export function capabilityDeploymentNamespace(
+  parentDeploymentNamespace: string,
+  capabilityId: string,
+): string {
+  if (!/^[a-zA-Z0-9_.~-]{1,128}$/.test(parentDeploymentNamespace)) {
+    throw new CapabilityBuildError(
+      "capability_contract_invalid",
+      "The parent deployment namespace is missing or invalid.",
+    );
+  }
+  const digest = hashCanonical({
+    parentDeploymentNamespace,
+    capabilityId,
+  }).slice(0, 24);
+  const rawStem = parentDeploymentNamespace
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const safeStem = /^[a-z]/.test(rawStem) ? rawStem : `anvil-${rawStem}`;
+  const stem = safeStem.slice(0, 103).replace(/-+$/g, "");
+  return `${stem}-${digest}`;
+}
+
+/**
  * Compile ONE approved capability into an aligned bundle: narrow the document
  * (`capabilityView`), reuse the whole-service `generateBundle`, and stamp a
  * content-addressed `bundle.json` at the root. Diagnostics are excluded from
@@ -298,7 +335,13 @@ export function generateCapabilityBundle(
     ? GatewayImportReceiptView.parse(rawParentGatewayReceipt)
     : undefined;
   const view = capabilityView(air, capabilityId);
-  const bundle = generateBundle(view, resourceOptions);
+  const bundle = generateBundle(view, {
+    ...resourceOptions,
+    deploymentNamespace: capabilityDeploymentNamespace(
+      resourceOptions.deploymentNamespace ?? air.service.id,
+      capabilityId,
+    ),
+  });
 
   const sourceCapability = air.capabilities.find((cap) => cap.id === capabilityId);
   if (!sourceCapability) {

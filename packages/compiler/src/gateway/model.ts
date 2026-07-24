@@ -12,6 +12,7 @@
  * assertion cites evidence back to the original export or management response.
  * Adapters never return AIR.
  */
+import { AuthCredentialCarrier, AuthPrincipal, AuthType } from "@anvil/air";
 import { z } from "zod";
 import type { PolicyOverlay } from "../contract/model.js";
 import type { CompilerSource } from "../source/compiler-source.js";
@@ -62,6 +63,138 @@ export const EvidenceCoordinate = z.object({
   span: z.object({ start: z.number().int(), end: z.number().int() }).optional(),
 });
 export type EvidenceCoordinate = z.infer<typeof EvidenceCoordinate>;
+
+const GatewaySha256Digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+/** One accepted collection project container plus every bounded member. */
+export const GATEWAY_MAX_ARTIFACT_EVIDENCE = 100_001;
+const GatewayArtifactPath = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine(
+    (path) =>
+      !path.startsWith("/") &&
+      !path.includes("\\") &&
+      !path.split("/").some((segment) => segment === "" || segment === "." || segment === ".."),
+    "must be a safe relative POSIX path",
+  );
+
+/**
+ * Content-addressed evidence for a native gateway artifact.
+ *
+ * A container and each accepted member get separate records. Member records
+ * retain their parent container coordinate and digest, so inventory and import
+ * reports can prove exactly which bytes were inspected without embedding those
+ * bytes or a host-local filesystem path.
+ */
+export const GatewayArtifactEvidence = z
+  .object({
+    kind: z.enum(["container", "member"]),
+    role: z.enum([
+      "api_project",
+      "api_definition",
+      "api_metadata",
+      "deployment_environments",
+      "formal_definition",
+      "opaque_policy",
+      "uninterpreted",
+    ]),
+    path: GatewayArtifactPath,
+    origin: z.string().min(1),
+    digest: GatewaySha256Digest,
+    bytes: z.number().int().nonnegative(),
+    /**
+     * Exact outer-package identity when `digest` describes canonical expanded
+     * project content. Repacking a ZIP may change this value without changing
+     * the semantic member graph; receipts retain both.
+     */
+    packaging: z
+      .object({
+        digest: GatewaySha256Digest,
+        bytes: z.number().int().nonnegative(),
+      })
+      .optional(),
+    parent: z
+      .object({
+        origin: z.string().min(1),
+        digest: GatewaySha256Digest,
+      })
+      .optional(),
+  })
+  .superRefine((artifact, ctx) => {
+    if (artifact.kind === "member" && artifact.parent === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["parent"],
+        message: "member artifact evidence requires its parent container origin and digest",
+      });
+    }
+    if (artifact.kind === "container" && artifact.parent !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["parent"],
+        message: "container artifact evidence cannot claim a parent container",
+      });
+    }
+    if (artifact.kind === "member" && artifact.packaging !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["packaging"],
+        message: "only container artifact evidence may carry outer packaging identity",
+      });
+    }
+  });
+export type GatewayArtifactEvidence = z.infer<typeof GatewayArtifactEvidence>;
+
+/**
+ * Structured, source-addressable identity facts exported by a gateway.
+ *
+ * Identity fields are optional on purpose: absence is evidence debt, not
+ * permission to invent a default. `basis` and `coordinate` are mandatory so an
+ * audit can distinguish a configured plugin family from an exact setting. In
+ * particular, an OAuth token endpoint is never an issuer; adapters may populate
+ * `issuer` only when the gateway export names it.
+ */
+export const GatewayIdentityEvidence = z
+  .object({
+    coordinate: EvidenceCoordinate,
+    /**
+     * Configured plugin family is weaker than exact field configuration, and
+     * observed enforcement is a third evidence class. Adapters must not collapse
+     * these into one undifferentiated auth summary.
+     */
+    basis: z.enum(["configured_plugin_type", "explicit_configuration", "observed_enforcement"]),
+    /** Operation selector when policy/scopes are route-specific; absent means API-wide. */
+    operationRef: z.string().min(1).optional(),
+    type: AuthType.optional(),
+    principal: AuthPrincipal.optional(),
+    issuer: z.string().url().optional(),
+    audience: z.string().min(1).optional(),
+    carrier: AuthCredentialCarrier.optional(),
+    scopes: z.array(z.string()).optional(),
+  })
+  .superRefine((evidence, ctx) => {
+    if (evidence.basis !== "configured_plugin_type") return;
+    if (evidence.type === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["type"],
+        message: "configured_plugin_type requires an unambiguous normalized auth type",
+      });
+    }
+    for (const field of ["principal", "issuer", "audience", "carrier", "scopes"] as const) {
+      if (evidence[field] !== undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message:
+            `configured_plugin_type may identify only the auth type; ${field} requires ` +
+            "explicit_configuration or observed_enforcement evidence",
+        });
+      }
+    }
+  });
+export type GatewayIdentityEvidence = z.infer<typeof GatewayIdentityEvidence>;
 
 /** A route as the gateway exposes it (the runtime coordinate, not the backend). */
 export const GatewayRoute = z.object({
@@ -120,7 +253,13 @@ export type GatewayContractProvenance = z.infer<typeof GatewayContractProvenance
 export const GatewayApiSummary = z.object({
   id: z.string(),
   name: z.string(),
+  /** Semantic API/product version as declared by the contract or gateway. */
   version: z.string().optional(),
+  /**
+   * Distinct gateway deployment revision. When absent, `version` remains the
+   * legacy effective revision for adapters whose source has only one axis.
+   */
+  revision: z.string().optional(),
   lifecycle: z.string().optional(),
   environmentIds: z.array(z.string()).default([]),
   routes: z.array(GatewayRoute).default([]),
@@ -134,11 +273,81 @@ export const GatewayApiSummary = z.object({
   owner: z.string().optional(),
   /** A one-line summary of the authentication posture (never a secret). */
   authSummary: z.string().optional(),
+  /** Exact identity facts, when the export actually contains them. */
+  identityEvidence: z.array(GatewayIdentityEvidence).optional(),
+  /** Content-addressed native files that support this API inventory row. */
+  artifacts: z.array(GatewayArtifactEvidence).max(GATEWAY_MAX_ARTIFACT_EVIDENCE).optional(),
   hasQuota: z.boolean().default(false),
   /** Coarse traffic level where the gateway exposes it (never PII). */
   trafficSummary: z.string().optional(),
 });
 export type GatewayApiSummary = z.infer<typeof GatewayApiSummary>;
+
+/**
+ * The source object a gateway diagnostic applies to.
+ *
+ * Absence is meaningful: the diagnostic is estate/global (for example the
+ * export cannot be parsed at all). Adapters populate the API identity whenever
+ * the source bytes identify one API, and add route identity only when the
+ * export identifies that route. Unknown revision/environment/route fields stay
+ * absent rather than being replaced with synthetic sentinels.
+ */
+export const GatewayDiagnosticSubject = z
+  .object({
+    api: z
+      .object({
+        id: z.string().min(1),
+        /** Semantic API contract/product version, when the gateway distinguishes it. */
+        apiVersion: z.string().min(1).optional(),
+        /** Gateway deployment revision, when distinct from the API version. */
+        revision: z.string().min(1).optional(),
+        environment: z.string().min(1).optional(),
+      })
+      .optional(),
+    /**
+     * Project/container lineage for a local failure that occurs before an API
+     * identity can be parsed. This is not global: selection can compare it with
+     * the selected inventory row's content-addressed artifact evidence.
+     */
+    artifact: z
+      .object({
+        origin: z.string().min(1),
+        digest: GatewaySha256Digest,
+      })
+      .optional(),
+    route: z
+      .object({
+        id: z.string().min(1).optional(),
+        method: z.string().min(1).optional(),
+        path: z.string().min(1).optional(),
+        operationRef: z.string().min(1).optional(),
+      })
+      .refine(
+        (route) =>
+          route.id !== undefined ||
+          route.method !== undefined ||
+          route.path !== undefined ||
+          route.operationRef !== undefined,
+        "route subject must carry at least one source route identity",
+      )
+      .optional(),
+  })
+  .superRefine((subject, ctx) => {
+    if (subject.api === undefined && subject.artifact === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "diagnostic subject requires API identity or artifact lineage",
+      });
+    }
+    if (subject.route !== undefined && subject.api === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["route"],
+        message: "route ownership requires an API identity",
+      });
+    }
+  });
+export type GatewayDiagnosticSubject = z.infer<typeof GatewayDiagnosticSubject>;
 
 /** A structured diagnostic from a gateway operation (parallel to AIR's Diagnostic). */
 export const GatewayDiagnostic = z.object({
@@ -146,8 +355,23 @@ export const GatewayDiagnostic = z.object({
   code: z.string(),
   message: z.string(),
   coordinate: EvidenceCoordinate.optional(),
+  /**
+   * Source ownership used by estate audit/import. Missing means genuinely
+   * global, never "the adapter forgot which API this came from".
+   */
+  subject: GatewayDiagnosticSubject.optional(),
 });
 export type GatewayDiagnostic = z.infer<typeof GatewayDiagnostic>;
+
+/** Attach source ownership to diagnostics that do not already carry a narrower subject. */
+export function withGatewayDiagnosticSubject(
+  diagnostics: readonly GatewayDiagnostic[],
+  subject: GatewayDiagnosticSubject,
+): GatewayDiagnostic[] {
+  return diagnostics.map((diagnostic) =>
+    diagnostic.subject ? diagnostic : { ...diagnostic, subject },
+  );
+}
 
 /**
  * A lightweight, content-addressed picture of a gateway estate. Deliberately
@@ -184,13 +408,33 @@ export interface GatewayApiImport {
   overlay: GatewayPolicyOverlay;
   contract: GatewayContractProvenance;
   diagnostics: GatewayDiagnostic[];
+  /** Exact identity facts carried alongside the compiled contract. */
+  identityEvidence?: GatewayIdentityEvidence[];
+  /** Native container/member evidence carried into the immutable import receipt. */
+  artifacts?: GatewayArtifactEvidence[];
 }
 
 /** An opaque handle for an API within a connection (adapter-defined id). */
 export const GatewayApiRef = z.object({
   id: z.string(),
   name: z.string().optional(),
+  /** Semantic API/product version. */
   version: z.string().optional(),
+  /** Distinct gateway deployment revision, when the source exposes one. */
+  revision: z.string().optional(),
+  /** Selected deployment environment, when the adapter exposes or accepts one. */
+  environmentId: z.string().optional(),
+  /**
+   * Exact native project/container selected from inventory. Collection
+   * adapters use this to bind extraction to the reviewed artifact rather than
+   * re-resolving a merely similar API coordinate.
+   */
+  sourceArtifact: z
+    .object({
+      origin: z.string().min(1),
+      digest: GatewaySha256Digest,
+    })
+    .optional(),
 });
 export type GatewayApiRef = z.infer<typeof GatewayApiRef>;
 

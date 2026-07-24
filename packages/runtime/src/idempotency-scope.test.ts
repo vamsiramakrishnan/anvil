@@ -76,7 +76,7 @@ function identity(subject: string, token: string) {
 }
 
 describe("idempotency replay scope", () => {
-  it("replays across token rotation while isolating a different verified principal", async () => {
+  it("replays across token rotation but conflicts the same raw key across principals", async () => {
     const ledger = new InMemoryLedger();
     const transport = new MockTransport(success);
     const base = {
@@ -110,8 +110,14 @@ describe("idempotency replay scope", () => {
     expect(first.outcome).toBe("success");
     expect(rotated.outcome).toBe("success");
     if (rotated.outcome === "success") expect(rotated.record.ledger).toBe("replay");
-    expect(otherPrincipal.outcome).toBe("success");
-    expect(transport.requests).toHaveLength(2);
+    expect(otherPrincipal.outcome).toBe("error");
+    if (otherPrincipal.outcome === "error") {
+      expect(otherPrincipal.envelope.error.code).toBe("conflict");
+      expect(otherPrincipal.record.ledger).toBe("conflict");
+      expect(JSON.stringify(otherPrincipal)).not.toContain("refund-1");
+    }
+    expect(transport.requests).toHaveLength(1);
+    expect(transport.requests[0]?.headers["Idempotency-Key"]).toBe("merchant-key-1");
   });
 
   it("treats CLI safety flags and modeled MCP carrier input as the same request", async () => {

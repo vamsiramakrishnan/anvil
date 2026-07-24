@@ -1,13 +1,27 @@
 import { randomUUID } from "node:crypto";
 import {
   type IdempotencyCarrierBinding,
+  idempotencyKeyMatchesOperation,
   isModeledIdempotencyCarrierInput,
+  MAX_RETRY_ATTEMPTS,
+  MAX_RETRY_DELAY_MS,
   type Operation,
+  operationSafetyInputKeys,
   propKey,
   resolveIdempotencyCarrier,
 } from "@anvil/air";
-import { applyAuth, type CredentialResolver, credentialProfileName } from "./auth.js";
-import { hostIsAllowed, normalizeEnv } from "./config.js";
+import {
+  applyAuth,
+  type AuthMaterial,
+  type CredentialResolver,
+  credentialProfileName,
+} from "./auth.js";
+import {
+  hostIsAllowed,
+  MAX_UPSTREAM_TIMEOUT_MS,
+  MIN_UPSTREAM_TIMEOUT_MS,
+  normalizeEnv,
+} from "./config.js";
 import {
   AnvilError,
   type ErrorEnvelope,
@@ -16,6 +30,8 @@ import {
 } from "./errors.js";
 import {
   type IdempotencyLedger,
+  idempotencyKeyIsTransportSafe,
+  MAX_IDEMPOTENCY_KEY_BYTES,
   requestFingerprint,
   resolveIdempotencyKey,
 } from "./idempotency.js";
@@ -126,13 +142,49 @@ function valueAtPath(value: unknown, path: readonly string[]): unknown {
   return current;
 }
 
+function modeledCarrierSurfaceKey(
+  op: Operation,
+  binding: IdempotencyCarrierBinding,
+): string | undefined {
+  const rawName = binding.mechanism === "body" ? binding.path[0] : binding.key;
+  if (!rawName) return undefined;
+  const key = propKey(rawName);
+  const modeled =
+    op.input.params.some((parameter) =>
+      isModeledIdempotencyCarrierInput(binding, parameter.in, parameter.name),
+    ) ||
+    (binding.mechanism === "body" &&
+      op.input.body?.projection === "fields" &&
+      op.input.body.fields.some((field) =>
+        isModeledIdempotencyCarrierInput(binding, "body", field.name),
+      ));
+  if (!modeled) return undefined;
+
+  const businessCollision =
+    op.input.params.some(
+      (parameter) =>
+        !isModeledIdempotencyCarrierInput(binding, parameter.in, parameter.name) &&
+        propKey(parameter.name) === key,
+    ) ||
+    (op.input.body?.projection === "fields" &&
+      op.input.body.fields.some(
+        (field) =>
+          !isModeledIdempotencyCarrierInput(binding, "body", field.name) &&
+          propKey(field.name) === key,
+      ));
+  return businessCollision ? undefined : key;
+}
+
 function carrierInputValue(
   op: Operation,
   input: Record<string, unknown>,
   binding: IdempotencyCarrierBinding | undefined,
 ): unknown {
   if (!binding) return undefined;
-  if (binding.mechanism !== "body") return input[propKey(binding.key)];
+  if (binding.mechanism !== "body") {
+    const key = modeledCarrierSurfaceKey(op, binding);
+    return key ? input[key] : undefined;
+  }
 
   const legacyOrProjected =
     binding.path.length === 1 &&
@@ -142,9 +194,9 @@ function carrierInputValue(
         isModeledIdempotencyCarrierInput(binding, "body", parameter.name),
     ) ||
       op.input.body?.projection === "fields");
-  return legacyOrProjected
-    ? input[propKey(binding.path[0] as string)]
-    : valueAtPath(input.body, binding.path);
+  if (!legacyOrProjected) return valueAtPath(input.body, binding.path);
+  const key = modeledCarrierSurfaceKey(op, binding);
+  return key ? input[key] : undefined;
 }
 
 function bodyCarrierContainerIssue(
@@ -210,12 +262,14 @@ function replayFingerprintInput(
   binding: IdempotencyCarrierBinding | undefined,
 ): Record<string, unknown> {
   const normalized = structuredClone(input);
-  delete normalized.confirm;
-  delete normalized.idempotency_key;
+  const safetyKeys = operationSafetyInputKeys(op);
+  if (op.confirmation.required) delete normalized[safetyKeys.confirm];
   if (!binding) return normalized;
+  delete normalized[safetyKeys.idempotencyKey];
 
   if (binding.mechanism !== "body") {
-    delete normalized[propKey(binding.key)];
+    const modeledKey = modeledCarrierSurfaceKey(op, binding);
+    if (modeledKey) delete normalized[modeledKey];
     return normalized;
   }
 
@@ -228,7 +282,8 @@ function replayFingerprintInput(
     ) ||
       op.input.body?.projection === "fields");
   if (usesFlatInput) {
-    delete normalized[propKey(binding.path[0] as string)];
+    const modeledKey = modeledCarrierSurfaceKey(op, binding);
+    if (modeledKey) delete normalized[modeledKey];
     return normalized;
   }
 
@@ -309,6 +364,14 @@ function buildRequest(
   if (binding && idempotencyKey) {
     switch (binding.mechanism) {
       case "header":
+        // HTTP field names are case-insensitive. A source parameter may use
+        // `idempotency-key` while the manifest names `Idempotency-Key`; leaving
+        // both object keys makes WHATWG Headers combine them into `key, key`.
+        // Replace the modeled coordinate case-insensitively before injecting
+        // the one authoritative safety value.
+        for (const name of Object.keys(headers)) {
+          if (name.toLowerCase() === binding.key.toLowerCase()) delete headers[name];
+        }
         headers[binding.key] = idempotencyKey;
         break;
       case "query":
@@ -378,6 +441,57 @@ function ledgerPrincipalScope(inbound: InboundIdentity | undefined): unknown | u
   };
 }
 
+function ledgerUnavailableError(
+  operation: string,
+  traceId: string,
+  phase: "reserve" | "replay" | "complete" | "release",
+  upstreamTouched: boolean,
+  reference?: string,
+): AnvilError {
+  const safeReference = safeLedgerReference(reference);
+  return new AnvilError({
+    code: "idempotency_ledger_unavailable",
+    message: upstreamTouched
+      ? "The upstream write may have completed, but its idempotency ledger transition could not be confirmed. The reservation was retained; inspect the upstream and ledger before retrying."
+      : "The idempotency ledger could not reserve or replay this request. The upstream was not called; restore ledger availability and retry.",
+    operation,
+    traceId,
+    retryable: !upstreamTouched,
+    safeToRetry: !upstreamTouched,
+    details: {
+      ledger_phase: phase,
+      upstream_touched: upstreamTouched,
+      ...(safeReference ? { ledger_reference: safeReference } : {}),
+      ...(upstreamTouched ? { operator_action_required: true } : {}),
+    },
+  });
+}
+
+function safeLedgerReference(reference: string | undefined): string | undefined {
+  // Accept only the built-in backend's two hashed coordinates. A generic
+  // "safe characters" check is insufficient because a raw caller key can
+  // itself be printable ASCII and must never become public diagnostics.
+  return reference && /^firestore\/anvil_idempotency_[a-f0-9]{16}\/[a-f0-9]{64}$/.test(reference)
+    ? reference
+    : undefined;
+}
+
+function authMaterialOverwritesIdempotencyCarrier(
+  material: AuthMaterial,
+  carrier: IdempotencyCarrierBinding | undefined,
+): boolean {
+  if (!carrier) return false;
+  if (carrier.mechanism === "header") {
+    return Object.keys(material.headers ?? {}).some(
+      (name) => name.toLowerCase() === carrier.key.toLowerCase(),
+    );
+  }
+  if (carrier.mechanism === "query") {
+    return Object.hasOwn(material.query ?? {}, carrier.key);
+  }
+  return false;
+}
+
 /** Execute a single AIR operation with all safety guarantees applied. */
 export async function execute(
   op: Operation,
@@ -389,7 +503,8 @@ export async function execute(
   const sleep = ctx.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const start = now();
   const input = args.input ?? {};
-  const confirm = args.confirm ?? input.confirm === true;
+  const safetyKeys = operationSafetyInputKeys(op);
+  const confirm = args.confirm ?? input[safetyKeys.confirm] === true;
   const policyDecisions: string[] = [];
 
   const record: ExecutionRecord = {
@@ -441,6 +556,35 @@ export async function execute(
     // can never even be planned, regardless of which caller reached us.
     if (op.state !== "approved") {
       return fail(unapprovedOperationError(op, traceId));
+    }
+
+    if (
+      !Number.isSafeInteger(op.retries.maxAttempts) ||
+      op.retries.maxAttempts < 1 ||
+      op.retries.maxAttempts > MAX_RETRY_ATTEMPTS ||
+      !Number.isSafeInteger(op.retries.baseDelayMs) ||
+      op.retries.baseDelayMs < 0 ||
+      op.retries.baseDelayMs > MAX_RETRY_DELAY_MS ||
+      !Number.isSafeInteger(op.retries.maxDelayMs) ||
+      op.retries.maxDelayMs < 0 ||
+      op.retries.maxDelayMs > MAX_RETRY_DELAY_MS
+    ) {
+      return fail(
+        new AnvilError({
+          code: "unsupported_operation",
+          message:
+            `Operation '${op.id}' has a retry contract outside the runtime safety bounds. ` +
+            `Recompile it with at most ${MAX_RETRY_ATTEMPTS} attempts and ` +
+            `${MAX_RETRY_DELAY_MS} milliseconds of backoff.`,
+          operation: op.id,
+          traceId,
+          retryable: false,
+          details: {
+            max_attempts: MAX_RETRY_ATTEMPTS,
+            max_delay_ms: MAX_RETRY_DELAY_MS,
+          },
+        }),
+      );
     }
 
     const carrierResolution = resolveIdempotencyCarrier(op);
@@ -499,7 +643,15 @@ export async function execute(
     // 2. Confirmation gate — explicit refusal over accidental execution (§2.4).
     if (op.confirmation.required && confirm !== true) {
       const flags = ["--confirm"];
-      if (op.idempotency.mode === "required") flags.push("--idempotency-key");
+      const explicitKeyRequired =
+        op.idempotency.mode === "required" &&
+        op.idempotency.keyDerivation !== "request_fingerprint";
+      const explicitKeyPresent = [
+        args.idempotencyKey,
+        carrier ? input[safetyKeys.idempotencyKey] : undefined,
+        carrierInputValue(op, input, carrier),
+      ].some((value) => typeof value === "string" && value.length > 0);
+      if (explicitKeyRequired && !explicitKeyPresent) flags.push("--idempotency-key");
       return fail(
         new AnvilError({
           code: "confirmation_required",
@@ -536,11 +688,55 @@ export async function execute(
         }),
       );
     }
-    const suppliedKeys = [
+    // The collision-aware safety property is synthetic only when AIR resolved
+    // a keyed upstream carrier. A source field with the familiar spelling is
+    // ordinary business input and remains on the wire and fingerprint.
+    const rawKeyValues: unknown[] = [
       args.idempotencyKey,
-      typeof input.idempotency_key === "string" ? input.idempotency_key : undefined,
-      typeof modeledCarrierValue === "string" ? modeledCarrierValue : undefined,
-    ].filter((value): value is string => value !== undefined && value.length > 0);
+      ...(carrier ? [input[safetyKeys.idempotencyKey], modeledCarrierValue] : []),
+    ];
+    if (
+      rawKeyValues.some(
+        (value) =>
+          value !== undefined &&
+          (typeof value !== "string" ||
+            (value.length > 0 && !idempotencyKeyIsTransportSafe(value))),
+      )
+    ) {
+      return fail(
+        new AnvilError({
+          code: "validation_error",
+          message:
+            "An idempotency key must be 1 to 255 bytes of visible ASCII with no spaces or control characters.",
+          operation: op.id,
+          traceId,
+          details: {
+            field: safetyKeys.idempotencyKey,
+            encoding: "visible_ascii",
+            max_bytes: MAX_IDEMPOTENCY_KEY_BYTES,
+          },
+        }),
+      );
+    }
+    const suppliedKeys = rawKeyValues.filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    if (!carrier && suppliedKeys.length > 0) {
+      return fail(
+        new AnvilError({
+          code: "validation_error",
+          message:
+            "This operation does not declare an upstream idempotency-key carrier; remove the caller idempotency key instead of implying local-only protection.",
+          operation: op.id,
+          traceId,
+          details: {
+            field: safetyKeys.idempotencyKey,
+            declared_mode: op.idempotency.mode,
+            accepted_modes: ["required", "key_supported"],
+          },
+        }),
+      );
+    }
     if (new Set(suppliedKeys).size > 1) {
       return fail(
         new AnvilError({
@@ -566,25 +762,49 @@ export async function execute(
         }),
       );
     }
-    const replayScope = {
+    // Ledger ownership follows the on-wire idempotency namespace, not caller
+    // identity. With a service-credential upstream, the same raw key can be
+    // global even when two verified end users supplied it. They must meet at
+    // one row; principal remains in the request fingerprint so the second user
+    // conflicts instead of receiving the first user's cached response. This is
+    // deliberately conservative for delegated upstreams that scope keys per
+    // end user: a false conflict is safer than a duplicate shared-principal
+    // write.
+    const ledgerScope = {
       serviceId,
       environment: normalizeEnv(ctx.env),
       upstream: canonicalUpstream(ctx.baseUrl),
       authProfile: ctx.authProfile ?? "default",
       credentialProfile: credentialProfileName(ctx.authProfile ?? "default", op.auth),
+    };
+    const replayScope = {
+      ...ledgerScope,
       principal: principalScope ?? null,
     };
     const fingerprintInput = replayFingerprintInput(op, input, carrier);
     const idempotencyFingerprint = requestFingerprint(op.id, fingerprintInput, replayScope);
-    const key = resolveIdempotencyKey({
-      provided: providedIdempotencyKey,
-      keyDerivation: op.idempotency.keyDerivation,
-      operationId: op.id,
-      input,
-      fingerprint: idempotencyFingerprint,
-    });
+    const key = carrier
+      ? resolveIdempotencyKey({
+          provided: providedIdempotencyKey,
+          keyDerivation: op.idempotency.keyDerivation,
+          operationId: op.id,
+          input,
+          fingerprint: idempotencyFingerprint,
+        })
+      : undefined;
+    if (key && !idempotencyKeyMatchesOperation(op, key)) {
+      return fail(
+        new AnvilError({
+          code: "validation_error",
+          message: "The idempotency key does not satisfy the modeled upstream carrier constraints.",
+          operation: op.id,
+          traceId,
+          details: { field: safetyKeys.idempotencyKey },
+        }),
+      );
+    }
     const ledgerKey = key
-      ? requestFingerprint("anvil.idempotency.ledger-key", key, replayScope)
+      ? requestFingerprint("anvil.idempotency.ledger-key", key, ledgerScope)
       : undefined;
     if (key && ctx.inbound && !principalScope) {
       return fail(
@@ -611,6 +831,28 @@ export async function execute(
     record.idempotencyKeyPresent = Boolean(key);
 
     // 4. Build the request (used by dry-run and execution).
+    if (
+      ctx.timeoutMs !== undefined &&
+      (!Number.isSafeInteger(ctx.timeoutMs) ||
+        ctx.timeoutMs < MIN_UPSTREAM_TIMEOUT_MS ||
+        ctx.timeoutMs > MAX_UPSTREAM_TIMEOUT_MS)
+    ) {
+      return fail(
+        new AnvilError({
+          code: "validation_error",
+          message:
+            `Upstream timeout must be an integer from ${MIN_UPSTREAM_TIMEOUT_MS} ` +
+            `to ${MAX_UPSTREAM_TIMEOUT_MS} milliseconds.`,
+          operation: op.id,
+          traceId,
+          details: {
+            field: "timeout_ms",
+            min: MIN_UPSTREAM_TIMEOUT_MS,
+            max: MAX_UPSTREAM_TIMEOUT_MS,
+          },
+        }),
+      );
+    }
     const baseRequest = buildRequest(op, input, ctx.baseUrl, carrier, key);
     if (ctx.timeoutMs) baseRequest.timeoutMs = ctx.timeoutMs;
 
@@ -681,6 +923,23 @@ export async function execute(
           }),
         );
       }
+      if (key && authMaterialOverwritesIdempotencyCarrier(material, carrier)) {
+        return fail(
+          new AnvilError({
+            code: "unsupported_operation",
+            message:
+              "The resolved credential carrier conflicts with this operation's idempotency carrier. " +
+              "Configure distinct header or query coordinates before retrying.",
+            operation: op.id,
+            traceId,
+            retryable: false,
+            details: {
+              idempotency_carrier: carrier?.mechanism,
+              credential_carrier_conflict: true,
+            },
+          }),
+        );
+      }
       request = applyAuth(request, material);
     }
 
@@ -714,8 +973,19 @@ export async function execute(
     }
 
     // 8. Idempotency ledger for unsafe idempotent mutations.
+    let reservationOwned = false;
+    let ledgerReference: string | undefined;
     if (op.effect.kind === "mutation" && ledgerKey && ctx.ledger) {
-      const reservation = await ctx.ledger.reserve(ledgerKey, idempotencyFingerprint);
+      let reservation: Awaited<ReturnType<IdempotencyLedger["reserve"]>>;
+      try {
+        reservation = await ctx.ledger.reserve(ledgerKey, idempotencyFingerprint, {
+          operationId: op.id,
+          traceId,
+        });
+      } catch {
+        return fail(ledgerUnavailableError(op.id, traceId, "reserve", false));
+      }
+      ledgerReference = safeLedgerReference(reservation.reference);
       if (reservation.outcome === "conflict") {
         record.ledger = "conflict";
         return fail(
@@ -728,9 +998,13 @@ export async function execute(
         );
       }
       if (reservation.outcome === "replay") {
+        const status = reservation.status ?? 200;
+        if (!Number.isSafeInteger(status) || status < 200 || status >= 300) {
+          return fail(ledgerUnavailableError(op.id, traceId, "replay", false));
+        }
         record.outcome = "success";
         record.ledger = "replay";
-        return finish({ outcome: "success", status: 200, data: reservation.result, record });
+        return finish({ outcome: "success", status, data: reservation.result, record });
       }
       if (reservation.outcome === "in_progress") {
         record.ledger = "in_progress";
@@ -740,10 +1014,12 @@ export async function execute(
             message: "A request with this idempotency key is already in progress.",
             operation: op.id,
             traceId,
+            details: ledgerReference ? { ledger_reference: ledgerReference } : undefined,
           }),
         );
       }
       record.ledger = "reserved";
+      reservationOwned = true;
     }
 
     // 9. Retry-bounded execution.
@@ -758,6 +1034,7 @@ export async function execute(
 
     let attempt = 0;
     let finalError: AnvilError | null = null;
+    let sawPostResponseFailure = false;
     while (attempt < maxAttempts) {
       attempt += 1;
       record.retryCount = attempt - 1;
@@ -766,8 +1043,18 @@ export async function execute(
         record.responseBytes = byteLen(res.body);
         if (res.status >= 200 && res.status < 300) {
           const data = res.body ? safeJson(res.body) : null;
-          if (ledgerKey && ctx.ledger && op.effect.kind === "mutation")
-            await ctx.ledger.complete(ledgerKey, data);
+          if (reservationOwned && ledgerKey && ctx.ledger) {
+            try {
+              await ctx.ledger.complete(ledgerKey, data, res.status);
+            } catch {
+              // The upstream acknowledged the write. Never release this
+              // reservation when persistence of the replay result is unknown:
+              // doing so could turn a ledger outage into a duplicate mutation.
+              return fail(
+                ledgerUnavailableError(op.id, traceId, "complete", true, ledgerReference),
+              );
+            }
+          }
           record.outcome = "success";
           await runHook(ctx.policy?.postResponse, request);
           await runHook(ctx.policy?.postExecute, request);
@@ -797,6 +1084,7 @@ export async function execute(
         break;
       } catch (err) {
         if (!(err instanceof TransportError)) throw err;
+        if (err.phase === "after_response") sawPostResponseFailure = true;
         const canRetry =
           retriesEnabled &&
           attempt < maxAttempts &&
@@ -820,9 +1108,48 @@ export async function execute(
       }
     }
 
-    // Execution failed — release the ledger reservation so a later retry can proceed.
-    if (ledgerKey && ctx.ledger && op.effect.kind === "mutation")
-      await ctx.ledger.release(ledgerKey);
+    if (reservationOwned && sawPostResponseFailure) {
+      // Once an upstream began a response, the write may have committed even
+      // though the body was truncated, reset, or rejected as oversized. A
+      // later pre-response failure does not erase that ambiguity. Retain the
+      // reservation and require reconciliation; releasing it could permit a
+      // duplicate mutation.
+      record.ledger = "in_progress";
+      await runHook(ctx.policy?.postError, request);
+      await runHook(ctx.policy?.postExecute, request);
+      return fail(
+        new AnvilError({
+          code: finalError?.code ?? "upstream_unavailable",
+          message:
+            "The upstream began a response, but it could not be safely consumed. " +
+            "The write may have completed and the idempotency reservation was retained; " +
+            "inspect the upstream and ledger before retrying.",
+          operation: op.id,
+          traceId,
+          retryable: true,
+          safeToRetry: false,
+          upstream: finalError?.upstream,
+          details: {
+            upstream_outcome: "possibly_committed",
+            operator_action_required: true,
+            ...(ledgerReference ? { ledger_reference: ledgerReference } : {}),
+          },
+        }),
+      );
+    }
+
+    // Only keyed upstream modes can own a reservation. Their exact modeled
+    // carrier receives the same key again, so releasing after a terminal
+    // upstream failure permits an honest later retry without inventing
+    // local-only protection for non-idempotent writes.
+    if (reservationOwned && ledgerKey && ctx.ledger) {
+      try {
+        await ctx.ledger.release(ledgerKey);
+        reservationOwned = false;
+      } catch {
+        return fail(ledgerUnavailableError(op.id, traceId, "release", true, ledgerReference));
+      }
+    }
     await runHook(ctx.policy?.postError, request);
     await runHook(ctx.policy?.postExecute, request);
     return fail(finalError ?? unknownError(op.id, traceId));

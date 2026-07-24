@@ -41,15 +41,15 @@ const ok = (body: unknown): HttpResponse => ({
 /** A `deps.mcpConnect` that links the CLI to a REAL in-process MCP server built
  *  from the same AIR, executing against a mock upstream. `requests` records the
  *  wire calls the server made, so a test can prove an op did (or didn't) execute. */
-function inProcessMcp(): {
+function inProcessMcp(document: AirDocument = air): {
   connect: () => Promise<McpToolClient>;
   requests: MockTransport["requests"];
 } {
   const transport = new MockTransport(() => ok({ id: "re_1", status: "succeeded" }));
-  const server = buildMcpServer(air, {
+  const server = buildMcpServer(document, {
     contextFor: () => ({
       transport,
-      serviceId: air.service.id,
+      serviceId: document.service.id,
       credentials: {
         async resolve() {
           return { headers: { Authorization: "Bearer t" } };
@@ -288,6 +288,31 @@ describe("CLI routed through MCP (--mcp)", () => {
     // and hit the (mock) upstream exactly once.
     expect(mcp.requests).toHaveLength(1);
     expect(io.stdout.join("\n")).toContain("re_1");
+  });
+
+  it("forwards an optional explicit key for key_supported operations", async () => {
+    const keyedAir = structuredClone(air);
+    const refund = keyedAir.operations.find(
+      (operation) => operation.canonicalName === "create_refund",
+    );
+    if (!refund) throw new Error("payments fixture has no create_refund operation");
+    refund.idempotency.mode = "key_supported";
+    refund.idempotency.keyDerivation = "request_fingerprint";
+
+    const mcp = inProcessMcp(keyedAir);
+    const io = bufferIO();
+    const code = await runToolCli(
+      keyedAir,
+      [...REFUND, "--idempotency-key", "optional-k1", "--confirm", "--mcp", "inmem"],
+      {
+        env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv,
+        io,
+        mcpConnect: mcp.connect,
+      },
+    );
+    expect(code, io.text()).toBe(0);
+    expect(mcp.requests).toHaveLength(1);
+    expect(mcp.requests[0]?.headers["Idempotency-Key"]).toBe("optional-k1");
   });
 
   it("does NOT execute the mutation over MCP without --confirm (safety preserved)", async () => {

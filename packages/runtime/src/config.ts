@@ -1,5 +1,9 @@
 import { DEFAULT_LEDGER_RESULT_TTL_SECONDS } from "./idempotency.js";
 
+export const DEFAULT_UPSTREAM_TIMEOUT_MS = 20_000;
+export const MIN_UPSTREAM_TIMEOUT_MS = 100;
+export const MAX_UPSTREAM_TIMEOUT_MS = 30_000;
+
 /**
  * The Cloud Run runtime contract (spec: "Cloud Run runtime contract"). The
  * generated, stateless runtime reads exactly these env vars — no spec parsing,
@@ -11,6 +15,8 @@ export interface RuntimeConfig {
   env: string;
   /** Pinned egress allowlist. Empty = deny all upstream hosts (fail closed). */
   allowedHosts: string[];
+  /** Per-attempt upstream deadline. Always bounded, including local serving paths. */
+  upstreamTimeoutMs: number;
   authProfile?: string;
   policyBundle?: string;
   otelExporter?: string;
@@ -72,6 +78,7 @@ export function loadRuntimeConfig(
     );
   }
   const ledgerResultTtlSeconds = parseLedgerResultTtlSeconds(env.ANVIL_LEDGER_RESULT_TTL_SECONDS);
+  const upstreamTimeoutMs = parseUpstreamTimeoutMs(env.ANVIL_UPSTREAM_TIMEOUT_MS);
   return {
     serviceId: env.ANVIL_SERVICE_ID,
     artifactVersion: env.ANVIL_ARTIFACT_VERSION,
@@ -80,6 +87,7 @@ export function loadRuntimeConfig(
       .split(",")
       .map((h) => h.trim())
       .filter(Boolean),
+    upstreamTimeoutMs,
     authProfile: env.ANVIL_AUTH_PROFILE,
     policyBundle: env.ANVIL_POLICY_BUNDLE,
     otelExporter: env.ANVIL_OTEL_EXPORTER,
@@ -88,6 +96,27 @@ export function loadRuntimeConfig(
     credentials: env.ANVIL_CREDENTIALS,
     secretProject: env.ANVIL_SECRET_PROJECT,
   };
+}
+
+export function parseUpstreamTimeoutMs(raw: unknown, label = "ANVIL_UPSTREAM_TIMEOUT_MS"): number {
+  if (raw === undefined || raw === "") return DEFAULT_UPSTREAM_TIMEOUT_MS;
+  const text = typeof raw === "number" ? String(raw) : typeof raw === "string" ? raw : "";
+  if (!/^[1-9]\d*$/.test(text)) {
+    throw new Error(
+      `${label} must be an integer from ${MIN_UPSTREAM_TIMEOUT_MS} to ${MAX_UPSTREAM_TIMEOUT_MS}.`,
+    );
+  }
+  const timeoutMs = Number(text);
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < MIN_UPSTREAM_TIMEOUT_MS ||
+    timeoutMs > MAX_UPSTREAM_TIMEOUT_MS
+  ) {
+    throw new Error(
+      `${label} must be an integer from ${MIN_UPSTREAM_TIMEOUT_MS} to ${MAX_UPSTREAM_TIMEOUT_MS}.`,
+    );
+  }
+  return timeoutMs;
 }
 
 function parseLedgerResultTtlSeconds(raw: string | undefined): number {

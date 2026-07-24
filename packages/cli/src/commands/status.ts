@@ -1,7 +1,12 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { type AirDocument, airFromJson, airFromYaml, airToJson, airToYaml } from "@anvil/air";
-import { type SourceDiagnostic, surfaceSignatureFor } from "@anvil/compiler";
+import {
+  GatewayImportReceiptView,
+  type SourceDiagnostic,
+  surfaceSignatureFor,
+  verifyGatewayImportIdentity,
+} from "@anvil/compiler";
 import {
   bundleHash,
   CERTIFICATION_FILE,
@@ -22,9 +27,12 @@ import {
   verifyTargetKit,
 } from "@anvil/targets";
 import type { Command } from "commander";
+import { recommendsExplicitIdempotencyKey, requiresExplicitIdempotencyKey } from "../explain.js";
 import type { CliIO } from "../io.js";
 import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
+import { locateGatewayWorkspace } from "./gateway-workspace.js";
+import { inspectIdempotencyStore } from "./idempotency-store.js";
 import { annotate } from "./meta.js";
 import { sourceService } from "./source.js";
 
@@ -68,9 +76,55 @@ export interface TargetSetupStatus {
   detail: string;
 }
 
+export interface IdempotencyStatus {
+  writes: Array<{
+    id: string;
+    command: string;
+    mode: AirDocument["operations"][number]["idempotency"]["mode"];
+    keyDerivation: AirDocument["operations"][number]["idempotency"]["keyDerivation"];
+    explicitKeyRequired: boolean;
+    explicitKeyRecommended: boolean;
+    managedStoreRequired: boolean;
+  }>;
+  store: {
+    contractPath: string;
+    contractState: "fresh" | "missing" | "corrupt" | "stale";
+    required: boolean;
+    backend: "firestore" | "none";
+    databaseId: string | null;
+    databaseTerraformVariable: string | null;
+    provisioningModeTerraformVariable: string | null;
+    provisioningModeDefault: "shared" | null;
+    collectionGroup: string | null;
+    runtimeUriTemplate: string | null;
+    locationTerraformVariable: string | null;
+    locationImmutable: boolean | null;
+    detail: string;
+  };
+  liveReadiness: {
+    state: "unverified" | "not-required";
+    path: string | null;
+    mutates: false | null;
+    deploymentStartupGate: boolean | null;
+    livenessRestartOnProviderFailure: boolean | null;
+    detail: string;
+  };
+}
+
+export interface GatewayImportStatus {
+  state: "bound" | "stale" | "legacy" | "invalid";
+  importId: string | null;
+  receiptDigest: string | null;
+  identity: GatewayImportReceiptView["selection"]["identity"] | null;
+  verifyCommand: string | null;
+  detail: string;
+}
+
 export interface NextSafeAction {
   code:
     | "repair-core"
+    | "resolve-contract"
+    | "resolve-gateway-policy"
     | "resolve-blocked"
     | "inspect-approve"
     | "certify"
@@ -121,6 +175,8 @@ export interface StatusReport {
     blocked: number;
     awaitingApproval: number;
   } | null;
+  idempotency: IdempotencyStatus | null;
+  gatewayImport: GatewayImportStatus | null;
   core: {
     state: "aligned" | "misaligned";
     bundleHash: string;
@@ -212,6 +268,28 @@ export async function buildStatusReport(
   const currentBundleHash = bundleHash(files);
   const canonical = loadCanonical(input, bundle, files);
   const diagnostics: StatusDiagnostic[] = [];
+  const gatewayImport = gatewayImportStatus(files, bundle, opts.root);
+  if (gatewayImport && gatewayImport.state !== "bound") {
+    diagnostics.push({
+      code: `status.gateway_import.${gatewayImport.state}`,
+      severity: gatewayImport.state === "legacy" ? "warning" : "error",
+      detail: gatewayImport.detail,
+      path: join(bundle, "import.receipt.json"),
+    });
+  }
+  const currentStaticJudgement = canonical.air ? certifyBundle(files, canonical.air) : null;
+  const idempotency =
+    canonical.air && currentStaticJudgement
+      ? idempotencyStatus(canonical.air, bundle, files, currentStaticJudgement)
+      : null;
+  if (idempotency && idempotency.store.contractState !== "fresh") {
+    diagnostics.push({
+      code: `status.idempotency.contract_${idempotency.store.contractState}`,
+      severity: "error",
+      detail: idempotency.store.detail,
+      path: idempotency.store.contractPath,
+    });
+  }
   const source = canonical.air ? await sourceStatus(canonical.air, bundle, opts.root) : null;
   if (source && source.integrity.state !== "fresh") {
     diagnostics.push({
@@ -233,9 +311,9 @@ export async function buildStatusReport(
     });
   }
 
-  const contractChecks = canonical.air
-    ? certifyBundle(files, canonical.air)
-        .checks.filter((check) => check.gate === "contract")
+  const contractChecks = currentStaticJudgement
+    ? currentStaticJudgement.checks
+        .filter((check) => check.gate === "contract")
         .map((check) => ({
           code: check.id,
           state: check.status === "failed" ? ("failed" as const) : ("passed" as const),
@@ -251,7 +329,10 @@ export async function buildStatusReport(
   const coreAligned =
     canonical.air !== undefined &&
     projections.every((projection) => projection.state === "fresh") &&
-    contractChecks.every((check) => check.state === "passed") &&
+    contractChecks.every(
+      (check) => check.state === "passed" || check.code === "contract.gateway-blockers-resolved",
+    ) &&
+    (idempotency === null || idempotency.store.contractState === "fresh") &&
     (source === null ||
       source.integrity.state === "fresh" ||
       source.integrity.state === "unverifiable");
@@ -315,6 +396,8 @@ export async function buildStatusReport(
     paths: { input, bundle, canonicalAir: canonical.path },
     source,
     operations,
+    idempotency,
+    gatewayImport,
     core: {
       state: coreAligned ? ("aligned" as const) : ("misaligned" as const),
       bundleHash: currentBundleHash,
@@ -527,6 +610,66 @@ function operationCounts(air: AirDocument): NonNullable<StatusReport["operations
     awaitingApproval: air.operations.filter(
       (operation) => operation.state === "generated" || operation.state === "review_required",
     ).length,
+  };
+}
+
+function idempotencyStatus(
+  air: AirDocument,
+  bundle: string,
+  files: Readonly<Record<string, string>>,
+  certification: ReturnType<typeof certifyBundle>,
+): IdempotencyStatus {
+  const inspection = inspectIdempotencyStore(air, bundle, files, certification);
+  const contract = inspection.expected;
+  const requiredIds = new Set(contract.requirement.operationIds);
+  const writes = air.operations
+    .filter((operation) => operation.state === "approved" && operation.effect.kind === "mutation")
+    .map((operation) => ({
+      id: operation.id,
+      command: operation.cli.command,
+      mode: operation.idempotency.mode,
+      keyDerivation: operation.idempotency.keyDerivation,
+      explicitKeyRequired: requiresExplicitIdempotencyKey(operation),
+      explicitKeyRecommended: recommendsExplicitIdempotencyKey(operation),
+      managedStoreRequired: requiredIds.has(operation.id),
+    }));
+  const firestore = contract.firestore;
+  return {
+    writes,
+    store: {
+      contractPath: inspection.path,
+      contractState: inspection.state,
+      required: contract.required,
+      backend: contract.backend,
+      databaseId: null,
+      databaseTerraformVariable: firestore?.database.idTerraformVariable ?? null,
+      provisioningModeTerraformVariable:
+        firestore?.database.provisioningModeTerraformVariable ?? null,
+      provisioningModeDefault: firestore?.database.provisioningModeDefault ?? null,
+      collectionGroup: firestore?.collectionGroup ?? null,
+      runtimeUriTemplate: firestore?.runtimeUri.resolvedTemplate ?? null,
+      locationTerraformVariable: firestore?.location.terraformVariable ?? null,
+      locationImmutable: firestore?.location.immutable ?? null,
+      detail: inspection.detail,
+    },
+    liveReadiness: firestore
+      ? {
+          state: "unverified",
+          path: firestore.readiness.path,
+          mutates: firestore.readiness.mutates,
+          deploymentStartupGate: firestore.readiness.deploymentStartupGate,
+          livenessRestartOnProviderFailure: firestore.readiness.livenessRestartOnProviderFailure,
+          detail:
+            "Offline status cannot prove provider existence or runtime IAM; require deployed /readyz HTTP 200 after apply.",
+        }
+      : {
+          state: "not-required",
+          path: null,
+          mutates: null,
+          deploymentStartupGate: null,
+          livenessRestartOnProviderFailure: null,
+          detail: "No approved mutation requires a managed idempotency store.",
+        },
   };
 }
 
@@ -976,10 +1119,100 @@ function parseTargetSetup(raw: string | undefined): {
   }
 }
 
+function gatewayImportStatus(
+  files: Record<string, string>,
+  bundle: string,
+  requestedWorkspaceRoot?: string,
+): GatewayImportStatus | null {
+  const text = files["import.receipt.json"];
+  if (text === undefined) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    return {
+      state: "invalid",
+      importId: null,
+      receiptDigest: null,
+      identity: null,
+      verifyCommand: null,
+      detail: `Gateway receipt view is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const parsed = GatewayImportReceiptView.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      state: "invalid",
+      importId: null,
+      receiptDigest: null,
+      identity: null,
+      verifyCommand: null,
+      detail: `Gateway receipt view is invalid: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+        .join("; ")}`,
+    };
+  }
+
+  const view = parsed.data;
+  const workspaceRoot =
+    requestedWorkspaceRoot ?? locateGatewayWorkspace(bundle, view.importId) ?? ".";
+  const verifyCommand =
+    `anvil estate verify ${shellArg(view.importId)} ` +
+    `--root ${shellArg(resolve(workspaceRoot))} --bundle ${shellArg(bundle)}`;
+  const identity = view.selection.identity ?? null;
+  if (identity) {
+    const integrity = verifyGatewayImportIdentity(identity);
+    if (!integrity.ok) {
+      return {
+        state: "invalid",
+        importId: view.importId,
+        receiptDigest: view.receiptDigest,
+        identity,
+        verifyCommand,
+        detail:
+          `Gateway identity digest is corrupt: recorded ${identity.digest}/${identity.lineageDigest}, ` +
+          `expected ${integrity.expectedDigest}/${integrity.expectedLineageDigest}.`,
+      };
+    }
+  }
+  if (view.lineage.status === "stale") {
+    return {
+      state: "stale",
+      importId: view.importId,
+      receiptDigest: view.receiptDigest,
+      identity,
+      verifyCommand,
+      detail: view.lineage.reason,
+    };
+  }
+  if (!identity) {
+    return {
+      state: "legacy",
+      importId: view.importId,
+      receiptDigest: view.receiptDigest,
+      identity: null,
+      verifyCommand,
+      detail:
+        "Receipt is intact but predates first-class vendor/gateway/API/environment/revision identity.",
+    };
+  }
+  return {
+    state: "bound",
+    importId: view.importId,
+    receiptDigest: view.receiptDigest,
+    identity,
+    verifyCommand,
+    detail:
+      `${identity.vendor}/${identity.gatewayId}/${identity.apiId}/` +
+      `${identity.environment}/${identity.revision} is bound to ${identity.lineageDigest}.`,
+  };
+}
+
 function nextSafeAction(report: {
   paths: StatusReport["paths"];
   source: StatusReport["source"];
   operations: StatusReport["operations"];
+  gatewayImport: StatusReport["gatewayImport"];
   core: StatusReport["core"];
   certification: StatusReport["certification"];
   executableEvidence: StatusReport["executableEvidence"];
@@ -987,6 +1220,30 @@ function nextSafeAction(report: {
   targets: StatusReport["targets"];
 }): NextSafeAction {
   const bundle = shellArg(report.paths.bundle);
+  if (report.gatewayImport?.state === "invalid") {
+    return {
+      code: "repair-core",
+      command: report.gatewayImport.verifyCommand,
+      reason:
+        "The bundled gateway receipt view is invalid or its identity digest is corrupt. Verify the private receipt and re-import before trusting or changing this output.",
+    };
+  }
+  if (report.gatewayImport?.state === "stale") {
+    return {
+      code: "operator-action-required",
+      command: report.gatewayImport.verifyCommand,
+      reason:
+        "Gateway output lineage is stale. Verify the recorded derived state, move approval semantics into a supplemental manifest, and re-import the preserved export; do not approve this bundle again in place.",
+    };
+  }
+  if (report.gatewayImport?.state === "legacy") {
+    return {
+      code: "operator-action-required",
+      command: report.gatewayImport.verifyCommand,
+      reason:
+        "This legacy gateway receipt has no environment/revision/control-plane identity. Verify it, then re-import with explicit identity flags into the collision-safe default output.",
+    };
+  }
   if (report.core.state !== "aligned") {
     const command = report.source?.snapshotId
       ? [
@@ -1006,6 +1263,28 @@ function nextSafeAction(report: {
         "Core projections are corrupt or misaligned; verify the locked source before recompiling.",
     };
   }
+  const gatewayPolicyBlocker = report.core.contractChecks.find(
+    (check) =>
+      check.state === "failed" &&
+      (check.code === "contract.gateway-blockers-resolved" ||
+        check.detail.includes("gateway/opaque_policy")),
+  );
+  if (gatewayPolicyBlocker) {
+    return {
+      code: "resolve-gateway-policy",
+      command: `anvil inspect ${bundle}`,
+      reason:
+        "Generated projections and locked source are healthy, but gateway policy evidence is unresolved. Inspect the exact opaque-policy coordinates, update adapter support or the gateway export, then re-import.",
+    };
+  }
+  const contractBlocker = report.core.contractChecks.find((check) => check.state === "failed");
+  if (contractBlocker) {
+    return {
+      code: "resolve-contract",
+      command: `anvil lint ${bundle}`,
+      reason: `Static contract gate ${contractBlocker.code} failed; resolve that semantic finding before certification.`,
+    };
+  }
   if ((report.operations?.blocked ?? 0) > 0) {
     return {
       code: "resolve-blocked",
@@ -1017,7 +1296,9 @@ function nextSafeAction(report: {
     return {
       code: "inspect-approve",
       command: `anvil inspect ${bundle}`,
-      reason: "Inspect operation risk, then approve only the intended operation ids.",
+      reason: report.gatewayImport
+        ? "Inspect operation risk, record reviewed state and required safety semantics in a supplemental manifest, then re-import so approval remains bound to immutable gateway lineage."
+        : "Inspect operation risk, then approve only the intended operation ids.",
     };
   }
   const staleTarget = report.targets.find((target) => target.state !== "fresh");
@@ -1170,12 +1451,59 @@ export function renderStatusReport(report: StatusReport): string {
       `  integrity: ${report.source.integrity.state} — ${report.source.integrity.detail}`,
     );
   }
+  if (report.gatewayImport) {
+    const identity = report.gatewayImport.identity;
+    lines.push(
+      "",
+      "Gateway import",
+      `  state: ${report.gatewayImport.state} — ${report.gatewayImport.detail}`,
+      `  receipt: ${report.gatewayImport.importId ?? "unknown"} (${report.gatewayImport.receiptDigest ?? "unknown digest"})`,
+    );
+    if (identity) {
+      lines.push(
+        `  coordinate: ${identity.vendor}/${identity.gatewayId}/${identity.apiId}/${identity.environment}/${identity.revision}`,
+        `  owner: ${identity.digest}`,
+        `  evidence: ${identity.lineageDigest}`,
+      );
+    }
+    if (report.gatewayImport.verifyCommand) {
+      lines.push(`  verify: ${report.gatewayImport.verifyCommand}`);
+    }
+  }
   if (report.operations) {
     lines.push(
       "",
       "Operations",
       `  ${report.operations.generated} generated · ${report.operations.approved} approved · ${report.operations.review_required} review_required · ${report.operations.deprecated} deprecated · ${report.operations.blocked} blocked · ${report.operations.total} total`,
     );
+  }
+  if (report.idempotency) {
+    const managedWrites = report.idempotency.writes.filter(
+      (write) => write.managedStoreRequired,
+    ).length;
+    const explicitKeyWrites = report.idempotency.writes.filter(
+      (write) => write.explicitKeyRequired,
+    ).length;
+    const recommendedKeyWrites = report.idempotency.writes.filter(
+      (write) => write.explicitKeyRecommended,
+    ).length;
+    const store = report.idempotency.store;
+    lines.push(
+      "",
+      "Writes & idempotency",
+      `  approved writes: ${report.idempotency.writes.length} · durable-store required: ${managedWrites} · explicit-key required: ${explicitKeyWrites} · recommended: ${recommendedKeyWrites}`,
+      `  store contract: ${store.contractState} · ${store.required ? store.backend : "not required"} · ${store.contractPath}`,
+    );
+    if (store.backend === "firestore") {
+      lines.push(
+        `  planned store: var.${store.databaseTerraformVariable} · mode var.${store.provisioningModeTerraformVariable} (default ${store.provisioningModeDefault}) · collection ${store.collectionGroup}`,
+        `  dedicated location: var.${store.locationTerraformVariable} (required and immutable only in dedicated mode)`,
+        `  live readiness: ${report.idempotency.liveReadiness.state} · ${report.idempotency.liveReadiness.path} · ${report.idempotency.liveReadiness.detail}`,
+      );
+    } else {
+      lines.push(`  live readiness: ${report.idempotency.liveReadiness.state}`);
+    }
+    lines.push(`  inspect: anvil deploy ledger ${shellArg(report.paths.bundle)}`);
   }
   lines.push("", `Core projections — ${report.core.state.toUpperCase()}`);
   for (const projection of report.core.projections) {

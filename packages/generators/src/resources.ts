@@ -25,6 +25,13 @@ export interface ResourceOptions {
   cliNpmPackage?: string;
   /** OCI reference for the CLI, if published as a container. */
   cliOci?: string;
+  /**
+   * Stable deployment-only identity for cloud resources and durable-store
+   * partitioning. Lowercase provider-safe id (letter, then letters/digits/
+   * hyphens), at most 128 characters. It must not replace the agent-facing AIR
+   * service id.
+   */
+  deploymentNamespace?: string;
 }
 
 function mimeFor(path: string): string {

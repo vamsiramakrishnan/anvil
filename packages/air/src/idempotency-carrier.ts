@@ -1,5 +1,5 @@
 import type { IdempotencyMode, ParamLocation } from "./enums.js";
-import type { JsonSchema, Operation } from "./schema.js";
+import { effectiveAuthCarrier, type JsonSchema, type Operation } from "./schema.js";
 
 const KEYED_MODES = new Set<IdempotencyMode>(["required", "key_supported"]);
 const HTTP_FIELD_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
@@ -17,10 +17,10 @@ const RUNTIME_OWNED_HEADERS = new Set([
 ]);
 
 export type IdempotencyCarrierBinding =
-  | { mechanism: "header"; key: string }
-  | { mechanism: "query"; key: string }
-  | { mechanism: "path"; key: string }
-  | { mechanism: "body"; key: string; path: string[] };
+  | { mechanism: "header"; key: string; schema?: JsonSchema }
+  | { mechanism: "query"; key: string; schema: JsonSchema }
+  | { mechanism: "path"; key: string; schema: JsonSchema }
+  | { mechanism: "body"; key: string; path: string[]; schema: JsonSchema };
 
 export type IdempotencyCarrierResolution =
   | { ok: true; binding?: IdempotencyCarrierBinding }
@@ -40,6 +40,60 @@ function schemaAcceptsString(schema: JsonSchema | undefined): boolean {
     Array.isArray(schema.enum) &&
     schema.enum.length > 0 &&
     schema.enum.every((v) => typeof v === "string")
+  );
+}
+
+const DERIVED_KEY_LENGTH = "anvil-".length + 32;
+const DERIVED_COMPATIBLE_PATTERNS = new Set([
+  "^[\\u0021-\\u007E]+$",
+  "^[!-~]+$",
+  "^anvil-[0-9a-f]{32}$",
+]);
+
+/**
+ * Prove that every request-fingerprint key (`anvil-` + 32 lowercase hex)
+ * satisfies a modeled source carrier. Arbitrary regex/format/enum logic is not
+ * guessed: a manifest can require a caller-supplied key instead.
+ */
+function derivedKeyFitsSchema(schema: JsonSchema | undefined): boolean {
+  if (!schema) return true;
+  if (schema.type !== "string" && !(Array.isArray(schema.type) && schema.type.includes("string"))) {
+    return false;
+  }
+  if (
+    (schema.minLength !== undefined &&
+      (typeof schema.minLength !== "number" || schema.minLength > DERIVED_KEY_LENGTH)) ||
+    (schema.maxLength !== undefined &&
+      (typeof schema.maxLength !== "number" || schema.maxLength < DERIVED_KEY_LENGTH))
+  ) {
+    return false;
+  }
+  if (
+    schema.const !== undefined ||
+    schema.enum !== undefined ||
+    schema.format !== undefined ||
+    schema.not !== undefined ||
+    schema.anyOf !== undefined ||
+    schema.oneOf !== undefined ||
+    schema.allOf !== undefined ||
+    schema.contentEncoding !== undefined ||
+    schema.contentMediaType !== undefined
+  ) {
+    return false;
+  }
+  return (
+    schema.pattern === undefined ||
+    (typeof schema.pattern === "string" && DERIVED_COMPATIBLE_PATTERNS.has(schema.pattern))
+  );
+}
+
+function derivedConstraintIssue(op: Operation, schema: JsonSchema | undefined): string | undefined {
+  if (op.idempotency.keyDerivation !== "request_fingerprint" || derivedKeyFitsSchema(schema)) {
+    return undefined;
+  }
+  return (
+    "request-fingerprint keys cannot be proven to satisfy the modeled carrier schema; " +
+    "use client_supplied derivation or relax the carrier constraint"
   );
 }
 
@@ -103,7 +157,26 @@ export function resolveIdempotencyCarrier(op: Operation): IdempotencyCarrierReso
         issue: `idempotency header '${key}' is owned by the HTTP/auth runtime and cannot carry a key`,
       };
     }
-    return { ok: true, binding: { mechanism, key } };
+    const parameter = op.input.params.find(
+      (candidate) =>
+        candidate.in === "header" && candidate.name.toLowerCase() === key.toLowerCase(),
+    );
+    if (parameter && !schemaAcceptsString(parameter.schema)) {
+      return {
+        ok: false,
+        issue: `idempotency header '${key}' is not modeled as a string`,
+      };
+    }
+    const issue = derivedConstraintIssue(op, parameter?.schema);
+    if (issue) return { ok: false, issue: `idempotency header '${key}' ${issue}` };
+    return {
+      ok: true,
+      binding: {
+        mechanism,
+        key,
+        ...(parameter ? { schema: parameter.schema } : {}),
+      },
+    };
   }
 
   if (mechanism === "query" || mechanism === "path") {
@@ -128,7 +201,11 @@ export function resolveIdempotencyCarrier(op: Operation): IdempotencyCarrierReso
         issue: `idempotency ${mechanism} parameter '${key}' is not modeled as a string`,
       };
     }
-    return { ok: true, binding: { mechanism, key } };
+    const issue = derivedConstraintIssue(op, parameter.schema);
+    if (issue) {
+      return { ok: false, issue: `idempotency ${mechanism} parameter '${key}' ${issue}` };
+    }
+    return { ok: true, binding: { mechanism, key, schema: parameter.schema } };
   }
 
   const path = decodeBodyPath(key);
@@ -149,7 +226,9 @@ export function resolveIdempotencyCarrier(op: Operation): IdempotencyCarrierReso
         issue: `idempotency body field '${key}' is not modeled as a string`,
       };
     }
-    return { ok: true, binding: { mechanism, key, path } };
+    const issue = derivedConstraintIssue(op, legacy.schema);
+    if (issue) return { ok: false, issue: `idempotency body field '${key}' ${issue}` };
+    return { ok: true, binding: { mechanism, key, path, schema: legacy.schema } };
   }
 
   const body = op.input.body;
@@ -173,7 +252,33 @@ export function resolveIdempotencyCarrier(op: Operation): IdempotencyCarrierReso
       issue: `idempotency body field '${key}' is not modeled as a string`,
     };
   }
-  return { ok: true, binding: { mechanism, key, path } };
+  const issue = derivedConstraintIssue(op, fieldSchema);
+  if (issue) return { ok: false, issue: `idempotency body field '${key}' ${issue}` };
+  return { ok: true, binding: { mechanism, key, path, schema: fieldSchema } };
+}
+
+/**
+ * Detect a statically declared credential carrier that would overwrite the
+ * idempotency key after request construction. Runtime credential resolvers may
+ * still override API-key coordinates, so the executor repeats this check
+ * against the resolved material before touching the ledger or upstream.
+ */
+export function idempotencyAuthCarrierIssue(op: Operation): string | undefined {
+  const resolution = resolveIdempotencyCarrier(op);
+  const binding = resolution.ok ? resolution.binding : undefined;
+  const auth = effectiveAuthCarrier(op.auth);
+  if (!binding || !auth) return undefined;
+  const sameHeader =
+    binding.mechanism === "header" &&
+    auth.in === "header" &&
+    binding.key.toLowerCase() === auth.name.toLowerCase();
+  const sameQuery =
+    binding.mechanism === "query" && auth.in === "query" && binding.key === auth.name;
+  if (!sameHeader && !sameQuery) return undefined;
+  return (
+    `idempotency ${binding.mechanism} '${binding.key}' conflicts with the ` +
+    `credential carrier '${auth.name}'`
+  );
 }
 
 /** True when a normal AIR input coordinate is replaced by `idempotency_key`. */

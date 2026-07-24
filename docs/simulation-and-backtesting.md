@@ -90,8 +90,10 @@ proof chain:
    proves the estate's controls can't be silently weakened.
 
 Cross-vendor honesty is itself tested: the same logical API expressed in Kong,
-Apigee, WSO2, MuleSoft, and API Connect formats must produce the **same effective
-contract** — a differential test, not a design intention.
+WSO2, and Anvil's normalized Apigee, MuleSoft, and API Connect adapter inputs
+must produce the **same effective contract** — a differential test, not a design
+intention. That test does not imply native Apigee proxy XML, Mule application
+JARs, or IBM assembly packages are decoded.
 
 ## What this is not (yet)
 
@@ -99,10 +101,13 @@ contract** — a differential test, not a design intention.
   (fixtures, state machines, fault profiles), not a replay of your gateway's
   production traffic. Backtesting proves the contract and its controls, not the
   vendor runtime's byte-for-byte behavior.
-- **No real-export corpus lane yet.** `anvil estate import` drives the adapters
-  end to end, but the nightly corpus still exercises only spec-based systems.
-  Pointing it at a corpus of real public vendor exports (with policy-accounting
-  oracles) is the next hardening step.
+- **No customer-derived multi-vendor export corpus yet.** The gateway suite
+  exercises native WSO2 apictl project/ZIP/directory structure, isolated bad
+  siblings, and a generated 1,000-per-API-ZIP collection with realistic
+  multi-member project layouts, plus differential normalized fixtures for all
+  five adapters. That proves parser and scaling behavior over realistic
+  structure; it is not the same as replaying a sanitized production estate from
+  each vendor with policy-accounting oracles.
 
 Related ADRs: 0017 (simulator as a projection), 0018 (static vs executable
 certification), 0020 (archive harness), 0021 (vendor adapters).

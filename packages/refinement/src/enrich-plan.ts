@@ -29,6 +29,7 @@ import type { DistillationReport } from "./distill.js";
 export type EnrichmentMotive =
   | "unproven_safety"
   | "review_cluster"
+  | "ui_projection_contract"
   | "stranded_intent"
   | "weak_name";
 export type SourceClass = "code" | "docs" | "any";
@@ -70,6 +71,7 @@ export interface EnrichmentPlan {
 const PRIORITY: Record<EnrichmentMotive, number> = {
   unproven_safety: 90,
   review_cluster: 80,
+  ui_projection_contract: 70,
   stranded_intent: 60,
   weak_name: 40,
 };
@@ -142,7 +144,49 @@ export function distillToEnrichmentPlan(
     }
   }
 
-  // 2. Same-signature mutation clusters — redundancy + idempotency questions.
+  // 2. View/BFF-shaped contracts — investigate the real callers and handler
+  //    boundary before treating screen composition as a durable tool. This is
+  //    deliberately a question, not an inferred facade or automatic exclusion.
+  for (const d of deficiencies) {
+    const opId = deficiencyOpId(d);
+    if (!opId || d.code !== "ui_projection_contract") continue;
+    const sourcePath = typeof d.facts.sourcePath === "string" ? d.facts.sourcePath : undefined;
+    const envelopeFields = Array.isArray(d.facts.envelopeFields)
+      ? d.facts.envelopeFields.filter((field): field is string => typeof field === "string")
+      : [];
+    const decisionQuestion =
+      typeof d.facts.decisionQuestion === "string"
+        ? d.facts.decisionQuestion
+        : "Is this screen plumbing a stable agent capability, or a view-specific projection?";
+    add(
+      target(
+        report,
+        opId,
+        "ui_projection_contract",
+        [
+          {
+            ask:
+              `${decisionQuestion} Trace frontend callers, the handler/serializer, contract tests, ` +
+              "and ownership/versioning evidence; do not invent a replacement facade.",
+            queries: [
+              opId,
+              ...(sourcePath ? [sourcePath] : []),
+              ...envelopeFields,
+              "frontend caller",
+              "handler serializer",
+            ],
+            sourceClass: "any",
+            predicate: "operation.agent_capability",
+            suggestedSkill: "investigate-ui-projection",
+          },
+        ],
+        `UI-shaped path and response envelope require an evidence-led stable-capability decision`,
+      ),
+      severityRank(d.severity),
+    );
+  }
+
+  // 3. Same-signature mutation clusters — redundancy + idempotency questions.
   for (const op of report.review) {
     add(
       target(report, op.operationId, "review_cluster", [
@@ -171,7 +215,7 @@ export function distillToEnrichmentPlan(
     );
   }
 
-  // 3. Reconstructible reads with stranded intents — keep-or-re-home usability
+  // 4. Reconstructible reads with stranded intents — keep-or-re-home usability
   //    decision (no safety direction; distill already named it a Stage-2 call).
   for (const op of report.reconstructible) {
     if (op.strandedIntents.length === 0) continue;
@@ -195,7 +239,7 @@ export function distillToEnrichmentPlan(
     );
   }
 
-  // 4. Weak / indistinct names — an any-class description question.
+  // 5. Weak / indistinct names — an any-class description question.
   for (const d of deficiencies) {
     const opId = deficiencyOpId(d);
     if (!opId) continue;
@@ -271,7 +315,13 @@ export const EnrichmentPlanSchema = z.object({
       operationId: z.string(),
       toolName: z.string(),
       capabilityId: z.string().optional(),
-      motive: z.enum(["unproven_safety", "review_cluster", "stranded_intent", "weak_name"]),
+      motive: z.enum([
+        "unproven_safety",
+        "review_cluster",
+        "ui_projection_contract",
+        "stranded_intent",
+        "weak_name",
+      ]),
       priority: z.number(),
       questions: z.array(ProbeQuestionSchema),
       reason: z.string(),

@@ -33,5 +33,13 @@ services:
       - name: reports-route
         paths: ["/reports"]
         methods: ["GET"]
+      # No method means "any method" in Kong. Anvil must keep this opaque
+      # instead of manufacturing the historical GET default.
+      - name: reports-any-method
+        paths: ["/reports/aggregate"]
+      # Expressions-router predicates are native Kong route configuration but
+      # are not an OpenAPI method/path coordinate.
+      - name: reports-expression
+        expression: '(http.method == "POST") && (http.path == "/reports/filter")'
     plugins:
       - name: key-auth

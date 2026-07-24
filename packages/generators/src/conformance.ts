@@ -1,4 +1,5 @@
 import type { AirDocument } from "@anvil/air";
+import { operationSafetyInputKeys } from "@anvil/air";
 
 /**
  * Generate a conformance test (spec §16) shipped with the bundle. A generated
@@ -20,15 +21,23 @@ export function generateConformanceTest(air: AirDocument): string {
   // the idempotency cases so they clear the confirmation gate first.
   const humanApprovalTools = approved
     .filter((o) => o.confirmation.humanApproval === true)
-    .map((o) => o.mcp.toolName);
+    .map((o) => ({ tool: o.mcp.toolName, confirmInput: operationSafetyInputKeys(o).confirm }));
   const modelConfirmTools = approved
     .filter((o) => o.confirmation.required && o.confirmation.humanApproval !== true)
-    .map((o) => o.mcp.toolName);
+    .map((o) => ({ tool: o.mcp.toolName, confirmInput: operationSafetyInputKeys(o).confirm }));
   // Human-approval ops always ASK first, so the idempotency-deny rule is only
   // reachable (via the hook) for non-human ops cleared with confirm:true.
   const keyTools = approved
-    .filter((o) => o.idempotency.mode === "required" && o.confirmation.humanApproval !== true)
-    .map((o) => o.mcp.toolName);
+    .filter(
+      (o) =>
+        o.idempotency.mode === "required" &&
+        o.idempotency.keyDerivation !== "request_fingerprint" &&
+        o.confirmation.humanApproval !== true,
+    )
+    .map((o) => ({
+      tool: o.mcp.toolName,
+      confirmInput: operationSafetyInputKeys(o).confirm,
+    }));
   const cleanReadTool = approved.find((o) => o.effect.kind === "read" && !o.confirmation.required)
     ?.mcp.toolName;
 
@@ -70,18 +79,18 @@ describe("${air.service.id} hook <-> executor agreement", () => {
     expect(decide("definitely_not_a_tool", {}).decision).toBe("deny");
   });
 
-  it.each(${JSON.stringify(humanApprovalTools)})("asks for human approval on %s", (tool) => {
+  it.each(${JSON.stringify(humanApprovalTools)})("asks for human approval on $tool", ({ tool, confirmInput }) => {
     // Human-approval ops escalate to the dialog even if the model supplies confirm.
-    expect(decide(tool, { confirm: true }).decision).toBe("ask");
+    expect(decide(tool, { [confirmInput]: true }).decision).toBe("ask");
   });
 
-  it.each(${JSON.stringify(modelConfirmTools)})("denies %s until confirm:true", (tool) => {
+  it.each(${JSON.stringify(modelConfirmTools)})("denies $tool until confirmation", ({ tool }) => {
     expect(decide(tool, {}).decision).toBe("deny");
   });
 
-  it.each(${JSON.stringify(keyTools)})("denies %s without an idempotency key", (tool) => {
+  it.each(${JSON.stringify(keyTools)})("denies $tool without an idempotency key", ({ tool, confirmInput }) => {
     // confirm:true clears the confirmation gate so the idempotency rule is reached.
-    const d = decide(tool, { confirm: true });
+    const d = decide(tool, { [confirmInput]: true });
     expect(d.decision).toBe("deny");
     expect(d.reason).toMatch(/idempotency/i);
   });

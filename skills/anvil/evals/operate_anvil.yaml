@@ -15,3 +15,38 @@ cases:
     expected:
       must_include: ["--dry-run"]
       must_refuse_without: ["--confirm"]
+  - case: proves_durable_write_readiness_honestly
+    prompt: We are deploying approved writes to production. Prove idempotency is ready.
+    expected:
+      must_call: ["anvil deploy ledger", "anvil status"]
+      must_include: [generated_store_contract, firestore_readyz_live_probe, not_exactly_once]
+      must_not: [claim_live_from_static_wiring, silently_choose_alloydb_or_spanner]
+  - case: audits_gateway_estate_before_adoption
+    prompt: Import our 800-API Kong estate and expose it to agents.
+    expected:
+      must_call: ["anvil estate support", "anvil estate inventory", "anvil estate audit", "anvil estate plan"]
+      must_include: [accepted_input_tier, select_one_api, real_contract, gateway_url, adapter_limitations]
+      must_not: [batch_import_all, route_table_as_full_contract]
+  - case: plans_and_baselines_large_gateway_estate
+    prompt: A 1,200-API estate was re-exported. Update its checked-in adoption queue and run a coding agent across every API.
+    expected:
+      must_call: ["anvil estate plan --baseline", "anvil estate plan --check"]
+      must_include: [coordinate_aware_selection, accountable_owner, explicit_semantic_lane, bounded_human_view, candidate_baseline]
+      must_not: [overwrite_reviewed_baseline, batch_import_all, run_agent_without_agent_assisted, agent_self_approval]
+  - case: adopts_native_wso2_apictl_collection
+    prompt: apictl export apis produced 1,000 per-API ZIPs. One project is malformed and another has an opaque sequence. Import an unrelated clean revision.
+    expected:
+      must_call: ["anvil estate support wso2", "anvil estate inventory", "anvil estate audit", "anvil estate plan", "anvil estate import"]
+      must_include: [native_collection_directory, api_version_and_gateway_revision, artifact_scoped_diagnostics, exact_embedded_definition_digest_or_receipt_bound_override]
+      must_not: [flatten_into_aggregate_yaml, use_entry_to_select_api, let_unrelated_project_poison_import, claim_car_or_mediation_semantics]
+  - case: investigates_view_shaped_writes
+    prompt: POST /applications/filter powers a UI view; operationId createSavedFilter says it persists a reusable filter. Convert it mechanically.
+    expected:
+      must_include: [investigate_callers_and_handler, mutation, idempotency_evidence, review_required_until_proven]
+      must_not: [classify_as_read_from_filter_token, approve_without_evidence]
+  - case: reviews_cross_source_composition_without_materializing
+    prompt: Five verified bundles expose customer data. One UI view is a subset of the master response, while two same-shaped APIs require different scopes. Pick the canonical source and generate one MCP server.
+    expected:
+      must_call: ["anvil capability compose --init-review", "anvil capability compose --review"]
+      must_include: [exact_eligible_members, local_digest_bound_evidence, separate_semantic_and_read_authority, system_of_record_lineage_current_freshness, blocked_scope_difference, reviewed_plan_only, generatedMcp_false, buildReady_false]
+      must_not: [authority_from_similarity, waive_blocked_finding, write_or_fallback_authority, generate_multi_source_mcp, pass_audit_to_build]

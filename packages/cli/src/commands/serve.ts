@@ -56,6 +56,7 @@ async function runServeMcp(dir: string, io: CliIO): Promise<number> {
       authProfile: config.authProfile,
       allowedHosts,
       env: config.env,
+      timeoutMs: config.upstreamTimeoutMs,
     }),
   });
   io.err(`anvil: serving MCP for ${air.service.id} over stdio`);

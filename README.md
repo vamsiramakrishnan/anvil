@@ -217,6 +217,16 @@ implemented vs. staged.
 
 Two current semantics worth stating plainly:
 
+- **Durable write protection is explicit and independently provable.**
+  `anvil deploy ledger <dir> --project <id> --database <database-id>` reads the
+  generated `deploy/idempotency-store.json`, lists every approved write, and
+  verifies the shared/dedicated Firestore boundary, collection group, TTL, IAM,
+  and `ANVIL_LEDGER` wiring against AIR without making a cloud call. Shared mode
+  is the estate-scale default; dedicated mode additionally requires an immutable
+  location. That is static
+  wiring, not live readiness: after apply, require the deployed `/readyz`
+  data-plane probe to return 200. The ledger provides bounded
+  reservation/replay protection, not an exactly-once guarantee.
 - **`publish` is plan-first, not a deployment.** It requires fresh static
   certification plus fresh passing `selftest`, `conformance`, and `simulation`
   reports for the current bundle digest, prints the Cloud Run deployment plan,

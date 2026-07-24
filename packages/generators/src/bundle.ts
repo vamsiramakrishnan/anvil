@@ -36,6 +36,7 @@ export interface GenerationMetadata {
     mcpEndpoint: string | null;
     cliNpmPackage: string | null;
     cliOci: string | null;
+    deploymentNamespace: string | null;
   };
 }
 
@@ -46,6 +47,7 @@ function generationMetadata(options: ResourceOptions): GenerationMetadata {
       mcpEndpoint: options.mcpEndpoint ?? null,
       cliNpmPackage: options.cliNpmPackage ?? null,
       cliOci: options.cliOci ?? null,
+      deploymentNamespace: options.deploymentNamespace ?? null,
     },
   };
 }
@@ -74,10 +76,21 @@ export function resourceOptionsFromGenerationMetadata(
   for (const key of ["mcpEndpoint", "cliNpmPackage", "cliOci"] as const) {
     if (record[key] !== null && typeof record[key] !== "string") return undefined;
   }
+  if (
+    record.deploymentNamespace !== undefined &&
+    record.deploymentNamespace !== null &&
+    (typeof record.deploymentNamespace !== "string" ||
+      !/^[a-z][a-z0-9-]{0,127}$/.test(record.deploymentNamespace))
+  ) {
+    return undefined;
+  }
   return {
     ...(typeof record.mcpEndpoint === "string" ? { mcpEndpoint: record.mcpEndpoint } : {}),
     ...(typeof record.cliNpmPackage === "string" ? { cliNpmPackage: record.cliNpmPackage } : {}),
     ...(typeof record.cliOci === "string" ? { cliOci: record.cliOci } : {}),
+    ...(typeof record.deploymentNamespace === "string"
+      ? { deploymentNamespace: record.deploymentNamespace }
+      : {}),
   };
 }
 
