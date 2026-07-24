@@ -2,16 +2,27 @@
 
 Produced by the mixed Sonnet/Haiku coverage bug-bash (see
 `docs/coverage-bug-bash-plan.md`). 22 new `*.bugbash.test.ts` files added
-~890 test cases. Every genuine defect below is **encoded in the test suite** as
-an `it.fails(...)` (or `it.skip`) with a `// BUG:` comment — the assertion
-documents the *correct* behavior and currently fails against the code, so it
-flips to green automatically once the bug is fixed. No test asserts wrong
-behavior as if it were right.
+~890 test cases. Each genuine defect below was first **encoded in the test
+suite** as an `it.fails(...)` (or `it.skip`) with a `// BUG:` comment — the
+assertion documenting the *correct* behavior.
 
-The tests are all green (`879 passed | 13 expected-fail | 1 skipped`); the
-"expected-fail" entries are the bugs below.
+**Status: all 12 confirmed defects are now FIXED.** Each fix landed in its
+source file and its pinned test was flipped from `it.fails`/`it.skip` to a
+normal passing `it(...)` that asserts the corrected behavior, so the suite now
+proves the fix rather than the bug. The "Fix" column records the change; the
+low-severity observations at the bottom remain open (noted, not fixed).
 
-## Confirmed defects (asserted via `it.fails` / `it.skip`)
+## Defects found — all fixed
+
+| # | Sev | Location | Defect | Fix |
+|---|-----|----------|--------|-----|
+| 1 | med-high | `cli/src/tool-cli.ts` | Second, **unguarded** `remoteMcpTarget()` (custom `--mcp` + `--mcp-token-env`) threw uncaught instead of a structured `validation_error`. | Wrapped in the same try/catch as the first call → `validation_error`, exit 2. |
+| 2 | med-high | `harness/src/conformance.ts` | **Safety-contract violation** — a JSON key `bearer_token` was **not** redacted (the `token` pattern's `\b` boundary fails across `_`), leaking into the conformance report. | Generalized the pattern to `[a-z]+[-_]token` so every `*_token`/`*-token` key is redacted. |
+| 3 | high | `refinement/src/case/battery/effectiveness.ts` (`buildAir`) | Synthetic op omitted the required `displayName`, so `anvil case battery --real` crashed (Zod) on the first of 30 cases. | Set a derived `displayName`; the command now validates and reaches the real containment preflight. |
+
+<details><summary>Original defect table (for reference)</summary>
+
+## Confirmed defects (originally asserted via `it.fails` / `it.skip`)
 
 | # | Sev | Location | Defect |
 |---|-----|----------|--------|
@@ -28,7 +39,22 @@ The tests are all green (`879 passed | 13 expected-fail | 1 skipped`); the
 | 11 | mod | `runtime/src/credentials.ts:379-390` | The RFC 7523 `jwt_bearer` grant computes `audience`/`resource` (from `ANVIL_<P>_AUDIENCE`/`_RESOURCE`) like the sibling grants but never puts them in the POST body — only `grant_type`/`assertion`/`scope`. Since `auth.ts` advertises `ANVIL_<P>_AUDIENCE` as an optional credential for this shape, an operator who sets it has it silently dropped. |
 | 12 | med | `cli/src/commands/sources.ts:49-52` | `runSourcesInit` returns inside the `opts.json` branch before the `opts.write` branch runs, so `anvil sources init <dir> --write <file> --json` **never writes the file**, despite the command documenting `--write` and `--json` as independent flags. |
 
-## Lower-severity observations (noted in tests, not asserted as failures)
+**Fixes for #4–#12** (analogous to #1–#3, each with its pinned test flipped to a
+passing assertion): #4 `approve` now re-checks post-mutation state and refuses
+(throws before writing) if a requested op ended up `blocked`; #5 `refine apply`
+writes JSON via `airToJson` when the AIR path is `.json`; #6 removed the
+vestigial `BOOLEAN_FLAGS` entries so business params keep their values; #7 a
+value-less flag on a non-boolean param now yields a structured `validation_error`;
+#8 `PolicyContext.response` is threaded into the post-response hooks; #9 dry-run
+`maxAttempts` now uses the combined `retrySafe && ctx.retries !== false`
+condition; #10 `postman lowerUrl` appends the port in the schemed-host branch
+(guarded against double-append); #11 `jwt_bearer` now includes `audience`/
+`resource` in the token request; #12 `sources init` writes the file and emits
+JSON when both flags are given.
+
+</details>
+
+## Lower-severity observations (noted in tests, still OPEN — not fixed)
 
 | Location | Note |
 |----------|------|
@@ -39,8 +65,8 @@ The tests are all green (`879 passed | 13 expected-fail | 1 skipped`); the
 
 ## Next steps
 
-None of these are fixed here — this pass adds the failing/skip tests that pin
-each defect. Fixing any listed bug should flip its `it.fails` to a normal
-passing `it` (remove the `.fails`) in the same change. The safety-relevant ones
-(#2 unredacted `bearer_token`, #4 misleading approval exit code, #8 policy
-`response` never populated) are worth prioritizing.
+The 12 confirmed defects are fixed and their tests now assert the corrected
+behavior. Remaining open items are the four low-severity observations above —
+each is a validation/UX tightening rather than a correctness or safety defect;
+they're left as documented notes (no failing test) for the maintainers to
+decide on.

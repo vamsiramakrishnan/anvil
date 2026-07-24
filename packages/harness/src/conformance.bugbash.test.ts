@@ -264,15 +264,15 @@ describe("safe CLI stream redaction — edge cases", () => {
     expect(context).not.toContain("anvil-hermetic");
   });
 
-  // BUG: SENSITIVE_CLI_KEY_SOURCE (packages/harness/src/conformance.ts:760-761)
-  // has no alternative matching a "bearer_token" JSON key (only "token" alone,
-  // which the ASSIGNED_CLI_SECRET/JSON_CLI_SECRET lookbehind excludes because
-  // it is preceded by the word character "_"). As a result a `"bearer_token"`
-  // field's value is never redacted by safeCliStream (conformance.ts:896-904),
-  // even though "access_token"/"refresh_token"/"id_token" are covered. This
-  // violates the CLAUDE.md safety contract: "Never log or echo secrets; the
-  // runtime redacts auth material from records."
-  it.fails("preserves non-sensitive content while redacting secrets", () => {
+  // FIXED: SENSITIVE_CLI_KEY_SOURCE (packages/harness/src/conformance.ts:760-761)
+  // previously had no alternative matching a "bearer_token" JSON key (only
+  // "token" alone, which the ASSIGNED_CLI_SECRET/JSON_CLI_SECRET lookbehind
+  // excluded because it is preceded by the word character "_"). A generic
+  // `[a-z]+[-_]token` alternative now covers "bearer_token" the same way it
+  // covers "access_token"/"refresh_token"/"id_token", per the CLAUDE.md
+  // safety contract: "Never log or echo secrets; the runtime redacts auth
+  // material from records."
+  it("preserves non-sensitive content while redacting secrets", () => {
     const context = safeCliProcessContext({
       exitCode: 0,
       signal: null,
@@ -284,6 +284,8 @@ describe("safe CLI stream redaction — edge cases", () => {
     });
     expect(context).toContain("op-123");
     expect(context).toContain("success");
+    expect(context).toContain("bearer_token");
+    expect(context).toContain("[REDACTED]");
     expect(context).not.toContain("secret");
   });
 

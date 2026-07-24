@@ -60,14 +60,13 @@ const BOOLEAN_FLAGS = new Set([
   "help",
   "no-retries",
   "all",
-  "quiet",
-  "allow-degraded-native",
-  "allow-uncertified",
-  "allow-large",
-  // Capability show sections: always boolean so they never swallow a value.
-  "operations",
-  "auth",
-  "evidence",
+  // NOTE: `quiet`, `allow-degraded-native`, `allow-uncertified`, `allow-large`,
+  // `operations`, `auth`, and `evidence` used to live here too, but nothing in
+  // this file ever reads them back out as booleans — they were vestigial and
+  // forced any same-named business parameter (e.g. a real `auth` query param)
+  // to boolean `true`, silently discarding its CLI value. Removed rather than
+  // exempted like the progressive-disclosure views below, since there is no
+  // disclosure short-circuit reading them.
   // NOTE: the progressive-disclosure views (`--schema`, `--examples`,
   // `--errors`, `--policy`, `--explain`) are deliberately NOT here. A real
   // operation can have a parameter of the same name — Oracle ORDS's
@@ -403,6 +402,7 @@ async function invoke(
     input = buildInput(op, flags, deps);
   } catch (err) {
     if (err instanceof JsonFlagError) return jsonFlagRefusal(io, op, err);
+    if (err instanceof MissingFlagValueError) return missingFlagValueRefusal(io, op, err);
     throw err;
   }
 
@@ -493,7 +493,17 @@ async function invoke(
       } else {
         // Injected connectors may support private target schemes, but bearer
         // auth has a deliberately narrower contract: remote Streamable HTTP.
-        remote ??= remoteMcpTarget(mcpTarget);
+        // A malformed target reaching this second lookup is caller input,
+        // just like the first guarded call above — never an uncaught throw.
+        if (!remote) {
+          try {
+            remote = remoteMcpTarget(mcpTarget);
+          } catch (err) {
+            return cliValidationError(io, op.id, err instanceof Error ? err.message : String(err), {
+              flag: "--mcp",
+            });
+          }
+        }
         if (remote.kind !== "streamable-http") {
           return cliValidationError(
             io,
@@ -876,6 +886,15 @@ function jsonFlagRefusal(io: CliIO, op: Operation, err: JsonFlagError): number {
   );
 }
 
+function missingFlagValueRefusal(io: CliIO, op: Operation, err: MissingFlagValueError): number {
+  return cliValidationError(
+    io,
+    op.id,
+    `${err.message} See \`${op.cli.command} --examples\` for a complete invocation.`,
+    { flag: err.flag },
+  );
+}
+
 /** Emit a CLI-side validation_error envelope (same shape the executor produces). */
 function cliValidationError(
   io: CliIO,
@@ -1002,6 +1021,28 @@ function nearestCommand(ops: Operation[], positionals: string[]): string | undef
   );
 }
 
+/**
+ * `parseArgs` cannot tell a bare boolean flag from a value-carrying flag left
+ * value-less because the next token is itself another `--flag` (or end of
+ * argv) — both parse to `flags[name] === true`. For a non-boolean operation
+ * parameter that ambiguity must not silently become the literal value `true`
+ * (e.g. a path param coercing to the string "true" and corrupting the request
+ * URL); it is caller input error, so it is refused as a structured
+ * validation_error instead.
+ */
+class MissingFlagValueError extends Error {
+  constructor(readonly flag: string) {
+    super(`\`${flag}\` requires a value.`);
+    this.name = "MissingFlagValueError";
+  }
+}
+
+function assertFlagHasValue(flag: string, value: string | boolean, schema: JsonSchema): void {
+  if (value === true && schema.type !== "boolean") {
+    throw new MissingFlagValueError(flag);
+  }
+}
+
 function coerce(value: string | boolean, schema: JsonSchema): unknown {
   if (typeof value === "boolean") return value;
   switch (schema.type) {
@@ -1023,20 +1064,26 @@ function buildInput(
 ): Record<string, unknown> {
   const base = readInput(flags, deps);
   for (const p of op.input.params) {
-    const flagName = businessInputCliFlag(op, p.in, p.name)?.slice(2);
-    if (!flagName) continue;
-    if (flags[flagName] !== undefined)
+    const flag = businessInputCliFlag(op, p.in, p.name);
+    if (!flag) continue;
+    const flagName = flag.slice(2);
+    if (flags[flagName] !== undefined) {
+      assertFlagHasValue(flag, flags[flagName], p.schema);
       base[propKey(p.name)] = coerce(flags[flagName] as string, p.schema);
+    }
   }
   // Body projection: flat scalar fields become individual flags; a `whole` body
   // is supplied as JSON via --body '<json>' (structure preserved end to end).
   const body = op.input.body;
   if (body?.projection === "fields") {
     for (const f of body.fields) {
-      const flagName = businessInputCliFlag(op, "body", f.name)?.slice(2);
-      if (!flagName) continue;
-      if (flags[flagName] !== undefined)
+      const flag = businessInputCliFlag(op, "body", f.name);
+      if (!flag) continue;
+      const flagName = flag.slice(2);
+      if (flags[flagName] !== undefined) {
+        assertFlagHasValue(flag, flags[flagName], f.schema);
         base[propKey(f.name)] = coerce(flags[flagName] as string, f.schema);
+      }
     }
   } else if (body && typeof flags.body === "string") {
     base.body = parseJsonFlag(flags.body, "--body");

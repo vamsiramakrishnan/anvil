@@ -195,15 +195,13 @@ describe("policy hooks", () => {
     expect(transport.requests).toHaveLength(0);
   });
 
-  // BUG: `runHook` (executor.ts) only ever forwards `request` at every one of
-  // its 6 call sites (preValidate/preAuth/preExecute/postResponse/postExecute/
-  // postError) — `PolicyContext.response` is declared in policy.ts specifically
-  // for a postResponse hook to inspect the upstream result, but the executor
-  // never assigns it. A postResponse hook can therefore never see the response
-  // status/body it is named for; it degrades to a same-timing alias of
-  // postExecute. Fix: thread `res` into `runHook(ctx.policy?.postResponse, request, res)`.
-  it.fails("BUG: postResponse hook never receives the actual HttpResponse via ctx.response", async () => {
-    let capturedResponse: unknown = "unset";
+  // `runHook` (executor.ts) threads the actual upstream `HttpResponse` into
+  // `PolicyContext.response` for the hooks that run after a response exists
+  // (postResponse, and postExecute/postError when one was obtained) — a
+  // postResponse hook can inspect status/body, not just a same-timing alias
+  // of postExecute.
+  it("passes the actual HttpResponse to a postResponse hook via ctx.response", async () => {
+    let capturedResponse: HttpResponse | undefined;
     const transport = new MockTransport(() => ok({ id: "re_1" }));
     await execute(
       op(),
@@ -219,6 +217,8 @@ describe("policy hooks", () => {
       },
     );
     expect(capturedResponse).toBeDefined();
+    expect(capturedResponse?.status).toBe(200);
+    expect(JSON.parse(capturedResponse?.body ?? "{}")).toEqual({ id: "re_1" });
   });
 });
 
@@ -725,18 +725,14 @@ describe("retry gating (safety contract)", () => {
 });
 
 describe("dry-run retry plan", () => {
-  // BUG: executor.ts's dry-run branch computes `retryPlan.maxAttempts` from
-  // `retrySafe` alone (`retrySafe ? op.retries.maxAttempts : 1`, executor.ts
-  // line 879), while `retryPlan.enabled` correctly factors in the
-  // `ctx.retries === false` override (line 878) — the same combined condition
-  // the real execution path uses to cap attempts at 1 (`retriesEnabled` /
-  // `maxAttempts`, executor.ts lines 1032-1033). So forcing `ctx.retries:
-  // false` on an otherwise-safe idempotent mutation yields a self-contradictory
-  // plan: `{ enabled: false, maxAttempts: 3 }`, which misrepresents what
-  // execution will actually do (cap at 1 attempt). Fix: mirror the enabled
-  // condition, e.g. `maxAttempts: retrySafe && ctx.retries !== false ?
-  // op.retries.maxAttempts : 1`.
-  it.fails("BUG: disables the retry plan when ctx.retries is forced false, even for a safe idempotent mutation", async () => {
+  // executor.ts's dry-run branch computes `retryPlan.maxAttempts` from the
+  // same combined condition as `retryPlan.enabled` (`retrySafe && ctx.retries
+  // !== false`) — the same condition the real execution path uses to cap
+  // attempts at 1 (`retriesEnabled` / `maxAttempts`, executor.ts lines
+  // 1032-1033). So forcing `ctx.retries: false` on an otherwise-safe
+  // idempotent mutation reports a consistent plan: `{ enabled: false,
+  // maxAttempts: 1 }`, matching what execution will actually do.
+  it("disables the retry plan when ctx.retries is forced false, even for a safe idempotent mutation", async () => {
     const transport = new MockTransport(() => ok({}));
     const res = await execute(
       op(),

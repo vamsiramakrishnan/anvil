@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { airToYaml } from "@anvil/air";
+import { airToJson, airToYaml } from "@anvil/air";
 import {
   applyApproved,
   buildRefinementPlan,
@@ -236,7 +236,10 @@ async function runApply(path: string, opts: RefineApplyOptions, io: CliIO): Prom
     io.out("\n(dry run — AIR was not written)");
     return 0;
   }
-  writeFileSync(airPath, airToYaml(next), "utf8");
+  // Write back in whatever format the resolved AIR path names — loadAir reads by
+  // this same extension (shared.ts), so the write path must agree with it instead
+  // of always serializing YAML (which would corrupt an air.json target).
+  writeFileSync(airPath, airPath.endsWith(".json") ? airToJson(next) : airToYaml(next), "utf8");
   io.out(
     `\nWrote ${airPath}. Regenerate the bundle with \`anvil compile\` to reproject the change.`,
   );

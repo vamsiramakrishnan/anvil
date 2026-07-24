@@ -486,7 +486,7 @@ describe("anvil approve — BUG: misleading success report when approval blocks 
   // idempotency carrier — plausible since `anvil approve` explicitly accepts
   // "generated bundle directory or air.yaml" and this repo's own status
   // command treats direct air.yaml edits as a first-class case.
-  it.fails("BUG: runApprove reports an operation as approved even when it actually ends up blocked", async () => {
+  it("runApprove refuses and leaves the bundle untouched when a requested operation actually ends up blocked", async () => {
     const dir = await paymentsBundle();
     const air = airFromYaml(readFileSync(join(dir, "air.yaml"), "utf8"));
     const target = air.operations.find((op) => op.state !== "approved" && op.state !== "blocked");
@@ -497,11 +497,15 @@ describe("anvil approve — BUG: misleading success report when approval blocks 
     writeFileSync(join(dir, "air.yaml"), airToYaml(air));
 
     const io = bufferIO();
-    const code = runApprove(dir, [target.id], io);
 
     // Correct behavior: a request that actually leaves the operation
-    // blocked must not be reported (or exit) as a plain success.
-    expect(code).not.toBe(0);
+    // blocked must not be reported (or exit) as a plain success — runApprove
+    // throws (like its other pre-flight guards) instead of reprojecting the
+    // bundle with a blocked operation under a misleading "Approved" message.
+    expect(() => runApprove(dir, [target.id], io)).toThrow(
+      `Approval refused: 1 of 1 requested operation(s) remain blocked and were not approved: ${target.id}. Resolve their blocking diagnostics (see reviewNotes) and recompile before approving again.`,
+    );
+    expect(io.text()).toBe("");
     const finalState = JSON.parse(readFileSync(join(dir, "air.json"), "utf8")) as {
       operations: Array<{ id: string; state: string }>;
     };

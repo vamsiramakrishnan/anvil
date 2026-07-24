@@ -169,12 +169,11 @@ operations: []
     expect(content).toContain("sources:");
   });
 
-  // BUG: packages/cli/src/commands/sources.ts:49-52 — runSourcesInit checks
-  // `opts.json` first and returns immediately, so when both --write and
-  // --json are passed the --write branch (line 53) never runs and the file
-  // is silently never saved, even though the command's own --description
-  // documents --write and --json as independent, combinable flags.
-  it.fails("with both --write and --json flags saves file and outputs JSON", async () => {
+  // Fixed: packages/cli/src/commands/sources.ts — runSourcesInit now writes
+  // the --write file before deciding whether to emit JSON or human output,
+  // so --write and --json compose as the command's own --description
+  // documents them: independent, combinable flags.
+  it("with both --write and --json flags saves file and outputs JSON", async () => {
     const dir = freshDir();
     const outputFile = join(dir, "sources.yaml");
     const validAir = `service:
@@ -195,6 +194,9 @@ operations: []
 
     // Verify the file was also written even with --json
     expect(() => readFileSync(outputFile, "utf8")).not.toThrow();
+    const content = readFileSync(outputFile, "utf8");
+    expect(content).toContain("sources:");
+    expect(content).toBe(json.yaml);
   });
 
   it("displays interview questions with prompts and examples", async () => {

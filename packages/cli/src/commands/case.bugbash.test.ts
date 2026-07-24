@@ -287,16 +287,14 @@ function writeNoopAgent(): string {
 }
 
 describe("anvil case battery --real", () => {
-  // BUG: `buildAir()` in packages/refinement/src/case/battery/effectiveness.ts
-  // (the operation literal at lines ~81-96) never sets `displayName`, which
+  // Fixed: `buildAir()` in packages/refinement/src/case/battery/effectiveness.ts
+  // now sets `displayName` on the synthetic operation, which
   // packages/air/src/schema.ts:668 declares as a required `z.string()` with no
-  // default. `anvil case battery --real` therefore crashes on the very first
-  // of the 30 `EFFECTIVENESS_CASES` with a Zod validation error before the
-  // agent driver (or the --allow-degraded-native containment check) ever
-  // runs, regardless of flags — every effective invocation exits 1. The
-  // assertions below describe the documented, intended behavior and fail
-  // against the actual crash.
-  it.fails("BUG: drives every effectiveness case through the agent driver and emits JSON metrics", async () => {
+  // default. `anvil case battery --real` therefore validates every one of the
+  // 30 `EFFECTIVENESS_CASES` and reaches the agent driver (and the
+  // --allow-degraded-native containment check) instead of crashing on the
+  // first case with a Zod validation error.
+  it("drives every effectiveness case through the agent driver and emits JSON metrics", async () => {
     const agent = writeNoopAgent();
     const { code, io } = await runCli([
       "case",
@@ -321,7 +319,7 @@ describe("anvil case battery --real", () => {
     expect(payload.metrics.outcomeAccuracy).toBeLessThanOrEqual(1);
   }, 30_000);
 
-  it.fails("BUG: renders the human-readable effectiveness report by default", async () => {
+  it("renders the human-readable effectiveness report by default", async () => {
     const agent = writeNoopAgent();
     const { code, io } = await runCli([
       "case",
@@ -338,17 +336,20 @@ describe("anvil case battery --real", () => {
     expect(io.text()).toContain("Per scenario:");
   }, 30_000);
 
-  // BUG: same root cause as above — the refusal is meant to come from
+  // With the AIR now validating, the refusal comes from
   // CodingAgentDriver.run()'s containment preflight (packages/refinement/src/
-  // case/driver.ts:158-163), but buildAir() throws its Zod error first, so the
-  // process does exit 1 (coincidentally matching the expected code) yet stderr
-  // carries the unrelated schema-validation message instead of the documented
-  // "--allow-degraded-native" refusal text.
-  it.fails("BUG: refuses native execution without --allow-degraded-native, for every case", async () => {
+  // case/driver.ts:158-163): native execution cannot enforce the case's
+  // filesystem split, and without --allow-degraded-native it refuses before
+  // ever launching the agent binary — a clean structured refusal on the very
+  // first case, not a crash partway through the battery.
+  it("refuses native execution without --allow-degraded-native, on the first case", async () => {
     const agent = writeNoopAgent();
     const { code, io } = await runCli(["case", "battery", "--real", "--command", agent]);
     expect(code).toBe(1);
     expect(io.stderr.join("\n")).toContain("--allow-degraded-native");
+    expect(io.stderr.join("\n")).toContain(
+      "Native execution cannot enforce repository read-only and case-only writes.",
+    );
   });
 });
 

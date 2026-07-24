@@ -99,14 +99,32 @@ export function runApprove(path: string, ids: string[], io: CliIO, deps: Approve
   const air = loadAir(path);
   const requested = [...new Set(ids)];
   validateApprovals(air.operations, requested);
-  const newlyApproved = requested.filter(
+  const pendingApproval = requested.filter(
     (id) => air.operations.find((op) => op.id === id)?.state !== "approved",
   );
-  if (newlyApproved.length > 0) {
-    assertImmutableGatewayLineage(existingFiles, bundleDir, "Operation approval", newlyApproved);
+  if (pendingApproval.length > 0) {
+    assertImmutableGatewayLineage(existingFiles, bundleDir, "Operation approval", pendingApproval);
   }
 
   approveOperations(air, requested);
+
+  // approveOperations() re-validates each requested operation's idempotency
+  // carrier and can leave it "blocked" instead of transitioning it to
+  // "approved" (e.g. an unresolvable carrier). Only approved operations are
+  // exposed by generated artifacts, so a request that actually ends in
+  // "blocked" must never be reported as success — refuse before reprojecting
+  // the bundle so no blocked state is ever written to disk as if it were a
+  // clean approval.
+  const stillBlocked = requested.filter(
+    (id) => air.operations.find((op) => op.id === id)?.state === "blocked",
+  );
+  if (stillBlocked.length > 0) {
+    throw new Error(
+      `Approval refused: ${stillBlocked.length} of ${requested.length} requested operation(s) remain blocked and were not approved: ${stillBlocked.join(", ")}. Resolve their blocking diagnostics (see reviewNotes) and recompile before approving again.`,
+    );
+  }
+  const newlyApproved = pendingApproval;
+
   const result = reprojectBundleAtomically(
     path,
     air,

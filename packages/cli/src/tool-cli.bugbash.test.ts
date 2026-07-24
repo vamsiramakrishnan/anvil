@@ -224,20 +224,17 @@ describe("parseArgs: `--flag=value` equals-syntax", () => {
   });
 });
 
-describe("BUGS: a value-carrying flag can be silently coerced to boolean `true`", () => {
+describe("FIXED: a value-carrying flag is no longer silently coerced to boolean `true`", () => {
   // The file's own comment (near BOOLEAN_FLAGS, tool-cli.ts ~line 71) explains
   // exactly this failure mode for --schema/--examples/--errors/--policy/--explain
   // and deliberately keeps them OUT of BOOLEAN_FLAGS so a same-named business
   // parameter stays reachable. `auth`, `evidence`, `operations`, `quiet`, and
   // the three `allow-*` flags (tool-cli.ts lines 62-69) got no such exemption,
-  // and nothing in this file ever reads them back out — they are forced
-  // booleans for no observable reason, and a real operation parameter sharing
-  // one of those names has its value silently discarded.
-  it.fails(
-    "BUG: BOOLEAN_FLAGS forces --auth to always be a bare boolean (tool-cli.ts ~55-69, ~93-98); " +
-      "a real `auth` query parameter's value is replaced with `true` instead of reaching the wire",
-    async () => {
-      const spec = `openapi: 3.0.0
+  // and nothing in this file ever read them back out — they were forced
+  // booleans for no observable reason, silently discarding a real operation
+  // parameter's value. They have been removed from BOOLEAN_FLAGS.
+  it("lets a real `auth` query parameter's value reach the wire instead of being replaced with `true`", async () => {
+    const spec = `openapi: 3.0.0
 info: { title: authcheck, version: 1.0.0 }
 paths:
   /items:
@@ -251,39 +248,35 @@ paths:
           schema: { type: string }
       responses: { '200': { description: ok } }
 `;
-      const doc = await compile({ spec, serviceId: "authcheck" });
-      for (const op of doc.operations) op.state = "approved";
-      const command = doc.operations[0]?.cli.command.split(" ").slice(1) ?? [];
-      const io = bufferIO();
-      const code = await runToolCli(doc, [...command, "--auth", "service-account", "--dry-run"], {
-        env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv,
-        io,
-      });
-      expect(code, io.text()).toBe(0);
-      const plan = JSON.parse(io.stdout.join("\n"));
-      // Desired: the caller's value reaches the wire. Actual: it is replaced
-      // with the literal string "true" because `--auth` is force-parsed as a
-      // bare boolean (parseArgs) and `coerce()` (tool-cli.ts ~1005) returns any
-      // boolean value verbatim regardless of the parameter's declared schema type.
-      expect(plan.url).toContain("auth=service-account");
-    },
-  );
+    const doc = await compile({ spec, serviceId: "authcheck" });
+    for (const op of doc.operations) op.state = "approved";
+    const command = doc.operations[0]?.cli.command.split(" ").slice(1) ?? [];
+    const io = bufferIO();
+    const code = await runToolCli(doc, [...command, "--auth", "service-account", "--dry-run"], {
+      env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv,
+      io,
+    });
+    expect(code, io.text()).toBe(0);
+    const plan = JSON.parse(io.stdout.join("\n"));
+    // The caller's value reaches the wire: `--auth` is no longer forced to a
+    // bare boolean by BOOLEAN_FLAGS, so it parses as a valued flag and
+    // `coerce()` passes the string through untouched.
+    expect(plan.url).toContain("auth=service-account");
+  });
 
-  it.fails(
-    "BUG: `--payment-id --dry-run` (no value for --payment-id because the next token is itself " +
-      "a flag) is coerced to boolean `true` (coerce(), tool-cli.ts ~1005-1009) and sent as the " +
-      "path segment /payments/true, instead of being refused as invalid/missing input",
-    async () => {
-      const io = bufferIO();
-      const code = await runToolCli(air, ["payments", "get", "--payment-id", "--dry-run"], {
-        env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv,
-        io,
-      });
-      // Desired: refused as invalid input (exit 2), never a "successful" plan
-      // against a corrupted resource id.
-      expect(code, io.text()).toBe(2);
-    },
-  );
+  it("refuses `--payment-id --dry-run` (no value; next token is itself a flag) as a structured validation_error, exit 2", async () => {
+    const io = bufferIO();
+    const code = await runToolCli(air, ["payments", "get", "--payment-id", "--dry-run"], {
+      env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv,
+      io,
+    });
+    // Refused as invalid input (exit 2), never a "successful" plan against a
+    // corrupted resource id (/payments/true).
+    expect(code, io.text()).toBe(2);
+    const envelope = JSON.parse(io.stderr.join("\n"));
+    expect(envelope.error.code).toBe("validation_error");
+    expect(envelope.error.details.flag).toBe("--payment-id");
+  });
 });
 
 describe("--mcp flag validation branches", () => {
@@ -401,13 +394,12 @@ describe("--mcp flag validation branches", () => {
   });
 });
 
-describe("BUGS: an unguarded second remoteMcpTarget() call can throw uncaught", () => {
-  it.fails(
-    "BUG: with a custom --mcp connector AND a resolved --mcp-token-env, a malformed target still " +
-      "throws an unhandled Error instead of the structured validation refusal the connector-less " +
-      "path gives for the identical target — only the FIRST remoteMcpTarget() call (tool-cli.ts " +
-      "~459-467, guarded by `!deps.mcpConnect`) is wrapped in try/catch; the second one inside the " +
-      "token-env branch (tool-cli.ts ~496, `remote ??= remoteMcpTarget(mcpTarget)`) is not",
+describe("FIXED: the second remoteMcpTarget() call is guarded like the first", () => {
+  it(
+    "with a custom --mcp connector AND a resolved --mcp-token-env, a malformed target gets the " +
+      "same structured validation refusal the connector-less path gives for the identical target " +
+      "— both the FIRST remoteMcpTarget() call (tool-cli.ts ~459-467, guarded by `!deps.mcpConnect`) " +
+      "and the second one inside the token-env branch (tool-cli.ts ~496) are now wrapped in try/catch",
     async () => {
       const io = bufferIO();
       const code = await runToolCli(
@@ -421,9 +413,12 @@ describe("BUGS: an unguarded second remoteMcpTarget() call can throw uncaught", 
           },
         },
       );
-      // Desired: the same graceful validation_error (exit 2) the connector-less
-      // path returns for this identical malformed target.
+      // The same graceful validation_error (exit 2) the connector-less path
+      // returns for this identical malformed target.
       expect(code).toBe(2);
+      const envelope = JSON.parse(io.stderr.join("\n"));
+      expect(envelope.error.code).toBe("validation_error");
+      expect(envelope.error.details.flag).toBe("--mcp");
     },
   );
 });

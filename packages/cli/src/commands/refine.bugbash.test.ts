@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type AirDocument, airToYaml } from "@anvil/air";
+import { type AirDocument, airFromJson, airToJson, airToYaml, loadAirDocument } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
 import {
@@ -75,6 +75,57 @@ async function paymentsBundle(): Promise<{ air: AirDocument; dir: string }> {
   const dir = freshDir();
   writeBundle(dir, generateBundle(air));
   return { air, dir };
+}
+
+/**
+ * A minimal AIR document whose one gap (a required field with a `field.example`
+ * claim but no example value) the deterministic heuristic executor can ground and
+ * `generate-examples` auto-approves (any grounding evidence is sufficient — see
+ * `classifyApproval` rule 3 in packages/refinement/src/approval.ts). Trimmed from
+ * the fixture in packages/refinement/src/pack.test.ts's `doc()`, which documents
+ * the same shape producing an auto-approved refinement.
+ */
+function autoApprovingAir(): AirDocument {
+  return loadAirDocument({
+    service: { id: "payments", displayName: "Payments", version: "1", source: { kind: "openapi" } },
+    operations: [
+      {
+        id: "payments.refunds.create",
+        canonicalName: "create_refund",
+        displayName: "Create refund",
+        description: "Creates a refund for a captured payment.",
+        sourceRef: { kind: "openapi", path: "/refunds", method: "post" },
+        effect: { kind: "mutation", action: "create", risk: "financial", reversible: false },
+        input: {
+          params: [],
+          body: {
+            projection: "fields",
+            fields: [{ name: "amount", required: true, schema: { type: "integer", minimum: 1 } }],
+          },
+        },
+        errors: [],
+        idempotency: { mode: "required", mechanism: "header", key: "Idempotency-Key" },
+        retries: { mode: "none" },
+        confirmation: { required: true, risk: "financial" },
+        auth: { type: "oauth2_client_credentials", scopes: ["payments.write"] },
+        cli: { command: "payments refunds create" },
+        mcp: { toolName: "payments_create_refund" },
+        skill: { intentExamples: ["Refund a payment."] },
+        evidence: {
+          claims: [
+            {
+              subject: "input.body.amount",
+              predicate: "field.example",
+              value: 2500,
+              source: "test_fixture",
+              sourceRef: "contract_test.ts:10",
+              confidence: 0.85,
+            },
+          ],
+        },
+      },
+    ],
+  });
 }
 
 describe("anvil refine — shared path validation (plan, run, apply)", () => {
@@ -399,26 +450,54 @@ describe("anvil refine apply — real bundle (the sole mutating step)", () => {
   });
 });
 
-describe("BUG: refine apply's write path ignores the resolved AIR file's extension", () => {
-  // packages/cli/src/commands/refine.ts:239 — `writeFileSync(airPath, airToYaml(next), "utf8")`
-  // always serializes YAML, even when `airPath` resolved to an air.json file. resolveAirPath
-  // returns a non-directory path unchanged (shared.ts:6-16), and loadAir reads it correctly
-  // based on that same extension (`resolved.endsWith(".json") ? airFromJson : airFromYaml`,
-  // shared.ts:22) — but runApply's write at the end ignores that extension entirely. Point
-  // `anvil refine apply` directly at a bundle's air.json (e.g. because air.yaml was removed,
-  // or the caller simply names the .json file), and any auto-approved refinement corrupts
-  // that .json file with YAML syntax instead of JSON.
-  it.skip("BUG: applying refinements to an air.json path overwrites it with YAML, not JSON", async () => {
-    const { dir } = await paymentsBundle();
-    rmSync(join(dir, "air.yaml")); // force resolveAirPath to address air.json directly
+describe("FIXED: refine apply's write path now matches the resolved AIR file's extension", () => {
+  // packages/cli/src/commands/refine.ts:239 (previously) —
+  // `writeFileSync(airPath, airToYaml(next), "utf8")` always serialized YAML, even when
+  // `airPath` resolved to an air.json file. resolveAirPath returns a non-directory path
+  // unchanged (shared.ts:6-16), and loadAir reads it correctly based on that same extension
+  // (`resolved.endsWith(".json") ? airFromJson : airFromYaml`, shared.ts:22) — but runApply's
+  // write ignored that extension entirely. Pointing `anvil refine apply` directly at a
+  // bundle's air.json (e.g. because air.yaml was removed, or the caller simply names the
+  // .json file) corrupted that .json file with YAML syntax instead of JSON. Fixed by
+  // branching the write on `airPath.endsWith(".json")`, mirroring `loadAir`'s read branch.
+  it("applying an auto-approved refinement to an air.json path writes valid, reloadable JSON", async () => {
+    const air = autoApprovingAir();
+    const dir = freshDir();
     const airJsonPath = join(dir, "air.json");
+    writeFileSync(airJsonPath, airToJson(air), "utf8");
+
+    const pack = await runRefinements(air, {});
+    const { air: expectedNext, applied } = applyApproved(air, pack);
+    expect(applied.length).toBeGreaterThan(0); // the write path is only exercised if something is written
 
     const result = await refine("apply", airJsonPath);
-    expect(result.code).toBe(0);
+    expect(result.code, result.err).toBe(0);
+    expect(result.out).toContain(`Wrote ${airJsonPath}.`);
 
-    // Whenever at least one refinement auto-approved, the file must still be
-    // valid JSON afterward — it is not, because it was written with airToYaml.
     const written = readFileSync(airJsonPath, "utf8");
+    // Must still be valid JSON (not YAML) afterward, and reload to the same AIR
+    // `applyApproved` computed directly.
     expect(() => JSON.parse(written)).not.toThrow();
+    expect(written).toBe(airToJson(expectedNext));
+    expect(airFromJson(written)).toEqual(expectedNext);
+  });
+
+  it("applying an auto-approved refinement to an air.yaml path still writes valid YAML (no regression)", async () => {
+    const air = autoApprovingAir();
+    const dir = freshDir();
+    const airYamlPath = join(dir, "air.yaml");
+    writeFileSync(airYamlPath, airToYaml(air), "utf8");
+
+    const pack = await runRefinements(air, {});
+    const { air: expectedNext, applied } = applyApproved(air, pack);
+    expect(applied.length).toBeGreaterThan(0);
+
+    const result = await refine("apply", airYamlPath);
+    expect(result.code, result.err).toBe(0);
+    expect(result.out).toContain(`Wrote ${airYamlPath}.`);
+
+    const written = readFileSync(airYamlPath, "utf8");
+    expect(() => JSON.parse(written)).toThrow(); // sanity: this is YAML, not JSON
+    expect(written).toBe(airToYaml(expectedNext));
   });
 });

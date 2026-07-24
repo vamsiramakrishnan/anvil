@@ -367,13 +367,12 @@ describe("collection variable resolution", () => {
     expect(doc.servers?.[0]?.url).toBe("https://internal.local:8080");
   });
 
-  // BUG: when a resolved host variable ALREADY includes a scheme (e.g. the collection
+  // FIXED: when a resolved host variable ALREADY includes a scheme (e.g. the collection
   // variable is itself a full base URL), `lowerUrl` (packages/compiler/src/protocols/postman.ts,
-  // the `if (resolved && /^https?:\/\//i.test(resolved))` branch) returns
-  // `resolved.replace(/\/+$/, "")` and never appends the separately-declared `port`, even though
-  // `port` was computed specifically for this function and IS used in the other two branches of
-  // the same if/else. A url.port alongside an already-schemed host variable is silently dropped.
-  it.fails("BUG: postman.ts lowerUrl drops url.port when the resolved host variable already has a scheme", () => {
+  // the `if (resolved && /^https?:\/\//i.test(resolved))` branch) now appends the
+  // separately-declared `port`, matching the other two branches of the same if/else, instead of
+  // silently dropping it.
+  it("appends url.port even when the resolved host variable already has a scheme", () => {
     const spec = JSON.stringify({
       info: { schema: SCHEMA_V21 },
       variable: [{ key: "apiHost2", value: "https://internal.corp.com" }],

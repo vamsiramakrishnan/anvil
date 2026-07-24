@@ -253,16 +253,16 @@ describe("TokenExchangeResolver — jwt_bearer grant edge cases", () => {
     expect(calls).toEqual([]);
   });
 
-  // BUG: acquire() computes `audience`/`resource` from ANVIL_<P>_AUDIENCE /
+  // acquire() computes `audience`/`resource` from ANVIL_<P>_AUDIENCE /
   // ANVIL_<P>_RESOURCE (and auth.audience/auth.provider.resource) up front and
-  // sends them on the token_exchange and client_credentials grants, but the
-  // RFC 7523 jwt_bearer branch (credentials.ts, the `post(tokenEndpoint, {
-  // grant_type: GRANT_JWT_BEARER, assertion, ...(scope ? { scope } : {}) }, ...)`
-  // call) never includes them in the token request body, even though
-  // credentialRequirement() (auth.ts) advertises ANVIL_<P>_AUDIENCE as an
-  // optional credential for this exact auth shape. An operator who sets the
-  // audience for a jwt_bearer grant gets it silently dropped.
-  it.fails("BUG: jwt_bearer grant silently drops the configured audience from the token request", async () => {
+  // sends them on the token_exchange and client_credentials grants; the RFC
+  // 7523 jwt_bearer branch (credentials.ts, the `post(tokenEndpoint, {
+  // grant_type: GRANT_JWT_BEARER, assertion, ...(scope ? { scope } : {}),
+  // ...(audience ? { audience } : {}), ...(resource ? { resource } : {}) },
+  // ...)` call) now includes them in the token request body too, matching
+  // credentialRequirement() (auth.ts), which advertises ANVIL_<P>_AUDIENCE as
+  // an optional credential for this exact auth shape.
+  it("includes the configured audience and resource in the jwt_bearer token request", async () => {
     const { privateKey } = generateKeyPairSync("rsa", {
       modulusLength: 2048,
       publicKeyEncoding: { type: "spki", format: "pem" },
@@ -276,6 +276,7 @@ describe("TokenExchangeResolver — jwt_bearer grant edge cases", () => {
         ANVIL_PROD_TOKEN_ENDPOINT: "https://idp.example.com/token",
         ANVIL_PROD_CLIENT_ID: "svc@project.iam",
         ANVIL_PROD_CLIENT_ASSERTION_KEY: privateKey,
+        ANVIL_PROD_RESOURCE: "https://api.example.com/resource",
       },
       fetchImpl: fn,
     });
@@ -289,6 +290,7 @@ describe("TokenExchangeResolver — jwt_bearer grant edge cases", () => {
     );
     const form = new URLSearchParams(calls.find((c) => c.method === "POST")?.body ?? "");
     expect(form.get("audience")).toBe("https://target.example");
+    expect(form.get("resource")).toBe("https://api.example.com/resource");
   });
 });
 
