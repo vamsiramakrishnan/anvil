@@ -1865,11 +1865,7 @@ async function runInventory(
   return snapshot.diagnostics.some((d) => d.level === "error") ? 1 : 0;
 }
 
-async function runConnect(
-  exportPath: string,
-  opts: ConnectOptions,
-  io: CliIO,
-): Promise<number> {
+async function runConnect(exportPath: string, opts: ConnectOptions, io: CliIO): Promise<number> {
   const gatewayIdError = invalidGatewayId(opts.gatewayId);
   if (gatewayIdError) {
     if (opts.json) {

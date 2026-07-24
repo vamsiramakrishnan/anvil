@@ -48,10 +48,9 @@ describe("anvil distill", () => {
     const planPath = join(root, "enrich-plan.json");
     const writeIo = bufferIO();
     expect(
-      await runAnvilCli(
-        ["distill", bundle, "--as-enrich-plan", "--write", planPath],
-        { io: writeIo },
-      ),
+      await runAnvilCli(["distill", bundle, "--as-enrich-plan", "--write", planPath], {
+        io: writeIo,
+      }),
       writeIo.text(),
     ).toBe(0);
     expect(() => parseEnrichmentPlan(readFileSync(planPath, "utf8"))).not.toThrow();

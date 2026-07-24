@@ -307,8 +307,7 @@ describe("anvil deploy credentials", () => {
   it("refuses a tampered Terraform ledger URI instead of claiming static wiring is fresh", async () => {
     const path = join(bundle, "deploy", "terraform", "main.tf");
     const original = readFileSync(path, "utf8");
-    const expectedUri =
-      "firestore://${var.project_id}/${local.ledger_database_id}/payments";
+    const expectedUri = "firestore://${var.project_id}/${local.ledger_database_id}/payments";
     expect(original).toContain(expectedUri);
     writeFileSync(path, original.replace(expectedUri, `${expectedUri}-forged`), "utf8");
     try {
@@ -390,9 +389,7 @@ describe("anvil deploy credentials", () => {
       expect(plan.terraform.credentialSecretIds).not.toHaveLength(0);
       expect(plan.terraform.credentialSecretIds).toEqual(
         expect.arrayContaining([
-          expect.stringMatching(
-            /^projects\/acme-prod-1\/secrets\/payments-prod-coordinate-/,
-          ),
+          expect.stringMatching(/^projects\/acme-prod-1\/secrets\/payments-prod-coordinate-/),
         ]),
       );
     } finally {

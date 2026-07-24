@@ -11,8 +11,8 @@ import {
   resolveIdempotencyCarrier,
 } from "@anvil/air";
 import {
-  applyAuth,
   type AuthMaterial,
+  applyAuth,
   type CredentialResolver,
   credentialProfileName,
 } from "./auth.js";

@@ -199,9 +199,9 @@ describe("idempotency gate", () => {
 
     expect(res.outcome).toBe("success");
     const headers = transport.requests[0]?.headers ?? {};
-    expect(Object.keys(headers).filter((name) => name.toLowerCase() === "idempotency-key")).toEqual([
-      "Idempotency-Key",
-    ]);
+    expect(Object.keys(headers).filter((name) => name.toLowerCase() === "idempotency-key")).toEqual(
+      ["Idempotency-Key"],
+    );
     expect(new Headers(headers).get("idempotency-key")).toBe("refund-key-1");
   });
 

@@ -152,9 +152,7 @@ describe("gateway estate identity", () => {
       "--json",
     );
     expect(testImport.code, `${testImport.err}\n${testImport.out}`).toBe(0);
-    const testGeneration = JSON.parse(
-      readFileSync(join(testOut, "generation.json"), "utf8"),
-    );
+    const testGeneration = JSON.parse(readFileSync(join(testOut, "generation.json"), "utf8"));
     expect(testGeneration.resourceOptions.deploymentNamespace).toMatch(
       /^orders-test-v1-[0-9a-f]{16}-[0-9a-f]{24}$/,
     );

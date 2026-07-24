@@ -711,11 +711,9 @@ describe("GCP-native deploy (single owner per concern)", () => {
       'error_message = "One runtime environment variable may not be supplied by both var.env and credential_secret_refs."',
     );
     expect(tf).toContain("var.anvil_expected_project_id == var.project_id");
-    expect(tf).toContain(
-      "var.anvil_ledger_input_digest == local.ledger_deployment_input_digest",
-    );
+    expect(tf).toContain("var.anvil_ledger_input_digest == local.ledger_deployment_input_digest");
     expect(tf).toContain("bundle_hash           = var.anvil_bundle_hash");
-    expect(tf).toContain('input_digest             = var.anvil_ledger_input_digest');
+    expect(tf).toContain("input_digest             = var.anvil_ledger_input_digest");
     expect(tf).toContain('deployment_artifact_hash = "');
     expect(tf).toContain('store_contract_digest    = "');
     expect(tf).toContain("location                 = var.ledger_location");
@@ -757,27 +755,17 @@ describe("GCP-native deploy (single owner per concern)", () => {
     expect(envSchema.properties.ANVIL_UPSTREAM_TIMEOUT_MS.description).toContain("100..30000");
     expect(files["deploy/README.md"]).toContain("field-masked, non-mutating data-plane lookup");
     expect(files["deploy/README.md"]).toContain("In-progress reservations never carry a TTL");
-    expect(files["deploy/README.md"]).toContain(
-      'default `ledger_database_mode = "shared"`',
-    );
+    expect(files["deploy/README.md"]).toContain('default `ledger_database_mode = "shared"`');
     expect(files["deploy/README.md"]).toContain(
       "Capability Terraform must not create or import that",
     );
-    expect(files["deploy/README.md"]).toContain(
-      "Firestore IAM conditions do **not** isolate",
-    );
-    expect(files["deploy/README.md"]).toContain(
-      "Google Cloud console access",
-    );
-    expect(files["deploy/README.md"]).toContain(
-      "Actual data deletion is a",
-    );
+    expect(files["deploy/README.md"]).toContain("Firestore IAM conditions do **not** isolate");
+    expect(files["deploy/README.md"]).toContain("Google Cloud console access");
+    expect(files["deploy/README.md"]).toContain("Actual data deletion is a");
     expect(files["deploy/README.md"]).toContain(
       "import google_firestore_field.ledger_result_expiry",
     );
-    expect(files["deploy/README.md"]).toContain(
-      "gcloud builds submit --project YOUR_PROJECT",
-    );
+    expect(files["deploy/README.md"]).toContain("gcloud builds submit --project YOUR_PROJECT");
     expect(files["deploy/README.md"]).toContain("It is plan evidence, not an apply receipt");
     expect(files["deploy/README.md"]).toContain(
       "External input cannot shadow runtime safety controls",
@@ -805,8 +793,7 @@ describe("GCP-native deploy (single owner per concern)", () => {
     expect(contract.firestore.collectionGroup).toMatch(/^anvil_idempotency_[a-f0-9]{16}$/);
     expect(contract.firestore.runtimeUri).toEqual({
       environmentVariable: "ANVIL_LEDGER",
-      terraformExpression:
-        "firestore://${var.project_id}/${local.ledger_database_id}/payments",
+      terraformExpression: "firestore://${var.project_id}/${local.ledger_database_id}/payments",
       resolvedTemplate: "firestore://{project_id}/{database_id}/payments",
     });
     expect(contract.firestore.indexing).toEqual({
@@ -890,17 +877,13 @@ describe("GCP-native deploy (single owner per concern)", () => {
     expect(firstContract.firestore.collectionGroup).not.toBe(
       secondContract.firestore.collectionGroup,
     );
-    expect(first["deploy/terraform/main.tf"]).toContain(
-      'name     = "wso2-prod-payments-v1-tools"',
-    );
+    expect(first["deploy/terraform/main.tf"]).toContain('name     = "wso2-prod-payments-v1-tools"');
     expect(first["deploy/terraform/main.tf"]).toContain('value = "payments"');
     expect(first["deploy/cloudbuild.yaml"]).toContain("wso2-prod-payments-v1-tools:");
-    expect(first["deploy/cloudbuild.yaml"]).toContain(
-      "anvil/wso2-prod-payments-v1-tools",
+    expect(first["deploy/cloudbuild.yaml"]).toContain("anvil/wso2-prod-payments-v1-tools");
+    expect(() => generateDeploy(air, { deploymentNamespace: "unsafe/namespace" })).toThrow(
+      /deploymentNamespace/,
     );
-    expect(() =>
-      generateDeploy(air, { deploymentNamespace: "unsafe/namespace" }),
-    ).toThrow(/deploymentNamespace/);
   });
 
   it("rejects partial or malformed managed-store contracts", () => {
@@ -982,31 +965,31 @@ describe("GCP-native deploy (single owner per concern)", () => {
     expect(cb).not.toContain("$SHORT_SHA");
   });
 
-  it.each(["prod", "test"])(
-    "propagates the AIR %s environment into every deployment default",
-    (environment) => {
-      const scoped = structuredClone(air);
-      scoped.service.environment = environment;
-      const deploy = generateDeploy(scoped);
-      const cloudBuild = deploy["deploy/cloudbuild.yaml"] as string;
-      const variables = deploy["deploy/terraform/variables.tf"] as string;
-      const readme = deploy["deploy/README.md"] as string;
-      const env = JSON.parse(deploy["deploy/env.schema.json"] as string);
+  it.each([
+    "prod",
+    "test",
+  ])("propagates the AIR %s environment into every deployment default", (environment) => {
+    const scoped = structuredClone(air);
+    scoped.service.environment = environment;
+    const deploy = generateDeploy(scoped);
+    const cloudBuild = deploy["deploy/cloudbuild.yaml"] as string;
+    const variables = deploy["deploy/terraform/variables.tf"] as string;
+    const readme = deploy["deploy/README.md"] as string;
+    const env = JSON.parse(deploy["deploy/env.schema.json"] as string);
 
-      expect(cloudBuild).toContain(`_ANVIL_ENV: ${environment}`);
-      expect(variables).toMatch(
-        new RegExp(`variable "anvil_env" \\{[\\s\\S]*?default = "${environment}"`),
-      );
-      expect(readme).toContain(`--env ${environment} --project YOUR_PROJECT`);
-      expect(readme).toContain(`_ANVIL_ENV=${environment}`);
-      expect(readme).toContain("That value also selects the outbound credential");
-      expect(readme).toContain("Proof gates stay separate");
-      expect(readme).toContain("Conformance never performs");
-      expect(readme).toContain("a live mutation");
-      expect(env.properties.ANVIL_ENV.default).toBe(environment);
-      expect(env.properties.ANVIL_ENV.enum).toContain(environment);
-    },
-  );
+    expect(cloudBuild).toContain(`_ANVIL_ENV: ${environment}`);
+    expect(variables).toMatch(
+      new RegExp(`variable "anvil_env" \\{[\\s\\S]*?default = "${environment}"`),
+    );
+    expect(readme).toContain(`--env ${environment} --project YOUR_PROJECT`);
+    expect(readme).toContain(`_ANVIL_ENV=${environment}`);
+    expect(readme).toContain("That value also selects the outbound credential");
+    expect(readme).toContain("Proof gates stay separate");
+    expect(readme).toContain("Conformance never performs");
+    expect(readme).toContain("a live mutation");
+    expect(env.properties.ANVIL_ENV.default).toBe(environment);
+    expect(env.properties.ANVIL_ENV.enum).toContain(environment);
+  });
 
   it("has exactly one owner for the image tag and never leaks PROJECT/REGION placeholders", () => {
     const { files } = generateBundle(air);

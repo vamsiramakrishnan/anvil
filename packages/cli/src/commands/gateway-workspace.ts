@@ -8,10 +8,7 @@ import { dirname, join, resolve } from "node:path";
  * directories. A candidate is accepted only when the exact private receipt
  * exists.
  */
-export function locateGatewayWorkspace(
-  bundleDir: string,
-  importId: string,
-): string | undefined {
+export function locateGatewayWorkspace(bundleDir: string, importId: string): string | undefined {
   const candidates: string[] = [];
   const addAncestors = (start: string): void => {
     let current = resolve(start);
