@@ -280,6 +280,37 @@ describe("anvil estate inventory", () => {
   });
 });
 
+describe("anvil estate connect", () => {
+  it("runs a stable adapter probe on a supported export and returns machine-readable evidence", async () => {
+    const cfg = join(work, "kong.yaml");
+    writeFileSync(cfg, KONG_ONE_SERVICE);
+    const result = await estate("connect", cfg, "--vendor", "kong", "--json");
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.out);
+    expect(report).toMatchObject({
+      reportType: "anvil.gateway-estate-connect",
+      vendor: "kong",
+      reachable: true,
+      capabilities: expect.any(Object),
+      summary: { errors: 0, warnings: expect.any(Number), infos: expect.any(Number) },
+    });
+  });
+
+  it("fails a non-representable export in a machine-readable connect report", async () => {
+    const cfg = join(work, "kong-openapi.yaml");
+    writeFileSync(cfg, REFUNDS_OPENAPI);
+    const result = await estate("connect", cfg, "--vendor", "kong", "--json");
+    expect(result.code).toBe(1);
+    const report = JSON.parse(result.out);
+    expect(report).toMatchObject({
+      reportType: "anvil.gateway-estate-connect",
+      vendor: "kong",
+      reachable: false,
+      summary: { errors: expect.any(Number) },
+    });
+  });
+});
+
 describe("anvil estate audit", () => {
   it("emits a deterministic adoption report with ownership and CI thresholds", async () => {
     const cfg = join(work, "kong.yaml");

@@ -137,6 +137,27 @@ export function registerEstate(parent: Command, ctx: CommandContext): void {
 
   annotate(
     estate
+      .command("connect")
+      .summary("Probe the chosen vendor adapter and confirm whether the export is understandable.")
+      .argument(
+        "<export>",
+        "vendor export: a config file, ZIP/JAR archive, or WSO2 apictl collection directory",
+      )
+      .requiredOption("--vendor <vendor>", `vendor (${VENDOR_LIST})`)
+      .option("--entry <path>", "archive entry holding the config, when the archive has several")
+      .option(
+        "--gateway-id <id>",
+        "stable gateway control-plane/org/instance id included in the probe digest (default unscoped)",
+      )
+      .option("--json", "emit the connect report as JSON")
+      .action(async (exportPath: string, opts: ConnectOptions) => {
+        ctx.code = await runConnect(exportPath, opts, ctx.io);
+      }),
+    { mutates: false },
+  );
+
+  annotate(
+    estate
       .command("inventory")
       .summary("List the APIs in a gateway export without compiling anything.")
       .argument(
@@ -365,6 +386,9 @@ interface ImportOptions extends InventoryOptions {
   out?: string;
   replaceDerived?: boolean;
   json?: boolean;
+}
+interface ConnectOptions extends Pick<InventoryOptions, "entry" | "gatewayId" | "json"> {
+  vendor: string;
 }
 
 function normalizeGatewayUrl(value: string): string {
@@ -1839,6 +1863,94 @@ async function runInventory(
     }
   }
   return snapshot.diagnostics.some((d) => d.level === "error") ? 1 : 0;
+}
+
+async function runConnect(
+  exportPath: string,
+  opts: ConnectOptions,
+  io: CliIO,
+): Promise<number> {
+  const gatewayIdError = invalidGatewayId(opts.gatewayId);
+  if (gatewayIdError) {
+    if (opts.json) {
+      io.out(
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            reportType: "anvil.gateway-estate-connect-error",
+            code: "estate/invalid_gateway_id",
+            message: gatewayIdError,
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      io.err(gatewayIdError);
+    }
+    return 1;
+  }
+  const adapter = adapterFor(opts.vendor, io, opts.json);
+  if (!adapter) return 1;
+  const loaded = loadEstateForCommand(exportPath, opts.vendor, opts.entry, opts.json, io);
+  if (!loaded) return 1;
+
+  const probe = await adapter.probe(
+    estateConnection(opts.gatewayId?.trim() || "unscoped", loaded),
+    {},
+  );
+  if (opts.json) {
+    const diagnostics = dedupeGatewayDiagnostics(probe.diagnostics);
+    const summary = {
+      errors: diagnostics.filter((diagnostic) => diagnostic.level === "error").length,
+      warnings: diagnostics.filter((diagnostic) => diagnostic.level === "warning").length,
+      infos: diagnostics.filter((diagnostic) => diagnostic.level === "info").length,
+    };
+    io.out(
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          reportType: "anvil.gateway-estate-connect",
+          vendor: opts.vendor,
+          gatewayId: opts.gatewayId?.trim() || "unscoped",
+          reachable: probe.reachable,
+          protocolVersion: probe.protocolVersion,
+          capabilities: probe.capabilities,
+          diagnostics: diagnostics.map((diagnostic) => ({
+            level: diagnostic.level,
+            code: diagnostic.code,
+            message: diagnostic.message,
+            path: coordinateText(diagnostic),
+          })),
+          summary,
+          exportDigest: gatewaySha256(loaded.exportBytes),
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    io.out(
+      `Gateway probe for ${opts.vendor}: ${probe.reachable ? "reachable" : "unreachable"} ` +
+        `via ${opts.gatewayId?.trim() || "unscoped"}${loaded.archiveEntry ? ` (entry ${loaded.archiveEntry})` : ""}`,
+    );
+    if (probe.protocolVersion) {
+      io.out(`  protocol: ${probe.protocolVersion}`);
+    }
+    io.out(
+      `  capabilities: ${Object.entries(probe.capabilities)
+        .map(
+          ([capability, value]) =>
+            `${capability}=${typeof value === "boolean" ? (value ? "yes" : "no") : value}`,
+        )
+        .join(", ")}`,
+    );
+    io.out(`  diagnostics: ${probe.diagnostics.length}`);
+    if (probe.diagnostics.length > 0) {
+      printDiagnostics(io, probe.diagnostics);
+    }
+  }
+  return probe.reachable ? 0 : 1;
 }
 
 async function runAudit(exportPath: string, opts: AuditOptions, io: CliIO): Promise<number> {

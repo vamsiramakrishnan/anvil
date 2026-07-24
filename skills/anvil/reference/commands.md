@@ -282,6 +282,21 @@ Options:
 
 Print the case's target inspection.
 
+#### `anvil case battery`
+`anvil case battery [options]`
+
+Run the investigator benchmark battery.
+
+Run either the deterministic baseline-vs-investigation battery (default, scripted, fast) or, when explicitly enabled, the real-agent investigator effectiveness battery. The default mode is deterministic and does not invoke an external agent.
+
+Options:
+- `--real` — invoke a real coding agent for the effectiveness battery
+- `--json` — emit JSON report
+- `--command <command>` — agent CLI to drive (default: claude)
+- `--model <model>` — model passed through to the agent CLI
+- `--check` — fail on scripted battery expectation mismatches
+- `--allow-degraded-native` — proceed even when native execution cannot enforce split
+
 #### `anvil case add-evidence`
 `anvil case add-evidence [options] <case-dir>`
 
@@ -375,6 +390,17 @@ Reports what artifact shapes Anvil actually accepts, separately from the semanti
 
 Options:
 - `--json` — emit the stable machine-readable support registry
+
+#### `anvil estate connect`
+`anvil estate connect [options] <export>`
+
+Probe the chosen vendor adapter and confirm whether the export is understandable.
+
+Options:
+- `--vendor <vendor>` — vendor (kong | apigee | wso2 | mulesoft | api_connect)
+- `--entry <path>` — archive entry holding the config, when the archive has several
+- `--gateway-id <id>` — stable gateway control-plane/org/instance id included in the probe digest (default unscoped)
+- `--json` — emit the connect report as JSON
 
 #### `anvil estate inventory`
 `anvil estate inventory [options] <export>`

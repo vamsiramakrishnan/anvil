@@ -13,12 +13,18 @@ adopt APIs one revision/environment coordinate at a time:
 ```bash
 GATEWAY_ID=<stable-control-plane-or-org-id>
 anvil estate support --json > gateway-support.json
+anvil estate connect <export> --vendor <vendor> --gateway-id "$GATEWAY_ID"
 anvil estate inventory <export> --vendor <vendor> --gateway-id "$GATEWAY_ID" --summary
 anvil estate audit <export> --vendor <vendor> --gateway-id "$GATEWAY_ID" --check
 anvil estate plan <export> --vendor <vendor> --gateway-id "$GATEWAY_ID" \
   --init-selection estate-selection.yaml \
   --out estate-adoption-plan.json
 ```
+
+Run `anvil estate connect` when introducing a new export to separate adapter
+readability and schema support checks from estate-wide audit. Connect returns a stable
+report (`reachability`, `capabilities`, `diagnostics`, `protocolVersion`) and
+does not require strict coordinate selection.
 
 For a large human view, filter `inventory` with `--query`, `--owner`, or
 `--lifecycle`, and bound it with `--limit`; use `--all` only when you

@@ -30,6 +30,9 @@ Anvil both sources of truth:
 # 0. Pin the versioned accepted-input and proof contract.
 anvil estate support --json > gateway-support.json
 
+# 0.5. Optional adapter preflight: confirm the export is readable before a full estate audit.
+anvil estate connect gateway-export.yaml --vendor kong --gateway-id kong-prod --json
+
 # 1. Inventory and audit the complete accepted input, then create a review queue.
 anvil estate inventory gateway-export.yaml --vendor kong \
   --gateway-id kong-prod --summary
