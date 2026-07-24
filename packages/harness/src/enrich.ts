@@ -161,7 +161,7 @@ export async function runEnrichment(
   return {
     sources: connected,
     operations,
-    proposedManifest: { operations: proposed, workflows: {} },
+    proposedManifest: { operations: proposed, workflows: {}, capabilities: {} },
     graph,
     targetedOperationIds: targetedIds,
   };

@@ -78,7 +78,7 @@ Compiles from an immutable Layer 0 source snapshot: everything the compiler read
 Options:
 - `--source <snapshot-id>` — compile an already-locked snapshot instead of a spec file
 - `--entrypoint <path>` — snapshot-relative entrypoint when a source has several
-- `--manifest <file>` — Anvil manifest with semantic overrides
+- `--manifest <file>` — Anvil manifest with semantic overrides, workflows, and exact-id capability reviews
 - `--service <id>` — override the derived service id
 - `--out <dir>` — bundle output directory (default generated/<service-id>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
@@ -88,9 +88,9 @@ Options:
 ### `anvil status`
 `anvil status [options] <path>`
 
-Show source, projection, approval, certification, target, and release status.
+Show source, projection, approval, assurance, target, and release-plan status.
 
-Read-only. Resolves the canonical AIR and locked-source coordinate, verifies generated CLI/MCP/catalog/runtime projections against it, checks certification and publication freshness, detects stale target setup signatures, and chooses one deterministic next safe action. Exit is non-zero only when a core projection is missing, corrupt, or misaligned.
+Read-only. Resolves the canonical AIR and locked-source coordinate, verifies generated CLI/MCP/catalog/runtime projections against it, checks static assurance plus current-hash selftest/conformance/simulation evidence, checks deployment-plan freshness, detects stale target setup signatures, and chooses one deterministic next safe action. A local publication.json means only that a plan was prepared; it never means deployed or live. Exit is non-zero only when a core projection is missing, corrupt, or misaligned.
 
 Options:
 - `--root <dir>` — workspace root containing .anvil/sources
@@ -137,7 +137,7 @@ Options:
 
 Review capability groupings: propose, inspect, approve, reject, or diff.
 
-The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. `approve`/`reject` persist the review decision to the AIR file. Approval enforces the tool budget: a capability disclosing more than 20 tools is blocked without --allow-large (more than 15 warns). Only an approved capability can be built with `anvil build`.
+The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. `approve`/`reject` persist the review decision to the AIR file. Approval enforces the effective disclosure budget (direct members plus authored workflow dependencies): more than 20 tools is blocked without --allow-large and an audit note; more than 15 warns. Only an approved capability can be built with `anvil build`.
 
 #### `anvil capability propose`
 `anvil capability propose [options] <path>`
@@ -166,7 +166,7 @@ Options:
 Record the approval decision; the tool budget gates it.
 
 Options:
-- `--allow-large` — waive the >20-tool budget block
+- `--allow-large` — waive the >20-tool budget block (requires a non-empty --note)
 - `--note <note>` — review note persisted with the decision
 
 #### `anvil capability reject`
@@ -373,6 +373,7 @@ Options:
 - `--api <id>` — API id from `estate inventory` (optional when the estate has one)
 - `--entry <path>` — archive entry holding the config, when the archive has several
 - `--spec <path>` — original OpenAPI/Swagger contract; lock it and apply gateway policies instead of compiling route-only synthesis
+- `--manifest <path>` — supplemental Anvil manifest, including exact-id capability reviews, applied in the receipt-bound compile
 - `--gateway-url <url>` — operator-attested public HTTPS gateway base URL; required with --spec so generated tools cannot bypass the gateway
 - `--root <dir>` — workspace root for the locked source under .anvil/sources
 - `--service <id>` — override the derived service id
@@ -435,7 +436,7 @@ Compile one approved capability into an aligned CLI + MCP + skill bundle.
 Narrows the AIR document to the capability's approved operations and reachable schemas, then reuses the whole-service generator, so the capability bundle is the same aligned projection of a smaller model. Refuses (with a structured error) a capability that is missing, not lifecycle-approved, or would build empty. Stamps a content-addressed bundle.json (capabilityHash + contractHash shared by every surface); rebuilding unchanged input reproduces identical hashes.
 
 Options:
-- `--out <dir>` — bundle output directory (default generated/<capability-id>)
+- `--out <dir>` — bundle output directory (default generated/<capability-artifact-id>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
 
 ### `anvil review`  *(mutates)*
@@ -454,9 +455,9 @@ Options:
 ### `anvil certify`  *(mutates)*
 `anvil certify [options] <path>`
 
-Run the certification gates over a bundle and write certification.json.
+Run static bundle-assurance gates and write certification.json.
 
-Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates, generated surfaces align, and each persisted target subtree exactly regenerates from its setup config), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.
+Static assurance only: four deterministic gates judge the bundle as emitted. CONTRACT re-validates AIR, generated-surface alignment, and persisted target-kit regeneration; SAFETY checks confirmation, retry/idempotency, and secret handling; SEMANTIC checks descriptions and routing; RUNTIME checks generated mocks, evals, conformance tests, and deploy artifacts. The record binds to a content hash, so generated-byte tampering invalidates it. It does not boot or invoke a surface; use `anvil selftest`, `anvil conformance`, and `anvil simulate` for executable evidence.
 
 Options:
 - `--json` — emit the full certification as JSON
@@ -498,14 +499,15 @@ Options:
 ### `anvil publish`  *(mutates)*
 `anvil publish [options] <dir>`
 
-Gated publish: verify the certification, then emit the deployment plan.
+Prepare a gated deployment plan; make no cloud API calls.
 
-Publication requires a PASSING certification whose bundle hash matches the current bundle content — a stale certificate fails. On success it prints the Cloud Run deployment plan (same as `anvil deploy cloud-run`) and writes publication.json into the bundle. `--allow-uncertified` waives the gate for non-prod environments only; publishing to prod (via --env prod or ANVIL_ENV=prod) fails closed without a valid certification, flag or no flag. No cloud credentials are held and no API calls are made.
+Compatibility note: `publish` prepares a deployment plan; it does not publish, apply, deploy, or contact a cloud API. Fresh static assurance and fresh passing selftest, conformance, and simulation reports must all match the current bundle content. On success it prints the Cloud Run operator plan and writes publication.json with the evidence snapshot. `--allow-uncertified` and `--allow-incomplete-evidence` are explicit non-prod-only waivers; prod always fails closed. Cloud Run is the sole target and therefore the default.
 
 Options:
 - `--target <target>` — publish target
 - `--env <env>` — target environment (default from ANVIL_ENV, else dev)
-- `--allow-uncertified` — waive the certification gate (non-prod only)
+- `--allow-uncertified` — waive static assurance for this plan (non-prod only)
+- `--allow-incomplete-evidence` — waive missing, stale, corrupt, or failing executable evidence (non-prod only)
 - `--json` — emit the publication record as JSON
 
 ### `anvil deploy`
@@ -513,7 +515,7 @@ Options:
 
 Print the Cloud Run deployment plan for a bundle.
 
-Anvil generates the deploy artifacts (Dockerfile, Terraform, env/credential contracts); it does not hold cloud credentials.
+Plan only: Anvil prints generated Dockerfile/Terraform/env instructions. It does not call Cloud Run, apply Terraform, or hold cloud credentials.
 
 #### `anvil deploy cloud-run`
 `anvil deploy cloud-run [options] <dir>`
@@ -547,9 +549,9 @@ Options:
 - `--surface <surface>` — registration surface
 - `--server-auth <mode>` — MCP resource-server auth mode
 - `--endpoint <url>` — the connector's public HTTPS MCP URL (e.g. https://host/mcp)
-- `--project <id>` — GCP project — fills the registration artifacts + console links
-- `--project-number <number>` — numeric GCP project identity used in a synthesized canonical engine resource
-- `--location <loc>` — Gemini Enterprise app/engine location
+- `--project <id>` — 6-30 character GCP project ID (not the numeric project number)
+- `--project-number <number>` — provider-assigned numeric GCP project identity used in canonical resources
+- `--location <loc>` — Gemini Enterprise app/engine location: global, us, eu, or a region
 - `--engine <id-or-resource>` — GE engine id, or full projects/.../locations/.../collections/.../engines/... resource
 - `--gateway-location <region>` — Agent Gateway region (required to match the verified app-location matrix)
 - `--registry-location <region>` — Agent Registry location referenced by the gateway
@@ -560,11 +562,11 @@ Options:
 - `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
 - `--inbound-issuer <url>` — issuer the MCP resource server validates
 - `--inbound-audience <audience>` — audience identifying this MCP API
-- `--wif <pool>` — Gemini Enterprise Workforce Identity Federation pool (separate from /mcp auth)
+- `--wif <pool>` — full locations/global/workforcePools/<pool-id> resource for GE sign-in (separate from /mcp auth)
 - `--allow-unauthenticated-mcp` — acknowledge that no-auth leaves the public /mcp endpoint without a bearer-token gate
 - `--confirm-engine-egress-reroute` — acknowledge that Agent Gateway binding reroutes all agent egress for the engine
-- `--agent-identity-principal-set <resource>` — exact principalSet:// identity granted registry, gateway, and runtime access
-- `--gateway-authorization-policy <resource>` — exact authorization-policy resource attached to the Agent Gateway
+- `--agent-identity-principal-set <resource>` — documented principalSet://agents.global... resource granted registry, gateway, and runtime access
+- `--gateway-authorization-policy <resource>` — full projects/<project>/locations/<region>/authzPolicies/<policy> resource attached to the gateway
 - `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
 - `--json` — emit the plan + compatibility report as JSON
 
@@ -616,11 +618,11 @@ Options:
 - `--json` — emit the reviewed record as JSON
 
 ### `anvil run`  *(mutates)*
-`anvil run <dir> [args...]`
+`anvil run [dir] [args...]`
 
 Invoke an operation through the safety runtime.
 
-Supports --dry-run, --confirm, --idempotency-key, --schema, --examples, --errors, --policy, --explain, --json, --trace. Unsafe mutations refuse without --confirm; failures are structured envelopes with stable exit codes (2 input, 3 needs-flags, 4 auth, 5 policy, 6 upstream state, 7 upstream availability).
+Supports --dry-run, --confirm, --idempotency-key, --schema, --examples, --errors, --policy, --explain, --json, --trace. Route through MCP with --mcp stdio, --mcp <https-url>, or explicit legacy --mcp sse:<url>; --mcp-token-env <NAME> reads a remote bearer token from that environment variable without putting the token in argv. Unsafe mutations refuse without --confirm; failures are structured envelopes with stable exit codes (2 input, 3 needs-flags, 4 auth, 5 policy, 6 upstream state, 7 upstream availability).
 
 ### `anvil serve`
 `anvil serve [options] [command]`
@@ -634,7 +636,7 @@ Boots the MCP server for local agent use. The same server deploys to Cloud Run f
 
 Serve the bundle's MCP server on stdio.
 
-### `anvil package`
+### `anvil package`  *(mutates)*
 `anvil package [options] [command]`
 
 Validate and package the portable skill package.

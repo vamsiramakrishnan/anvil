@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   approveCapability,
   BUDGET_BLOCKED_CODE,
+  BUDGET_WAIVED_CODE,
   BUDGET_WARNING_CODE,
   CapabilityReviewError,
   capabilityToolBudget,
@@ -20,6 +21,20 @@ function specWithOps(count: number): string {
       "    get:",
       `      operationId: getThing${i}`,
       "      tags: [things]",
+      '      responses: { "200": { description: ok } }',
+    ].join("\n"),
+  ).join("\n");
+  return `openapi: 3.0.0\ninfo: { title: things, version: 1.0.0 }\npaths:\n${paths}\n`;
+}
+
+/** 15 direct tools plus 6 authored workflow dependencies from another grouping. */
+function specWithWorkflowClosure(): string {
+  const paths = Array.from({ length: 21 }, (_, i) =>
+    [
+      `  /things${i}:`,
+      "    get:",
+      `      operationId: getThing${i}`,
+      `      tags: [${i < 15 ? "primary" : "support"}]`,
       '      responses: { "200": { description: ok } }',
     ].join("\n"),
   ).join("\n");
@@ -75,6 +90,153 @@ describe("capability review lifecycle", () => {
       expect((err as CapabilityReviewError).code).toBe("capability_not_found");
     }
   });
+
+  it("applies exact-id capability review decisions from the supplemental manifest", async () => {
+    const air = await compile({
+      spec: specWithOps(2),
+      serviceId: "things",
+      manifest: `capabilities:
+  things.things:
+    state: approved
+    note: reviewed with the source and gateway evidence
+`,
+    });
+    expect(air.capabilities).toHaveLength(1);
+    expect(air.capabilities[0]).toMatchObject({
+      id: "things.things",
+      lifecycle: "approved",
+      reviewNote: "reviewed with the source and gateway evidence",
+    });
+  });
+
+  it("applies manifest rejection without changing member operation approval", async () => {
+    const air = await compile({
+      spec: specWithOps(2),
+      serviceId: "things",
+      manifest: `operations:
+  getThing0:
+    state: approved
+capabilities:
+  things.things:
+    state: rejected
+    note: This grouping is not the right release unit.
+`,
+    });
+    expect(air.capabilities[0]).toMatchObject({
+      lifecycle: "rejected",
+      reviewNote: "This grouping is not the right release unit.",
+    });
+    expect(
+      air.operations.find((operation) => operation.sourceRef.operationId === "getThing0")?.state,
+    ).toBe("approved");
+    expect(
+      air.operations.find((operation) => operation.sourceRef.operationId === "getThing1")?.state,
+    ).not.toBe("approved");
+  });
+
+  it("rejects an unknown manifest capability id with the typed review error", async () => {
+    try {
+      await compile({
+        spec: specWithOps(1),
+        serviceId: "things",
+        manifest: `capabilities:
+  things.nope:
+    state: approved
+`,
+      });
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(CapabilityReviewError);
+      expect((err as CapabilityReviewError).code).toBe("capability_not_found");
+      expect((err as Error).message).toContain("Known capabilities: things.things");
+    }
+  });
+
+  it("resolves exact capability ids after service and resource-name overrides", async () => {
+    const renamed = `service:
+  name: renamed
+operations:
+  getThing0:
+    name:
+      resource: records
+capabilities:
+  renamed.record:
+    state: approved
+`;
+    const untaggedSpec = specWithOps(1).replace("      tags: [things]\n", "");
+    const air = await compile({ spec: untaggedSpec, manifest: renamed });
+    expect(air.capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "renamed.record", lifecycle: "approved" }),
+      ]),
+    );
+
+    await expect(
+      compile({
+        spec: untaggedSpec,
+        manifest: renamed.replace("renamed.record:", "things.thing:"),
+      }),
+    ).rejects.toMatchObject({
+      name: "CapabilityReviewError",
+      code: "capability_not_found",
+      message: expect.stringContaining("Known capabilities: renamed.record"),
+    });
+  });
+
+  it("is invariant to capability decision map order", async () => {
+    const spec = specWithWorkflowClosure();
+    const first = await compile({
+      spec,
+      serviceId: "things",
+      manifest: `capabilities:
+  things.support:
+    state: rejected
+    note: split support
+  things.primary:
+    state: approved
+    note: primary reviewed
+`,
+    });
+    const reversed = await compile({
+      spec,
+      serviceId: "things",
+      manifest: `capabilities:
+  things.primary:
+    note: primary reviewed
+    state: approved
+  things.support:
+    note: split support
+    state: rejected
+`,
+    });
+    expect(airToYaml(reversed)).toBe(airToYaml(first));
+  });
+
+  it("rejects meaningless or unaudited allow_large manifest declarations", async () => {
+    await expect(
+      compile({
+        spec: specWithOps(1),
+        serviceId: "things",
+        manifest: `capabilities:
+  things.things:
+    state: rejected
+    allow_large: false
+`,
+      }),
+    ).rejects.toThrow("allow_large is valid only for an approved capability review");
+
+    await expect(
+      compile({
+        spec: specWithOps(21),
+        serviceId: "things",
+        manifest: `capabilities:
+  things.things:
+    state: approved
+    allow_large: true
+`,
+      }),
+    ).rejects.toThrow("a non-empty review note is required when allow_large is true");
+  });
 });
 
 describe("tool budget (deterministic, typed diagnostic)", () => {
@@ -113,6 +275,20 @@ describe("tool budget (deterministic, typed diagnostic)", () => {
     const budget = approveCapability(air, id);
     expect(budget.verdict).toBe("warning");
     expect(air.capabilities[0]?.lifecycle).toBe("approved");
+    expect(air.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "warning",
+          code: BUDGET_WARNING_CODE,
+          capabilityId: id,
+        }),
+      ]),
+    );
+
+    rejectCapability(air, id, "Do not expose this grouping.");
+    expect(air.diagnostics.some((diagnostic) => diagnostic.code === BUDGET_WARNING_CODE)).toBe(
+      false,
+    );
   });
 
   it("blocks approval above 20 without --allow-large (structured diagnostic)", async () => {
@@ -135,9 +311,106 @@ describe("tool budget (deterministic, typed diagnostic)", () => {
     expect(air.capabilities[0]?.lifecycle).toBe("proposed"); // refusal did not mutate
 
     // The deliberate override records the approval.
-    const budget = approveCapability(air, id, { allowLarge: true });
-    expect(budget.verdict).toBe("blocked");
+    expect(() => approveCapability(air, id, { allowLarge: true })).toThrowError(
+      expect.objectContaining({ code: "capability_budget_waiver_note_required" }),
+    );
+    const budget = approveCapability(air, id, {
+      allowLarge: true,
+      note: "Reviewed as one deliberately large disclosure unit.",
+    });
+    expect(budget.verdict).toBe("warning");
+    expect(budget.diagnostic?.code).toBe(BUDGET_WAIVED_CODE);
     expect(air.capabilities[0]?.lifecycle).toBe("approved");
+    expect(air.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "warning",
+          code: BUDGET_WAIVED_CODE,
+          capabilityId: id,
+        }),
+      ]),
+    );
+  });
+
+  it("enforces the same typed budget gate for manifest approval and requires allow_large", async () => {
+    const review = `capabilities:
+  things.things:
+    state: approved
+`;
+    try {
+      await compile({ spec: specWithOps(21), serviceId: "things", manifest: review });
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(CapabilityReviewError);
+      expect((err as CapabilityReviewError).code).toBe("capability_budget_exceeded");
+      expect((err as CapabilityReviewError).diagnostic?.code).toBe(BUDGET_BLOCKED_CODE);
+    }
+
+    const overridden = await compile({
+      spec: specWithOps(21),
+      serviceId: "things",
+      manifest: `${review}    allow_large: true
+    note: Deliberately reviewed as one large disclosure unit.
+`,
+    });
+    expect(overridden.capabilities[0]?.lifecycle).toBe("approved");
+    expect(overridden.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "warning",
+          code: BUDGET_WAIVED_CODE,
+          capabilityId: "things.things",
+        }),
+      ]),
+    );
+  });
+
+  it("budgets the unique authored-workflow dependency closure before manifest approval", async () => {
+    const workflow = `workflows:
+  cross_group:
+    capability: things.primary
+    steps:
+${Array.from({ length: 6 }, (_, index) => `      - operation: getThing${index + 15}`).join("\n")}
+capabilities:
+  things.primary:
+    state: approved
+`;
+    try {
+      await compile({
+        spec: specWithWorkflowClosure(),
+        serviceId: "things",
+        manifest: workflow,
+      });
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(CapabilityReviewError);
+      expect((err as CapabilityReviewError).code).toBe("capability_budget_exceeded");
+      expect((err as CapabilityReviewError).diagnostic).toMatchObject({
+        capabilityId: "things.primary",
+        code: BUDGET_BLOCKED_CODE,
+        message: expect.stringContaining("21 tools"),
+      });
+    }
+
+    const overridden = await compile({
+      spec: specWithWorkflowClosure(),
+      serviceId: "things",
+      manifest: `${workflow}    allow_large: true
+    note: Reviewed all 15 direct tools and 6 workflow dependencies.
+`,
+    });
+    expect(overridden.capabilities.find((cap) => cap.id === "things.primary")).toMatchObject({
+      lifecycle: "approved",
+    });
+    expect(overridden.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: BUDGET_WAIVED_CODE,
+          capabilityId: "things.primary",
+          message: expect.stringContaining("21 tools"),
+        }),
+      ]),
+    );
   });
 });
 

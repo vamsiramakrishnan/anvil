@@ -1,4 +1,4 @@
-import { cpSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Command } from "commander";
 import { parse as parseYaml } from "yaml";
@@ -13,7 +13,7 @@ export function registerPackage(parent: Command, ctx: CommandContext): void {
       .command("package")
       .summary("Validate and package the portable skill package.")
       .description("The skill is also served over MCP as anvil://skill/<service>/... resources."),
-    { mutates: false },
+    { mutates: true },
   );
 
   pkg
@@ -38,16 +38,24 @@ interface SkillIssue {
 
 /** Agent Skills `name`: [a-z0-9-], ≤64, no leading/trailing/double hyphen. */
 const SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const SYMLINK_MARKER = "/<symlink>";
 
 function runPackageSkill(dir: string, out: string | undefined, io: CliIO): number {
   const skillDir = join(dir, "skill");
-  if (!existsSync(join(skillDir, "SKILL.md"))) {
+  const skillMdPath = join(skillDir, "SKILL.md");
+  if (!existsSync(skillMdPath)) {
     io.err(`No skill found at ${skillDir}. Run \`anvil compile\` first.`);
+    return 1;
+  }
+  const skillMdStat = lstatSync(skillMdPath);
+  if (!skillMdStat.isFile() || skillMdStat.isSymbolicLink()) {
+    io.err(`Skill entrypoint ${skillMdPath} must be a regular file, not a symlink.`);
     return 1;
   }
 
   const issues: SkillIssue[] = [];
   const files = walkFiles(skillDir);
+  validateNoSymlinks(files, issues);
   const skillName = validateSkillMd(skillDir, dir, issues);
   validateMarkdownFrontmatter(skillDir, files, issues);
   validateExamples(skillDir, files, issues);
@@ -66,7 +74,26 @@ function runPackageSkill(dir: string, out: string | undefined, io: CliIO): numbe
   if (out) {
     // The Agent Skills spec requires the skill's directory name to equal the
     // frontmatter `name` — the copy is what makes the package spec-legal.
+    mkdirSync(out, { recursive: true });
     const dest = join(out, skillName);
+    if (existsSync(dest)) {
+      const stat = lstatSync(dest);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        io.err(
+          `Refusing to replace non-directory or symlinked skill destination ${dest}; choose another --out.`,
+        );
+        return 1;
+      }
+      if (!sameDirectoryTree(skillDir, dest)) {
+        io.err(
+          `Refusing to overwrite nonidentical skill package at ${dest}; choose another --out or remove the old package explicitly.`,
+        );
+        return 1;
+      }
+      io.out(`Already packaged at ${dest}; destination is byte-identical.`);
+      io.out("It is also served over MCP as anvil://skill/<service>/... resources.");
+      return 0;
+    }
     cpSync(skillDir, dest, { recursive: true });
     io.out(`Packaged to ${dest} (directory name matches the skill name "${skillName}").`);
   } else {
@@ -78,19 +105,49 @@ function runPackageSkill(dir: string, out: string | undefined, io: CliIO): numbe
   return 0;
 }
 
+/** Exact recursive comparison; symlinks are never accepted as package content. */
+function sameDirectoryTree(source: string, destination: string): boolean {
+  const sourceFiles = walkFiles(source);
+  const destinationFiles = walkFiles(destination);
+  if (
+    sourceFiles.length !== destinationFiles.length ||
+    sourceFiles.some((file, index) => file !== destinationFiles[index])
+  ) {
+    return false;
+  }
+  return sourceFiles.every((file) =>
+    readFileSync(join(source, file)).equals(readFileSync(join(destination, file))),
+  );
+}
+
 /** All files under `root`, as root-relative POSIX paths. */
 function walkFiles(root: string): string[] {
   const out: string[] = [];
   const walk = (rel: string): void => {
     for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {
-      if (entry.name === "node_modules" || entry.isSymbolicLink()) continue;
+      if (entry.name === "node_modules") continue;
       const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
+      if (entry.isSymbolicLink()) {
+        out.push(`${childRel}${SYMLINK_MARKER}`);
+        continue;
+      }
       if (entry.isDirectory()) walk(childRel);
       else out.push(childRel);
     }
   };
   walk("");
   return out.sort();
+}
+
+function validateNoSymlinks(files: string[], issues: SkillIssue[]): void {
+  for (const rel of files) {
+    if (!rel.endsWith(SYMLINK_MARKER)) continue;
+    issues.push({
+      file: rel.slice(0, -SYMLINK_MARKER.length),
+      rule: "no-symlinks",
+      message: "skill packages must contain regular files and directories only",
+    });
+  }
 }
 
 /** Parse a leading `---\n...\n---` frontmatter block as YAML, or undefined. */
@@ -249,6 +306,7 @@ function validateExamples(skillDir: string, files: string[], issues: SkillIssue[
 function validateNoAbsolutePaths(skillDir: string, files: string[], issues: SkillIssue[]): void {
   const absolute = /(^|[\s"'`(=])\/(home|tmp|usr|var|etc|private|Users)\//m;
   for (const rel of files) {
+    if (rel.endsWith(SYMLINK_MARKER)) continue;
     const hit = readFileSync(join(skillDir, rel), "utf8").match(absolute);
     if (hit) {
       issues.push({

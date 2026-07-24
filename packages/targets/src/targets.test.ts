@@ -12,6 +12,14 @@ import {
   type GeminiEnterpriseTargetConfigInput,
 } from "./config.js";
 import { buildConnectorPlan, renderConnectorPlanText } from "./connector-plan.js";
+import {
+  isGcpProjectId,
+  isGcpProjectNumber,
+  isWorkforcePoolResource,
+  parseAgentIdentityPrincipalSet,
+  parseCanonicalEngineResource,
+  parseGatewayAuthorizationPolicyResource,
+} from "./coordinates.js";
 import { GEMINI_ENTERPRISE_PROFILE } from "./gemini-enterprise.js";
 import { generateTargetKit } from "./generate.js";
 import { buildRegistrationRequest, renderRegistrationCurl } from "./registration.js";
@@ -33,6 +41,8 @@ paths:
       description: Issue a refund.
       responses: { "201": { description: created } }
 `;
+const AGENT_PRINCIPAL_SET =
+  "principalSet://agents.global.org-123456789012.system.id.goog/attribute.container/projects/123456789";
 
 let air: AirDocument;
 
@@ -63,8 +73,7 @@ function config(overrides: GeminiEnterpriseTargetConfigInput = {}) {
     engine: "eng-1",
     gatewayLocation: "us-central1",
     registryLocation: "global",
-    agentIdentityPrincipalSet:
-      "principalSet://agents.global.org-123.system.id.goog/deployed-agents",
+    agentIdentityPrincipalSet: AGENT_PRINCIPAL_SET,
     gatewayAuthorizationPolicy: "projects/acme-proj/locations/us-central1/authzPolicies/mcp-egress",
     workforcePool: "locations/global/workforcePools/ge-users",
     confirmEngineEgressReroute: true,
@@ -105,6 +114,7 @@ describe("target kit generation", () => {
       "inbound-auth.env",
       "oauth.template.json",
       "organization-policy-checklist.md",
+      "README.md",
       "registration.curl.sh",
       "registration.request.template.json",
       "server-description.md",
@@ -160,7 +170,7 @@ describe("target kit generation", () => {
     expect(textFile(kit, "cloud-run.tfvars")).toContain("api://anvil-mcp/mcp.invoke");
     expect(textFile(kit, "cloud-run.tfvars")).toContain("allow_unauthenticated = true");
     expect(textFile(kit, "cloud-run.tfvars")).toContain(
-      'invoker_members       = ["principalSet://agents.global.org-123.system.id.goog/deployed-agents"]',
+      `invoker_members       = ["${AGENT_PRINCIPAL_SET}"]`,
     );
     const terraformReadme = textFile(kit, "terraform/README.md");
     expect(terraformReadme).toContain('terraform -chdir="$ANVIL_TF_WORK_DIR"');
@@ -254,9 +264,49 @@ describe("target kit generation", () => {
     expect(customTfvars).toContain("invoker_members       = []");
     const gatewayTfvars = textFile(gateway, "cloud-run.tfvars");
     expect(gatewayTfvars).toContain("allow_unauthenticated = false");
-    expect(gatewayTfvars).toContain(
-      'invoker_members       = ["principalSet://agents.global.org-123.system.id.goog/deployed-agents"]',
+    expect(gatewayTfvars).toContain(`invoker_members       = ["${AGENT_PRINCIPAL_SET}"]`);
+  });
+
+  it("labels and sequences each selected surface without leaking the other journey", () => {
+    const custom = generateTargetKit(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({
+        surface: "custom-mcp",
+        appLocation: "asia-southeast1",
+        gatewayLocation: undefined,
+        registryLocation: undefined,
+        projectNumber: undefined,
+        confirmEngineEgressReroute: false,
+      }),
     );
+    const gateway = generateTargetKit(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({ surface: "agent-gateway" }),
+    );
+
+    const customReadme = textFile(custom, "gemini-enterprise/README.md");
+    expect(customReadme).toContain("Selected integration: **Custom MCP Server data store**");
+    expect(customReadme).toContain("## Custom MCP Server data store");
+    expect(customReadme).not.toContain("## Agent Registry + Agent Gateway");
+    expect(textFile(custom, "server-description.md")).toContain(
+      "Gemini Enterprise — Custom MCP Server data store",
+    );
+
+    const gatewayReadme = textFile(gateway, "gemini-enterprise/README.md");
+    expect(gatewayReadme).toContain("Selected integration: **Agent Registry + Agent Gateway**");
+    expect(gatewayReadme).toContain("## Agent Registry + Agent Gateway");
+    expect(gatewayReadme).not.toContain("## Custom MCP Server data store");
+    const gatewayRunbook = textFile(gateway, "admin-runbook.md");
+    const numbers = [...gatewayRunbook.matchAll(/^(\d+)\. /gm)].map((match) => Number(match[1]));
+    expect(numbers).toEqual(numbers.map((_, index) => index + 1));
+    expect(numbers[0]).toBe(1);
+    expect(gatewayRunbook).not.toContain("registration.curl.sh");
+    const gatewayAssumptions = textFile(gateway, "organization-policy-checklist.md");
+    expect(gatewayAssumptions).not.toContain("setUpDataConnector");
+    expect(gatewayAssumptions).not.toContain("external gateway in front");
+    expect(gatewayAssumptions).toContain("Gateway IAM does not replace");
   });
 
   it("keeps Agent Gateway-only no-auth reachable only by the service-scoped principalSet", () => {
@@ -279,9 +329,7 @@ describe("target kit generation", () => {
     const tfvars = textFile(kit, "cloud-run.tfvars");
     expect(tfvars).toContain('ingress               = "INGRESS_TRAFFIC_ALL"');
     expect(tfvars).toContain("allow_unauthenticated = false");
-    expect(tfvars).toContain(
-      'invoker_members       = ["principalSet://agents.global.org-123.system.id.goog/deployed-agents"]',
-    );
+    expect(tfvars).toContain(`invoker_members       = ["${AGENT_PRINCIPAL_SET}"]`);
     expect(textFile(kit, "agent-registry/agent-registry.tf")).not.toContain(
       'role    = "roles/run.invoker"',
     );
@@ -407,7 +455,7 @@ describe("target kit generation", () => {
     expect(rollback).toContain("readback did not confirm");
     expect(terraform).not.toContain("google_agent_registry_service");
     expect(terraform).toContain("roles/agentregistry.viewer");
-    expect(terraform).toContain("principalSet://agents.global.org-123.system.id.goog");
+    expect(terraform).toContain("principalSet://agents.global.org-123456789012.system.id.goog");
     expect(terraform).not.toContain('resource "google_project_iam_member" "agent_run_invoker"');
     expect(readiness.authorizationPolicyResource).toContain("authzPolicies/mcp-egress");
     expect(readiness.agentIdentityPrincipalSet).toContain("principalSet://");
@@ -829,6 +877,178 @@ describe("target validation", () => {
     expect(codes).toContain("target/insecure_transport");
   });
 
+  it("parses exact provider coordinates rather than trusting prefixes", () => {
+    expect(isGcpProjectId("acme-proj")).toBe(true);
+    expect(isGcpProjectId("ABC")).toBe(false);
+    expect(isGcpProjectNumber("123456789")).toBe(true);
+    expect(isGcpProjectNumber("123")).toBe(false);
+    expect(
+      parseCanonicalEngineResource(
+        "projects/123456789/locations/global/collections/default_collection/engines/eng-1",
+      ),
+    ).toEqual({
+      projectNumber: "123456789",
+      location: "global",
+      collection: "default_collection",
+      engineId: "eng-1",
+    });
+    expect(
+      parseCanonicalEngineResource(
+        "projects/999/locations/global/collections/default_collection/engines/eng-1",
+      ),
+    ).toBeUndefined();
+    expect(parseAgentIdentityPrincipalSet(AGENT_PRINCIPAL_SET)).toMatchObject({
+      projectNumber: "123456789",
+      scope: "container",
+    });
+    expect(parseAgentIdentityPrincipalSet("principalSet://garbage")).toBeUndefined();
+    expect(
+      parseGatewayAuthorizationPolicyResource(
+        "projects/acme-proj/locations/us-central1/authzPolicies/mcp-egress",
+      ),
+    ).toEqual({
+      project: "acme-proj",
+      location: "us-central1",
+      policyId: "mcp-egress",
+    });
+    expect(parseGatewayAuthorizationPolicyResource("garbage")).toBeUndefined();
+    expect(isWorkforcePoolResource("locations/global/workforcePools/ge-users")).toBe(true);
+    expect(isWorkforcePoolResource("garbage")).toBe(false);
+  });
+
+  it.each([
+    [{ project: "ABC" }, "target/invalid_project"],
+    [{ projectNumber: "123" }, "target/invalid_project_number"],
+    [{ appLocation: "!!!" }, "target/invalid_app_location"],
+    [{ engine: "/bad" }, "target/invalid_engine_resource"],
+    [
+      {
+        engine: "projects/999/locations/global/collections/default_collection/engines/eng-1",
+        projectNumber: undefined,
+      },
+      "target/invalid_engine_resource",
+    ],
+    [{ workforcePool: "garbage" }, "target/invalid_workforce_pool"],
+    [
+      { agentIdentityPrincipalSet: "principalSet://garbage" },
+      "target/invalid_agent_identity_principal_set",
+    ],
+    [{ gatewayAuthorizationPolicy: "garbage" }, "target/invalid_gateway_authorization_policy"],
+    [
+      { connectorOAuth: { tenant: "tenant@evil.example" } },
+      "target/invalid_connector_oauth_tenant",
+    ],
+    [{ connectorOAuth: { inboundIssuer: "garbage" } }, "target/invalid_inbound_issuer"],
+    [
+      { connectorOAuth: { inboundIssuer: "https://login.microsoftonline.com/other/v2.0" } },
+      "target/inbound_issuer_tenant_mismatch",
+    ],
+    [{ connectorOAuth: { inboundAudience: "x" } }, "target/invalid_inbound_audience"],
+    [{ connectorOAuth: { scopes: ["x"] } }, "target/invalid_connector_oauth_scope"],
+    [
+      { connectorOAuth: { scopes: ["api://other-api/mcp.invoke"] } },
+      "target/oauth_scope_audience_mismatch",
+    ],
+  ] as const)("rejects malformed provider coordinate %#", (overrides, expectedCode) => {
+    const result = validateTarget(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config(overrides as GeminiEnterpriseTargetConfigInput),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.findings.map((finding) => finding.code)).toContain(expectedCode);
+  });
+
+  it("rejects runtime-invalid gateway and registry locations", () => {
+    const gateway = validateTarget(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({ gatewayLocation: "moon-1" as never }),
+    );
+    expect(gateway.findings.map((finding) => finding.code)).toContain(
+      "target/invalid_gateway_location",
+    );
+    const registry = validateTarget(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({ registryLocation: "moon" as never }),
+    );
+    expect(registry.findings.map((finding) => finding.code)).toContain(
+      "target/invalid_registry_location",
+    );
+  });
+
+  it("binds canonical engine and authorization-policy coordinates to CLI fields", () => {
+    const engineProjectMismatch = validateTarget(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({
+        engine: "projects/987654321/locations/global/collections/default_collection/engines/eng-1",
+      }),
+    );
+    expect(engineProjectMismatch.findings.map((finding) => finding.code)).toContain(
+      "target/engine_project_number_mismatch",
+    );
+
+    const engineLocationMismatch = validateTarget(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({
+        engine: "projects/123456789/locations/eu/collections/default_collection/engines/eng-1",
+      }),
+    );
+    expect(engineLocationMismatch.findings.map((finding) => finding.code)).toContain(
+      "target/engine_location_mismatch",
+    );
+
+    const policyProjectMismatch = validateTarget(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({
+        gatewayAuthorizationPolicy:
+          "projects/other-proj/locations/us-central1/authzPolicies/mcp-egress",
+      }),
+    );
+    expect(policyProjectMismatch.findings.map((finding) => finding.code)).toContain(
+      "target/gateway_authorization_policy_project_mismatch",
+    );
+
+    const policyLocationMismatch = validateTarget(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({
+        gatewayAuthorizationPolicy:
+          "projects/acme-proj/locations/europe-west1/authzPolicies/mcp-egress",
+      }),
+    );
+    expect(policyLocationMismatch.findings.map((finding) => finding.code)).toContain(
+      "target/gateway_authorization_policy_location_mismatch",
+    );
+
+    const principalProjectMismatch = validateTarget(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({
+        agentIdentityPrincipalSet:
+          "principalSet://agents.global.org-123456789012.system.id.goog/attribute.container/projects/987654321",
+      }),
+    );
+    expect(principalProjectMismatch.findings.map((finding) => finding.code)).toContain(
+      "target/agent_identity_principal_project_mismatch",
+    );
+
+    const broadPrincipal = validateTarget(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({
+        agentIdentityPrincipalSet: "principalSet://agents.global.org-123456789012.system.id.goog/*",
+      }),
+    );
+    expect(broadPrincipal.findings.map((finding) => finding.code)).toContain(
+      "target/agent_identity_principal_scope_too_broad",
+    );
+  });
+
   it.each([
     ["https://x.example/mcp/", "target/invalid_mcp_endpoint_path"],
     ["https://x.example/other", "target/invalid_mcp_endpoint_path"],
@@ -920,6 +1140,8 @@ describe("target validation", () => {
         appLocation: "eu",
         gatewayLocation: "europe-west1",
         registryLocation: "global",
+        gatewayAuthorizationPolicy:
+          "projects/acme-proj/locations/europe-west1/authzPolicies/mcp-egress",
       }),
     );
     expect(validEu.ok).toBe(true);
@@ -971,6 +1193,8 @@ describe("target validation", () => {
         surface: "agent-gateway",
         projectNumber: undefined,
         engine: "projects/987654321/locations/global/collections/default_collection/engines/eng-2",
+        agentIdentityPrincipalSet:
+          "principalSet://agents.global.org-123456789012.system.id.goog/attribute.container/projects/987654321",
       }),
     );
     expect(result.ok).toBe(true);

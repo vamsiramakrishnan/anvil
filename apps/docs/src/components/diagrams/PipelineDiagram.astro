@@ -1,10 +1,22 @@
 ---
+import MobileDiagram from "./MobileDiagram.astro";
+
 // The signature pipeline: any spec → `anvil compile` → AIR (one shared
 // model, gated by approval) → four generated tools. Inline SVG so every
 // color rides the theme's CSS variables and flips correctly in light/dark.
 ---
 
 <figure class="anvil-diagram">
+  <MobileDiagram
+    ariaLabel="How Anvil turns a specification into aligned tools"
+    items={[
+      { label: "Input", title: "Any supported spec", detail: "OpenAPI, Swagger, GraphQL, gRPC, SOAP, Postman, Discovery, or a gateway export." },
+      { label: "01", title: "Compile", detail: "Parse, classify, and validate every operation." },
+      { label: "02", title: "AIR", detail: "Hold effect, risk, idempotency, auth, and approval in one shared model." },
+      { label: "Gate", title: "Approve deliberately", detail: "Unapproved operations never reach a generated surface." },
+      { label: "Out", title: "Project together", detail: "Generate the CLI, MCP server, skill, and harness hooks from that same contract." },
+    ]}
+  />
   <svg
     viewBox="0 0 1040 400"
     role="img"
@@ -155,4 +167,8 @@
   .d-bar { fill: var(--sl-color-accent); }
   .d-plate-title { font-family: var(--ge-display-font); font-size: 14.5px; font-weight: 700; fill: var(--sl-color-white); }
   .d-plate-desc { font-size: 12px; fill: var(--sl-color-gray-3); }
+  @media (max-width: 40rem) {
+    .anvil-diagram { overflow-x: visible; }
+    .anvil-diagram svg { display: none; }
+  }
 </style>

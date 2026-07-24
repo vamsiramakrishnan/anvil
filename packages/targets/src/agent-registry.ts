@@ -882,10 +882,10 @@ Steps:
    first verifies that the live engine still points at this kit's gateway and
    applies an etag precondition, so it cannot overwrite a newer route.
 
-Custom MCP DataConnector vs. this path: a direct custom-MCP DataConnector
+Custom MCP Server data store vs. this path: a direct Custom MCP Server data store
 (instance_uri + OAuth) is NOT governed by the Agent Gateway — only
 registry-imported servers are. Use this path when you want gateway governance;
-use the console-first DataConnector for a quick standalone data store.
+use the console-first Custom MCP Server flow for a quick standalone data store.
 
 Constraints: \`toolspec.json\` ≤ 10 KB; manual registration is unsupported in the
 \`us\`/\`eu\` multi-region locations — use a region or \`global\`. Keep enabled tools

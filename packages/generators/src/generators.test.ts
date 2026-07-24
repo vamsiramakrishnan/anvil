@@ -303,6 +303,9 @@ describe("capabilities in generated artifacts", () => {
     const skill = files["skill/SKILL.md"] as string;
     expect(skill).toMatch(/Start with capabilities/);
     expect(skill).toMatch(/refunds/);
+    expect(skill).toContain("--mcp-token-env REMOTE_MCP_TOKEN");
+    expect(skill).toContain("ANVIL_MCP_TOKEN_ENV=REMOTE_MCP_TOKEN");
+    expect(skill).toContain("never renders the value");
     const capsRef = files["skill/reference/capabilities.md"] as string;
     expect(capsRef).toContain("payments.refunds");
     const workflows = files["skill/reference/workflows.md"] as string;
@@ -428,7 +431,6 @@ describe("skill package format", () => {
     const { files } = generateBundle(air);
     const setup = files["skill/reference/setup.md"] as string;
     for (const name of [
-      "ANVIL_DEFAULT_TOKEN",
       "ANVIL_BASE_URL",
       "ANVIL_ENV",
       "ANVIL_ALLOWED_HOSTS",
@@ -437,10 +439,36 @@ describe("skill package format", () => {
     ]) {
       expect(setup, `setup.md must name ${name}`).toContain(name);
     }
+    expect(setup).toMatch(/`ANVIL_DEFAULT_[A-Z0-9_]+_CLIENT_ID`/);
+    expect(setup).toMatch(/`ANVIL_DEFAULT_[A-Z0-9_]+_CLIENT_SECRET`/);
+    expect(setup).toContain("ANVIL_CREDENTIAL_HOSTS");
+    expect(setup).toMatch(/`ANVIL_DEFAULT_[A-Z0-9_]+_TOKEN_ENDPOINT`/);
     expect(files["skill/SKILL.md"]).toContain("reference/setup.md");
     const errors = files["skill/reference/errors.md"] as string;
     expect(errors).toMatch(/auth_required[^\n]*setup\.md/);
     expect(errors).toMatch(/policy_denied[^\n]*setup\.md/);
+  });
+
+  it("generates OAuth setup from the same exact credential contract as runtime and deploy", () => {
+    const oauth = structuredClone(air);
+    const op = oauth.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+    op.auth = {
+      type: "oauth2_client_credentials",
+      principal: "service",
+      scopes: ["payments.read"],
+      secretSource: "secret_manager",
+      provider: {
+        grant: "client_credentials",
+        tokenEndpoint: "https://issuer.example.test/token",
+      },
+    };
+    const setup = generateBundle(oauth).files["skill/reference/setup.md"] as string;
+    expect(setup).toMatch(/`ANVIL_DEFAULT_[A-Z0-9_]+_CLIENT_ID`/);
+    expect(setup).toMatch(/`ANVIL_DEFAULT_[A-Z0-9_]+_CLIENT_SECRET`/);
+    expect(setup).toContain("ANVIL_CREDENTIAL_HOSTS");
+    expect(setup).toMatch(/`ANVIL_DEFAULT_[A-Z0-9_]+_TOKEN_ENDPOINT`/);
+    expect(setup).not.toContain("Bearer / OAuth2 / JWT token: `ANVIL_DEFAULT_TOKEN`");
   });
 
   it("omits empty eval suites and explains the omission in a README", () => {

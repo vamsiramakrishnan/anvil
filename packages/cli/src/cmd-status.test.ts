@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { bundleHash, readBundleDir } from "@anvil/generators";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAnvilCli } from "./anvil-cli.js";
 import { bufferIO } from "./io.js";
@@ -46,15 +47,49 @@ async function jsonStatus(bundle: string, sourceRoot?: string) {
   return { code, io, report: JSON.parse(io.stdout[0] ?? "{}") };
 }
 
+function writePassingExecutableEvidence(bundle: string): void {
+  const subject = bundleHash(readBundleDir(bundle));
+  writeFileSync(
+    join(bundle, "selftest.report.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: subject,
+      summary: { pass: 9, fail: 0, skipped: 1 },
+    }),
+  );
+  writeFileSync(
+    join(bundle, "conformance.report.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: subject,
+      summary: { pass: 11, fail: 0, skipped: 0 },
+    }),
+  );
+  writeFileSync(
+    join(bundle, "simulation.report.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: subject,
+      summary: {
+        coverageCells: 35,
+        coveragePassed: 35,
+        mutantsKilled: 4,
+        ok: true,
+      },
+    }),
+  );
+}
+
 describe("anvil status", () => {
-  it("shows a fresh released journey with canonical source coordinates", async () => {
+  it("shows a planned journey without claiming a cloud deployment completed", async () => {
     const { bundle, root } = await compileApprovedBundle();
     const sourceRoot = join(root, "workspace");
     const certify = bufferIO();
     expect(await runAnvilCli(["certify", bundle], { io: certify }), certify.text()).toBe(0);
+    writePassingExecutableEvidence(bundle);
     const publish = bufferIO();
     expect(
-      await runAnvilCli(["publish", bundle, "--target", "cloud-run", "--env", "dev"], {
+      await runAnvilCli(["publish", bundle, "--env", "dev"], {
         io: publish,
       }),
       publish.text(),
@@ -63,9 +98,13 @@ describe("anvil status", () => {
     const io = bufferIO();
     expect(await runAnvilCli(["status", bundle], { io })).toBe(0);
     expect(io.text()).toContain("Core projections — ALIGNED");
-    expect(io.text()).toContain("certification: fresh");
-    expect(io.text()).toContain("publication:   fresh");
-    expect(io.text()).toContain("Next safe action — complete");
+    expect(io.text()).toContain("static assurance: fresh");
+    expect(io.text()).toContain("selftest:         fresh");
+    expect(io.text()).toContain("conformance:      fresh");
+    expect(io.text()).toContain("simulation:       fresh");
+    expect(io.text()).toContain("deployment plan:  planned");
+    expect(io.text()).toContain("Next safe action — operator-action-required");
+    expect(io.text()).toContain("Anvil made no cloud call");
 
     const { report } = await jsonStatus(bundle, sourceRoot);
     expect(report.paths.bundle).toBe(bundle);
@@ -87,8 +126,10 @@ describe("anvil status", () => {
     );
     expect(report.operations).toMatchObject({
       total: 4,
+      generated: 0,
       approved: 4,
       review_required: 0,
+      deprecated: 0,
       blocked: 0,
     });
     expect(
@@ -97,7 +138,18 @@ describe("anvil status", () => {
       ),
     ).toBe(true);
     expect(report.certification.state).toBe("fresh");
-    expect(report.publication.state).toBe("fresh");
+    expect(report.executableEvidence.selftest).toMatchObject({
+      state: "fresh",
+      fresh: true,
+      passed: true,
+      bundleHash: report.core.bundleHash,
+    });
+    expect(report.executableEvidence.conformance.state).toBe("fresh");
+    expect(report.executableEvidence.simulation.state).toBe("fresh");
+    expect(report.publication.state).toBe("planned");
+    expect(report.publication.cloudCallsMade).toBe(false);
+    expect(report.publication.operatorActionRequired).toBe(true);
+    expect(report.nextAction.code).toBe("operator-action-required");
   });
 
   it("anchors --root, validates locked source bytes, and propagates it to recovery", async () => {
@@ -252,6 +304,75 @@ describe("anvil status", () => {
     expect(io.stdout[0]?.trim().endsWith("}")).toBe(true);
     expect(report.schemaVersion).toBe(1);
     expect(report.serviceId).toBe("payments");
+    expect(report.executableEvidence.selftest).toMatchObject({
+      state: "missing",
+      fresh: false,
+      passed: null,
+    });
     expect(report.nextAction.code).toBe("certify");
+  });
+
+  it("reports pass and freshness independently and routes to the first incomplete lane", async () => {
+    const { bundle } = await compileApprovedBundle();
+    const certify = bufferIO();
+    expect(await runAnvilCli(["certify", bundle], { io: certify }), certify.text()).toBe(0);
+    const subject = bundleHash(readBundleDir(bundle));
+    writeFileSync(
+      join(bundle, "selftest.report.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        bundleHash: subject,
+        summary: { pass: 9, fail: 0, skipped: 1 },
+      }),
+    );
+    writeFileSync(
+      join(bundle, "conformance.report.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        bundleHash: "0".repeat(64),
+        summary: { pass: 11, fail: 0, skipped: 0 },
+      }),
+    );
+    writeFileSync(
+      join(bundle, "simulation.report.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        bundleHash: subject,
+        summary: {
+          coverageCells: 35,
+          coveragePassed: 34,
+          mutantsKilled: 3,
+          ok: false,
+        },
+      }),
+    );
+
+    const { code, report } = await jsonStatus(bundle);
+    expect(code).toBe(0);
+    expect(report.executableEvidence.selftest).toMatchObject({
+      state: "fresh",
+      fresh: true,
+      passed: true,
+    });
+    expect(report.executableEvidence.conformance).toMatchObject({
+      state: "stale",
+      fresh: false,
+      passed: true,
+    });
+    expect(report.executableEvidence.simulation).toMatchObject({
+      state: "failed",
+      fresh: true,
+      passed: false,
+    });
+    expect(report.nextAction).toMatchObject({
+      code: "conformance",
+      command: `anvil conformance ${bundle}`,
+    });
+    expect(report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "status.evidence.conformance.stale" }),
+        expect.objectContaining({ code: "status.evidence.simulation.failed" }),
+      ]),
+    );
   });
 });

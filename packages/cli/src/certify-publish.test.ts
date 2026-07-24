@@ -1,12 +1,23 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile } from "@anvil/compiler";
-import { generateBundle, writeBundle } from "@anvil/generators";
+import {
+  bundleHash,
+  generateBundle,
+  readBundleDir,
+  verifyCertification,
+  writeBundle,
+} from "@anvil/generators";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runAnvilCli } from "./anvil-cli.js";
 import { runCertify } from "./commands/certify.js";
+import { runConformanceCommand } from "./commands/conformance.js";
 import { runPublish } from "./commands/publish.js";
+import { runSelftest } from "./commands/selftest.js";
+import { runSimulate } from "./commands/simulate.js";
+import { buildStatusReport } from "./commands/status.js";
 import { bufferIO } from "./io.js";
 
 const examples = fileURLToPath(new URL("../../../examples/payments/", import.meta.url));
@@ -34,6 +45,39 @@ const certify = (io = bufferIO(), now = clock("2026-07-10T00:00:00Z")) => ({
   io,
 });
 
+function writePassingExecutableEvidence(bundle = dir): void {
+  const subject = bundleHash(readBundleDir(bundle));
+  writeFileSync(
+    join(bundle, "selftest.report.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: subject,
+      summary: { pass: 9, fail: 0, skipped: 1 },
+    })}\n`,
+  );
+  writeFileSync(
+    join(bundle, "conformance.report.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: subject,
+      summary: { pass: 11, fail: 0, skipped: 0 },
+    })}\n`,
+  );
+  writeFileSync(
+    join(bundle, "simulation.report.json"),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: subject,
+      summary: {
+        coverageCells: 35,
+        coveragePassed: 35,
+        mutantsKilled: 4,
+        ok: true,
+      },
+    })}\n`,
+  );
+}
+
 describe("anvil certify", () => {
   it("passes a clean payments bundle and writes certification.json", () => {
     const { code, io } = certify();
@@ -45,6 +89,13 @@ describe("anvil certify", () => {
     const cert = JSON.parse(readFileSync(join(dir, "certification.json"), "utf8"));
     expect(cert.status).toBe("passed");
     expect(cert.schemaVersion).toBe(1);
+    expect(cert.assuranceLevel).toBe("static");
+    expect(cert.assurance).toMatchObject({
+      level: "static",
+      engine: "@anvil/certification",
+      engineStatus: "static_passed",
+    });
+    expect(io.text()).toContain("No generated surface was executed");
   });
 
   it("re-certifying an unchanged bundle reproduces the certification (minus certifiedAt)", () => {
@@ -104,22 +155,51 @@ describe("anvil publish (gated)", () => {
     expect(io.text()).toMatch(/anvil certify/);
   });
 
-  it("publishes a certified bundle and writes a publication record", () => {
+  it("prepares a certified deployment plan and writes an honest plan record", () => {
     certify();
+    writePassingExecutableEvidence();
     const io = bufferIO();
-    const code = runPublish(dir, { target: "cloud-run", env: "prod" }, io, {
+    const code = runPublish(dir, { env: "prod" }, io, {
       env: noEnv,
       now: clock("2026-07-10T01:00:00Z"),
     });
     expect(code).toBe(0);
-    expect(io.text()).toContain("Deployment plan for 'prod'");
+    expect(io.text()).toContain("Deployment plan only for 'prod'");
+    expect(io.text()).toContain("No cloud call was made");
+    expect(io.text()).not.toMatch(/^Published /m);
     const record = JSON.parse(readFileSync(join(dir, "publication.json"), "utf8"));
+    expect(record.schemaVersion).toBe(2);
     expect(record.certification.status).toBe("passed");
+    expect(record.certification.assuranceLevel).toBe("static");
+    expect(record.executableEvidence.status).toBe("passed");
+    expect(record.executableEvidence.records.selftest).toMatchObject({
+      state: "fresh",
+      fresh: true,
+      passed: true,
+      bundleHash: record.bundleHash,
+    });
     expect(record.env).toBe("prod");
     expect(record.target).toBe("cloud-run");
+    expect(record.recordKind).toBe("deployment_plan");
+    expect(record.plannedAt).toBe("2026-07-10T01:00:00Z");
+    expect(record.publishedAt).toBeUndefined();
+    expect(record.cloudCallsMade).toBe(false);
+    expect(record.operatorActionRequired).toBe(true);
+  });
+
+  it("defaults the sole publish target to cloud-run at the CLI boundary", async () => {
+    certify();
+    writePassingExecutableEvidence();
+    const io = bufferIO();
+    expect(await runAnvilCli(["publish", dir, "--env", "dev"], { io }), io.text()).toBe(0);
+    expect(io.text()).toContain("Deployment plan prepared");
+    expect(JSON.parse(readFileSync(join(dir, "publication.json"), "utf8")).target).toBe(
+      "cloud-run",
+    );
   });
 
   it("--allow-uncertified waives the gate for dev, recording the waiver", () => {
+    writePassingExecutableEvidence();
     const io = bufferIO();
     const code = runPublish(dir, { target: "cloud-run", env: "dev", allowUncertified: true }, io, {
       env: noEnv,
@@ -129,6 +209,74 @@ describe("anvil publish (gated)", () => {
     expect(io.text()).toMatch(/WARNING/);
     const record = JSON.parse(readFileSync(join(dir, "publication.json"), "utf8"));
     expect(record.certification.status).toBe("waived");
+    expect(record.executableEvidence.status).toBe("passed");
+  });
+
+  it("refuses a plan when executable reports are missing", () => {
+    certify();
+    const io = bufferIO();
+    expect(runPublish(dir, { env: "dev" }, io, { env: noEnv })).toBe(1);
+    expect(io.text()).toContain("executable evidence is incomplete");
+    expect(io.text()).toContain("selftest");
+    expect(io.text()).toContain("--allow-incomplete-evidence");
+  });
+
+  it("refuses a passing executable report that belongs to an older bundle digest", () => {
+    certify();
+    writePassingExecutableEvidence();
+    const conformancePath = join(dir, "conformance.report.json");
+    const conformance = JSON.parse(readFileSync(conformancePath, "utf8"));
+    conformance.bundleHash = "0".repeat(64);
+    writeFileSync(conformancePath, JSON.stringify(conformance));
+    const io = bufferIO();
+    expect(runPublish(dir, { env: "dev" }, io, { env: noEnv })).toBe(1);
+    expect(io.text()).toContain("conformance.report.json is stale");
+  });
+
+  it("--allow-incomplete-evidence waives executable proof for dev and records the waiver", () => {
+    certify();
+    const io = bufferIO();
+    expect(
+      runPublish(dir, { env: "dev", allowIncompleteEvidence: true }, io, {
+        env: noEnv,
+        now: clock("2026-07-10T01:00:00Z"),
+      }),
+      io.text(),
+    ).toBe(0);
+    expect(io.text()).toContain("EXECUTABLE EVIDENCE WAIVED");
+    const record = JSON.parse(readFileSync(join(dir, "publication.json"), "utf8"));
+    expect(record.executableEvidence).toMatchObject({
+      status: "waived",
+      waiver: { flag: "--allow-incomplete-evidence" },
+      records: {
+        selftest: { state: "missing", fresh: false, passed: null },
+        conformance: { state: "missing", fresh: false, passed: null },
+        simulation: { state: "missing", fresh: false, passed: null },
+      },
+    });
+  });
+
+  it("fails closed for prod even when incomplete executable evidence is explicitly waived", () => {
+    certify();
+    const io = bufferIO();
+    expect(
+      runPublish(dir, { env: "prod", allowIncompleteEvidence: true }, io, { env: noEnv }),
+    ).toBe(1);
+    const structured = io.stderr
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return undefined;
+        }
+      })
+      .find((entry) => entry?.error)?.error;
+    expect(structured).toMatchObject({
+      code: "incomplete_executable_evidence_refused",
+      env: "prod",
+      allowIncompleteEvidence: true,
+    });
+    expect(structured.evidence.selftest.state).toBe("missing");
   });
 
   it("fails closed for prod: --allow-uncertified is refused with a structured error", () => {
@@ -158,6 +306,17 @@ describe("anvil publish (gated)", () => {
     expect(io.text()).toContain("uncertified_publish_refused");
   });
 
+  it("refuses an unknown ANVIL_ENV instead of treating it as a waivable non-prod environment", () => {
+    const io = bufferIO();
+    const code = runPublish(dir, { allowUncertified: true, allowIncompleteEvidence: true }, io, {
+      env: { ANVIL_ENV: "production" } as NodeJS.ProcessEnv,
+    });
+    expect(code).toBe(1);
+    expect(io.text()).toContain("invalid_deployment_environment");
+    expect(io.text()).toContain("dev, staging, or prod");
+    expect(existsSync(join(dir, "publication.json"))).toBe(false);
+  });
+
   it("invalidates publish when the bundle is tampered after certification", () => {
     certify();
     writeFileSync(join(dir, "docs/README.md"), "tampered after certification", "utf8");
@@ -169,6 +328,7 @@ describe("anvil publish (gated)", () => {
 
   it("a publish record does not invalidate the certification it was gated by", () => {
     certify();
+    writePassingExecutableEvidence();
     const first = runPublish(dir, { target: "cloud-run", env: "dev" }, bufferIO(), {
       env: noEnv,
     });
@@ -180,4 +340,167 @@ describe("anvil publish (gated)", () => {
     });
     expect(second).toBe(0);
   });
+
+  it("reads legacy schema-v1 publication records as plans, never as completed deploys", async () => {
+    certify();
+    writePassingExecutableEvidence();
+    const subject = bundleHash(readBundleDir(dir));
+    writeFileSync(
+      join(dir, "publication.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          serviceId: "payments",
+          target: "cloud-run",
+          env: "dev",
+          bundleHash: subject,
+          certification: {
+            status: "passed",
+            certifiedAt: "2026-07-10T00:00:00Z",
+          },
+          publishedAt: "2026-07-10T01:00:00Z",
+          artifacts: ["deploy/Dockerfile"],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const status = await buildStatusReport(dir);
+    expect(status.publication.state).toBe("planned");
+    expect(status.publication.plannedAt).toBe("2026-07-10T01:00:00Z");
+    expect(status.publication.publishedAt).toBe("2026-07-10T01:00:00Z");
+    expect(status.publication.cloudCallsMade).toBe(false);
+    expect(status.publication.executableEvidenceGate).toBe("unrecorded");
+    expect(status.nextAction.code).toBe("operator-action-required");
+  });
+
+  it("fails closed when a schema-v2 plan omits its executable-evidence snapshot", async () => {
+    certify();
+    writePassingExecutableEvidence();
+    expect(
+      runPublish(dir, { env: "dev" }, bufferIO(), {
+        env: noEnv,
+        now: clock("2026-07-10T01:00:00Z"),
+      }),
+    ).toBe(0);
+    const path = join(dir, "publication.json");
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    delete record.executableEvidence;
+    writeFileSync(path, JSON.stringify(record));
+
+    const status = await buildStatusReport(dir);
+    expect(status.publication).toMatchObject({
+      state: "corrupt",
+      executableEvidenceGate: null,
+    });
+    expect(status.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "status.publication.corrupt" }),
+    );
+    expect(status.nextAction.code).toBe("release");
+  });
+
+  it("rejects a tampered production plan that carries non-production waivers", async () => {
+    expect(
+      runPublish(
+        dir,
+        {
+          env: "dev",
+          allowUncertified: true,
+          allowIncompleteEvidence: true,
+        },
+        bufferIO(),
+        { env: noEnv },
+      ),
+    ).toBe(0);
+    const path = join(dir, "publication.json");
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    record.env = "prod";
+    writeFileSync(path, JSON.stringify(record));
+
+    const status = await buildStatusReport(dir);
+    expect(status.publication.state).toBe("corrupt");
+    expect(status.nextAction.code).toBe("certify");
+  });
+
+  it("fails closed when a passed plan snapshot names a different bundle digest", async () => {
+    certify();
+    writePassingExecutableEvidence();
+    expect(runPublish(dir, { env: "dev" }, bufferIO(), { env: noEnv })).toBe(0);
+    const path = join(dir, "publication.json");
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    record.executableEvidence.records.selftest.bundleHash = "0".repeat(64);
+    writeFileSync(path, JSON.stringify(record));
+
+    const status = await buildStatusReport(dir);
+    expect(status.publication.state).toBe("corrupt");
+    expect(status.nextAction.code).toBe("release");
+  });
+
+  it("fails closed when keyed plan evidence swaps its lane or report file", async () => {
+    certify();
+    writePassingExecutableEvidence();
+    expect(runPublish(dir, { env: "dev" }, bufferIO(), { env: noEnv })).toBe(0);
+    const path = join(dir, "publication.json");
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    record.executableEvidence.records.selftest.lane = "conformance";
+    record.executableEvidence.records.selftest.file = "conformance.report.json";
+    writeFileSync(path, JSON.stringify(record));
+
+    const status = await buildStatusReport(dir);
+    expect(status.publication.state).toBe("corrupt");
+    expect(status.nextAction.code).toBe("release");
+  });
+
+  it("keeps one subject digest through static assurance, executable evidence, and release planning", async () => {
+    const subject = bundleHash(readBundleDir(dir));
+    expect(certify().code).toBe(0);
+    expect(verifyCertification(readBundleDir(dir)).ok).toBe(true);
+
+    const selftest = bufferIO();
+    expect(await runSelftest(dir, {}, selftest), selftest.text()).toBe(0);
+    expect(JSON.parse(readFileSync(join(dir, "selftest.report.json"), "utf8")).bundleHash).toBe(
+      subject,
+    );
+    expect(verifyCertification(readBundleDir(dir)).ok).toBe(true);
+
+    const conformance = bufferIO();
+    expect(await runConformanceCommand(dir, {}, conformance), conformance.text()).toBe(0);
+    expect(JSON.parse(readFileSync(join(dir, "conformance.report.json"), "utf8")).bundleHash).toBe(
+      subject,
+    );
+    expect(verifyCertification(readBundleDir(dir)).ok).toBe(true);
+
+    const simulation = bufferIO();
+    expect(runSimulate(dir, {}, simulation), simulation.text()).toBe(0);
+    expect(JSON.parse(readFileSync(join(dir, "simulation.report.json"), "utf8")).bundleHash).toBe(
+      subject,
+    );
+    expect(verifyCertification(readBundleDir(dir)).ok).toBe(true);
+
+    const plan = bufferIO();
+    expect(
+      runPublish(dir, { env: "dev" }, plan, {
+        env: noEnv,
+        now: clock("2026-07-10T01:00:00Z"),
+      }),
+      plan.text(),
+    ).toBe(0);
+    expect(verifyCertification(readBundleDir(dir)).ok).toBe(true);
+
+    const status = await buildStatusReport(dir);
+    expect(status.core.bundleHash).toBe(subject);
+    expect(status.executableEvidence.selftest).toMatchObject({
+      state: "fresh",
+      fresh: true,
+      passed: true,
+      bundleHash: subject,
+    });
+    expect(status.executableEvidence.conformance.state).toBe("fresh");
+    expect(status.executableEvidence.simulation.state).toBe("fresh");
+    expect(status.publication.state).toBe("planned");
+    expect(status.publication.executableEvidenceGate).toBe("passed");
+    expect(status.nextAction.code).toBe("operator-action-required");
+  }, 60_000);
 });

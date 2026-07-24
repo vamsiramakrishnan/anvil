@@ -1,24 +1,36 @@
 import type { AirDocument, JsonSchema, Operation } from "@anvil/air";
-import { hashCanonical, loadAirDocument } from "@anvil/air";
+import { hashCanonical, kebabCase, loadAirDocument } from "@anvil/air";
+import {
+  GatewayImportReceiptView,
+  type GatewayImportReceiptView as GatewayImportReceiptViewType,
+} from "@anvil/compiler";
 import { type GeneratedBundle, generateBundle } from "./bundle.js";
 import type { ResourceOptions } from "./resources.js";
 
 /**
  * Capability-scoped builds. `capabilityView` narrows a whole-service AIR
- * document to ONE approved capability — its approved member operations, the
- * workflows those operations fully satisfy, and only the schemas they reach —
+ * document to ONE approved capability — its approved public operations, the
+ * approved dependency closure of its authored workflows, and only the schemas
+ * those operations reach —
  * and `generateCapabilityBundle` compiles that view through the ordinary
  * whole-service `generateBundle`, so a capability bundle is not a new artifact
  * kind: it is the same aligned CLI + MCP + skill projection of a smaller model.
  *
- * The safety contract holds by construction: an operation that is not an
- * approved member of the capability never *enters* the view, so it cannot
- * appear on any generated surface.
+ * The safety contract holds by construction: only approved public members and
+ * explicitly recorded workflow dependencies enter the view. A missing or
+ * unapproved dependency stops the build rather than dropping the workflow.
  */
 
 /** A structured, typed failure from a capability build. */
 export class CapabilityBuildError extends Error {
-  readonly code: "capability_not_found" | "capability_not_approved" | "capability_empty";
+  readonly code:
+    | "capability_not_found"
+    | "capability_not_approved"
+    | "capability_empty"
+    | "capability_workflow_incomplete"
+    | "capability_workflow_dependency_unapproved"
+    | "capability_parent_gateway_receipt_missing"
+    | "capability_parent_gateway_receipt_invalid";
 
   constructor(code: CapabilityBuildError["code"], message: string) {
     super(message);
@@ -50,9 +62,11 @@ export function capabilityView(air: AirDocument, capabilityId: string): AirDocum
     );
   }
 
-  const memberIds = new Set(capability.operationIds);
-  const operations = air.operations.filter((op) => memberIds.has(op.id) && op.state === "approved");
-  if (operations.length === 0) {
+  const publicMemberIds = new Set(capability.operationIds);
+  const publicOperations = air.operations.filter(
+    (op) => publicMemberIds.has(op.id) && op.state === "approved",
+  );
+  if (publicOperations.length === 0) {
     const states = capability.operationIds
       .map((id) => `${id}=${air.operations.find((o) => o.id === id)?.state ?? "missing"}`)
       .join(", ");
@@ -62,33 +76,94 @@ export function capabilityView(air: AirDocument, capabilityId: string): AirDocum
         `Approve operations with \`anvil approve\` before building.`,
     );
   }
-  const keptIds = new Set(operations.map((op) => op.id));
 
-  // A workflow survives only if every step it takes stays in the view —
-  // shipping a workflow whose step is not exposed would be a broken promise.
-  const workflows = air.workflows.filter(
-    (wf) => wf.capabilityId === capabilityId && wf.steps.every((s) => keptIds.has(s.operationId)),
+  // An authored workflow is a contract, not optional decoration. Close the
+  // view over every approved operation it invokes so a capability build never
+  // silently drops the workflow merely because one step is owned by another
+  // discovery grouping. Missing or unapproved dependencies fail loudly.
+  const workflows = air.workflows.filter((wf) => wf.capabilityId === capabilityId);
+  const workflowDependencyIds = new Set(
+    workflows.flatMap((wf) => wf.steps.map((step) => step.operationId)),
   );
+  for (const operationId of workflowDependencyIds) {
+    const dependency = air.operations.find((op) => op.id === operationId);
+    if (!dependency) {
+      throw new CapabilityBuildError(
+        "capability_workflow_incomplete",
+        `Capability '${capabilityId}' workflow dependency '${operationId}' is missing from AIR. ` +
+          "Repair or remove the authored workflow before building.",
+      );
+    }
+    if (dependency.state !== "approved") {
+      throw new CapabilityBuildError(
+        "capability_workflow_dependency_unapproved",
+        `Capability '${capabilityId}' workflow dependency '${operationId}' is '${dependency.state}', not approved. ` +
+          "Inspect and approve that operation, or repair the authored workflow before building.",
+      );
+    }
+  }
+
+  const keptIds = new Set([...publicOperations.map((op) => op.id), ...workflowDependencyIds]);
+  const operations = air.operations
+    .filter((op) => keptIds.has(op.id))
+    .map((op) => {
+      if (publicMemberIds.has(op.id)) return op;
+      const sourceCapabilityId = op.capabilityId;
+      return {
+        ...op,
+        capabilityId,
+        reviewNotes: [
+          ...op.reviewNotes,
+          `Included in ${capabilityId} as an authored workflow dependency from ${sourceCapabilityId ?? "an ungrouped operation"}.`,
+        ],
+        evidence: {
+          claims: [
+            ...op.evidence.claims,
+            {
+              subject: op.id,
+              predicate: "capability.workflow_dependency",
+              value: { capabilityId, sourceCapabilityId },
+              source: "inferred" as const,
+              method: "authored_workflow_dependency_closure",
+              confidence: 1,
+              review: "accepted" as const,
+              note: `Included by an authored workflow owned by ${capabilityId}.`,
+            },
+          ],
+        },
+      };
+    });
   const workflowIds = new Set(workflows.map((wf) => wf.id));
 
   const narrowedCapability = {
     ...capability,
-    operationIds: capability.operationIds.filter((id) => keptIds.has(id)),
-    workflowIds: capability.workflowIds.filter((id) => workflowIds.has(id)),
+    operationIds: [
+      ...capability.operationIds.filter((id) => keptIds.has(id)),
+      ...[...workflowDependencyIds].filter((id) => !publicMemberIds.has(id)).sort(),
+    ],
+    workflowIds: [...workflowIds].sort(),
   };
 
-  // Keep only diagnostics that refer to something inside the view. Anonymous
-  // diagnostics may mention operations that are deliberately excluded, so they
-  // are dropped rather than leaked into the narrowed artifact.
+  // Keep diagnostics that refer to the view plus anonymous blockers and
+  // gateway evidence. Dropping an unscoped error or gateway policy finding
+  // would let narrowing launder a blocked parent into an apparently clean
+  // capability bundle.
   const diagnostics = air.diagnostics.filter(
     (d) =>
       (d.operationId !== undefined && keptIds.has(d.operationId)) ||
-      d.capabilityId === capabilityId,
+      d.capabilityId === capabilityId ||
+      (d.operationId === undefined &&
+        d.capabilityId === undefined &&
+        (d.level === "error" || d.code.startsWith("gateway/"))),
   );
 
   const view: AirDocument = {
     anvilVersion: air.anvilVersion,
-    service: air.service,
+    service: {
+      ...air.service,
+      id: capabilityArtifactId(capabilityId),
+      displayName: `${air.service.displayName ?? air.service.id} — ${capability.displayName}`,
+    },
     operations,
     capabilities: [narrowedCapability],
     workflows,
@@ -98,6 +173,20 @@ export function capabilityView(air: AirDocument, capabilityId: string): AirDocum
   // Re-validate and deep-clone through the schema so the view never aliases
   // (and can never mutate) the whole-service document it was cut from.
   return loadAirDocument(structuredClone(view));
+}
+
+/**
+ * A capability bundle is independently installable, so its CLI/package/skill
+ * identity must not collide with another capability cut from the same service.
+ */
+export function capabilityArtifactId(capabilityId: string): string {
+  const candidate = kebabCase(capabilityId.replaceAll(".", "-"));
+  if (candidate.length <= 64) return candidate;
+  const digest = hashCanonical(capabilityId)
+    .replace(/^sha256:/, "")
+    .slice(0, 8);
+  const prefix = candidate.slice(0, 55).replace(/-+$/, "");
+  return `${prefix}-${digest}`;
 }
 
 /**
@@ -153,12 +242,29 @@ export interface CapabilitySurface {
 export interface CapabilityBundleManifest {
   schemaVersion: typeof CAPABILITY_BUNDLE_SCHEMA_VERSION;
   capabilityId: string;
+  /** Unique install/package/CLI/skill identity of this derived capability. */
+  artifactId: string;
+  /** Canonical whole-service identity from which this capability was derived. */
+  parentServiceId: string;
   /** The service version the capability was cut from. */
   capabilityVersion: string;
+  /** Approved operations directly owned by the reviewed grouping. */
+  publicOperationIds: string[];
+  /** Additional approved operations required by authored workflows. */
+  workflowDependencyOperationIds: string[];
   /** Hash of the narrowed capability node (grouping identity). */
   capabilityHash: string;
   /** Hash of the full narrowed contract every surface is generated from. */
   contractHash: string;
+  /** Immutable gateway lineage carried from a gateway-imported parent bundle. */
+  parentGatewayImport?: {
+    importId: string;
+    receiptDigest: string;
+    receiptViewDigest: string;
+    outputDigest: string;
+    lineage: "bound" | "stale";
+    blockerCount: number;
+  };
   surfaces: { cli: CapabilitySurface; mcp: CapabilitySurface; skill: CapabilitySurface };
 }
 
@@ -168,6 +274,11 @@ export interface CapabilityBundle {
   manifest: CapabilityBundleManifest;
   /** The ordinary aligned bundle plus `bundle.json` at its root. */
   bundle: GeneratedBundle;
+}
+
+export interface CapabilityBundleOptions extends ResourceOptions {
+  /** Validated, redacted gateway receipt view from the parent bundle. */
+  parentGatewayReceipt?: GatewayImportReceiptViewType;
 }
 
 /**
@@ -180,11 +291,27 @@ export interface CapabilityBundle {
 export function generateCapabilityBundle(
   air: AirDocument,
   capabilityId: string,
-  options: ResourceOptions = {},
+  options: CapabilityBundleOptions = {},
 ): CapabilityBundle {
+  const { parentGatewayReceipt: rawParentGatewayReceipt, ...resourceOptions } = options;
+  const parentGatewayReceipt = rawParentGatewayReceipt
+    ? GatewayImportReceiptView.parse(rawParentGatewayReceipt)
+    : undefined;
   const view = capabilityView(air, capabilityId);
-  const bundle = generateBundle(view, options);
+  const bundle = generateBundle(view, resourceOptions);
 
+  const sourceCapability = air.capabilities.find((cap) => cap.id === capabilityId);
+  if (!sourceCapability) {
+    throw new CapabilityBuildError("capability_not_found", `No capability '${capabilityId}'.`);
+  }
+  const publicOperationIds = view.operations
+    .filter((op) => sourceCapability.operationIds.includes(op.id))
+    .map((op) => op.id)
+    .sort();
+  const workflowDependencyOperationIds = view.operations
+    .filter((op) => !sourceCapability.operationIds.includes(op.id))
+    .map((op) => op.id)
+    .sort();
   const capability = view.capabilities[0] as AirDocument["capabilities"][number];
   const contractHash = hashCanonical({ ...view, diagnostics: undefined });
   const capabilityHash = hashCanonical(capability);
@@ -192,9 +319,25 @@ export function generateCapabilityBundle(
   const manifest: CapabilityBundleManifest = {
     schemaVersion: CAPABILITY_BUNDLE_SCHEMA_VERSION,
     capabilityId,
+    artifactId: view.service.id,
+    parentServiceId: air.service.id,
     capabilityVersion: view.service.version,
+    publicOperationIds,
+    workflowDependencyOperationIds,
     capabilityHash,
     contractHash,
+    ...(parentGatewayReceipt
+      ? {
+          parentGatewayImport: {
+            importId: parentGatewayReceipt.importId,
+            receiptDigest: parentGatewayReceipt.receiptDigest,
+            receiptViewDigest: hashCanonical(parentGatewayReceipt),
+            outputDigest: parentGatewayReceipt.output.digest,
+            lineage: parentGatewayReceipt.lineage.status,
+            blockerCount: parentGatewayReceipt.blockers.length,
+          },
+        }
+      : {}),
     surfaces: {
       cli: {
         entrypoint: `cli/${view.service.id}.mjs`,
@@ -213,6 +356,10 @@ export function generateCapabilityBundle(
       },
     },
   };
+  if (parentGatewayReceipt) {
+    bundle.files["provenance/parent-gateway-import.receipt.json"] =
+      `${JSON.stringify(parentGatewayReceipt, null, 2)}\n`;
+  }
   bundle.files["bundle.json"] = `${JSON.stringify(manifest, null, 2)}\n`;
   return { view, manifest, bundle };
 }

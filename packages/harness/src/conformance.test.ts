@@ -5,7 +5,16 @@ import { fileURLToPath } from "node:url";
 import { compile } from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
 import { afterAll, describe, expect, it } from "vitest";
-import { type ConformanceCheck, ConformanceReport, runConformance } from "./conformance.js";
+import {
+  type CliProcessResult,
+  type ConformanceCheck,
+  ConformanceReport,
+  isTransientWorkspaceModuleFailure,
+  parseCliErrorCode,
+  retryTransientCliLaunch,
+  runConformance,
+  safeCliProcessContext,
+} from "./conformance.js";
 
 /**
  * Tri-surface conformance runs against real generated bundles: the bundle's own
@@ -40,6 +49,110 @@ const byId = (report: { checks: ConformanceCheck[] }, id: string, operationId?: 
   report.checks.filter(
     (c) => c.id === id && (operationId === undefined || c.operationId === operationId),
   );
+
+const cliProcessResult = (overrides: Partial<CliProcessResult> = {}): CliProcessResult => ({
+  exitCode: 1,
+  signal: null,
+  stdout: "",
+  stderr: "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  ...overrides,
+});
+
+describe("generated CLI child capture", () => {
+  it("retries only the transient linked-workspace dist replacement race", async () => {
+    const transient = cliProcessResult({
+      stderr:
+        "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/tmp/bundle/node_modules/@anvil/cli/dist/index.js' imported from /tmp/bundle/cli/payments.mjs",
+    });
+    const success = cliProcessResult({ exitCode: 0, stdout: '{"ok":true}' });
+    let runs = 0;
+    const waits: number[] = [];
+    const result = await retryTransientCliLaunch(
+      async () => {
+        runs++;
+        return runs < 3 ? transient : success;
+      },
+      async (ms) => {
+        waits.push(ms);
+      },
+    );
+
+    expect(isTransientWorkspaceModuleFailure(transient)).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.attempts).toBe(3);
+    expect(waits).toEqual([50, 100]);
+
+    runs = 0;
+    const ordinary = cliProcessResult({ stderr: "validation failed" });
+    const notRetried = await retryTransientCliLaunch(async () => {
+      runs++;
+      return ordinary;
+    });
+    expect(isTransientWorkspaceModuleFailure(ordinary)).toBe(false);
+    expect(notRetried.attempts).toBe(1);
+    expect(runs).toBe(1);
+
+    expect(
+      isTransientWorkspaceModuleFailure(
+        cliProcessResult({
+          stderr:
+            "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/tmp/bundle/node_modules/@anvil/runtime/dist/index.js' imported from /tmp/bundle/cli/payments.mjs",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isTransientWorkspaceModuleFailure(
+        cliProcessResult({
+          stdout: '{"error":{"code":"runtime_failure"}}',
+          stderr:
+            "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/tmp/bundle/node_modules/@anvil/cli/dist/index.js' imported from /tmp/bundle/cli/payments.mjs",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("finds a structured refusal in either stream even when diagnostics precede it", () => {
+    expect(
+      parseCliErrorCode(
+        cliProcessResult({
+          stderr: "ExperimentalWarning: diagnostic only",
+          stdout: '{"error":{"code":"confirmation_required"}}',
+        }),
+      ),
+    ).toBe("confirmation_required");
+    expect(
+      parseCliErrorCode(
+        cliProcessResult({
+          stderr: 'warning before JSON\n{"error":{"code":"confirmation_required"}}\n',
+        }),
+      ),
+    ).toBe("confirmation_required");
+  });
+
+  it("bounds and redacts child output before persisting failure context", () => {
+    const context = safeCliProcessContext({
+      ...cliProcessResult({
+        stdout: `token=top-secret {"access_token":"json-secret"} ${"x".repeat(2_000)}`,
+        stderr:
+          "Authorization: Bearer bearer-secret\nclient_secret=client-secret\nANVIL_PROD_CLIENT_SECRET=env-secret",
+        stdoutTruncated: true,
+      }),
+      attempts: 5,
+    });
+    expect(context).toContain("exit=1");
+    expect(context).toContain("attempts=5");
+    expect(context).toContain("[REDACTED]");
+    expect(context).toContain("[capture-truncated]");
+    expect(context).not.toContain("top-secret");
+    expect(context).not.toContain("bearer-secret");
+    expect(context).not.toContain("client-secret");
+    expect(context).not.toContain("json-secret");
+    expect(context).not.toContain("env-secret");
+    expect(context.length).toBeLessThan(800);
+  });
+});
 
 describe("tri-surface conformance (payments, OpenAPI)", () => {
   it("proves the CLI, MCP, and skill surfaces agree end-to-end", async () => {

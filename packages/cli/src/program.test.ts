@@ -222,6 +222,18 @@ describe("embedding contract", () => {
 });
 
 describe("run pass-through", () => {
+  it("prints local run help when no bundle coordinate is supplied", async () => {
+    for (const flag of ["--help", "-h"]) {
+      const { code, io } = await anvil("run", flag);
+      expect(code).toBe(0);
+      expect(io.text()).toContain("Usage: anvil run");
+      expect(io.text()).toContain("generated bundle directory or air.yaml");
+      expect(io.text()).toMatch(/--mcp-token-env\s+<NAME>/);
+      expect(io.text()).toMatch(/--mcp\s+<https-url>/);
+      expect(io.text()).not.toContain("ENOENT");
+    }
+  });
+
   it("forwards --help after the positionals to the tool engine, not Commander", async () => {
     const { code, io } = await anvil("run", bundle, "refunds", "create", "--help");
     expect(code).toBe(0);
@@ -235,6 +247,38 @@ describe("run pass-through", () => {
     expect(code).toBe(0);
     const schema = JSON.parse(io.stdout.join("\n"));
     expect(schema.required).toContain("payment_id");
+  });
+
+  it("resolves the local MCP server beside a direct air.yaml coordinate", async () => {
+    let serverPath: string | undefined;
+    const io = bufferIO();
+    const code = await runAnvilCli(
+      [
+        "run",
+        join(bundle, "air.yaml"),
+        "customers",
+        "get",
+        "--customer-id",
+        "cus_123",
+        "--dry-run",
+        "--mcp",
+        "stdio",
+      ],
+      {
+        io,
+        mcpConnect: async (_target, deps) => {
+          serverPath = deps.mcpServerPath;
+          return {
+            async callTool() {
+              return { content: [{ type: "text", text: '{"method":"GET"}' }] };
+            },
+            async close() {},
+          };
+        },
+      },
+    );
+    expect(code, io.text()).toBe(0);
+    expect(serverPath).toBe(join(bundle, "mcp", "server.js"));
   });
 });
 

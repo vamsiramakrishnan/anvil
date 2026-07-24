@@ -46,7 +46,7 @@ async function compileBundle(): Promise<{ bundle: string; root: string; operatio
 function transactionLitter(root: string): string[] {
   return readdirSync(root).filter(
     (entry) =>
-      entry.startsWith(".bundle.approve-stage-") || entry.startsWith(".bundle.approve-backup-"),
+      entry.startsWith(".bundle.reproject-stage-") || entry.startsWith(".bundle.reproject-backup-"),
   );
 }
 

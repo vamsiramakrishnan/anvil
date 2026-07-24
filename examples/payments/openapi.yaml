@@ -53,6 +53,8 @@ paths:
       summary: Create a refund
       description: Creates a refund for a captured payment. Irreversible.
       tags: [refunds]
+      security:
+        - oauth2: [payments.write]
       parameters:
         - name: payment_id
           in: path
@@ -94,6 +96,8 @@ paths:
       operationId: capturePayment
       summary: Capture a payment
       tags: [payments]
+      security:
+        - oauth2: [payments.write]
       parameters:
         - name: payment_id
           in: path

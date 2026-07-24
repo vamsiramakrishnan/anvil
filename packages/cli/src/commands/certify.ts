@@ -1,6 +1,7 @@
 import { existsSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { airFromJson, airFromYaml } from "@anvil/air";
+import { certify as assessStaticContract } from "@anvil/certification";
 import {
   CERTIFICATION_FILE,
   type Certification,
@@ -17,18 +18,18 @@ import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 
 /**
- * `anvil certify <dir|air.yaml>` — run the certification gates over a generated
- * bundle and write `certification.json` into it. The judgement itself is the
- * pure `certifyBundle` core in @anvil/generators; this command is only the fs
- * shell and the summary printer. Exit 0 only when every gate passes.
+ * `anvil certify <dir|air.yaml>` — run static assurance gates over a generated
+ * bundle and write `certification.json` into it. This proves byte/contract
+ * coherence; it does not boot a generated surface. `selftest`, `conformance`,
+ * and `simulate` produce the executable evidence.
  */
 export function registerCertify(parent: Command, ctx: CommandContext): void {
   annotate(
     parent
       .command("certify")
-      .summary("Run the certification gates over a bundle and write certification.json.")
+      .summary("Run static bundle-assurance gates and write certification.json.")
       .description(
-        "Four deterministic gates judge the bundle as emitted: CONTRACT (AIR re-validates, generated surfaces align, and each persisted target subtree exactly regenerates from its setup config), SAFETY (risky mutations confirm, no retry without a proven basis or idempotency, coherent secret handling), SEMANTIC (approved operations are described, distinct, and routable by intent; blocking dispositions stop certification), and RUNTIME (mocks, evals, conformance test, and deploy artifacts are present and consistent). The certification binds to a content hash of the bundle, so any tamper invalidates it. Exit 0 only when every gate passes.",
+        "Static assurance only: four deterministic gates judge the bundle as emitted. CONTRACT re-validates AIR, generated-surface alignment, and persisted target-kit regeneration; SAFETY checks confirmation, retry/idempotency, and secret handling; SEMANTIC checks descriptions and routing; RUNTIME checks generated mocks, evals, conformance tests, and deploy artifacts. The record binds to a content hash, so generated-byte tampering invalidates it. It does not boot or invoke a surface; use `anvil selftest`, `anvil conformance`, and `anvil simulate` for executable evidence.",
       )
       .argument("<path>", "bundle directory or its air.yaml")
       .option("--json", "emit the full certification as JSON")
@@ -55,6 +56,30 @@ export function runCertify(
   const air = loadBundleAir(dir, files);
 
   const cert = certifyBundle(files, air, { now: deps.now });
+  // Bridge the generated-byte judgement to the canonical certification
+  // attestation model. This remains static: executable=false is intentional.
+  const canonical = assessStaticContract(air);
+  if (canonical.status !== "failed" && canonical.status !== "static_passed") {
+    throw new Error(`Static assurance returned unexpected status "${canonical.status}".`);
+  }
+  cert.assurance = {
+    level: "static",
+    engine: "@anvil/certification",
+    engineStatus: canonical.status,
+    recordDigest: canonical.digest,
+    attestation: canonical.attestation,
+  };
+  cert.checks.push(
+    ...canonical.checks.map(
+      (check): CertificationCheck => ({
+        id: `contract.certification-core.${check.id.replaceAll("/", ".")}`,
+        gate: "contract",
+        status: check.ok ? "passed" : "failed",
+        detail: check.detail ?? `${check.id} ${check.ok ? "passed" : "failed"}`,
+      }),
+    ),
+  );
+  if (canonical.status === "failed") cert.status = "failed";
   const targetChecks = targetCertificationChecks(files, air);
   cert.checks.push(...targetChecks);
   if (targetChecks.some((check) => check.status === "failed")) cert.status = "failed";
@@ -92,7 +117,7 @@ function targetCertificationChecks(
 export function renderCertificationSummary(cert: Certification, dir: string): string {
   const lines: string[] = [];
   lines.push(
-    `Certification — ${cert.serviceId}${cert.capabilityId ? ` (${cert.capabilityId})` : ""}  bundle ${cert.bundleHash.slice(0, 12)}…`,
+    `Static assurance — ${cert.serviceId}${cert.capabilityId ? ` (${cert.capabilityId})` : ""}  bundle ${cert.bundleHash.slice(0, 12)}…`,
   );
   const gates: CertificationGate[] = ["contract", "safety", "semantic", "runtime"];
   for (const gate of gates) {
@@ -107,8 +132,8 @@ export function renderCertificationSummary(cert: Certification, dir: string): st
   lines.push("");
   lines.push(
     cert.status === "passed"
-      ? `PASSED — wrote ${join(dir, CERTIFICATION_FILE)}. Publish with \`anvil publish ${dir} --target cloud-run\`.`
-      : `FAILED — wrote ${join(dir, CERTIFICATION_FILE)}. Fix the gates above and re-certify.`,
+      ? `STATIC PASSED — wrote ${join(dir, CERTIFICATION_FILE)}. No generated surface was executed; continue with \`anvil selftest ${dir}\`, \`anvil conformance ${dir}\`, and \`anvil simulate ${dir}\` before preparing a release plan.`
+      : `STATIC FAILED — wrote ${join(dir, CERTIFICATION_FILE)}. Fix the gates above and re-run static assurance.`,
   );
   return lines.join("\n");
 }

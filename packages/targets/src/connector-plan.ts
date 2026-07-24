@@ -13,6 +13,7 @@ import type { AirDocument } from "@anvil/air";
 import {
   connectorOAuthEndpoints,
   connectorScopes,
+  GEMINI_SURFACE_LABELS,
   type GeminiEnterpriseTargetConfig,
   type GeminiRegistrationSurface,
   includesSurface,
@@ -290,12 +291,12 @@ terraform -chdir="$ANVIL_TF_WORK_DIR" apply "$ANVIL_TF_WORK_DIR/tfplan"`,
     surfaces: [
       {
         id: "custom-mcp",
-        label: "Custom MCP DataConnector",
+        label: GEMINI_SURFACE_LABELS["custom-mcp"],
         when: "quick, standalone data store; OAuth setup is console-first",
       },
       {
         id: "agent-gateway",
-        label: "Agent Registry + Agent Gateway",
+        label: GEMINI_SURFACE_LABELS["agent-gateway"],
         when: "gateway-governed; engine egress binding requires explicit confirmation",
       },
     ],
@@ -312,7 +313,11 @@ export function renderConnectorPlanText(plan: ConnectorPlan): string {
     `\nConnect "${plan.service}" to Gemini Enterprise — ${plan.toolCount} tool(s), budget ${plan.actionBudget}.`,
   );
 
-  L.push(`\nSelected registration surface: ${plan.selectedSurface}.`);
+  const selectedLabel =
+    plan.selectedSurface && Object.hasOwn(GEMINI_SURFACE_LABELS, plan.selectedSurface)
+      ? GEMINI_SURFACE_LABELS[plan.selectedSurface as GeminiRegistrationSurface]
+      : "not selected";
+  L.push(`\nSelected registration surface: ${selectedLabel}.`);
   L.push("Available surfaces:");
   for (const s of plan.surfaces) L.push(`  • ${s.label} — ${s.when}`);
 

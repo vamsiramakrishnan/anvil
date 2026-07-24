@@ -1,15 +1,18 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  bundleHash,
+  CONFORMANCE_REPORT_FILE,
+  LIVE_CONFORMANCE_REPORT_FILE,
+  readBundleDir,
+} from "@anvil/generators";
 import type { ConformanceCheck, ConformanceReport, LiveCheck, LiveReport } from "@anvil/harness";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-
-const CONFORMANCE_REPORT_FILE = "conformance.report.json";
-const LIVE_REPORT_FILE = "conformance.live.report.json";
 
 /**
  * `anvil conformance <dir>` — the tri-surface conformance harness. Where
@@ -60,9 +63,14 @@ export async function runConformanceCommand(
 
   const { runConformance } = await import("@anvil/harness");
   const report = await runConformance(dir, { cliPackageDir: resolveCliPackageDir() });
-  writeFileSync(join(dir, CONFORMANCE_REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  const boundReport = { ...report, bundleHash: bundleHash(readBundleDir(dir)) };
+  writeFileSync(
+    join(dir, CONFORMANCE_REPORT_FILE),
+    `${JSON.stringify(boundReport, null, 2)}\n`,
+    "utf8",
+  );
 
-  if (opts.json === true) io.out(JSON.stringify(report, null, 2));
+  if (opts.json === true) io.out(JSON.stringify(boundReport, null, 2));
   else io.out(renderConformanceSummary(report, dir));
   return report.summary.fail === 0 ? 0 : 1;
 }
@@ -77,9 +85,14 @@ async function runLiveLane(
   const { loadLiveConfig, runLiveConformance } = await import("@anvil/harness");
   const config = loadLiveConfig(configPath);
   const report = await runLiveConformance(dir, config);
-  writeFileSync(join(dir, LIVE_REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  const boundReport = { ...report, bundleHash: bundleHash(readBundleDir(dir)) };
+  writeFileSync(
+    join(dir, LIVE_CONFORMANCE_REPORT_FILE),
+    `${JSON.stringify(boundReport, null, 2)}\n`,
+    "utf8",
+  );
 
-  if (opts.json === true) io.out(JSON.stringify(report, null, 2));
+  if (opts.json === true) io.out(JSON.stringify(boundReport, null, 2));
   else io.out(renderLiveSummary(report, dir));
   return report.summary.fail === 0 ? 0 : 1;
 }
@@ -96,8 +109,8 @@ export function renderLiveSummary(report: LiveReport, dir: string): string {
   lines.push("");
   lines.push(
     fail === 0
-      ? `PASSED — ${pass} check(s) passed, ${skipped} skipped. Wrote ${join(dir, LIVE_REPORT_FILE)}.`
-      : `FAILED — ${fail} check(s) failed (${pass} passed, ${skipped} skipped). Wrote ${join(dir, LIVE_REPORT_FILE)}.`,
+      ? `PASSED — ${pass} check(s) passed, ${skipped} skipped. Wrote ${join(dir, LIVE_CONFORMANCE_REPORT_FILE)}.`
+      : `FAILED — ${fail} check(s) failed (${pass} passed, ${skipped} skipped). Wrote ${join(dir, LIVE_CONFORMANCE_REPORT_FILE)}.`,
   );
   return lines.join("\n");
 }

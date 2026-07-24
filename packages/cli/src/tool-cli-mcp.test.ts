@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AirDocument } from "@anvil/air";
@@ -9,14 +10,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { bufferIO } from "./io.js";
-import { type McpToolClient, runToolCli } from "./tool-cli.js";
+import { type McpToolClient, remoteMcpTarget, runToolCli } from "./tool-cli.js";
 
 // skill → CLI → MCP: the CLI can route an invocation THROUGH an MCP server (the
 // `--mcp` path) instead of executing directly, and the safety contract survives
 // the hop — confirm / idempotency-key travel as the operation's synthesized input
 // fields, and --dry-run rides the reserved anvil_dry_run arg. The MCP transport
-// (stdio vs SSE) is orthogonal and injected here in-process via InMemoryTransport;
-// a real SSE client↔server is exercised separately (the generated server test).
+// Transport selection is orthogonal and mostly injected here via
+// InMemoryTransport; the bearer test below also drives the real Streamable HTTP
+// client far enough to inspect its initialization request.
 
 const examples = fileURLToPath(new URL("../../../examples/payments/", import.meta.url));
 const read = (rel: string) => readFileSync(join(examples, rel), "utf8");
@@ -82,6 +84,180 @@ const REFUND = [
 ];
 
 describe("CLI routed through MCP (--mcp)", () => {
+  it("uses Streamable HTTP for ordinary deployed /mcp URLs and requires an explicit SSE prefix", () => {
+    expect(remoteMcpTarget("https://tools.example.com/mcp")).toMatchObject({
+      kind: "streamable-http",
+    });
+    expect(remoteMcpTarget("sse:https://tools.example.com/sse")).toMatchObject({
+      kind: "sse",
+    });
+    expect(() => remoteMcpTarget("ftp://tools.example.com/mcp")).toThrow(/expected HTTP\(S\)/);
+    expect(() => remoteMcpTarget("not-a-url")).toThrow(/Invalid remote MCP target/);
+    expect(() => remoteMcpTarget("https://token@tools.example.com/mcp")).toThrow(
+      /URL credentials are forbidden/,
+    );
+  });
+
+  it("classifies a malformed built-in MCP target as input, not an outage", async () => {
+    const io = bufferIO();
+    const code = await runToolCli(
+      air,
+      [
+        "customers",
+        "get",
+        "--customer-id",
+        "cus_123",
+        "--dry-run",
+        "--mcp",
+        "ftp://tools.example.com/mcp",
+      ],
+      { env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv, io },
+    );
+    expect(code).toBe(2);
+    expect(io.stderr.join("\n")).toContain("validation_error");
+    expect(io.stderr.join("\n")).toContain("expected HTTP(S)");
+    expect(io.stderr.join("\n")).not.toContain("upstream_unavailable");
+  });
+
+  it("reads remote Streamable HTTP bearer auth from the named env variable at call time", async () => {
+    const token = "secret-that-must-not-be-rendered";
+    let authorization: string | undefined;
+    const server = createServer((req, res) => {
+      authorization = req.headers.authorization;
+      res.writeHead(401, { "content-type": "application/json", "www-authenticate": "Bearer" });
+      res.end('{"error":"unauthorized test endpoint"}');
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP test server.");
+      const io = bufferIO();
+      const code = await runToolCli(
+        air,
+        [
+          "customers",
+          "get",
+          "--customer-id",
+          "cus_123",
+          "--dry-run",
+          "--mcp",
+          `http://127.0.0.1:${address.port}/mcp`,
+          "--mcp-token-env",
+          "TEST_REMOTE_MCP_TOKEN",
+        ],
+        {
+          env: {
+            ANVIL_ENV: "dev",
+            TEST_REMOTE_MCP_TOKEN: token,
+          } as NodeJS.ProcessEnv,
+          io,
+        },
+      );
+      expect(code).toBe(7); // the probe deliberately rejects initialization
+      expect(authorization).toBe(`Bearer ${token}`);
+      expect(io.text()).not.toContain(token);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
+  it("redacts a bearer value even when a connector includes it in an error", async () => {
+    const token = "secret-that-a-connector-echoed";
+    const io = bufferIO();
+    const code = await runToolCli(
+      air,
+      [
+        "customers",
+        "get",
+        "--customer-id",
+        "cus_123",
+        "--dry-run",
+        "--mcp",
+        "https://tools.example.com/mcp?tenant=acme",
+        "--mcp-token-env",
+        "TEST_REMOTE_MCP_TOKEN",
+      ],
+      {
+        env: {
+          ANVIL_ENV: "dev",
+          TEST_REMOTE_MCP_TOKEN: token,
+        } as NodeJS.ProcessEnv,
+        io,
+        mcpConnect: async () => {
+          throw new Error(`authorization failed for Bearer ${token}`);
+        },
+      },
+    );
+    expect(code).toBe(7);
+    expect(io.text()).toContain("Bearer [REDACTED]");
+    expect(io.text()).toContain("?redacted");
+    expect(io.text()).not.toContain(token);
+    expect(io.text()).not.toContain("tenant=acme");
+  });
+
+  it("fails before connecting when the named remote MCP bearer variable is absent", async () => {
+    let connected = false;
+    const io = bufferIO();
+    const code = await runToolCli(
+      air,
+      [
+        "customers",
+        "get",
+        "--customer-id",
+        "cus_123",
+        "--dry-run",
+        "--mcp",
+        "https://tools.example.com/mcp",
+        "--mcp-token-env",
+        "MISSING_REMOTE_MCP_TOKEN",
+      ],
+      {
+        env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv,
+        io,
+        mcpConnect: async () => {
+          connected = true;
+          throw new Error("must not connect");
+        },
+      },
+    );
+    expect(code).toBe(4);
+    expect(connected).toBe(false);
+    expect(io.stderr.join("\n")).toContain("MISSING_REMOTE_MCP_TOKEN");
+    expect(io.stderr.join("\n")).toContain("auth_required");
+  });
+
+  it("supports ANVIL_MCP_TOKEN_ENV as the secret-free default variable name", async () => {
+    let observedToken: string | undefined;
+    const io = bufferIO();
+    const code = await runToolCli(
+      air,
+      ["customers", "get", "--customer-id", "cus_123", "--dry-run"],
+      {
+        env: {
+          ANVIL_ENV: "dev",
+          ANVIL_MCP_TARGET: "https://tools.example.com/mcp",
+          ANVIL_MCP_TOKEN_ENV: "REMOTE_MCP_TOKEN",
+          REMOTE_MCP_TOKEN: "opaque-test-token",
+        } as NodeJS.ProcessEnv,
+        io,
+        mcpConnect: async (_target, _deps, options) => {
+          observedToken = options?.bearerToken;
+          return {
+            async callTool() {
+              return { content: [{ type: "text", text: '{"ok":true}' }] };
+            },
+            async close() {},
+          };
+        },
+      },
+    );
+    expect(code, io.text()).toBe(0);
+    expect(observedToken).toBe("opaque-test-token");
+    expect(io.text()).not.toContain("opaque-test-token");
+  });
+
   it("previews a dry-run over MCP — the plan, and no upstream call", async () => {
     const mcp = inProcessMcp();
     const io = bufferIO();

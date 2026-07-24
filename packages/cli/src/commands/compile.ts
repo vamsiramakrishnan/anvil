@@ -30,7 +30,10 @@ export function registerCompile(parent: Command, ctx: CommandContext): void {
       .argument("[spec]", "OpenAPI/Swagger spec file (imported and locked before compiling)")
       .option("--source <snapshot-id>", "compile an already-locked snapshot instead of a spec file")
       .option("--entrypoint <path>", "snapshot-relative entrypoint when a source has several")
-      .option("--manifest <file>", "Anvil manifest with semantic overrides")
+      .option(
+        "--manifest <file>",
+        "Anvil manifest with semantic overrides, workflows, and exact-id capability reviews",
+      )
       .option("--service <id>", "override the derived service id")
       .option("--out <dir>", "bundle output directory (default generated/<service-id>)")
       .option("--endpoint <url>", "MCP endpoint recorded in the generated artifacts")

@@ -1,4 +1,6 @@
 ---
+import MobileDiagram from "./MobileDiagram.astro";
+
 // The estate funnel: the gateway's whole catalog narrows, stage by stage, to
 // the few operations an agent actually sees. A single funnel silhouette carries
 // the narrowing; stage names sit above, counts inside, glosses below. Inline
@@ -6,6 +8,16 @@
 ---
 
 <figure class="anvil-diagram">
+  <MobileDiagram
+    ariaLabel="How an API estate narrows to the operations an agent can call"
+    items={[
+      { label: "01", title: "The estate", detail: "Roughly 800 APIs remain behind the gateway." },
+      { label: "02", title: "Inventory", detail: "List the whole catalog cheaply before compiling anything." },
+      { label: "03", title: "Import", detail: "Bring in only the handful of APIs that matter." },
+      { label: "04", title: "Capabilities", detail: "Group related operations into review-sized units." },
+      { label: "05", title: "The agent", detail: "Expose only the few approved operations it needs." },
+    ]}
+  />
   <svg
     viewBox="0 0 1040 380"
     role="img"
@@ -105,5 +117,9 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
     fill: var(--sl-color-gray-3);
+  }
+  @media (max-width: 40rem) {
+    .anvil-diagram { overflow-x: visible; }
+    .anvil-diagram svg { display: none; }
   }
 </style>

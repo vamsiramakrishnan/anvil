@@ -33,6 +33,8 @@ export const CAPABILITY_TOOL_BUDGET = {
 export const BUDGET_WARNING_CODE = "capability_tool_budget";
 /** Diagnostic code for a capability over the hard limit (blocks approval). */
 export const BUDGET_BLOCKED_CODE = "capability_tool_budget_exceeded";
+/** Durable audit signal when a reviewer deliberately waives the hard limit. */
+export const BUDGET_WAIVED_CODE = "capability_tool_budget_waived";
 
 export type CapabilityBudgetVerdict = "ok" | "warning" | "blocked";
 
@@ -50,7 +52,28 @@ export interface CapabilityBudgetCheck {
  * deterministic: the verdict depends only on the member-operation count.
  */
 export function capabilityToolBudget(capability: Capability): CapabilityBudgetCheck {
-  const toolCount = capability.operationIds.length;
+  return budgetForOperationIds(capability, capability.operationIds);
+}
+
+/**
+ * Budget the actual surface a capability build can disclose: its direct
+ * members plus every operation referenced by an authored workflow it owns.
+ * Dependencies count regardless of current operation approval, so approving a
+ * dependency later cannot silently expand a grouping beyond what was reviewed.
+ */
+export function capabilityDisclosureBudget(
+  air: AirDocument,
+  capabilityId: string,
+): CapabilityBudgetCheck {
+  const capability = requireCapability(air, capabilityId);
+  return budgetForOperationIds(capability, disclosedOperationIds(air, capability));
+}
+
+function budgetForOperationIds(
+  capability: Capability,
+  operationIds: readonly string[],
+): CapabilityBudgetCheck {
+  const toolCount = new Set(operationIds).size;
   const base = { capabilityId: capability.id, toolCount };
   if (toolCount > CAPABILITY_TOOL_BUDGET.blockAbove) {
     return {
@@ -87,7 +110,10 @@ export function capabilityToolBudget(capability: Capability): CapabilityBudgetCh
 
 /** A structured, typed failure from a capability review action. */
 export class CapabilityReviewError extends Error {
-  readonly code: "capability_not_found" | "capability_budget_exceeded";
+  readonly code:
+    | "capability_not_found"
+    | "capability_budget_exceeded"
+    | "capability_budget_waiver_note_required";
   /** The budget diagnostic, when the failure is budget-driven. */
   readonly diagnostic?: Diagnostic;
 
@@ -131,7 +157,7 @@ export function approveCapability(
   options: ApproveCapabilityOptions = {},
 ): CapabilityBudgetCheck {
   const capability = requireCapability(air, capabilityId);
-  const budget = capabilityToolBudget(capability);
+  const budget = capabilityDisclosureBudget(air, capabilityId);
   if (budget.verdict === "blocked" && options.allowLarge !== true) {
     throw new CapabilityReviewError(
       "capability_budget_exceeded",
@@ -139,9 +165,32 @@ export function approveCapability(
       budget.diagnostic,
     );
   }
+  if (budget.verdict === "blocked" && !options.note?.trim()) {
+    throw new CapabilityReviewError(
+      "capability_budget_waiver_note_required",
+      `Capability '${capabilityId}' exceeds the hard tool budget; --allow-large requires a non-empty review note so the waiver is auditable.`,
+    );
+  }
   capability.lifecycle = "approved";
   if (options.note) capability.reviewNote = options.note;
-  return budget;
+  const acceptedBudget =
+    budget.verdict === "blocked"
+      ? {
+          ...budget,
+          verdict: "warning" as const,
+          diagnostic: {
+            level: "warning" as const,
+            code: BUDGET_WAIVED_CODE,
+            capabilityId,
+            message:
+              `Capability '${capabilityId}' discloses ${budget.toolCount} tools, above the hard ` +
+              `limit ${CAPABILITY_TOOL_BUDGET.blockAbove}; the reviewer explicitly waived the limit` +
+              `${options.note ? `: ${options.note}` : "."}`,
+          },
+        }
+      : budget;
+  recordBudgetDiagnostic(air, capabilityId, acceptedBudget.diagnostic);
+  return acceptedBudget;
 }
 
 /**
@@ -157,6 +206,7 @@ export function rejectCapability(
   const capability = requireCapability(air, capabilityId);
   capability.lifecycle = "rejected";
   if (reason) capability.reviewNote = reason;
+  recordBudgetDiagnostic(air, capabilityId, undefined);
   return capability;
 }
 
@@ -184,7 +234,11 @@ export function proposeCapabilities(air: AirDocument): CapabilityProposal[] {
       capability.lifecycle = prior.lifecycle;
       capability.reviewNote = prior.reviewNote;
     }
-    return { capability, budget: capabilityToolBudget(capability), isNew: !prior };
+    return {
+      capability,
+      budget: budgetForOperationIds(capability, disclosedOperationIds(air, capability)),
+      isNew: !prior,
+    };
   });
 }
 
@@ -247,4 +301,28 @@ export function diffCapability(air: AirDocument, capabilityId: string): Capabili
 function rediscover(air: AirDocument): Capability[] {
   const clones = structuredClone(air.operations) as Operation[];
   return discoverCapabilities(air.service.id, clones);
+}
+
+function disclosedOperationIds(air: AirDocument, capability: Capability): string[] {
+  return [
+    ...capability.operationIds,
+    ...air.workflows
+      .filter((workflow) => workflow.capabilityId === capability.id)
+      .flatMap((workflow) => workflow.steps.map((step) => step.operationId)),
+  ];
+}
+
+function recordBudgetDiagnostic(
+  air: AirDocument,
+  capabilityId: string,
+  diagnostic: Diagnostic | undefined,
+): void {
+  air.diagnostics = air.diagnostics.filter(
+    (candidate) =>
+      !(
+        candidate.capabilityId === capabilityId &&
+        (candidate.code === BUDGET_WARNING_CODE || candidate.code === BUDGET_WAIVED_CODE)
+      ),
+  );
+  if (diagnostic) air.diagnostics.push(diagnostic);
 }

@@ -478,10 +478,17 @@ type CliRun = (
   args: Record<string, unknown>,
   confirm: boolean,
 ) => Promise<CliResult>;
-interface CliResult {
+export interface CliProcessResult {
   exitCode: number | null;
+  signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+}
+export interface CliResult extends CliProcessResult {
+  /** A workspace build can briefly replace a linked package's dist directory. */
+  attempts: number;
 }
 
 /**
@@ -527,12 +534,7 @@ async function checkWireAgreement(
     const cliResult = await cli(op, args, confirm);
     const cliWire = await ctl.capture();
     if (cliResult.exitCode !== 0) {
-      return fail(
-        id,
-        op,
-        s,
-        `CLI surface exited ${cliResult.exitCode}: ${trim(cliResult.stderr || cliResult.stdout)}`,
-      );
+      return fail(id, op, s, `CLI surface failed: ${safeCliProcessContext(cliResult)}`);
     }
     const cliReq = single(cliWire);
     if (!cliReq)
@@ -613,20 +615,19 @@ async function checkGateAgreement(
     await ctl.reset();
     const cliRefused = await cli(op, args, false);
     const cliLeak = await ctl.capture();
-    const cliError = parseJson(cliRefused.stderr || cliRefused.stdout) as
-      | { error?: { code?: string } }
-      | undefined;
+    const cliErrorCode = parseCliErrorCode(cliRefused);
     const cliGated =
-      cliRefused.exitCode !== 0 &&
-      cliError?.error?.code === "confirmation_required" &&
-      cliLeak.length === 0;
+      cliRefused.exitCode !== 0 && cliErrorCode === "confirmation_required" && cliLeak.length === 0;
     if (!cliGated) {
       const divergences: ConformanceDivergence[] = [
         {
           path: "confirm-refusal",
           between: ["mcp", "cli"],
           left: "refused",
-          right: cliLeak.length > 0 ? "hit-wire" : `${cliError?.error?.code ?? "no-error"}`,
+          right:
+            cliLeak.length > 0
+              ? "hit-wire"
+              : (cliErrorCode ?? `unrecognized-refusal(exit=${cliRefused.exitCode ?? "null"})`),
         },
       ];
       return {
@@ -635,7 +636,9 @@ async function checkGateAgreement(
         surfaces: s,
         status: "fail",
         divergences,
-        detail: "CLI surface did not enforce the confirmation gate the MCP surface enforced",
+        detail:
+          "CLI surface did not enforce the confirmation gate the MCP surface enforced. " +
+          safeCliProcessContext(cliRefused),
       };
     }
     return {
@@ -674,6 +677,26 @@ function driveCli(
     base,
     "--json",
   ];
+  return retryTransientCliLaunch(() => spawnCliProcess(argv, credentialEnv));
+}
+
+const CLI_CAPTURE_LIMIT = 32 * 1024;
+const TRANSIENT_CLI_RETRY_DELAYS_MS = [50, 100, 200, 400] as const;
+const SENSITIVE_CLI_KEY_SOURCE =
+  "(?:ANVIL_[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY|ASSERTION_KEY)|authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]key|client[-_]secret|access[-_]token|refresh[-_]token|id[-_]token|password|token|secret|private[-_]key|assertion[-_]key|credential)";
+const JSON_CLI_SECRET = new RegExp(
+  String.raw`((?:["'])${SENSITIVE_CLI_KEY_SOURCE}(?:["'])\s*:\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`,
+  "gi",
+);
+const ASSIGNED_CLI_SECRET = new RegExp(
+  String.raw`((?<![A-Za-z0-9_])${SENSITIVE_CLI_KEY_SOURCE}(?![A-Za-z0-9_])\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`,
+  "gi",
+);
+
+function spawnCliProcess(
+  argv: string[],
+  credentialEnv: Record<string, string>,
+): Promise<CliProcessResult> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, argv, {
       env: {
@@ -688,15 +711,137 @@ function driveCli(
     });
     let stdout = "";
     let stderr = "";
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     child.stdout?.on("data", (c: Buffer) => {
-      stdout += c.toString("utf8");
+      const captured = appendBounded(stdout, c.toString("utf8"), CLI_CAPTURE_LIMIT);
+      stdout = captured.text;
+      stdoutTruncated ||= captured.truncated;
     });
     child.stderr?.on("data", (c: Buffer) => {
-      stderr += c.toString("utf8");
+      const captured = appendBounded(stderr, c.toString("utf8"), CLI_CAPTURE_LIMIT);
+      stderr = captured.text;
+      stderrTruncated ||= captured.truncated;
     });
     child.on("error", reject);
-    child.on("close", (exitCode) => resolvePromise({ exitCode, stdout, stderr }));
+    child.on("close", (exitCode, signal) =>
+      resolvePromise({
+        exitCode,
+        signal,
+        stdout,
+        stderr,
+        stdoutTruncated,
+        stderrTruncated,
+      }),
+    );
   });
+}
+
+/**
+ * Retry only a pre-entrypoint workspace-link race: tsup cleans a linked Anvil
+ * package's `dist` directory before atomically writing its replacement. A module
+ * resolution failure at that exact path cannot have executed or hit the wire,
+ * so retrying is side-effect safe. Every other CLI failure is returned once.
+ *
+ * Exported to make the concurrency regression deterministic without rebuilding
+ * this live workspace from inside a unit test.
+ */
+export async function retryTransientCliLaunch(
+  run: () => Promise<CliProcessResult>,
+  wait: (ms: number) => Promise<void> = delay,
+): Promise<CliResult> {
+  let latest: CliProcessResult | undefined;
+  for (let attempt = 1; attempt <= TRANSIENT_CLI_RETRY_DELAYS_MS.length + 1; attempt++) {
+    latest = await run();
+    if (
+      !isTransientWorkspaceModuleFailure(latest) ||
+      attempt > TRANSIENT_CLI_RETRY_DELAYS_MS.length
+    ) {
+      return { ...latest, attempts: attempt };
+    }
+    await wait(TRANSIENT_CLI_RETRY_DELAYS_MS[attempt - 1] as number);
+  }
+  throw new Error("unreachable transient CLI retry state");
+}
+
+/** Whether the CLI failed before entrypoint execution on a linked Anvil dist. */
+export function isTransientWorkspaceModuleFailure(
+  result: Pick<CliProcessResult, "exitCode" | "stdout" | "stderr">,
+): boolean {
+  // This is intentionally exact. The generated CLI statically imports
+  // `@anvil/cli`, whose package export resolves to dist/index.js before the
+  // entrypoint can execute. A missing dist from any other package may happen
+  // after operation execution and is therefore not safe to replay.
+  if (result.exitCode !== 1 || result.stdout.trim() !== "" || parseCliErrorCode(result)) {
+    return false;
+  }
+  return (
+    /Error \[ERR_MODULE_NOT_FOUND\]: Cannot find (?:module|package) ['"][^'"\r\n]*[\\/]node_modules[\\/]@anvil[\\/]cli[\\/]dist[\\/]index\.js['"]/.test(
+      result.stderr,
+    ) && /imported from [^\r\n]*[\\/]cli[\\/][^\\/\r\n]+\.mjs/.test(result.stderr)
+  );
+}
+
+/**
+ * Parse a structured CLI error from either stream. Diagnostics or Node warnings
+ * can precede the JSON envelope, so inspect complete streams and individual
+ * lines instead of choosing `stderr || stdout`.
+ */
+export function parseCliErrorCode(
+  result: Pick<CliProcessResult, "stdout" | "stderr">,
+): string | undefined {
+  for (const stream of [result.stderr, result.stdout]) {
+    const candidates = [stream, ...stream.split(/\r?\n/).reverse()];
+    for (const candidate of candidates) {
+      const decoded = parseJson(candidate) as { error?: { code?: unknown } } | undefined;
+      if (typeof decoded?.error?.code === "string") return decoded.error.code;
+    }
+  }
+  return undefined;
+}
+
+/** Bounded, redacted child context safe to persist in a conformance report. */
+export function safeCliProcessContext(
+  result: Pick<
+    CliResult,
+    "exitCode" | "signal" | "stdout" | "stderr" | "stdoutTruncated" | "stderrTruncated" | "attempts"
+  >,
+): string {
+  const stdout = safeCliStream(result.stdout);
+  const stderr = safeCliStream(result.stderr);
+  const truncated = (value: string, wasTruncated: boolean) =>
+    `${JSON.stringify(value || "<empty>")}${wasTruncated ? " [capture-truncated]" : ""}`;
+  return (
+    `exit=${result.exitCode ?? "null"} signal=${result.signal ?? "none"} attempts=${result.attempts}; ` +
+    `stdout=${truncated(stdout, result.stdoutTruncated)}; ` +
+    `stderr=${truncated(stderr, result.stderrTruncated)}`
+  );
+}
+
+function safeCliStream(text: string): string {
+  return trim(
+    text
+      .replace(/\b(Bearer|Basic)\s+\S+/gi, "$1 [REDACTED]")
+      .replace(JSON_CLI_SECRET, "$1[REDACTED]")
+      .replace(ASSIGNED_CLI_SECRET, "$1[REDACTED]")
+      .replace(/\banvil-hermetic-[A-Za-z0-9._-]+\b/g, "[REDACTED]"),
+  );
+}
+
+function appendBounded(
+  current: string,
+  chunk: string,
+  limit: number,
+): { text: string; truncated: boolean } {
+  const remaining = Math.max(0, limit - current.length);
+  return {
+    text: remaining > 0 ? current + chunk.slice(0, remaining) : current,
+    truncated: chunk.length > remaining,
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
 const fail = (

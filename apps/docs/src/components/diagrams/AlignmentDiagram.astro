@@ -1,10 +1,20 @@
 ---
+import MobileDiagram from "./MobileDiagram.astro";
+
 // The drift problem, side by side: three hand-written wrappers that disagree
 // about one operation's safety posture, vs one AIR model projected onto every
 // surface. This is the argument for the whole product in one picture.
 ---
 
 <figure class="anvil-diagram">
+  <MobileDiagram
+    ariaLabel="The difference between separate wrappers and one generated contract"
+    items={[
+      { label: "Drift", title: "Separate wrappers guess", detail: "The CLI, MCP tool, and runbook can assign different retry and confirmation rules to one refund." },
+      { label: "AIR", title: "One contract decides", detail: "Anvil records the refund as financial, irreversible, and idempotency-key protected once." },
+      { label: "Align", title: "Every surface agrees", detail: "The CLI, MCP tool, and skill regenerate with the same confirmation, key, and retry behavior." },
+    ]}
+  />
   <svg
     viewBox="0 0 1040 320"
     role="img"
@@ -125,4 +135,8 @@
   .d-air-title { font-family: var(--ge-display-font); font-size: 13.5px; font-weight: 700; fill: var(--sl-color-white); }
   .d-air-desc { font-family: var(--sl-font-mono); font-size: 11px; fill: var(--sl-color-gray-3); }
   .d-caption { font-size: 12.5px; fill: var(--sl-color-gray-3); }
+  @media (max-width: 40rem) {
+    .anvil-diagram { overflow-x: visible; }
+    .anvil-diagram svg { display: none; }
+  }
 </style>

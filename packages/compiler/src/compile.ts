@@ -10,6 +10,7 @@ import {
   snakeCase,
 } from "@anvil/air";
 import { discoverCapabilities } from "./capabilities.js";
+import { approveCapability, rejectCapability } from "./capability-review.js";
 import { overlayDigest } from "./contract/digest.js";
 import type { AppliedOverlay, PolicyOverlay, SemanticConflict } from "./contract/model.js";
 import { manifestToOverlay } from "./contract/overlay.js";
@@ -251,7 +252,7 @@ async function buildAir(
   const doc = parsed.document;
   const manifest: AnvilManifest = options.manifest
     ? parseManifest(options.manifest)
-    : { operations: {}, workflows: {} };
+    : { operations: {}, workflows: {}, capabilities: {} };
 
   const title = (doc.info?.title as string | undefined) ?? "service";
   const serviceId = options.serviceId ?? manifest.service?.name ?? snakeCase(title) ?? "service";
@@ -375,7 +376,7 @@ async function buildAir(
     secretSource: "none",
   };
 
-  const air = {
+  const air = loadAirDocument({
     anvilVersion: "0.1.0",
     service: {
       id: serviceId,
@@ -409,9 +410,31 @@ async function buildAir(
       ...workflowDiagnostics,
       ...overlayDiagnostics,
     ],
-  };
+  });
 
-  return { air: loadAirDocument(air), conflicts, blockedOperationIds, appliedOverlays };
+  // Capability review is declarative compiler input when it appears in the
+  // supplemental manifest. Apply it only after deterministic discovery and
+  // authored workflow attachment, using exact capability ids and the same
+  // typed tool-budget gate as the interactive review command. This lets a
+  // gateway import mint an immutable receipt whose initial output is already
+  // both reviewed and bound, rather than approving after import and necessarily
+  // making that receipt stale.
+  const reviewedAir = loadAirDocument(structuredClone(air));
+  const capabilityReviews = Object.entries(manifest.capabilities).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  for (const [capabilityId, review] of capabilityReviews) {
+    if (review.state === "approved") {
+      approveCapability(reviewedAir, capabilityId, {
+        allowLarge: review.allow_large === true,
+        note: review.note,
+      });
+    } else {
+      rejectCapability(reviewedAir, capabilityId, review.note);
+    }
+  }
+
+  return { air: loadAirDocument(reviewedAir), conflicts, blockedOperationIds, appliedOverlays };
 }
 
 /** Approve operations by id (spec §17 approval workflow). */

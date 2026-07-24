@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { type AirDocument, airFromYaml, airToYaml } from "@anvil/air";
-import { approveCapability, compile } from "@anvil/compiler";
+import { type AirDocument, airFromYaml, airToYaml, hashCanonical } from "@anvil/air";
+import { approveCapability, compile, type GatewayImportReceiptView } from "@anvil/compiler";
 import { describe, expect, it } from "vitest";
 import {
   CapabilityBuildError,
   type CapabilityBundleManifest,
+  capabilityArtifactId,
   capabilityView,
   generateCapabilityBundle,
 } from "./capability-view.js";
@@ -63,20 +64,50 @@ describe("capabilityView", () => {
     }
   });
 
-  it("narrows to the capability's approved operations, workflows, and reachable schemas", async () => {
+  it("closes over approved workflow dependencies instead of silently dropping authored workflows", async () => {
     const air = await paymentsAir();
     approveCapability(air, "payments.refunds");
     const view = capabilityView(air, "payments.refunds");
-    expect(view.operations.map((o) => o.id)).toEqual(["payments.refunds.create"]);
+    expect(view.operations.map((o) => o.id)).toEqual([
+      "payments.payments.get",
+      "payments.refunds.create",
+    ]);
     expect(view.capabilities).toHaveLength(1);
-    expect(view.capabilities[0]?.operationIds).toEqual(["payments.refunds.create"]);
-    // The authored refunds workflow steps through getPayment, which is not a
-    // member of this capability's view — a workflow with an unexposed step
-    // must not ship.
-    expect(view.workflows).toEqual([]);
-    expect(view.capabilities[0]?.workflowIds).toEqual([]);
+    expect(view.capabilities[0]?.operationIds).toEqual([
+      "payments.refunds.create",
+      "payments.payments.get",
+    ]);
+    expect(view.workflows.map((workflow) => workflow.id)).toEqual([
+      "payments.refunds.refund_customer",
+    ]);
+    expect(view.capabilities[0]?.workflowIds).toEqual(["payments.refunds.refund_customer"]);
+    expect(view.service.id).toBe("payments-refunds");
     // Narrowing never mutates the source document.
     expect(air.operations.length).toBeGreaterThan(view.operations.length);
+  });
+
+  it("fails loudly when an authored workflow dependency is not approved", async () => {
+    const air = await paymentsAir();
+    approveCapability(air, "payments.refunds");
+    const dependency = air.operations.find((op) => op.id === "payments.payments.get");
+    if (dependency) dependency.state = "review_required";
+    try {
+      capabilityView(air, "payments.refunds");
+      expect.unreachable();
+    } catch (error) {
+      expect((error as CapabilityBuildError).code).toBe(
+        "capability_workflow_dependency_unapproved",
+      );
+      expect((error as Error).message).toContain("payments.payments.get");
+    }
+  });
+
+  it("projects long capability ids to stable, service-safe artifact identities", () => {
+    const id = `payments.${"very_long_capability_name_".repeat(4)}`;
+    const projected = capabilityArtifactId(id);
+    expect(projected.length).toBeLessThanOrEqual(64);
+    expect(projected).toMatch(/^payments-[a-z0-9-]+$/);
+    expect(capabilityArtifactId(id)).toBe(projected);
   });
 });
 
@@ -154,6 +185,8 @@ describe("capability bundle (acceptance)", () => {
     const m = first.manifest;
     expect(m.schemaVersion).toBe(1);
     expect(m.capabilityId).toBe("payments.payments");
+    expect(m.artifactId).toBe("payments-payments");
+    expect(m.parentServiceId).toBe("payments");
     expect(m.capabilityVersion).toBe(air.service.version);
     // One bundle hash, shared by every surface.
     expect(m.surfaces.cli.contractHash).toBe(m.contractHash);
@@ -172,5 +205,82 @@ describe("capability bundle (acceptance)", () => {
       return generateCapabilityBundle(doc, "payments.payments").manifest;
     })();
     expect(altered.contractHash).not.toBe(m.contractHash);
+  });
+
+  it("binds a parent gateway receipt and preserves anonymous gateway blockers", async () => {
+    const air = await paymentsAir();
+    approveCapability(air, "payments.refunds");
+    air.diagnostics.push({
+      level: "warning",
+      code: "gateway/opaque_policy",
+      message: "An opaque policy still needs review.",
+    });
+    const sha = `sha256:${"a".repeat(64)}`;
+    const receipt: GatewayImportReceiptView = {
+      schemaVersion: 1,
+      viewType: "anvil.gateway-import-receipt-view",
+      redacted: true,
+      importId: "gwi-0123456789abcdef",
+      receiptDigest: sha,
+      lineage: { status: "bound" },
+      privateReceipt: {
+        workspaceRoot: "$WORKSPACE",
+        storedAs: ".anvil/imports/gwi-0123456789abcdef/import.receipt.json",
+        verifyCommand: "anvil estate verify gwi-0123456789abcdef --root .",
+      },
+      selection: {
+        vendor: "fixture",
+        apiId: "payments",
+        export: { format: "text", sha256: sha, bytes: 10 },
+      },
+      inventoryDigest: "inventory-digest",
+      contract: {
+        provenance: {
+          kind: "native",
+          fidelity: "full",
+          format: "openapi",
+          location: { origin: "fixture-export.yaml" },
+        },
+        compilerSource: {
+          snapshotId: "src-1",
+          sourceHash: sha,
+          entrypoint: "openapi.yaml",
+        },
+      },
+      overlays: [],
+      diagnostics: [
+        {
+          level: "warning",
+          code: "gateway/opaque_policy",
+          message: "An opaque policy still needs review.",
+        },
+      ],
+      blockers: [
+        {
+          level: "warning",
+          code: "gateway/opaque_policy",
+          message: "An opaque policy still needs review.",
+        },
+      ],
+      output: { digest: sha, files: [] },
+    };
+
+    const built = generateCapabilityBundle(air, "payments.refunds", {
+      parentGatewayReceipt: receipt,
+    });
+    expect(built.manifest.parentGatewayImport).toEqual({
+      importId: receipt.importId,
+      receiptDigest: receipt.receiptDigest,
+      receiptViewDigest: hashCanonical(receipt),
+      outputDigest: receipt.output.digest,
+      lineage: "bound",
+      blockerCount: 1,
+    });
+    expect(built.bundle.files["provenance/parent-gateway-import.receipt.json"]).toBe(
+      `${JSON.stringify(receipt, null, 2)}\n`,
+    );
+    expect(built.view.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "gateway/opaque_policy" }),
+    );
   });
 });

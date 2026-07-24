@@ -20,8 +20,8 @@ import type { AgentPlatformTargetProfile } from "./model.js";
 
 export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
   id: "gemini-enterprise",
-  version: "2026.07.2",
-  displayName: "Gemini Enterprise (custom MCP)",
+  version: "2026.07.3",
+  displayName: "Gemini Enterprise",
   // StreamableHTTP ONLY — Gemini Enterprise explicitly does not support the SSE
   // transport, so the connector's remote server must be the StreamableHTTP one.
   transportRequirements: [{ kind: "streamable-http", requiresHttps: true, publicEndpoint: true }],
@@ -61,8 +61,6 @@ export const GEMINI_ENTERPRISE_PROFILE: AgentPlatformTargetProfile = {
   unsupportedAssumptions: [
     "The platform does not enforce the API's auth for you — the MCP server must self-enforce it.",
     "Platform action confirmation defaults do not replace contract-level confirmation for irreversible actions.",
-    "An external gateway in front of the server is not assumed; controls travel in the pack.",
-    "The raw setUpDataConnector API cannot finish OAUTH consent — the connector reaches ACTIVE only after the console's interactive Authorize step.",
   ],
   // The human-in-the-loop steps neither Anvil nor a script can perform — the CLI
   // surfaces these as "open steps" so the operator/harness knows what is left.

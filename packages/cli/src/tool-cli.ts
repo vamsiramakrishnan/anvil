@@ -147,7 +147,16 @@ export interface ToolCliDeps {
    *  `<dir>/mcp/server.js`. Absent ⇒ resolved relative to the running script. */
   mcpServerPath?: string;
   /** Test seam: connect an MCP client to a target and return a minimal client. */
-  mcpConnect?: (target: string, deps: ToolCliDeps) => Promise<McpToolClient>;
+  mcpConnect?: (
+    target: string,
+    deps: ToolCliDeps,
+    options?: McpConnectOptions,
+  ) => Promise<McpToolClient>;
+}
+
+/** Secret-bearing MCP connection input. It is resolved at call time and never rendered. */
+export interface McpConnectOptions {
+  bearerToken?: string;
 }
 
 /** The slice of the MCP client the CLI uses — a tool call and a close. */
@@ -375,13 +384,85 @@ async function invoke(
   // skill → CLI → MCP: where this invocation runs is a per-call runtime choice.
   //   (unset)                    → execute directly (the default)
   //   --mcp stdio  | =stdio      → route through the bundle's LOCAL mcp/server.js
-  //   --mcp <sse-url>            → route through a REMOTE SSE server
+  //   --mcp <http-url>           → route through a REMOTE Streamable HTTP server
+  //   --mcp sse:<url>            → route through an explicitly legacy SSE server
   //   --mcp direct | off | none  → force DIRECT, overriding an ANVIL_MCP_TARGET env
   // The per-call flag always wins over the env default, so a user who set
   // ANVIL_MCP_TARGET can still do a one-off direct (or differently-targeted) call.
   // A bare `--mcp` (no value) means "route locally" — the common intent.
   const mcpTarget = resolveMcpTarget(flags.mcp, (deps.env ?? process.env).ANVIL_MCP_TARGET);
+  const explicitMcpTokenEnv = flags["mcp-token-env"];
+  if (explicitMcpTokenEnv === true) {
+    return cliValidationError(
+      io,
+      op.id,
+      "`--mcp-token-env` requires an environment-variable name, never a token value.",
+      { flag: "--mcp-token-env" },
+    );
+  }
+  if (!mcpTarget && typeof explicitMcpTokenEnv === "string") {
+    return cliValidationError(
+      io,
+      op.id,
+      "`--mcp-token-env` is valid only with a remote Streamable HTTP `--mcp` target.",
+      { flag: "--mcp-token-env" },
+    );
+  }
   if (mcpTarget) {
+    const localMcp = mcpTarget === "stdio" || mcpTarget === "local";
+    // A malformed built-in target is caller input, not an upstream outage.
+    // Custom injected connectors deliberately own their own target grammar.
+    let remote: RemoteMcpTarget | undefined;
+    if (!localMcp && !deps.mcpConnect) {
+      try {
+        remote = remoteMcpTarget(mcpTarget);
+      } catch (err) {
+        return cliValidationError(io, op.id, err instanceof Error ? err.message : String(err), {
+          flag: "--mcp",
+        });
+      }
+    }
+    const tokenEnvName =
+      typeof explicitMcpTokenEnv === "string"
+        ? explicitMcpTokenEnv
+        : (deps.env ?? process.env).ANVIL_MCP_TOKEN_ENV;
+    let bearerToken: string | undefined;
+    if (tokenEnvName) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(tokenEnvName)) {
+        return cliValidationError(
+          io,
+          op.id,
+          "`--mcp-token-env` must name a valid environment variable.",
+          { flag: "--mcp-token-env", env_name: tokenEnvName },
+        );
+      }
+      if (localMcp) {
+        // A process-wide default is harmless for local/direct calls, but an
+        // explicit per-call flag must never be silently ignored.
+        if (typeof explicitMcpTokenEnv === "string") {
+          return cliValidationError(
+            io,
+            op.id,
+            "`--mcp-token-env` is valid only with a remote Streamable HTTP `--mcp` target.",
+            { flag: "--mcp-token-env" },
+          );
+        }
+      } else {
+        // Injected connectors may support private target schemes, but bearer
+        // auth has a deliberately narrower contract: remote Streamable HTTP.
+        remote ??= remoteMcpTarget(mcpTarget);
+        if (remote.kind !== "streamable-http") {
+          return cliValidationError(
+            io,
+            op.id,
+            "Bearer authentication is supported for remote Streamable HTTP MCP targets, not legacy SSE.",
+            { flag: "--mcp-token-env" },
+          );
+        }
+        bearerToken = (deps.env ?? process.env)[tokenEnvName];
+        if (!bearerToken) return mcpAuthRequired(io, op, tokenEnvName);
+      }
+    }
     return invokeViaMcp(
       op,
       input,
@@ -393,6 +474,7 @@ async function invoke(
       mcpTarget,
       deps,
       io,
+      { ...(bearerToken ? { bearerToken } : {}) },
     );
   }
 
@@ -468,8 +550,9 @@ interface McpSafety {
 }
 
 /**
- * Route one operation call through an MCP server (local stdio or remote SSE)
- * instead of executing it directly. Flags are already mapped to `input`; the
+ * Route one operation call through an MCP server (local stdio, remote
+ * Streamable HTTP, or explicit legacy SSE) instead of executing it directly.
+ * Flags are already mapped to `input`; the
  * safety controls ride as the reserved `anvil_*` args the server understands, so
  * the same dry-run / confirm / idempotency contract holds over the hop. The
  * server's response — success data, a dry-run plan, or a structured error
@@ -483,6 +566,7 @@ async function invokeViaMcp(
   target: string,
   deps: ToolCliDeps,
   io: CliIO,
+  connectOptions: McpConnectOptions = {},
 ): Promise<number> {
   // Map the CLI's safety flags onto what the MCP tool expects. `confirm` and
   // `idempotency_key` are synthesized INPUT fields (present in the published
@@ -499,15 +583,17 @@ async function invokeViaMcp(
   let client: McpToolClient;
   try {
     client = deps.mcpConnect
-      ? await deps.mcpConnect(target, deps)
-      : await connectMcpClient(target, deps);
+      ? await deps.mcpConnect(target, deps, connectOptions)
+      : await connectMcpClient(target, deps, connectOptions);
   } catch (err) {
     io.err(
       JSON.stringify(
         {
           error: {
             code: "upstream_unavailable",
-            message: `Could not connect to the MCP server '${target}': ${err instanceof Error ? err.message : String(err)}`,
+            message:
+              `Could not connect to the MCP server '${redactedMcpTarget(target)}': ` +
+              redactedConnectionError(err, connectOptions),
           },
         },
         null,
@@ -533,6 +619,15 @@ async function invokeViaMcp(
   }
 }
 
+/** SDK errors are not part of Anvil's secrecy boundary; redact any credential
+ * before forwarding their human-readable message. */
+function redactedConnectionError(err: unknown, options: McpConnectOptions): string {
+  let message = err instanceof Error ? err.message : String(err);
+  const token = options.bearerToken;
+  if (token) message = message.replaceAll(token, "[REDACTED]");
+  return message;
+}
+
 /** Map a server-returned error-envelope JSON back onto the CLI exit-code contract. */
 function exitCodeFromEnvelopeText(text: string): number {
   try {
@@ -544,11 +639,51 @@ function exitCodeFromEnvelopeText(text: string): number {
   return exitCodeFor("unknown_upstream_error");
 }
 
+export interface RemoteMcpTarget {
+  kind: "streamable-http" | "sse";
+  url: URL;
+}
+
+/**
+ * Resolve a remote MCP target without guessing its transport. An ordinary
+ * HTTP(S) URL is the current MCP Streamable HTTP transport used by Anvil's
+ * deployed `/mcp` endpoint. Legacy SSE remains available only through the
+ * explicit `sse:` prefix so a production `/mcp` URL can never silently take
+ * the wrong client path.
+ */
+export function remoteMcpTarget(target: string): RemoteMcpTarget {
+  const legacySse = target.startsWith("sse:");
+  const raw = legacySse ? target.slice(4) : target;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(
+      "Invalid remote MCP target. Use an HTTP(S) /mcp URL, or sse:https://host/sse for an explicit legacy SSE endpoint.",
+    );
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error(
+      `Invalid remote MCP target: expected HTTP(S), got ${url.protocol || "(none)"}.`,
+    );
+  }
+  if (url.username || url.password) {
+    throw new Error(
+      "Invalid remote MCP target: URL credentials are forbidden. Put a bearer token in an environment variable and name it with --mcp-token-env.",
+    );
+  }
+  return { kind: legacySse ? "sse" : "streamable-http", url };
+}
+
 /** Connect a real MCP client to `target`: `stdio`/`local` spawns the bundle's
- *  `mcp/server.js`; anything else is treated as an SSE URL (an optional `sse:`
- *  prefix is stripped). Transports are imported lazily so the direct path never
- *  loads the client SDK. */
-async function connectMcpClient(target: string, deps: ToolCliDeps): Promise<McpToolClient> {
+ *  `mcp/server.js`; an ordinary HTTP(S) URL uses Streamable HTTP; only an
+ *  explicit `sse:` target uses the legacy SSE client. Transports are imported
+ *  lazily so the direct path never loads the client SDK. */
+async function connectMcpClient(
+  target: string,
+  deps: ToolCliDeps,
+  options: McpConnectOptions = {},
+): Promise<McpToolClient> {
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const client = new Client({ name: "anvil-cli", version: "1.0.0" }, { capabilities: {} });
   if (target === "stdio" || target === "local") {
@@ -562,11 +697,40 @@ async function connectMcpClient(target: string, deps: ToolCliDeps): Promise<McpT
       }),
     );
   } else {
-    const { SSEClientTransport } = await import("@modelcontextprotocol/sdk/client/sse.js");
-    const url = target.startsWith("sse:") ? target.slice(4) : target;
-    await client.connect(new SSEClientTransport(new URL(url)));
+    const remote = remoteMcpTarget(target);
+    if (remote.kind === "sse") {
+      const { SSEClientTransport } = await import("@modelcontextprotocol/sdk/client/sse.js");
+      await client.connect(new SSEClientTransport(remote.url));
+    } else {
+      const { StreamableHTTPClientTransport } = await import(
+        "@modelcontextprotocol/sdk/client/streamableHttp.js"
+      );
+      await client.connect(
+        new StreamableHTTPClientTransport(remote.url, {
+          ...(options.bearerToken
+            ? { requestInit: { headers: { Authorization: `Bearer ${options.bearerToken}` } } }
+            : {}),
+        }),
+      );
+    }
   }
   return client as unknown as McpToolClient;
+}
+
+/** Render a remote coordinate without userinfo, query values, or fragments. */
+function redactedMcpTarget(target: string): string {
+  const legacySse = target.startsWith("sse:");
+  const raw = legacySse ? target.slice(4) : target;
+  try {
+    const url = new URL(raw);
+    url.username = "";
+    url.password = "";
+    if (url.search) url.search = "?redacted";
+    url.hash = "";
+    return `${legacySse ? "sse:" : ""}${url.toString()}`;
+  } catch {
+    return "<invalid-mcp-target>";
+  }
 }
 
 /** Best-effort local server path when the caller didn't pass one: the generated
@@ -684,6 +848,21 @@ function cliValidationError(
   return exitCodeFor("validation_error");
 }
 
+/** Fail closed when the named remote-MCP bearer variable is absent, naming only its location. */
+function mcpAuthRequired(io: CliIO, op: Operation, envName: string): number {
+  const err = new AnvilError({
+    code: "auth_required",
+    message:
+      `Remote MCP authentication requires environment variable '${envName}'. ` +
+      "Set it to the bearer token and retry; never put the token in the MCP URL or command line.",
+    operation: op.id,
+    traceId: `trace_${randomUUID()}`,
+    details: { expected_env: [envName] },
+  });
+  io.err(JSON.stringify(err.toEnvelope(), null, 2));
+  return exitCodeFor("auth_required");
+}
+
 /**
  * Engine-owned flags every operation invocation accepts. Only flags the invoke
  * path actually consumes belong here — anything else is a probable typo and
@@ -707,9 +886,13 @@ const GLOBAL_OPERATION_FLAGS = [
   "timeout",
   "input",
   // Route this invocation THROUGH an MCP server instead of executing directly:
-  // `--mcp stdio` (spawn the bundle's local mcp/server.js) or `--mcp <sse-url>`
-  // (a remote SSE server). Env ANVIL_MCP_TARGET sets the same. skill → CLI → MCP.
+  // `--mcp stdio` (spawn the bundle's local mcp/server.js), `--mcp <http-url>`
+  // (remote Streamable HTTP), or explicit `--mcp sse:<url>` for legacy SSE.
+  // Env ANVIL_MCP_TARGET sets the same. skill → CLI → MCP.
   "mcp",
+  // Name of an environment variable holding a remote Streamable HTTP bearer
+  // token. The token itself is resolved only at call time and is never a CLI arg.
+  "mcp-token-env",
 ] as const;
 
 function knownFlagsFor(op: Operation): Set<string> {
@@ -1048,8 +1231,12 @@ function serviceHelp(air: AirDocument): string {
     `  --help --schema --examples --errors --policy --explain --dry-run --json --trace`,
     `  --confirm --idempotency-key <k> --auth-profile <p> --timeout <ms> --no-retries`,
     `  --body '<json>'  (for operations whose body is not a flat object)`,
-    `  --mcp stdio | <sse-url> | direct  (per-call: run via a local/remote MCP server,`,
-    `                                     or force direct; overrides ANVIL_MCP_TARGET)`,
+    `  --mcp stdio | <http-url> | sse:<url> | direct`,
+    `                     (local MCP, remote Streamable HTTP, explicit legacy SSE,`,
+    `                      or force direct; overrides ANVIL_MCP_TARGET)`,
+    `  --mcp-token-env <NAME>`,
+    `                     (read a remote Streamable HTTP bearer token from NAME;`,
+    `                      ANVIL_MCP_TOKEN_ENV sets the default variable name)`,
     `\nCapabilities:`,
     capabilitiesTable(air),
     `\nUnsafe mutations refuse to run without --confirm. That refusal is correct.`,

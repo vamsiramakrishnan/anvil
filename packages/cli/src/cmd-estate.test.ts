@@ -254,6 +254,18 @@ describe("anvil estate import", () => {
     // The unknown plugin must surface as an opaque policy, never vanish.
     expect(res.out).toMatch(/opaque/i);
     expect(res.out).toContain("--spec");
+
+    const certifyIo = bufferIO();
+    expect(await runAnvilCli(["certify", out, "--json"], { io: certifyIo })).toBe(1);
+    expect(JSON.parse(certifyIo.stdout.join("\n")).checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "contract.gateway-blockers-resolved",
+          status: "failed",
+          detail: expect.stringContaining("gateway/opaque_policy"),
+        }),
+      ]),
+    );
   });
 
   it("locks a supplied full contract, retargets gateway policy, and clears route-only guards", async () => {
@@ -293,7 +305,14 @@ describe("anvil estate import", () => {
       `$WORKSPACE/.anvil/sources/${report.source.snapshotId}/raw`,
     );
     expect(report.source.lock.directory).toContain(".anvil/sources");
-    expect(report.operations.blocked).toBe(0);
+    expect(report.operations).toMatchObject({
+      total: 1,
+      generated: 1,
+      approved: 0,
+      review_required: 0,
+      deprecated: 0,
+      blocked: 0,
+    });
     expect(report.diagnostics.map((d: { code: string }) => d.code)).not.toEqual(
       expect.arrayContaining([
         "gateway/route_only_contract",
@@ -360,6 +379,293 @@ describe("anvil estate import", () => {
       source: { checked: true, ok: true, snapshotId: report.source.snapshotId },
       output: { checked: true, ok: true, bundle: out },
     });
+  });
+
+  it("applies a supplemental manifest in the same receipt-bound gateway compile", async () => {
+    const cfg = join(work, "kong-manifest.yaml");
+    const spec = join(work, "refunds-manifest.openapi.yaml");
+    const manifest = join(work, "refunds.anvil.yaml");
+    const out = join(work, "bundle-manifest");
+    writeFileSync(
+      cfg,
+      `_format_version: "3.0"
+services:
+  - name: refunds
+    routes:
+      - name: refunds-post
+        paths: ["/refunds"]
+        methods: ["POST"]
+    plugins:
+      - name: openid-connect
+        config:
+          scopes: ["refunds:write"]
+`,
+    );
+    writeFileSync(spec, REFUNDS_POST_OPENAPI);
+    const operationManifest = `operations:
+  createRefund:
+    description: Create an idempotent, reviewed refund through the imported gateway.
+    side_effect: mutation
+    risk: financial
+    reversible: false
+    idempotency:
+      strategy: required_request_key
+      key_location: header
+      header: Idempotency-Key
+    confirmation:
+      required: true
+      risk: financial
+      reason: The operator reviewed the gateway-backed refund contract.
+    retries:
+      enabled: true
+      only_on: [timeout, "429", "503"]
+      max_attempts: 3
+    state: approved
+`;
+    writeFileSync(manifest, operationManifest);
+    const baseline = await estate(
+      "import",
+      cfg,
+      "--vendor",
+      "kong",
+      "--spec",
+      spec,
+      "--manifest",
+      manifest,
+      "--gateway-url",
+      "https://gateway.example.test",
+      "--root",
+      work,
+      "--out",
+      out,
+      "--json",
+    );
+    expect(baseline.code, baseline.err).toBe(0);
+    const baselineReport = JSON.parse(baseline.out);
+    const baselineReceiptPath = join(baselineReport.receipt.directory, "import.receipt.json");
+    const baselineReceiptBytes = readFileSync(baselineReceiptPath);
+    const baselineReceiptStat = statSync(baselineReceiptPath);
+
+    const interactiveApproval = bufferIO();
+    expect(
+      await runAnvilCli(
+        ["capability", "approve", out, "refunds.refund", "--note", "Initial interactive review."],
+        { io: interactiveApproval },
+      ),
+      interactiveApproval.text(),
+    ).toBe(0);
+    const staleReceiptViewBytes = readFileSync(join(out, "import.receipt.json"));
+    expect(JSON.parse(staleReceiptViewBytes.toString("utf8")).lineage).toMatchObject({
+      status: "stale",
+      reason: expect.stringContaining("Capability approval"),
+    });
+
+    writeFileSync(
+      manifest,
+      `${operationManifest}capabilities:
+  refunds.refund:
+    state: approved
+    note: Reviewed with the gateway export and locked OpenAPI contract.
+`,
+    );
+
+    const reviewedImportArgs = [
+      "import",
+      cfg,
+      "--vendor",
+      "kong",
+      "--spec",
+      spec,
+      "--manifest",
+      manifest,
+      "--gateway-url",
+      "https://gateway.example.test",
+      "--root",
+      work,
+      "--out",
+      out,
+      "--json",
+    ];
+    const refusedWithoutReplace = await estate(...reviewedImportArgs);
+    expect(refusedWithoutReplace.code).toBe(1);
+    expect(JSON.parse(refusedWithoutReplace.out).diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "gateway_receipt/stale_output_requires_replace" }),
+      ]),
+    );
+    expect(readFileSync(join(out, "import.receipt.json"))).toEqual(staleReceiptViewBytes);
+
+    const imported = await estate(...reviewedImportArgs, "--replace-derived");
+    expect(imported.code, imported.err).toBe(0);
+    const importedAir = parseYaml(readFileSync(join(out, "air.yaml"), "utf8"));
+    const operation = importedAir.operations.find(
+      (candidate: { sourceRef?: { operationId?: string } }) =>
+        candidate.sourceRef?.operationId === "createRefund",
+    );
+    expect(operation).toMatchObject({
+      state: "approved",
+      effect: { kind: "mutation", risk: "financial", reversible: false },
+      idempotency: { mode: "required" },
+      confirmation: { required: true },
+    });
+    expect(
+      importedAir.capabilities.find(
+        (candidate: { id: string }) => candidate.id === "refunds.refund",
+      ),
+    ).toMatchObject({
+      lifecycle: "approved",
+      reviewNote: "Reviewed with the gateway export and locked OpenAPI contract.",
+    });
+    const importReport = JSON.parse(imported.out);
+    expect(importReport.receipt.importId).not.toBe(baselineReport.receipt.importId);
+    expect(readFileSync(baselineReceiptPath)).toEqual(baselineReceiptBytes);
+    expect(statSync(baselineReceiptPath).ino).toBe(baselineReceiptStat.ino);
+
+    const privateReceipt = JSON.parse(
+      readFileSync(join(importReport.receipt.directory, "import.receipt.json"), "utf8"),
+    );
+    expect(privateReceipt.compilerInput).toMatchObject({
+      manifestDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      capabilityReviews: {
+        digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+        decisions: [
+          {
+            capabilityId: "refunds.refund",
+            state: "approved",
+            allowLarge: false,
+            note: "Reviewed with the gateway export and locked OpenAPI contract.",
+          },
+        ],
+      },
+    });
+    const bundleReceiptView = JSON.parse(readFileSync(join(out, "import.receipt.json"), "utf8"));
+    expect(bundleReceiptView).toMatchObject({
+      lineage: { status: "bound" },
+      compilerInput: {
+        manifestDigest: privateReceipt.compilerInput.manifestDigest,
+        capabilityReviews: {
+          digest: privateReceipt.compilerInput.capabilityReviews.digest,
+          decisions: [
+            {
+              capabilityId: "refunds.refund",
+              state: "approved",
+              allowLarge: false,
+              noteDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+            },
+          ],
+        },
+      },
+    });
+    expect(JSON.stringify(bundleReceiptView)).not.toContain(
+      "Reviewed with the gateway export and locked OpenAPI contract.",
+    );
+
+    const baselinePrivateVerify = await estate(
+      "verify",
+      baselineReport.receipt.importId,
+      "--root",
+      work,
+      "--json",
+    );
+    expect(baselinePrivateVerify.code, baselinePrivateVerify.out).toBe(0);
+    const baselineAgainstReviewed = await estate(
+      "verify",
+      baselineReport.receipt.importId,
+      "--root",
+      work,
+      "--bundle",
+      out,
+      "--json",
+    );
+    expect(baselineAgainstReviewed.code).toBe(1);
+
+    const verified = await estate(
+      "verify",
+      importReport.receipt.importId,
+      "--root",
+      work,
+      "--bundle",
+      out,
+      "--json",
+    );
+    expect(verified.code, verified.out).toBe(0);
+
+    const capabilityOut = join(work, "refunds-capability");
+    const buildIo = bufferIO();
+    expect(
+      await runAnvilCli(["build", out, "refunds.refund", "--out", capabilityOut], {
+        io: buildIo,
+      }),
+      buildIo.text(),
+    ).toBe(0);
+    expect(buildIo.text()).toContain("gateway lineage:");
+    expect(buildIo.text()).toContain("(bound, 0 blocker(s))");
+    expect(
+      JSON.parse(readFileSync(join(capabilityOut, "bundle.json"), "utf8")).parentGatewayImport,
+    ).toMatchObject({
+      importId: importReport.receipt.importId,
+      lineage: "bound",
+      blockerCount: 0,
+    });
+
+    const certifyIo = bufferIO();
+    expect(
+      await runAnvilCli(["certify", capabilityOut, "--json"], { io: certifyIo }),
+      certifyIo.text(),
+    ).toBe(0);
+    expect(
+      JSON.parse(certifyIo.stdout.join("\n")).checks.find(
+        (check: { id: string }) => check.id === "contract.capability-parent-gateway-provenance",
+      ),
+    ).toMatchObject({ status: "passed" });
+  }, 15_000);
+
+  it("fails a manifest review for an unknown exact capability before receipt or output creation", async () => {
+    const cfg = join(work, "kong-unknown-capability.yaml");
+    const spec = join(work, "refunds-unknown-capability.openapi.yaml");
+    const manifest = join(work, "refunds-unknown-capability.anvil.yaml");
+    const out = join(work, "bundle-unknown-capability");
+    writeFileSync(
+      cfg,
+      `_format_version: "3.0"
+services:
+  - name: refunds
+    routes:
+      - name: refunds-post
+        paths: ["/refunds"]
+        methods: ["POST"]
+`,
+    );
+    writeFileSync(spec, REFUNDS_POST_OPENAPI);
+    writeFileSync(
+      manifest,
+      `capabilities:
+  refunds.old-derived-name:
+    state: approved
+`,
+    );
+
+    const imported = await estate(
+      "import",
+      cfg,
+      "--vendor",
+      "kong",
+      "--spec",
+      spec,
+      "--manifest",
+      manifest,
+      "--gateway-url",
+      "https://gateway.example.test",
+      "--root",
+      work,
+      "--out",
+      out,
+    );
+    expect(imported.code).toBe(1);
+    expect(imported.err).toContain("error capability_not_found:");
+    expect(imported.err).toContain("Known capabilities: refunds.refund");
+    expect(existsSync(out)).toBe(false);
+    expect(existsSync(join(work, ".anvil", "imports"))).toBe(false);
   });
 
   it("requires an explicit HTTPS gateway coordinate before accepting a full contract", async () => {

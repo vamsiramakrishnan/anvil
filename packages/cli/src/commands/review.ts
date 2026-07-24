@@ -1,5 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { bundleHash, REVIEW_REPORT_FILE, readBundleDir } from "@anvil/generators";
 import {
   type AgentDriver,
   haikuReviewDriver,
@@ -16,8 +17,8 @@ import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 
-/** Where the review report is written inside a bundle. */
-export const REVIEW_REPORT_FILE = "review.report.json";
+/** Kept as a command-module export for existing API consumers. */
+export { REVIEW_REPORT_FILE } from "@anvil/generators";
 
 /**
  * `anvil review <bundle-dir>` — the model-driven semantic review. Deterministic
@@ -110,9 +111,10 @@ export async function runReview(
     throw err;
   }
 
-  writeFileSync(join(dir, REVIEW_REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  const boundReport = { ...report, bundleHash: bundleHash(readBundleDir(dir)) };
+  writeFileSync(join(dir, REVIEW_REPORT_FILE), `${JSON.stringify(boundReport, null, 2)}\n`, "utf8");
   if (opts.json === true) {
-    io.out(JSON.stringify(report, null, 2));
+    io.out(JSON.stringify(boundReport, null, 2));
   } else {
     io.out(renderReviewSummary(report, join(dir, REVIEW_REPORT_FILE)));
   }

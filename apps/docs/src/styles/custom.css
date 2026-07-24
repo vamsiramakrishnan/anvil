@@ -1184,8 +1184,28 @@ main > .content-panel,
 }
 
 @media (max-width: 50rem) {
+  :root {
+    --sl-menu-button-size: 2.75rem;
+  }
   body { background-image: none; }
-  .header { border-inline: 0; border-radius: 0; }
+  header.header {
+    border-inline: 0;
+    border-radius: 0;
+    /* The menu button is fixed over the header. Reserve its full touch target
+     * plus breathing room so the adjacent search control can never sit under
+     * it on narrow phones. */
+    padding-inline-end: calc(var(--sl-menu-button-size) + var(--sl-nav-pad-x));
+  }
+  header.header > .header {
+    /* `.header` also names Starlight's inner layout. Do not reserve the fixed
+     * menu slot twice. */
+    padding-inline-end: var(--ge-space-3);
+  }
+  site-search button[data-open-modal] {
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
   .ge-footer-main,
   .ge-footer-nav { grid-template-columns: 1fr; }
   .ge-footer-bottom { flex-direction: column; }

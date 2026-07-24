@@ -1,16 +1,28 @@
 ---
+import MobileDiagram from "./MobileDiagram.astro";
+
 // The working loop as a cycle of five steps: compile → inspect → enrich →
-// approve → deploy, and back to compile. Five cards read left to right with a
+// approve → release, and back to compile. Five cards read left to right with a
 // return arrow underneath, so the loop is legible without a circle. Each card
 // carries a plain title and a short gloss. Inline SVG so every color rides the
 // theme's CSS variables and flips correctly in light/dark.
 ---
 
 <figure class="anvil-diagram">
+  <MobileDiagram
+    ariaLabel="The five-step Anvil working loop"
+    items={[
+      { label: "01", title: "Compile", detail: "Turn the source specification into one complete bundle." },
+      { label: "02", title: "Inspect", detail: "Read risk, approval state, and the next safe action." },
+      { label: "03", title: "Enrich", detail: "Supply evidence for gaps the source could not prove." },
+      { label: "04", title: "Approve", detail: "Open only the operations whose contract you inspected." },
+      { label: "05", title: "Release", detail: "Run static assurance and executable evidence, then prepare an operator deployment plan." },
+    ]}
+  />
   <svg
     viewBox="0 0 1040 300"
     role="img"
-    aria-label="The working loop as a cycle of five steps. Compile turns a spec into a bundle. Inspect reads the risk. Enrich fills the gaps the spec left out. Approve is where a human opens the gate. Deploy serves the tools. Then it repeats — recompile whenever the spec changes."
+    aria-label="The working loop as a cycle of five steps. Compile turns a spec into a bundle. Inspect reads the risk. Enrich fills the gaps the spec left out. Approve is where a human opens the gate. Release runs static assurance and executable evidence, then prepares an operator deployment plan without making a cloud call. Then it repeats — recompile whenever the spec changes."
   >
     <defs>
       <marker id="lp-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -55,18 +67,18 @@
     <text x="642" y="132" class="d-gloss">a human opens the gate</text>
     <path d="M804 118 H828" class="d-line" marker-end="url(#lp-arrow)" />
 
-    <!-- 05 deploy -->
+    <!-- 05 release -->
     <rect x="828" y="48" width="180" height="140" rx="4" class="d-card" />
     <rect x="828" y="48" width="3" height="140" class="d-bar" />
     <text x="846" y="80" class="d-index">05</text>
-    <text x="846" y="108" class="d-card-title">Deploy</text>
-    <text x="846" y="132" class="d-gloss">serve the tools</text>
+    <text x="846" y="108" class="d-card-title">Release</text>
+    <text x="846" y="132" class="d-gloss">assure · exercise · plan</text>
 
-    <!-- return arrow: deploy → compile -->
+    <!-- return arrow: release → compile -->
     <path d="M918 188 V226 Q918 244 896 244 H124 Q102 244 102 226 V194" class="d-back" marker-end="url(#lp-back)" />
     <text x="510" y="238" text-anchor="middle" class="d-back-label">and back · recompile when the spec drifts</text>
   </svg>
-  <figcaption>fig 09 · the loop: compile, inspect, enrich, approve, deploy</figcaption>
+  <figcaption>fig 09 · the loop: compile, inspect, enrich, approve, release</figcaption>
 </figure>
 
 <style>
@@ -110,5 +122,9 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     fill: var(--sl-color-text-accent);
+  }
+  @media (max-width: 40rem) {
+    .anvil-diagram { overflow-x: visible; }
+    .anvil-diagram svg { display: none; }
   }
 </style>

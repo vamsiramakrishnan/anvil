@@ -20,6 +20,7 @@ import {
 import { basename, join } from "node:path";
 import { hashCanonical } from "@anvil/air";
 import { z } from "zod";
+import type { AnvilManifest } from "../manifest.js";
 import { sha256Hex } from "../source/hash.js";
 import { SourceDiagnostic, SourceEntrypoint, SourceFile } from "../source/model.js";
 import {
@@ -63,6 +64,29 @@ export const GatewayImportOutputFile = z.object({
   bytes: z.number().int().nonnegative(),
 });
 export type GatewayImportOutputFile = z.infer<typeof GatewayImportOutputFile>;
+
+export const GatewayCapabilityReviewDecision = z.object({
+  capabilityId: z.string().min(1),
+  state: z.enum(["approved", "rejected"]),
+  allowLarge: z.boolean(),
+  note: z.string().optional(),
+});
+export type GatewayCapabilityReviewDecision = z.infer<typeof GatewayCapabilityReviewDecision>;
+
+export const GatewayCapabilityReviewInput = z.object({
+  digest: Sha256Digest,
+  decisions: z.array(GatewayCapabilityReviewDecision),
+});
+export type GatewayCapabilityReviewInput = z.infer<typeof GatewayCapabilityReviewInput>;
+
+const GatewayCapabilityReviewView = z.object({
+  digest: Sha256Digest,
+  decisions: z.array(
+    GatewayCapabilityReviewDecision.omit({ note: true }).extend({
+      noteDigest: Sha256Digest.optional(),
+    }),
+  ),
+});
 
 export const GatewayImportReceipt = z.object({
   schemaVersion: z.literal(1),
@@ -108,6 +132,13 @@ export const GatewayImportReceipt = z.object({
       entrypoints: z.array(SourceEntrypoint),
       files: z.array(SourceFile),
       diagnostics: z.array(SourceDiagnostic),
+    })
+    .optional(),
+  /** Canonical semantic compiler inputs that are not policy overlays. */
+  compilerInput: z
+    .object({
+      manifestDigest: Sha256Digest.optional(),
+      capabilityReviews: GatewayCapabilityReviewInput.optional(),
     })
     .optional(),
   overlays: z.array(GatewayImportOverlayReceipt),
@@ -182,6 +213,12 @@ export const GatewayImportReceiptView = z.object({
       files: z.array(SourceFile),
     })
     .optional(),
+  compilerInput: z
+    .object({
+      manifestDigest: Sha256Digest.optional(),
+      capabilityReviews: GatewayCapabilityReviewView.optional(),
+    })
+    .optional(),
   overlays: z.array(GatewayImportOverlayReceipt),
   diagnostics: z.array(GatewayDiagnostic),
   blockers: z.array(GatewayDiagnostic),
@@ -233,6 +270,34 @@ export type CreateGatewayImportReceiptResult =
 /** sha256 with the prefix used throughout provenance records. */
 export function gatewaySha256(bytes: Uint8Array): string {
   return `sha256:${sha256Hex(bytes)}`;
+}
+
+/**
+ * Canonicalize parsed capability review input for immutable receipts. YAML
+ * formatting, map order, manifest paths, and host coordinates never enter this
+ * record; only the exact discovered id decision and its review semantics do.
+ */
+export function gatewayCapabilityReviewInput(
+  reviews: AnvilManifest["capabilities"],
+): GatewayCapabilityReviewInput | undefined {
+  const decisions = Object.entries(reviews)
+    .map(([capabilityId, review]) => ({
+      capabilityId,
+      state: review.state,
+      allowLarge: review.allow_large === true,
+      ...(review.note !== undefined ? { note: review.note } : {}),
+    }))
+    .sort((left, right) => left.capabilityId.localeCompare(right.capabilityId));
+  if (decisions.length === 0) return undefined;
+  return GatewayCapabilityReviewInput.parse({
+    digest: `sha256:${hashCanonical(decisions)}`,
+    decisions,
+  });
+}
+
+/** Canonical parsed-manifest identity; independent of YAML formatting and path. */
+export function gatewayManifestDigest(manifest: AnvilManifest): string {
+  return `sha256:${hashCanonical(manifest)}`;
 }
 
 /** Deterministic generated-output manifest. `import.receipt.json` must be excluded. */
@@ -336,6 +401,33 @@ export function verifyGatewayImportReceipt(
       code: "gateway_receipt/output_manifest_mismatch",
       message: `Output digest ${receipt.output.digest} does not match its file manifest ${canonicalOutputDigest}.`,
     });
+  }
+  const capabilityReviews = receipt.compilerInput?.capabilityReviews;
+  if (capabilityReviews) {
+    const canonicalDecisions = [...capabilityReviews.decisions].sort((left, right) =>
+      left.capabilityId.localeCompare(right.capabilityId),
+    );
+    if (
+      new Set(canonicalDecisions.map((decision) => decision.capabilityId)).size !==
+        canonicalDecisions.length ||
+      JSON.stringify(canonicalDecisions) !== JSON.stringify(capabilityReviews.decisions)
+    ) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_receipt/capability_review_not_canonical",
+        message: "Capability review decisions must have unique ids in ascending id order.",
+      });
+    }
+    const canonicalReviewDigest = `sha256:${hashCanonical(canonicalDecisions)}`;
+    if (capabilityReviews.digest !== canonicalReviewDigest) {
+      diagnostics.push({
+        level: "error",
+        code: "gateway_receipt/capability_review_digest_mismatch",
+        message:
+          `Capability review digest ${capabilityReviews.digest} does not match its canonical ` +
+          `decision record ${canonicalReviewDigest}.`,
+      });
+    }
   }
   if (exportBytes) {
     const actualHash = gatewaySha256(exportBytes);
@@ -511,6 +603,26 @@ export function redactGatewayImportReceipt(
           sourceHash: receipt.lockedSource.sourceHash,
           entrypoints: receipt.lockedSource.entrypoints,
           files: receipt.lockedSource.files,
+        }
+      : undefined,
+    compilerInput: receipt.compilerInput
+      ? {
+          manifestDigest: receipt.compilerInput.manifestDigest,
+          capabilityReviews: receipt.compilerInput.capabilityReviews
+            ? {
+                digest: receipt.compilerInput.capabilityReviews.digest,
+                decisions: receipt.compilerInput.capabilityReviews.decisions.map((decision) => ({
+                  capabilityId: decision.capabilityId,
+                  state: decision.state,
+                  allowLarge: decision.allowLarge,
+                  ...(decision.note !== undefined
+                    ? {
+                        noteDigest: gatewaySha256(new TextEncoder().encode(decision.note)),
+                      }
+                    : {}),
+                })),
+              }
+            : undefined,
         }
       : undefined,
     overlays: receipt.overlays.map((overlay) => ({

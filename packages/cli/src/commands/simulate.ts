@@ -6,14 +6,12 @@ import {
   type MutantResult,
   runMutationBattery,
 } from "@anvil/certification";
-import { readBundleDir } from "@anvil/generators";
+import { bundleHash, readBundleDir, SIMULATION_REPORT_FILE } from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import { loadBundleAir, resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-
-const SIMULATION_REPORT_FILE = "simulation.report.json";
 
 /**
  * `anvil simulate <dir>` — the mechanistic coverage lane. It generates the full
@@ -52,6 +50,8 @@ export interface SimulateOptions {
 export interface SimulationReport {
   schemaVersion: 1;
   bundle: string;
+  /** Digest of the generated bundle content this evidence exercised. */
+  bundleHash: string;
   coverage: CoverageReport;
   mutation: { mutants: MutantResult[]; applicable: number; killed: number };
   summary: { coverageCells: number; coveragePassed: number; mutantsKilled: number; ok: boolean };
@@ -59,18 +59,21 @@ export interface SimulationReport {
 
 export function runSimulate(path: string, opts: SimulateOptions, io: CliIO): number {
   const dir = resolveBundleDir(path);
-  const air = loadBundleAir(dir, readBundleDir(dir));
+  const files = readBundleDir(dir);
+  const subjectHash = bundleHash(files);
+  const air = loadBundleAir(dir, files);
   const seed = Number.parseInt(opts.seed ?? "1", 10) || 1;
 
   const coverage = coverageMatrix(air, { seed });
   const mutants = runMutationBattery(air);
   const applicable = mutants.filter((m) => m.applicable);
-  const killed = mutants.filter((m) => m.killed);
-  const ok = coverage.summary.failed === 0 && mutants.every((m) => m.killed);
+  const killed = applicable.filter((m) => m.killed);
+  const ok = coverage.summary.failed === 0 && applicable.every((m) => m.killed);
 
   const report: SimulationReport = {
     schemaVersion: 1,
     bundle: dir,
+    bundleHash: subjectHash,
     coverage,
     mutation: { mutants, applicable: applicable.length, killed: killed.length },
     summary: {
@@ -112,7 +115,7 @@ export function renderSimulationSummary(report: SimulationReport, dir: string): 
   lines.push("");
   lines.push("  Mutation battery (safety-regression detection):");
   for (const m of mutation.mutants) {
-    const mark = m.killed ? "✓" : "✗";
+    const mark = !m.applicable ? "–" : m.killed ? "✓" : "✗";
     const note = m.applicable
       ? m.killed
         ? `killed (${m.classification})`
@@ -123,8 +126,8 @@ export function renderSimulationSummary(report: SimulationReport, dir: string): 
   lines.push("");
   lines.push(
     report.summary.ok
-      ? `PASSED — ${coverage.summary.passed}/${coverage.summary.cells} cells held, ${mutation.killed}/${mutation.mutants.length} mutants killed. Wrote ${join(dir, SIMULATION_REPORT_FILE)}.`
-      : `FAILED — ${coverage.summary.failed} cell(s) failed, ${mutation.mutants.length - mutation.killed} mutant(s) survived. Wrote ${join(dir, SIMULATION_REPORT_FILE)}.`,
+      ? `PASSED — ${coverage.summary.passed}/${coverage.summary.cells} cells held, ${mutation.killed}/${mutation.applicable} applicable mutants killed. Wrote ${join(dir, SIMULATION_REPORT_FILE)}.`
+      : `FAILED — ${coverage.summary.failed} cell(s) failed, ${mutation.applicable - mutation.killed} applicable mutant(s) survived. Wrote ${join(dir, SIMULATION_REPORT_FILE)}.`,
   );
   return lines.join("\n");
 }

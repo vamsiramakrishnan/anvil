@@ -8,6 +8,8 @@ import {
   Certification as CertificationSchema,
   certifyBundle,
   compiledOperations,
+  type ExecutableEvidenceStatus,
+  executableEvidenceStatuses,
   operationCatalog,
   PUBLICATION_FILE,
   PublicationRecord,
@@ -28,6 +30,7 @@ import { sourceService } from "./source.js";
 
 export type ProjectionState = "fresh" | "missing" | "corrupt" | "misaligned" | "unverifiable";
 export type RecordState = "fresh" | "missing" | "corrupt" | "failed" | "stale";
+export type DeploymentPlanState = "planned" | "missing" | "corrupt" | "stale";
 
 export interface StatusDiagnostic {
   code: string;
@@ -71,8 +74,13 @@ export interface NextSafeAction {
     | "resolve-blocked"
     | "inspect-approve"
     | "certify"
+    | "selftest"
+    | "conformance"
+    | "simulate"
     | "retarget"
     | "release"
+    | "operator-action-required"
+    /** @deprecated Local plan records can never produce this state. */
     | "complete";
   command: string | null;
   reason: string;
@@ -106,8 +114,10 @@ export interface StatusReport {
   } | null;
   operations: {
     total: number;
+    generated: number;
     approved: number;
     review_required: number;
+    deprecated: number;
     blocked: number;
     awaitingApproval: number;
   } | null;
@@ -128,13 +138,25 @@ export interface StatusReport {
     certifiedAt: string | null;
     detail: string;
   };
+  executableEvidence: {
+    selftest: ExecutableEvidenceStatus & { path: string };
+    conformance: ExecutableEvidenceStatus & { path: string };
+    simulation: ExecutableEvidenceStatus & { path: string };
+  };
   publication: {
-    state: Exclude<RecordState, "failed">;
+    /** Compatibility field name; this describes a local deployment plan. */
+    state: DeploymentPlanState;
     path: string;
     bundleHash: string | null;
+    plannedAt: string | null;
+    /** Legacy timestamp from older publication records. */
     publishedAt: string | null;
     target: string | null;
     environment: string | null;
+    cloudCallsMade: false | null;
+    operatorActionRequired: boolean;
+    executableEvidenceGate: "passed" | "waived" | "unrecorded" | null;
+    evidenceWaiverReason: string | null;
     detail: string;
   };
   targets: TargetSetupStatus[];
@@ -160,9 +182,9 @@ export function registerStatus(parent: Command, ctx: CommandContext): void {
   annotate(
     parent
       .command("status")
-      .summary("Show source, projection, approval, certification, target, and release status.")
+      .summary("Show source, projection, approval, assurance, target, and release-plan status.")
       .description(
-        "Read-only. Resolves the canonical AIR and locked-source coordinate, verifies generated CLI/MCP/catalog/runtime projections against it, checks certification and publication freshness, detects stale target setup signatures, and chooses one deterministic next safe action. Exit is non-zero only when a core projection is missing, corrupt, or misaligned.",
+        "Read-only. Resolves the canonical AIR and locked-source coordinate, verifies generated CLI/MCP/catalog/runtime projections against it, checks static assurance plus current-hash selftest/conformance/simulation evidence, checks deployment-plan freshness, detects stale target setup signatures, and chooses one deterministic next safe action. A local publication.json means only that a plan was prepared; it never means deployed or live. Exit is non-zero only when a core projection is missing, corrupt, or misaligned.",
       )
       .argument("<path>", "generated bundle directory or AIR file")
       .option("--root <dir>", "workspace root containing .anvil/sources")
@@ -242,8 +264,23 @@ export async function buildStatusReport(
       path: certification.path,
     });
   }
+  const evidence = executableEvidenceStatuses(files, currentBundleHash);
+  const executableEvidence = {
+    selftest: { ...evidence.selftest, path: join(bundle, evidence.selftest.file) },
+    conformance: { ...evidence.conformance, path: join(bundle, evidence.conformance.file) },
+    simulation: { ...evidence.simulation, path: join(bundle, evidence.simulation.file) },
+  };
+  for (const status of Object.values(executableEvidence)) {
+    if (status.state === "fresh" && status.passed === true) continue;
+    diagnostics.push({
+      code: `status.evidence.${status.lane}.${status.state}`,
+      severity: "warning",
+      detail: status.detail,
+      path: status.path,
+    });
+  }
   const publication = publicationStatus(bundle, files, currentBundleHash, canonical.air);
-  if (publication.state !== "fresh") {
+  if (publication.state !== "planned") {
     diagnostics.push({
       code: `status.publication.${publication.state}`,
       severity: "warning",
@@ -285,6 +322,7 @@ export async function buildStatusReport(
       contractChecks,
     },
     certification,
+    executableEvidence,
     publication,
     targets,
   };
@@ -481,8 +519,10 @@ function operationCounts(air: AirDocument): NonNullable<StatusReport["operations
     air.operations.filter((operation) => operation.state === state).length;
   return {
     total: air.operations.length,
+    generated: count("generated"),
     approved: count("approved"),
     review_required: count("review_required"),
+    deprecated: count("deprecated"),
     blocked: count("blocked"),
     awaitingApproval: air.operations.filter(
       (operation) => operation.state === "generated" || operation.state === "review_required",
@@ -695,7 +735,7 @@ function certificationStatus(
       path,
       bundleHash: parsed.data.bundleHash,
       certifiedAt: parsed.data.certifiedAt,
-      detail: `Passing certification matches bundle ${shortHash(currentBundleHash)}.`,
+      detail: `Passing static assurance matches bundle ${shortHash(currentBundleHash)}; executable evidence is tracked separately.`,
     };
   }
   return {
@@ -720,9 +760,14 @@ function publicationStatus(
       state: "missing",
       path,
       bundleHash: null,
+      plannedAt: null,
       publishedAt: null,
       target: null,
       environment: null,
+      cloudCallsMade: null,
+      operatorActionRequired: false,
+      executableEvidenceGate: null,
+      evidenceWaiverReason: null,
       detail: `No ${PUBLICATION_FILE} is present.`,
     };
   }
@@ -735,9 +780,14 @@ function publicationStatus(
       state: "corrupt",
       path,
       bundleHash: null,
+      plannedAt: null,
       publishedAt: null,
       target: null,
       environment: null,
+      cloudCallsMade: null,
+      operatorActionRequired: false,
+      executableEvidenceGate: null,
+      evidenceWaiverReason: null,
       detail: `${PUBLICATION_FILE} is not valid JSON.`,
     };
   }
@@ -747,9 +797,14 @@ function publicationStatus(
       state: "corrupt",
       path,
       bundleHash: null,
+      plannedAt: null,
       publishedAt: null,
       target: null,
       environment: null,
+      cloudCallsMade: null,
+      operatorActionRequired: false,
+      executableEvidenceGate: null,
+      evidenceWaiverReason: null,
       detail: `${PUBLICATION_FILE} does not match the publication schema.`,
     };
   }
@@ -757,18 +812,33 @@ function publicationStatus(
   const record = parsed.data;
   const serviceMatches = air === undefined || record.serviceId === air.service.id;
   const fresh = record.bundleHash === currentBundleHash && serviceMatches;
+  const recordedEvidence = record.schemaVersion === 2 ? record.executableEvidence : undefined;
+  const executableEvidenceGate = recordedEvidence?.status ?? "unrecorded";
+  const evidenceWaiverReason =
+    recordedEvidence?.status === "waived" ? recordedEvidence.waiver.reason : null;
+  const evidenceDetail =
+    executableEvidenceGate === "passed"
+      ? " Fresh passing executable evidence was recorded."
+      : executableEvidenceGate === "waived"
+        ? ` Executable evidence was explicitly waived: ${evidenceWaiverReason}`
+        : " This legacy plan does not record its executable-evidence gate.";
   return {
-    state: fresh ? "fresh" : "stale",
+    state: fresh ? "planned" : "stale",
     path,
     bundleHash: record.bundleHash,
-    publishedAt: record.publishedAt,
+    plannedAt: record.schemaVersion === 2 ? record.plannedAt : record.publishedAt,
+    publishedAt: record.schemaVersion === 1 ? record.publishedAt : null,
     target: record.target,
     environment: record.env,
+    cloudCallsMade: false,
+    operatorActionRequired: true,
+    executableEvidenceGate,
+    evidenceWaiverReason,
     detail: fresh
-      ? `Publication matches bundle ${shortHash(currentBundleHash)}.`
+      ? `Deployment plan matches bundle ${shortHash(currentBundleHash)}; no cloud call was made and operator apply/verification remain.${evidenceDetail}`
       : !serviceMatches
-        ? `Publication service ${record.serviceId} does not match ${air?.service.id}.`
-        : `Publication is stale: published ${shortHash(record.bundleHash)}, current ${shortHash(currentBundleHash)}.`,
+        ? `Deployment plan service ${record.serviceId} does not match ${air?.service.id}.`
+        : `Deployment plan is stale: planned ${shortHash(record.bundleHash)}, current ${shortHash(currentBundleHash)}.`,
   };
 }
 
@@ -912,6 +982,7 @@ function nextSafeAction(report: {
   operations: StatusReport["operations"];
   core: StatusReport["core"];
   certification: StatusReport["certification"];
+  executableEvidence: StatusReport["executableEvidence"];
   publication: StatusReport["publication"];
   targets: StatusReport["targets"];
 }): NextSafeAction {
@@ -961,21 +1032,36 @@ function nextSafeAction(report: {
     return {
       code: "certify",
       command: `anvil certify ${bundle}`,
-      reason: "The current bundle bytes do not carry a fresh passing certification.",
+      reason: "The current bundle bytes do not carry fresh passing static assurance.",
     };
   }
-  if (report.publication.state !== "fresh") {
+  const evidenceOrder = [
+    { lane: "selftest", command: "selftest" },
+    { lane: "conformance", command: "conformance" },
+    { lane: "simulation", command: "simulate" },
+  ] as const;
+  for (const step of evidenceOrder) {
+    const evidence = report.executableEvidence[step.lane];
+    if (evidence.state === "fresh" && evidence.passed === true) continue;
+    return {
+      code: step.command,
+      command: `anvil ${step.command} ${bundle}`,
+      reason: `Fresh passing ${step.lane} evidence for the current bundle is required before preparing a deployment plan.`,
+    };
+  }
+  if (report.publication.state !== "planned") {
     return {
       code: "release",
-      command: `anvil publish ${bundle} --target cloud-run`,
+      command: `anvil publish ${bundle}`,
       reason:
-        "Core, certification, and discovered target setup are current; release is the next gate.",
+        "Core, static assurance, executable evidence, and discovered target setup are current; prepare the operator deployment plan next.",
     };
   }
   return {
-    code: "complete",
+    code: "operator-action-required",
     command: null,
-    reason: "Core projections, certification, publication, and discovered targets are current.",
+    reason:
+      "A current local deployment plan exists, but Anvil made no cloud call. Operator review/apply and live verification are still required.",
   };
 }
 
@@ -1088,7 +1174,7 @@ export function renderStatusReport(report: StatusReport): string {
     lines.push(
       "",
       "Operations",
-      `  ${report.operations.approved} approved · ${report.operations.review_required} review_required · ${report.operations.blocked} blocked · ${report.operations.total} total`,
+      `  ${report.operations.generated} generated · ${report.operations.approved} approved · ${report.operations.review_required} review_required · ${report.operations.deprecated} deprecated · ${report.operations.blocked} blocked · ${report.operations.total} total`,
     );
   }
   lines.push("", `Core projections — ${report.core.state.toUpperCase()}`);
@@ -1098,8 +1184,11 @@ export function renderStatusReport(report: StatusReport): string {
   lines.push(
     "",
     "Evidence",
-    `  certification: ${report.certification.state} — ${report.certification.detail}`,
-    `  publication:   ${report.publication.state} — ${report.publication.detail}`,
+    `  static assurance: ${report.certification.state} — ${report.certification.detail}`,
+    `  selftest:         ${report.executableEvidence.selftest.state} — ${report.executableEvidence.selftest.detail}`,
+    `  conformance:      ${report.executableEvidence.conformance.state} — ${report.executableEvidence.conformance.detail}`,
+    `  simulation:       ${report.executableEvidence.simulation.state} — ${report.executableEvidence.simulation.detail}`,
+    `  deployment plan:  ${report.publication.state} — ${report.publication.detail}`,
     "",
     "Targets",
   );

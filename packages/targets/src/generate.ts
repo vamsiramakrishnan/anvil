@@ -20,7 +20,10 @@ import {
   connectorScopes,
   engineResource,
   engineStateKey,
+  GEMINI_SURFACE_LABELS,
   type GeminiEnterpriseTargetConfig,
+  type GeminiRegistrationSurface,
+  geminiEnterpriseTargetDisplayName,
   includesSurface,
   isCanonicalEngineResource,
   targetStateRelativePath,
@@ -82,6 +85,10 @@ export function generateTargetKit(
   const files: TargetKitFile[] = [
     { path: `${dir}/target-profile.json`, bytes: json(profile) },
     {
+      path: `${dir}/README.md`,
+      bytes: enc(targetReadme(air, profile, config)),
+    },
+    {
       path: `${dir}/setup.json`,
       bytes: json({
         target: profile.id,
@@ -118,7 +125,7 @@ export function generateTargetKit(
     { path: `${dir}/inbound-auth.env`, bytes: enc(inboundAuthEnv(profile, config)) },
     {
       path: `${dir}/server-description.md`,
-      bytes: enc(serverDescription(air, profile)),
+      bytes: enc(serverDescription(air, profile, config)),
     },
     {
       path: `${dir}/action-selection.json`,
@@ -131,7 +138,10 @@ export function generateTargetKit(
         })),
       }),
     },
-    { path: `${dir}/organization-policy-checklist.md`, bytes: enc(orgPolicyChecklist(profile)) },
+    {
+      path: `${dir}/organization-policy-checklist.md`,
+      bytes: enc(orgPolicyChecklist(profile, config)),
+    },
     { path: `${dir}/admin-runbook.md`, bytes: enc(adminRunbook(air, profile, config)) },
     { path: `${dir}/compatibility-report.json`, bytes: json(compatibility) },
     // A public connector overlays the generic Cloud Run deploy through an
@@ -221,15 +231,35 @@ export function generateTargetKit(
   return { targetId: profile.id, targetVersion: profile.version, files };
 }
 
-function serverDescription(air: AirDocument, profile: AgentPlatformTargetProfile): string {
+function serverDescription(
+  air: AirDocument,
+  _profile: AgentPlatformTargetProfile,
+  config: GeminiEnterpriseTargetConfig,
+): string {
   const caps = air.capabilities.map((c) => `- ${c.displayName}: ${c.description || c.id}`).sort();
-  return `# ${air.service.displayName ?? air.service.id}\n\nRegistered with ${profile.displayName}.\n\n## Capabilities\n${caps.join("\n")}\n`;
+  return `# ${air.service.displayName ?? air.service.id}\n\nTargeted for ${geminiEnterpriseTargetDisplayName(config)}.\n\n## Capabilities\n${caps.join("\n")}\n`;
 }
 
-function orgPolicyChecklist(profile: AgentPlatformTargetProfile): string {
+function orgPolicyChecklist(
+  profile: AgentPlatformTargetProfile,
+  config: GeminiEnterpriseTargetConfig,
+): string {
   const net = profile.networkingRequirements.map((n) => `- [ ] ${n.description}`).join("\n");
-  const assume = profile.unsupportedAssumptions.map((a) => `- [ ] ${a}`).join("\n");
-  return `# Organization policy checklist — ${profile.displayName}\n\n## Networking\n${net}\n\n## Do not assume\n${assume}\n`;
+  const assumptions = [...profile.unsupportedAssumptions];
+  if (includesSurface(config, "custom-mcp")) {
+    assumptions.push(
+      "An external gateway in front of the direct Custom MCP endpoint is not assumed; controls travel in the pack.",
+      "The raw setUpDataConnector API cannot finish OAuth consent; the connector reaches ACTIVE only after the console's interactive Authorize step.",
+    );
+  }
+  if (includesSurface(config, "agent-gateway")) {
+    assumptions.push(
+      "Agent Gateway IAM does not replace the MCP server's bearer-token validation.",
+      "Registering a service does not import it into a Gemini Enterprise app; that step remains console-only.",
+    );
+  }
+  const assume = assumptions.map((assumption) => `- [ ] ${assumption}`).join("\n");
+  return `# Organization policy checklist — ${geminiEnterpriseTargetDisplayName(config)}\n\n## Networking\n${net}\n\n## Do not assume\n${assume}\n`;
 }
 
 function adminRunbook(
@@ -237,63 +267,109 @@ function adminRunbook(
   profile: AgentPlatformTargetProfile,
   config: GeminiEnterpriseTargetConfig,
 ): string {
-  const lines = [
-    `# Admin runbook — ${air.service.displayName ?? air.service.id} on ${profile.displayName}`,
-    "",
-    "1. Retain terraform/cloud-run.tfvars as the deployment input; do not copy",
-    "   target files into compiler-owned output. Certify the complete bundle,",
-    "   then copy deploy/terraform into an empty external work directory and run",
-    "   init, plan, and apply only there. This keeps .terraform, lockfiles, and",
-    "   tfplan out of the immutable target and deploy trees. Deploy the MCP server",
-    `   (${config.endpoint}). SSE is not supported by ${profile.displayName}. The server is`,
-    "   session-based (mints an mcp-session-id on initialize) so the platform can",
-    "   fetch the tool list — do not make it stateless.",
+  const steps = [
+    [
+      "Retain `terraform/cloud-run.tfvars` as the deployment input; do not copy",
+      "target files into compiler-owned output. Certify the complete bundle, then",
+      "copy `deploy/terraform` into an empty external work directory and run init,",
+      "plan, and apply only there. This keeps `.terraform`, lockfiles, and `tfplan`",
+      `out of the immutable trees. Deploy the MCP server at ${config.endpoint}.`,
+      "The server is Streamable HTTP and session-based; SSE and stateless mode are",
+      "not compatible with this target.",
+    ].join(" "),
     config.serverAuth === "oauth"
-      ? "2. Verify the applied ANVIL_INBOUND_* contract. RESOURCE is the public MCP URL used for discovery; AUDIENCE is the distinct JWT audience. GE sign-in / Workforce Identity Federation is separate."
-      : "2. WARNING: inbound-auth.env explicitly sets no-auth. The public /mcp endpoint has no bearer-token gate; GE sign-in / Workforce Identity Federation does not protect it.",
-    "3. Grant the registering admin discoveryengine.editor and ensure the server URL",
-    "   is reachable (a 'protected' project also requires it allowlisted — 403",
-    "   otherwise; the console's Custom MCP flow allowlists it).",
+      ? "Verify the applied `ANVIL_INBOUND_*` contract. RESOURCE is the public MCP URL used for discovery; AUDIENCE is the distinct JWT audience. Gemini Enterprise sign-in and Workforce Identity Federation are separate."
+      : "WARNING: `inbound-auth.env` explicitly sets no-auth. The public `/mcp` endpoint has no bearer-token gate; Gemini Enterprise sign-in and Workforce Identity Federation do not protect it.",
+    "Grant the registering administrator `roles/discoveryengine.editor` and ensure the server URL is reachable. A protected project also requires the endpoint to be allowlisted.",
   ];
   if (includesSurface(config, "custom-mcp")) {
-    lines.push(
+    steps.push(
       config.serverAuth === "oauth"
-        ? "4. Create the connector OAuth client at the provider in oauth.template.json. Its redirect URI is https://vertexaisearch.cloud.google.com/oauth-redirect; store its secret outside this kit."
-        : "4. Review and retain the explicit no-auth acknowledgement and compensating controls.",
-      "5. In the Gemini Enterprise console, create a Custom MCP Server data store",
-      "   using the plan's copy fields. This console-first path is the supported",
-      config.serverAuth === "oauth"
-        ? "   path because OAuth authorization is interactive."
-        : "   path; choose No authentication.",
-      "   registration.curl.sh is an opt-in experimental API reference and is not",
-      "   part of the normal plan. It renders a mode-0600 temporary request from",
-      "   runtime env or mounted secret files and deletes it on exit.",
+        ? "Create the connector OAuth client at the provider in `oauth.template.json`. Its redirect URI is `https://vertexaisearch.cloud.google.com/oauth-redirect`; store its secret outside this kit."
+        : "Review and retain the explicit no-auth acknowledgement and compensating controls.",
+      [
+        "In the Gemini Enterprise console, create a Custom MCP Server data store",
+        "using the plan's copy fields. This console-first path is the supported",
+        config.serverAuth === "oauth"
+          ? "path because OAuth authorization is interactive."
+          : "path; choose No authentication.",
+        "`registration.curl.sh` is an opt-in experimental API reference, not part",
+        "of the supported console-first path.",
+      ].join(" "),
     );
   }
   if (includesSurface(config, "agent-gateway")) {
-    lines.push(
-      "6. Review agent-registry/register.sh, rollback.sh, and the canonical engine",
-      "   resource in setup.json. Then explicitly run:",
-      "   export ANVIL_STATE_DIR=/absolute/path/outside/the/bundle",
-      "   ANVIL_RECONCILE_REGISTRY_GATEWAY=1 ANVIL_CONFIRM_REGISTRY_GATEWAY_RECONCILE=1 bash agent-registry/register.sh",
-      "   With no readiness file, this copies the template to external state and",
-      "   exits before any provider read or mutation.",
-      "7. Provision and independently verify the exact authorization policy, IAM",
-      "   grants, service-agent access, and MCP readiness in readiness.json. Rerun",
-      "   that explicit reconciliation command; it reconciles and readback-verifies",
-      "   the registry/gateway only, without binding the engine.",
-      "8. Separately bind after review; this repeats all read-only preflights and",
-      "   uses engine etag concurrency protection:",
-      "   ANVIL_CONFIRM_ENGINE_EGRESS_REROUTE=1 bash agent-registry/register.sh",
-      "9. Complete the console-only registry import. To restore the previous route:",
-      "   ANVIL_CONFIRM_ENGINE_EGRESS_ROLLBACK=1 bash agent-registry/rollback.sh",
+    steps.push(
+      "Review `agent-registry/register.sh`, `rollback.sh`, and the canonical engine resource in `setup.json`. Set `ANVIL_STATE_DIR` to an absolute directory outside the bundle, then run `ANVIL_RECONCILE_REGISTRY_GATEWAY=1 ANVIL_CONFIRM_REGISTRY_GATEWAY_RECONCILE=1 bash agent-registry/register.sh`. With no readiness file, this copies the template to external state and exits before any provider read or mutation.",
+      "Provision and independently verify the exact authorization policy, IAM grants, service-agent access, and MCP readiness in `readiness.json`. Rerun the explicit reconciliation command; it reconciles and readback-verifies the registry and gateway only, without binding the engine.",
+      "Separately bind after review with `ANVIL_CONFIRM_ENGINE_EGRESS_REROUTE=1 bash agent-registry/register.sh`. This repeats all read-only preflights and uses the engine etag as a concurrency precondition.",
+      "Complete the console-only registry import. To restore the previous route, run `ANVIL_CONFIRM_ENGINE_EGRESS_ROLLBACK=1 bash agent-registry/rollback.sh` after inspecting the retained snapshot.",
     );
   }
-  lines.push(
-    `Final check: keep the enabled surface under ${profile.actionLimits.maxActions} actions and confirm compatibility-report.json has no errors.`,
+  return [
+    `# Admin runbook — ${air.service.displayName ?? air.service.id} on ${geminiEnterpriseTargetDisplayName(config)}`,
     "",
-  );
-  return lines.join("\n");
+    ...steps.flatMap((step, index) => [`${index + 1}. ${step}`, ""]),
+    `Final check: keep the enabled surface under ${profile.actionLimits.maxActions} actions and confirm \`compatibility-report.json\` has no errors.`,
+    "",
+  ].join("\n");
+}
+
+function targetReadme(
+  air: AirDocument,
+  profile: AgentPlatformTargetProfile,
+  config: GeminiEnterpriseTargetConfig,
+): string {
+  const selectedSurface =
+    GEMINI_SURFACE_LABELS[config.surface as GeminiRegistrationSurface] ?? "Unselected surface";
+  const identityLines = [
+    "- `inbound-auth.env` configures the token accepted by the MCP resource server.",
+    "- `workforcePool` in `setup.json`, when present, identifies Gemini Enterprise sign-in and does not protect `/mcp`.",
+    ...(includesSurface(config, "agent-gateway")
+      ? [
+          "- Agent Gateway IAM controls gateway and runtime reachability; it does not replace OAuth bearer-token validation at the MCP server.",
+        ]
+      : []),
+  ];
+  const surfaceSections: string[] = [];
+  if (includesSurface(config, "custom-mcp")) {
+    surfaceSections.push(`## ${GEMINI_SURFACE_LABELS["custom-mcp"]}
+
+Use the console-first data-store journey. Start with \`oauth.template.json\`,
+\`inbound-auth.env\`, and the Custom MCP copy fields printed by \`anvil target\`.
+\`registration.request.template.json\` and \`registration.curl.sh\` are
+experimental API references; they cannot complete interactive OAuth consent.`);
+  }
+  if (includesSurface(config, "agent-gateway")) {
+    surfaceSections.push(`## ${GEMINI_SURFACE_LABELS["agent-gateway"]}
+
+Start with \`agent-registry/agent-gateway.md\`. Registration, readiness,
+reconciliation, engine binding, and rollback are deliberately separate phases.
+Mutable readiness and rollback evidence belongs under the external
+\`ANVIL_STATE_DIR\`, never inside this certified target subtree.`);
+  }
+  return `# ${air.service.displayName ?? air.service.id} — Gemini Enterprise target
+
+Selected integration: **${selectedSurface}**
+
+This directory is the deterministic, non-secret target projection for
+${profile.displayName}. It records configuration; it does not prove that the
+named provider resources exist or that IAM grants are effective.
+
+## Start here
+
+1. Confirm \`compatibility-report.json\` has no errors.
+2. Review \`organization-policy-checklist.md\` and \`admin-runbook.md\`.
+3. Apply \`terraform/cloud-run.tfvars\` only from the external Terraform work
+   directory described in \`terraform/README.md\`.
+4. Complete only the selected integration journey below.
+
+## Identity boundaries
+
+${identityLines.join("\n")}
+
+${surfaceSections.join("\n\n")}
+`;
 }
 
 function selectedInteractiveSteps(

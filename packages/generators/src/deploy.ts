@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 import { type AirDocument, type AuthRequirement, airToJson } from "@anvil/air";
 import {
   credentialProfileName,
+  credentialRequirement,
   DEFAULT_LEDGER_RESULT_TTL_SECONDS,
-  envPrefix,
   firestoreLedgerCollection,
 } from "@anvil/runtime";
 import { buildSync } from "esbuild";
@@ -657,111 +657,7 @@ function credentialRow(
   auth: AuthRequirement,
   profile: string,
 ): Omit<CredentialRequirement, "operations" | "profile"> {
-  const p = envPrefix(profile);
-  const isObo = auth.type === "oauth2_on_behalf_of";
-  const isJwtBearer = auth.type === "jwt_bearer" && auth.provider?.grant === "jwt_bearer";
-  const importedEndpoint = Boolean(auth.provider?.tokenEndpoint);
-  const endpointRequired = importedEndpoint ? [] : [`${p}_TOKEN_ENDPOINT`];
-  const endpointAlternatives = importedEndpoint
-    ? [[`ANVIL_CREDENTIAL_HOSTS`], [`${p}_TOKEN_ENDPOINT`]]
-    : undefined;
-  const endpointOptional = importedEndpoint
-    ? [`ANVIL_CREDENTIAL_HOSTS`, `${p}_TOKEN_ENDPOINT`]
-    : [];
-
-  if (auth.type === "workload_identity") {
-    return {
-      auth: "workload_identity",
-      resolver: "workload_identity",
-      required: [],
-      optional: [`${p}_AUDIENCE`],
-      note: "Mints a GCP ID token (for the audience) or access token from the metadata server — no client secret. The runtime service account IS the identity.",
-    };
-  }
-  if (isObo) {
-    const method = auth.provider?.clientAuth ?? "client_secret_basic";
-    const clientCredential =
-      method === "private_key_jwt" ? `${p}_CLIENT_ASSERTION_KEY` : `${p}_CLIENT_SECRET`;
-    const actorRequired = auth.delegation?.actor ? [`${p}_ACTOR_TOKEN`] : [];
-    return {
-      auth:
-        `${auth.type} (on-behalf-of, principal=${auth.principal ?? "delegated"}, ` +
-        `client_auth=${method}, token_endpoint=${auth.provider?.tokenEndpoint ?? `${p}_TOKEN_ENDPOINT`})`,
-      resolver: "delegated",
-      required: [...endpointRequired, `${p}_CLIENT_ID`, clientCredential, ...actorRequired],
-      ...(endpointAlternatives ? { requiredOneOf: endpointAlternatives } : {}),
-      optional: [...endpointOptional, `${p}_AUDIENCE`, `${p}_RESOURCE`, `${p}_SCOPES`],
-      note:
-        "RFC 8693 token exchange. Needs a validated inbound caller token (the subject_token). " +
-        "For an imported token endpoint, either admit its exact host with ANVIL_CREDENTIAL_HOSTS " +
-        `or override it with ${p}_TOKEN_ENDPOINT. When delegation.actor is declared, ` +
-        "ANVIL_<P>_ACTOR_TOKEN is required; a missing actor token fails closed.",
-    };
-  }
-  if (isJwtBearer) {
-    return {
-      auth: `jwt_bearer (RFC 7523 assertion, token_endpoint=${auth.provider?.tokenEndpoint ?? `${p}_TOKEN_ENDPOINT`})`,
-      resolver: "delegated",
-      required: [...endpointRequired, `${p}_CLIENT_ID`, `${p}_CLIENT_ASSERTION_KEY`],
-      ...(endpointAlternatives ? { requiredOneOf: endpointAlternatives } : {}),
-      optional: [...endpointOptional, `${p}_AUDIENCE`, `${p}_SCOPES`],
-      note:
-        "The runtime signs a JWT assertion with ANVIL_<P>_CLIENT_ASSERTION_KEY (a PEM private key — provision it as an sm:// reference). " +
-        "For an imported token endpoint, admit its exact host with ANVIL_CREDENTIAL_HOSTS or override *_TOKEN_ENDPOINT.",
-    };
-  }
-  if (auth.type === "oauth2_client_credentials") {
-    const method = auth.provider?.clientAuth ?? "client_secret_basic";
-    const required = [...endpointRequired, `${p}_CLIENT_ID`];
-    required.push(
-      method === "private_key_jwt" ? `${p}_CLIENT_ASSERTION_KEY` : `${p}_CLIENT_SECRET`,
-    );
-    return {
-      auth: `oauth2_client_credentials (${method}, token_endpoint=${auth.provider?.tokenEndpoint ?? `${p}_TOKEN_ENDPOINT`})`,
-      resolver: "delegated",
-      required,
-      ...(endpointAlternatives ? { requiredOneOf: endpointAlternatives } : {}),
-      optional: [...endpointOptional, `${p}_AUDIENCE`, `${p}_SCOPES`],
-      note: "RFC 6749 §4.4 — a service principal, no user identity. For an imported token endpoint, admit its exact host with ANVIL_CREDENTIAL_HOSTS or override *_TOKEN_ENDPOINT.",
-    };
-  }
-  if (auth.type === "api_key") {
-    return {
-      auth: "api_key",
-      resolver: "env",
-      required: [`${p}_API_KEY`],
-      optional: [`${p}_API_KEY_HEADER`, `${p}_API_KEY_QUERY`],
-      note: "Carrier defaults to the `X-API-Key` header; override per gateway (Apigee/Kong often `apikey` as a query param, Azure `Ocp-Apim-Subscription-Key`) via AIR `provider.apiKey` or the *_API_KEY_HEADER / *_API_KEY_QUERY env override.",
-    };
-  }
-  if (auth.type === "basic") {
-    return {
-      auth: "basic",
-      resolver: "env",
-      required: [`${p}_USERNAME`, `${p}_PASSWORD`],
-      optional: [],
-    };
-  }
-  if (
-    auth.type === "mtls" ||
-    auth.type === "custom_header" ||
-    auth.type === "oauth2_authorization_code"
-  ) {
-    return {
-      auth: `${auth.type} (unsupported)`,
-      resolver: "unsupported",
-      required: [],
-      optional: [],
-      note: "Anvil does not currently model the transport certificate or custom header carrier. Runtime and certification fail closed; enrich the auth model before approval.",
-    };
-  }
-  return {
-    auth: `${auth.type} (static bearer)`,
-    resolver: "env",
-    required: [`${p}_TOKEN`],
-    optional: [],
-    note: "A pre-issued bearer token read from the env (provision it as an sm:// reference).",
-  };
+  return credentialRequirement(profile, auth);
 }
 
 function deployReadme(air: AirDocument): string {

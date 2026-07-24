@@ -7,9 +7,16 @@
  * for regeneration, status checks, and resumable operator handoff.
  */
 import { createHash } from "node:crypto";
+import { parseCanonicalEngineResource } from "./coordinates.js";
 
 export const GEMINI_REGISTRATION_SURFACES = ["custom-mcp", "agent-gateway", "both"] as const;
 export type GeminiRegistrationSurface = (typeof GEMINI_REGISTRATION_SURFACES)[number];
+
+export const GEMINI_SURFACE_LABELS = {
+  "custom-mcp": "Custom MCP Server data store",
+  "agent-gateway": "Agent Registry + Agent Gateway",
+  both: "Custom MCP Server data store + Agent Registry / Agent Gateway",
+} as const satisfies Record<GeminiRegistrationSurface, string>;
 
 export const GEMINI_GATEWAY_LOCATIONS = ["us-central1", "europe-west1"] as const;
 export type GeminiGatewayLocation = (typeof GEMINI_GATEWAY_LOCATIONS)[number];
@@ -85,15 +92,16 @@ export interface GeminiEnterpriseTargetConfig {
   /** Numeric project identity required in a synthesized Discovery Engine resource. */
   projectNumber?: string;
   /**
-   * Gemini Enterprise app/engine location. Custom MCP accepts any nonempty
-   * provider-supported location; Agent Gateway uses the strict mapping above.
+   * Gemini Enterprise app/engine location. Custom MCP accepts the known
+   * multi-regions or a syntactically valid Google-style region; Agent Gateway
+   * uses the strict mapping above.
    */
   appLocation: string;
   /** Engine id or canonical projects/.../engines/... resource. */
   engine: string;
-  /** Derived from appLocation unless explicitly supplied. */
+  /** Derived from appLocation for Agent Gateway surfaces unless explicitly supplied. */
   gatewayLocation?: GeminiGatewayLocation;
-  /** Registry referenced by the gateway; defaults to the gateway's region. */
+  /** Registry referenced by the gateway; defaults to its region for gateway surfaces. */
   registryLocation?: GeminiRegistryLocation;
   /** Exact deployed-agent identity granted registry, gateway, and runtime access. */
   agentIdentityPrincipalSet?: string;
@@ -132,8 +140,10 @@ export function createGeminiEnterpriseTargetConfig(
   input: GeminiEnterpriseTargetConfigInput,
 ): GeminiEnterpriseTargetConfig {
   const appLocation = input.appLocation?.trim() ?? "";
+  const usesAgentGateway = input.surface === "agent-gateway" || input.surface === "both";
   const gatewayLocation =
-    input.gatewayLocation ?? (appLocation ? defaultGatewayLocation(appLocation) : undefined);
+    input.gatewayLocation ??
+    (usesAgentGateway && appLocation ? defaultGatewayLocation(appLocation) : undefined);
   return {
     surface: input.surface ?? "",
     serverAuth: input.serverAuth ?? "",
@@ -144,7 +154,7 @@ export function createGeminiEnterpriseTargetConfig(
     appLocation,
     engine: input.engine?.trim() ?? "",
     gatewayLocation,
-    registryLocation: input.registryLocation ?? gatewayLocation,
+    registryLocation: input.registryLocation ?? (usesAgentGateway ? gatewayLocation : undefined),
     agentIdentityPrincipalSet: input.agentIdentityPrincipalSet?.trim() || undefined,
     gatewayAuthorizationPolicy: input.gatewayAuthorizationPolicy?.trim() || undefined,
     connectorOAuth: {
@@ -152,7 +162,13 @@ export function createGeminiEnterpriseTargetConfig(
       tenant: input.connectorOAuth?.tenant?.trim() || undefined,
       authorizationUrl: input.connectorOAuth?.authorizationUrl?.trim() || undefined,
       tokenUrl: input.connectorOAuth?.tokenUrl?.trim() || undefined,
-      scopes: [...(input.connectorOAuth?.scopes ?? [])],
+      scopes: [
+        ...new Set(
+          (input.connectorOAuth?.scopes ?? [])
+            .map((scope) => scope.trim())
+            .filter((scope) => scope.length > 0),
+        ),
+      ],
       inboundIssuer: input.connectorOAuth?.inboundIssuer?.trim() || undefined,
       inboundAudience: input.connectorOAuth?.inboundAudience?.trim() || undefined,
     },
@@ -180,6 +196,16 @@ export function includesSurface(
   return config.surface === surface || config.surface === "both";
 }
 
+export function geminiEnterpriseTargetDisplayName(
+  config: Pick<GeminiEnterpriseTargetConfig, "surface">,
+): string {
+  const surface =
+    config.surface && Object.hasOwn(GEMINI_SURFACE_LABELS, config.surface)
+      ? GEMINI_SURFACE_LABELS[config.surface as GeminiRegistrationSurface]
+      : "unselected surface";
+  return `Gemini Enterprise — ${surface}`;
+}
+
 /** Canonical Discovery Engine resource used by UpdateEngine. */
 export function engineResource(config: GeminiEnterpriseTargetConfig): string {
   if (isCanonicalEngineResource(config.engine)) return config.engine;
@@ -187,13 +213,15 @@ export function engineResource(config: GeminiEnterpriseTargetConfig): string {
 }
 
 export function isCanonicalEngineResource(engine: string): boolean {
-  return /^projects\/\d+\/locations\/[a-z0-9-]+\/collections\/[A-Za-z0-9_-]+\/engines\/[A-Za-z0-9_-]+$/.test(
-    engine,
-  );
+  return parseCanonicalEngineResource(engine) !== undefined;
 }
 
 export function canonicalEngineLocation(engine: string): string | undefined {
-  return isCanonicalEngineResource(engine) ? engine.split("/")[3] : undefined;
+  return parseCanonicalEngineResource(engine)?.location;
+}
+
+export function canonicalEngineProjectNumber(engine: string): string | undefined {
+  return parseCanonicalEngineResource(engine)?.projectNumber;
 }
 
 /** Stable engine-scoped mutable state key; safe as one filesystem path segment. */

@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseManifest } from "../manifest.js";
 import {
   FileSystemGatewayImportReceiptStore,
   finalizeGatewayImportReceipt,
@@ -9,6 +10,8 @@ import {
   type GatewayImportReceiptDraft,
   GatewayImportReceiptView,
   gatewayBundleManifest,
+  gatewayCapabilityReviewInput,
+  gatewayManifestDigest,
   gatewaySha256,
   redactGatewayImportReceipt,
 } from "./receipt.js";
@@ -180,5 +183,84 @@ describe("GatewayImportReceipt", () => {
     });
     expect(JSON.stringify(view)).not.toContain("/private/customer");
     expect(JSON.stringify(view)).not.toContain('"receiptType"');
+  });
+
+  it("binds canonical capability review input while redacting the review note", () => {
+    const first = gatewayCapabilityReviewInput({
+      "refunds.support": {
+        state: "rejected",
+        note: "split this grouping",
+      },
+      "refunds.refund": {
+        state: "approved",
+        allow_large: true,
+        note: "reviewed 21 disclosed tools",
+      },
+    });
+    const reordered = gatewayCapabilityReviewInput({
+      "refunds.refund": {
+        note: "reviewed 21 disclosed tools",
+        allow_large: true,
+        state: "approved",
+      },
+      "refunds.support": {
+        note: "split this grouping",
+        state: "rejected",
+      },
+    });
+    expect(reordered).toEqual(first);
+
+    const manifestDigest = gatewayManifestDigest(
+      parseManifest(`capabilities:
+  refunds.refund:
+    state: approved
+    allow_large: true
+    note: reviewed 21 disclosed tools
+  refunds.support:
+    state: rejected
+    note: split this grouping
+`),
+    );
+    expect(
+      gatewayManifestDigest(
+        parseManifest(`capabilities:
+  refunds.support: { note: split this grouping, state: rejected }
+  refunds.refund:
+    note: reviewed 21 disclosed tools
+    allow_large: true
+    state: approved
+`),
+      ),
+    ).toBe(manifestDigest);
+
+    const receipt = finalizeGatewayImportReceipt({
+      ...draft(),
+      compilerInput: { manifestDigest, capabilityReviews: first },
+    });
+    const baseline = finalizeGatewayImportReceipt(draft());
+    expect(receipt.importId).not.toBe(baseline.importId);
+    const view = redactGatewayImportReceipt(receipt);
+    expect(view.compilerInput).toMatchObject({
+      manifestDigest,
+      capabilityReviews: {
+        digest: first?.digest,
+        decisions: [
+          {
+            capabilityId: "refunds.refund",
+            state: "approved",
+            allowLarge: true,
+            noteDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+          },
+          {
+            capabilityId: "refunds.support",
+            state: "rejected",
+            allowLarge: false,
+            noteDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(view)).not.toContain("reviewed 21 disclosed tools");
+    expect(JSON.stringify(view)).not.toContain("split this grouping");
   });
 });

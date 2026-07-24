@@ -24,14 +24,15 @@ aligned MCP server + CLI + skill bundle.
 
 ## The loop
 1. `anvil compile <spec> --manifest <manifest> --out <dir>` — build the bundle.
-2. `anvil status <dir>` — orient on projection, approval, certification, target, and release state and read the next safe action.
+2. `anvil status <dir>` — orient on projection, approval, static assurance, executable evidence, target, and release-plan state and read the next safe action.
 3. `anvil inspect <dir>` and `anvil lint <dir>` — inspect risk and fix diagnostics. Non-idempotent mutations remain `review_required`.
 4. Enrich unsafe or weakly named operations with a manifest. `anvil distill <dir> --as-enrich-plan` targets the residue for `anvil enrich --plan` (see reference/workflow.md).
 5. `anvil approve <dir> <operation-id...>` — expose operations only after inspecting risk.
 6. If the bundle will connect to Gemini Enterprise, generate the target now: `anvil target gemini-enterprise <dir> --surface <custom-mcp|agent-gateway> --server-auth <oauth|no-auth> ...`. Integrate its deployment inputs through the generated external var-file; never copy target files into compiler-owned output.
 7. Run `anvil status <dir>`, then certify the complete bundle. Target artifacts are deployment inputs and part of the certified hash.
-8. Publish and deploy only with a fresh passing certification.
-9. After the endpoint is live, complete the external Gemini console or guarded Agent Gateway registration steps. See reference/gemini-enterprise.md.
+8. Run `anvil selftest <dir>`, `anvil conformance <dir>`, and `anvil simulate <dir>`; each report must pass against that same bundle hash.
+9. Prepare a plan with `anvil publish <dir>` only after static assurance and all three executable lanes are fresh and passing. A non-prod-only `--allow-incomplete-evidence` waiver is explicit in the plan; prod fails closed.
+10. After the endpoint is live, complete the external Gemini console or guarded Agent Gateway registration steps. See reference/gemini-enterprise.md.
 
 ## Safety rules
 - **Never approve an operation you have not inspected.** Only approved operations are exposed.

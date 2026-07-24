@@ -35,10 +35,13 @@ Without a manifest, the payments-moving operations arrive gated and unexposed:
 
 ```text
 RetailBanking @ 1.0.0 — 4 operations
-  banking GetAccountBalance list     read               generated
-  banking ListTransactions list      read               generated
-  banking TransferFunds create       mutation/financial review_required ⚠
-  banking CloseAccount create        mutation/medium    review_required ⚠
+
+  Move money between two accounts. Irreversible financial mutation. · review_required · id=banking.transfer_funds.create
+    command       banking TransferFunds create
+    try safely    anvil run generated/banking TransferFunds create --dry-run
+    effect        mutation · financial risk · irreversible
+    safeguards    confirm required · idempotency none · retry not automatic
+    access        none · anonymous principal · scopes none declared
 ```
 
 and `anvil lint` explains why:
@@ -124,14 +127,17 @@ node packages/cli/dist/bin-anvil.js inspect "$WORK/banking-bare" | grep -q revie
 node packages/cli/dist/bin-anvil.js compile examples/soap/bank.wsdl \
   --manifest examples/soap/anvil.yaml --service banking \
   --out "$WORK/banking" --root "$WORK"
-node packages/cli/dist/bin-anvil.js inspect "$WORK/banking" \
-  | grep -qE 'TransferFunds create +mutation/financial approved'
+INSPECT=$(node packages/cli/dist/bin-anvil.js inspect "$WORK/banking")
+grep -qE 'approved · id=banking\.transfer_funds\.create' <<<"$INSPECT"
+grep -qE 'command +banking TransferFunds create' <<<"$INSPECT"
+grep -qE 'effect +mutation · financial risk · irreversible' <<<"$INSPECT"
 node packages/cli/dist/bin-anvil.js lint "$WORK/banking"
 rm -rf "$WORK"
 ```
 
 With the manifest in place, `inspect` shows all four operations `approved`, with
-`TransferFunds` as `mutation/financial ⚠` (gated) — and `lint` still warns
+`TransferFunds` as an irreversible, financial mutation with confirmation and
+an idempotency key required — and `lint` still warns
 `unproven_idempotency` for `CloseAccount`, which is honest: we approved it
 *without* an idempotency claim, so auto-retry stays disabled and confirmation
 stays required. A warning you understand is better than a claim you can't

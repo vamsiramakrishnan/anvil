@@ -203,6 +203,36 @@ export const WorkflowManifest = z.object({
 });
 export type WorkflowManifest = z.infer<typeof WorkflowManifest>;
 
+/**
+ * A review decision for one deterministically discovered capability. Keys in
+ * `capabilities` are exact AIR capability ids: review must bind to the grouping
+ * that discovery actually produced, never a fuzzy label that could drift.
+ */
+export const CapabilityReviewManifest = z
+  .object({
+    state: z.enum(["approved", "rejected"]),
+    note: z.string().optional(),
+    /** Deliberate override for approval above the hard tool-disclosure budget. */
+    allow_large: z.boolean().optional(),
+  })
+  .superRefine((review, ctx) => {
+    if (review.state !== "approved" && review.allow_large !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["allow_large"],
+        message: "allow_large is valid only for an approved capability review",
+      });
+    }
+    if (review.allow_large === true && !review.note?.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["note"],
+        message: "a non-empty review note is required when allow_large is true",
+      });
+    }
+  });
+export type CapabilityReviewManifest = z.infer<typeof CapabilityReviewManifest>;
+
 export const AnvilManifest = z.object({
   service: z
     .object({
@@ -220,6 +250,7 @@ export const AnvilManifest = z.object({
   }).optional(),
   operations: z.record(z.string(), OperationManifest).default({}),
   workflows: z.record(z.string(), WorkflowManifest).default({}),
+  capabilities: z.record(z.string(), CapabilityReviewManifest).default({}),
 });
 export type AnvilManifest = z.infer<typeof AnvilManifest>;
 

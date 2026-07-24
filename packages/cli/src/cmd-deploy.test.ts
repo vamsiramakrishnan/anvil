@@ -46,6 +46,8 @@ describe("anvil deploy credentials", () => {
     expect(result.code, result.io.text()).toBe(0);
     const output = result.io.stdout.join("\n");
     expect(output).toContain("creates its delete-protected named Firestore database");
+    expect(output).toContain("No cloud call is made by this command");
+    expect(output).toContain("Deployment remains operator action");
     expect(output).not.toContain("Firestore (default)");
   });
 

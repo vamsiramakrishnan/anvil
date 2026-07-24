@@ -15,10 +15,7 @@ import type { CompilerSource } from "../source/compiler-source.js";
 import { contractDigest } from "./digest.js";
 import type { ContractSnapshot, EffectiveContractResult, PolicyOverlay } from "./model.js";
 
-export interface ContractCompileOptions {
-  /** Override the derived service id (forwarded to the compiler). */
-  serviceId?: string;
-}
+export interface ContractCompileOptions extends CompileSourceOptions {}
 
 /** Assemble a `ContractSnapshot` from an effective compile result. */
 function toContractSnapshot(
@@ -61,7 +58,7 @@ export async function compileContract(
   options: ContractCompileOptions = {},
 ): Promise<EffectiveContractResult> {
   const compileOptions: CompileSourceOptions & { overlays: readonly PolicyOverlay[] } = {
-    serviceId: options.serviceId,
+    ...options,
     overlays,
   };
   const result = await compileSourceEffective(source, compileOptions);

@@ -27,7 +27,8 @@ spec (OpenAPI / Swagger)
         │  generate
         ├─ type-safe CLI            (discovery, --dry-run, --explain, --schema, --mcp)
         ├─ MCP server               (one tool per approved op, risk in metadata;
-        │                            local stdio + remote SSE, one serving core — ADR-0022)
+        │                            local stdio + remote Streamable HTTP;
+        │                            explicit legacy SSE — ADR-0022/0023)
         ├─ skill package            (progressive disclosure: SKILL.md + reference/)
         ├─ compiled runtime         (thin, stateless Cloud Run server)
         ├─ deploy artifacts         (Dockerfile, Cloud Run YAML, env/secret contracts)
@@ -42,9 +43,9 @@ non-idempotent writes are never retried automatically, and require confirmation.
 ## Quickstart
 
 The lifecycle is: **agentify → assess → capability approve → build → certify →
-publish**. `agentify` is the one-shot front door — it locks the source snapshot,
-compiles from it, assesses readiness, and proposes capabilities, then stops for
-human review.
+exercise → plan**. `agentify` is the one-shot front door — it locks the source
+snapshot, compiles from it, assesses readiness, and proposes capabilities, then
+stops for human review.
 
 ```bash
 pnpm install && pnpm build
@@ -63,11 +64,15 @@ anvil assess generated/payments --check --fail-on blocked   # gate a pipeline ex
 anvil capability list generated/payments
 anvil capability approve generated/payments payments.refunds
 
-# 4. Build the capability's own aligned bundle, then certify it.
+# 4. Build the capability's own aligned bundle, statically certify it, then
+#    execute all three proof lanes against the same bundle digest.
 anvil build generated/payments payments.refunds --out generated/refunds
 anvil certify generated/refunds
+anvil selftest generated/refunds
+anvil conformance generated/refunds
+anvil simulate generated/refunds
 
-# 5. Publish: verify the certification and emit the Cloud Run deploy plan
+# 5. Plan: verify static + executable evidence and emit the Cloud Run deploy plan
 #    (see "publish" below — this writes a plan + publication.json, it does not
 #    call any cloud API).
 anvil publish generated/refunds
@@ -101,6 +106,10 @@ directly — `--mcp stdio` spawns the bundle's own local server, `--mcp <url>`
 targets a remote one, and `ANVIL_MCP_TARGET` sets the default (the per-call flag
 wins). This makes *skill → CLI → MCP* one code path, so the CLI and the MCP tool
 provably do the same thing (see [ADR-0023](docs/adr/0023-cli-to-mcp-runtime-routing.md)).
+For an OAuth-protected remote Streamable HTTP endpoint, store the bearer token
+in an environment variable and pass only its name with
+`--mcp-token-env <ENV_NAME>` (`ANVIL_MCP_TOKEN_ENV` sets the default name);
+tokens never belong in the target URL or command arguments.
 
 ## Architecture
 
@@ -208,11 +217,14 @@ implemented vs. staged.
 
 Two current semantics worth stating plainly:
 
-- **`publish` is plan-first, not a deployment.** It verifies that a *passing*
-  certification matches the current bundle, prints the Cloud Run deployment plan,
-  and writes `publication.json` into the bundle. It makes **no cloud API calls** —
-  `anvil deploy cloud-run` owns actual rollout. Publishing to prod fails closed
-  without a valid certification.
+- **`publish` is plan-first, not a deployment.** It requires fresh static
+  certification plus fresh passing `selftest`, `conformance`, and `simulation`
+  reports for the current bundle digest, prints the Cloud Run deployment plan,
+  and writes the evidence snapshot to `publication.json`. It makes **no cloud API
+  calls**; `anvil deploy cloud-run` also only prints the operator plan. Your
+  reviewed delivery workflow applies the generated Terraform or Cloud Build
+  artifacts. Non-prod plans can explicitly use `--allow-incomplete-evidence`;
+  prod always fails closed.
 - **`anvil certify` is static (bundle-integrity); executable verification lives
   in three dedicated lanes.** The four certify gates (CONTRACT, SAFETY, SEMANTIC,
   RUNTIME) re-validate AIR, prove the CLI / MCP / runtime surfaces expose exactly

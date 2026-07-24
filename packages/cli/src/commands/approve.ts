@@ -58,6 +58,14 @@ export interface ApproveDeps {
   installStagedBundle?: (stageDir: string, bundleDir: string) => void;
 }
 
+export interface BundleReprojectionResult {
+  bundleDir: string;
+  generatedFileCount: number;
+  existingFiles: Record<string, string>;
+  projectionsChanged: boolean;
+  retainedBackup?: string;
+}
+
 /** `anvil approve` — approve and atomically re-project the complete bundle. */
 export function registerApprove(parent: Command, ctx: CommandContext): void {
   annotate(
@@ -94,14 +102,59 @@ export function runApprove(path: string, ids: string[], io: CliIO, deps: Approve
     (id) => air.operations.find((op) => op.id === id)?.state !== "approved",
   );
 
-  const resourceOptions = readResourceOptions(existingFiles, air.service.id);
   approveOperations(air, requested);
+  const result = reprojectBundleAtomically(
+    path,
+    air,
+    "Operation approval regenerated executable bundle projections after the immutable gateway import receipt was issued.",
+    deps,
+  );
+
+  io.out(
+    `Approved ${newlyApproved.length} new operation(s) (${requested.length} requested) and atomically regenerated ${result.generatedFileCount} bundle files in ${bundleDir}.`,
+  );
+  if (requested.length > newlyApproved.length) {
+    io.out(`  ${requested.length - newlyApproved.length} operation(s) were already approved.`);
+  }
+  reportPreservedStaleArtifacts(
+    io,
+    result.existingFiles,
+    result.projectionsChanged,
+    result.bundleDir,
+  );
+  if (result.retainedBackup) {
+    io.out(
+      `  The replaced bundle backup could not be removed; it remains at ${result.retainedBackup}.`,
+    );
+  }
+  return 0;
+}
+
+/**
+ * Persist any AIR mutation through the one safe reprojection path. The caller
+ * mutates an in-memory AIR document; this function regenerates every
+ * compiler-owned projection, verifies exact bytes and surface agreement, then
+ * swaps the complete staged directory into place with rollback.
+ */
+export function reprojectBundleAtomically(
+  path: string,
+  air: ReturnType<typeof loadAir>,
+  gatewayStaleReason: string,
+  deps: ApproveDeps = {},
+): BundleReprojectionResult {
+  const bundleDir = resolve(resolveBundleDir(path));
+  const airPath = resolve(resolveAirPath(path));
+  assertSafeBundleRoot(bundleDir, airPath);
+
+  const existingFiles = readBundleDir(bundleDir);
+  assertCompleteBundle(existingFiles, bundleDir);
+  const resourceOptions = readResourceOptions(existingFiles, air.service.id);
   const generated = generateBundle(air, resourceOptions);
   const projectionsChanged = Object.entries(generated.files).some(
     ([rel, contents]) => existingFiles[rel] !== contents,
   );
 
-  const stageDir = makeHiddenSibling(bundleDir, "approve-stage");
+  const stageDir = makeHiddenSibling(bundleDir, "reproject-stage");
   let retainedBackup: string | undefined;
   try {
     cpSync(bundleDir, stageDir, {
@@ -116,6 +169,7 @@ export function runApprove(path: string, ids: string[], io: CliIO, deps: Approve
       generated.files,
       air,
       projectionsChanged,
+      gatewayStaleReason,
     );
     verifyStagedBundle(stageDir, generated.files, air, gatewayLineageIntentionallyStale);
     retainedBackup = replaceBundle(bundleDir, stageDir, deps);
@@ -125,17 +179,13 @@ export function runApprove(path: string, ids: string[], io: CliIO, deps: Approve
     if (existsSync(stageDir)) rmSync(stageDir, { recursive: true, force: true });
   }
 
-  io.out(
-    `Approved ${newlyApproved.length} new operation(s) (${requested.length} requested) and atomically regenerated ${Object.keys(generated.files).length} bundle files in ${bundleDir}.`,
-  );
-  if (requested.length > newlyApproved.length) {
-    io.out(`  ${requested.length - newlyApproved.length} operation(s) were already approved.`);
-  }
-  reportPreservedStaleArtifacts(io, existingFiles, projectionsChanged, bundleDir);
-  if (retainedBackup) {
-    io.out(`  The replaced bundle backup could not be removed; it remains at ${retainedBackup}.`);
-  }
-  return 0;
+  return {
+    bundleDir,
+    generatedFileCount: Object.keys(generated.files).length,
+    existingFiles,
+    projectionsChanged,
+    ...(retainedBackup ? { retainedBackup } : {}),
+  };
 }
 
 function markGatewayLineageStale(
@@ -144,6 +194,7 @@ function markGatewayLineageStale(
   generatedFiles: Record<string, string>,
   air: ReturnType<typeof loadAir>,
   projectionsChanged: boolean,
+  reason: string,
 ): boolean {
   if (!projectionsChanged) return false;
   const text = existingFiles["import.receipt.json"];
@@ -184,8 +235,7 @@ function markGatewayLineageStale(
     ...parsed.data,
     lineage: {
       status: "stale",
-      reason:
-        "Operation approval regenerated executable bundle projections after the immutable gateway import receipt was issued.",
+      reason,
       currentOutputDigest: currentOutput.digest,
       currentOutputFiles: currentOutput.files,
     },
@@ -333,7 +383,7 @@ function verifyStagedBundle(
  * of old and new projection files.
  */
 function replaceBundle(bundleDir: string, stageDir: string, deps: ApproveDeps): string | undefined {
-  const backupDir = makeHiddenSibling(bundleDir, "approve-backup");
+  const backupDir = makeHiddenSibling(bundleDir, "reproject-backup");
   rmSync(backupDir, { recursive: true, force: true });
   renameSync(bundleDir, backupDir);
   try {
@@ -359,7 +409,7 @@ function replaceBundle(bundleDir: string, stageDir: string, deps: ApproveDeps): 
   }
 }
 
-function reportPreservedStaleArtifacts(
+export function reportPreservedStaleArtifacts(
   io: CliIO,
   existingFiles: Record<string, string>,
   projectionsChanged: boolean,

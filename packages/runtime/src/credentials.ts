@@ -31,6 +31,7 @@ import {
   apiKeyMaterial as apiKeyMaterialFor,
   type CredentialCallContext,
   type CredentialResolver,
+  credentialRequirement,
   EnvCredentialResolver,
   envPrefix,
 } from "./auth.js";
@@ -297,16 +298,15 @@ export class TokenExchangeResolver implements CredentialResolver {
   }
 
   expectedCredentials(profileName: string, auth: AuthRequirement): string[] {
-    const p = envPrefix(profileName);
-    if (auth.type === "workload_identity") return [`${p}_AUDIENCE (or workload-identity SA)`];
-    const clientCredential =
-      auth.provider?.clientAuth === "private_key_jwt"
-        ? `${p}_CLIENT_ASSERTION_KEY`
-        : `${p}_CLIENT_SECRET`;
-    const names = [`${p}_TOKEN_ENDPOINT`, `${p}_CLIENT_ID`, clientCredential];
+    const contract = credentialRequirement(profileName, auth);
+    const names = [...contract.required];
+    if (contract.requiredOneOf && contract.requiredOneOf.length > 0) {
+      names.push(
+        `one of: ${contract.requiredOneOf.map((group) => group.join(" + ")).join(" OR ")}`,
+      );
+    }
     if (auth.type === "oauth2_on_behalf_of") {
       names.push("a validated inbound caller token");
-      if (auth.delegation?.actor) names.push(`${p}_ACTOR_TOKEN`);
     }
     return names;
   }

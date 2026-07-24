@@ -148,11 +148,20 @@ describe("compile pipeline (with manifest enrichment)", () => {
     expect(confidenceFor(refund?.evidence ?? { claims: [] }, "enriched")).toBeGreaterThan(0.6);
   });
 
-  it("resolves oauth2 auth with scopes", async () => {
+  it("requires the write scope for every financial mutation in the reference API", async () => {
     const air = await compile({ spec, manifest, serviceId: "payments" });
-    const refund = air.operations.find((o) => o.canonicalName === "create_refund");
-    expect(refund?.auth.type).toBe("oauth2_client_credentials");
-    expect(refund?.auth.scopes).toContain("payments.read");
+    const financialMutations = air.operations.filter(
+      (operation) => operation.effect.kind === "mutation" && operation.effect.risk === "financial",
+    );
+    expect(financialMutations.map((operation) => operation.canonicalName).sort()).toEqual([
+      "capture_payment",
+      "create_refund",
+    ]);
+    for (const operation of financialMutations) {
+      expect(operation.auth.type).toBe("oauth2_client_credentials");
+      expect(operation.auth.scopes).toContain("payments.write");
+      expect(operation.auth.scopes).not.toContain("payments.read");
+    }
   });
 
   it("supports explicit approval of additional operations", async () => {

@@ -27,6 +27,7 @@ import {
   type GeminiGatewayLocation,
   type GeminiRegistrationSurface,
   type GeminiRegistryLocation,
+  geminiEnterpriseTargetDisplayName,
   generateTargetKit,
   MCP_SERVER_AUTH_MODES,
   type McpServerAuthMode,
@@ -88,12 +89,15 @@ export function registerTarget(parent: Command, ctx: CommandContext): void {
           .makeOptionMandatory(),
       )
       .option("--endpoint <url>", "the connector's public HTTPS MCP URL (e.g. https://host/mcp)")
-      .option("--project <id>", "GCP project — fills the registration artifacts + console links")
+      .option("--project <id>", "6-30 character GCP project ID (not the numeric project number)")
       .option(
         "--project-number <number>",
-        "numeric GCP project identity used in a synthesized canonical engine resource",
+        "provider-assigned numeric GCP project identity used in canonical resources",
       )
-      .option("--location <loc>", "Gemini Enterprise app/engine location")
+      .option(
+        "--location <loc>",
+        "Gemini Enterprise app/engine location: global, us, eu, or a region",
+      )
       .option(
         "--engine <id-or-resource>",
         "GE engine id, or full projects/.../locations/.../collections/.../engines/... resource",
@@ -127,7 +131,7 @@ export function registerTarget(parent: Command, ctx: CommandContext): void {
       .option("--inbound-audience <audience>", "audience identifying this MCP API")
       .option(
         "--wif <pool>",
-        "Gemini Enterprise Workforce Identity Federation pool (separate from /mcp auth)",
+        "full locations/global/workforcePools/<pool-id> resource for GE sign-in (separate from /mcp auth)",
       )
       .option(
         "--allow-unauthenticated-mcp",
@@ -139,11 +143,11 @@ export function registerTarget(parent: Command, ctx: CommandContext): void {
       )
       .option(
         "--agent-identity-principal-set <resource>",
-        "exact principalSet:// identity granted registry, gateway, and runtime access",
+        "documented principalSet://agents.global... resource granted registry, gateway, and runtime access",
       )
       .option(
         "--gateway-authorization-policy <resource>",
-        "exact authorization-policy resource attached to the Agent Gateway",
+        "full projects/<project>/locations/<region>/authzPolicies/<policy> resource attached to the gateway",
       )
       .option(
         "--out <dir>",
@@ -285,7 +289,7 @@ function runTarget(
 
   if (opts.json !== true) {
     io.out(
-      `Generated ${profile.displayName} connector kit (${kit.files.length} files) under ${join(outRoot, "targets", profile.id)}/`,
+      `Generated ${geminiEnterpriseTargetDisplayName(config)} connector kit (${kit.files.length} files) under ${join(outRoot, "targets", profile.id)}/`,
     );
     const approved = air.operations.filter((o) => o.state === "approved").length;
     io.out(

@@ -9,12 +9,29 @@ import type { AirDocument } from "@anvil/air";
 import { renderToolSpecJson, TOOLSPEC_MAX_BYTES } from "./agent-registry.js";
 import {
   canonicalEngineLocation,
+  canonicalEngineProjectNumber,
   GEMINI_AGENT_GATEWAY_LOCATION_COMPATIBILITY,
+  GEMINI_GATEWAY_LOCATIONS,
+  GEMINI_REGISTRATION_SURFACES,
+  GEMINI_REGISTRY_LOCATIONS,
   type GeminiEnterpriseTargetConfig,
   includesSurface,
   isCanonicalEngineResource,
   isGatewayCompatibleAppLocation,
+  MCP_SERVER_AUTH_MODES,
 } from "./config.js";
+import {
+  isEngineId,
+  isGcpProjectId,
+  isGcpProjectNumber,
+  isGeminiAppLocation,
+  isHttpsIssuer,
+  isMcpApiScope,
+  isMcpAudience,
+  isWorkforcePoolResource,
+  parseAgentIdentityPrincipalSet,
+  parseGatewayAuthorizationPolicyResource,
+} from "./coordinates.js";
 import type {
   AgentPlatformTargetProfile,
   TargetValidationFinding,
@@ -44,6 +61,95 @@ export function validateTarget(
         message: `Gemini Enterprise target configuration requires ${field}.`,
       });
     }
+  }
+
+  if (
+    config.surface &&
+    !GEMINI_REGISTRATION_SURFACES.some((surface) => surface === config.surface)
+  ) {
+    findings.push({
+      level: "error",
+      code: "target/invalid_surface",
+      message: `--surface must be one of ${GEMINI_REGISTRATION_SURFACES.join(", ")}; got ${config.surface}.`,
+    });
+  }
+  if (
+    config.serverAuth &&
+    !MCP_SERVER_AUTH_MODES.some((serverAuth) => serverAuth === config.serverAuth)
+  ) {
+    findings.push({
+      level: "error",
+      code: "target/invalid_server_auth",
+      message: `--server-auth must be one of ${MCP_SERVER_AUTH_MODES.join(", ")}; got ${config.serverAuth}.`,
+    });
+  }
+  if (config.project && !isGcpProjectId(config.project)) {
+    findings.push({
+      level: "error",
+      code: "target/invalid_project",
+      message:
+        "--project must be a 6-30 character Google Cloud project ID: lowercase letters, digits, or hyphens; start with a letter and do not end with a hyphen.",
+    });
+  }
+  if (config.projectNumber && !isGcpProjectNumber(config.projectNumber)) {
+    findings.push({
+      level: "error",
+      code: "target/invalid_project_number",
+      message: `--project-number must be a complete positive numeric Google Cloud project identity; got ${config.projectNumber}.`,
+    });
+  }
+  if (config.appLocation && !isGeminiAppLocation(config.appLocation)) {
+    findings.push({
+      level: "error",
+      code: "target/invalid_app_location",
+      message: `--location must be global, us, eu, or a Google Cloud region such as us-central1; got ${config.appLocation}.`,
+    });
+  }
+  if (config.engine) {
+    const canonical = isCanonicalEngineResource(config.engine);
+    if (config.engine.includes("/") && !canonical) {
+      findings.push({
+        level: "error",
+        code: "target/invalid_engine_resource",
+        message:
+          "--engine must be an RFC-1034 engine id or an exact projects/<number>/locations/<location>/collections/<collection>/engines/<engine> resource.",
+      });
+    } else if (!config.engine.includes("/") && !isEngineId(config.engine)) {
+      findings.push({
+        level: "error",
+        code: "target/invalid_engine_id",
+        message:
+          "--engine must start with a lowercase letter and contain at most 63 lowercase letters, digits, hyphens, or underscores.",
+      });
+    }
+    const resourceProjectNumber = canonicalEngineProjectNumber(config.engine);
+    if (
+      resourceProjectNumber &&
+      config.projectNumber &&
+      resourceProjectNumber !== config.projectNumber
+    ) {
+      findings.push({
+        level: "error",
+        code: "target/engine_project_number_mismatch",
+        message: `Canonical engine project number ${resourceProjectNumber} does not match --project-number ${config.projectNumber}.`,
+      });
+    }
+    const resourceLocation = canonicalEngineLocation(config.engine);
+    if (resourceLocation && config.appLocation && resourceLocation !== config.appLocation) {
+      findings.push({
+        level: "error",
+        code: "target/engine_location_mismatch",
+        message: `Canonical engine location ${resourceLocation} does not match --location ${config.appLocation}.`,
+      });
+    }
+  }
+  if (config.workforcePool && !isWorkforcePoolResource(config.workforcePool)) {
+    findings.push({
+      level: "error",
+      code: "target/invalid_workforce_pool",
+      message:
+        "--wif must be an exact locations/global/workforcePools/<pool-id> resource; it describes Gemini Enterprise sign-in, not /mcp auth.",
+    });
   }
 
   if (served.length === 0) {
@@ -118,7 +224,11 @@ export function validateTarget(
     }
   }
 
-  if (includesSurface(config, "custom-mcp") && config.appLocation) {
+  if (
+    includesSurface(config, "custom-mcp") &&
+    config.appLocation &&
+    isGeminiAppLocation(config.appLocation)
+  ) {
     findings.push({
       level: "warning",
       code: "target/provider_location_validation_required",
@@ -127,12 +237,24 @@ export function validateTarget(
   }
 
   if (includesSurface(config, "agent-gateway") && config.appLocation) {
-    if (config.engine.includes("/") && !isCanonicalEngineResource(config.engine)) {
+    if (
+      config.gatewayLocation &&
+      !GEMINI_GATEWAY_LOCATIONS.some((location) => location === config.gatewayLocation)
+    ) {
       findings.push({
         level: "error",
-        code: "target/invalid_engine_resource",
-        message:
-          "--engine must be a simple engine id or an exact projects/<number>/locations/<location>/collections/<collection>/engines/<engine> resource.",
+        code: "target/invalid_gateway_location",
+        message: `--gateway-location must be one of ${GEMINI_GATEWAY_LOCATIONS.join(", ")}; got ${config.gatewayLocation}.`,
+      });
+    }
+    if (
+      config.registryLocation &&
+      !GEMINI_REGISTRY_LOCATIONS.some((location) => location === config.registryLocation)
+    ) {
+      findings.push({
+        level: "error",
+        code: "target/invalid_registry_location",
+        message: `--registry-location must be one of ${GEMINI_REGISTRY_LOCATIONS.join(", ")}; got ${config.registryLocation}.`,
       });
     }
     if (!config.agentIdentityPrincipalSet) {
@@ -142,12 +264,40 @@ export function validateTarget(
         message:
           "Agent Gateway requires --agent-identity-principal-set so generated IAM and readiness evidence identify the exact deployed-agent principal.",
       });
-    } else if (!config.agentIdentityPrincipalSet.startsWith("principalSet://")) {
-      findings.push({
-        level: "error",
-        code: "target/invalid_agent_identity_principal_set",
-        message: "--agent-identity-principal-set must be an exact principalSet:// resource.",
-      });
+    } else {
+      const principal = parseAgentIdentityPrincipalSet(config.agentIdentityPrincipalSet);
+      if (!principal) {
+        findings.push({
+          level: "error",
+          code: "target/invalid_agent_identity_principal_set",
+          message:
+            "--agent-identity-principal-set must be a documented principalSet://agents.global.org-<organization-number>.system.id.goog/<agent-scope> resource.",
+        });
+      } else if (!principal.projectNumber) {
+        findings.push({
+          level: "error",
+          code: "target/agent_identity_principal_scope_too_broad",
+          message:
+            "Agent Gateway IAM requires a project-scoped deployed-agent principalSet; organization-wide and platform-wide principal sets are too broad.",
+        });
+      } else {
+        const declaredProjectNumbers = [
+          config.projectNumber,
+          canonicalEngineProjectNumber(config.engine),
+        ].filter((value): value is string => value !== undefined);
+        const mismatched = declaredProjectNumbers.find(
+          (projectNumber) => projectNumber !== principal.projectNumber,
+        );
+        if (mismatched) {
+          findings.push({
+            level: "error",
+            code: "target/agent_identity_principal_project_mismatch",
+            message:
+              `Agent identity principal project ${principal.projectNumber} does not match ` +
+              `the target engine/project identity ${mismatched}.`,
+          });
+        }
+      }
     }
     if (!config.gatewayAuthorizationPolicy) {
       findings.push({
@@ -156,6 +306,31 @@ export function validateTarget(
         message:
           "Agent Gateway requires --gateway-authorization-policy naming the exact attached authorization-policy resource.",
       });
+    } else {
+      const policy = parseGatewayAuthorizationPolicyResource(config.gatewayAuthorizationPolicy);
+      if (!policy) {
+        findings.push({
+          level: "error",
+          code: "target/invalid_gateway_authorization_policy",
+          message:
+            "--gateway-authorization-policy must be an exact projects/<project>/locations/<region>/authzPolicies/<policy> resource.",
+        });
+      } else {
+        if (policy.project !== config.project) {
+          findings.push({
+            level: "error",
+            code: "target/gateway_authorization_policy_project_mismatch",
+            message: `Authorization policy project ${policy.project} does not match --project ${config.project}.`,
+          });
+        }
+        if (config.gatewayLocation && policy.location !== config.gatewayLocation) {
+          findings.push({
+            level: "error",
+            code: "target/gateway_authorization_policy_location_mismatch",
+            message: `Authorization policy location ${policy.location} does not match --gateway-location ${config.gatewayLocation}.`,
+          });
+        }
+      }
     }
     if (!isCanonicalEngineResource(config.engine) && !config.projectNumber) {
       findings.push({
@@ -163,21 +338,6 @@ export function validateTarget(
         code: "target/missing_project_number",
         message:
           "Agent Gateway binding needs --project-number to synthesize the canonical engine resource; alternatively pass the full projects/.../engines/... resource to --engine.",
-      });
-    }
-    if (config.projectNumber && !/^\d+$/.test(config.projectNumber)) {
-      findings.push({
-        level: "error",
-        code: "target/invalid_project_number",
-        message: `--project-number must be numeric; got ${config.projectNumber}.`,
-      });
-    }
-    const resourceLocation = canonicalEngineLocation(config.engine);
-    if (resourceLocation && resourceLocation !== config.appLocation) {
-      findings.push({
-        level: "error",
-        code: "target/engine_location_mismatch",
-        message: `Canonical engine location ${resourceLocation} does not match --location ${config.appLocation}.`,
       });
     }
     if (!isGatewayCompatibleAppLocation(config.appLocation)) {
@@ -239,12 +399,23 @@ export function validateTarget(
           "Google connector OAuth access tokens may be opaque, but the generated server currently validates JWTs only; use a JWT-issuing provider or no-auth until a verified Google token verifier exists.",
       });
     }
-    if ((provider === "entra" || provider === "okta") && !config.connectorOAuth.tenant) {
-      findings.push({
-        level: "error",
-        code: "target/missing_connector_oauth_tenant",
-        message: `Connector OAuth provider ${provider} requires --tenant.`,
-      });
+    if (provider === "entra" || provider === "okta") {
+      if (!config.connectorOAuth.tenant) {
+        findings.push({
+          level: "error",
+          code: "target/missing_connector_oauth_tenant",
+          message: `Connector OAuth provider ${provider} requires --tenant.`,
+        });
+      } else if (!isSafeConnectorTenant(provider, config.connectorOAuth.tenant)) {
+        findings.push({
+          level: "error",
+          code: "target/invalid_connector_oauth_tenant",
+          message:
+            provider === "okta"
+              ? "--tenant must be an exact credential-free Okta hostname, with no path, port, query, or fragment."
+              : "--tenant must be an exact Entra tenant id or verified domain, with no URL delimiters.",
+        });
+      }
     }
     if (!provider) {
       findings.push({
@@ -304,6 +475,29 @@ export function validateTarget(
         message:
           "OAuth server auth requires the issuer validated by the MCP server via --inbound-issuer.",
       });
+    } else if (!isHttpsIssuer(config.connectorOAuth.inboundIssuer)) {
+      findings.push({
+        level: "error",
+        code: "target/invalid_inbound_issuer",
+        message:
+          "--inbound-issuer must be a credential-free HTTPS issuer URL without a query string or fragment.",
+      });
+    } else if (
+      (provider === "entra" || provider === "okta") &&
+      config.connectorOAuth.tenant &&
+      isSafeConnectorTenant(provider, config.connectorOAuth.tenant) &&
+      !issuerMatchesConnectorTenant(
+        provider,
+        config.connectorOAuth.tenant,
+        config.connectorOAuth.inboundIssuer,
+      )
+    ) {
+      findings.push({
+        level: "error",
+        code: "target/inbound_issuer_tenant_mismatch",
+        message:
+          "The inbound issuer does not match the authorization-server tenant selected by --idp and --tenant.",
+      });
     }
     if (!config.connectorOAuth.inboundAudience) {
       findings.push({
@@ -311,6 +505,32 @@ export function validateTarget(
         code: "target/missing_inbound_audience",
         message: "OAuth server auth requires the MCP API audience via --inbound-audience.",
       });
+    } else if (!isMcpAudience(config.connectorOAuth.inboundAudience)) {
+      findings.push({
+        level: "error",
+        code: "target/invalid_inbound_audience",
+        message:
+          "--inbound-audience must be a URI that uniquely identifies this MCP API, such as api://anvil-mcp.",
+      });
+    }
+    for (const scope of config.connectorOAuth.scopes) {
+      if (!isMcpApiScope(scope)) {
+        findings.push({
+          level: "error",
+          code: "target/invalid_connector_oauth_scope",
+          message: `OAuth scope ${JSON.stringify(scope)} must be a resource-qualified MCP API scope, such as mcp.invoke or api://anvil-mcp/mcp.invoke.`,
+        });
+      } else if (
+        config.connectorOAuth.inboundAudience &&
+        /^[a-z][a-z0-9+.-]*:\/\//i.test(scope) &&
+        !scope.startsWith(`${config.connectorOAuth.inboundAudience.replace(/\/+$/, "")}/`)
+      ) {
+        findings.push({
+          level: "error",
+          code: "target/oauth_scope_audience_mismatch",
+          message: `OAuth scope ${JSON.stringify(scope)} is qualified for a different resource than --inbound-audience ${JSON.stringify(config.connectorOAuth.inboundAudience)}.`,
+        });
+      }
     }
   } else if (config.serverAuth === "no-auth") {
     if (!config.allowUnauthenticatedMcp) {
@@ -411,4 +631,43 @@ function isPrivateEndpointHost(hostname: string): boolean {
     );
   }
   return false;
+}
+
+function isSafeConnectorTenant(provider: "entra" | "okta", tenant: string): boolean {
+  if (provider === "entra") {
+    return (
+      tenant.length <= 253 &&
+      /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(tenant) &&
+      !tenant.includes("..")
+    );
+  }
+  try {
+    const url = new URL(`https://${tenant}`);
+    return (
+      tenant.includes(".") &&
+      url.hostname === tenant.toLowerCase() &&
+      !url.username &&
+      !url.password &&
+      !url.port &&
+      url.pathname === "/" &&
+      !url.search &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+function issuerMatchesConnectorTenant(
+  provider: "entra" | "okta",
+  tenant: string,
+  issuer: string,
+): boolean {
+  const url = new URL(issuer);
+  if (provider === "okta") return url.hostname === tenant.toLowerCase();
+  const expectedPath = `/${tenant.toLowerCase()}/v2.0`;
+  return (
+    url.hostname === "login.microsoftonline.com" &&
+    url.pathname.replace(/\/+$/, "").toLowerCase() === expectedPath
+  );
 }

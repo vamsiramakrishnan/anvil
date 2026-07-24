@@ -15,6 +15,8 @@ import {
   ApiConnectGatewayAdapter,
   ApigeeGatewayAdapter,
   ArchiveDecodeError,
+  BUDGET_WAIVED_CODE,
+  BUDGET_WARNING_CODE,
   buildGatewayOverlay,
   compileContract,
   decodeArchiveText,
@@ -30,11 +32,14 @@ import {
   GatewayImportReceiptView,
   type GatewayPolicyOverlay,
   gatewayBundleManifest,
+  gatewayCapabilityReviewInput,
+  gatewayManifestDigest,
   gatewaySha256,
   isGatewayLifecycleArtifact,
   KongGatewayAdapter,
   MulesoftGatewayAdapter,
   makeOverlay,
+  parseManifest,
   readArchive,
   redactGatewayImportReceipt,
   sniffArchiveFormat,
@@ -120,6 +125,10 @@ export function registerEstate(parent: Command, ctx: CommandContext): void {
         "original OpenAPI/Swagger contract; lock it and apply gateway policies instead of compiling route-only synthesis",
       )
       .option(
+        "--manifest <path>",
+        "supplemental Anvil manifest, including exact-id capability reviews, applied in the receipt-bound compile",
+      )
+      .option(
         "--gateway-url <url>",
         "operator-attested public HTTPS gateway base URL; required with --spec so generated tools cannot bypass the gateway",
       )
@@ -160,6 +169,7 @@ interface InventoryOptions {
 interface ImportOptions extends InventoryOptions {
   api?: string;
   spec?: string;
+  manifest?: string;
   gatewayUrl?: string;
   root?: string;
   service?: string;
@@ -1124,6 +1134,24 @@ async function runImport(
       return 1;
     }
   }
+  let manifest: string | undefined;
+  let compilerInput: GatewayImportReceiptDraft["compilerInput"];
+  if (opts.manifest) {
+    try {
+      manifest = readFileSync(opts.manifest, "utf8");
+      const parsedManifest = parseManifest(manifest);
+      const capabilityReviews = gatewayCapabilityReviewInput(parsedManifest.capabilities);
+      compilerInput = {
+        manifestDigest: gatewayManifestDigest(parsedManifest),
+        ...(capabilityReviews ? { capabilityReviews } : {}),
+      };
+    } catch (error) {
+      io.err(
+        `Cannot read or parse --manifest '${opts.manifest}': ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return 1;
+    }
+  }
 
   const adapter = adapterFor(opts.vendor, io);
   if (!adapter) return 1;
@@ -1321,6 +1349,7 @@ async function runImport(
 
   let result = await compileContract(source, [overlay], {
     serviceId: opts.service,
+    manifest,
   });
   if (result.status === "conflicted") {
     io.err(`Import conflicted: ${result.conflicts.length} unresolved safety conflict(s).`);
@@ -1392,6 +1421,7 @@ async function runImport(
   if (guard) {
     result = await compileContract(source, [overlay, guard], {
       serviceId: opts.service,
+      manifest,
     });
     if (result.status === "conflicted") {
       io.err(`Import conflicted: ${result.conflicts.length} unresolved safety conflict(s).`);
@@ -1401,6 +1431,23 @@ async function runImport(
   }
 
   const air = result.contract.air;
+  for (const diagnostic of air.diagnostics) {
+    if (diagnostic.code !== BUDGET_WARNING_CODE && diagnostic.code !== BUDGET_WAIVED_CODE) {
+      continue;
+    }
+    if (
+      !diagnostics.some(
+        (candidate) =>
+          candidate.code === diagnostic.code && candidate.message === diagnostic.message,
+      )
+    ) {
+      diagnostics.push({
+        level: diagnostic.level,
+        code: diagnostic.code,
+        message: diagnostic.message,
+      });
+    }
+  }
   if (gatewayUrl) {
     air.service.servers = [
       {
@@ -1443,6 +1490,7 @@ async function runImport(
         }
       : undefined,
     lockedSource: lockedSourceReceipt,
+    compilerInput,
     overlays: [
       receiptOverlay("gateway_policy", overlay),
       ...(guard ? [receiptOverlay("import_guard", guard)] : []),
@@ -1547,8 +1595,10 @@ async function runImport(
   const written = installation.written;
 
   const opaque = diagnostics.filter((d) => d.code.includes("opaque"));
+  const generated = air.operations.filter((o) => o.state === "generated").length;
   const approved = air.operations.filter((o) => o.state === "approved").length;
   const review = air.operations.filter((o) => o.state === "review_required").length;
+  const deprecated = air.operations.filter((o) => o.state === "deprecated").length;
   const blocked = air.operations.filter((o) => o.state === "blocked").length;
   if (opts.json) {
     // The machine-readable report CI oracles gate on (policy accounting: opaque
@@ -1570,8 +1620,10 @@ async function runImport(
           },
           operations: {
             total: air.operations.length,
+            generated,
             approved,
             review_required: review,
+            deprecated,
             blocked,
           },
           contract,
@@ -1606,7 +1658,7 @@ async function runImport(
     `Imported ${apiRef.id} from the ${opts.vendor} estate → ${outDir} (${written.length} files).`,
   );
   io.out(
-    `  operations: ${air.operations.length}  approved: ${approved}  review_required: ${review}  blocked: ${blocked}`,
+    `  operations: ${air.operations.length}  generated: ${generated}  approved: ${approved}  review_required: ${review}  deprecated: ${deprecated}  blocked: ${blocked}`,
   );
   io.out(
     `  contract: ${contract.kind}/${contract.fidelity} ${contract.format ?? "unknown"} @ ${contract.location.origin}${contract.location.pointer ? `#${contract.location.pointer}` : ""}`,

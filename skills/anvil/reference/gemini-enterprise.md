@@ -33,7 +33,7 @@ SSE is not a supported transport.
 
 | | `custom-mcp` | `agent-gateway` |
 | --- | --- | --- |
-| Platform object | Custom MCP data store in a Gemini Enterprise app | MCP service in Agent Registry, reached through Agent Gateway |
+| Platform object | Custom MCP Server data store in a Gemini Enterprise app | MCP service in Agent Registry, reached through Agent Gateway |
 | Normal setup | Console-first | Guarded generated scripts, then a console import |
 | Network path | Gemini Enterprise calls the public `/mcp` URL directly | The engine routes agent egress through the gateway |
 | Gateway policy | Does not pass through Agent Gateway | Agent Gateway authorization and governance apply |
@@ -124,8 +124,9 @@ The resource uses a numeric project number, not the project id, and its location
 must equal `--location`. When `--engine` is only an id, the Agent Gateway journey
 also requires `--project-number` so Anvil can build that canonical resource.
 
-For Custom MCP, Anvil records any nonempty app location and emits a warning to
-verify that location against the live provider before registration.
+For Custom MCP, Anvil accepts `global`, `us`, `eu`, or a syntactically valid
+Google-style region such as `asia-southeast1`, then emits a warning to verify
+current provider availability before registration.
 
 For Agent Gateway, Anvil deliberately supports only this verified matrix:
 
@@ -237,8 +238,8 @@ anvil target gemini-enterprise <bundle> \
   --engine support-app \
   --gateway-location us-central1 \
   --registry-location global \
-  --agent-identity-principal-set principalSet://... \
-  --gateway-authorization-policy projects/.../locations/global/authzPolicies/... \
+  --agent-identity-principal-set principalSet://agents.global.org-123456789012.system.id.goog/attribute.container/projects/123456789012 \
+  --gateway-authorization-policy projects/acme-prod/locations/us-central1/authzPolicies/anvil-mcp \
   --idp entra \
   --tenant <entra-tenant-id> \
   --oauth-scope api://anvil-mcp/mcp.invoke \

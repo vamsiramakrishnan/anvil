@@ -258,6 +258,15 @@ describe("anvil CLI: end-to-end compile → inspect → lint", () => {
       const io2 = bufferIO();
       await runAnvilCli(["inspect", dir], { io: io2 });
       expect(io2.text()).toContain("payments refunds create");
+      expect(io2.text()).toContain(`anvil run '${dir}' refunds create`);
+      expect(io2.text()).toContain("--payment-id");
+      expect(io2.text()).toContain("--amount");
+      expect(io2.text()).toContain("--currency");
+      expect(io2.text()).toContain("--idempotency-key");
+      expect(io2.text()).toContain("--confirm --dry-run");
+      expect(io2.text()).toContain("confirm required");
+      expect(io2.text()).toContain("idempotency required");
+      expect(io2.text()).toContain("scopes payments.write");
 
       const io3 = bufferIO();
       const lintCode = await runAnvilCli(["lint", dir], { io: io3 });

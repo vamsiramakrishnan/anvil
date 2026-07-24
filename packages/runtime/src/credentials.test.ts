@@ -274,6 +274,24 @@ describe("TokenExchangeResolver — RFC 8693 on-behalf-of", () => {
     expect(r.expectedCredentials("prod", requirement)).toContain("ANVIL_PROD_ACTOR_TOKEN");
   });
 
+  it("reports the host-allowlist alternative for an imported token endpoint", () => {
+    const r = new TokenExchangeResolver({ env: oboEnv });
+    const names = r.expectedCredentials(
+      "prod",
+      auth({
+        type: "oauth2_client_credentials",
+        provider: {
+          grant: "client_credentials",
+          tokenEndpoint: "https://issuer.example.test/token",
+        },
+      }),
+    );
+    expect(names).toContain("ANVIL_PROD_CLIENT_ID");
+    expect(names).toContain("ANVIL_PROD_CLIENT_SECRET");
+    expect(names).toContain("one of: ANVIL_CREDENTIAL_HOSTS OR ANVIL_PROD_TOKEN_ENDPOINT");
+    expect(names).not.toContain("ANVIL_PROD_TOKEN_ENDPOINT");
+  });
+
   it("supports client_secret_post client auth", async () => {
     const { fn, calls } = fakeFetch(() => ({ json: { access_token: "E", expires_in: 3600 } }));
     const r = new TokenExchangeResolver({ env: oboEnv, fetchImpl: fn });

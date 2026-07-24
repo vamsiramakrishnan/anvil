@@ -1,103 +1,150 @@
 ---
 title: Quickstart
-description: Build, then drive Anvil — compile a spec into an aligned CLI + MCP + skill + hooks bundle, inspect risk, and approve operations.
+description: Compile Anvil's bundled payments API, inspect the safety contract, package the skill, record static and executable assurance, and prepare a deployment plan.
 sidebar:
   order: 2
 ---
 
-This is the short path from a raw API spec to an aligned bundle you can inspect,
-approve, and deploy. The working loop is five steps:
+This path starts with the example already in the repository, so every command
+is copy-pasteable. In about five minutes you will have a real CLI + MCP + skill
+bundle, a readable safety review, a certification record, and a Cloud Run
+deployment plan. No cloud credentials are needed and no service is deployed.
 
-> **compile → inspect → enrich → approve → deploy**
+## 1. Build Anvil
 
-Every command below is exact. Replace `<spec>`, `<manifest>`, and `<service>`
-with your own values.
-
-## 1. Build the toolchain
+From the repository root:
 
 ```bash
 pnpm install
 pnpm build
+pnpm anvil --help
 ```
 
-The `anvil` CLI is then at `packages/cli/dist/bin-anvil.js`:
+`pnpm anvil` runs the locally built CLI. You can use it in every command below
+without a global install or shell alias.
+
+## 2. Compile the bundled API
 
 ```bash
-node packages/cli/dist/bin-anvil.js --help
+export ANVIL_BUNDLE=generated/quickstart-payments
+
+pnpm anvil compile examples/payments/openapi.yaml \
+  --manifest examples/payments/anvil.yaml \
+  --service payments \
+  --out "$ANVIL_BUNDLE"
 ```
 
-:::tip
-Set an alias so the rest of this page is shorter to type:
-`alias anvil='node packages/cli/dist/bin-anvil.js'`
-:::
+The OpenAPI file supplies the routes and schemas. The adjacent Anvil manifest
+supplies what OpenAPI cannot prove on its own: confirmation, idempotency,
+retry, workflow, and approval policy.
 
-## 2. Compile a spec
+The result is one bundle projected from AIR, Anvil's shared model:
 
-```bash
-node packages/cli/dist/bin-anvil.js compile <spec> \
-  --manifest <manifest> \
-  --out generated/<service>
-```
-
-This writes a full bundle. Every part is generated from the one shared model
-(AIR), so they can't disagree about what an operation does:
-
-| Folder | What it is |
+| Path | What to look for |
 | --- | --- |
-| `cli/` | A typed command per approved operation |
-| `mcp/` | The same operations as MCP tools, with risk in the metadata |
-| `skill/` | A step-by-step operating manual an agent reads |
-| `runtime/` | The safety runtime that enforces the contract at call time |
-| `plugin/` | Hooks for Claude Code, Codex, and Antigravity |
-| conformance test | A test that proves the bundle honors its own safety rules |
+| `air.yaml` | The canonical operation contract |
+| `cli/` | Typed commands for approved operations |
+| `mcp/` | The same approved operations as MCP tools |
+| `skill/` | The operating manual and examples an agent reads |
+| `runtime/` | Fail-closed execution policy |
+| `deploy/` | Credential contracts and deployment inputs |
 
-## 3. Inspect before you approve
+## 3. Orient, inspect, and lint
 
-```bash
-node packages/cli/dist/bin-anvil.js inspect generated/<service>
-node packages/cli/dist/bin-anvil.js lint generated/<service>
-```
-
-`inspect` shows each operation's effect (read or mutation), risk, and
-idempotency (whether it's safe to repeat).
-
-:::note
-Mutations that can't be safely repeated compile as `review_required` — held for
-review, not exposed to any agent until a person approves them. That's a stop
-sign, not a nuisance.
-:::
-
-To clear one, fill in what the spec left out with a **manifest** — a small YAML
-file where you declare idempotency, confirmation, and retry policy — then
-recompile with `--manifest`.
-
-## 4. Approve, then deploy
+Start with status. It checks whether the projections agree and tells you the
+next safe action:
 
 ```bash
-# Expose an operation only after reading its risk
-node packages/cli/dist/bin-anvil.js approve generated/<service> <operation-id>
-
-# Package the skill and (optionally) deploy the server
-node packages/cli/dist/bin-anvil.js package skill generated/<service>
-node packages/cli/dist/bin-anvil.js deploy cloud-run generated/<service> --env prod
+pnpm anvil status "$ANVIL_BUNDLE"
 ```
 
-## Require a human, not just a model (optional)
-
-By default, a gated mutation runs once the caller supplies `confirm: true` — but
-a model can supply that itself. To require an actual person to sign off, compile
-with a human-approval policy:
+Then read the actual operation contract:
 
 ```bash
-node packages/cli/dist/bin-anvil.js compile <spec> --human-approval unsafe --out generated/<service>
+pnpm anvil inspect "$ANVIL_BUNDLE"
+pnpm anvil lint "$ANVIL_BUNDLE"
+pnpm anvil distill "$ANVIL_BUNDLE"
 ```
 
-The generated Claude Code, Codex, and Antigravity hooks then escalate those
-operations to the human permission dialog. The model cannot self-confirm past
-them. See [Hooks and plugins](/anvil/design/hooks-and-plugins/).
+`inspect` prints effect, risk, reversibility, confirmation, idempotency, retry,
+auth scopes, and a complete dry-run command for every operation. It uses the
+installed command spelling, `anvil run`; in this source-checkout quickstart,
+run that line as `pnpm anvil run`. `lint` names weak or unsafe evidence.
+`distill` shows the smallest useful operation basis and the residue that still
+needs human judgment.
 
-## Next
+The example manifest already approves its four operations. On your own API,
+an unproven mutation remains `review_required`. Inspect it first, enrich its
+manifest entry if the contract is incomplete, recompile, and only then run:
 
-- [Operating Anvil](/anvil/guides/operating-anvil/) — the full operating manual.
-- [Command reference](/anvil/guides/commands/) — every command.
-- [Architecture](/anvil/concepts/architecture/) — the AIR model and the packages.
+```bash
+pnpm anvil approve "$ANVIL_BUNDLE" <operation-id>
+```
+
+Approval reprojects the CLI, MCP server, runtime, and skill together. Never use
+approval to silence an idempotency warning you cannot prove.
+
+## 4. Package, assure, and exercise
+
+```bash
+pnpm anvil package skill "$ANVIL_BUNDLE" --out dist/skills
+pnpm anvil certify "$ANVIL_BUNDLE"
+pnpm anvil selftest "$ANVIL_BUNDLE"
+pnpm anvil conformance "$ANVIL_BUNDLE"
+pnpm anvil simulate "$ANVIL_BUNDLE"
+pnpm anvil status "$ANVIL_BUNDLE"
+```
+
+Packaging validates the skill before copying it. `certify` is static assurance:
+it checks the contract, safety, semantic, and generated-runtime bytes without
+starting them. `selftest`, `conformance`, and `simulate` then provide executable
+evidence over the same bundle digest. Writing those reports does not change that
+digest or stale fresh static assurance. A later generated-content change does.
+The final `status` prints freshness and pass state for each lane and routes you
+to the first report that must be run again.
+
+## 5. Generate a deployment plan
+
+```bash
+pnpm anvil publish "$ANVIL_BUNDLE" --env dev
+pnpm anvil status "$ANVIL_BUNDLE"
+```
+
+Despite its compatibility name, `publish` prepares a gated deployment plan; it
+does not publish or deploy anything. Cloud Run is the only target, so it is the
+default. The command requires the fresh static certification and all three
+fresh passing executable reports for the current bundle digest, then records
+that evidence in the plan. A non-production experiment can explicitly use
+`--allow-incomplete-evidence`; production cannot waive executable proof. Anvil
+makes no cloud API call and leaves `status` at
+`operator-action-required`—never complete or live. Review and apply the plan in
+your delivery system, then record live evidence separately.
+
+Connecting the MCP endpoint to Gemini Enterprise is also an explicit second
+journey. Choose either [Custom MCP or Agent
+Gateway](/anvil/cookbooks/connect-gemini-enterprise/) after the bundle and its
+target configuration pass static assurance and executable checks.
+
+## Bring your own specification
+
+Once the example makes sense, change only the source coordinates:
+
+```bash
+pnpm anvil compile path/to/openapi.yaml \
+  --manifest path/to/anvil.yaml \
+  --out generated/my-service
+```
+
+The manifest is optional for a read-only, fully described API. It becomes the
+normal place to add evidence the source format cannot express. When `lint`
+finds uncertainty, target only that residue:
+
+```bash
+pnpm anvil distill generated/my-service \
+  --as-enrich-plan \
+  --write /tmp/anvil-enrich-plan.json
+```
+
+See [Operating Anvil](/anvil/guides/operating-anvil/) for the full loop and
+[Import a gateway estate](/anvil/cookbooks/import-a-gateway-estate/) when the
+source of truth is Apigee, Kong, WSO2, MuleSoft, or IBM API Connect.

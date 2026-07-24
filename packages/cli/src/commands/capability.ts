@@ -1,20 +1,20 @@
-import { writeFileSync } from "node:fs";
 import type { AirDocument, Capability, Diagnostic } from "@anvil/air";
-import { airToYaml, evidenceConfidence } from "@anvil/air";
+import { evidenceConfidence } from "@anvil/air";
 import {
   approveCapability,
   type CapabilityBudgetCheck,
   CapabilityReviewError,
-  capabilityToolBudget,
+  capabilityDisclosureBudget,
   diffCapability,
   proposeCapabilities,
   rejectCapability,
 } from "@anvil/compiler";
 import { type Command, Option } from "commander";
 import type { CliIO } from "../io.js";
+import { reportPreservedStaleArtifacts, reprojectBundleAtomically } from "./approve.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir, resolveAirPath } from "./shared.js";
+import { loadAir } from "./shared.js";
 
 /**
  * `anvil capability <subcommand>` — the capability review lifecycle. Discovery
@@ -33,7 +33,7 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
       .summary("Review capability groupings: propose, inspect, approve, reject, or diff.")
       .description(
         "The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. " +
-          "`approve`/`reject` persist the review decision to the AIR file. Approval enforces the tool budget: a capability disclosing more than 20 tools is blocked without --allow-large (more than 15 warns). Only an approved capability can be built with `anvil build`.",
+          "`approve`/`reject` persist the review decision to the AIR file. Approval enforces the effective disclosure budget (direct members plus authored workflow dependencies): more than 20 tools is blocked without --allow-large and an audit note; more than 15 warns. Only an approved capability can be built with `anvil build`.",
       ),
     { mutates: true },
   );
@@ -80,7 +80,7 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
     .summary("Record the approval decision; the tool budget gates it.")
     .argument("<path>", "generated bundle directory or air.yaml")
     .argument("<capability-id>", "the capability to approve")
-    .option("--allow-large", "waive the >20-tool budget block")
+    .option("--allow-large", "waive the >20-tool budget block (requires a non-empty --note)")
     .option("--note <note>", "review note persisted with the decision")
     .action((path: string, id: string, opts: { allowLarge?: boolean; note?: string }) => {
       ctx.code = runApprove(path, id, opts, ctx.io);
@@ -153,7 +153,7 @@ function runList(path: string, io: CliIO): number {
     `${air.service.id} @ ${air.service.version} — ${air.capabilities.length} capability(ies):`,
   );
   for (const cap of air.capabilities) {
-    const budget = capabilityToolBudget(cap);
+    const budget = capabilityDisclosureBudget(air, cap.id);
     const flag = budget.verdict === "ok" ? "" : `  [${budget.verdict}: ${budget.toolCount} tools]`;
     io.out(
       `  ${cap.id.padEnd(28)} ${cap.lifecycle.padEnd(10)} ${String(cap.operationIds.length).padStart(3)} op(s)  ${cap.source}${flag}`,
@@ -170,7 +170,7 @@ function runShow(path: string, id: string, opts: ShowOptions, io: CliIO): number
     io.err(`No capability '${id}'. Run \`anvil capability list ${path}\`.`);
     return 1;
   }
-  const budget = capabilityToolBudget(cap);
+  const budget = capabilityDisclosureBudget(air, cap.id);
   if (opts.json === true) {
     io.out(JSON.stringify({ capability: cap, budget }, null, 2));
     return 0;
@@ -223,7 +223,6 @@ function runApprove(
   opts: { allowLarge?: boolean; note?: string },
   io: CliIO,
 ): number {
-  const airPath = resolveAirPath(path);
   const air = loadAir(path);
   let budget: CapabilityBudgetCheck;
   try {
@@ -240,15 +239,31 @@ function runApprove(
     throw err;
   }
   if (budget.diagnostic) io.out(formatDiagnostic(budget.diagnostic));
-  writeFileSync(airPath, airToYaml(air), "utf8");
-  io.out(`Approved capability '${id}' (${budget.toolCount} tool(s)) in ${airPath}.`);
+  const result = reprojectBundleAtomically(
+    path,
+    air,
+    `Capability approval for '${id}' regenerated executable bundle projections after the immutable gateway import receipt was issued.`,
+  );
+  io.out(
+    `Approved capability '${id}' (${budget.toolCount} tool(s)) and atomically regenerated ${result.generatedFileCount} bundle files in ${result.bundleDir}.`,
+  );
+  reportPreservedStaleArtifacts(
+    io,
+    result.existingFiles,
+    result.projectionsChanged,
+    result.bundleDir,
+  );
+  if (result.retainedBackup) {
+    io.out(
+      `  The replaced bundle backup could not be removed; it remains at ${result.retainedBackup}.`,
+    );
+  }
   io.out(`Build it with \`anvil build ${path} ${id}\`.`);
   return 0;
 }
 
 /** `anvil capability reject` — record why the grouping is not the right unit. */
 function runReject(path: string, id: string, opts: { reason?: string }, io: CliIO): number {
-  const airPath = resolveAirPath(path);
   const air = loadAir(path);
   try {
     rejectCapability(air, id, opts.reason);
@@ -259,8 +274,25 @@ function runReject(path: string, id: string, opts: { reason?: string }, io: CliI
     }
     throw err;
   }
-  writeFileSync(airPath, airToYaml(air), "utf8");
-  io.out(`Rejected capability '${id}' in ${airPath}.`);
+  const result = reprojectBundleAtomically(
+    path,
+    air,
+    `Capability rejection for '${id}' regenerated executable bundle projections after the immutable gateway import receipt was issued.`,
+  );
+  io.out(
+    `Rejected capability '${id}' and atomically regenerated ${result.generatedFileCount} bundle files in ${result.bundleDir}.`,
+  );
+  reportPreservedStaleArtifacts(
+    io,
+    result.existingFiles,
+    result.projectionsChanged,
+    result.bundleDir,
+  );
+  if (result.retainedBackup) {
+    io.out(
+      `  The replaced bundle backup could not be removed; it remains at ${result.retainedBackup}.`,
+    );
+  }
   return 0;
 }
 

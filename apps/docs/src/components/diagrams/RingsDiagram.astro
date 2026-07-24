@@ -1,4 +1,6 @@
 ---
+import MobileDiagram from "./MobileDiagram.astro";
+
 // Defense in depth as concentric rings. The outer hook ring is drawn DASHED
 // because it is fail-open; the inner runtime ring is solid accent because it is
 // authoritative and fail-closed. The human-approval tier feeds the outer ring:
@@ -6,6 +8,15 @@
 ---
 
 <figure class="anvil-diagram">
+  <MobileDiagram
+    ariaLabel="Anvil's three enforcement layers"
+    items={[
+      { label: "Core", title: "Runtime executor", detail: "Authoritative and fail-closed: confirmation, idempotency, retries, egress, and redaction." },
+      { label: "02", title: "Generated CLI and MCP", detail: "Only approved operations exist on either callable surface." },
+      { label: "03", title: "Harness hooks", detail: "Fail-open preflight catches problems early and can escalate to a person." },
+      { label: "Human", title: "Approval tier", detail: "A model cannot clear an operation that is configured to require human approval." },
+    ]}
+  />
   <svg
     viewBox="0 0 1040 330"
     role="img"
@@ -94,5 +105,9 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     fill: var(--sl-color-gray-3);
+  }
+  @media (max-width: 40rem) {
+    .anvil-diagram { overflow-x: visible; }
+    .anvil-diagram svg { display: none; }
   }
 </style>

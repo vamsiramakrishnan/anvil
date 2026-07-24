@@ -58,6 +58,7 @@ describe("anvil review", () => {
     expect(code).toBe(0);
     const report = JSON.parse(readFileSync(join(dir, REVIEW_REPORT_FILE), "utf8"));
     expect(report.schemaVersion).toBe(1);
+    expect(report.bundleHash).toMatch(/^[a-f0-9]{64}$/);
     expect(report.findings).toHaveLength(1);
     expect(report.model).toBe("haiku");
     expect(io.text()).toContain("Artifact review — payments");

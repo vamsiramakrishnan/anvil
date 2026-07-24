@@ -20,6 +20,9 @@ Anvil both sources of truth:
   policy; and
 - the original **OpenAPI or Swagger specification**, which supplies the request,
   response, and authentication contract.
+- an optional **Anvil manifest**, which supplies reviewed idempotency,
+  confirmation, retry, naming, workflow, and approval evidence that neither
+  source can express.
 
 ```bash
 # 1. Find the one API to adopt.
@@ -32,6 +35,7 @@ anvil estate import gateway-export.zip \
   --vendor kong \
   --api payments \
   --spec specs/payments.swagger.yaml \
+  --manifest specs/payments.anvil.yaml \
   --gateway-url https://api.example.com/payments \
   --root "$PWD" \
   --out generated/payments \
@@ -62,6 +66,30 @@ the selected gateway API with the supplied contract. Missing, extra, duplicate,
 or ambiguous routes block every supplied operation. Gateway policies are then
 retargeted by that method/path identity, not by coincidentally matching
 `operationId` text.
+
+`--manifest` is applied in that same compile, after the source is locked and
+alongside the gateway policy overlay. This avoids modifying the bundle after
+import—and immediately making its receipt lineage stale—just to add reviewed
+operation semantics.
+
+Capability review can be receipt-bound in the same way. Use the exact id printed
+by `anvil capability list <bundle>` (not a display name or suffix):
+
+```yaml
+capabilities:
+  payments.refunds:
+    state: approved
+    note: Reviewed against the locked contract and gateway evidence.
+```
+
+Anvil applies these decisions only after deterministic capability discovery and
+authored workflow attachment. The budget therefore counts the real disclosed
+surface: direct members plus every workflow dependency, whether or not that
+dependency is approved yet. More than 20 tools requires both `allow_large: true`
+and a non-empty `note`; the waiver is retained as a warning in AIR and bound,
+together with the canonical parsed-manifest digest, into the immutable import
+receipt. Unknown ids and unwaived budgets fail before any output or receipt is
+created.
 
 ### Where the Swagger, export, and proof live
 
@@ -103,12 +131,17 @@ spec plus extra facts. Two parts:
 
 A request-transformer, a DataWeave script, a `gatewayscript` assembly step —
 anything the adapter can't *prove* it understands is marked **opaque**: a policy
-Anvil can't fully read, so it flags it for a human. Each opaque policy is cited
-by its exact location and **blocks automatic certification** — a signed check
-that the bundle is safe to ship — rather than being quietly dropped.
+Anvil can't fully read. Each opaque policy is cited by its exact location and
+the immutable import receipt carries it as a blocker. Certification fails the
+`contract.gateway-blockers-resolved` check rather than quietly dropping it.
 
 The reasoning is simple: a gateway that rewrites requests in flight has a
 contract the spec alone can't state. Anvil won't pretend otherwise.
+
+There is deliberately no generic “reviewed, continue anyway” flag. Resolve the
+blocker by replacing or removing the opaque policy and re-exporting, or by
+adding deterministic support for that policy to the vendor adapter and
+re-importing. An operation approval cannot clear an estate-level policy blocker.
 
 ## Before any adapter reads a byte: the archive harness
 
@@ -265,14 +298,17 @@ intentional mutations are the same output.
   `bound` does not work because the recorded hashes still disagree.
 - Re-import without a flag refuses a stale derived state. `--replace-derived` is
   an explicit reset, not a merge: it first verifies every recorded derived byte,
-  then discards the approval-derived state and any later recognized lifecycle
-  artifacts and installs a fresh bound import.
+  then discards the old derived state and later recognized lifecycle artifacts.
+  Put the reviewed operation and capability decisions in `--manifest` on that
+  re-import to mint a new immutable receipt whose initial output is already
+  approved and bound.
 
-That last operation does **not** preserve approvals. Use it only when resetting
-to the imported baseline is the intended recovery. A failed staged install
-leaves the prior bundle intact; if only old-backup cleanup fails after a
-successful swap, the command reports success and tells you where the retained
-backup is.
+That last operation does **not** infer or copy approvals from the stale bundle:
+only declarations in the supplied manifest survive the reset. A failed staged
+install leaves the prior bundle and its old private receipt intact; a successful
+reviewed re-import creates a new content-derived receipt rather than rewriting
+the old one. If only old-backup cleanup fails after a successful swap, the
+command reports success and tells you where the retained backup is.
 
 ## Using it today, honestly
 

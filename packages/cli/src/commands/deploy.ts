@@ -13,7 +13,7 @@ export function registerDeploy(parent: Command, ctx: CommandContext): void {
       .command("deploy")
       .summary("Print the Cloud Run deployment plan for a bundle.")
       .description(
-        "Anvil generates the deploy artifacts (Dockerfile, Terraform, env/credential contracts); it does not hold cloud credentials.",
+        "Plan only: Anvil prints generated Dockerfile/Terraform/env instructions. It does not call Cloud Run, apply Terraform, or hold cloud credentials.",
       ),
     { mutates: false },
   );
@@ -60,11 +60,12 @@ function runDeployCloudRun(dir: string, opts: { env: string }, io: CliIO): numbe
 
 /**
  * The Cloud Run deployment plan — shared with the gated `anvil publish`, which
- * prints the same steps after verifying the certification.
+ * prints the same steps after verifying static assurance.
  */
 export function printCloudRunPlan(dir: string, env: string, io: CliIO): void {
   const deployDir = join(dir, "deploy");
-  io.out(`Deployment plan for '${env}' (artifacts in ${deployDir}):`);
+  io.out(`Deployment plan only for '${env}' (artifacts in ${deployDir}):`);
+  io.out("No cloud call is made by this command; the operator must review and apply the plan.");
   io.out("Prereqs (shared, once per project): Artifact Registry repo and Terraform");
   io.out("  state bucket. When a durable ledger is needed, this bundle's Terraform");
   io.out("  creates its delete-protected named Firestore database. See deploy/README.md.");
@@ -75,14 +76,14 @@ export function printCloudRunPlan(dir: string, env: string, io: CliIO): void {
     `       --substitutions _REGION=<region>,_AR_REPO=<repo>,_ANVIL_ENV=${env},_TF_STATE_BUCKET=<state-bucket>,_TF_STATE_PREFIX=<state-prefix>,_TFVARS_URI=gs://<private-input-bucket>/operator.auto.tfvars.json`,
   );
   io.out("     → builds + pushes the image, then runs `terraform plan` (no auto-apply).");
-  io.out("  3. Review the published plan; secrets are declared in");
+  io.out("  3. Review the emitted plan; secrets are declared in");
   io.out("     deploy/credentials.required.yaml; secret values remain in operator-owned stores.");
   io.out("  4. terraform apply tfplan   (the exact reviewed plan, behind approval)");
   io.out("Upstream (outbound) credentials: deploy/credentials.required.yaml, or run");
   io.out(
     `     \`anvil deploy credentials <dir> --env ${env} --project <PROJECT_ID>\` for provisioning.`,
   );
-  io.out("Anvil generates the artifacts; it does not hold your cloud credentials.");
+  io.out("Plan prepared. Deployment remains operator action; no cloud resource was changed.");
 }
 
 /**

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +52,55 @@ describe("anvil package skill", () => {
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
+  });
+
+  it("--out is idempotent for an identical package and refuses a nonidentical overwrite", async () => {
+    const out = mkdtempSync(join(tmpdir(), "anvil-package-collision-"));
+    try {
+      const first = await packageSkill("--out", out);
+      expect(first.code).toBe(0);
+
+      const identical = await packageSkill("--out", out);
+      expect(identical.code).toBe(0);
+      expect(identical.io.text()).toContain("destination is byte-identical");
+
+      const installed = join(out, "payments", "reference", "setup.md");
+      writeFileSync(installed, `${readFileSync(installed, "utf8")}\nlocal customization\n`);
+      const before = readFileSync(installed, "utf8");
+      const collision = await packageSkill("--out", out);
+      expect(collision.code).toBe(1);
+      expect(collision.io.text()).toContain("Refusing to overwrite nonidentical skill package");
+      expect(readFileSync(installed, "utf8")).toBe(before);
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("compares package collisions as bytes, including invalid UTF-8 assets", async () => {
+    const out = mkdtempSync(join(tmpdir(), "anvil-package-binary-collision-"));
+    const sourceAsset = join(dir, "skill", "reference", "opaque.bin");
+    writeFileSync(sourceAsset, Buffer.from([0x80]));
+    try {
+      const first = await packageSkill("--out", out);
+      expect(first.code).toBe(0);
+
+      const installedAsset = join(out, "payments", "reference", "opaque.bin");
+      writeFileSync(installedAsset, Buffer.from([0x81]));
+      const collision = await packageSkill("--out", out);
+      expect(collision.code).toBe(1);
+      expect(collision.io.text()).toContain("Refusing to overwrite nonidentical skill package");
+      expect(readFileSync(installedAsset)).toEqual(Buffer.from([0x81]));
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects symlinks as a typed validation issue instead of following or crashing on them", async () => {
+    symlinkSync("/etc/hosts", join(dir, "skill", "reference", "external-link"));
+    const { code, io } = await packageSkill();
+    expect(code).toBe(1);
+    expect(io.text()).toContain("reference/external-link: [no-symlinks]");
+    expect(io.text()).not.toContain("ENOTDIR");
   });
 
   it("fails with the file and rule when frontmatter is missing or the name is illegal", async () => {

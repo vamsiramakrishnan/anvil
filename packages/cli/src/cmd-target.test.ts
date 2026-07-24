@@ -19,6 +19,8 @@ const payments = fileURLToPath(new URL("../../../examples/payments/", import.met
 let root: string;
 let baseBundle: string;
 let sequence = 0;
+const AGENT_PRINCIPAL_SET =
+  "principalSet://agents.global.org-123456789012.system.id.goog/attribute.container/projects/123456789";
 
 beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "anvil-target-cli-"));
@@ -92,7 +94,7 @@ function oauthArgs(
   if (surface !== "custom-mcp") {
     args.push(
       "--agent-identity-principal-set",
-      "principalSet://agents.global.org-123.system.id.goog/deployed-agents",
+      AGENT_PRINCIPAL_SET,
       "--gateway-authorization-policy",
       "projects/acme-proj/locations/us-central1/authzPolicies/mcp-egress",
     );
@@ -126,18 +128,26 @@ describe("anvil target Gemini Enterprise journey", () => {
     const bundle = freshBundle();
     const result = await cli([...oauthArgs(bundle), "--location", "asia-southeast1"]);
     expect(result.code, result.io.text()).toBe(0);
+    expect(result.io.stdout.join("\n")).toContain(
+      "Gemini Enterprise — Custom MCP Server data store",
+    );
     expect(result.io.stdout.join("\n")).toContain("console-first");
     expect(result.io.stdout.join("\n")).not.toContain("registration.curl.sh");
 
     const target = join(bundle, "targets/gemini-enterprise");
     expect(existsSync(join(target, "registration.request.template.json"))).toBe(true);
     expect(existsSync(join(target, "agent-registry"))).toBe(false);
+    expect(readFileSync(join(target, "README.md"), "utf8")).toContain(
+      "Selected integration: **Custom MCP Server data store**",
+    );
     const setup = JSON.parse(readFileSync(join(target, "setup.json"), "utf8")) as {
       config: {
         surface: string;
         appLocation: string;
         workforcePool: string;
         connectorOAuth: { tenant: string; scopes: string[] };
+        gatewayLocation?: string;
+        registryLocation?: string;
       };
       inboundAuth: { resource: string; audience: string };
     };
@@ -146,6 +156,8 @@ describe("anvil target Gemini Enterprise journey", () => {
     expect(setup.config.workforcePool).toContain("workforcePools/ge-users");
     expect(setup.config.connectorOAuth.tenant).toBe("tenant-123");
     expect(setup.config.connectorOAuth.scopes).toEqual(["api://anvil-mcp/mcp.invoke"]);
+    expect(setup.config).not.toHaveProperty("gatewayLocation");
+    expect(setup.config).not.toHaveProperty("registryLocation");
     expect(setup.inboundAuth.resource).toBe("https://mcp.example.test/mcp");
     expect(setup.inboundAuth.audience).toBe("api://anvil-mcp");
     expect(readFileSync(join(target, "inbound-auth.env"), "utf8")).toContain(
@@ -166,6 +178,75 @@ describe("anvil target Gemini Enterprise journey", () => {
     expect(result.code).toBe(1);
     expect(result.io.text()).toContain("target/missing_endpoint");
     expect(existsSync(join(bundle, "targets/gemini-enterprise"))).toBe(false);
+  });
+
+  it("rejects every malformed coordinate found in the novice audit before writing", async () => {
+    const customBundle = freshBundle();
+    const customArgs = oauthArgs(customBundle);
+    customArgs[customArgs.indexOf("--project") + 1] = "ABC";
+    customArgs[customArgs.indexOf("--location") + 1] = "!!!";
+    customArgs[customArgs.indexOf("--engine") + 1] = "/bad";
+    customArgs[customArgs.indexOf("--inbound-issuer") + 1] = "garbage";
+    customArgs[customArgs.indexOf("--inbound-audience") + 1] = "x";
+    customArgs[customArgs.indexOf("--oauth-scope") + 1] = "x";
+    customArgs[customArgs.indexOf("--wif") + 1] = "garbage";
+    const custom = await cli(customArgs);
+    expect(custom.code).toBe(1);
+    for (const code of [
+      "target/invalid_project",
+      "target/invalid_app_location",
+      "target/invalid_engine_resource",
+      "target/invalid_inbound_issuer",
+      "target/invalid_inbound_audience",
+      "target/invalid_connector_oauth_scope",
+      "target/invalid_workforce_pool",
+    ]) {
+      expect(custom.io.text()).toContain(code);
+    }
+    expect(existsSync(join(customBundle, "targets/gemini-enterprise"))).toBe(false);
+
+    const gatewayBundle = freshBundle();
+    const gatewayArgs = [
+      ...oauthArgs(gatewayBundle, "agent-gateway"),
+      "--project-number",
+      "123",
+      "--confirm-engine-egress-reroute",
+    ];
+    gatewayArgs[gatewayArgs.indexOf("--project") + 1] = "ABC";
+    gatewayArgs[gatewayArgs.indexOf("--engine") + 1] =
+      "projects/999/locations/global/collections/default_collection/engines/eng-1";
+    gatewayArgs[gatewayArgs.indexOf("--agent-identity-principal-set") + 1] =
+      "principalSet://garbage";
+    gatewayArgs[gatewayArgs.indexOf("--gateway-authorization-policy") + 1] = "garbage";
+    gatewayArgs[gatewayArgs.indexOf("--wif") + 1] = "garbage";
+    const gateway = await cli(gatewayArgs);
+    expect(gateway.code).toBe(1);
+    for (const code of [
+      "target/invalid_project",
+      "target/invalid_project_number",
+      "target/invalid_engine_resource",
+      "target/invalid_agent_identity_principal_set",
+      "target/invalid_gateway_authorization_policy",
+      "target/invalid_workforce_pool",
+    ]) {
+      expect(gateway.io.text()).toContain(code);
+    }
+    expect(existsSync(join(gatewayBundle, "targets/gemini-enterprise"))).toBe(false);
+
+    const mismatchBundle = freshBundle();
+    const mismatchArgs = [
+      ...oauthArgs(mismatchBundle, "agent-gateway"),
+      "--project-number",
+      "123456789",
+      "--confirm-engine-egress-reroute",
+    ];
+    mismatchArgs[mismatchArgs.indexOf("--engine") + 1] =
+      "projects/987654321/locations/eu/collections/default_collection/engines/eng-1";
+    const mismatch = await cli(mismatchArgs);
+    expect(mismatch.code).toBe(1);
+    expect(mismatch.io.text()).toContain("target/engine_project_number_mismatch");
+    expect(mismatch.io.text()).toContain("target/engine_location_mismatch");
+    expect(existsSync(join(mismatchBundle, "targets/gemini-enterprise"))).toBe(false);
   });
 
   it("guards Agent Gateway rerouting and uses a numeric project in the engine resource", async () => {
@@ -190,8 +271,14 @@ describe("anvil target Gemini Enterprise journey", () => {
       "--confirm-engine-egress-reroute",
     ]);
     expect(accepted.code, accepted.io.text()).toBe(0);
+    expect(accepted.io.stdout.join("\n")).toContain(
+      "Gemini Enterprise — Agent Registry + Agent Gateway",
+    );
     const target = join(bundle, "targets/gemini-enterprise");
     expect(existsSync(join(target, "registration.request.template.json"))).toBe(false);
+    expect(readFileSync(join(target, "README.md"), "utf8")).toContain(
+      "Selected integration: **Agent Registry + Agent Gateway**",
+    );
     const setup = JSON.parse(readFileSync(join(target, "setup.json"), "utf8")) as {
       engineResource: string;
       mutableState: {
@@ -397,7 +484,7 @@ describe("anvil target Gemini Enterprise journey", () => {
       "--engine eng-1",
       "--gateway-location us-central1",
       "--registry-location global",
-      "--agent-identity-principal-set principalSet://agents.global.org-123.system.id.goog/deployed-agents",
+      `--agent-identity-principal-set ${AGENT_PRINCIPAL_SET}`,
       "--gateway-authorization-policy projects/acme-proj/locations/us-central1/authzPolicies/mcp-egress",
       "--wif locations/global/workforcePools/ge-users",
       "--idp other",

@@ -38,7 +38,8 @@ describe("anvil simulate", () => {
     expect(report.summary.ok).toBe(true);
     expect(report.coverage.summary.failed).toBe(0);
     // Every applicable safety mutant is killed.
-    expect(report.mutation.killed).toBe(report.mutation.mutants.length);
+    expect(report.mutation.killed).toBe(report.mutation.applicable);
+    expect(report.bundleHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("emits the full machine-readable report under --json", () => {

@@ -18,14 +18,17 @@ reads a **file on disk** — a config document you exported, or a ZIP/JAR
 containing one — and parses it offline. The adapters are pure parsers; they hold
 no credentials and open no sockets.
 
-The production flow has four inputs, all under your control:
+The production flow has four required inputs and one optional enrichment input,
+all under your control:
 
 1. **Export** your APIs from the gateway, using the gateway's own tooling, to a file.
 2. **Locate the original OpenAPI/Swagger** for the one API you want to adopt.
 3. **Attest the public HTTPS gateway URL** that generated calls must traverse.
    This runtime URL is written into the bundle; Anvil does not call it during
    import.
-4. **Point `anvil estate` at the two files.**
+4. Optionally provide an **Anvil manifest** with reviewed idempotency,
+   confirmation, retry, naming, workflow, and approval evidence.
+5. **Point `anvil estate` at those files.**
 
 That's the whole model. The rest of this page is what that file has to look
 like, and how to produce it for each vendor.
@@ -52,8 +55,8 @@ other three you produce a small normalized document from the vendor's export.
 Anything Anvil can't *prove* it understands — a Kong transformer, an Apigee
 `JavaScript` policy, a MuleSoft DataWeave step — is kept as an **opaque**
 policy: one Anvil can't fully read, so it flags it for a human. An opaque policy
-blocks certification (the signed check that a bundle is safe to ship), so a
-mapping gap is never a silent one.
+is recorded as an immutable receipt blocker, and certification fails
+`contract.gateway-blockers-resolved`, so a mapping gap is never a silent one.
 
 ## Try it now — no gateway required
 
@@ -131,7 +134,9 @@ rm -rf "$WORK"
 ```
 
 The commands below swap in your real export. For production onboarding, add the
-same `--spec`, `--gateway-url`, and `--root` flags to every vendor example.
+same `--spec`, `--gateway-url`, and `--root` flags to every vendor example. Add
+`--manifest <anvil.yaml>` when the source pair cannot prove operation-level
+safety; Anvil applies it in the same receipt-bound compile.
 Without `--spec`, Anvil emits an assessment-only route contract and blocks every
 operation because routes alone do not prove request, response, or authentication
 semantics.
@@ -163,7 +168,8 @@ point Anvil straight at the file.
 deck gateway dump -o kong.yaml            # run by you, against your Kong Gateway
 anvil estate inventory kong.yaml --vendor kong
 anvil estate import kong.yaml --vendor kong --api refunds \
-  --spec refunds.openapi.yaml --gateway-url https://api.example.com/refunds \
+  --spec refunds.openapi.yaml --manifest refunds.anvil.yaml \
+  --gateway-url https://api.example.com/refunds \
   --root "$PWD" --out generated/refunds
 ```
 
@@ -379,17 +385,44 @@ anvil approve generated/refunds <operation-id>   # expose one, after reading its
 ```
 
 Risky operations from a full native contract stay `review_required` until you
-approve them, and opaque policies block certification until reviewed. Approval
-intentionally changes compiler output, so the bundled import receipt becomes
-`stale`; `estate verify --bundle`, `status`, and `certify` surface that fact
-instead of pretending the original receipt attests to the changed bundle.
+approve them. Prefer supplying reviewed semantics through `--manifest` during
+import so the first receipt already binds the intended surface. A later
+approval intentionally changes compiler output, so the bundled import receipt
+becomes `stale`; `estate verify --bundle`, `status`, and `certify` surface that
+fact instead of pretending the original receipt attests to the changed bundle.
+
+The manifest can bind capability review too. Copy the exact id from
+`anvil capability list generated/refunds`:
+
+```yaml
+capabilities:
+  refunds.refund:
+    state: approved
+    note: Reviewed against the locked contract and gateway evidence.
+```
+
+The id is exact—Anvil does not guess from a short or display name. Review is
+applied after workflow attachment, so the budget includes direct tools and every
+authored workflow dependency. A capability above 20 disclosed tools needs
+`allow_large: true` and a non-empty note; that waiver and the canonical parsed
+manifest digest are recorded in the immutable receipt.
+
+Opaque policies are different from operation approval: they are estate-level
+contract blockers. There is no generic “reviewed, continue anyway” switch.
+Use the diagnostic's exact export coordinate to inspect the policy, then either
+replace or remove it and re-export, or add deterministic support for that
+policy to the vendor adapter and re-import. Certification names every unresolved
+blocker under `contract.gateway-blockers-resolved`.
 
 Re-running an unchanged bound import preserves recognized certification,
 publication, report, and exactly regenerable Gemini target artifacts. It refuses
 unknown or tampered files. If you deliberately need to reset a stale approved
 bundle to the clean import baseline, rerun the same import with
 `--replace-derived`. Anvil first verifies the recorded derived bytes, then
-discards approvals and later lifecycle artifacts; this is a reset, not a merge.
+discards the old derived state and later lifecycle artifacts; this is a reset,
+not a merge. Re-declare the reviewed operation and capability decisions in the
+manifest on that command to mint a new bound receipt without copying decisions
+implicitly from the stale bundle. The old private receipt remains immutable.
 
 For a large estate, see
 [operating at estate scale](/anvil/concepts/gateway-estates/#operating-at-scale) —

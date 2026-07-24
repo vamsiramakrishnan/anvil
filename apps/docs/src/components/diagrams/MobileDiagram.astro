@@ -1,0 +1,76 @@
+---
+interface DiagramItem {
+  label: string;
+  title: string;
+  detail: string;
+}
+
+interface Props {
+  ariaLabel: string;
+  items: DiagramItem[];
+}
+
+const { ariaLabel, items } = Astro.props;
+---
+
+<ol class="anvil-mobile-diagram" aria-label={ariaLabel}>
+  {items.map((item) => (
+    <li>
+      <span>{item.label}</span>
+      <strong>{item.title}</strong>
+      <p>{item.detail}</p>
+    </li>
+  ))}
+</ol>
+
+<style>
+  .anvil-mobile-diagram {
+    display: none;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  @media (max-width: 40rem) {
+    .anvil-mobile-diagram {
+      display: grid;
+      border-block: 1px solid var(--sl-color-gray-5);
+    }
+
+    .anvil-mobile-diagram li {
+      display: grid;
+      grid-template-columns: 2.25rem minmax(0, 1fr);
+      gap: 0 var(--ge-space-3);
+      padding: var(--ge-space-3) 0;
+      border-bottom: 1px solid var(--sl-color-gray-5);
+    }
+
+    .anvil-mobile-diagram li:last-child {
+      border-bottom: 0;
+    }
+
+    .anvil-mobile-diagram span {
+      grid-row: 1 / span 2;
+      color: var(--sl-color-text-accent);
+      font-family: var(--sl-font-mono);
+      font-size: 0.6875rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      line-height: 1.5rem;
+      text-transform: uppercase;
+    }
+
+    .anvil-mobile-diagram strong {
+      color: var(--sl-color-white);
+      font-size: 1rem;
+      line-height: 1.5rem;
+    }
+
+    .anvil-mobile-diagram p {
+      margin: 0;
+      color: var(--sl-color-gray-3);
+      font-size: 0.875rem;
+      line-height: 1.35rem;
+    }
+  }
+</style>

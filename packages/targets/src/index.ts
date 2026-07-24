@@ -9,6 +9,7 @@
 export * from "./agent-registry.js";
 export * from "./config.js";
 export * from "./connector-plan.js";
+export * from "./coordinates.js";
 export * from "./gemini-enterprise.js";
 export * from "./generate.js";
 export * from "./model.js";

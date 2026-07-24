@@ -223,18 +223,36 @@ every MCP client.
 # 1. Compile a spec into a full bundle (CLI + MCP + skill + hooks)
 anvil compile <spec> --manifest <manifest> --out <dir>
 
-# 2. Read every operation's effect, risk, and idempotency
+# 2. Orient, then read every operation's effect, risk, and idempotency
+anvil status <dir>
 anvil inspect <dir>
+anvil lint <dir>
 
-# 3. Expose an operation only after reading its risk
+# 3. Target the residue, then expose only what you have inspected
+anvil distill <dir> --as-enrich-plan --write /tmp/anvil-enrich-plan.json
 anvil approve <dir> <operation-id>
 
-# 4. Package the skill and deploy the server
+# 4. Package and statically assure the complete bundle, then exercise it
 anvil package skill <dir>
+anvil certify <dir>
+anvil selftest <dir>
+anvil conformance <dir>
+anvil simulate <dir>
+
+# 5. Prepare the gated deployment plan; this makes no cloud call
+anvil publish <dir> --env prod
+anvil status <dir>  # planned · operator-action-required
 ```
 
 Mutations that can't be safely repeated land as `review_required` — held for
 review, not exposed until a human approves them. That refusal is the point.
+`certify` proves static byte and contract coherence; the three following
+commands add executable evidence without changing the bundle digest. The
+compatibility verb `publish` requires all four fresh records for that digest
+and records their evidence snapshot in a plan. A non-production plan can
+explicitly waive incomplete executable evidence with
+`--allow-incomplete-evidence`; production fails closed. A plan never means
+deployed or live.
 
 ## Where to go next
 
@@ -259,7 +277,12 @@ review, not exposed until a human approves them. That refusal is the point.
   </Card>
   <Card title="Operate it safely" icon="approve-check">
     [Operating Anvil](/anvil/guides/operating-anvil/) is the progressive-disclosure
-    manual: the compile → enrich → approve → deploy loop and the safety rules.
+    manual: the compile → enrich → approve → release loop and the safety rules.
+  </Card>
+  <Card title="Connect Gemini Enterprise" icon="seti:pipeline">
+    Choose [Custom MCP or Agent Gateway](/anvil/cookbooks/connect-gemini-enterprise/),
+    keep sign-in, MCP OAuth, gateway IAM, and upstream credentials separate,
+    and use the supported project/location matrix.
   </Card>
   <Card title="Design notes" icon="pencil">
     [Hooks and plugins](/anvil/design/hooks-and-plugins/) shows how the safety

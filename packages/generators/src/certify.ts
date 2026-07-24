@@ -2,8 +2,12 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AirDocument, Operation } from "@anvil/air";
-import { AirDocument as AirDocumentSchema, authCoherenceIssues } from "@anvil/air";
-import { GatewayImportReceiptView, verifyGatewayImportOutputManifest } from "@anvil/compiler";
+import { AirDocument as AirDocumentSchema, authCoherenceIssues, hashCanonical } from "@anvil/air";
+import {
+  GatewayImportReceiptView,
+  GatewayKind,
+  verifyGatewayImportOutputManifest,
+} from "@anvil/compiler";
 import { runDetectors, targetOperationId } from "@anvil/refinement";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
@@ -14,13 +18,13 @@ import {
 } from "./bundle.js";
 
 /**
- * Capability certification (Layer 5). A certification is a *judgement over a
- * generated bundle*: deterministic gates re-check that the artifacts on disk
- * still embody the safety and alignment contract AIR promised at compile time.
- * The core is pure — `(bundle files, AirDocument) → Certification` — so gates
- * can never depend on ambient state; only the thin shell (`readBundleDir`)
- * touches the filesystem. Certification lives in generators because it judges
- * what generators emit.
+ * Static bundle assurance (Layer 5). This is a *judgement over generated
+ * bytes*: deterministic gates re-check that the artifacts on disk still embody
+ * the safety and alignment contract AIR promised at compile time. It does not
+ * boot or exercise those artifacts; executable evidence is produced by
+ * selftest, conformance, and simulation. The core is pure — `(bundle files,
+ * AirDocument) → Certification` — so gates can never depend on ambient state;
+ * only the thin shell (`readBundleDir`) touches the filesystem.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -53,6 +57,28 @@ export const Certification = z.object({
   capabilityId: z.string().optional(),
   /** Content hash of the bundle's generated files — the identity the cert binds to. */
   bundleHash: z.string(),
+  /** This record proves deterministic byte/contract coherence, not execution. */
+  assuranceLevel: z.literal("static").default("static"),
+  /**
+   * Optional bridge to the canonical @anvil/certification attestation model.
+   * Older records omit it and remain readable.
+   */
+  assurance: z
+    .object({
+      level: z.literal("static"),
+      engine: z.literal("@anvil/certification"),
+      engineStatus: z.enum(["failed", "static_passed"]),
+      recordDigest: z.string(),
+      attestation: z.object({
+        packDigest: z.string(),
+        contractDigest: z.string(),
+        capabilityDigests: z.array(z.string()),
+        surfaceSignatureDigest: z.string(),
+        targetProfileVersion: z.string().optional(),
+        certificationVersion: z.string(),
+      }),
+    })
+    .optional(),
   status: CertificationStatus,
   checks: z.array(CertificationCheck),
   certifiedAt: z.string(),
@@ -65,10 +91,56 @@ export const CERTIFICATION_FILE = "certification.json";
 export const PUBLICATION_FILE = "publication.json";
 /** Where `anvil selftest` writes its loopback report inside a bundle. */
 export const SELFTEST_REPORT_FILE = "selftest.report.json";
+/** Where `anvil conformance` writes its hermetic tri-surface report. */
+export const CONFORMANCE_REPORT_FILE = "conformance.report.json";
+/** Where the opt-in live conformance lane writes its report. */
+export const LIVE_CONFORMANCE_REPORT_FILE = "conformance.live.report.json";
+/** Where `anvil simulate` writes mechanistic coverage evidence. */
+export const SIMULATION_REPORT_FILE = "simulation.report.json";
+/** Where `anvil review` writes model-review evidence. */
+export const REVIEW_REPORT_FILE = "review.report.json";
 
-/** Injectable clock so certification/publication records are testable. */
+/** Injectable clock so assurance/deployment-plan records are testable. */
 export type Clock = () => string;
 const systemClock: Clock = () => new Date().toISOString();
+
+/** Executable proof lanes required before Anvil prepares an unwaived release plan. */
+export const EXECUTABLE_EVIDENCE_FILES = {
+  selftest: SELFTEST_REPORT_FILE,
+  conformance: CONFORMANCE_REPORT_FILE,
+  simulation: SIMULATION_REPORT_FILE,
+} as const;
+export type ExecutableEvidenceLane = keyof typeof EXECUTABLE_EVIDENCE_FILES;
+export type ExecutableEvidenceState = "fresh" | "missing" | "corrupt" | "failed" | "stale";
+
+/**
+ * One report's relationship to the current generated-content digest. `fresh`
+ * deliberately describes digest freshness independently of `passed`: a current
+ * failing report is fresh evidence of a failure, not stale evidence.
+ */
+export interface ExecutableEvidenceStatus {
+  lane: ExecutableEvidenceLane;
+  file: (typeof EXECUTABLE_EVIDENCE_FILES)[ExecutableEvidenceLane];
+  state: ExecutableEvidenceState;
+  fresh: boolean;
+  passed: boolean | null;
+  bundleHash: string | null;
+  detail: string;
+}
+
+export type ExecutableEvidenceStatusFor<Lane extends ExecutableEvidenceLane> = Omit<
+  ExecutableEvidenceStatus,
+  "lane" | "file"
+> & {
+  lane: Lane;
+  file: (typeof EXECUTABLE_EVIDENCE_FILES)[Lane];
+};
+
+export interface ExecutableEvidenceStatuses {
+  selftest: ExecutableEvidenceStatusFor<"selftest">;
+  conformance: ExecutableEvidenceStatusFor<"conformance">;
+  simulation: ExecutableEvidenceStatusFor<"simulation">;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Bundle identity                                                             */
@@ -76,14 +148,28 @@ const systemClock: Clock = () => new Date().toISOString();
 
 /**
  * Files that are *records about* the bundle, not part of its generated content.
- * They are excluded from the hash so writing a certification (or publication)
- * into the bundle does not invalidate the very identity it attests to.
+ * They are excluded from the hash so recording assurance, executable evidence,
+ * or a deployment plan does not invalidate the identity each record attests to.
  */
-const RECORD_FILES: ReadonlySet<string> = new Set([
+export const DERIVED_RECORD_FILES: ReadonlySet<string> = new Set([
   CERTIFICATION_FILE,
   PUBLICATION_FILE,
   SELFTEST_REPORT_FILE,
+  CONFORMANCE_REPORT_FILE,
+  LIVE_CONFORMANCE_REPORT_FILE,
+  SIMULATION_REPORT_FILE,
+  REVIEW_REPORT_FILE,
 ]);
+
+/**
+ * Evidence is about generated content, never part of that content's identity.
+ * Only known root record paths are excluded. Deliberately do not ignore
+ * arbitrary `*.report.json` names: adding a new evidence kind requires an
+ * explicit review of this identity boundary.
+ */
+export function isDerivedRecordFile(relativePath: string): boolean {
+  return DERIVED_RECORD_FILES.has(relativePath);
+}
 
 /**
  * Content-derived identity of a bundle: sha256 over the sorted relative paths
@@ -94,13 +180,181 @@ const RECORD_FILES: ReadonlySet<string> = new Set([
 export function bundleHash(files: Record<string, string>): string {
   const hash = createHash("sha256");
   for (const rel of Object.keys(files).sort()) {
-    if (RECORD_FILES.has(rel)) continue;
+    if (isDerivedRecordFile(rel)) continue;
     const content = createHash("sha256")
       .update(files[rel] ?? "")
       .digest("hex");
     hash.update(`${rel}\0${content}\0`);
   }
   return hash.digest("hex");
+}
+
+const CheckEvidenceReport = z.object({
+  schemaVersion: z.literal(1),
+  bundleHash: z.string().regex(/^[0-9a-f]{64}$/),
+  summary: z.object({
+    pass: z.number().int().nonnegative(),
+    fail: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+  }),
+});
+
+const SimulationEvidenceReport = z.object({
+  schemaVersion: z.literal(1),
+  bundleHash: z.string().regex(/^[0-9a-f]{64}$/),
+  summary: z.object({
+    coverageCells: z.number().int().nonnegative(),
+    coveragePassed: z.number().int().nonnegative(),
+    mutantsKilled: z.number().int().nonnegative(),
+    ok: z.boolean(),
+  }),
+});
+
+/**
+ * Read the three local executable reports as evidence about the exact current
+ * bundle content. This intentionally validates only the stable report envelope
+ * needed by release policy; each producing command owns its detailed schema.
+ */
+export function executableEvidenceStatuses(
+  files: Record<string, string>,
+  currentBundleHash = bundleHash(files),
+): ExecutableEvidenceStatuses {
+  return {
+    selftest: checkEvidenceStatus("selftest", files, currentBundleHash),
+    conformance: checkEvidenceStatus("conformance", files, currentBundleHash),
+    simulation: simulationEvidenceStatus(files, currentBundleHash),
+  };
+}
+
+/** True only when every executable lane passed against the current digest. */
+export function executableEvidenceReady(statuses: ExecutableEvidenceStatuses): boolean {
+  return Object.values(statuses).every(
+    (status) => status.state === "fresh" && status.fresh && status.passed === true,
+  );
+}
+
+function checkEvidenceStatus<Lane extends "selftest" | "conformance">(
+  lane: Lane,
+  files: Record<string, string>,
+  currentBundleHash: string,
+): ExecutableEvidenceStatusFor<Lane> {
+  const file = EXECUTABLE_EVIDENCE_FILES[lane];
+  const decoded = parseEvidenceJson(files, lane, file);
+  if (!decoded.ok) return decoded.status;
+  const parsed = CheckEvidenceReport.safeParse(decoded.value);
+  if (!parsed.success) {
+    return corruptEvidence(lane, file, `${file} does not match its report schema.`);
+  }
+  const report = parsed.data;
+  const passed = report.summary.fail === 0 && report.summary.pass > 0;
+  const summary = `${report.summary.pass} passed, ${report.summary.fail} failed, ${report.summary.skipped} skipped`;
+  return boundEvidenceStatus(lane, file, report.bundleHash, currentBundleHash, passed, summary);
+}
+
+function simulationEvidenceStatus(
+  files: Record<string, string>,
+  currentBundleHash: string,
+): ExecutableEvidenceStatusFor<"simulation"> {
+  const lane = "simulation" as const;
+  const file = EXECUTABLE_EVIDENCE_FILES[lane];
+  const decoded = parseEvidenceJson(files, lane, file);
+  if (!decoded.ok) return decoded.status;
+  const parsed = SimulationEvidenceReport.safeParse(decoded.value);
+  if (!parsed.success) {
+    return corruptEvidence(lane, file, `${file} does not match its report schema.`);
+  }
+  const report = parsed.data;
+  const summary =
+    `${report.summary.coveragePassed}/${report.summary.coverageCells} coverage cells passed, ` +
+    `${report.summary.mutantsKilled} mutants killed`;
+  return boundEvidenceStatus(
+    lane,
+    file,
+    report.bundleHash,
+    currentBundleHash,
+    report.summary.ok &&
+      report.summary.coverageCells > 0 &&
+      report.summary.coveragePassed === report.summary.coverageCells,
+    summary,
+  );
+}
+
+function parseEvidenceJson<Lane extends ExecutableEvidenceLane>(
+  files: Record<string, string>,
+  lane: Lane,
+  file: (typeof EXECUTABLE_EVIDENCE_FILES)[Lane],
+): { ok: true; value: unknown } | { ok: false; status: ExecutableEvidenceStatusFor<Lane> } {
+  const raw = files[file];
+  if (raw === undefined) {
+    return {
+      ok: false,
+      status: {
+        lane,
+        file,
+        state: "missing",
+        fresh: false,
+        passed: null,
+        bundleHash: null,
+        detail: `No ${file} is present.`,
+      },
+    };
+  }
+  try {
+    return { ok: true, value: JSON.parse(raw) };
+  } catch {
+    return {
+      ok: false,
+      status: corruptEvidence(lane, file, `${file} is not valid JSON.`),
+    };
+  }
+}
+
+function corruptEvidence<Lane extends ExecutableEvidenceLane>(
+  lane: Lane,
+  file: (typeof EXECUTABLE_EVIDENCE_FILES)[Lane],
+  detail: string,
+): ExecutableEvidenceStatusFor<Lane> {
+  return {
+    lane,
+    file,
+    state: "corrupt",
+    fresh: false,
+    passed: null,
+    bundleHash: null,
+    detail,
+  };
+}
+
+function boundEvidenceStatus<Lane extends ExecutableEvidenceLane>(
+  lane: Lane,
+  file: (typeof EXECUTABLE_EVIDENCE_FILES)[Lane],
+  recordedBundleHash: string,
+  currentBundleHash: string,
+  passed: boolean,
+  summary: string,
+): ExecutableEvidenceStatusFor<Lane> {
+  if (recordedBundleHash !== currentBundleHash) {
+    return {
+      lane,
+      file,
+      state: "stale",
+      fresh: false,
+      passed,
+      bundleHash: recordedBundleHash,
+      detail: `${file} is stale: exercised ${recordedBundleHash.slice(0, 12)}… but the bundle now hashes to ${currentBundleHash.slice(0, 12)}… (${summary}).`,
+    };
+  }
+  return {
+    lane,
+    file,
+    state: passed ? "fresh" : "failed",
+    fresh: true,
+    passed,
+    bundleHash: recordedBundleHash,
+    detail: passed
+      ? `Passing evidence matches bundle ${currentBundleHash.slice(0, 12)}… (${summary}).`
+      : `Current evidence failed for bundle ${currentBundleHash.slice(0, 12)}… (${summary}).`,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -161,6 +415,115 @@ function check(
   return failures.length === 0
     ? { id, gate, status: "passed", detail: passDetail }
     : { id, gate, status: "failed", detail: failures.join("; ") };
+}
+
+const CapabilityParentGatewayImport = z.object({
+  importId: z.string().regex(/^gwi-[0-9a-f]{16}$/),
+  receiptDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  receiptViewDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  outputDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  lineage: z.enum(["bound", "stale"]),
+  blockerCount: z.number().int().nonnegative(),
+});
+
+const CapabilityBundleWithParentGatewayImport = z.object({
+  parentGatewayImport: CapabilityParentGatewayImport,
+});
+
+/**
+ * A derived capability must not turn its copied gateway receipt into decorative
+ * provenance. The manifest declaration, the copied receipt view, and every
+ * content-bearing coordinate between them must agree.
+ */
+function capabilityParentGatewayChecks(files: Record<string, string>): CertificationCheck[] {
+  const manifestText = files["bundle.json"];
+  if (manifestText === undefined) return [];
+
+  let decodedManifest: unknown;
+  try {
+    decodedManifest = JSON.parse(manifestText);
+  } catch {
+    return [
+      check(
+        "contract.capability-parent-gateway-provenance",
+        "contract",
+        ["bundle.json is not valid JSON; parent gateway lineage cannot be verified"],
+        "Capability parent gateway lineage is schema-valid and digest-bound",
+      ),
+    ];
+  }
+  if (
+    decodedManifest === null ||
+    typeof decodedManifest !== "object" ||
+    !Object.hasOwn(decodedManifest, "parentGatewayImport")
+  ) {
+    return [];
+  }
+
+  const failures: string[] = [];
+  const parsedManifest = CapabilityBundleWithParentGatewayImport.safeParse(decodedManifest);
+  if (!parsedManifest.success) {
+    failures.push(
+      `bundle.json parentGatewayImport fails schema validation: ${parsedManifest.error.issues[0]?.message ?? "invalid"}`,
+    );
+  } else {
+    const expected = parsedManifest.data.parentGatewayImport;
+    const receiptPath = "provenance/parent-gateway-import.receipt.json";
+    const receipt = parseJson(files, receiptPath);
+    if (receipt === undefined) {
+      failures.push(`${receiptPath} is missing or not valid JSON`);
+    } else {
+      const parsedReceipt = GatewayImportReceiptView.safeParse(receipt);
+      if (!parsedReceipt.success) {
+        failures.push(
+          `${receiptPath} fails the gateway receipt-view schema: ${parsedReceipt.error.issues[0]?.message ?? "invalid"}`,
+        );
+      } else {
+        const actual = parsedReceipt.data;
+        const compare = (
+          label: string,
+          declared: string | number,
+          copied: string | number,
+        ): void => {
+          if (declared !== copied) {
+            failures.push(
+              `${label} mismatch: bundle.json declares ${declared}, receipt has ${copied}`,
+            );
+          }
+        };
+        compare("importId", expected.importId, actual.importId);
+        compare("receiptDigest", expected.receiptDigest, actual.receiptDigest);
+        compare("receiptViewDigest", expected.receiptViewDigest, hashCanonical(actual));
+        compare("outputDigest", expected.outputDigest, actual.output.digest);
+        compare("lineage", expected.lineage, actual.lineage.status);
+        compare("blockerCount", expected.blockerCount, actual.blockers.length);
+
+        const canonicalOutputDigest = `sha256:${hashCanonical(actual.output.files)}`;
+        if (actual.output.digest !== canonicalOutputDigest) {
+          failures.push(
+            `copied parent output manifest hashes to ${canonicalOutputDigest}, not ${actual.output.digest}`,
+          );
+        }
+        if (actual.lineage.status !== "bound") {
+          failures.push(`copied parent gateway lineage is stale: ${actual.lineage.reason}`);
+        }
+        for (const blocker of actual.blockers) {
+          failures.push(
+            `unresolved parent gateway blocker ${blocker.code}${blocker.coordinate ? ` at ${blocker.coordinate.origin}` : ""}: ${blocker.message}`,
+          );
+        }
+      }
+    }
+  }
+
+  return [
+    check(
+      "contract.capability-parent-gateway-provenance",
+      "contract",
+      failures,
+      "Capability parent gateway receipt is schema-valid, bound, blocker-free, and exactly matches bundle.json",
+    ),
+  ];
 }
 
 /* -------------------------------------------------------------------------- */
@@ -252,28 +615,75 @@ function contractChecks(files: Record<string, string>, air: AirDocument): Certif
     ),
   );
 
-  const gatewayReceipt = parseJson(files, "import.receipt.json");
-  if (gatewayReceipt !== undefined) {
+  const gatewayReceiptText = files["import.receipt.json"];
+  const capabilityManifest = parseJson(files, "bundle.json");
+  const declaresParentGatewayImport =
+    capabilityManifest !== null &&
+    typeof capabilityManifest === "object" &&
+    Object.hasOwn(capabilityManifest, "parentGatewayImport");
+  const gatewayOrigin = GatewayKind.safeParse(air.service.source.origin?.kind);
+  if (gatewayReceiptText === undefined && gatewayOrigin.success && !declaresParentGatewayImport) {
+    checks.push(
+      check(
+        "contract.gateway-lineage-current",
+        "contract",
+        [
+          `AIR records gateway origin ${gatewayOrigin.data}, but import.receipt.json is missing and no derived-capability parent receipt is declared`,
+        ],
+        "Gateway import receipt view is schema-valid and every recorded output byte still matches its manifest",
+      ),
+    );
+    checks.push(
+      check(
+        "contract.gateway-blockers-resolved",
+        "contract",
+        ["gateway blockers cannot be verified because import.receipt.json is missing"],
+        "Gateway import receipt carries no unresolved route, auth, or opaque-policy blockers",
+      ),
+    );
+  } else if (gatewayReceiptText !== undefined) {
     const failures: string[] = [];
-    const parsedReceipt = GatewayImportReceiptView.safeParse(gatewayReceipt);
-    if (!parsedReceipt.success) {
-      failures.push(
-        `import.receipt.json fails the gateway receipt-view schema: ${parsedReceipt.error.issues[0]?.message ?? "invalid"}`,
-      );
-    } else if (parsedReceipt.data.lineage.status !== "bound") {
-      failures.push(`gateway import output lineage is stale: ${parsedReceipt.data.lineage.reason}`);
+    const blockerFailures: string[] = [];
+    const gatewayReceipt = parseJson(files, "import.receipt.json");
+    if (gatewayReceipt === undefined) {
+      const detail = "import.receipt.json is not valid JSON";
+      failures.push(detail);
+      blockerFailures.push(`gateway blockers cannot be verified: ${detail}`);
     } else {
-      const encoded = new Map<string, Uint8Array>();
-      const encoder = new TextEncoder();
-      for (const expected of parsedReceipt.data.output.files) {
-        const contents = files[expected.path];
-        if (contents !== undefined) encoded.set(expected.path, encoder.encode(contents));
+      const parsedReceipt = GatewayImportReceiptView.safeParse(gatewayReceipt);
+      if (!parsedReceipt.success) {
+        const detail = `import.receipt.json fails the gateway receipt-view schema: ${parsedReceipt.error.issues[0]?.message ?? "invalid"}`;
+        failures.push(detail);
+        blockerFailures.push(`gateway blockers cannot be verified: ${detail}`);
+      } else {
+        for (const blocker of parsedReceipt.data.blockers) {
+          const coordinate = blocker.coordinate
+            ? ` at ${blocker.coordinate.origin}${blocker.coordinate.pointer ? `#${blocker.coordinate.pointer}` : ""}`
+            : "";
+          blockerFailures.push(`${blocker.code}${coordinate}: ${blocker.message}`);
+        }
+        if (parsedReceipt.data.lineage.status !== "bound") {
+          failures.push(
+            `gateway import output lineage is stale: ${parsedReceipt.data.lineage.reason}`,
+          );
+        } else {
+          const encoded = new Map<string, Uint8Array>();
+          const encoder = new TextEncoder();
+          for (const expected of parsedReceipt.data.output.files) {
+            const contents = files[expected.path];
+            if (contents !== undefined) encoded.set(expected.path, encoder.encode(contents));
+          }
+          failures.push(
+            ...verifyGatewayImportOutputManifest(
+              parsedReceipt.data.output,
+              encoded,
+            ).diagnostics.map(
+              (diagnostic) =>
+                `${diagnostic.path ? `${diagnostic.path}: ` : ""}${diagnostic.message}`,
+            ),
+          );
+        }
       }
-      failures.push(
-        ...verifyGatewayImportOutputManifest(parsedReceipt.data.output, encoded).diagnostics.map(
-          (diagnostic) => `${diagnostic.path ? `${diagnostic.path}: ` : ""}${diagnostic.message}`,
-        ),
-      );
     }
     checks.push(
       check(
@@ -283,7 +693,16 @@ function contractChecks(files: Record<string, string>, air: AirDocument): Certif
         "Gateway import receipt view is schema-valid and every recorded output byte still matches its manifest",
       ),
     );
+    checks.push(
+      check(
+        "contract.gateway-blockers-resolved",
+        "contract",
+        blockerFailures,
+        "Gateway import receipt carries no unresolved route, auth, or opaque-policy blockers",
+      ),
+    );
   }
+  checks.push(...capabilityParentGatewayChecks(files));
   return checks;
 }
 
@@ -691,6 +1110,7 @@ export function certifyBundle(
     serviceId: air.service.id,
     capabilityId,
     bundleHash: bundleHash(files),
+    assuranceLevel: "static",
     status: checks.some((c) => c.status === "failed") ? "failed" : "passed",
     checks,
     certifiedAt: (options.now ?? systemClock)(),
@@ -701,22 +1121,135 @@ export function certifyBundle(
 /* Publication gating (PR 8)                                                   */
 /* -------------------------------------------------------------------------- */
 
-export const PublicationRecord = z.object({
+const PublicationGate = z.union([
+  z.object({
+    status: z.literal("passed"),
+    certifiedAt: z.string(),
+    assuranceLevel: z.literal("static").default("static"),
+  }),
+  z.object({ status: z.literal("waived"), reason: z.string().min(1) }),
+]);
+
+const BundleDigest = z.string().regex(/^[0-9a-f]{64}$/);
+
+const PublicationEvidenceSnapshotBase = z.object({
+  state: z.enum(["fresh", "missing", "corrupt", "failed", "stale"]),
+  fresh: z.boolean(),
+  passed: z.boolean().nullable(),
+  bundleHash: BundleDigest.nullable(),
+  detail: z.string().min(1),
+});
+
+const SelftestPublicationEvidenceSnapshot = PublicationEvidenceSnapshotBase.extend({
+  lane: z.literal("selftest"),
+  file: z.literal(SELFTEST_REPORT_FILE),
+});
+const ConformancePublicationEvidenceSnapshot = PublicationEvidenceSnapshotBase.extend({
+  lane: z.literal("conformance"),
+  file: z.literal(CONFORMANCE_REPORT_FILE),
+});
+const SimulationPublicationEvidenceSnapshot = PublicationEvidenceSnapshotBase.extend({
+  lane: z.literal("simulation"),
+  file: z.literal(SIMULATION_REPORT_FILE),
+});
+
+const PassingEvidenceFields = {
+  state: z.literal("fresh"),
+  fresh: z.literal(true),
+  passed: z.literal(true),
+  bundleHash: BundleDigest,
+} as const;
+
+const PublicationEvidenceRecords = z.object({
+  selftest: SelftestPublicationEvidenceSnapshot,
+  conformance: ConformancePublicationEvidenceSnapshot,
+  simulation: SimulationPublicationEvidenceSnapshot,
+});
+
+const PassingPublicationEvidenceRecords = z.object({
+  selftest: SelftestPublicationEvidenceSnapshot.extend(PassingEvidenceFields),
+  conformance: ConformancePublicationEvidenceSnapshot.extend(PassingEvidenceFields),
+  simulation: SimulationPublicationEvidenceSnapshot.extend(PassingEvidenceFields),
+});
+
+/** Snapshot of the current executable proof gate when a deployment plan was prepared. */
+export const PublicationExecutableEvidence = z.union([
+  z.object({
+    status: z.literal("passed"),
+    records: PassingPublicationEvidenceRecords,
+  }),
+  z.object({
+    status: z.literal("waived"),
+    records: PublicationEvidenceRecords,
+    waiver: z.object({
+      flag: z.literal("--allow-incomplete-evidence"),
+      reason: z.string().min(1),
+    }),
+  }),
+]);
+export type PublicationExecutableEvidence = z.infer<typeof PublicationExecutableEvidence>;
+
+const DeploymentPlanRecord = z
+  .object({
+    schemaVersion: z.literal(2),
+    recordKind: z.literal("deployment_plan"),
+    serviceId: z.string().min(1),
+    target: z.literal("cloud-run"),
+    env: z.enum(["dev", "staging", "prod"]),
+    /** Identity of the exact bundle content the plan was prepared for. */
+    bundleHash: BundleDigest,
+    /** How the gate was satisfied: current static assurance, or a non-prod waiver. */
+    certification: PublicationGate,
+    /** Fresh executable proof, or an explicit non-prod-only waiver. */
+    executableEvidence: PublicationExecutableEvidence,
+    plannedAt: z.string(),
+    cloudCallsMade: z.literal(false),
+    operatorActionRequired: z.literal(true),
+    /** The deploy artifacts this plan points at. */
+    artifacts: z.array(z.string().min(1)).min(1),
+  })
+  .superRefine((record, ctx) => {
+    if (record.env === "prod" && record.certification.status === "waived") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["certification"],
+        message: "production deployment plans cannot waive static assurance",
+      });
+    }
+    if (record.env === "prod" && record.executableEvidence.status === "waived") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["executableEvidence"],
+        message: "production deployment plans cannot waive executable evidence",
+      });
+    }
+    if (record.executableEvidence.status === "passed") {
+      for (const lane of ["selftest", "conformance", "simulation"] as const) {
+        const evidenceHash = record.executableEvidence.records[lane].bundleHash;
+        if (evidenceHash === record.bundleHash) continue;
+        ctx.addIssue({
+          code: "custom",
+          path: ["executableEvidence", "records", lane, "bundleHash"],
+          message: `${lane} evidence hash must equal the deployment plan bundleHash`,
+        });
+      }
+    }
+  });
+
+/** Legacy plan record written before the command's plan-only semantics were explicit. */
+const LegacyPublicationRecord = z.object({
   schemaVersion: z.literal(1),
   serviceId: z.string(),
   target: z.literal("cloud-run"),
   env: z.string(),
-  /** Identity of the exact bundle content that was published. */
   bundleHash: z.string(),
-  /** How the gate was satisfied: a verified cert, or an explicit non-prod waiver. */
-  certification: z.union([
-    z.object({ status: z.literal("passed"), certifiedAt: z.string() }),
-    z.object({ status: z.literal("waived"), reason: z.string() }),
-  ]),
+  certification: PublicationGate,
   publishedAt: z.string(),
-  /** The deploy artifacts this publication points at. */
   artifacts: z.array(z.string()),
 });
+
+/** New honest plan records plus read compatibility for legacy publication.json. */
+export const PublicationRecord = z.union([DeploymentPlanRecord, LegacyPublicationRecord]);
 export type PublicationRecord = z.infer<typeof PublicationRecord>;
 
 export type CertificationVerdict =
@@ -724,16 +1257,16 @@ export type CertificationVerdict =
   | { ok: false; reason: string; certification?: Certification };
 
 /**
- * Verify that a bundle carries a PASSING certification whose bundleHash matches
- * the bundle's *current* content — a cert issued for different bytes is stale
- * and must not gate a publish.
+ * Verify that a bundle carries PASSING static assurance whose bundleHash matches
+ * the bundle's *current* content — a record issued for different bytes is stale
+ * and must not gate a deployment plan.
  */
 export function verifyCertification(files: Record<string, string>): CertificationVerdict {
   const raw = parseJson(files, CERTIFICATION_FILE);
   if (raw === undefined) {
     return {
       ok: false,
-      reason: `no ${CERTIFICATION_FILE} in the bundle — run \`anvil certify\` first`,
+      reason: `no ${CERTIFICATION_FILE} in the bundle — run \`anvil certify\` for static assurance first`,
     };
   }
   const parsed = Certification.safeParse(raw);
@@ -744,7 +1277,7 @@ export function verifyCertification(files: Record<string, string>): Certificatio
   if (cert.status !== "passed") {
     return {
       ok: false,
-      reason: `certification status is "${cert.status}", not "passed"`,
+      reason: `static assurance status is "${cert.status}", not "passed"`,
       certification: cert,
     };
   }
@@ -752,7 +1285,7 @@ export function verifyCertification(files: Record<string, string>): Certificatio
   if (cert.bundleHash !== current) {
     return {
       ok: false,
-      reason: `certification is stale: certified ${cert.bundleHash.slice(0, 12)}… but the bundle now hashes to ${current.slice(0, 12)}…`,
+      reason: `static assurance is stale: assured ${cert.bundleHash.slice(0, 12)}… but the bundle now hashes to ${current.slice(0, 12)}…`,
       certification: cert,
     };
   }
@@ -767,15 +1300,21 @@ export function verifyCertification(files: Record<string, string>): Certificatio
  * Read a bundle directory into the pure core's input shape: relative POSIX
  * paths → file contents. The only filesystem-touching entry to certification.
  * Install artifacts are not bundle content: `node_modules` (created by an
- * install, or linked in by `anvil selftest`) and symlinks are skipped so the
- * certification binds to the generated files only.
+ * install, or linked in by `anvil selftest`) is skipped. Any other symlink is
+ * refused so mutable or external link targets cannot sit outside the identity
+ * that certification binds.
  */
 export function readBundleDir(dir: string): Record<string, string> {
   const files: Record<string, string> = {};
   const walk = (rel: string): void => {
     for (const entry of readdirSync(join(dir, rel), { withFileTypes: true })) {
-      if (entry.name === "node_modules" || entry.isSymbolicLink()) continue;
       const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
+      if (entry.name === "node_modules") continue;
+      if (entry.isSymbolicLink()) {
+        throw new Error(
+          `Unexpected symlink in bundle at ${childRel}; certification cannot bind external or mutable link targets.`,
+        );
+      }
       if (entry.isDirectory()) walk(childRel);
       else files[childRel] = readFileSync(join(dir, childRel), "utf8");
     }

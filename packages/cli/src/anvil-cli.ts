@@ -1,3 +1,4 @@
+import { CapabilityReviewError } from "@anvil/compiler";
 import { CommanderError } from "commander";
 import type { AnvilCliDeps } from "./commands/context.js";
 import { processIO } from "./io.js";
@@ -33,6 +34,10 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
       // choice, conflict — was already written through CliIO and fails.
       const benign = ["commander.helpDisplayed", "commander.version", "commander.help"];
       return benign.includes(err.code) ? 0 : 1;
+    }
+    if (err instanceof CapabilityReviewError) {
+      io.err(`error ${err.code}: ${err.message}`);
+      return 1;
     }
     io.err(`anvil: ${(err as Error).message}`);
     return 1;

@@ -1,14 +1,20 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AirDocument } from "@anvil/air";
-import { compile } from "@anvil/compiler";
+import { type AirDocument, hashCanonical } from "@anvil/air";
+import { approveCapability, compile, type GatewayImportReceiptView } from "@anvil/compiler";
 import { beforeAll, describe, expect, it } from "vitest";
 import { generateBundle } from "./bundle.js";
+import { generateCapabilityBundle } from "./capability-view.js";
 import {
   bundleHash,
   CERTIFICATION_FILE,
   type Certification,
   certifyBundle,
+  executableEvidenceReady,
+  executableEvidenceStatuses,
+  readBundleDir,
   verifyCertification,
 } from "./certify.js";
 
@@ -36,6 +42,59 @@ const clock = (iso: string) => () => iso;
 const failedIds = (cert: Certification) =>
   cert.checks.filter((c) => c.status === "failed").map((c) => c.id);
 
+const sha = (character = "a") => `sha256:${character.repeat(64)}`;
+
+function gatewayReceipt(
+  overrides: Partial<GatewayImportReceiptView> = {},
+): GatewayImportReceiptView {
+  const outputFiles: GatewayImportReceiptView["output"]["files"] = [];
+  return {
+    schemaVersion: 1,
+    viewType: "anvil.gateway-import-receipt-view",
+    redacted: true,
+    importId: "gwi-0123456789abcdef",
+    receiptDigest: sha(),
+    lineage: { status: "bound" },
+    privateReceipt: {
+      workspaceRoot: "$WORKSPACE",
+      storedAs: ".anvil/imports/gwi-0123456789abcdef/import.receipt.json",
+      verifyCommand: "anvil estate verify gwi-0123456789abcdef --root .",
+    },
+    selection: {
+      vendor: "fixture",
+      apiId: "payments",
+      export: { format: "text", sha256: sha(), bytes: 10 },
+    },
+    inventoryDigest: "inventory-digest",
+    contract: {
+      provenance: {
+        kind: "native",
+        fidelity: "full",
+        format: "openapi",
+        location: { origin: "fixture-export.yaml" },
+      },
+      compilerSource: {
+        snapshotId: "src-1",
+        sourceHash: sha(),
+        entrypoint: "openapi.yaml",
+      },
+    },
+    overlays: [],
+    diagnostics: [],
+    blockers: [],
+    output: { digest: `sha256:${hashCanonical(outputFiles)}`, files: outputFiles },
+    ...overrides,
+  };
+}
+
+function capabilityBundleWithParentGateway(receipt = gatewayReceipt()) {
+  const parent = structuredClone(air);
+  approveCapability(parent, "payments.refunds");
+  return generateCapabilityBundle(parent, "payments.refunds", {
+    parentGatewayReceipt: receipt,
+  });
+}
+
 describe("certification: clean bundle", () => {
   it("passes every gate on the compiled payments bundle", () => {
     const cert = certifyBundle(files, air, { now: clock("2026-07-10T00:00:00Z") });
@@ -58,10 +117,36 @@ describe("certification: clean bundle", () => {
 
   it("derives the bundle hash from content, ignoring its own record files", () => {
     const h = bundleHash(files);
-    expect(bundleHash({ ...files, [CERTIFICATION_FILE]: "{}", "publication.json": "{}" })).toBe(h);
+    expect(
+      bundleHash({
+        ...files,
+        [CERTIFICATION_FILE]: "{}",
+        "publication.json": "{}",
+        "selftest.report.json": "{}",
+        "conformance.report.json": "{}",
+        "conformance.live.report.json": "{}",
+        "simulation.report.json": "{}",
+        "review.report.json": "{}",
+      }),
+    ).toBe(h);
+    expect(bundleHash({ ...files, "runtime/custom.report.json": "{}" })).not.toBe(h);
     expect(bundleHash({ ...files, "docs/README.md": "tampered" })).not.toBe(h);
     // Adding or removing a file changes the identity too, not just content edits.
     expect(bundleHash({ ...files, "extra.txt": "x" })).not.toBe(h);
+  });
+
+  it("refuses unexpected symlinks instead of omitting them from bundle identity", () => {
+    const dir = mkdtempSync(join(tmpdir(), "anvil-cert-identity-"));
+    const external = join(dir, "..", `${dir.split("/").at(-1)}-external.txt`);
+    try {
+      mkdirSync(join(dir, "skill"), { recursive: true });
+      writeFileSync(external, "mutable external instructions");
+      symlinkSync(external, join(dir, "skill", "external.md"));
+      expect(() => readBundleDir(dir)).toThrow(/Unexpected symlink.*skill\/external\.md/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(external, { force: true });
+    }
   });
 });
 
@@ -140,6 +225,193 @@ describe("certification: CONTRACT gate", () => {
       air,
     );
     expect(failedIds(cert)).toContain("contract.generated-bytes-agree");
+  });
+});
+
+describe("certification: gateway provenance", () => {
+  it("fails closed when a gateway-origin bundle drops its receipt view", () => {
+    const gatewayAir = structuredClone(air);
+    gatewayAir.service.source.origin = { kind: "kong", uri: "kong://payments" };
+    const gatewayFiles = generateBundle(gatewayAir).files;
+    const cert = certifyBundle(gatewayFiles, gatewayAir);
+
+    expect(failedIds(cert)).toEqual(
+      expect.arrayContaining([
+        "contract.gateway-lineage-current",
+        "contract.gateway-blockers-resolved",
+      ]),
+    );
+    expect(
+      cert.checks.find((candidate) => candidate.id === "contract.gateway-lineage-current")?.detail,
+    ).toContain("import.receipt.json is missing");
+  });
+
+  it.each([
+    "not json\n",
+    '{"not":"a receipt"}\n',
+  ])("fails both lineage and blocker checks when a top-level receipt cannot be trusted", (receipt) => {
+    const cert = certifyBundle({ ...files, "import.receipt.json": receipt }, air);
+    expect(failedIds(cert)).toEqual(
+      expect.arrayContaining([
+        "contract.gateway-lineage-current",
+        "contract.gateway-blockers-resolved",
+      ]),
+    );
+    expect(
+      cert.checks.find((candidate) => candidate.id === "contract.gateway-blockers-resolved")
+        ?.detail,
+    ).toContain("blockers cannot be verified");
+  });
+
+  it("accepts a schema-valid, bound, blocker-free copied parent receipt", () => {
+    const built = capabilityBundleWithParentGateway();
+    const cert = certifyBundle(built.bundle.files, built.view);
+    expect(cert.status).toBe("passed");
+    expect(failedIds(cert)).not.toContain("contract.capability-parent-gateway-provenance");
+    expect(
+      cert.checks.find(
+        (candidate) => candidate.id === "contract.capability-parent-gateway-provenance",
+      ),
+    ).toMatchObject({ status: "passed" });
+  });
+
+  it("fails when a declared parent receipt is missing or fails schema validation", () => {
+    const built = capabilityBundleWithParentGateway();
+    const receiptPath = "provenance/parent-gateway-import.receipt.json";
+    const { [receiptPath]: _missing, ...withoutReceipt } = built.bundle.files;
+    const missing = certifyBundle(withoutReceipt, built.view);
+    expect(
+      missing.checks.find(
+        (candidate) => candidate.id === "contract.capability-parent-gateway-provenance",
+      ),
+    ).toMatchObject({ status: "failed", detail: expect.stringContaining("missing") });
+
+    const malformed = certifyBundle(
+      { ...built.bundle.files, [receiptPath]: '{"not":"a receipt"}\n' },
+      built.view,
+    );
+    expect(
+      malformed.checks.find(
+        (candidate) => candidate.id === "contract.capability-parent-gateway-provenance",
+      ),
+    ).toMatchObject({ status: "failed", detail: expect.stringContaining("schema") });
+  });
+
+  it.each([
+    [
+      "importId",
+      (declaration: Record<string, unknown>) => {
+        declaration.importId = "gwi-fedcba9876543210";
+      },
+    ],
+    [
+      "receiptDigest",
+      (declaration: Record<string, unknown>) => {
+        declaration.receiptDigest = sha("b");
+      },
+    ],
+    [
+      "receiptViewDigest",
+      (declaration: Record<string, unknown>) => {
+        declaration.receiptViewDigest = "b".repeat(64);
+      },
+    ],
+    [
+      "outputDigest",
+      (declaration: Record<string, unknown>) => {
+        declaration.outputDigest = sha("b");
+      },
+    ],
+    [
+      "lineage",
+      (declaration: Record<string, unknown>) => {
+        declaration.lineage = "stale";
+      },
+    ],
+    [
+      "blockerCount",
+      (declaration: Record<string, unknown>) => {
+        declaration.blockerCount = 1;
+      },
+    ],
+  ])("detects a %s mismatch between bundle.json and the copied receipt", (field, mutate) => {
+    const built = capabilityBundleWithParentGateway();
+    const manifest = JSON.parse(built.bundle.files["bundle.json"] as string) as {
+      parentGatewayImport: Record<string, unknown>;
+    };
+    mutate(manifest.parentGatewayImport);
+    const cert = certifyBundle(
+      {
+        ...built.bundle.files,
+        "bundle.json": `${JSON.stringify(manifest, null, 2)}\n`,
+      },
+      built.view,
+    );
+    expect(
+      cert.checks.find(
+        (candidate) => candidate.id === "contract.capability-parent-gateway-provenance",
+      ),
+    ).toMatchObject({ status: "failed", detail: expect.stringContaining(`${field} mismatch`) });
+  });
+
+  it("rejects a copied receipt whose declared output digest does not hash its file manifest", () => {
+    const built = capabilityBundleWithParentGateway();
+    const receiptPath = "provenance/parent-gateway-import.receipt.json";
+    const receipt = JSON.parse(built.bundle.files[receiptPath] as string);
+    receipt.output.digest = sha("b");
+    const manifest = JSON.parse(built.bundle.files["bundle.json"] as string);
+    manifest.parentGatewayImport.outputDigest = receipt.output.digest;
+    manifest.parentGatewayImport.receiptViewDigest = hashCanonical(receipt);
+
+    const cert = certifyBundle(
+      {
+        ...built.bundle.files,
+        [receiptPath]: `${JSON.stringify(receipt, null, 2)}\n`,
+        "bundle.json": `${JSON.stringify(manifest, null, 2)}\n`,
+      },
+      built.view,
+    );
+    expect(
+      cert.checks.find(
+        (candidate) => candidate.id === "contract.capability-parent-gateway-provenance",
+      ),
+    ).toMatchObject({
+      status: "failed",
+      detail: expect.stringContaining("output manifest hashes"),
+    });
+  });
+
+  it("refuses matching but stale or blocked parent lineage", () => {
+    const receipt = gatewayReceipt({
+      lineage: {
+        status: "stale",
+        reason: "parent output changed",
+        currentOutputDigest: sha("b"),
+        currentOutputFiles: [],
+      },
+      blockers: [
+        {
+          level: "warning",
+          code: "gateway/opaque_policy",
+          message: "Plugin semantics require review.",
+        },
+      ],
+    });
+    const built = capabilityBundleWithParentGateway(receipt);
+    const manifest = JSON.parse(built.bundle.files["bundle.json"] as string);
+    expect(manifest.parentGatewayImport).toMatchObject({
+      receiptViewDigest: hashCanonical(receipt),
+      lineage: "stale",
+      blockerCount: 1,
+    });
+
+    const cert = certifyBundle(built.bundle.files, built.view);
+    const provenance = cert.checks.find(
+      (candidate) => candidate.id === "contract.capability-parent-gateway-provenance",
+    );
+    expect(provenance).toMatchObject({ status: "failed" });
+    expect(provenance?.detail).toContain("lineage is stale");
+    expect(provenance?.detail).toContain("gateway/opaque_policy");
   });
 });
 
@@ -342,5 +614,134 @@ describe("publication gating: verifyCertification", () => {
     const bundle = { ...files, [CERTIFICATION_FILE]: JSON.stringify(failed) };
     const verdict = verifyCertification(bundle);
     expect(verdict.ok).toBe(false);
+  });
+});
+
+describe("publication gating: executable evidence", () => {
+  const reportFiles = (subject = bundleHash(files)) => ({
+    "selftest.report.json": JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: subject,
+      summary: { pass: 9, fail: 0, skipped: 1 },
+    }),
+    "conformance.report.json": JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: subject,
+      summary: { pass: 11, fail: 0, skipped: 0 },
+    }),
+    "simulation.report.json": JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: subject,
+      summary: {
+        coverageCells: 35,
+        coveragePassed: 35,
+        mutantsKilled: 4,
+        ok: true,
+      },
+    }),
+  });
+
+  it("requires every lane to pass against the current generated-content digest", () => {
+    const statuses = executableEvidenceStatuses({ ...files, ...reportFiles() });
+    expect(executableEvidenceReady(statuses)).toBe(true);
+    expect(statuses.selftest).toMatchObject({ state: "fresh", fresh: true, passed: true });
+    expect(statuses.conformance).toMatchObject({ state: "fresh", fresh: true, passed: true });
+    expect(statuses.simulation).toMatchObject({ state: "fresh", fresh: true, passed: true });
+  });
+
+  it("distinguishes stale passing proof from a current failure", () => {
+    const reports = reportFiles();
+    reports["conformance.report.json"] = JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: "0".repeat(64),
+      summary: { pass: 11, fail: 0, skipped: 0 },
+    });
+    reports["simulation.report.json"] = JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: bundleHash(files),
+      summary: {
+        coverageCells: 35,
+        coveragePassed: 34,
+        mutantsKilled: 3,
+        ok: false,
+      },
+    });
+    const statuses = executableEvidenceStatuses({ ...files, ...reports });
+    expect(executableEvidenceReady(statuses)).toBe(false);
+    expect(statuses.conformance).toMatchObject({
+      state: "stale",
+      fresh: false,
+      passed: true,
+    });
+    expect(statuses.simulation).toMatchObject({
+      state: "failed",
+      fresh: true,
+      passed: false,
+    });
+  });
+
+  it("fails closed on malformed report envelopes", () => {
+    const statuses = executableEvidenceStatuses({
+      ...files,
+      ...reportFiles(),
+      "selftest.report.json": "{",
+    });
+    expect(executableEvidenceReady(statuses)).toBe(false);
+    expect(statuses.selftest).toMatchObject({
+      state: "corrupt",
+      fresh: false,
+      passed: null,
+    });
+  });
+
+  it("does not treat an all-skipped check lane as passing executable proof", () => {
+    const reports = reportFiles();
+    reports["conformance.report.json"] = JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: bundleHash(files),
+      summary: { pass: 0, fail: 0, skipped: 4 },
+    });
+    const statuses = executableEvidenceStatuses({ ...files, ...reports });
+    expect(executableEvidenceReady(statuses)).toBe(false);
+    expect(statuses.conformance).toMatchObject({
+      state: "failed",
+      fresh: true,
+      passed: false,
+    });
+  });
+
+  it("requires positive complete simulation coverage even when summary.ok claims true", () => {
+    const reports = reportFiles();
+    reports["simulation.report.json"] = JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: bundleHash(files),
+      summary: {
+        coverageCells: 35,
+        coveragePassed: 34,
+        mutantsKilled: 4,
+        ok: true,
+      },
+    });
+    const partial = executableEvidenceStatuses({ ...files, ...reports });
+    expect(executableEvidenceReady(partial)).toBe(false);
+    expect(partial.simulation).toMatchObject({
+      state: "failed",
+      fresh: true,
+      passed: false,
+    });
+
+    reports["simulation.report.json"] = JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: bundleHash(files),
+      summary: {
+        coverageCells: 0,
+        coveragePassed: 0,
+        mutantsKilled: 0,
+        ok: true,
+      },
+    });
+    const empty = executableEvidenceStatuses({ ...files, ...reports });
+    expect(executableEvidenceReady(empty)).toBe(false);
+    expect(empty.simulation).toMatchObject({ state: "failed", passed: false });
   });
 });

@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { SELFTEST_REPORT_FILE } from "@anvil/generators";
+import { bundleHash, readBundleDir, SELFTEST_REPORT_FILE } from "@anvil/generators";
 import type { LoopbackCheck, LoopbackReport } from "@anvil/harness";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
@@ -41,9 +41,14 @@ export async function runSelftest(path: string, opts: SelftestOptions, io: CliIO
   const dir = resolveBundleDir(path);
   const { runLoopback } = await import("@anvil/harness");
   const report = await runLoopback(dir);
-  writeFileSync(join(dir, SELFTEST_REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  const boundReport = { ...report, bundleHash: bundleHash(readBundleDir(dir)) };
+  writeFileSync(
+    join(dir, SELFTEST_REPORT_FILE),
+    `${JSON.stringify(boundReport, null, 2)}\n`,
+    "utf8",
+  );
 
-  if (opts.json === true) io.out(JSON.stringify(report, null, 2));
+  if (opts.json === true) io.out(JSON.stringify(boundReport, null, 2));
   else io.out(renderLoopbackSummary(report, dir));
   return report.summary.fail === 0 ? 0 : 1;
 }

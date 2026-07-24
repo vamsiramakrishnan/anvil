@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AirDocument, airFromYaml, airToYaml } from "@anvil/air";
 import { compile } from "@anvil/compiler";
+import { generateBundle, writeBundle } from "@anvil/generators";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runAnvilCli } from "./anvil-cli.js";
 import { bufferIO } from "./io.js";
@@ -39,7 +40,7 @@ async function writePaymentsAir(): Promise<AirDocument> {
     manifest: read("anvil.yaml"),
     serviceId: "payments",
   });
-  writeFileSync(join(dir, "air.yaml"), airToYaml(air), "utf8");
+  writeBundle(dir, generateBundle(air));
   return air;
 }
 
@@ -103,7 +104,7 @@ describe("anvil capability", () => {
     expect(parsed.budget.verdict).toBe("ok");
   });
 
-  it("approve and reject persist the decision to the AIR file", async () => {
+  it("approve and reject atomically reproject the decision across every AIR surface", async () => {
     await writePaymentsAir();
     const io = bufferIO();
     expect(
@@ -112,6 +113,12 @@ describe("anvil capability", () => {
     const approved = reload().capabilities.find((c) => c.id === "payments.refunds");
     expect(approved?.lifecycle).toBe("approved");
     expect(approved?.reviewNote).toBe("ok");
+    for (const rel of ["air.json", "cli/air.json", "mcp/air.json", "runtime/air.json"]) {
+      const projected = JSON.parse(readFileSync(join(dir, rel), "utf8")) as AirDocument;
+      expect(projected.capabilities.find((c) => c.id === "payments.refunds")?.lifecycle).toBe(
+        "approved",
+      );
+    }
 
     const io2 = bufferIO();
     expect(
@@ -123,6 +130,12 @@ describe("anvil capability", () => {
     const rejected = reload().capabilities.find((c) => c.id === "payments.customers");
     expect(rejected?.lifecycle).toBe("rejected");
     expect(rejected?.reviewNote).toBe("not a unit");
+    for (const rel of ["air.json", "cli/air.json", "mcp/air.json", "runtime/air.json"]) {
+      const projected = JSON.parse(readFileSync(join(dir, rel), "utf8")) as AirDocument;
+      expect(projected.capabilities.find((c) => c.id === "payments.customers")?.lifecycle).toBe(
+        "rejected",
+      );
+    }
   });
 
   it("diff reports no drift for a fresh compile, and drift after the model moves", async () => {
@@ -148,7 +161,7 @@ describe("anvil capability", () => {
 
   it("blocks approving an over-budget capability without --allow-large", async () => {
     const air = await compile({ spec: specWithOps(21), serviceId: "things" });
-    writeFileSync(join(dir, "air.yaml"), airToYaml(air), "utf8");
+    writeBundle(dir, generateBundle(air));
     const id = air.capabilities[0]?.id as string;
 
     const refused = bufferIO();
@@ -157,16 +170,43 @@ describe("anvil capability", () => {
     expect(refused.text()).toContain("--allow-large");
     expect(reload().capabilities[0]?.lifecycle).toBe("proposed"); // refusal persisted nothing
 
+    const unaudited = bufferIO();
+    expect(
+      await runAnvilCli(["capability", "approve", dir, id, "--allow-large"], {
+        io: unaudited,
+      }),
+    ).toBe(1);
+    expect(unaudited.text()).toContain("capability_budget_waiver_note_required");
+
     const allowed = bufferIO();
     expect(
-      await runAnvilCli(["capability", "approve", dir, id, "--allow-large"], { io: allowed }),
+      await runAnvilCli(
+        [
+          "capability",
+          "approve",
+          dir,
+          id,
+          "--allow-large",
+          "--note",
+          "Reviewed as one deliberately large disclosure unit.",
+        ],
+        { io: allowed },
+      ),
     ).toBe(0);
     expect(reload().capabilities[0]?.lifecycle).toBe("approved");
+    expect(reload().diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "capability_tool_budget_waived",
+          capabilityId: id,
+        }),
+      ]),
+    );
   });
 
   it("warns (without blocking) between 16 and 20 tools", async () => {
     const air = await compile({ spec: specWithOps(16), serviceId: "things" });
-    writeFileSync(join(dir, "air.yaml"), airToYaml(air), "utf8");
+    writeBundle(dir, generateBundle(air));
     const id = air.capabilities[0]?.id as string;
     const io = bufferIO();
     expect(await runAnvilCli(["capability", "approve", dir, id], { io })).toBe(0);
@@ -188,13 +228,15 @@ describe("anvil build", () => {
     expect(await runAnvilCli(["build", dir, "payments.payments", "--out", out], { io })).toBe(0);
     expect(io.text()).toContain("Built capability payments.payments");
     expect(existsSync(join(out, "bundle.json"))).toBe(true);
-    expect(existsSync(join(out, "cli", "payments.mjs"))).toBe(true);
+    expect(existsSync(join(out, "cli", "payments-payments.mjs"))).toBe(true);
     expect(existsSync(join(out, "mcp", "server.js"))).toBe(true);
     expect(existsSync(join(out, "skill", "SKILL.md"))).toBe(true);
 
     const manifest = JSON.parse(readFileSync(join(out, "bundle.json"), "utf8"));
     expect(manifest.schemaVersion).toBe(1);
     expect(manifest.capabilityId).toBe("payments.payments");
+    expect(manifest.artifactId).toBe("payments-payments");
+    expect(manifest.parentServiceId).toBe("payments");
     expect(manifest.surfaces.cli.contractHash).toBe(manifest.contractHash);
     expect(manifest.surfaces.mcp.contractHash).toBe(manifest.contractHash);
     expect(manifest.surfaces.skill.contractHash).toBe(manifest.contractHash);
@@ -204,7 +246,79 @@ describe("anvil build", () => {
       "payments_get_payment",
     ]);
     const skill = readFileSync(join(out, "skill", "SKILL.md"), "utf8");
+    expect(skill).toContain("name: payments-payments");
     expect(skill).not.toContain("create_refund");
+  });
+
+  it("keeps an authored workflow and reports its cross-capability dependency explicitly", async () => {
+    await writePaymentsAir();
+    expect(
+      await runAnvilCli(["capability", "approve", dir, "payments.refunds"], {
+        io: bufferIO(),
+      }),
+    ).toBe(0);
+
+    const out = join(dir, "refunds-bundle");
+    const io = bufferIO();
+    expect(await runAnvilCli(["build", dir, "payments.refunds", "--out", out], { io })).toBe(0);
+    expect(io.text()).toContain("workflow dependencies: 1");
+    const manifest = JSON.parse(readFileSync(join(out, "bundle.json"), "utf8"));
+    expect(manifest.artifactId).toBe("payments-refunds");
+    expect(manifest.publicOperationIds).toEqual(["payments.refunds.create"]);
+    expect(manifest.workflowDependencyOperationIds).toEqual(["payments.payments.get"]);
+    expect(readFileSync(join(out, "skill", "SKILL.md"), "utf8")).toContain(
+      "name: payments-refunds",
+    );
+    expect(readFileSync(join(out, "skill", "reference", "workflows.md"), "utf8")).toContain(
+      "Refund a customer",
+    );
+    const packaged = join(dir, "packaged-skills");
+    expect(
+      await runAnvilCli(["package", "skill", out, "--out", packaged], {
+        io: bufferIO(),
+      }),
+    ).toBe(0);
+    expect(existsSync(join(packaged, "payments-refunds", "SKILL.md"))).toBe(true);
+  });
+
+  it("refuses to launder an invalid parent gateway receipt during capability build", async () => {
+    await writePaymentsAir();
+    expect(
+      await runAnvilCli(["capability", "approve", dir, "payments.payments"], {
+        io: bufferIO(),
+      }),
+    ).toBe(0);
+    writeFileSync(join(dir, "import.receipt.json"), '{"not":"a receipt"}\n', "utf8");
+
+    const io = bufferIO();
+    expect(
+      await runAnvilCli(
+        ["build", dir, "payments.payments", "--out", join(dir, "invalid-lineage")],
+        { io },
+      ),
+    ).toBe(1);
+    expect(io.text()).toContain("capability_parent_gateway_receipt_invalid");
+    expect(io.text()).toContain("Refusing to drop gateway lineage");
+  });
+
+  it("refuses to build gateway-origin AIR when its parent receipt is missing", async () => {
+    const air = await compile({
+      spec: read("openapi.yaml"),
+      manifest: read("anvil.yaml"),
+      serviceId: "payments",
+    });
+    air.service.source.origin = { kind: "kong", uri: "kong://payments" };
+    const capability = air.capabilities.find((candidate) => candidate.id === "payments.refunds");
+    if (!capability) throw new Error("Expected payments.refunds capability.");
+    capability.lifecycle = "approved";
+    writeBundle(dir, generateBundle(air));
+
+    const out = join(dir, "missing-lineage");
+    const io = bufferIO();
+    expect(await runAnvilCli(["build", dir, "payments.refunds", "--out", out], { io })).toBe(1);
+    expect(io.text()).toContain("capability_parent_gateway_receipt_missing");
+    expect(io.text()).toContain("records gateway origin 'kong'");
+    expect(existsSync(out)).toBe(false);
   });
 
   it("refuses to build a non-approved capability with a structured error", async () => {
