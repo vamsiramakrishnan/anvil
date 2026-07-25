@@ -23,6 +23,8 @@ import {
   decodeArchiveText,
   FileSystemGatewayImportReceiptStore,
   finalizeGatewayImportReceipt,
+  GATEWAY_UNSCOPED_ENVIRONMENT,
+  GATEWAY_UNVERSIONED_REVISION,
   type GatewayAdapter,
   type GatewayConnection,
   type GatewayContractProvenance,
@@ -2458,14 +2460,22 @@ async function runImport(
       environment,
     });
 
+  // `resolveGatewayApiSelection` fills unspecified axes with the "unversioned"/
+  // "unscoped" sentinels so the receipt/service identity is always concrete.
+  // Those sentinels mean "no such axis on this export", not a literal value to
+  // match, so they must NOT be forwarded to `extractApi` — an adapter treats any
+  // supplied axis as a hard constraint (see the wso2 matcher), and a sentinel
+  // would then match nothing. Forward only real, caller-meaningful coordinates.
+  const hasRealRevision = revision !== GATEWAY_UNVERSIONED_REVISION;
+  const hasRealEnvironment = environment !== GATEWAY_UNSCOPED_ENVIRONMENT;
   const imported = await adapter.extractApi(
     connection,
     {
       id: apiRef.id,
       name: apiRef.name,
-      version: apiVersion ?? revision,
-      ...(apiVersion ? { revision } : {}),
-      environmentId: environment,
+      version: apiVersion ?? (hasRealRevision ? revision : undefined),
+      ...(apiVersion && hasRealRevision ? { revision } : {}),
+      ...(hasRealEnvironment ? { environmentId: environment } : {}),
       ...(sourceArtifact ? { sourceArtifact } : {}),
     },
     {},

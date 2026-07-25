@@ -490,8 +490,17 @@ function readEstatesTsv() {
 /** Import one estate; returns { ok, report, out } or { ok:false, ... }. */
 function importEstate(est, outDir) {
   const fixture = join(ROOT, est.fixture);
+  // Isolate the workspace per run: `estate import` locks the source under
+  // `<root>/.anvil/sources` and is idempotent, so two runs sharing a root
+  // report `created: true` then `created: false` — a false determinism miss.
+  // Give each run its own root (and a bundle subdir) so the two are truly
+  // independent reproductions of the same import.
   const res = runNode(
-    [ANVIL, "estate", "import", fixture, "--vendor", est.vendor, "--api", est.api, "--out", outDir, "--json"],
+    [
+      ANVIL, "estate", "import", fixture,
+      "--vendor", est.vendor, "--api", est.api,
+      "--out", join(outDir, "bundle"), "--root", outDir, "--json",
+    ],
     { timeoutMs: 120_000 },
   );
   if (res.timedOut) return { ok: false, classification: "timeout", out: res };
@@ -507,10 +516,17 @@ function importEstate(est, outDir) {
   return { ok: true, report, out: res };
 }
 
-/** Compare two reports for determinism, ignoring only the (intentionally distinct) out dir. */
-function reportsMatch(a, b) {
-  const strip = (r) => JSON.stringify({ ...r, out: null });
-  return strip(a) === strip(b);
+/**
+ * Compare two reports for determinism. The two runs are independent
+ * reproductions to distinct workspaces, so the only legitimate differences are
+ * the run-specific filesystem paths (the top-level `out`, plus nested
+ * `directory` fields for the bundle and the `.anvil/imports` receipt). Replace
+ * each run's own base dir with a placeholder, then require byte-equality — any
+ * remaining difference is real non-determinism in the mapping.
+ */
+function reportsMatch(a, b, baseA, baseB) {
+  const strip = (r, base) => JSON.stringify({ ...r, out: null }).split(base).join("$BASE");
+  return strip(a, baseA) === strip(b, baseB);
 }
 
 async function estates(args) {
@@ -540,7 +556,9 @@ async function estates(args) {
       continue;
     }
 
-    const first = importEstate(est, join(work, `${est.name}-a`));
+    const outA = join(work, `${est.name}-a`);
+    const outB = join(work, `${est.name}-b`);
+    const first = importEstate(est, outA);
     if (!first.ok) {
       record.status = "fail";
       record.classification = first.classification;
@@ -552,14 +570,14 @@ async function estates(args) {
       continue;
     }
     const report = first.report;
-    const second = importEstate(est, join(work, `${est.name}-b`));
+    const second = importEstate(est, outB);
 
     const base = baseline.estates?.[est.name];
     const oracles = [
       { name: "import-completes", ok: report.files > 0, detail: `${report.files} file(s), api=${report.api}` },
       {
         name: "determinism",
-        ok: second.ok && reportsMatch(report, second.report),
+        ok: second.ok && reportsMatch(report, second.report, outA, outB),
         detail: second.ok ? "two runs identical" : `second run failed (${second.classification})`,
       },
     ];
