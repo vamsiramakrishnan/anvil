@@ -1,58 +1,76 @@
 {
-  "updatedAt": "2026-07-13T07:59:51.567Z",
+  "updatedAt": "2026-07-25T00:27:08.742Z",
   "note": "Per-estate policy accounting. Regenerate with: node tools/corpus/run.mjs estates --update-baseline",
   "estates": {
     "kong-refunds": {
-      "files": 55,
+      "files": 65,
       "operations": {
         "total": 3,
+        "generated": 0,
         "approved": 0,
-        "review_required": 1
+        "review_required": 0,
+        "deprecated": 0,
+        "blocked": 3
       },
       "opaque": 2
     },
     "kong-reporting": {
-      "files": 53,
+      "files": 63,
       "operations": {
         "total": 1,
+        "generated": 0,
         "approved": 0,
-        "review_required": 0
+        "review_required": 0,
+        "deprecated": 0,
+        "blocked": 1
       },
-      "opaque": 0
+      "opaque": 2
     },
     "apigee-payments": {
-      "files": 54,
+      "files": 64,
       "operations": {
         "total": 2,
+        "generated": 0,
         "approved": 0,
-        "review_required": 1
+        "review_required": 0,
+        "deprecated": 0,
+        "blocked": 2
       },
       "opaque": 2
     },
     "wso2-orders": {
-      "files": 55,
+      "files": 65,
       "operations": {
         "total": 3,
+        "generated": 0,
         "approved": 0,
-        "review_required": 1
+        "review_required": 0,
+        "deprecated": 0,
+        "blocked": 3
       },
-      "opaque": 1
+      "opaque": 2
     },
     "mulesoft-customer": {
-      "files": 54,
+      "files": 64,
       "operations": {
         "total": 2,
+        "generated": 0,
         "approved": 0,
-        "review_required": 1
+        "review_required": 0,
+        "deprecated": 0,
+        "blocked": 2
       },
       "opaque": 1
     },
     "apiconnect-claims": {
-      "files": 54,
+      "files": 64,
       "operations": {
         "total": 2,
+        "generated": 0,
         "approved": 0,
-        "review_required": 1
+        "review_required": 0,
+        "deprecated": 0,
+        "blocked": 2
       },
       "opaque": 2
     }

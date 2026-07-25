@@ -758,7 +758,7 @@ function driveCli(
 const CLI_CAPTURE_LIMIT = 32 * 1024;
 const TRANSIENT_CLI_RETRY_DELAYS_MS = [50, 100, 200, 400] as const;
 const SENSITIVE_CLI_KEY_SOURCE =
-  "(?:ANVIL_[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY|ASSERTION_KEY)|authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]key|client[-_]secret|access[-_]token|refresh[-_]token|id[-_]token|password|token|secret|private[-_]key|assertion[-_]key|credential)";
+  "(?:ANVIL_[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY|ASSERTION_KEY)|authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]key|client[-_]secret|[a-z]+[-_]token|password|token|secret|private[-_]key|assertion[-_]key|credential)";
 const JSON_CLI_SECRET = new RegExp(
   String.raw`((?:["'])${SENSITIVE_CLI_KEY_SOURCE}(?:["'])\s*:\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)`,
   "gi",

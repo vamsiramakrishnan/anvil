@@ -190,9 +190,7 @@ describe("anvil estate plan", () => {
     expect(orders.nextCommand).toContain("--revision 'unversioned'");
     expect(orders.nextCommand).toContain("--environment 'unscoped'");
     expect(orders.nextCommand).toContain("--gateway-id 'corp-prod' --strict-identity");
-    expect(orders.nextCommand).toMatch(
-      /--service 'orders-unscoped-unversioned-[0-9a-f]{16}'/,
-    );
+    expect(orders.nextCommand).toMatch(/--service 'orders-unscoped-unversioned-[0-9a-f]{16}'/);
     expect(orders.nextCommand).toContain("--json");
     expect(orders.nextCommand).not.toContain("--out");
     expect(orders.investigation.authority).toMatch(/proposal only|propose a manifest patch only/i);
@@ -312,10 +310,7 @@ describe("anvil estate plan", () => {
     const lineageTamperedPlan = structuredClone(initialPlan);
     lineageTamperedPlan.change.status = "changed";
     lineageTamperedPlan.change.hasChanges = true;
-    writeFileSync(
-      lineageTamperedPath,
-      `${JSON.stringify(lineageTamperedPlan, null, 2)}\n`,
-    );
+    writeFileSync(lineageTamperedPath, `${JSON.stringify(lineageTamperedPlan, null, 2)}\n`);
     const lineageTampered = await estatePlan(
       exportPath,
       "--vendor",

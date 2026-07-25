@@ -661,9 +661,7 @@ services:
       confirmation: { required: true },
     });
     expect(
-      importedAir.capabilities.find(
-        (candidate: { id: string }) => candidate.id === capabilityId,
-      ),
+      importedAir.capabilities.find((candidate: { id: string }) => candidate.id === capabilityId),
     ).toMatchObject({
       lifecycle: "approved",
       reviewNote: "Reviewed with the gateway export and locked OpenAPI contract.",

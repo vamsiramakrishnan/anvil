@@ -387,7 +387,9 @@ function lowerUrl(url: PostmanUrl | string, variables: Map<string, string>): Low
   if (hostVar !== undefined) {
     const resolved = variables.get(hostVar);
     if (resolved && /^https?:\/\//i.test(resolved)) {
-      base = resolved.replace(/\/+$/, "");
+      const trimmed = resolved.replace(/\/+$/, "");
+      // Don't double-append when the scheme'd host variable already carries its own port.
+      base = /:\d+$/.test(trimmed) ? trimmed : `${trimmed}${port}`;
     } else if (resolved) {
       base = `https://${resolved.replace(/\/+$/, "")}${port}`;
     } else {

@@ -383,6 +383,8 @@ export class TokenExchangeResolver implements CredentialResolver {
             grant_type: GRANT_JWT_BEARER,
             assertion,
             ...(scope ? { scope } : {}),
+            ...(audience ? { audience } : {}),
+            ...(resource ? { resource } : {}),
           },
           {},
           approvedHosts,

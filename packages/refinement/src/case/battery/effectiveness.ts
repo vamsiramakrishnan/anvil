@@ -81,6 +81,7 @@ function buildAir(c: EffectivenessCase): AirDocument {
       {
         id: OP_ID,
         canonicalName: "do_thing",
+        displayName: `Do the thing (${c.id})`,
         description: "A benchmark operation.",
         sourceRef: { kind: "openapi", path: "/thing", method: "post" },
         effect: { kind: "mutation", action: "create", risk: "low", reversible: true },

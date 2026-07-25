@@ -11,8 +11,8 @@ import {
   resolveIdempotencyCarrier,
 } from "@anvil/air";
 import {
-  applyAuth,
   type AuthMaterial,
+  applyAuth,
   type CredentialResolver,
   credentialProfileName,
 } from "./auth.js";
@@ -44,7 +44,12 @@ import {
   httpStatusToRetryCondition,
   retryIsSafe,
 } from "./retry.js";
-import { type HttpRequest, type Transport, TransportError } from "./transport.js";
+import {
+  type HttpRequest,
+  type HttpResponse,
+  type Transport,
+  TransportError,
+} from "./transport.js";
 
 export interface DryRunPlan {
   operation: string;
@@ -536,7 +541,11 @@ export async function execute(
     return finish({ outcome: "error", envelope: err.toEnvelope(), record });
   };
 
-  const runHook = async (hook: PolicyHook | undefined, request?: HttpRequest): Promise<void> => {
+  const runHook = async (
+    hook: PolicyHook | undefined,
+    request?: HttpRequest,
+    response?: HttpResponse,
+  ): Promise<void> => {
     if (!hook) return;
     const pctx: PolicyContext = {
       operation: op,
@@ -544,6 +553,7 @@ export async function execute(
       traceId,
       authProfile: ctx.authProfile,
       request,
+      response,
       decide: (d) => policyDecisions.push(d),
     };
     await hook(pctx);
@@ -865,6 +875,7 @@ export async function execute(
         idempotencyMode: op.idempotency.mode,
         hasIdempotencyKey: Boolean(key),
       });
+      const dryRunRetriesEnabled = retrySafe && ctx.retries !== false;
       return finish({
         outcome: "dry_run",
         plan: {
@@ -875,8 +886,8 @@ export async function execute(
           body: baseRequest.body ? JSON.parse(baseRequest.body) : undefined,
           idempotencyKeyPresent: Boolean(key),
           retryPlan: {
-            enabled: retrySafe && ctx.retries !== false,
-            maxAttempts: retrySafe ? op.retries.maxAttempts : 1,
+            enabled: dryRunRetriesEnabled,
+            maxAttempts: dryRunRetriesEnabled ? op.retries.maxAttempts : 1,
           },
           confirmationRequired: op.confirmation.required,
         },
@@ -1035,11 +1046,17 @@ export async function execute(
     let attempt = 0;
     let finalError: AnvilError | null = null;
     let sawPostResponseFailure = false;
+    // Tracks the most recent HttpResponse actually received from the
+    // transport (success or non-2xx), so postError/postExecute can surface it
+    // to policy hooks when one exists. A thrown TransportError never produces
+    // one, so this deliberately stays whatever it last was (often undefined).
+    let lastResponse: HttpResponse | undefined;
     while (attempt < maxAttempts) {
       attempt += 1;
       record.retryCount = attempt - 1;
       try {
         const res = await ctx.transport.send(request);
+        lastResponse = res;
         record.responseBytes = byteLen(res.body);
         if (res.status >= 200 && res.status < 300) {
           const data = res.body ? safeJson(res.body) : null;
@@ -1056,8 +1073,8 @@ export async function execute(
             }
           }
           record.outcome = "success";
-          await runHook(ctx.policy?.postResponse, request);
-          await runHook(ctx.policy?.postExecute, request);
+          await runHook(ctx.policy?.postResponse, request, res);
+          await runHook(ctx.policy?.postExecute, request, res);
           return finish({ outcome: "success", status: res.status, data, record });
         }
 
@@ -1115,8 +1132,8 @@ export async function execute(
       // reservation and require reconciliation; releasing it could permit a
       // duplicate mutation.
       record.ledger = "in_progress";
-      await runHook(ctx.policy?.postError, request);
-      await runHook(ctx.policy?.postExecute, request);
+      await runHook(ctx.policy?.postError, request, lastResponse);
+      await runHook(ctx.policy?.postExecute, request, lastResponse);
       return fail(
         new AnvilError({
           code: finalError?.code ?? "upstream_unavailable",
@@ -1150,8 +1167,8 @@ export async function execute(
         return fail(ledgerUnavailableError(op.id, traceId, "release", true, ledgerReference));
       }
     }
-    await runHook(ctx.policy?.postError, request);
-    await runHook(ctx.policy?.postExecute, request);
+    await runHook(ctx.policy?.postError, request, lastResponse);
+    await runHook(ctx.policy?.postExecute, request, lastResponse);
     return fail(finalError ?? unknownError(op.id, traceId));
   } catch (err) {
     if (err instanceof AnvilError) return fail(err);

@@ -1,9 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import {
-  GENERATION_METADATA_FILE,
-  resourceOptionsFromGenerationMetadata,
-} from "@anvil/generators";
+import { GENERATION_METADATA_FILE, resourceOptionsFromGenerationMetadata } from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
@@ -77,9 +74,7 @@ export function printCloudRunPlan(dir: string, env: string, io: CliIO): void {
   io.out("  trust-domain Firestore database; dedicated mode creates one protected database.");
   io.out("  See deploy/README.md for the IAM boundary and console caveat.");
   io.out("  Inspect its exact write/store contract before apply:");
-  io.out(
-    "     `anvil deploy ledger <dir> --project <PROJECT_ID> --database <DATABASE_ID>`",
-  );
+  io.out("     `anvil deploy ledger <dir> --project <PROJECT_ID> --database <DATABASE_ID>`");
   io.out("  1. Generate/review the external operator var-file (credentials + target");
   io.out("     settings), resolve every scaffold entry, then upload it to a private GCS URI.");
   io.out("  2. gcloud builds submit --project <PROJECT_ID> --config deploy/cloudbuild.yaml \\");
@@ -142,8 +137,7 @@ async function runDeployCredentials(
     );
     return 1;
   }
-  const credentialNamespace =
-    generationOptions?.deploymentNamespace ?? contract.service;
+  const credentialNamespace = generationOptions?.deploymentNamespace ?? contract.service;
   const requirements = contract.requirements.map((requirement) => ({
     ...requirement,
     secrets: [...new Set(requirement.required.filter(isSecretKey))].map((envKey) => {

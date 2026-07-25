@@ -46,12 +46,14 @@ export function registerSources(parent: Command, ctx: CommandContext): void {
 function runSourcesInit(path: string, opts: { write?: string; json?: boolean }, io: CliIO): number {
   const air = loadAir(path);
   const scaffold = scaffoldSources(air);
+  if (opts.write) {
+    writeFileSync(opts.write, scaffold.yaml);
+  }
   if (opts.json === true) {
     io.out(JSON.stringify(scaffold, null, 2));
     return 0;
   }
   if (opts.write) {
-    writeFileSync(opts.write, scaffold.yaml);
     io.out(`Wrote ${scaffold.proposal.length}-source scaffold to ${opts.write}`);
   } else {
     io.out(scaffold.yaml);
