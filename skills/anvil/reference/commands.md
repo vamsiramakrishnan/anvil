@@ -277,11 +277,6 @@ Options:
 - `--repo-root <dir>` — repository root recorded for filesystem evidence
 - `--executor <executor>` — executor identity recorded in the case
 
-#### `anvil case inspect`
-`anvil case inspect [options] <case-dir>`
-
-Print the case's target inspection.
-
 #### `anvil case battery`
 `anvil case battery [options]`
 
@@ -296,6 +291,11 @@ Options:
 - `--model <model>` — model passed through to the agent CLI
 - `--check` — fail on scripted battery expectation mismatches
 - `--allow-degraded-native` — proceed even when native execution cannot enforce split
+
+#### `anvil case inspect`
+`anvil case inspect [options] <case-dir>`
+
+Print the case's target inspection.
 
 #### `anvil case add-evidence`
 `anvil case add-evidence [options] <case-dir>`
@@ -548,6 +548,82 @@ Options:
 - `--allow-degraded-native` — explicitly allow the unsandboxed native reviewer (isolated HOME; host files remain reachable)
 - `--json` — emit the full review report as JSON
 
+### `anvil target`  *(mutates)*
+`anvil target [options] <profile> <dir>`
+
+Generate an agent-platform connector kit (e.g. Gemini Enterprise) for a bundle.
+
+Validates and generates one explicit Gemini Enterprise registration journey. `custom-mcp` is console-first; its raw setUpDataConnector files are experimental references. `agent-gateway` emits guarded Agent Registry, gateway, engine-binding, and rollback artifacts. `both` is available only when explicitly requested for compatibility. Connector OAuth protects /mcp and is separate from Gemini Enterprise sign-in / Workforce Identity Federation. No files are written when validation fails.
+
+Options:
+- `--surface <surface>` — registration surface
+- `--server-auth <mode>` — MCP resource-server auth mode
+- `--endpoint <url>` — the connector's public HTTPS MCP URL (e.g. https://host/mcp)
+- `--project <id>` — 6-30 character GCP project ID (not the numeric project number)
+- `--project-number <number>` — provider-assigned numeric GCP project identity used in canonical resources
+- `--location <loc>` — Gemini Enterprise app/engine location: global, us, eu, or a region
+- `--engine <id-or-resource>` — GE engine id, or full projects/.../locations/.../collections/.../engines/... resource
+- `--gateway-location <region>` — Agent Gateway region (required to match the verified app-location matrix)
+- `--registry-location <region>` — Agent Registry location referenced by the gateway
+- `--idp <provider>` — connector OAuth provider protecting /mcp; not the GE sign-in IdP
+- `--tenant <id>` — connector OAuth tenant id / Okta domain
+- `--oauth-authorization-url <url>` — explicit connector authorization URL (required for --idp other)
+- `--oauth-token-url <url>` — explicit connector token URL (required for --idp other)
+- `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
+- `--inbound-issuer <url>` — issuer the MCP resource server validates
+- `--inbound-audience <audience>` — audience identifying this MCP API
+- `--wif <pool>` — full locations/global/workforcePools/<pool-id> resource for GE sign-in (separate from /mcp auth)
+- `--allow-unauthenticated-mcp` — acknowledge that no-auth leaves the public /mcp endpoint without a bearer-token gate
+- `--confirm-engine-egress-reroute` — acknowledge that Agent Gateway binding reroutes all agent egress for the engine
+- `--agent-identity-principal-set <resource>` — documented principalSet://agents.global... resource granted registry, gateway, and runtime access
+- `--gateway-authorization-policy <resource>` — full projects/<project>/locations/<region>/authzPolicies/<policy> resource attached to the gateway
+- `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
+- `--json` — emit the plan + compatibility report as JSON
+
+### `anvil deploy`
+`anvil deploy [options] [command]`
+
+Inspect Cloud Run, credentials, and durable idempotency deployment plans.
+
+Plan and inspection only: Anvil prints generated Dockerfile/Terraform/env instructions and verifies the generated durable idempotency-store contract. It does not call Cloud Run, Firestore, apply Terraform, or hold cloud credentials.
+
+#### `anvil deploy cloud-run`
+`anvil deploy cloud-run [options] <dir>`
+
+The Cloud Run deployment plan (Terraform owns config, Cloud Build the pipeline).
+
+Options:
+- `--env <env>` — target environment
+
+#### `anvil deploy credentials`
+`anvil deploy credentials [options] <dir>`
+
+The upstream (outbound) credential plan: exact env vars + copy-paste provisioning.
+
+Prints, per auth shape, the exact ANVIL_<PROFILE>_* env vars the runtime resolver reads to reach the upstream — names only — with ready-to-run gcloud/terraform commands and a pre-assembled Secret Manager console link. Nothing here holds or echoes a secret value.
+
+Options:
+- `--env <env>` — auth profile / target environment
+- `--project <id>` — GCP project id for links and sm:// references
+- `--json` — emit one machine-readable credential plan
+- `--tfvars` — emit only Terraform auto-tfvars JSON for an external plan work directory
+
+#### `anvil deploy ledger`
+`anvil deploy ledger [options] <dir>`
+
+Inspect durable-write coverage and the generated Firestore ledger contract.
+
+Read-only and offline. Lists every approved write and its idempotency posture, verifies deploy/idempotency-store.json plus every compiler-owned generated byte against canonical AIR and persisted generator inputs, and prints the selected Firestore database/collection/ANVIL_LEDGER coordinate. Shared mode (default) uses an existing platform-owned trust-domain database; dedicated mode creates one capability-owned database. Static wiring is not live readiness: after applying the reviewed Terraform plan, require the deployed /readyz probe to return 200. Firestore Native is the built-in managed backend; Firebase client SDKs, AlloyDB, and Spanner are not silently substituted.
+
+Options:
+- `--project <id>` — resolve {project_id} in the planned ledger URI
+- `--database <id>` — exact Firestore Native database id, including (default)
+- `--database-mode <mode>` — shared (existing trust-domain database) or dedicated (create one database)
+- `--location <location>` — reviewed immutable Firestore location; required only in dedicated mode
+- `--ttl-seconds <seconds>` — completed replay-result retention (60..31536000; defaults from the generated contract)
+- `--json` — emit one machine-readable offline readiness report
+- `--tfvars` — emit only Terraform input JSON (requires --project and --database; dedicated also requires --location)
+
 ### `anvil certify`  *(mutates)*
 `anvil certify [options] <path>`
 
@@ -605,82 +681,6 @@ Options:
 - `--allow-uncertified` — waive static assurance for this plan (non-prod only)
 - `--allow-incomplete-evidence` — waive missing, stale, corrupt, or failing executable evidence (non-prod only)
 - `--json` — emit the publication record as JSON
-
-### `anvil deploy`
-`anvil deploy [options] [command]`
-
-Inspect Cloud Run, credentials, and durable idempotency deployment plans.
-
-Plan and inspection only: Anvil prints generated Dockerfile/Terraform/env instructions and verifies the generated durable idempotency-store contract. It does not call Cloud Run, Firestore, apply Terraform, or hold cloud credentials.
-
-#### `anvil deploy cloud-run`
-`anvil deploy cloud-run [options] <dir>`
-
-The Cloud Run deployment plan (Terraform owns config, Cloud Build the pipeline).
-
-Options:
-- `--env <env>` — target environment
-
-#### `anvil deploy credentials`
-`anvil deploy credentials [options] <dir>`
-
-The upstream (outbound) credential plan: exact env vars + copy-paste provisioning.
-
-Prints, per auth shape, the exact ANVIL_<PROFILE>_* env vars the runtime resolver reads to reach the upstream — names only — with ready-to-run gcloud/terraform commands and a pre-assembled Secret Manager console link. Nothing here holds or echoes a secret value.
-
-Options:
-- `--env <env>` — auth profile / target environment
-- `--project <id>` — GCP project id for links and sm:// references
-- `--json` — emit one machine-readable credential plan
-- `--tfvars` — emit only Terraform auto-tfvars JSON for an external plan work directory
-
-#### `anvil deploy ledger`
-`anvil deploy ledger [options] <dir>`
-
-Inspect durable-write coverage and the generated Firestore ledger contract.
-
-Read-only and offline. Lists every approved write and its idempotency posture, verifies deploy/idempotency-store.json plus every compiler-owned generated byte against canonical AIR and persisted generator inputs, and prints the selected Firestore database/collection/ANVIL_LEDGER coordinate. Shared mode (default) uses an existing platform-owned trust-domain database; dedicated mode creates one capability-owned database. Static wiring is not live readiness: after applying the reviewed Terraform plan, require the deployed /readyz probe to return 200. Firestore Native is the built-in managed backend; Firebase client SDKs, AlloyDB, and Spanner are not silently substituted.
-
-Options:
-- `--project <id>` — resolve {project_id} in the planned ledger URI
-- `--database <id>` — exact Firestore Native database id, including (default)
-- `--database-mode <mode>` — shared (existing trust-domain database) or dedicated (create one database)
-- `--location <location>` — reviewed immutable Firestore location; required only in dedicated mode
-- `--ttl-seconds <seconds>` — completed replay-result retention (60..31536000; defaults from the generated contract)
-- `--json` — emit one machine-readable offline readiness report
-- `--tfvars` — emit only Terraform input JSON (requires --project and --database; dedicated also requires --location)
-
-### `anvil target`  *(mutates)*
-`anvil target [options] <profile> <dir>`
-
-Generate an agent-platform connector kit (e.g. Gemini Enterprise) for a bundle.
-
-Validates and generates one explicit Gemini Enterprise registration journey. `custom-mcp` is console-first; its raw setUpDataConnector files are experimental references. `agent-gateway` emits guarded Agent Registry, gateway, engine-binding, and rollback artifacts. `both` is available only when explicitly requested for compatibility. Connector OAuth protects /mcp and is separate from Gemini Enterprise sign-in / Workforce Identity Federation. No files are written when validation fails.
-
-Options:
-- `--surface <surface>` — registration surface
-- `--server-auth <mode>` — MCP resource-server auth mode
-- `--endpoint <url>` — the connector's public HTTPS MCP URL (e.g. https://host/mcp)
-- `--project <id>` — 6-30 character GCP project ID (not the numeric project number)
-- `--project-number <number>` — provider-assigned numeric GCP project identity used in canonical resources
-- `--location <loc>` — Gemini Enterprise app/engine location: global, us, eu, or a region
-- `--engine <id-or-resource>` — GE engine id, or full projects/.../locations/.../collections/.../engines/... resource
-- `--gateway-location <region>` — Agent Gateway region (required to match the verified app-location matrix)
-- `--registry-location <region>` — Agent Registry location referenced by the gateway
-- `--idp <provider>` — connector OAuth provider protecting /mcp; not the GE sign-in IdP
-- `--tenant <id>` — connector OAuth tenant id / Okta domain
-- `--oauth-authorization-url <url>` — explicit connector authorization URL (required for --idp other)
-- `--oauth-token-url <url>` — explicit connector token URL (required for --idp other)
-- `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
-- `--inbound-issuer <url>` — issuer the MCP resource server validates
-- `--inbound-audience <audience>` — audience identifying this MCP API
-- `--wif <pool>` — full locations/global/workforcePools/<pool-id> resource for GE sign-in (separate from /mcp auth)
-- `--allow-unauthenticated-mcp` — acknowledge that no-auth leaves the public /mcp endpoint without a bearer-token gate
-- `--confirm-engine-egress-reroute` — acknowledge that Agent Gateway binding reroutes all agent egress for the engine
-- `--agent-identity-principal-set <resource>` — documented principalSet://agents.global... resource granted registry, gateway, and runtime access
-- `--gateway-authorization-policy <resource>` — full projects/<project>/locations/<region>/authzPolicies/<policy> resource attached to the gateway
-- `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
-- `--json` — emit the plan + compatibility report as JSON
 
 ### `anvil sync`  *(mutates)*
 `anvil sync [options] <spec-path> <path>`
