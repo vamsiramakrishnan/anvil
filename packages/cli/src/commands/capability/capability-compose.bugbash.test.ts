@@ -13,12 +13,12 @@ import { type AirDocument, loadAirDocument } from "@anvil/air";
 import { generateBundle, writeBundle } from "@anvil/generators";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stringify as stringifyYaml } from "yaml";
-import { runAnvilCli } from "../anvil-cli.js";
-import type { CompositionAuditReport } from "../capability-composition.js";
-import { bufferIO } from "../io.js";
+import { runAnvilCli } from "../../anvil-cli.js";
+import type { CompositionAuditReport } from "../../capability-composition.js";
+import { bufferIO } from "../../io.js";
 
 /**
- * Targeted coverage for packages/cli/src/commands/capability-compose.ts.
+ * Targeted coverage for packages/cli/src/commands/capability/capability-compose.ts.
  * Nothing besides `registerCapabilityCompose` and `writeCompositionTransaction`
  * is exported from that module (already exercised elsewhere), so every
  * scenario here drives the real `anvil capability compose` command end to

@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runAnvilCli } from "../anvil-cli.js";
-import { bufferIO } from "../io.js";
+import { runAnvilCli } from "../../anvil-cli.js";
+import { bufferIO } from "../../io.js";
 
 /**
  * `anvil estate` — targeted coverage of guard clauses and error/failure
@@ -13,7 +13,7 @@ import { bufferIO } from "../io.js";
  * baselines, approval-gated bundle-install collisions, and drift/import
  * failure modes.
  *
- * Nothing in packages/cli/src/commands/estate.ts is exported besides
+ * Nothing in packages/cli/src/commands/estate/estate.ts is exported besides
  * `registerEstate` and `gatewayIdentityDiagnostics` (the latter already has
  * dedicated coverage in estate-identity.test.ts), so every case here drives
  * the real CLI end-to-end through `runAnvilCli`, matching the repo's existing

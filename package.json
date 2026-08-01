@@ -15,6 +15,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "typecheck": "turbo run typecheck",
+    "deadcode": "knip",
     "anvil": "node packages/cli/dist/bin-anvil.js",
     "clean": "turbo run clean && rm -rf node_modules",
     "coverage": "vitest run --coverage --coverage.provider=v8 --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.include=\"packages/*/src/**\" --coverage.exclude=\"**/*.test.ts\" --coverage.reportsDirectory=./coverage-report --exclude=\"**/cookbook*.test.ts\""
@@ -23,7 +24,7 @@
     "@biomejs/biome": "^2.3.5",
     "@types/node": "^22.20.1",
     "@vitest/coverage-v8": "4.1.10",
-    "tsup": "^8.5.0",
+    "knip": "^6.31.0",
     "turbo": "^2.6.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
@@ -32,8 +33,5 @@
     "onlyBuiltDependencies": [
       "esbuild"
     ]
-  },
-  "dependencies": {
-    "@scalar/openapi-parser": "^0.28.8"
   }
 }

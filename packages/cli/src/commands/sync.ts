@@ -63,7 +63,7 @@ interface SyncOptions {
 }
 
 /** The sync action, exported with an injectable clock so tests can pin time. */
-export async function runSync(
+async function runSync(
   specPath: string,
   bundlePath: string,
   opts: SyncOptions,

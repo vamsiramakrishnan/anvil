@@ -27,7 +27,7 @@ import {
   CompositionInputError,
   type CompositionReviewManifest,
 } from "./capability-composition.js";
-import { writeCompositionTransaction } from "./commands/capability-compose.js";
+import { writeCompositionTransaction } from "./commands/capability/capability-compose.js";
 import { bufferIO } from "./io.js";
 
 let work: string;

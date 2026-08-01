@@ -70,13 +70,15 @@ import {
 import { GEMINI_ENTERPRISE_PROFILE, verifyTargetKit } from "@anvil/targets";
 import type { Command } from "commander";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import type { CliIO } from "../io.js";
+import type { CliIO } from "../../io.js";
 import {
   loadWso2ApictlDirectory,
   loadWso2ApictlZip,
   Wso2ApictlCollectionError,
-} from "../wso2-apictl.js";
-import type { CommandContext } from "./context.js";
+} from "../../wso2-apictl.js";
+import type { CommandContext } from "../context.js";
+import { annotate } from "../meta.js";
+import { printDiagnostics as printSourceDiagnostics, sourceService } from "../source.js";
 import {
   buildEstateAdoptionPlan,
   buildEstateSelectionTemplate,
@@ -94,8 +96,6 @@ import {
   dedupeGatewayDiagnostics,
   gatewayDiagnosticAppliesToSelection,
 } from "./gateway-diagnostic-policy.js";
-import { annotate } from "./meta.js";
-import { printDiagnostics as printSourceDiagnostics, sourceService } from "./source.js";
 
 /**
  * `anvil estate` — the CLI seam onto the gateway adapters (ADR-0021). Reads a

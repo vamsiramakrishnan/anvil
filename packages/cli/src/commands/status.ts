@@ -31,23 +31,23 @@ import { recommendsExplicitIdempotencyKey, requiresExplicitIdempotencyKey } from
 import type { CliIO } from "../io.js";
 import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
-import { locateGatewayWorkspace } from "./gateway-workspace.js";
+import { locateGatewayWorkspace } from "./estate/gateway-workspace.js";
 import { inspectIdempotencyStore } from "./idempotency-store.js";
 import { annotate } from "./meta.js";
 import { sourceService } from "./source.js";
 
-export type ProjectionState = "fresh" | "missing" | "corrupt" | "misaligned" | "unverifiable";
-export type RecordState = "fresh" | "missing" | "corrupt" | "failed" | "stale";
-export type DeploymentPlanState = "planned" | "missing" | "corrupt" | "stale";
+type ProjectionState = "fresh" | "missing" | "corrupt" | "misaligned" | "unverifiable";
+type RecordState = "fresh" | "missing" | "corrupt" | "failed" | "stale";
+type DeploymentPlanState = "planned" | "missing" | "corrupt" | "stale";
 
-export interface StatusDiagnostic {
+interface StatusDiagnostic {
   code: string;
   severity: "error" | "warning";
   detail: string;
   path?: string;
 }
 
-export interface ProjectionStatus {
+interface ProjectionStatus {
   id:
     | "canonical"
     | "canonical-json"
@@ -61,7 +61,7 @@ export interface ProjectionStatus {
   detail: string;
 }
 
-export interface TargetSetupStatus {
+interface TargetSetupStatus {
   targetId: string;
   path: string;
   state: "fresh" | "stale" | "corrupt" | "unverifiable";
@@ -76,7 +76,7 @@ export interface TargetSetupStatus {
   detail: string;
 }
 
-export interface IdempotencyStatus {
+interface IdempotencyStatus {
   writes: Array<{
     id: string;
     command: string;
@@ -111,7 +111,7 @@ export interface IdempotencyStatus {
   };
 }
 
-export interface GatewayImportStatus {
+interface GatewayImportStatus {
   state: "bound" | "stale" | "legacy" | "invalid";
   importId: string | null;
   receiptDigest: string | null;
@@ -120,7 +120,7 @@ export interface GatewayImportStatus {
   detail: string;
 }
 
-export interface NextSafeAction {
+interface NextSafeAction {
   code:
     | "repair-core"
     | "resolve-contract"

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   dedupeGatewayDiagnostics,
   gatewayDiagnosticAppliesToSelection,
-} from "./commands/gateway-diagnostic-policy.js";
+} from "./commands/estate/gateway-diagnostic-policy.js";
 
 const PROJECT_A = `sha256:${"a".repeat(64)}`;
 const PROJECT_B = `sha256:${"b".repeat(64)}`;

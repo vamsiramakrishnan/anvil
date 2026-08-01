@@ -5,7 +5,7 @@ import { compile, type GatewayIdentityEvidence } from "@anvil/compiler";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { runAnvilCli } from "./anvil-cli.js";
-import { gatewayIdentityDiagnostics } from "./commands/estate.js";
+import { gatewayIdentityDiagnostics } from "./commands/estate/estate.js";
 import { bufferIO } from "./io.js";
 
 const SPEC = `openapi: 3.0.3

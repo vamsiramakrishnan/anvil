@@ -26,14 +26,14 @@ const SECTION_LABELS = {
 
 const ASIDE_LABELS = { note: "Note", tip: "Tip", caution: "Caution", danger: "Important" };
 
-export function sectionOf(id) {
+function sectionOf(id) {
   const slug = String(id ?? "");
   if (slug === "index" || slug === "") return "start";
   if (slug.startsWith("reference/adr/") || slug === "reference/adr") return "reference/adr";
   return slug.split("/")[0];
 }
 
-export function sectionLabelOf(id) {
+function sectionLabelOf(id) {
   const section = sectionOf(id);
   return SECTION_LABELS[section] ?? section.charAt(0).toUpperCase() + section.slice(1);
 }
@@ -72,7 +72,7 @@ export function siteRootFrom(site, base) {
   return `${String(site ?? "").replace(/\/+$/, "")}${String(base ?? "").replace(/\/+$/, "")}`;
 }
 
-export function urlFor(id, siteRoot) {
+function urlFor(id, siteRoot) {
   return `${siteRoot}/${id === "index" ? "" : `${id}/`}`;
 }
 
@@ -82,7 +82,7 @@ export function urlFor(id, siteRoot) {
 // through byte-identical. The placeholder alphabet (U+0000 NUL + digits) cannot be
 // produced or altered by any of the prose passes below.
 
-export function shelterFences(text) {
+function shelterFences(text) {
   const blocks = [];
   const sheltered = String(text ?? "").replace(
     /^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]*\1`*[ \t]*$/gm,
@@ -94,11 +94,11 @@ export function shelterFences(text) {
   return { sheltered, blocks };
 }
 
-export function restoreFences(text, blocks) {
+function restoreFences(text, blocks) {
   return text.replace(/\u0000F(\d+)\u0000/g, (_, i) => blocks[Number(i)] ?? "");
 }
 
-export function shelterInlineCode(text) {
+function shelterInlineCode(text) {
   const spans = [];
   const sheltered = String(text ?? "").replace(/(`+)(?!`)[^`]+\1(?!`)/g, (match) => {
     spans.push(match);
@@ -107,7 +107,7 @@ export function shelterInlineCode(text) {
   return { sheltered, spans };
 }
 
-export function restoreInlineCode(text, spans) {
+function restoreInlineCode(text, spans) {
   return text.replace(/\u0000C(\d+)\u0000/g, (_, i) => spans[Number(i)] ?? "");
 }
 

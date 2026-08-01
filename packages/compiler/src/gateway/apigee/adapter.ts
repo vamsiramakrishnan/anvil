@@ -5,6 +5,7 @@
  * into the overlay/inventory; message-mutating policies are classified **opaque**.
  */
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
+import { axisMatches, axisMatchesAny } from "../coordinate.js";
 import {
   type ExplicitGatewayIdentityConfiguration,
   projectConfiguredAuthType,
@@ -426,19 +427,12 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
     const parsed = parseExport(connection.config, origin);
     const exp = parsed.exp;
     const proxies = asObjects<ApigeeProxy>(exp.proxies);
-    const proxyIndex = proxies.findIndex((proxy) => {
-      if (proxy.name !== api.id) return false;
-      // A caller-supplied axis is a constraint, never permission to attest a
-      // missing source value as if it matched.
-      if (api.version !== undefined && proxy.revision !== api.version) return false;
-      if (
-        api.environmentId !== undefined &&
-        !asStrings(proxy.environments).includes(api.environmentId)
-      ) {
-        return false;
-      }
-      return true;
-    });
+    const proxyIndex = proxies.findIndex(
+      (proxy) =>
+        proxy.name === api.id &&
+        axisMatches(api.version, proxy.revision) &&
+        axisMatchesAny(api.environmentId, asStrings(proxy.environments)),
+    );
     const proxy = proxies[proxyIndex];
     if (!proxy) {
       const empty = buildGatewayApiImport({

@@ -89,7 +89,7 @@ export function asRecord(value: unknown): Record<string, unknown> {
 }
 
 /** An array, or `[]` — safe to `.map`/`.forEach`/`.findIndex` over. */
-export function asArray<T = unknown>(value: unknown): T[] {
+function asArray<T = unknown>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 

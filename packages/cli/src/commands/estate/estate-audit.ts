@@ -15,8 +15,8 @@ import {
   gatewayDiagnosticAuditSeverity,
 } from "./gateway-diagnostic-policy.js";
 
-export type EstateAuditSeverity = "blocking" | "warning" | "info";
-export type EstateAuditDisposition = "candidate" | "needs_evidence" | "blocked";
+type EstateAuditSeverity = "blocking" | "warning" | "info";
+type EstateAuditDisposition = "candidate" | "needs_evidence" | "blocked";
 
 export interface EstateAuditFinding {
   id: string;

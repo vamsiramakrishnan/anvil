@@ -14,7 +14,7 @@ import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
-import { locateGatewayWorkspace } from "./gateway-workspace.js";
+import { locateGatewayWorkspace } from "./estate/gateway-workspace.js";
 import { annotate } from "./meta.js";
 import { loadAir, resolveAirPath } from "./shared.js";
 

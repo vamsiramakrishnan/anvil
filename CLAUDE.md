@@ -28,6 +28,15 @@ holds behavior checks.
 the deployed unit) · `@anvil/generators` (build-time artifact foundry) ·
 `@anvil/cli` (`anvil` command + shared tool-CLI engine).
 
+Eval, enrich, and deploy-target packages: `@anvil/refinement` (deterministic
+deficiency detection over AIR; the case/evidence/proposal enrich workflow) ·
+`@anvil/harness` (conformance and live-evidence checks against a deployed MCP
+server) · `@anvil/simulator` (contract-faithful, deterministic capability
+simulator) · `@anvil/certification` (static + executable certification checks
+over a bundle) · `@anvil/system-pack` (the portable, content-addressed
+artifact graph Anvil emits) · `@anvil/targets` (versioned agent-platform
+target profiles and kit generation, e.g. Gemini Enterprise).
+
 The magic is not that Anvil generates code. It is that the CLI, MCP server, and
 skill all agree on what an operation means. The highest compliment: "the agent
 stopped guessing."

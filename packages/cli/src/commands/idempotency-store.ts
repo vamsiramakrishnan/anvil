@@ -24,7 +24,7 @@ import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { loadAir } from "./shared.js";
 
-export type IdempotencyStoreContractState = "fresh" | "missing" | "corrupt" | "stale";
+type IdempotencyStoreContractState = "fresh" | "missing" | "corrupt" | "stale";
 
 /**
  * Read and verify the generated store contract and compiler-owned bundle bytes

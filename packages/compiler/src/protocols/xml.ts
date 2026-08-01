@@ -23,12 +23,6 @@ export function localName(qname: string): string {
   return idx >= 0 ? qname.slice(idx + 1) : qname;
 }
 
-/** Prefix of a QName ("tns:Foo" → "tns"), or "" when unprefixed. */
-export function prefixOf(qname: string): string {
-  const idx = qname.indexOf(":");
-  return idx >= 0 ? qname.slice(0, idx) : "";
-}
-
 const ATTRS_KEY = ":@";
 const TEXT_KEY = "#text";
 
@@ -100,9 +94,4 @@ export function findAll(el: XmlElement, local: string): XmlElement[] {
 /** Direct children whose local name matches. */
 export function childrenNamed(el: XmlElement, local: string): XmlElement[] {
   return el.children.filter((c) => localName(c.tag) === local);
-}
-
-/** First descendant with the given local name, or undefined. */
-export function firstNamed(el: XmlElement, local: string): XmlElement | undefined {
-  return findAll(el, local)[0];
 }
