@@ -5,7 +5,29 @@ import { bufferIO } from "./io.js";
 import { createAnvilProgram } from "./program.js";
 import { commandPath, commandUsage, generateAnvilSkill, visibleSubcommands } from "./self-skill.js";
 
+const STALE = "run `anvil skill skills/anvil` and commit the result";
+
 describe("anvil self-skill", () => {
+  it("every generated file matches its checked-in copy under skills/anvil/ (no drift)", () => {
+    // Exhaustive by construction: this walks generateAnvilSkill's own output
+    // keys rather than a manually maintained file list, so a newly added
+    // reference file is covered automatically instead of silently lacking a
+    // drift guard the way reference/commands.md and reference/gateway-
+    // estates.md once did (both drifted from their templates undetected —
+    // only spot-checked with .toContain, never diffed against the checked-in
+    // copy — until a real compile against a messy real-world spec surfaced
+    // the stale content and this test was added to close the gap for good).
+    const program = createAnvilProgram({ io: bufferIO() });
+    const files = generateAnvilSkill(program);
+    for (const [rel, content] of Object.entries(files)) {
+      const checkedIn = readFileSync(
+        new URL(`../../../skills/anvil/${rel}`, import.meta.url),
+        "utf8",
+      );
+      expect(content, `skills/anvil/${rel} is stale — ${STALE}`).toBe(checkedIn);
+    }
+  });
+
   it("documents the Commander tree exactly (walk-and-compare, no drift)", () => {
     const program = createAnvilProgram({ io: bufferIO() });
     const ref = generateAnvilSkill(program)["reference/commands.md"] ?? "";
@@ -111,12 +133,7 @@ describe("anvil self-skill", () => {
     expect(gemini.indexOf("ANVIL_CONFIRM_REGISTRY_GATEWAY_RECONCILE=1")).toBeLessThan(
       gemini.indexOf("ANVIL_CONFIRM_ENGINE_EGRESS_REROUTE=1"),
     );
-    expect(gemini).toBe(
-      readFileSync(
-        new URL("../../../skills/anvil/reference/gemini-enterprise.md", import.meta.url),
-        "utf8",
-      ),
-    );
+    // Drift against the checked-in copy is covered exhaustively above.
   });
 
   it("generates the upstream credential reference from the self-skill source", () => {
@@ -137,12 +154,7 @@ describe("anvil self-skill", () => {
     expect(upstream).toContain("`/readyz` are useful diagnostics");
     expect(upstream).toContain("never accepted as IdP/OBO readiness proof");
     expect(upstream).not.toContain("tls_client_auth");
-    expect(upstream).toBe(
-      readFileSync(
-        new URL("../../../skills/anvil/reference/upstream-credentials.md", import.meta.url),
-        "utf8",
-      ),
-    );
+    // Drift against the checked-in copy is covered exhaustively above.
   });
 
   it("teaches the estate audit and evidence-led view/BFF workflow", () => {
@@ -229,12 +241,7 @@ describe("anvil self-skill", () => {
     expect(composition).toContain("no safe multi-source AIR/MCP materializer");
     expect(composition).not.toContain("generate one MCP server after review");
     expect(evals).toContain("reviews_cross_source_composition_without_materializing");
-    expect(composition).toBe(
-      readFileSync(
-        new URL("../../../skills/anvil/reference/composing-capabilities.md", import.meta.url),
-        "utf8",
-      ),
-    );
+    // Drift against the checked-in copy is covered exhaustively above.
   });
 
   it("teaches durable-write wiring without claiming offline or exactly-once proof", () => {
@@ -262,12 +269,7 @@ describe("anvil self-skill", () => {
     expect(durable).toContain("every compiler-owned bundle");
     expect(durable).toContain("1–255 visible ASCII bytes");
     expect(evals).toContain("proves_durable_write_readiness_honestly");
-    expect(durable).toBe(
-      readFileSync(
-        new URL("../../../skills/anvil/reference/durable-idempotency.md", import.meta.url),
-        "utf8",
-      ),
-    );
+    // Drift against the checked-in copy is covered exhaustively above.
   });
 
   it("`anvil skill` prints SKILL.md to stdout", async () => {
