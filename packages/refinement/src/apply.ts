@@ -100,11 +100,43 @@ function applyOne(
 ): void {
   switch (target.kind) {
     case "operation": {
-      if (key !== "description") return;
       const op = findOperation(air, target.operationId);
       if (!op) return;
-      record(key, op.description, value);
-      op.description = String(value);
+      if (key === "description") {
+        record(key, op.description, value);
+        op.description = String(value);
+        return;
+      }
+      // The idempotency carrier and retry-basis keys below are the sole write
+      // path for `classify-idempotency` — validated upstream (proposal
+      // validation resolves the carrier; the heuristic executor only ever
+      // proposes an admissible enum member), so this layer trusts the value
+      // the same way `description`/`retryable` already do.
+      if (key === "idempotency_mode") {
+        record(key, op.idempotency.mode, value);
+        op.idempotency.mode = value as Operation["idempotency"]["mode"];
+        return;
+      }
+      if (key === "idempotency_mechanism") {
+        record(key, op.idempotency.mechanism, value);
+        op.idempotency.mechanism = value as Operation["idempotency"]["mechanism"];
+        return;
+      }
+      if (key === "idempotency_key") {
+        record(key, op.idempotency.key, value);
+        op.idempotency.key = String(value);
+        return;
+      }
+      if (key === "idempotency_key_derivation") {
+        record(key, op.idempotency.keyDerivation, value);
+        op.idempotency.keyDerivation = value as Operation["idempotency"]["keyDerivation"];
+        return;
+      }
+      if (key === "retry_basis") {
+        record(key, op.retries.basis, value);
+        op.retries.basis = value as Operation["retries"]["basis"];
+        return;
+      }
       return;
     }
     case "capability": {

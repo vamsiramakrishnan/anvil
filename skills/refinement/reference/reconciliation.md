@@ -20,6 +20,7 @@ A proposal is rejected unless every check its skill declares passes.
 - `description_not_tautological` — the description adds meaning beyond the name
 - `examples_validate_against_schema` — every example validates against the field's schema
 - `error_message_nonempty` — the error message is non-empty
+- `idempotency_carrier_resolves` — a proposed idempotency mode/mechanism/key resolves cleanly against the operation (the same check the compiler runs)
 
 ## Eval families (the measurement)
 For a refinement we score ONLY the families it affects, before and after applying

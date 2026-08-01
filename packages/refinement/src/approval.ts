@@ -53,6 +53,29 @@ export function classifyApproval(input: ApprovalInput): ApprovalDecision {
     // not count), so a proposal backed only by such artifacts still routes to review.
     !grounding.some(isVerifiedGrounding);
 
+  // Rule 0 — idempotency classification guard: AIR's own default for an
+  // unclassified mutation is `idempotency.mode: "none"`, already the most
+  // conservative state possible (no auto-retry). Every reclassification a
+  // `classify-idempotency` proposal can make moves away from that default,
+  // never further from it — there is no "tightening" direction here the way
+  // `retryable=false` tightens error handling, so unlike every other rule
+  // below, this one is not an evidence-strength threshold. It always routes
+  // to review, regardless of skill name, strength, or verification: checked
+  // on the FIELD, not on skill membership in AUTO_APPROVAL_SKILLS, so this
+  // stays true even if a future skill is added that also happens to touch
+  // these keys.
+  if (
+    "idempotency_mode" in set ||
+    "idempotency_mechanism" in set ||
+    "idempotency_key" in set ||
+    "idempotency_key_derivation" in set
+  ) {
+    return {
+      tier: "review",
+      reason: "an idempotency classification is always a person's decision, never automatic",
+    };
+  }
+
   // Rule 1 — safety loosening guard: enabling retries reduces safety, so it is
   // never auto-approved on anything less than authoritative evidence.
   if (set.retryable === true && strength !== "authoritative") {
