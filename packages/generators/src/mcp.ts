@@ -100,15 +100,22 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import { buildMcpServer } from "@anvil/mcp-runtime";
+import {
+  buildMcpServer,
+  loadInboundAuthConfig,
+  protectedResourceMetadata,
+  verifyInboundToken,
+} from "@anvil/mcp-runtime";
 import {
   allowedHostsFor,
+  currentInboundIdentity,
   FetchTransport,
   InMemoryObserver,
   loadRuntimeConfig,
   probeLedgerReadiness,
   resolveCredentials,
   resolveLedger,
+  withInboundIdentity,
 } from "@anvil/runtime";
 import { loadAirDocument } from "@anvil/air";
 
@@ -141,7 +148,66 @@ const mcpContext = () => ({
   allowedHosts,
   env: config.env,
   timeoutMs: config.upstreamTimeoutMs,
+  // The per-request caller identity (set by withInboundIdentity around dispatch);
+  // the credential resolver uses it as the subject_token for OBO exchange.
+  inbound: currentInboundIdentity(),
 });
+
+// Inbound authentication: this server is an OAuth 2 resource server, exactly
+// like runtime/server.js. Mode "none" (the default) admits everything, for
+// local runs behind other controls — but every deployed transport validates
+// the same way, so a client cannot bypass ANVIL_INBOUND_AUTH by using SSE.
+const inboundAuth = loadInboundAuthConfig();
+const resourceMetadata = protectedResourceMetadata(inboundAuth);
+
+async function authorized(req, res) {
+  const header = req.headers["authorization"];
+  const result = await verifyInboundToken(header, inboundAuth);
+  if (!result.ok) {
+    res.writeHead(result.status, {
+      "content-type": "application/json",
+      "www-authenticate": result.wwwAuthenticate,
+    });
+    res.end(JSON.stringify({ error: { code: result.error, message: result.description } }));
+    return { ok: false };
+  }
+  const rawToken =
+    typeof header === "string" ? header.replace(/^Bearer\\s+/i, "").trim() : undefined;
+  if (inboundAuth.mode !== "none" && !rawToken) {
+    res.writeHead(401, {
+      "content-type": "application/json",
+      "www-authenticate": 'Bearer error="invalid_token"',
+    });
+    res.end(
+      JSON.stringify({
+        error: { code: "invalid_token", message: "Verified bearer token is unavailable." },
+      }),
+    );
+    return { ok: false };
+  }
+  // Inbound mode "none" deliberately performs no token verification. Never promote a
+  // caller-supplied bearer from that mode into a "validated" OBO subject.
+  return {
+    ok: true,
+    identity:
+      inboundAuth.mode === "none" ? undefined : inboundIdentityFrom(rawToken, result.claims),
+  };
+}
+
+// The raw caller token + its verified claims → the OBO subject. The raw bearer is
+// forwarded ONLY to the configured token endpoint for exchange; it is never sent
+// to the upstream directly, recorded, or logged.
+function inboundIdentityFrom(raw, claims) {
+  if (!raw) return undefined;
+  return {
+    subjectToken: raw,
+    subjectTokenType: raw.split(".").length === 3 ? "jwt" : "access_token",
+    sub: claims.sub,
+    email: claims.email,
+    scope: claims.scope,
+    claims,
+  };
+}
 
 // One live SSE transport per session, keyed by its sessionId. POST /messages
 // carries ?sessionId=… back to the stream that owns the conversation.
@@ -168,22 +234,34 @@ const server = createServer(async (req, res) => {
           code: "ledger_unavailable",
         });
   }
+  if (url.pathname === "/.well-known/oauth-protected-resource") {
+    return resourceMetadata
+      ? send(res, 200, resourceMetadata)
+      : send(res, 404, { error: { code: "not_found", message: "Inbound auth is not configured." } });
+  }
   if (req.method === "GET" && url.pathname === "/sse") {
+    const auth = await authorized(req, res);
+    if (!auth.ok) return;
     const transport = new SSEServerTransport("/messages", res);
-    sessions.set(transport.sessionId, transport);
+    sessions.set(transport.sessionId, { transport, identity: auth.identity });
     res.on("close", () => sessions.delete(transport.sessionId));
     const mcp = buildMcpServer(air, { resources, contextFor: () => mcpContext() });
-    await mcp.connect(transport);
-    return;
+    return auth.identity
+      ? withInboundIdentity(auth.identity, () => mcp.connect(transport))
+      : mcp.connect(transport);
   }
   if (req.method === "POST" && url.pathname === "/messages") {
+    const auth = await authorized(req, res);
+    if (!auth.ok) return;
     const sessionId = url.searchParams.get("sessionId");
-    const transport = sessionId ? sessions.get(sessionId) : undefined;
-    if (!transport)
+    const entry = sessionId ? sessions.get(sessionId) : undefined;
+    if (!entry)
       return send(res, 400, {
         error: { code: "no_session", message: "Unknown or missing sessionId. Open GET /sse first." },
       });
-    return transport.handlePostMessage(req, res);
+    return entry.identity
+      ? withInboundIdentity(entry.identity, () => entry.transport.handlePostMessage(req, res))
+      : entry.transport.handlePostMessage(req, res);
   }
   return send(res, 404, {
     error: { code: "not_found", message: "MCP over SSE: GET /sse, then POST /messages?sessionId=…" },

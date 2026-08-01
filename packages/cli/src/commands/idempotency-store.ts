@@ -17,6 +17,7 @@ import {
   readBundleDir,
   resourceOptionsFromGenerationMetadata,
 } from "@anvil/generators";
+import { DEFAULT_LEDGER_RESULT_TTL_SECONDS } from "@anvil/runtime";
 import type { Command } from "commander";
 import { recommendsExplicitIdempotencyKey, requiresExplicitIdempotencyKey } from "../explain.js";
 import type { CliIO } from "../io.js";
@@ -225,14 +226,15 @@ export async function runDeployLedger(
       managedStoreRequired: managedStoreOperationIds.has(operation.id),
     }));
 
-  if (contract.backend === "none") {
-    return renderNoStore(air.service.id, inspection, writes, opts, io);
-  }
-
-  const ttlSeconds = parseLedgerTtlSeconds(
-    opts.ttlSeconds,
-    contract.firestore.retention.resultTtlSecondsDefault,
-  );
+  // Parsed/validated ahead of the `backend === "none"` early return below so
+  // malformed or inconsistent flags are rejected consistently regardless of
+  // which backend canonical AIR requires — a no-store bundle must not
+  // silently ignore flags that would fail loudly on a firestore-backed one.
+  const ttlSecondsFallback =
+    contract.backend === "firestore"
+      ? contract.firestore.retention.resultTtlSecondsDefault
+      : DEFAULT_LEDGER_RESULT_TTL_SECONDS;
+  const ttlSeconds = parseLedgerTtlSeconds(opts.ttlSeconds, ttlSecondsFallback);
   if (ttlSeconds === null) {
     io.err("--ttl-seconds must be an integer from 60 to 31536000.");
     return 1;
@@ -258,6 +260,13 @@ export async function runDeployLedger(
     );
     return 1;
   }
+  if (contract.backend === "none") {
+    return renderNoStore(air.service.id, inspection, writes, opts, io);
+  }
+
+  // Firestore-only: renderNoStore's own --tfvars handling always emits `{}`
+  // and intentionally ignores --project/--database, so this check must not
+  // run before the backend === "none" branch above.
   if (opts.tfvars === true && (opts.project === undefined || opts.database === undefined)) {
     io.err(
       "--tfvars requires --project and --database so the emitted input has no unresolved store coordinate.",

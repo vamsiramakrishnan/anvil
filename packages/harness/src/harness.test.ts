@@ -315,4 +315,55 @@ describe("reconcile conflict gate", () => {
     expect(decision?.accepted).toBe(false);
     expect(decision?.reason).toContain("conflicting evidence");
   });
+
+  it("applies the fields from the claim that justified acceptance, not just the first-listed one (bug-bash)", () => {
+    const op = air.operations.find((o) => o.canonicalName === "create_refund");
+    if (!op) throw new Error("fixture missing create_refund");
+    // Both findings tighten (so no direction conflict), but they differ in
+    // reliability and in the detail they carry. The lower-reliability finding
+    // is listed first in source-config order; the higher-reliability one — the
+    // one whose reliability the accept decision actually cites — carries the
+    // header/mechanism detail.
+    const findings: HarnessFinding[] = [
+      {
+        operationId: op.id,
+        sourceId: "wiki",
+        evidence: {
+          subject: op.id,
+          predicate: "idempotency.mode",
+          value: "required",
+          source: "source_docs",
+          confidence: 0.6,
+          reliability: 0.5,
+        },
+        claim: { type: "idempotency", mode: "required", direction: "tighten" },
+      },
+      {
+        operationId: op.id,
+        sourceId: "impl",
+        evidence: {
+          subject: op.id,
+          predicate: "idempotency.mode",
+          value: "required",
+          source: "source_impl",
+          confidence: 0.95,
+          reliability: 0.9,
+        },
+        claim: {
+          type: "idempotency",
+          mode: "required",
+          mechanism: "header",
+          header: "Idempotency-Key",
+          direction: "tighten",
+        },
+      },
+    ];
+    const { patch, decisions } = reconcile(op, findings);
+    const decision = decisions.find((d) => d.claim.type === "idempotency");
+    expect(decision?.accepted).toBe(true);
+    // The reliability cited in the decision is the higher one (0.9) …
+    expect(decision?.evidenceReliability).toBeCloseTo(0.9);
+    // … so the applied patch must come from that same finding, mechanism/header included.
+    expect(patch.idempotency).toMatchObject({ key_location: "header", header: "Idempotency-Key" });
+  });
 });

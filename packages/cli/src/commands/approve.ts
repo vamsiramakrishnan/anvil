@@ -1,19 +1,6 @@
-import {
-  cpSync,
-  existsSync,
-  lstatSync,
-  mkdtempSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import {
-  approveOperations,
-  GatewayImportReceiptView,
-  gatewayBundleManifest,
-  isGatewayLifecycleArtifact,
-} from "@anvil/compiler";
+import { approveOperations, GatewayImportReceiptView } from "@anvil/compiler";
 import {
   certifyBundle,
   GENERATION_METADATA_FILE,
@@ -23,7 +10,6 @@ import {
   resourceOptionsFromGenerationMetadata,
   writeBundle,
 } from "@anvil/generators";
-import { GEMINI_ENTERPRISE_PROFILE, verifyTargetKit } from "@anvil/targets";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import { resolveBundleDir } from "./certify.js";
@@ -125,12 +111,7 @@ export function runApprove(path: string, ids: string[], io: CliIO, deps: Approve
   }
   const newlyApproved = pendingApproval;
 
-  const result = reprojectBundleAtomically(
-    path,
-    air,
-    "Operation approval regenerated executable bundle projections after the immutable gateway import receipt was issued.",
-    deps,
-  );
+  const result = reprojectBundleAtomically(path, air, deps);
 
   io.out(
     `Approved ${newlyApproved.length} new operation(s) (${requested.length} requested) and atomically regenerated ${result.generatedFileCount} bundle files in ${bundleDir}.`,
@@ -240,7 +221,6 @@ function assertImmutableGatewayLineage(
 export function reprojectBundleAtomically(
   path: string,
   air: ReturnType<typeof loadAir>,
-  gatewayStaleReason: string,
   deps: ApproveDeps = {},
 ): BundleReprojectionResult {
   const bundleDir = resolve(resolveBundleDir(path));
@@ -267,15 +247,12 @@ export function reprojectBundleAtomically(
     });
     resetGeneratedRoots(stageDir, generated.files);
     writeBundle(stageDir, generated);
-    const gatewayLineageIntentionallyStale = markGatewayLineageStale(
-      stageDir,
-      existingFiles,
-      generated.files,
-      air,
-      projectionsChanged,
-      gatewayStaleReason,
-    );
-    verifyStagedBundle(stageDir, generated.files, air, gatewayLineageIntentionallyStale);
+    // No path reaches this point with a receipt-bound bundle whose projections
+    // changed: assertImmutableGatewayLineage above unconditionally refuses
+    // that case first. Reprojection here is therefore never gateway-lineage
+    // stale by intent — verifyStagedBundle enforces the gateway-lineage-current
+    // contract check like every other contract check.
+    verifyStagedBundle(stageDir, generated.files, air, false);
     retainedBackup = replaceBundle(bundleDir, stageDir, deps);
   } finally {
     // After a successful install the rename consumed stageDir. After any
@@ -290,66 +267,6 @@ export function reprojectBundleAtomically(
     projectionsChanged,
     ...(retainedBackup ? { retainedBackup } : {}),
   };
-}
-
-function markGatewayLineageStale(
-  stageDir: string,
-  existingFiles: Record<string, string>,
-  generatedFiles: Record<string, string>,
-  air: ReturnType<typeof loadAir>,
-  projectionsChanged: boolean,
-  reason: string,
-): boolean {
-  if (!projectionsChanged) return false;
-  const text = existingFiles["import.receipt.json"];
-  if (text === undefined) return false;
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return false;
-  }
-  const parsed = GatewayImportReceiptView.safeParse(raw);
-  if (!parsed.success) return false;
-  const stagedFiles = readBundleDir(stageDir);
-  const targetPaths = Object.keys(stagedFiles).filter((path) => path.startsWith("targets/"));
-  if (targetPaths.some((path) => !path.startsWith(`targets/${GEMINI_ENTERPRISE_PROFILE.id}/`))) {
-    throw new Error(
-      "Gateway approval found an unrecognized target subtree; move or remove it before changing receipt-bound output.",
-    );
-  }
-  const verifiedTarget = verifyTargetKit(air, GEMINI_ENTERPRISE_PROFILE, stagedFiles);
-  if (!verifiedTarget.ok) {
-    throw new Error(
-      `Gateway approval cannot bind an unverified target subtree: ${verifiedTarget.findings.map((finding) => finding.detail).join("; ")}`,
-    );
-  }
-  const generatedPaths = new Set(Object.keys(generatedFiles));
-  const verifiedTargetPaths = new Set(verifiedTarget.actualFiles);
-  const scopedFiles = Object.fromEntries(
-    Object.entries(stagedFiles).filter(
-      ([path]) =>
-        generatedPaths.has(path) ||
-        isGatewayLifecycleArtifact(path) ||
-        verifiedTargetPaths.has(path),
-    ),
-  );
-  const currentOutput = gatewayBundleManifest(scopedFiles);
-  const stale = GatewayImportReceiptView.parse({
-    ...parsed.data,
-    lineage: {
-      status: "stale",
-      reason,
-      currentOutputDigest: currentOutput.digest,
-      currentOutputFiles: currentOutput.files,
-    },
-  });
-  writeFileSync(
-    join(stageDir, "import.receipt.json"),
-    `${JSON.stringify(stale, null, 2)}\n`,
-    "utf8",
-  );
-  return true;
 }
 
 function assertSafeBundleRoot(bundleDir: string, airPath: string): void {

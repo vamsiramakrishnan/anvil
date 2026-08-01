@@ -103,6 +103,43 @@ describe("the gate kills safety mutants", () => {
   });
 });
 
+describe("fault injection on a mutation-only approved surface (bug-bash)", () => {
+  it("still detects normalized fault handling when no read op is approved", async () => {
+    // Only a gated mutation is on the approved surface: confirmation required
+    // AND a required idempotency key. Before the fix, exec/fault_injection
+    // invoked this op with a bare context (no confirm/idempotencyKey), so it
+    // was rejected by the safety gates before ever reaching the fault branch,
+    // and certification failed even though fault handling was correct.
+    const mutOnlySpec = `openapi: "3.0.3"
+info: { title: Refunds, version: "1.0.0" }
+paths:
+  /refunds:
+    post:
+      operationId: createRefund
+      tags: [refunds]
+      responses: { "201": { description: created } }
+`;
+    const compiled = await compile({ spec: mutOnlySpec, serviceId: "refunds-mut-only" });
+    const mutOnly = approveOperations(
+      compiled,
+      compiled.operations.map((o) => o.id),
+    );
+    for (const op of mutOnly.operations) {
+      op.effect.resource = "refund";
+      op.confirmation = { required: true };
+      op.idempotency = {
+        mode: "required",
+        mechanism: "header",
+        key: "Idempotency-Key",
+        keyDerivation: "request_fingerprint",
+      };
+    }
+    const record = certify(mutOnly, { executable: true });
+    const faultCheck = record.checks.find((c) => c.id === "exec/fault_injection");
+    expect(faultCheck).toMatchObject({ ok: true });
+  });
+});
+
 describe("review fixes — honest grading and complete expiry", () => {
   it("a surface with no safety-sensitive controls is simulator_exercised, not certified (#20)", async () => {
     // A read-only service: nothing to confirm, no scopes, no non-idempotent

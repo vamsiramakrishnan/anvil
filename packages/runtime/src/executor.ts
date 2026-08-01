@@ -1067,6 +1067,12 @@ export async function execute(
               // The upstream acknowledged the write. Never release this
               // reservation when persistence of the replay result is unknown:
               // doing so could turn a ledger outage into a duplicate mutation.
+              // The reservation is now ambiguous/unconfirmed rather than
+              // merely reserved, matching the sawPostResponseFailure branch
+              // below.
+              record.ledger = "in_progress";
+              await runHook(ctx.policy?.postResponse, request, res);
+              await runHook(ctx.policy?.postExecute, request, res);
               return fail(
                 ledgerUnavailableError(op.id, traceId, "complete", true, ledgerReference),
               );

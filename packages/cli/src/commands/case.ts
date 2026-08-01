@@ -411,14 +411,29 @@ async function runCaseAddEvidence(
   io: CliIO,
 ): Promise<number> {
   const value = opts.value !== undefined ? coerceValue(opts.value) : undefined;
-  const confidence = opts.confidence !== undefined ? Number(opts.confidence) : undefined;
+  let confidence: number | undefined;
+  if (opts.confidence !== undefined) {
+    confidence = Number(opts.confidence);
+    if (!Number.isFinite(confidence)) {
+      io.err(`Invalid --confidence '${opts.confidence}': expected a number.`);
+      return 1;
+    }
+  }
   // --lines a-b (or a) → a verified filesystem coordinate for --path.
   let startLine: number | undefined;
   let endLine: number | undefined;
   if (opts.lines !== undefined) {
     const [a, b] = opts.lines.split("-").map((n) => Number(n.trim()));
-    startLine = Number.isFinite(a) ? a : undefined;
-    endLine = Number.isFinite(b) ? b : startLine;
+    if (!Number.isFinite(a)) {
+      io.err(`Invalid --lines '${opts.lines}': expected a line number or range like 12 or 12-34.`);
+      return 1;
+    }
+    startLine = a;
+    endLine = b !== undefined && opts.lines.includes("-") ? b : startLine;
+    if (!Number.isFinite(endLine)) {
+      io.err(`Invalid --lines '${opts.lines}': expected a line number or range like 12 or 12-34.`);
+      return 1;
+    }
   }
   const input: AddEvidenceInput = {
     predicate: opts.predicate,
@@ -430,7 +445,7 @@ async function runCaseAddEvidence(
     uri: opts.uri,
     ref: opts.ref,
     note: opts.note,
-    confidence: Number.isFinite(confidence) ? confidence : undefined,
+    confidence,
   };
   io.out(await caseService.addEvidence(dir, input));
   return 0;

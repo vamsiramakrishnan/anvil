@@ -95,6 +95,12 @@ function isLoosening(predicate: SemanticPredicate, base: unknown, candidate: unk
       // Any move away from "none" makes the operation retry-eligible and can drop
       // the non-idempotent confirmation trigger — a loosening that needs authority.
       return base === "none" && candidate !== "none";
+    case "state":
+      // Moving to "approved" exposes the operation on the generated surface, and
+      // moving off "blocked" lifts an explicit block — both are loosenings that
+      // require an authoritative origin (operator/manifest), never a bare
+      // investigation/observed_traffic assertion.
+      return candidate !== base && (candidate === "approved" || base === "blocked");
     default:
       return false;
   }

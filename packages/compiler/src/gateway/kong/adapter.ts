@@ -309,6 +309,28 @@ export class KongGatewayAdapter implements GatewayAdapter<KongConnection> {
       ...unmodeledTopLevelPluginDiagnostics(parsed.config, origin),
       ...unmodeledRoutePluginDiagnostics(service, svcIndex, origin),
     );
+    if (api.version !== undefined || api.environmentId !== undefined) {
+      // Kong declarative services carry no version/environment field for
+      // Anvil to verify against. Rather than silently drop the caller's
+      // disambiguating axis (and risk binding it to the wrong same-named
+      // service), surface that the axis could not be enforced.
+      norm.diagnostics.push({
+        level: "warning",
+        code: "kong/unenforced_coordinate_axis",
+        message: `Kong service '${service.name}' has no version/environment axis; the requested ${[
+          ...(api.version !== undefined ? ["version"] : []),
+          ...(api.environmentId !== undefined ? ["environmentId"] : []),
+        ].join("/")} coordinate could not be verified and was ignored for service selection.`,
+        coordinate: { origin, pointer: `/services/${svcIndex}` },
+        subject: {
+          api: {
+            id: api.id,
+            ...(api.version ? { revision: api.version } : {}),
+            ...(api.environmentId ? { environment: api.environmentId } : {}),
+          },
+        },
+      });
+    }
     return {
       ...buildGatewayApiImport({
         originKind: "kong",

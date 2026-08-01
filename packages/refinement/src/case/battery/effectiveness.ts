@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type AirDocument, loadAirDocument } from "@anvil/air";
+import type { Refinement } from "../../model.js";
 import { buildRefinementPlan } from "../../plan.js";
 import { skillFor } from "../../skills/registry.js";
 import type { AgentDriver } from "../driver.js";
@@ -146,7 +147,25 @@ export async function runEffectivenessCase(
   await driver.run(dir);
 
   const result = readInvestigation(dir);
-  const refinement = result.status === "proposal_generated" ? closeCase(air, dir) : undefined;
+  // A "proposal_generated" status only means a proposalDoc exists and validation
+  // isn't recorded rejected (executor.ts readInvestigation) — it is also true when
+  // validate-proposal was never run at all. closeCase then refuses (throws) in that
+  // case. Score that refusal the same way the scripted-scenario runner (run.ts) does:
+  // as a non-grounded, rejected outcome rather than letting it crash the whole
+  // battery loop and discard every row computed so far.
+  let refinement: Refinement | undefined;
+  let closeFailed = false;
+  if (result.status === "proposal_generated") {
+    try {
+      refinement = closeCase(air, dir);
+    } catch (err) {
+      if (err instanceof Error && /^Cannot close: this case's proposal was/.test(err.message)) {
+        closeFailed = true;
+      } else {
+        throw err;
+      }
+    }
+  }
 
   const citedUris = new Set(result.artifacts.map((a) => a.uri));
   const expected = c.labels.expectedEvidence;
@@ -163,7 +182,11 @@ export async function runEffectivenessCase(
     expected: c.labels.expectedOutcome,
     observed: result.status,
     outcomeCorrect: result.status === c.labels.expectedOutcome,
-    grounded: refinement ? refinement.status !== "rejected" && unsupportedClaims === 0 : true,
+    grounded: closeFailed
+      ? false
+      : refinement
+        ? refinement.status !== "rejected" && unsupportedClaims === 0
+        : true,
     unsupportedClaims,
     evidenceRecall,
     conflictExpected: c.labels.expectedOutcome === "conflicted",

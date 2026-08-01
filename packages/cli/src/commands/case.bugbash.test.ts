@@ -415,10 +415,9 @@ describe("anvil case add-evidence", () => {
       expect(io.stderr[0]).toContain("Invalid line range 0-5 for 'service.ts' (5 lines).");
     }
 
-    // A malformed --lines value ("abc" — not "a" or "a-b") is not rejected: it
-    // silently degrades to "no line range", reading the whole file instead of
-    // erroring on the caller's mistake. See case.ts:418-422; minor UX bug, not
-    // asserted as a failure since nothing here actually crashes.
+    // A malformed --lines value ("abc" — not "a" or "a-b") is rejected outright
+    // with a validation error naming --lines, instead of silently degrading to
+    // "no line range" and reading the whole file.
     {
       const { code, io } = await runCli([
         "case",
@@ -429,13 +428,14 @@ describe("anvil case add-evidence", () => {
         "--source",
         "test_fixture",
         "--value",
-        "whole file used because 'abc' silently failed to parse as a line range",
+        "should be rejected because 'abc' is not a valid line range",
         "--path",
         "service.ts",
         "--lines",
         "abc",
       ]);
-      expect(code, io.text()).toBe(0);
+      expect(code).toBe(1);
+      expect(io.stderr[0]).toContain("Invalid --lines 'abc'");
     }
 
     // Both --path and --uri.
@@ -514,8 +514,8 @@ describe("anvil case add-evidence", () => {
       expect(io.stderr[0]).toContain("Output: field.description");
     }
 
-    // An unparsable --confidence falls back to the skill's 0.8 default rather
-    // than erroring (Number.isFinite(NaN) is false → undefined → ?? 0.8).
+    // An unparsable --confidence is rejected outright with a validation error
+    // naming --confidence, instead of silently dropping the field.
     {
       const { code, io } = await runCli([
         "case",
@@ -532,7 +532,8 @@ describe("anvil case add-evidence", () => {
         "--confidence",
         "not-a-number",
       ]);
-      expect(code, io.text()).toBe(0);
+      expect(code).toBe(1);
+      expect(io.stderr[0]).toContain("Invalid --confidence 'not-a-number'");
     }
 
     // Freeze the research stage via synthesize, then confirm add-evidence refuses.

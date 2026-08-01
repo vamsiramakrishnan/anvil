@@ -426,14 +426,19 @@ export class ApigeeGatewayAdapter implements GatewayAdapter<ApigeeConnection> {
     const parsed = parseExport(connection.config, origin);
     const exp = parsed.exp;
     const proxies = asObjects<ApigeeProxy>(exp.proxies);
-    const proxyIndex = proxies.findIndex(
-      (proxy) =>
-        proxy.name === api.id &&
-        (!api.version || !proxy.revision || proxy.revision === api.version) &&
-        (!api.environmentId ||
-          asStrings(proxy.environments).length === 0 ||
-          asStrings(proxy.environments).includes(api.environmentId)),
-    );
+    const proxyIndex = proxies.findIndex((proxy) => {
+      if (proxy.name !== api.id) return false;
+      // A caller-supplied axis is a constraint, never permission to attest a
+      // missing source value as if it matched.
+      if (api.version !== undefined && proxy.revision !== api.version) return false;
+      if (
+        api.environmentId !== undefined &&
+        !asStrings(proxy.environments).includes(api.environmentId)
+      ) {
+        return false;
+      }
+      return true;
+    });
     const proxy = proxies[proxyIndex];
     if (!proxy) {
       const empty = buildGatewayApiImport({

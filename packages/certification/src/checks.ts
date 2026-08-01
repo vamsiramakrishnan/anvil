@@ -169,7 +169,16 @@ export function executableChecks(air: AirDocument, seed = 1): CertificationCheck
     checks.push(check("exec/fault_injection", "executable", true, "no operations"));
   } else {
     const r = record(
-      sim.invoke(tool(anyOp), {}, { principalId: principalFor(anyOp), faultScenario: "outage" }),
+      sim.invoke(
+        tool(anyOp),
+        {},
+        {
+          principalId: principalFor(anyOp),
+          confirm: true,
+          idempotencyKey: "cert-fault-key",
+          faultScenario: "outage",
+        },
+      ),
     );
     checks.push(
       check("exec/fault_injection", "executable", !r.ok && r.error.code === "upstream_unavailable"),

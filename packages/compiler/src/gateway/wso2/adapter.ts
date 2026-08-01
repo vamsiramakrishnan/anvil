@@ -902,7 +902,12 @@ export class Wso2GatewayAdapter implements GatewayAdapter<Wso2Connection> {
           contract: routeOnlyContract({ origin: apiOrigin, pointer }),
           productIds: [],
           owner: api.provider,
-          authSummary: asStrings(api.securityScheme).join(", ") || undefined,
+          authSummary:
+            asStrings(api.securityScheme).join(", ") ||
+            (asObjects<WsoOperation>(api.operations).some((op) => Boolean(op.authType)) ||
+            norm.facts.length > 0
+              ? "scoped"
+              : undefined),
           ...(norm.identityEvidence.length > 0 ? { identityEvidence: norm.identityEvidence } : {}),
           ...(artifacts.length > 0 ? { artifacts } : {}),
           hasQuota: norm.hasQuota,
