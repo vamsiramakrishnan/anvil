@@ -332,7 +332,8 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
         hasSpec: false,
         contract: routeOnlyContract({ origin, pointer: `/apis/${i}` }),
         productIds: norm.productIds,
-        authSummary: asStrings(api.oauthProviders).length > 0 ? "OAuth2" : undefined,
+        authSummary:
+          asStrings(api.oauthProviders).length > 0 || norm.facts.length > 0 ? "OAuth2" : undefined,
         ...(norm.identityEvidence.length > 0 ? { identityEvidence: norm.identityEvidence } : {}),
         hasQuota: norm.hasQuota,
       };
@@ -364,7 +365,7 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
     const apiIndex = apis.findIndex(
       (candidate) =>
         candidate.name === api.id &&
-        (!api.version || !candidate.version || candidate.version === api.version),
+        (api.version === undefined || candidate.version === api.version),
     );
     const found = apis[apiIndex];
     if (!found) {

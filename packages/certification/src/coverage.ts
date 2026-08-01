@@ -209,7 +209,7 @@ export function coverageMatrix(air: AirDocument, options: CoverageOptions = {}):
     // --- fault --------------------------------------------------------------
     // Faults fire after the gates, so drive them with a fully-satisfied context.
     for (const [variant, expected] of [
-      ["none", op.effect.kind === "read" ? "ok" : "ok"],
+      ["none", "ok"],
       ["throttle", "rate_limited"],
       ["outage", "upstream_unavailable"],
       ["conflict", "conflict"],

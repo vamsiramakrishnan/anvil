@@ -57,4 +57,26 @@ describe("anvil simulate", () => {
       "pagination",
     ]);
   });
+
+  it("honors an explicit --seed 0 instead of silently coercing it to 1", () => {
+    const io = bufferIO();
+    const code = runSimulate(dir, { seed: "0", json: true }, io);
+    expect(code, io.text()).toBe(0);
+    const report = JSON.parse(io.text());
+    expect(report.coverage.seed).toBe(0);
+  });
+
+  it("rejects a non-numeric --seed instead of silently substituting 1", () => {
+    const io = bufferIO();
+    const code = runSimulate(dir, { seed: "banana" }, io);
+    expect(code).toBe(1);
+    expect(io.text()).toContain("Invalid --seed 'banana'");
+  });
+
+  it("rejects a negative --seed", () => {
+    const io = bufferIO();
+    const code = runSimulate(dir, { seed: "-1" }, io);
+    expect(code).toBe(1);
+    expect(io.text()).toContain("Invalid --seed '-1'");
+  });
 });

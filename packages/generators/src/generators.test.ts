@@ -83,6 +83,42 @@ describe("MCP server entrypoints — two transports, one runtime", () => {
       expect(src).toContain("resolveCredentials");
     }
   });
+
+  it("gates the remote SSE server on the same inbound auth as the StreamableHTTP server", () => {
+    const sse = generateMcpSseServerSource(air);
+    // Syntactically valid, generated JavaScript.
+    const checked = spawnSync(process.execPath, ["--input-type=module", "--check", "-"], {
+      input: sse,
+      encoding: "utf8",
+    });
+    expect(checked.status, checked.stderr).toBe(0);
+
+    // Same inbound-auth machinery as runtime/server.js: loaded config, token
+    // verification, and the resource-metadata discovery route.
+    expect(sse).toContain("loadInboundAuthConfig");
+    expect(sse).toContain("verifyInboundToken");
+    expect(sse).toContain("protectedResourceMetadata");
+    expect(sse).toContain("/.well-known/oauth-protected-resource");
+    expect(sse).toContain("async function authorized(req, res)");
+
+    // GET /sse and POST /messages are both gated on `authorized` before doing
+    // any protocol work — a client cannot reach a tool without a verified token
+    // when ANVIL_INBOUND_AUTH requires one.
+    const sseRoute = sse.indexOf('url.pathname === "/sse"');
+    const sseAuth = sse.indexOf("const auth = await authorized(req, res)", sseRoute);
+    const sseConnect = sse.indexOf("mcp.connect(transport)", sseRoute);
+    expect(sseAuth).toBeGreaterThan(-1);
+    expect(sseAuth).toBeLessThan(sseConnect);
+
+    const messagesRoute = sse.indexOf('url.pathname === "/messages"');
+    const messagesAuth = sse.indexOf("const auth = await authorized(req, res)", messagesRoute);
+    const messagesDispatch = sse.indexOf("handlePostMessage(req, res)", messagesRoute);
+    expect(messagesAuth).toBeGreaterThan(-1);
+    expect(messagesAuth).toBeLessThan(messagesDispatch);
+
+    // OBO credential resolution works on this transport too.
+    expect(sse).toContain("inbound: currentInboundIdentity()");
+  });
 });
 
 describe("deploy: upstream credential wiring", () => {

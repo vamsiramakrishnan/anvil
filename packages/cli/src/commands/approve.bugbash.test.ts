@@ -455,7 +455,7 @@ describe("anvil approve — immutable gateway import lineage guard", () => {
     expect(air.operations.find((op) => op.id === target.id)?.state).toBe("approved");
 
     const before = readBundleDir(bundle);
-    expect(() => reprojectBundleAtomically(bundle, air, "test reprojection reason")).toThrow(
+    expect(() => reprojectBundleAtomically(bundle, air)).toThrow(
       /^Bundle reprojection refused: .* is bound to immutable gateway receipt/,
     );
     expect(readBundleDir(bundle)).toEqual(before);

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ClaudeCodeAgentDriver } from "../driver.js";
+import { ClaudeCodeAgentDriver, ScriptedAgentDriver } from "../driver.js";
+import { addEvidence } from "../evidence.js";
+import { synthesizeProposal } from "../proposal.js";
 import {
+  type EffectivenessCase,
   type EffectivenessRow,
   effectivenessMetrics,
   runEffectivenessCase,
@@ -43,6 +46,48 @@ describe("effectiveness taxonomy is well-formed", () => {
         expect(Object.keys(c.repoFiles), `${c.id}: ${coord}`).toContain(path);
       }
     }
+  });
+});
+
+describe("runEffectivenessCase — agent stops before validate-proposal", () => {
+  // Regression for a bug-bash finding: readInvestigation reports "proposal_generated"
+  // whenever a proposalDoc exists and validation isn't recorded 'rejected' — which is
+  // also true when validate-proposal was simply never run. closeCase then refuses
+  // (throws "Cannot close: ... never run through validate-proposal") for that case.
+  // runEffectivenessCase must score that refusal as a non-grounded outcome instead of
+  // letting it crash the whole battery loop and discard every row computed so far.
+  it("scores the case as ungrounded instead of throwing", async () => {
+    const DESC = "Customer-supplied explanation stored with the refund.";
+    const c: EffectivenessCase = {
+      id: "eff-unvalidated",
+      category: "explicit_evidence",
+      skill: "describe-field",
+      field: { name: "reason", required: true, schema: { type: "string" }, in: "body" },
+      repoFiles: {
+        "src/service.ts": `// reason: ${DESC}\n`,
+      },
+      labels: {
+        expectedOutcome: "proposal_generated",
+        expectedEvidence: ["src/service.ts#L1-L1"],
+      },
+    };
+    const driver = new ScriptedAgentDriver(async (dir) => {
+      await addEvidence(dir, {
+        predicate: "field.description",
+        value: DESC,
+        source: "source_impl",
+        path: "src/service.ts",
+        startLine: 1,
+        endLine: 1,
+      });
+      synthesizeProposal(dir, { description: DESC });
+      // Deliberately stop here: never run validate-proposal (or finalize), the
+      // realistic failure mode the effectiveness harness exists to exercise.
+    });
+
+    const row = await runEffectivenessCase(c, driver);
+    expect(row.observed).toBe("proposal_generated");
+    expect(row.grounded).toBe(false);
   });
 });
 

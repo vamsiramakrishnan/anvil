@@ -62,7 +62,15 @@ export function runSimulate(path: string, opts: SimulateOptions, io: CliIO): num
   const files = readBundleDir(dir);
   const subjectHash = bundleHash(files);
   const air = loadBundleAir(dir, files);
-  const seed = Number.parseInt(opts.seed ?? "1", 10) || 1;
+  let seed = 1;
+  if (opts.seed !== undefined) {
+    const parsed = Number.parseInt(opts.seed, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      io.err(`Invalid --seed '${opts.seed}': expected a non-negative integer.`);
+      return 1;
+    }
+    seed = parsed;
+  }
 
   const coverage = coverageMatrix(air, { seed });
   const mutants = runMutationBattery(air);

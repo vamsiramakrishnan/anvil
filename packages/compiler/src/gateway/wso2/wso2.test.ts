@@ -811,3 +811,61 @@ data:
     );
   });
 });
+
+describe("WSO2 adapter inventory authSummary", () => {
+  it("reflects per-operation authType even with an empty top-level securityScheme", async () => {
+    const adapter = new Wso2GatewayAdapter();
+    const connection = {
+      id: "wso2-op-authtype",
+      config: `data:
+  name: orders
+  context: /orders
+  version: "1.0.0"
+  operations:
+    - target: /
+      verb: GET
+      authType: jwt
+`,
+    };
+
+    const inventory = await adapter.inventory(connection, {});
+    expect(inventory.apis[0]?.authSummary).toBeDefined();
+  });
+
+  it("reflects per-operation scopes even with an empty top-level securityScheme", async () => {
+    const adapter = new Wso2GatewayAdapter();
+    const connection = {
+      id: "wso2-op-scopes",
+      config: `data:
+  name: orders
+  context: /orders
+  version: "1.0.0"
+  operations:
+    - target: /
+      verb: GET
+      scopes: [orders:read]
+`,
+    };
+
+    const inventory = await adapter.inventory(connection, {});
+    expect(inventory.apis[0]?.authSummary).toBeDefined();
+  });
+
+  it("leaves authSummary undefined with no securityScheme, authType, or scopes", async () => {
+    const adapter = new Wso2GatewayAdapter();
+    const connection = {
+      id: "wso2-no-auth",
+      config: `data:
+  name: orders
+  context: /orders
+  version: "1.0.0"
+  operations:
+    - target: /
+      verb: GET
+`,
+    };
+
+    const inventory = await adapter.inventory(connection, {});
+    expect(inventory.apis[0]?.authSummary).toBeUndefined();
+  });
+});

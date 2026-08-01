@@ -268,6 +268,10 @@ function normalizeApi(api: MuleApi, apiIndex: number, origin: string) {
     }
   });
 
+  if (authSummary === undefined && facts.length > 0) {
+    authSummary = "scoped";
+  }
+
   return { ops, facts, diagnostics, identityEvidence, hasQuota, authSummary };
 }
 
@@ -333,14 +337,16 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
   ): Promise<GatewayApiImport> {
     const origin = connection.origin ?? "mulesoft.yaml";
     const parsed = parseExport(connection.config, origin);
-    const apiIndex = parsed.apis.findIndex(
-      (candidate) =>
-        candidate.assetId === api.id &&
-        (!api.version || !candidate.productVersion || candidate.productVersion === api.version) &&
-        (!api.environmentId ||
-          !candidate.instanceLabel ||
-          candidate.instanceLabel === api.environmentId),
-    );
+    const apiIndex = parsed.apis.findIndex((candidate) => {
+      if (candidate.assetId !== api.id) return false;
+      // A caller-supplied axis is a constraint, never permission to attest a
+      // missing source value as if it matched.
+      if (api.version !== undefined && candidate.productVersion !== api.version) return false;
+      if (api.environmentId !== undefined && candidate.instanceLabel !== api.environmentId) {
+        return false;
+      }
+      return true;
+    });
     const found = parsed.apis[apiIndex];
     if (!found) {
       const empty = buildGatewayApiImport({

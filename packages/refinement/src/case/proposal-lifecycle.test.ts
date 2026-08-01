@@ -489,3 +489,65 @@ describe("finalize 'supported' proves the current value is already correct", () 
     expect(() => finalize(dir, { status: "supported" })).toThrow(/requires verified evidence/);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* validateCaseProposal's critique clauses are scoped to their own key        */
+/* -------------------------------------------------------------------------- */
+
+describe("validateCaseProposal — critique clauses are scoped per key, not shared", () => {
+  it("does not apply one key's unsupported-value failure to a different, fully-grounded clause", async () => {
+    const { air, dir } = openErrorRetryableCase(); // enrich-errors: patch touches message + retryable
+    // Ground `message` only — `retryable` has no grounding claim at all, so
+    // evidence_supports_value fails on 'retryable', never on 'message'.
+    await addEvidence(dir, {
+      predicate: "error.message",
+      value: "Refund conflicts with a pending capture.",
+      source: "source_impl",
+      ref: "refunds/service.ts:80",
+    });
+    synthesizeProposal(dir, {
+      message: "Refund conflicts with a pending capture.",
+      retryable: false,
+    });
+    const { report } = validateCaseProposal(air, dir);
+    expect(report.status).toBe("rejected");
+    const messageClause = report.clauses.find((c) => c.clause.startsWith("message"));
+    const retryableClause = report.clauses.find((c) => c.clause.startsWith("retryable"));
+    // Before the fix, the single (retryable-specific) failing outcome was applied to
+    // EVERY clause, so the fully-grounded `message` clause was wrongly marked unsupported.
+    expect(messageClause?.supported).toBe(true);
+    expect(messageClause?.reason).toBe("grounded and in-boundary");
+    expect(retryableClause?.supported).toBe(false);
+    expect(retryableClause?.reason).toContain("retryable");
+  });
+
+  it("attributes an evidence_meets_verification rejection to its clause instead of marking every clause supported", async () => {
+    const { air, dir } = openErrorRetryableCase();
+    await addEvidence(dir, {
+      predicate: "error.message",
+      value: "Refund conflicts with a pending capture.",
+      source: "source_impl",
+      ref: "refunds/service.ts:80",
+    });
+    // `retryable` IS grounded, but only by an unverified source — fieldVerification
+    // requires "verified" for retryable, so only evidence_meets_verification fails
+    // (evidence_supports_value passes for both keys).
+    await addEvidence(dir, {
+      predicate: "error.retryable",
+      value: false,
+      source: "incident",
+      ref: "incidents/INC-2210",
+    });
+    synthesizeProposal(dir, {
+      message: "Refund conflicts with a pending capture.",
+      retryable: false,
+    });
+    const { report } = validateCaseProposal(air, dir);
+    // Before the fix, evidence_meets_verification was never consulted by the clause
+    // loop, so a proposal rejected ONLY on that check reported every clause supported.
+    expect(report.status).toBe("rejected");
+    const retryableClause = report.clauses.find((c) => c.clause.startsWith("retryable"));
+    expect(retryableClause?.supported).toBe(false);
+    expect(retryableClause?.reason).toContain("verified");
+  });
+});

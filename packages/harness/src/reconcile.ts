@@ -59,8 +59,11 @@ export function reconcile(op: Operation, findings: HarnessFinding[]): ReconcileR
     const hasTighten = group.some((f) => f.claim?.direction === "tighten");
     const considered = hasTighten ? group.filter((f) => f.claim?.direction === "tighten") : group;
 
-    const best = considered.reduce((acc, f) => Math.max(acc, reliabilityOf(f.evidence)), 0);
-    const claim = considered[0]?.claim;
+    const bestFinding = considered.reduce((acc, f) =>
+      reliabilityOf(f.evidence) > reliabilityOf(acc.evidence) ? f : acc,
+    );
+    const best = reliabilityOf(bestFinding.evidence);
+    const claim = bestFinding.claim;
     if (!claim) continue;
 
     const threshold = claim.direction === "loosen" ? LOOSEN_THRESHOLD : TIGHTEN_THRESHOLD;

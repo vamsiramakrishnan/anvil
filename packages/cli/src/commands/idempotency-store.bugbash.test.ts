@@ -423,10 +423,10 @@ describe("runDeployLedger — backend none (renderNoStore): entirely uncovered e
     expect(report.cloudCallsMade).toBe(false);
   });
 
-  it("short-circuits before ttl/database-mode validation: a backend-none bundle ignores those flags entirely", async () => {
-    // Documents current behavior: because `contract.backend === "none"` returns before the
-    // ttl-seconds parse and the dedicated/shared database-mode checks run, flags that would be
-    // rejected outright on a firestore-backed bundle are silently accepted (and ignored) here.
+  it("rejects a malformed --ttl-seconds for a backend-none bundle just like a firestore-backed one", async () => {
+    // The ttl-seconds parse now runs ahead of the `contract.backend === "none"` early
+    // return, so a no-store bundle rejects a malformed --ttl-seconds instead of
+    // silently ignoring it.
     const dir = await writeRealBundle(withoutApprovedLedgerWrite(await paymentsAir()));
     const io = bufferIO();
     const code = await runDeployLedger(
@@ -434,8 +434,31 @@ describe("runDeployLedger — backend none (renderNoStore): entirely uncovered e
       { ttlSeconds: "not-a-number", databaseMode: "dedicated" },
       io,
     );
+    expect(code).toBe(1);
+    expect(io.stderr).toEqual(["--ttl-seconds must be an integer from 60 to 31536000."]);
+  });
+
+  it("rejects an inconsistent --database-mode/--database/--location combination for a backend-none bundle", async () => {
+    // With a valid (omitted) --ttl-seconds, the dedicated-mode consistency checks still run
+    // ahead of the backend === "none" early return.
+    const dir = await writeRealBundle(withoutApprovedLedgerWrite(await paymentsAir()));
+    const io = bufferIO();
+    const code = await runDeployLedger(dir, { databaseMode: "dedicated" }, io);
+    expect(code).toBe(1);
+    expect(io.stderr).toEqual([
+      "Dedicated mode requires --database so Terraform can create the exact named database.",
+    ]);
+  });
+
+  it("still ignores --project/--database for --tfvars on a backend-none bundle (renderNoStore's own tfvars handling)", async () => {
+    // --tfvars requiring --project/--database is a firestore-only concern (renderNoStore
+    // always emits `{}` and never needs those coordinates), so this flag combination is
+    // still accepted for a no-store bundle.
+    const dir = await writeRealBundle(withoutApprovedLedgerWrite(await paymentsAir()));
+    const io = bufferIO();
+    const code = await runDeployLedger(dir, { tfvars: true }, io);
     expect(code).toBe(0);
-    expect(io.stderr).toEqual([]);
+    expect(io.stdout).toEqual(["{}"]);
   });
 });
 

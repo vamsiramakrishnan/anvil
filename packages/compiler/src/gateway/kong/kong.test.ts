@@ -304,3 +304,30 @@ services:
     expect(air.operations).toEqual([]);
   });
 });
+
+describe("Kong adapter version/environment coordinate axis", () => {
+  it("surfaces a diagnostic instead of silently dropping a requested version/environment", async () => {
+    const imported = await adapter.extractApi(
+      connection,
+      { id: "refunds", version: "2", environmentId: "prod" },
+      {},
+    );
+    const unenforced = imported.diagnostics.filter(
+      (diagnostic) => diagnostic.code === "kong/unenforced_coordinate_axis",
+    );
+    expect(unenforced).toHaveLength(1);
+    expect(unenforced[0]?.level).toBe("warning");
+    // The service is still found by name — Kong has no axis to enforce, but
+    // the caller is told so rather than being misled by silence.
+    expect(imported.contract.location.pointer).toBe("/services/0");
+  });
+
+  it("emits no diagnostic when the caller supplies no version/environment", async () => {
+    const imported = await adapter.extractApi(connection, { id: "refunds" }, {});
+    expect(
+      imported.diagnostics.some(
+        (diagnostic) => diagnostic.code === "kong/unenforced_coordinate_axis",
+      ),
+    ).toBe(false);
+  });
+});

@@ -102,6 +102,7 @@ export const CONTRACT_SAFETY_PREDICATES: ReadonlySet<SemanticPredicate> =
     "auth.issuer",
     "auth.audience",
     "auth.carrier",
+    "state",
   ]);
 
 type ManifestStrategy = NonNullable<NonNullable<OperationManifest["idempotency"]>["strategy"]>;

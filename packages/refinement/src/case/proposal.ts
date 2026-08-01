@@ -186,9 +186,17 @@ export function validateCaseProposal(
     artifacts: frozenEvidence.artifacts,
   });
   const clauses = Object.entries(proposal.patch.set).map(([key, value]) => {
+    // Scope the failure lookup to THIS clause's key: evidence_supports_value and
+    // evidence_meets_verification (validate.ts) both return only the first unsupported
+    // key they find, so an unscoped `.find` would misattribute one key's failure reason
+    // to every clause. Only a check whose reason actually names this key can fail it.
     const failing = validated.outcomes.find(
       (o) =>
-        !o.ok && (o.check === "evidence_supports_value" || o.check === "patch_within_boundary"),
+        !o.ok &&
+        (o.check === "evidence_supports_value" ||
+          o.check === "patch_within_boundary" ||
+          o.check === "evidence_meets_verification") &&
+        o.reason.includes(key),
     );
     return {
       clause: `${key} = ${JSON.stringify(value)}`,

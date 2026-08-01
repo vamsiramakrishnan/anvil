@@ -355,6 +355,49 @@ describe("resolution policy", () => {
     expect(o?.confirmation.required).toBe(true);
   });
 
+  it("a non-authoritative origin may not loosen state straight to approved", async () => {
+    // Base state defaults to "generated" — never exposed. An investigation
+    // asserting "approved" must be refused: it is not authoritative for `state`.
+    const loosen = makeOverlay({
+      origin: "investigation",
+      assertions: [assertion("refundPayment", "state", "set", "approved")],
+    });
+    const result = await compileContract(source(), [loosen]);
+    expect(op(result, "refundPayment")?.state).not.toBe("approved");
+
+    // Same for observed_traffic.
+    const observed = makeOverlay({
+      origin: "observed_traffic",
+      assertions: [assertion("refundPayment", "state", "set", "approved")],
+    });
+    const result2 = await compileContract(source(), [observed]);
+    expect(op(result2, "refundPayment")?.state).not.toBe("approved");
+
+    // An operator (authoritative) may still approve directly through an overlay.
+    const approve = makeOverlay({
+      origin: "operator",
+      assertions: [assertion("refundPayment", "state", "set", "approved")],
+    });
+    const approved = await compileContract(source(), [approve]);
+    expect(op(approved, "refundPayment")?.state).toBe("approved");
+  });
+
+  it("a contested state assertion becomes a blocking conflict, not a silent pick", async () => {
+    const a = makeOverlay({
+      origin: "operator",
+      assertions: [assertion("refundPayment", "state", "set", "approved")],
+    });
+    const b = makeOverlay({
+      origin: "operator",
+      assertions: [assertion("refundPayment", "state", "set", "blocked")],
+    });
+    const result = await compileContract(source(), [a, b]);
+    expect(result.status).toBe("conflicted");
+    if (result.status !== "conflicted") throw new Error("expected conflict");
+    const conflict = result.conflicts.find((c) => c.predicate === "state");
+    expect(conflict?.safetySensitive).toBe(true);
+  });
+
   it("a non-authoritative set may not drop required scopes", async () => {
     // The operator establishes two required scopes; an investigation `set` that
     // omits one cannot strip it — a non-authoritative set may only add.

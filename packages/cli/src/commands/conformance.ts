@@ -65,6 +65,14 @@ export async function runConformanceCommand(
   const dir = resolveBundleDir(path);
   if (opts.live !== undefined) return runLiveLane(dir, opts.live, opts, io);
 
+  // The harness reads air.json directly with no existence check of its own
+  // (packages/harness/src/conformance.ts), so a missing bundle would otherwise
+  // surface as a raw ENOENT instead of the same friendly guidance other
+  // commands give for the same missing-bundle input.
+  if (!existsSync(join(dir, "air.yaml")) && !existsSync(join(dir, "air.json"))) {
+    throw new Error(`No air.yaml or air.json in ${dir}. Run \`anvil compile\` first.`);
+  }
+
   const { runConformance } = await import("@anvil/harness");
   const report = await runConformance(dir, { cliPackageDir: resolveCliPackageDir() });
   const boundReport = { ...report, bundleHash: bundleHash(readBundleDir(dir)) };

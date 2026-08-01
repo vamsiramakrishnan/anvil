@@ -857,7 +857,17 @@ describe("idempotency ledger", () => {
         confirm: true,
         idempotencyKey: "complete-failure",
       },
-      { ...baseCtx, env: "prod", transport, ledger },
+      {
+        ...baseCtx,
+        env: "prod",
+        transport,
+        ledger,
+        policy: {
+          postResponse: (ctx) => ctx.decide("postResponse"),
+          postExecute: (ctx) => ctx.decide("postExecute"),
+          postError: (ctx) => ctx.decide("postError"),
+        },
+      },
     );
 
     expect(res.outcome).toBe("error");
@@ -872,6 +882,15 @@ describe("idempotency ledger", () => {
     });
     expect(JSON.stringify(res)).not.toContain("secret backend detail");
     expect(releases).toBe(0);
+    // A real 2xx response was received, so the same postResponse ->
+    // postExecute hook sequence as the success path must still run even
+    // though the ledger completion write itself failed.
+    expect(res.record.policyDecisions).toEqual(["postResponse", "postExecute"]);
+    // The reservation is ambiguous (upstream wrote, but the ledger never
+    // confirmed it), not merely "reserved" — mirrors the sawPostResponseFailure
+    // branch, which also marks the reservation "in_progress" pending
+    // reconciliation.
+    expect(res.record.ledger).toBe("in_progress");
   });
 
   it("releases a failed reservation when the upstream repeat contract is proven safe", async () => {

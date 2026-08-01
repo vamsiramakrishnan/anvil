@@ -1,19 +1,18 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ConformanceCheck, ConformanceReport, LiveCheck, LiveReport } from "@anvil/harness";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConformanceReport, LiveReport } from "@anvil/harness";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runAnvilCli } from "../anvil-cli.js";
 import { bufferIO } from "../io.js";
 import {
-  type ConformanceCliOptions,
   renderConformanceSummary,
   renderLiveSummary,
   runConformanceCommand,
 } from "./conformance.js";
 
-const examples = fileURLToPath(new URL("../../../examples/payments/", import.meta.url));
+const _examples = fileURLToPath(new URL("../../../examples/payments/", import.meta.url));
 
 let root: string;
 beforeEach(() => {
@@ -37,20 +36,19 @@ describe("anvil conformance — command and rendering", () => {
       expect(io.text()).toBe("");
     });
 
-    it("throws a plain error (not a caught 1) when the path is not a valid bundle (no air.yaml/air.json)", async () => {
+    it("throws the same friendly 'No air.yaml or air.json' message other commands give for a missing bundle", async () => {
       // runConformanceCommand does not wrap resolveBundleDir/runConformance in
       // a try/catch — only the top-level runAnvilCli catches and converts to
-      // an exit code (see the "CLI integration" describe block below). Called
-      // directly, a directory that resolves but has no air.json rejects with
-      // the harness's raw ENOENT — it never gets the friendly
-      // "No air.yaml or air.json" message (that message lives in
-      // certify.ts/shared.ts, not in the harness's runConformance).
+      // an exit code (see the "CLI integration" describe block below). But it
+      // now checks for air.yaml/air.json itself before ever delegating to the
+      // harness, so a directory with neither file gets the same friendly
+      // guidance as certify.ts/shared.ts instead of the harness's raw ENOENT.
       const io = bufferIO();
       const invalidBundle = join(root, "empty-bundle");
       mkdirSync(invalidBundle, { recursive: true });
       writeFileSync(join(invalidBundle, "README.md"), "not a bundle\n");
       await expect(runConformanceCommand(invalidBundle, {}, io)).rejects.toThrow(
-        /ENOENT.*air\.json/,
+        `No air.yaml or air.json in ${invalidBundle}. Run \`anvil compile\` first.`,
       );
     });
 
@@ -451,7 +449,7 @@ describe("anvil conformance — command and rendering", () => {
     it("writes conformance.report.json with bundleHash when text mode succeeds", async () => {
       // We can't easily mock the harness import, so we create a minimal test
       // that checks that JSON output is properly formatted
-      const io = bufferIO();
+      const _io = bufferIO();
       const report: ConformanceReport = {
         summary: { pass: 1, fail: 0, skipped: 0 },
         surfaces: ["cli", "mcp"],
@@ -538,7 +536,7 @@ describe("anvil conformance — command and rendering", () => {
     });
 
     it("handles very long operation IDs in check lines", () => {
-      const longOpId = "very_long_operation_id_".repeat(5) + "end";
+      const longOpId = `${"very_long_operation_id_".repeat(5)}end`;
       const report: ConformanceReport = {
         summary: { pass: 1, fail: 0, skipped: 0 },
         surfaces: ["cli", "mcp"],

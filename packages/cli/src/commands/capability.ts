@@ -242,11 +242,7 @@ function runApprove(
     throw err;
   }
   if (budget.diagnostic) io.out(formatDiagnostic(budget.diagnostic));
-  const result = reprojectBundleAtomically(
-    path,
-    air,
-    `Capability approval for '${id}' regenerated executable bundle projections after the immutable gateway import receipt was issued.`,
-  );
+  const result = reprojectBundleAtomically(path, air);
   io.out(
     `Approved capability '${id}' (${budget.toolCount} tool(s)) and atomically regenerated ${result.generatedFileCount} bundle files in ${result.bundleDir}.`,
   );
@@ -277,11 +273,7 @@ function runReject(path: string, id: string, opts: { reason?: string }, io: CliI
     }
     throw err;
   }
-  const result = reprojectBundleAtomically(
-    path,
-    air,
-    `Capability rejection for '${id}' regenerated executable bundle projections after the immutable gateway import receipt was issued.`,
-  );
+  const result = reprojectBundleAtomically(path, air);
   io.out(
     `Rejected capability '${id}' and atomically regenerated ${result.generatedFileCount} bundle files in ${result.bundleDir}.`,
   );
