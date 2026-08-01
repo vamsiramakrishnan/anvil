@@ -62,7 +62,13 @@ async function runEnrich(
   }
 
   if (opts.json === true) {
-    io.out(JSON.stringify({ sources: report.sources, operations: report.operations }, null, 2));
+    io.out(
+      JSON.stringify(
+        { sources: report.sources, operations: report.operations, workflows: report.workflows },
+        null,
+        2,
+      ),
+    );
   } else {
     io.out(
       `Connected to ${report.sources.length} source(s): ${report.sources.join(", ") || "none"}`,
@@ -76,9 +82,19 @@ async function runEnrich(
         io.out(`  [${d.accepted ? "APPLY" : "SKIP "}] ${d.claim.type}: ${d.reason}`);
       }
     }
+    if (report.workflows.length > 0) {
+      io.out("\nWorkflow candidates (structural, corroborated against connected sources):");
+      for (const w of report.workflows) {
+        io.out(
+          `  [${w.accepted ? "PROPOSE" : "SKIP   "}] ${w.candidate.fromOperationId} -> ${w.candidate.toOperationId}: ${w.reason}`,
+        );
+      }
+    }
   }
 
-  const patchCount = Object.keys(report.proposedManifest.operations).length;
+  const operationPatchCount = Object.keys(report.proposedManifest.operations).length;
+  const workflowPatchCount = Object.keys(report.proposedManifest.workflows).length;
+  const patchCount = operationPatchCount + workflowPatchCount;
   if (patchCount === 0) {
     io.out("\nNo enrichment proposed. AIR already reflects the available evidence.");
     return 0;
@@ -86,7 +102,9 @@ async function runEnrich(
   const manifestYaml = toYaml(report.proposedManifest);
   if (opts.write) {
     writeFileSync(opts.write, manifestYaml, "utf8");
-    io.out(`\nProposed manifest for ${patchCount} operation(s) written to ${opts.write}.`);
+    io.out(
+      `\nProposed manifest for ${operationPatchCount} operation(s) and ${workflowPatchCount} workflow(s) written to ${opts.write}.`,
+    );
     io.out(`Review it, then apply with \`anvil compile <spec> --manifest ${opts.write}\`.`);
   } else {
     io.out(`\nProposed manifest (review, then pass to \`anvil compile --manifest\`):\n`);

@@ -18,3 +18,5 @@ export * from "./profiles.js";
 export * from "./reconcile.js";
 export * from "./sources.js";
 export * from "./sources-init.js";
+export * from "./workflow-candidates.js";
+export * from "./workflow-probe.js";
