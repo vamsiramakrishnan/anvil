@@ -141,3 +141,30 @@ Findings:
   (`auth/end_user_flow_unexecutable`, per-caller OBO needed). Both diagnostics
   say exactly what to model — the estates aren't mysteriously broken, they're
   waiting on the two known auth work items.
+
+## Auth unblock work items — built (both classes closed)
+
+- **Carrier-equivalent OR alternatives now compile** (`resolveAlternatives`
+  in `packages/compiler/src/normalize.ts`): when every credentialed
+  alternative resolves cleanly to the SAME principal class, the first is
+  selected with a non-blocking `auth/alternative_selected` issue → the
+  operation lands `review_required` with a note naming what was picked and
+  what was bypassed. Any principal disagreement, unresolvable alternative,
+  or embedded AND-composite keeps the conservative block. Validated:
+  Stripe 589/589 blocked → 589/589 review_required (basic selected);
+  Coupa 8/8 → review_required (client-credentials selected over api-key).
+- **End-user OAuth has a paved OBO road**: the
+  `auth/end_user_flow_unexecutable` diagnostic now prescribes the exact
+  manifest recipe (`auth: { type: oauth2_on_behalf_of }`), and a narrow
+  service-level carve-out in `applyServiceAuthDefaults`
+  (`packages/compiler/src/compile.ts`) applies the one sanctioned
+  service-wide type remodel authorization_code → on_behalf_of: same
+  end-user authority story, executed per caller via RFC 8693 token
+  exchange (runtime support already existed in
+  `packages/runtime/src/credentials.ts` / `inbound-identity.ts`), imported
+  token endpoint preserved, operation lifted blocked → review_required
+  with an `auth/end_user_flow_remodeled` note. Authority swaps
+  (service↔end_user) remain refused. Validated: Workday REST 2/2 blocked →
+  review_required with a one-line manifest. (Zoho's mirror spec has an
+  unresolvable external `Common.json` ref — a corpus artifact, same auth
+  shape as Workday.)
