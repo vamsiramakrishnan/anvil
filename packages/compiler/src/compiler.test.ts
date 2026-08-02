@@ -162,6 +162,44 @@ describe("classifier", () => {
     const poll = classifyEffect("get", "pollStatus /jobs/{id}/status");
     expect(classifyArchetype(poll.effect, "poll", false)).toBeUndefined();
   });
+
+  it("classifies query_passthrough archetype for unconstrained query params", () => {
+    const mutationEffect = classifyEffect("post", "createPayment /payments").effect;
+    const params = [
+      { name: "sql", in: "query" as const, required: true, schema: { type: "string" } },
+    ];
+    expect(classifyArchetype(mutationEffect, "create", false, params)).toBe("query_passthrough");
+  });
+
+  it("does not classify query_passthrough when query param is constrained by maxLength", () => {
+    const mutationEffect = classifyEffect("post", "createPayment /payments").effect;
+    const params = [
+      {
+        name: "sql",
+        in: "query" as const,
+        required: true,
+        schema: { type: "string", maxLength: 1000 },
+      },
+    ];
+    expect(classifyArchetype(mutationEffect, "create", false, params)).toBe("transaction");
+  });
+
+  it("classifies query_passthrough for unconstrained body field", () => {
+    const mutationEffect = classifyEffect("post", "createPayment /payments").effect;
+    const body = {
+      projection: "fields" as const,
+      fields: [{ name: "query", required: true, schema: { type: "string" } }],
+    };
+    expect(classifyArchetype(mutationEffect, "create", false, [], body)).toBe("query_passthrough");
+  });
+
+  it("query_passthrough does not override long_running", () => {
+    const mutationEffect = classifyEffect("post", "createPayment /payments").effect;
+    const params = [
+      { name: "jql", in: "query" as const, required: true, schema: { type: "string" } },
+    ];
+    expect(classifyArchetype(mutationEffect, "create", true, params)).toBe("long_running");
+  });
 });
 
 describe("compile pipeline (spec only)", () => {
@@ -199,7 +237,7 @@ paths:
           application/json:
             schema:
               type: object
-              properties: { name: { type: string }, query: { type: string } }
+              properties: { name: { type: string }, pattern: { type: string } }
       responses: { "201": { description: saved } }
 `;
     const air = await compile({ spec: viewApi, serviceId: "application_views" });
@@ -208,6 +246,30 @@ paths:
     expect(op?.cli.command).toBe("application_views filter create");
     expect(op?.idempotency.mode).toBe("none");
     expect(op?.state).toBe("review_required");
+  });
+
+  it("detects and blocks query_passthrough archetype operations", async () => {
+    const queryApi = `openapi: 3.0.3
+info: { title: Database Query, version: 1.0.0 }
+paths:
+  /query:
+    post:
+      operationId: executeQuery
+      summary: Execute a SQL query
+      parameters:
+        - name: sql
+          in: query
+          required: true
+          schema: { type: string }
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: queryApi, serviceId: "database" });
+    const op = air.operations[0];
+    expect(op?.archetype).toBe("query_passthrough");
+    expect(op?.state).toBe("blocked");
+    expect(air.diagnostics.some((d) => d.code === "query_language_passthrough")).toBe(true);
+    const diagnostic = air.diagnostics.find((d) => d.code === "query_language_passthrough");
+    expect(diagnostic?.level).toBe("error");
   });
 });
 

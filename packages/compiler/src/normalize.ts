@@ -477,7 +477,6 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
       // No spec dialect sets long-running yet; keep the operation field and the
       // archetype input tied to one value so they can never disagree.
       const longRunning = false;
-      const archetype = classifyArchetype(effect, effect.action, longRunning);
 
       const params: Param[] = [];
       for (const rp of mergeParams(pathParams, raw.parameters ?? [])) {
@@ -501,6 +500,8 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         raw.requestBody?.required ?? false,
         namedSchemas,
       );
+
+      const archetype = classifyArchetype(effect, effect.action, longRunning, params, body);
 
       const successRes =
         raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;

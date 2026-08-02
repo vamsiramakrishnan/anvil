@@ -202,11 +202,16 @@ visible and lands raw passthrough on the conservative rung.
 - `packages/refinement/src/deficiency.ts` + `detect.ts`: new deficiency
   `query_language_passthrough` (catalog disposition:
   `humanDecisionRequired`; read the catalog's existing entries and copy
-  their shape). Detector: a string-typed param or body field whose name
-  matches `/^(sql|query|q|jql|cql|kql|xpath|dsl|filter|where|expression)$/i`
-  AND whose schema has no `enum`, no `maxLength`, and no `pattern` — i.e.
-  genuinely unconstrained. Message must name the field and say why it is
-  agent-hostile (arbitrary logic through one parameter).
+  their shape). Detector: a string-typed param or body field with no
+  `enum`, no `maxLength`, and no `pattern` — i.e. genuinely unconstrained
+  — whose name is an unambiguous query-language carrier
+  (`/^(sql|jql|cql|kql|xpath|dsl|where|expression)$/i`, any location) or a
+  contextual one (`/^(q|query|filter)$/i`) **in a request body only**: a
+  POSTed query document is the DSL shape, while `GET /search?q=…` is
+  free-text search data — blocking every ordinary search API's `q` param
+  would make the conservative rung meaningless. Message must name the
+  field and say why it is agent-hostile (arbitrary logic through one
+  parameter).
 - `packages/compiler/src/classify.ts`: same predicate assigns `archetype:
   "query_passthrough"` (extends 2a's classifier; keep the predicate in ONE
   shared helper so detector and classifier cannot drift — put it in

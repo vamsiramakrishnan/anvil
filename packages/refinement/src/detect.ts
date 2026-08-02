@@ -4,6 +4,7 @@ import {
   type Capability,
   conflictedSafetyPredicates,
   type ErrorCode,
+  isQueryPassthroughParam,
   type NameWeakness,
   nameWeaknesses,
   type Operation,
@@ -675,6 +676,47 @@ const contestedSafety: Detector = {
   },
 };
 
+const queryLanguagePassthrough: Detector = {
+  name: "query-language-passthrough",
+  detect(air) {
+    const out: Deficiency[] = [];
+    for (const op of air.operations) {
+      // Check params for unconstrained query-language passthrough
+      for (const p of op.input.params as Param[]) {
+        if (isQueryPassthroughParam(p.name, p.schema, "param")) {
+          out.push(
+            makeDeficiency(
+              "query_language_passthrough",
+              { kind: "field", operationId: op.id, path: `input.params.${p.name}` },
+              `Parameter '${p.name}' of '${op.id}' accepts unconstrained query-language injection.`,
+              { fieldName: p.name, paramType: "query" },
+              "high",
+            ),
+          );
+        }
+      }
+      // Check body fields for unconstrained query-language passthrough
+      const body = op.input.body;
+      if (body && body.projection === "fields") {
+        for (const f of body.fields as BodyField[]) {
+          if (isQueryPassthroughParam(f.name, f.schema, "body")) {
+            out.push(
+              makeDeficiency(
+                "query_language_passthrough",
+                { kind: "field", operationId: op.id, path: `input.body.${f.name}` },
+                `Body field '${f.name}' of '${op.id}' accepts unconstrained query-language injection.`,
+                { fieldName: f.name, paramType: "body" },
+                "high",
+              ),
+            );
+          }
+        }
+      }
+    }
+    return out;
+  },
+};
+
 /* --- mock / eval coverage ------------------------------------------------- */
 
 const requiredFieldExamples: Detector = {
@@ -725,6 +767,7 @@ export const DETECTORS: readonly Detector[] = [
   authPrincipal,
   errorRetryability,
   contestedSafety,
+  queryLanguagePassthrough,
   requiredFieldExamples,
 ];
 

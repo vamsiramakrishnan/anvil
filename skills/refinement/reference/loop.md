@@ -39,6 +39,7 @@ it, and whether that skill is implemented today.
 | `contested_safety_semantic` | safety | blocking | classify-idempotency | yes |
 | `error_retryability_unclear` | safety | medium | enrich-errors | yes |
 | `mutation_effect_unproven` | safety | high | classify-idempotency | yes |
+| `query_language_passthrough` | safety | high | review-query-passthrough | — |
 | `retry_basis_unproven` | safety | high | classify-idempotency | yes |
 | `capability_missing_routing_phrases` | usability | low | author-intent-examples | — |
 | `cross_surface_disagreement` | usability | high | align-artifacts | — |

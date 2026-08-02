@@ -166,6 +166,21 @@ export function validate(operations: Operation[]): ValidationResult {
       );
     }
 
+    // Query-language passthrough operations are blocked by default — unconstrained
+    // query injection is a critical safety issue requiring explicit human decision.
+    if (op.archetype === "query_passthrough") {
+      flag(
+        "error",
+        "query_language_passthrough",
+        `Operation '${op.id}' accepts unconstrained query-language injection; must be explicitly reviewed and approved.`,
+      );
+      op.state = "blocked";
+      notes.push(
+        "Blocked: this operation passes unconstrained query-language strings; " +
+          "use query templates with constrained parameters instead, or provide evidence this is safe.",
+      );
+    }
+
     op.reviewNotes = notes;
     if (mustReview && op.state === "generated") op.state = "review_required";
     out.push(op);

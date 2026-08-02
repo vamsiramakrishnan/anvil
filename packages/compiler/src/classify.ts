@@ -1,13 +1,16 @@
 import {
   type AuthPrincipal,
   type AuthType,
+  type BodyField,
   type Confirmation,
   type Effect,
   type EffectKind,
   type HttpMethod,
   type Idempotency,
   type InteractionArchetype,
+  isQueryPassthroughParam,
   type OperationAction,
+  type Param,
   type RetryBasis,
   type RetryCondition,
   type RetryPolicy,
@@ -357,18 +360,40 @@ export function classifyConfirmation(effect: Effect, idempotency: Idempotency): 
 /**
  * Classify the interaction archetype — how an agent should interact with the operation.
  * Returns undefined for operations that match no rule (unclassified).
+ *
+ * Parameters and body fields can be passed to detect query-language passthrough:
+ * operations with unconstrained query-language parameters get classified as
+ * query_passthrough, which blocks them by default. This dominates search/transaction
+ * but not long_running.
  */
 export function classifyArchetype(
   effect: Effect,
   action: OperationAction,
   longRunning: boolean,
+  params?: readonly Param[],
+  body?: { projection: string; fields?: readonly BodyField[] },
 ): InteractionArchetype | undefined {
   // Long-running operations dominate other classifications.
   if (longRunning) return "long_running";
+
+  // Check for unconstrained query-language passthrough in params
+  if (params) {
+    for (const p of params) {
+      if (isQueryPassthroughParam(p.name, p.schema, "param")) return "query_passthrough";
+    }
+  }
+
+  // Check for unconstrained query-language passthrough in body fields
+  if (body && body.projection === "fields" && body.fields) {
+    for (const f of body.fields) {
+      if (isQueryPassthroughParam(f.name, f.schema, "body")) return "query_passthrough";
+    }
+  }
+
   // Search-family reads (searches and list operations).
   if (effect.kind === "read" && (action === "search" || action === "list")) return "search";
   // All mutations are transactions.
   if (effect.kind === "mutation") return "transaction";
-  // Everything else: unclassified (query_passthrough and bulk are Phase 3+ features).
+  // Everything else: unclassified (bulk and file_transfer are Phase 3+ features).
   return undefined;
 }
