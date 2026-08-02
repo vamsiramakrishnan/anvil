@@ -105,7 +105,11 @@ export function exampleInput(op: Operation): Record<string, unknown> {
   };
   for (const p of op.input.params) {
     if (isModeledIdempotencyCarrierInput(binding, p.in, p.name)) continue;
-    set(propKey(p.name), surfaceExample(p.example, p.schema) ?? exampleFromSchema(p.schema), p.required);
+    set(
+      propKey(p.name),
+      surfaceExample(p.example, p.schema) ?? exampleFromSchema(p.schema),
+      p.required,
+    );
   }
   const body = op.input.body;
   if (body?.projection === "fields") {
