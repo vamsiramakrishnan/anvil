@@ -1446,6 +1446,94 @@ describe("example synthesis (mock + loopback inputs)", () => {
     });
     expect(exampleInput(op).body).toEqual({});
   });
+
+  it("splits a wire-serialized declared example back into items for array params", () => {
+    // Coda declares `example: "fetcher,custom"` (form-style comma-join) on
+    // array params; the generated zod shape rightly wants an array, so a
+    // verbatim declared example would fail every tool call that pastes it.
+    const op = OperationSchema.parse({
+      id: "svc.logs.list",
+      canonicalName: "list_logs",
+      displayName: "List logs",
+      sourceRef: { kind: "openapi", path: "/logs", method: "get" },
+      effect: { kind: "read", action: "list", resource: "log", risk: "low", reversible: true },
+      input: {
+        params: [
+          {
+            name: "logTypes",
+            in: "query",
+            required: false,
+            schema: { type: "array", items: { type: "string" } },
+            example: "fetcher,custom",
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer" },
+            example: 25,
+          },
+        ],
+      },
+      idempotency: { mode: "natural" },
+      retries: { mode: "safe", maxAttempts: 3, backoff: "exponential_jitter", retryOn: [] },
+      confirmation: { required: false },
+      auth: { type: "none", scopes: [] },
+      cli: { command: "svc logs list" },
+      mcp: { toolName: "svc_list_logs" },
+      skill: { intentExamples: [] },
+    });
+    const input = exampleInput(op);
+    expect(input.log_types).toEqual(["fetcher", "custom"]);
+    expect(input.limit).toBe(25);
+  });
+
+  it("demotes markdown headings inside spec descriptions so op sections never fracture", () => {
+    // Coda's rows.list description carries its own `### Value results` heading;
+    // rendered verbatim it terminates the operation's `###` section before the
+    // Semantics line, so conformance (and any agent) reads retry-safe as absent.
+    const air2: AirDocument = JSON.parse(JSON.stringify(air));
+    const op = air2.operations.find((o) => o.effect.kind === "read");
+    if (!op) throw new Error("payments example has no read operation");
+    op.state = "approved";
+    op.description = "Lists things.\n### Value results\nDetails follow.";
+    const bundle = generateBundle(air2);
+    const opsMd = bundle.files["skill/reference/operations.md"];
+    if (!opsMd) throw new Error("bundle has no skill/reference/operations.md");
+    expect(opsMd).toContain("**Value results**");
+    expect(opsMd).not.toContain("### Value results");
+  });
+
+  it("drops a type-mismatched declared example and synthesizes from the schema", () => {
+    // Coda declares `example: true` on a string-enum sortBy param; a verbatim
+    // boolean would fail the enum zod shape, so synthesis must win.
+    const op = OperationSchema.parse({
+      id: "svc.packs.list",
+      canonicalName: "list_packs",
+      displayName: "List packs",
+      sourceRef: { kind: "openapi", path: "/packs", method: "get" },
+      effect: { kind: "read", action: "list", resource: "pack", risk: "low", reversible: true },
+      input: {
+        params: [
+          {
+            name: "sortBy",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["title", "createdAt", "updatedAt"] },
+            example: true,
+          },
+        ],
+      },
+      idempotency: { mode: "natural" },
+      retries: { mode: "safe", maxAttempts: 3, backoff: "exponential_jitter", retryOn: [] },
+      confirmation: { required: false },
+      auth: { type: "none", scopes: [] },
+      cli: { command: "svc packs list" },
+      mcp: { toolName: "svc_list_packs" },
+      skill: { intentExamples: [] },
+    });
+    expect(exampleInput(op).sort_by).toBe("title");
+  });
 });
 
 // Keep the loader import meaningful for downstream consumers.

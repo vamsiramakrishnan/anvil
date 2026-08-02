@@ -342,6 +342,17 @@ ${intro}${sections}\n`;
 }
 
 /** One line listing an operation's inputs (params + projected body). */
+/**
+ * Spec-authored descriptions may carry their own markdown headings (Coda's
+ * `### Value results`), which would fracture the per-operation `###` sections
+ * this file's structure — and every parser of it, conformance included — relies
+ * on. Demote embedded heading lines to bold text so injected prose can never
+ * terminate an operation's section early.
+ */
+function demoteHeadings(text: string): string {
+  return text.replace(/^#{1,6}\s+(.+)$/gm, "**$1**");
+}
+
 function inputList(op: Operation): string {
   const parts = op.input.params.map((p) => `\`${p.name}\`${p.required ? "*" : ""}`);
   const body = op.input.body;
@@ -423,7 +434,7 @@ function operationsRef(ops: Operation[]): string {
       const tail = `${intentLine}${intentLine && metadata ? "\n" : ""}${metadata}`;
 
       return `### \`${op.cli.command}\`  (id: \`${op.id}\`, tool: \`${op.mcp.toolName}\`)
-${op.description || op.displayName}
+${demoteHeadings(op.description || op.displayName)}
 ${confirmationCallout(op)}
 - Semantics: ${flags}
 - Auth: ${op.auth.type}${op.auth.scopes.length ? ` (${op.auth.scopes.join(", ")})` : ""}
