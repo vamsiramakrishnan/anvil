@@ -708,6 +708,19 @@ export const Operation = z.object({
   evidence: Evidence.default({ claims: [] }),
   /** The primary capability this operation belongs to (see `Capability`). */
   capabilityId: z.string().optional(),
+  /**
+   * Optional query template for derived operations. A derived operation's
+   * fixed query text with {param} placeholders is rendered and sent as the
+   * base operation's target param; substitution is literal-value only (no
+   * expression evaluation, no nesting).
+   */
+  queryTemplate: z
+    .object({
+      baseOperationId: z.string(),
+      template: z.string(),
+      targetParam: z.string(),
+    })
+    .optional(),
 });
 export type Operation = z.infer<typeof Operation>;
 

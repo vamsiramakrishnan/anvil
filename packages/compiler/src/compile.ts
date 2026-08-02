@@ -21,6 +21,7 @@ import {
   type AnvilManifest,
   airAuthProviderToManifest,
   applyOperationManifest,
+  buildQueryTemplates,
   buildWorkflows,
   manifestAuthProviderToAir,
   parseManifest,
@@ -255,7 +256,7 @@ async function buildAir(
   const doc = parsed.document;
   const manifest: AnvilManifest = options.manifest
     ? parseManifest(options.manifest)
-    : { operations: {}, workflows: {}, capabilities: {} };
+    : { operations: {}, workflows: {}, capabilities: {}, query_templates: {} };
 
   const title = (doc.info?.title as string | undefined) ?? "service";
   const serviceId = options.serviceId ?? manifest.service?.name ?? snakeCase(title) ?? "service";
@@ -372,7 +373,13 @@ async function buildAir(
     capabilities,
   );
 
-  const serviceAuth: AuthRequirement = validated.find((o) => o.auth.type !== "none")?.auth ?? {
+  // Build derived operations from query templates. Each template produces a new
+  // operation that safely wraps an unconstrained query-language parameter.
+  const { operations: queryTemplateDerived, diagnostics: queryTemplateDiagnostics } =
+    buildQueryTemplates(manifest, validated, capabilities);
+  const allOperations = [...validated, ...queryTemplateDerived];
+
+  const serviceAuth: AuthRequirement = allOperations.find((o) => o.auth.type !== "none")?.auth ?? {
     type: "none",
     scopes: [],
     principal: "anonymous",
@@ -400,7 +407,7 @@ async function buildAir(
       auth: serviceAuth,
       servers: (doc.servers ?? []).map((s) => ({ url: s.url, description: s.description })),
     },
-    operations: validated,
+    operations: allOperations,
     capabilities,
     workflows,
     schemas: (doc.components?.schemas as Record<string, JsonSchema> | undefined) ?? {},
@@ -411,6 +418,7 @@ async function buildAir(
       ...diagnostics,
       ...namingDiagnostics,
       ...workflowDiagnostics,
+      ...queryTemplateDiagnostics,
       ...overlayDiagnostics,
     ],
   });
