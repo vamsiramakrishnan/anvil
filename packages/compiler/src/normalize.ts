@@ -17,6 +17,7 @@ import {
   classifyAuth,
   classifyConfirmation,
   classifyEffect,
+  classifyPagination,
   classifyRetry,
 } from "./classify.js";
 import { materializeSchema } from "./decycle.js";
@@ -505,6 +506,8 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
 
       const successRes =
         raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;
+      const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas);
+      const pagination = classifyPagination(effect, effect.action, params, outputSchema);
       const auth = resolveAuth(doc, raw.security);
       if (auth.issue) {
         diagnostics.push({
@@ -525,7 +528,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         effect,
         input: { params, body },
         output: {
-          schema: jsonSchemaOf(successRes?.content, namedSchemas),
+          schema: outputSchema,
           description: successRes?.description,
         },
         errors: errorSpecs(raw.responses),
@@ -536,6 +539,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         streaming: false,
         longRunning,
         archetype,
+        ...(pagination ? { pagination } : {}),
         deprecated: Boolean(raw.deprecated),
         cli: { command: names.cliCommand, aliases: [] },
         mcp: { toolName: names.toolName },

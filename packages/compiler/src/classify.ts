@@ -397,3 +397,91 @@ export function classifyArchetype(
   // Everything else: unclassified (bulk and file_transfer are Phase 3+ features).
   return undefined;
 }
+
+/* --- pagination inference ------------------------------------------------- */
+
+/**
+ * Continuation-param names by style, most specific first. Cursor-style names
+ * beat page-style when both are present (e.g. Twilio carries PageToken AND
+ * Page — PageToken is the operative continuation). Measured against the real
+ * corpus: starting_after (Stripe), cursor (Slack), PageToken (Twilio),
+ * page/per_page (GitHub), startAt/maxResults (Jira).
+ */
+const CURSOR_PARAM_NAMES = new Set([
+  "cursor",
+  "starting_after",
+  "page_token",
+  "pagetoken",
+  "next_token",
+  "nexttoken",
+  "after",
+]);
+const PAGE_PARAM_NAMES = new Set(["page"]);
+const OFFSET_PARAM_NAMES = new Set(["offset", "startat"]);
+const NEXT_FIELD_NAMES = new Set([
+  "next_cursor",
+  "nextcursor",
+  "next_page",
+  "nextpage",
+  "next_page_token",
+  "nextpagetoken",
+  "next_token",
+  "nexttoken",
+]);
+
+/**
+ * Infer pagination for a search-archetype read from unambiguous parameter
+ * names, so generated surfaces can teach paging (and the MCP truncation
+ * marker can name the cursor param) without waiting for enrichment. Inference
+ * is deliberately conservative — a name that plainly IS a continuation param,
+ * nothing fuzzier; anything ambiguous stays unset for the document-pagination
+ * refinement skill to prove from evidence. Emits only fields it can ground:
+ * itemsField only when the response object has exactly one array property,
+ * nextField only when exactly one next-marker property matches.
+ */
+export function classifyPagination(
+  effect: Effect,
+  action: OperationAction,
+  params: readonly Param[],
+  outputSchema: Record<string, unknown> | undefined,
+):
+  | {
+      style: "cursor" | "page" | "offset";
+      cursorParam: string;
+      nextField?: string;
+      itemsField?: string;
+    }
+  | undefined {
+  if (effect.kind !== "read" || (action !== "search" && action !== "list")) return undefined;
+
+  const styleOf = (name: string): "cursor" | "page" | "offset" | undefined => {
+    const n = name.toLowerCase();
+    if (CURSOR_PARAM_NAMES.has(n)) return "cursor";
+    if (PAGE_PARAM_NAMES.has(n)) return "page";
+    if (OFFSET_PARAM_NAMES.has(n)) return "offset";
+    return undefined;
+  };
+
+  let match: { style: "cursor" | "page" | "offset"; cursorParam: string } | undefined;
+  for (const p of params) {
+    const style = styleOf(p.name);
+    if (!style) continue;
+    // Cursor-style names win over page/offset when a spec carries both.
+    if (!match || (style === "cursor" && match.style !== "cursor")) {
+      match = { style, cursorParam: p.name };
+    }
+  }
+  if (!match) return undefined;
+
+  let nextField: string | undefined;
+  let itemsField: string | undefined;
+  const props = outputSchema?.properties as Record<string, Record<string, unknown>> | undefined;
+  if (props) {
+    const arrays = Object.entries(props).filter(([, v]) => v?.type === "array");
+    if (arrays.length === 1) itemsField = arrays[0]?.[0];
+    const nexts = Object.keys(props).filter((k) => NEXT_FIELD_NAMES.has(k.toLowerCase()));
+    if (nexts.length === 1) nextField = nexts[0];
+  }
+
+  return { ...match, ...(nextField ? { nextField } : {}), ...(itemsField ? { itemsField } : {}) };
+}

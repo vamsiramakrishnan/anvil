@@ -79,3 +79,35 @@ Cite these rather than rediscovering them from scratch:
   classified `pagination` through to generated `--limit`/`--cursor`
   CLI/MCP params. A real, concrete next slice if pagination/token-economy
   work becomes a priority.
+
+## Public-corpus gauntlet (Slack, Jira, Twilio, Stripe, GitHub, NOAA WSDL)
+
+2,804 operations compiled across six public specs (Swagger 2.0, OpenAPI 3,
+WSDL) with zero crashes. Findings, in leverage order:
+
+- **query_language_passthrough fired correctly on first contact**: six Jira
+  operations blocked, including delete-by-JQL and archive-by-JQL — the most
+  dangerous operations in that spec. GitHub's search `q` query param was NOT
+  blocked (free-text search data), vindicating the position-aware two-tier
+  rule; the originally-specced single regex would have blocked every search
+  endpoint on GitHub.
+- **Pagination inference was the missing compile step** (now fixed): the
+  corpus initially compiled with pagination on 0 of 938 search operations
+  despite trivially name-inferable params. Conservative name-based inference
+  (classifyPagination in the compiler) lifted this to 572/938 (60%) with
+  per-API styles matching reality — Stripe starting_after→cursor 89%,
+  Twilio PageToken→cursor 96%, Jira startAt→offset, GitHub page→page.
+- **Whole-service blocking is the top adoption cliff, by design**: Slack
+  174/174 blocked (end-user OAuth needs per-caller OBO modeling — correct),
+  Stripe 589/589 blocked because the spec declares basic-OR-bearer
+  alternative security for the same key and AIR refuses to pick implicitly.
+  Recommendation (not yet implemented): when ALL alternatives share one
+  principal class and differ only in carrier, select the first with a
+  warning instead of blocking — the distinction carries no safety weight.
+- **SOAP adapter emits no read hints**: NOAA's 12 forecast operations (pure
+  reads) all classify as mutation/none/review_required — safe but useless.
+  x-anvil-effect exists for adapters to declare reads; the WSDL adapter
+  never emits it.
+- **Compile produces empty intentExamples**, so `anvil benchmark` has no
+  tasks to derive on a raw compile — intent generation is enrichment work,
+  but the benchmark's usefulness depends on it; sequence accordingly.

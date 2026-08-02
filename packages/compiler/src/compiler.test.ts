@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { confidenceFor } from "@anvil/air";
 import { describe, expect, it } from "vitest";
-import { classifyArchetype, classifyConfirmation, classifyEffect } from "./classify.js";
+import {
+  classifyArchetype,
+  classifyConfirmation,
+  classifyEffect,
+  classifyPagination,
+} from "./classify.js";
 import { approveOperations, compile } from "./compile.js";
 
 const read = (rel: string) =>
@@ -199,6 +204,91 @@ describe("classifier", () => {
       { name: "jql", in: "query" as const, required: true, schema: { type: "string" } },
     ];
     expect(classifyArchetype(mutationEffect, "create", true, params)).toBe("long_running");
+  });
+});
+
+describe("classifyPagination", () => {
+  const param = (name: string, type = "string") => ({
+    name,
+    in: "query" as const,
+    required: false,
+    schema: { type },
+    inferred: false,
+  });
+  const listRead = classifyEffect("get", "listCharges /charges");
+
+  it("infers cursor pagination from a starting_after param and a single array output", () => {
+    const out = {
+      type: "object",
+      properties: { data: { type: "array" }, has_more: { type: "boolean" } },
+    };
+    expect(
+      classifyPagination(listRead.effect, listRead.effect.action, [param("starting_after")], out),
+    ).toEqual({ style: "cursor", cursorParam: "starting_after", itemsField: "data" });
+  });
+
+  it("prefers a cursor-style name over a page-style name when both are present", () => {
+    const pag = classifyPagination(
+      listRead.effect,
+      listRead.effect.action,
+      [param("Page", "integer"), param("PageToken")],
+      undefined,
+    );
+    expect(pag).toMatchObject({ style: "cursor", cursorParam: "PageToken" });
+  });
+
+  it("infers page and offset styles, and a unique next field", () => {
+    const out = {
+      type: "object",
+      properties: { values: { type: "array" }, nextPage: { type: "string" } },
+    };
+    expect(
+      classifyPagination(
+        listRead.effect,
+        listRead.effect.action,
+        [param("startAt", "integer")],
+        out,
+      ),
+    ).toEqual({
+      style: "offset",
+      cursorParam: "startAt",
+      nextField: "nextPage",
+      itemsField: "values",
+    });
+    expect(
+      classifyPagination(
+        listRead.effect,
+        listRead.effect.action,
+        [param("page", "integer")],
+        undefined,
+      ),
+    ).toEqual({ style: "page", cursorParam: "page" });
+  });
+
+  it("stays unset without a continuation param, on mutations, and with ambiguous arrays", () => {
+    expect(
+      classifyPagination(
+        listRead.effect,
+        listRead.effect.action,
+        [param("limit", "integer")],
+        undefined,
+      ),
+    ).toBeUndefined();
+    const create = classifyEffect("post", "createCharge /charges");
+    expect(
+      classifyPagination(create.effect, create.effect.action, [param("starting_after")], undefined),
+    ).toBeUndefined();
+    const twoArrays = {
+      type: "object",
+      properties: { a: { type: "array" }, b: { type: "array" } },
+    };
+    const pag = classifyPagination(
+      listRead.effect,
+      listRead.effect.action,
+      [param("cursor")],
+      twoArrays,
+    );
+    expect(pag).toEqual({ style: "cursor", cursorParam: "cursor" }); // no itemsField guessed
   });
 });
 
