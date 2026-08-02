@@ -6,6 +6,7 @@ import {
 } from "@anvil/air";
 import { type ExecuteContext, execute } from "@anvil/runtime";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { truncateResultText } from "./truncation.js";
 import { MCP_RESERVED, operationZodShape, reservedSafetyShape } from "./zodshape.js";
 
 /**
@@ -42,6 +43,12 @@ export interface McpBuildOptions {
    * serve tools only.
    */
   resources?: ServedResource[];
+  /**
+   * Character budget for serialized results (default 50_000; 0 disables
+   * truncation). Results exceeding this budget are truncated at the boundary
+   * without splitting UTF-16 surrogate pairs, with a marker appended.
+   */
+  resultCharacterBudget?: number;
 }
 
 /**
@@ -92,20 +99,27 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         const input = { ...args };
         delete input[MCP_RESERVED.dryRun];
         const result = await execute(op, { input, dryRun }, options.contextFor(op));
+        const charBudget = options.resultCharacterBudget ?? 50_000;
         if (result.outcome === "success") {
           const data = result.data ?? null;
+          let text = JSON.stringify(data, null, 2);
+          text = truncateResultText(text, op, charBudget);
           return {
-            content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+            content: [{ type: "text" as const, text }],
             structuredContent: isRecord(data) ? data : { result: data },
           };
         }
         if (result.outcome === "dry_run") {
+          let text = JSON.stringify(result.plan, null, 2);
+          text = truncateResultText(text, op, charBudget);
           return {
-            content: [{ type: "text" as const, text: JSON.stringify(result.plan, null, 2) }],
+            content: [{ type: "text" as const, text }],
           };
         }
+        let text = JSON.stringify(result.envelope, null, 2);
+        text = truncateResultText(text, op, charBudget);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result.envelope, null, 2) }],
+          content: [{ type: "text" as const, text }],
           isError: true,
         };
       },
