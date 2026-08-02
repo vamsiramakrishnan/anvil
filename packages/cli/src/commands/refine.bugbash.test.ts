@@ -219,6 +219,7 @@ describe("anvil refine skills", () => {
       "enrich-errors",
       "investigate-ui-projection",
       "classify-idempotency",
+      "document-pagination",
     ]);
 
     const textResult = await refine("skills");

@@ -4,6 +4,7 @@ import {
   IdempotencyMechanism,
   IdempotencyMode,
   KeyDerivation,
+  Pagination,
   RetryBasis,
 } from "@anvil/air";
 import type {
@@ -114,6 +115,8 @@ export class HeuristicSkillExecutor implements SkillExecutor {
         return this.enrichError(skill, context);
       case "classify-idempotency":
         return this.classifyIdempotency(skill, context);
+      case "document-pagination":
+        return this.classifyPagination(skill, context);
       default:
         return null;
     }
@@ -212,6 +215,53 @@ export class HeuristicSkillExecutor implements SkillExecutor {
     if (typeof key === "string" && key.trim().length > 0) {
       set.idempotency_key = key;
       used.push(...claimsAsserting(keyClaims, key));
+    }
+
+    if (Object.keys(set).length === 0) return null;
+    return proposal(skill, context, used, set);
+  }
+
+  /**
+   * Pagination classification: extract and validate pagination metadata.
+   * Like idempotency, the style enum values are filtered; the other fields
+   * are free-form strings grounded-string-only (non-empty).
+   */
+  private classifyPagination(skill: RefinementSkill, context: SkillContext): SkillProposal | null {
+    const set: Record<string, JsonValue> = {};
+    const used: Claim[] = [];
+
+    const take = (suffix: string, validValues: readonly string[]): void => {
+      const claims = claimsFor(context, skill, suffix).filter((c) =>
+        (validValues as readonly unknown[]).includes(c.value),
+      );
+      const value = strongestValue(claims);
+      if (typeof value !== "string") return;
+      set[suffix.slice(1)] = value;
+      used.push(...claimsAsserting(claims, value));
+    };
+
+    take(".pagination_style", Pagination.shape.style.options);
+
+    // The other fields are free-form strings — grounded string only.
+    const cursorParamClaims = claimsFor(context, skill, ".pagination_cursor_param");
+    const cursorParam = strongestValue(cursorParamClaims);
+    if (typeof cursorParam === "string" && cursorParam.trim().length > 0) {
+      set.pagination_cursor_param = cursorParam;
+      used.push(...claimsAsserting(cursorParamClaims, cursorParam));
+    }
+
+    const nextFieldClaims = claimsFor(context, skill, ".pagination_next_field");
+    const nextField = strongestValue(nextFieldClaims);
+    if (typeof nextField === "string" && nextField.trim().length > 0) {
+      set.pagination_next_field = nextField;
+      used.push(...claimsAsserting(nextFieldClaims, nextField));
+    }
+
+    const itemsFieldClaims = claimsFor(context, skill, ".pagination_items_field");
+    const itemsField = strongestValue(itemsFieldClaims);
+    if (typeof itemsField === "string" && itemsField.trim().length > 0) {
+      set.pagination_items_field = itemsField;
+      used.push(...claimsAsserting(itemsFieldClaims, itemsField));
     }
 
     if (Object.keys(set).length === 0) return null;

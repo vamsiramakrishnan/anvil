@@ -192,6 +192,7 @@ describe("deficiency catalog", () => {
       "enrich-errors",
       "investigate-ui-projection",
       "classify-idempotency",
+      "document-pagination",
     ]);
     expect(implemented).toEqual(expectedImplemented);
     for (const def of Object.values(DEFICIENCY_CATALOG)) {

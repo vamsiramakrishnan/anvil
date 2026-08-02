@@ -33,7 +33,7 @@ it, and whether that skill is implemented today.
 | `opaque_enum_values` | documentation | medium | describe-enum | — |
 | `phantom_operation_documented` | documentation | high | align-artifacts | — |
 | `undocumented_error` | documentation | low | enrich-errors | yes |
-| `undocumented_pagination` | documentation | low | document-pagination | — |
+| `undocumented_pagination` | documentation | low | document-pagination | yes |
 | `auth_principal_unclear` | safety | medium | clarify-auth | — |
 | `confirmation_posture_incomplete` | safety | blocking | confirm-posture | — |
 | `contested_safety_semantic` | safety | blocking | classify-idempotency | yes |

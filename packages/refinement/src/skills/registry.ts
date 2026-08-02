@@ -246,6 +246,50 @@ const classifyIdempotency: RefinementSkill = {
   ],
 };
 
+/**
+ * Document how a paginated operation's results are fetched: the pagination style
+ * (cursor/page/offset/link), the parameter name used to pass a cursor/page/offset,
+ * the field containing the next cursor/page/offset or link, and the field containing
+ * the result items.
+ *
+ * This skill is lower-stakes than `classify-idempotency`: pagination misclassification
+ * breaks an agent's ability to page through results, but it does not loosen retry or
+ * idempotency safety. It uses the gentler bar of `describe-field` (corroborated evidence,
+ * unverified sources allowed), not the authoritative-only bar of safety changes.
+ */
+const classifyPagination: RefinementSkill = {
+  name: "document-pagination",
+  version: 1,
+  triggers: ["undocumented_pagination"],
+  targetKind: "operation",
+  context: ["parent_operation", "source_evidence", "capability"],
+  evidence: {
+    allowed: ["source_impl", "test_fixture", "spec", "doc_example", "postman"],
+    minimumStrength: "corroborated",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["operation.pagination"],
+    supportingPredicates: ["operation.behavior", "operation.effect"],
+    fields: [
+      "pagination_style",
+      "pagination_cursor_param",
+      "pagination_next_field",
+      "pagination_items_field",
+    ],
+  },
+  constraints: ["do_not_invent_business_rules"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+    "pagination_binding_resolves",
+  ],
+};
+
 /** Every skill Anvil ships today. Executors are separate; these are semantics only. */
 export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   describeField,
@@ -254,6 +298,7 @@ export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   enrichErrors,
   investigateUiProjection,
   classifyIdempotency,
+  classifyPagination,
 ];
 
 /** Discover the available skills (stable order). */

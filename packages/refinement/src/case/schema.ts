@@ -51,6 +51,7 @@ const zValidationCheckId = z.enum([
   "examples_validate_against_schema",
   "error_message_nonempty",
   "idempotency_carrier_resolves",
+  "pagination_binding_resolves",
 ]);
 const zEvalFamily = z.enum([
   "operation_routing",

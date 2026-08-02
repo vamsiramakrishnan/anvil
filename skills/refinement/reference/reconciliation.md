@@ -21,6 +21,7 @@ A proposal is rejected unless every check its skill declares passes.
 - `examples_validate_against_schema` — every example validates against the field's schema
 - `error_message_nonempty` — the error message is non-empty
 - `idempotency_carrier_resolves` — a proposed idempotency mode/mechanism/key resolves cleanly against the operation (the same check the compiler runs)
+- `pagination_binding_resolves` — when pagination style is cursor/page/offset, the cursor param names an existing input parameter, and pagination_items_field is a non-empty string
 
 ## Eval families (the measurement)
 For a refinement we score ONLY the families it affects, before and after applying

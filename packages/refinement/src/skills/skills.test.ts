@@ -318,3 +318,83 @@ describe("classify-idempotency", () => {
     );
   });
 });
+
+/** An operation with no pagination documented. */
+function paginatedDoc(): AirDocument {
+  return loadAirDocument({
+    service: { id: "search", displayName: "Search", version: "1", source: { kind: "openapi" } },
+    operations: [
+      {
+        id: "search.results.list",
+        canonicalName: "list_results",
+        displayName: "List results",
+        description: "Search results.",
+        capabilityId: "search.results",
+        sourceRef: { kind: "openapi", path: "/results", method: "get" },
+        effect: { kind: "read", action: "list" },
+        input: {
+          params: [
+            { name: "query", in: "query", required: true, schema: { type: "string" } },
+            { name: "after", in: "query", required: false, schema: { type: "string" } },
+          ],
+          body: { projection: "whole" },
+        },
+        errors: [],
+        idempotency: { mode: "none" },
+        retries: { mode: "safe" },
+        confirmation: { required: false },
+        auth: { type: "api_key" },
+        cli: { command: "search results list" },
+        mcp: { toolName: "search_list_results" },
+        skill: { intentExamples: ["Search for results."] },
+      },
+    ],
+  });
+}
+
+describe("document-pagination", () => {
+  const skill = skillByName("document-pagination")!;
+
+  it("validates a proposal grounded by corroborated evidence", async () => {
+    const ctx = contextFor(paginatedDoc(), (code) => code === "undocumented_pagination", [
+      claim("operation.pagination_style", "cursor", "spec", "api.yaml:42"),
+      claim("operation.pagination_cursor_param", "after", "spec", "api.yaml:42"),
+      claim("operation.pagination_items_field", "items", "spec", "api.yaml:42"),
+      claim("operation.pagination_style", "cursor", "doc_example", "docs/pagination.md:5"),
+      claim("operation.pagination_cursor_param", "after", "doc_example", "docs/pagination.md:5"),
+      claim("operation.pagination_items_field", "items", "doc_example", "docs/pagination.md:5"),
+    ]);
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set).toEqual({
+      pagination_style: "cursor",
+      pagination_cursor_param: "after",
+      pagination_items_field: "items",
+    });
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("validated");
+  });
+
+  it("proposes nothing when there is no admissible evidence", async () => {
+    const ctx = contextFor(paginatedDoc(), (code) => code === "undocumented_pagination");
+    expect(await executor.execute(skill, ctx)).toBeNull();
+  });
+
+  it("rejects a cursor style with a nonexistent cursor param", async () => {
+    const ctx = contextFor(paginatedDoc(), (code) => code === "undocumented_pagination", [
+      claim("operation.pagination_style", "cursor", "spec", "api.yaml:42"),
+      claim("operation.pagination_cursor_param", "token", "spec", "api.yaml:42"),
+      claim("operation.pagination_items_field", "results", "spec", "api.yaml:42"),
+    ]);
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set).toEqual({
+      pagination_style: "cursor",
+      pagination_cursor_param: "token",
+      pagination_items_field: "results",
+    });
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("rejected");
+    const outcome = result.outcomes.find((o) => o.check === "pagination_binding_resolves");
+    expect(outcome?.ok).toBe(false);
+    expect(outcome?.reason).toContain("does not name an existing input parameter");
+  });
+});

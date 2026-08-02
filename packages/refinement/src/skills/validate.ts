@@ -367,6 +367,73 @@ const CHECKS: Record<ValidationCheckId, Check> = {
       ? ok("idempotency_carrier_resolves", "the proposed idempotency carrier resolves cleanly")
       : fail("idempotency_carrier_resolves", resolution.issue);
   },
+
+  pagination_binding_resolves(_skill, proposal, context) {
+    const set = proposal.patch.set;
+    // No pagination keys touched — inert.
+    if (
+      !("pagination_style" in set) &&
+      !("pagination_cursor_param" in set) &&
+      !("pagination_next_field" in set) &&
+      !("pagination_items_field" in set)
+    ) {
+      return ok("pagination_binding_resolves", "patch does not touch pagination");
+    }
+
+    const op = context.operation;
+    if (!op) {
+      return fail("pagination_binding_resolves", "no operation in context to resolve against");
+    }
+
+    // A field-only patch needs a style to anchor to: either the proposal sets
+    // `pagination_style` or the operation already has one. Applying a bare field
+    // would otherwise require fabricating a style no evidence claimed.
+    if (!("pagination_style" in set) && !op.pagination) {
+      return fail(
+        "pagination_binding_resolves",
+        "pagination fields need a pagination_style — the operation has none and the patch proposes none",
+      );
+    }
+
+    // When pagination_style is one of {cursor, page, offset}, pagination_cursor_param
+    // must name an existing op.input.params entry.
+    const style = typeof set.pagination_style === "string" ? set.pagination_style : undefined;
+    if (style && ["cursor", "page", "offset"].includes(style)) {
+      const cursorParam =
+        typeof set.pagination_cursor_param === "string"
+          ? set.pagination_cursor_param
+          : op.pagination?.cursorParam;
+
+      if (!cursorParam) {
+        return fail(
+          "pagination_binding_resolves",
+          `pagination_style '${style}' requires pagination_cursor_param, but none was provided`,
+        );
+      }
+
+      // Check that the cursor param exists in op.input.params
+      const paramExists = op.input.params.some((p) => p.name === cursorParam);
+      if (!paramExists) {
+        return fail(
+          "pagination_binding_resolves",
+          `pagination_cursor_param '${cursorParam}' does not name an existing input parameter`,
+        );
+      }
+    }
+
+    // pagination_items_field when proposed must be a non-empty string.
+    if ("pagination_items_field" in set) {
+      const itemsField = set.pagination_items_field;
+      if (typeof itemsField !== "string" || itemsField.trim().length === 0) {
+        return fail(
+          "pagination_binding_resolves",
+          "pagination_items_field must be a non-empty string",
+        );
+      }
+    }
+
+    return ok("pagination_binding_resolves", "the proposed pagination binding resolves cleanly");
+  },
 };
 
 /**

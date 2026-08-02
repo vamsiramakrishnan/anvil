@@ -168,6 +168,67 @@ describe("applyPatch", () => {
     expect(op?.idempotency.mode).toBe("none");
   });
 
+  it("sets the pagination carrier onto an operation", () => {
+    const air = fixtureDoc();
+    const result = applyPatches(air, [
+      {
+        target: { kind: "operation", operationId: OPERATION_ID },
+        set: {
+          pagination_style: "cursor",
+          pagination_cursor_param: "after",
+          pagination_items_field: "items",
+          pagination_next_field: "nextCursor",
+        },
+      },
+    ]);
+
+    const op = result.air.operations.find((o) => o.id === OPERATION_ID);
+    expect(op?.pagination).toEqual({
+      style: "cursor",
+      cursorParam: "after",
+      itemsField: "items",
+      nextField: "nextCursor",
+    });
+    expect(result.changes).toHaveLength(4);
+    expect(result.changes[0]?.key).toBe("pagination_style");
+    expect(result.changes[0]?.after).toBe("cursor");
+    expect(result.changes[1]?.key).toBe("pagination_cursor_param");
+    expect(result.changes[1]?.after).toBe("after");
+    expect(result.changes[2]?.key).toBe("pagination_items_field");
+    expect(result.changes[2]?.after).toBe("items");
+    expect(result.changes[3]?.key).toBe("pagination_next_field");
+    expect(result.changes[3]?.after).toBe("nextCursor");
+  });
+
+  it("applies pagination_style first regardless of the patch's key order", () => {
+    const air = fixtureDoc();
+    const result = applyPatch(air, {
+      target: { kind: "operation", operationId: OPERATION_ID },
+      set: { pagination_items_field: "items", pagination_style: "page" },
+    });
+
+    const op = result.air.operations.find((o) => o.id === OPERATION_ID);
+    expect(op?.pagination).toMatchObject({ style: "page", itemsField: "items" });
+    expect(result.changes.map((c) => c.key)).toEqual([
+      "pagination_style",
+      "pagination_items_field",
+    ]);
+  });
+
+  it("never fabricates a pagination style to anchor a field-only patch", () => {
+    const air = fixtureDoc();
+    const result = applyPatch(air, {
+      target: { kind: "operation", operationId: OPERATION_ID },
+      set: { pagination_items_field: "items" },
+    });
+
+    // The fixture operation has no pagination and the patch proposes no style:
+    // inventing `style: "cursor"` would be a business fact no evidence claimed.
+    const op = result.air.operations.find((o) => o.id === OPERATION_ID);
+    expect(op?.pagination).toBeUndefined();
+    expect(result.changes).toEqual([]);
+  });
+
   it("sets a capability description", () => {
     const air = fixtureDoc();
     const patch: SemanticPatch = {

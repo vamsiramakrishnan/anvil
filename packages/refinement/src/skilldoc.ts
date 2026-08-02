@@ -390,6 +390,8 @@ const CHECK_DOC: Record<ValidationCheckId, string> = {
   error_message_nonempty: "the error message is non-empty",
   idempotency_carrier_resolves:
     "a proposed idempotency mode/mechanism/key resolves cleanly against the operation (the same check the compiler runs)",
+  pagination_binding_resolves:
+    "when pagination style is cursor/page/offset, the cursor param names an existing input parameter, and pagination_items_field is a non-empty string",
 };
 
 const FAMILY_DOC: Record<EvalFamily, string> = {
