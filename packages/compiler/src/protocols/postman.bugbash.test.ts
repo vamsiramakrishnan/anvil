@@ -1200,7 +1200,8 @@ describe("disabled query parameter UX and operation descriptions", () => {
       ]),
     );
     const op = opAt(doc, "/search", "get");
-    const limitParam = (op?.parameters as Array<Record<string, unknown>>).find(
+    if (!op) throw new Error("fixture missing GET /search");
+    const limitParam = (op.parameters as Array<Record<string, unknown>>).find(
       (p) => p.name === "limit",
     );
     expect(limitParam?.description).toContain(
