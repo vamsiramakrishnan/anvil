@@ -75,6 +75,7 @@
       "intentExamples": [],
       "confidence": 0.19999999999999996,
       "description": "Get a customer",
+      "inputs": "customer_id*",
       "path": "get /customers/{customer_id}"
     },
     {
@@ -106,6 +107,7 @@
       "intentExamples": [],
       "confidence": 0.19999999999999996,
       "description": "Get a payment",
+      "inputs": "payment_id*",
       "path": "get /payments/{payment_id}"
     },
     {
@@ -138,6 +140,7 @@
       "intentExamples": [],
       "confidence": 0.19999999999999996,
       "description": "Creates a refund for a captured payment. Irreversible.",
+      "inputs": "payment_id*, body.amount*, body.currency*, body.reason",
       "path": "post /payments/{payment_id}/refunds",
       "archetype": "transaction"
     },
@@ -171,6 +174,7 @@
       "intentExamples": [],
       "confidence": 0.19999999999999996,
       "description": "Capture a payment",
+      "inputs": "payment_id*",
       "path": "post /payments/{payment_id}/capture",
       "archetype": "transaction"
     }

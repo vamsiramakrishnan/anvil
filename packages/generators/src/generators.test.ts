@@ -19,6 +19,7 @@ import {
   MAX_GENERATED_WRITE_PATH_MS,
   parseIdempotencyStoreContract,
 } from "./deploy.js";
+import { operationInputSignature } from "./input-signature.js";
 import { buildMcpServer, generateMcpServerSource, generateMcpSseServerSource } from "./mcp.js";
 import { exampleFromSchema, exampleInput } from "./mock.js";
 import { buildToolResources } from "./resources.js";
@@ -36,6 +37,85 @@ beforeAll(async () => {
     spec: read("openapi.yaml"),
     manifest: read("anvil.yaml"),
     serviceId: "payments",
+  });
+});
+
+describe("operationInputSignature", () => {
+  it("generates signature with required params first, then optional", () => {
+    const op = air.operations.find((o) => o.id === "payments.refunds.create");
+    expect(op).toBeDefined();
+    const sig = operationInputSignature(op!);
+    // Refund create should have required params like payment_id
+    expect(sig).toContain("*"); // At least one required param
+    // Should have body fields with body. prefix
+    expect(sig).toContain("body.");
+  });
+
+  it("includes body fields as body.<name> when projection is fields", () => {
+    const op = air.operations.find((o) => o.id === "payments.refunds.create");
+    expect(op).toBeDefined();
+    const sig = operationInputSignature(op!);
+    // Check that if body fields exist with projection="fields", they're included as body.*
+    if (op?.input.body?.projection === "fields" && op.input.body.fields.length > 0) {
+      expect(sig).toContain("body.");
+    }
+  });
+
+  it("caps at 8 entries with ellipsis", () => {
+    // Create a synthetic operation with >8 params to test the cap
+    const testOp = {
+      id: "test.op",
+      canonicalName: "test_op",
+      displayName: "Test Op",
+      description: "",
+      tags: [],
+      sourceRef: { method: "POST", path: "/test" },
+      effect: {
+        kind: "mutation" as const,
+        action: "create" as const,
+        risk: "high" as const,
+        reversible: false,
+      },
+      input: {
+        params: [
+          { name: "p1", in: "query" as const, required: true },
+          { name: "p2", in: "query" as const, required: true },
+          { name: "p3", in: "query" as const, required: true },
+          { name: "p4", in: "query" as const, required: false },
+          { name: "p5", in: "query" as const, required: false },
+          { name: "p6", in: "query" as const, required: false },
+          { name: "p7", in: "query" as const, required: false },
+          { name: "p8", in: "query" as const, required: false },
+          { name: "p9", in: "query" as const, required: false },
+        ],
+      },
+      output: {},
+      errors: [],
+      idempotency: {
+        mode: "not_idempotent" as const,
+        mechanism: "none" as const,
+        keyDerivation: "none" as const,
+      },
+      retries: { mode: "not_safe" as const },
+      confirmation: { required: false },
+      auth: { type: "bearer", principal: "user", scopes: [] },
+      pagination: undefined,
+      streaming: false,
+      longRunning: false,
+      deprecated: false,
+      cli: { command: "test", aliases: [] },
+      mcp: { toolName: "test" },
+      skill: { intentExamples: [] },
+      state: "approved" as const,
+      reviewNotes: [],
+      evidence: { claims: [] },
+    } as OperationSchema;
+
+    const sig = operationInputSignature(testOp);
+    expect(sig).toContain("…");
+    const parts = sig.split(", ");
+    // Should have 8 parts plus the ellipsis as part of the last entry
+    expect(parts.length).toBeLessThanOrEqual(9); // 8 entries + ", …" counts as modifying last entry
   });
 });
 
@@ -354,6 +434,46 @@ describe("capabilities in generated artifacts", () => {
     const workflows = files["skill/reference/workflows.md"] as string;
     expect(workflows).toContain("Refund a customer");
     expect(workflows).toMatch(/human approval/i);
+  });
+
+  it("includes input signatures in the operation catalog and pending operations in skill", () => {
+    const { files } = generateBundle(air);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const refundOp = catalog.operations.find((o: { id: string }) => o.id.includes("refund"));
+    expect(refundOp).toBeDefined();
+    expect(refundOp.inputs).toBeDefined();
+    // Should include at least one required param with asterisk (payment_id or similar)
+    expect(refundOp.inputs).toMatch(/\*/);
+
+    // Unapproved operations in pending section should also show signature
+    const unapproved = structuredClone(air);
+    if (unapproved.operations.length > 0) {
+      unapproved.operations[0].state = "review_required";
+    }
+    const { files: files2 } = generateBundle(unapproved);
+    const opsRef = files2["skill/reference/operations.md"] as string;
+    expect(opsRef).toContain("## Pending approval");
+    // Should have signature in parens for pending operation (e.g., "- `cmd` — Name [state] (param*)")
+    expect(opsRef).toMatch(/\[review_required\] \(/);
+  });
+
+  it("strips HTML tags from operation descriptions in catalog", () => {
+    // Clone air and add HTML to a description
+    const withHtml = structuredClone(air);
+    if (withHtml.operations.length > 0) {
+      withHtml.operations[0].description = "<p>Create a <strong>refund</strong> for a charge</p>";
+    }
+    const { files } = generateBundle(withHtml);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const op = catalog.operations[0];
+    expect(op).toBeDefined();
+    if (op.description) {
+      // Should not contain HTML tags
+      expect(op.description).not.toContain("<");
+      expect(op.description).not.toContain(">");
+      // Should have the text content
+      expect(op.description).toMatch(/Create a.*refund/);
+    }
   });
 
   it("omits blocked workflows from skill, catalog, and MCP discovery while retaining AIR", () => {

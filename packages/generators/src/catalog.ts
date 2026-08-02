@@ -1,20 +1,32 @@
 import type { AirDocument, Operation } from "@anvil/air";
 import { evidenceConfidence, operationInputSchema, operationSafetyInputKeys } from "@anvil/air";
+import { operationInputSignature } from "./input-signature.js";
+
+/**
+ * Strip HTML tags from text (e.g., <p>…</p> → plain text).
+ */
+function stripHtmlTags(text: string): string {
+  return text.replace(/<[^>]+>/g, "");
+}
 
 /**
  * Truncate a description to 160 chars at a word boundary, appending "…" if truncated.
  * Returns undefined if input is empty or falsy.
+ * First strips HTML tags if present.
  */
 function truncateDescription(text?: string, maxChars = 160): string | undefined {
   if (!text) return undefined;
-  if (text.length <= maxChars) return text;
+
+  // Strip HTML tags first
+  const clean = stripHtmlTags(text);
+  if (clean.length <= maxChars) return clean;
 
   // Find the last space before maxChars
-  const truncated = text.substring(0, maxChars);
+  const truncated = clean.substring(0, maxChars);
   const lastSpace = truncated.lastIndexOf(" ");
   const cutPoint = lastSpace > 0 ? lastSpace : maxChars;
 
-  return `${text.substring(0, cutPoint)}…`;
+  return `${clean.substring(0, cutPoint)}…`;
 }
 
 export interface CatalogEntry {
@@ -23,6 +35,8 @@ export interface CatalogEntry {
   displayName: string;
   /** Glanceable one-line description (truncated to 160 chars at word boundary). */
   description?: string;
+  /** Compact input signature: required params first with `*`, then optional, then body.fields. Capped at 8 entries with ellipsis. */
+  inputs?: string;
   capability?: string;
   effect: string;
   action: string;
@@ -128,6 +142,11 @@ export function operationCatalog(air: AirDocument): {
       const truncatedDescription = truncateDescription(op.description);
       if (truncatedDescription) {
         entry.description = truncatedDescription;
+      }
+      // Populate inputs signature
+      const signature = operationInputSignature(op);
+      if (signature) {
+        entry.inputs = signature;
       }
       // Populate path if sourceRef has both method and path
       if (op.sourceRef.method && op.sourceRef.path) {

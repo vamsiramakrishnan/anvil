@@ -2,6 +2,7 @@ import type { AirDocument, Operation } from "@anvil/air";
 import { evidenceConfidence, kebabCase } from "@anvil/air";
 import { stringify as toYaml } from "yaml";
 import { credentialContract } from "./deploy.js";
+import { operationInputSignature } from "./input-signature.js";
 
 /**
  * The source formats Anvil can compile, phrased for agents. THE single place to
@@ -224,7 +225,7 @@ connecting to the MCP server directly (no CLI) gets the same tools, so
 - **Do not** retry a mutation unless the tool reports it as retry-safe. Reads and idempotent writes retry automatically; non-idempotent writes never do.
 
 ## What this skill exposes
-${ops.length === 0 ? `_${air.operations.length} operations compiled but await approval (see \`reference/operations.md\` for the pending list). Run \`anvil approve\` to expose operations._` : `${ops.length} approved operation(s) out of ${air.operations.length} compiled. For the full catalog, read \`reference/operations.md\`.`}
+${ops.length === 0 ? `_${air.operations.length} operations compiled but await approval (see \`reference/operations.md\` for the pending list). Approval is a human decision recorded with \`anvil approve <bundle> <operation-ids>\`; blocked operations need their noted issue resolved first._` : `${ops.length} approved operation(s) out of ${air.operations.length} compiled. For the full catalog, read \`reference/operations.md\`.`}
 
 ## Where to look
 - \`reference/capabilities.md\` — the capabilities and what each one owns.
@@ -435,9 +436,11 @@ ${tail}`;
   const approvedRows = buildApprovedRows(approved);
   const approvedSection =
     approved.length > 0 ? `## Approved operations\n\n${approvedRows.join("\n\n")}` : "";
-  const pendingLines = pending.map(
-    (op) => `- \`${op.cli.command}\` — ${op.displayName || op.id} [${op.state}]`,
-  );
+  const pendingLines = pending.map((op) => {
+    const signature = operationInputSignature(op);
+    const sigPart = signature ? ` (${signature})` : "";
+    return `- \`${op.cli.command}\` — ${op.displayName || op.id} [${op.state}]${sigPart}`;
+  });
   const pendingSection =
     pending.length > 0
       ? `## Pending approval (not callable)\n\nThese operations are compiled but not yet approved. They are not exposed by the CLI or MCP server.\n\n${pendingLines.join("\n")}`
