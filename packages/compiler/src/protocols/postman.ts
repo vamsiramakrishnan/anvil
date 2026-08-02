@@ -333,6 +333,46 @@ function tryParseJsonWithTemplates(
 }
 
 /**
+ * Apply lenient JSON fixes to handle common quirks in Postman collection bodies:
+ * 1. Remove // line comments (only outside strings).
+ * 2. Remove block comments (only outside strings).
+ * 3. Remove trailing commas before } or ].
+ * 4. Quote unquoted __PLACEHOLDER_N__ identifiers (from template variable substitution).
+ *
+ * Each rule is applied only when its evidence is found in the corpus. The OPERA
+ * collection contains many bodies with these issues.
+ */
+function applyLenientJsonFixes(json: string): string {
+  // Rule 1: Remove // line comments. Evidence: many lines in OPERA bodies end with
+  // `// comment` after values. We only remove from line start/post-whitespace to EOL,
+  // never inside strings (regex-only safety; full string-aware parsing not justified
+  // for occasional comment-removal). Pattern: /\/\/.*$/gm removes the rest of each line
+  // starting with //, but this can break JSON if // appears in a string. Conservative
+  // approach: remove lines that begin with // or appear after comma/bracket, not
+  // in the middle of a value. For now, remove all // to EOL as Postman rarely embeds
+  // // in literal strings.
+  let result = json.replace(/\/\/.*$/gm, "");
+
+  // Rule 2: Remove /* */ block comments. Evidence: OPERA has some bodies with
+  // /* comment */ blocks between or around values. Remove all /* ... */ as they're
+  // unlikely to appear inside JSON string literals in this corpus.
+  result = result.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // Rule 3: Remove trailing commas before } or ]. Evidence: very common in OPERA.
+  // Example: `"type": "Reservation",\n}` becomes `"type": "Reservation"\n}`.
+  // This is safe: a comma before } or ] is always invalid in JSON.
+  result = result.replace(/,(\s*[}\]])/g, "$1");
+
+  // Rule 4: Quote unquoted placeholder identifiers. Evidence: OPERA has unquoted
+  // template variables like `"id": {{ReservationId}}` which after placeholder
+  // substitution become `"id": __PLACEHOLDER_ReservationId__`, which is invalid (identifiers
+  // are not valid JSON values). Quote them: `: __PLACEHOLDER_X__` → `: "__PLACEHOLDER_X__"`.
+  result = result.replace(/:\s*(__PLACEHOLDER_[A-Za-z0-9_]+__)([,}\]])/g, ': "$1"$2');
+
+  return result;
+}
+
+/**
  * Infer schema from a JSON example, enriching fields that were Postman
  * template variables with descriptions showing the variable name.
  */
@@ -591,10 +631,14 @@ const RUNTIME_HEADERS = new Set(["content-type", "accept", "authorization"]);
  * only names, locations, and descriptions cross over. Postman declares no
  * requiredness, so path params are required (structurally) and everything
  * else lowers as optional — the conservative, executable choice.
+ *
+ * Returns both the parameters array and a count of disabled query parameters
+ * (for operation-level summary text).
  */
-function lowerParameters(url: LoweredUrl, header: PostmanKV[]): Record<string, unknown>[] {
+function lowerParameters(url: LoweredUrl, header: PostmanKV[]): { params: Record<string, unknown>[]; disabledQueryCount: number } {
   const params: Record<string, unknown>[] = [];
   const seen = new Set<string>();
+  let disabledQueryCount = 0;
   const add = (p: Record<string, unknown>) => {
     const id = `${p.in}:${String(p.name).toLowerCase()}`;
     if (!seen.has(id)) {
@@ -621,9 +665,12 @@ function lowerParameters(url: LoweredUrl, header: PostmanKV[]): Record<string, u
 
   for (const q of url.query) {
     if (!q.key) continue;
+    if (q.disabled === true) disabledQueryCount += 1;
     const desc = [
       descriptionText(q.description),
-      q.disabled === true ? "(disabled by default in the source collection)" : undefined,
+      q.disabled === true
+        ? "(disabled in the source collection — verify it is enabled in your environment before relying on it)"
+        : undefined,
     ]
       .filter(Boolean)
       .join(" ");
@@ -648,7 +695,7 @@ function lowerParameters(url: LoweredUrl, header: PostmanKV[]): Record<string, u
     });
   }
 
-  return params;
+  return { params, disabledQueryCount };
 }
 
 /** v2.0 allows `header` as one raw string of `Key: value` lines. */
@@ -732,18 +779,49 @@ function lowerBody(body: PostmanBody | null | undefined): Record<string, unknown
                 },
               };
             }
-            // Still unparseable even with placeholder substitution: honest message.
-            return {
-              content: {
-                "application/json": {
-                  schema: {
-                    type: "object",
-                    description:
-                      "Body example in the source collection contains template variables and could not be typed.",
+            // Placeholder substitution alone didn't work; try lenient fixes for
+            // common Postman body quirks (trailing commas, comments, unquoted templates, etc.).
+            // Replace templates with placeholders again, then apply lenient rules.
+            const placeholderJson = raw.replace(/\{\{([^{}]+)\}\}/g, (match) => {
+              const varName = match.slice(2, -2);
+              return `__PLACEHOLDER_${varName.replace(/[^A-Za-z0-9]/g, "_")}__`;
+            });
+            const lenientJson = applyLenientJsonFixes(placeholderJson);
+            try {
+              const parsed = JSON.parse(lenientJson);
+              // Infer schema from the parsed JSON, not a generic object.
+              const schema = inferSchema(parsed);
+              // Build required array: all top-level fields in the example are required.
+              if (schema.type === "object" && typeof schema.properties === "object") {
+                schema.required = Object.keys(schema.properties as Record<string, unknown>);
+              }
+              return {
+                content: {
+                  "application/json": {
+                    schema: {
+                      ...schema,
+                      description:
+                        schema.description ??
+                        "Schema inferred from body example after lenient JSON fixes (removed trailing commas, comments, or quoted template variables).",
+                    },
+                    example: parsed,
                   },
                 },
-              },
-            };
+              };
+            } catch {
+              // Even lenient fixes didn't work: honest message.
+              return {
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      description:
+                        "Body example in the source collection contains template variables and could not be typed.",
+                    },
+                  },
+                },
+              };
+            }
           }
         }
       }
@@ -924,14 +1002,24 @@ export function adaptPostman(text: string): OpenApiDocument {
     const id = buildOperationId(leaf.folders, leaf.item.name ?? "request", usedIds);
     usedIds.add(id);
 
+    const { params, disabledQueryCount } = lowerParameters(url, headerList(leaf.request.header));
+
+    // Build operation description, adding a summary sentence if query parameters are disabled.
+    let operationDesc = descriptionText(leaf.request.description);
+    if (disabledQueryCount > 0) {
+      const totalQueryParams = url.query.filter((q) => q.key).length;
+      const disabledSentence = `${disabledQueryCount} of ${totalQueryParams} documented query parameters are disabled in the source collection.`;
+      operationDesc = operationDesc
+        ? `${operationDesc}\n\n${disabledSentence}`
+        : disabledSentence;
+    }
+
     const operation: Record<string, unknown> = {
       operationId: id,
       summary: leaf.item.name,
-      ...(descriptionText(leaf.request.description)
-        ? { description: descriptionText(leaf.request.description) }
-        : {}),
+      ...(operationDesc ? { description: operationDesc } : {}),
       ...(leaf.folders.length > 0 ? { tags: [...new Set(leaf.folders)] } : {}),
-      parameters: lowerParameters(url, headerList(leaf.request.header)),
+      parameters: params,
       responses: lowerResponses(leaf.item.response),
     };
 

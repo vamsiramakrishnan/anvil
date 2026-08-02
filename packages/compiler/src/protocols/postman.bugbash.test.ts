@@ -1052,3 +1052,222 @@ describe("postmanSchemaVersion", () => {
     expect(postmanSchemaVersion(v20)).toBe("2.0");
   });
 });
+
+/* ---------------------- lenient JSON parsing for malformed bodies ---------------------- */
+
+describe("lenient JSON parsing for common Postman body quirks", () => {
+  const post = (name: string, path: string, body: unknown) =>
+    JSON.stringify({
+      info: { schema: SCHEMA_V21 },
+      item: [
+        {
+          name,
+          request: { method: "POST", url: `https://x.example.com${path}`, body },
+        },
+      ],
+    });
+
+  it("removes trailing commas before closing braces to parse otherwise-valid JSON with template variables", () => {
+    // Evidence from OPERA corpus: bodies like {"id": {{ReservationId}},} where the trailing comma
+    // is present even before the closing brace.
+    const doc = adaptPostman(
+      post("TrailingCommas", "/trailing-commas", {
+        mode: "raw",
+        raw: '{"reservationId": {"type": "Reservation", "id": {{ReservationId}},}, "name": "Guest"}',
+        options: { raw: { language: "json" } },
+      }),
+    );
+    const body = opAt(doc, "/trailing-commas", "post")?.requestBody as {
+      content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
+    };
+    expect(body).toBeDefined();
+    const schema = body.content["application/json"].schema as Record<string, unknown>;
+    // Verify the schema was properly inferred from the lenient-parsed JSON
+    expect(schema.type).toBe("object");
+    const props = schema.properties as Record<string, unknown>;
+    expect(props).toBeDefined();
+    expect(props.name).toMatchObject({ type: "string" });
+    expect(props.reservationId).toMatchObject({ type: "object" });
+  });
+
+  it("quotes unquoted placeholder identifiers from template variable substitution", () => {
+    // Evidence: OPERA bodies contain unquoted template variables like "id": {{var}}
+    // which after placeholder substitution become "id": __PLACEHOLDER_0__ (invalid JSON).
+    // Lenient parsing quotes them: "id": "__PLACEHOLDER_0__".
+    const doc = adaptPostman(
+      post("UnquotedPlaceholders", "/unquoted-templates", {
+        mode: "raw",
+        raw: '{"id": {{HotelId}}, "type": "Hotel"}',
+        options: { raw: { language: "json" } },
+      }),
+    );
+    const body = opAt(doc, "/unquoted-templates", "post")?.requestBody as {
+      content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
+    };
+    expect(body).toBeDefined();
+    expect(body.content["application/json"].schema).toMatchObject({
+      type: "object",
+      properties: expect.objectContaining({
+        id: { type: "string" },
+        type: { type: "string" },
+      }),
+    });
+  });
+
+  it("removes // line comments to parse JSON with inline comments", () => {
+    const doc = adaptPostman(
+      post("LineComments", "/line-comments", {
+        mode: "raw",
+        raw: '{"amount": 100, // charge amount\n"currency": "USD"} // end of body',
+        options: { raw: { language: "json" } },
+      }),
+    );
+    const body = opAt(doc, "/line-comments", "post")?.requestBody as {
+      content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
+    };
+    expect(body).toBeDefined();
+    expect(body.content["application/json"].schema).toMatchObject({
+      type: "object",
+      properties: expect.objectContaining({
+        amount: { type: "number" },
+        currency: { type: "string" },
+      }),
+    });
+  });
+
+  it("removes /* */ block comments to parse JSON with block comments", () => {
+    const doc = adaptPostman(
+      post("BlockComments", "/block-comments", {
+        mode: "raw",
+        raw: '{"amount": 100, /* charge amount */ "currency": /* USD or EUR */ "USD"}',
+        options: { raw: { language: "json" } },
+      }),
+    );
+    const body = opAt(doc, "/block-comments", "post")?.requestBody as {
+      content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
+    };
+    expect(body).toBeDefined();
+    expect(body.content["application/json"].schema).toMatchObject({
+      type: "object",
+      properties: expect.objectContaining({
+        amount: { type: "number" },
+        currency: { type: "string" },
+      }),
+    });
+  });
+
+  it("emits honest 'could not be typed' message when lenient fixes cannot parse the JSON", () => {
+    // Body with genuinely malformed JSON that no lenient fix can handle
+    const doc = adaptPostman(
+      post("ReallyMalformed", "/malformed", {
+        mode: "raw",
+        raw: '{"id": {{HotelId}}}extra text here',
+        options: { raw: { language: "json" } },
+      }),
+    );
+    const body = opAt(doc, "/malformed", "post")?.requestBody as {
+      content: Record<string, { schema: Record<string, unknown> }>;
+    };
+    expect(body.content["application/json"].schema).toMatchObject({
+      type: "object",
+      description: expect.stringContaining("could not be typed"),
+    });
+  });
+});
+
+/* ---------------------- disabled query parameter UI ---------------------- */
+
+describe("disabled query parameter UX and operation descriptions", () => {
+  const getWithParams = (name: string, path: string, query: unknown[]) =>
+    JSON.stringify({
+      info: { schema: SCHEMA_V21 },
+      item: [
+        {
+          name,
+          request: {
+            method: "GET",
+            url: { path, query },
+          },
+        },
+      ],
+    });
+
+  it("updates per-field disabled text to guide users on verification", () => {
+    const doc = adaptPostman(
+      getWithParams("DisabledParams", "/search", [
+        { key: "q", value: "test" },
+        { key: "limit", value: "10", disabled: true },
+      ]),
+    );
+    const op = opAt(doc, "/search", "get");
+    const limitParam = (op?.parameters as Array<Record<string, unknown>>).find(
+      (p) => p.name === "limit",
+    );
+    expect(limitParam?.description).toContain(
+      "disabled in the source collection — verify it is enabled in your environment",
+    );
+    expect(limitParam?.description).not.toContain("disabled by default");
+  });
+
+  it("adds a summary sentence to operation description when query parameters are disabled", () => {
+    const doc = adaptPostman(
+      getWithParams("MultipleDisabled", "/search", [
+        { key: "q", value: "test" },
+        { key: "limit", value: "10", disabled: true },
+        { key: "offset", value: "0", disabled: true },
+        { key: "sort", value: "name" },
+      ]),
+    );
+    const op = opAt(doc, "/search", "get");
+    expect(op?.description).toContain("2 of 4 documented query parameters are disabled");
+  });
+
+  it("omits the summary sentence when no query parameters are disabled", () => {
+    const doc = adaptPostman(
+      getWithParams("NoDisabled", "/search", [
+        { key: "q", value: "test" },
+        { key: "limit", value: "10" },
+      ]),
+    );
+    const op = opAt(doc, "/search", "get");
+    // When no parameters are disabled and there's no request description,
+    // the operation description should be undefined (not present at all).
+    if (op?.description) {
+      expect(op.description).not.toContain("disabled");
+    }
+  });
+
+  it("prepends the summary sentence to an existing operation description", () => {
+    const spec = JSON.stringify({
+      info: { schema: SCHEMA_V21 },
+      item: [
+        {
+          name: "Search",
+          request: {
+            method: "GET",
+            url: "https://x.example.com/search?q=test&limit=10",
+            description: "Perform a full-text search across all resources.",
+          },
+        },
+      ],
+    });
+    const collection = JSON.parse(spec) as Record<string, unknown>;
+    // Manually add disabled query param (the string URL doesn't parse query params with disabled flag)
+    const item = (collection.item as Array<Record<string, unknown>>)[0];
+    (item.request as Record<string, unknown>).url = {
+      raw: "https://x.example.com/search?q=test&limit=10",
+      protocol: "https",
+      host: ["x.example.com"],
+      path: ["search"],
+      query: [
+        { key: "q", value: "test" },
+        { key: "limit", value: "10", disabled: true },
+      ],
+    };
+
+    const doc = adaptPostman(JSON.stringify(collection));
+    const op = opAt(doc, "/search", "get");
+    expect(op?.description).toContain("Perform a full-text search");
+    expect(op?.description).toContain("1 of 2 documented query parameters are disabled");
+  });
+});
