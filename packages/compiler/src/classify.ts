@@ -6,6 +6,7 @@ import {
   type EffectKind,
   type HttpMethod,
   type Idempotency,
+  type InteractionArchetype,
   type OperationAction,
   type RetryBasis,
   type RetryCondition,
@@ -351,4 +352,23 @@ export function classifyConfirmation(effect: Effect, idempotency: Idempotency): 
     ? `This operation is an irreversible ${effect.risk} mutation.`
     : `This operation is an unsafe ${effect.risk} mutation.`;
   return { required: true, risk: effect.risk, reason };
+}
+
+/**
+ * Classify the interaction archetype — how an agent should interact with the operation.
+ * Returns undefined for operations that match no rule (unclassified).
+ */
+export function classifyArchetype(
+  effect: Effect,
+  action: OperationAction,
+  longRunning: boolean,
+): InteractionArchetype | undefined {
+  // Long-running operations dominate other classifications.
+  if (longRunning) return "long_running";
+  // Search-family reads (searches and list operations).
+  if (effect.kind === "read" && (action === "search" || action === "list")) return "search";
+  // All mutations are transactions.
+  if (effect.kind === "mutation") return "transaction";
+  // Everything else: unclassified (query_passthrough and bulk are Phase 3+ features).
+  return undefined;
 }

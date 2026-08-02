@@ -10,6 +10,7 @@ import {
   HttpMethod,
   IdempotencyMechanism,
   IdempotencyMode,
+  InteractionArchetype,
   KeyDerivation,
   OperationAction,
   OperationState,
@@ -693,6 +694,8 @@ export const Operation = z.object({
   pagination: Pagination.optional(),
   streaming: z.boolean().default(false),
   longRunning: z.boolean().default(false),
+  /** How an agent should interact with this operation (transaction, search, long_running, etc.). */
+  archetype: InteractionArchetype.optional(),
   deprecated: z.boolean().default(false),
   /** Agent-facing bindings — one operation, three aligned surfaces. */
   cli: z.object({ command: z.string(), aliases: z.array(z.string()).default([]) }),

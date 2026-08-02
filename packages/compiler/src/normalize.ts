@@ -12,7 +12,13 @@ import type {
   RequestBody,
 } from "@anvil/air";
 import { snakeCase } from "@anvil/air";
-import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import {
+  classifyArchetype,
+  classifyAuth,
+  classifyConfirmation,
+  classifyEffect,
+  classifyRetry,
+} from "./classify.js";
 import { materializeSchema } from "./decycle.js";
 import { deriveNames, singularize } from "./naming.js";
 import type { OpenApiDocument, ParsedSpec, SecurityScheme } from "./parse.js";
@@ -468,6 +474,10 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
       if (declaredIdempotent && idempotency.mode === "none") idempotency.mode = "natural";
       const retries = classifyRetry(effect, idempotency);
       const confirmation = classifyConfirmation(effect, idempotency);
+      // No spec dialect sets long-running yet; keep the operation field and the
+      // archetype input tied to one value so they can never disagree.
+      const longRunning = false;
+      const archetype = classifyArchetype(effect, effect.action, longRunning);
 
       const params: Param[] = [];
       for (const rp of mergeParams(pathParams, raw.parameters ?? [])) {
@@ -523,7 +533,8 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         confirmation,
         auth: auth.auth,
         streaming: false,
-        longRunning: false,
+        longRunning,
+        archetype,
         deprecated: Boolean(raw.deprecated),
         cli: { command: names.cliCommand, aliases: [] },
         mcp: { toolName: names.toolName },

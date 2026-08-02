@@ -235,6 +235,27 @@ export const SourceKind = z.enum([
 ]);
 export type SourceKind = z.infer<typeof SourceKind>;
 
+/**
+ * Interaction archetype — the *shape* of how an agent interacts with an
+ * operation, orthogonal to its effect/risk classification (confirmation and
+ * retry policy stay decided by their own classifiers, never implied here).
+ *   transaction       — a state-changing call an agent makes once, on purpose
+ *   search            — a read that filters/lists; results may need paging
+ *   query_passthrough — a query-language string passes through unconstrained
+ *   long_running      — returns before completion; progress is polled
+ *   bulk              — operates on many records per call
+ *   file_transfer     — moves file content rather than structured data
+ */
+export const InteractionArchetype = z.enum([
+  "transaction",
+  "search",
+  "query_passthrough",
+  "long_running",
+  "bulk",
+  "file_transfer",
+]);
+export type InteractionArchetype = z.infer<typeof InteractionArchetype>;
+
 /** Diagnostic severity emitted by the validator. */
 export const DiagnosticLevel = z.enum(["error", "warning", "info"]);
 export type DiagnosticLevel = z.infer<typeof DiagnosticLevel>;

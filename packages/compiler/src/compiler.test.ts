@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { confidenceFor } from "@anvil/air";
 import { describe, expect, it } from "vitest";
-import { classifyConfirmation, classifyEffect } from "./classify.js";
+import { classifyArchetype, classifyConfirmation, classifyEffect } from "./classify.js";
 import { approveOperations, compile } from "./compile.js";
 
 const read = (rel: string) =>
@@ -121,6 +121,46 @@ describe("classifier", () => {
     expect(classifyConfirmation(hinted.effect, hinted.idempotency).required).toBe(false);
     // An unhinted POST with the same signal stays a conservative mutation.
     expect(classifyEffect("post", signal).effect.kind).toBe("mutation");
+  });
+
+  it("classifies search and list reads as archetype search", () => {
+    const search = classifyEffect("get", "searchPayments /payments/search");
+    expect(classifyArchetype(search.effect, search.effect.action, false)).toBe("search");
+
+    const list = classifyEffect("get", "listPayments /payments");
+    expect(classifyArchetype(list.effect, list.effect.action, false)).toBe("search");
+  });
+
+  it("classifies all mutations as archetype transaction", () => {
+    const create = classifyEffect("post", "createPayment /payments");
+    expect(classifyArchetype(create.effect, create.effect.action, false)).toBe("transaction");
+
+    const update = classifyEffect("patch", "updatePayment /payments/{id}");
+    expect(classifyArchetype(update.effect, update.effect.action, false)).toBe("transaction");
+
+    const delete_ = classifyEffect("delete", "deletePayment /payments/{id}");
+    expect(classifyArchetype(delete_.effect, delete_.effect.action, false)).toBe("transaction");
+  });
+
+  it("classifies longRunning operations as archetype long_running regardless of other attributes", () => {
+    // Even a search or list operation that would normally map to "search" archetype
+    // becomes "long_running" if the operation has longRunning: true.
+    const search = classifyEffect("get", "searchPayments /payments/search");
+    expect(classifyArchetype(search.effect, search.effect.action, true)).toBe("long_running");
+
+    // A mutation with longRunning also becomes long_running (not transaction).
+    const mutation = classifyEffect("post", "initiateAsyncJob /jobs");
+    expect(classifyArchetype(mutation.effect, mutation.effect.action, true)).toBe("long_running");
+  });
+
+  it("leaves unclassified operations with undefined archetype", () => {
+    // A non-list, non-search read that is not long_running stays unclassified.
+    const simpleGet = classifyEffect("get", "getPayment /payments/{id}");
+    expect(classifyArchetype(simpleGet.effect, "get", false)).toBeUndefined();
+
+    // Polling is a read-family verb but not search/list, so it stays unclassified.
+    const poll = classifyEffect("get", "pollStatus /jobs/{id}/status");
+    expect(classifyArchetype(poll.effect, "poll", false)).toBeUndefined();
   });
 });
 
