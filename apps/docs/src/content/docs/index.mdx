@@ -234,6 +234,44 @@ speed and human escalation, never correctness.
 One contract, enforced in Antigravity, Claude Code, and Codex — and visible to
 every MCP client.
 
+## Proof, not promises
+
+The quality of the generated MCP server and skill is not asserted — **each
+bundle demonstrates it about itself**, with every record bound to the bundle's
+content hash so stale evidence can never masquerade as current:
+
+- **`anvil selftest`** boots the generated mock and MCP server, then invokes
+  every approved tool over the real MCP transport — arguments reach the wire
+  faithfully, confirmation gates refuse *before* any side effect, and
+  non-idempotent mutations are never auto-retried.
+- **`anvil conformance`** proves the skill, CLI, and MCP tool list agree —
+  same operations, same handles, and a skill that documents the *exact*
+  posture the runtime enforces. A skill that under-states a gate fails here.
+- **`anvil simulate`** drives the full safety matrix through a deterministic
+  simulator, then deliberately weakens each safety control and proves the
+  surface catches the mutant.
+- **`anvil certify`** is the static gate: byte-level surface agreement plus
+  semantic checks (sibling operations may not share one description).
+- **`anvil benchmark`** scores agent-task completion — tool discovery,
+  parameter satisfiability, call success — and gates CI with `--check`.
+
+On the public-corpus gauntlet (5,500+ operations across Stripe, GitHub, Jira,
+Twilio, Slack, Coda, Zendesk, TM Forum, Coupa, Workday, Zoho, Oracle OPERA,
+and a 2004-era SOAP service), fully-driven bundles pass every lane — Coda:
+72/72 selftest, 136/136 conformance, 504/504 simulation cells with 4/4 safety
+mutants killed, 134/134 benchmark tasks.
+
+## Malleable by declaration
+
+You never edit generated code and never fork the vendor spec. One declarative
+manifest layer reshapes the whole surface — rename operations, remodel a
+blocked end-user OAuth estate to per-caller token exchange with a single
+`auth: { type: oauth2_on_behalf_of }` line, enforce idempotency keys, replace a
+raw SQL passthrough with a constrained read-only query template — and
+`anvil refine` proposes evidence-gated improvements (descriptions, examples,
+intent phrases) that apply back to the model, never to one surface. Recompile,
+and the CLI, MCP server, and skill move together.
+
 ## The loop
 
 <LoopDiagram />

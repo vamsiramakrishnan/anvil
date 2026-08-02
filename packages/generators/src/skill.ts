@@ -163,6 +163,20 @@ and workflows a capability owns; \`${id} workflows <name>\` shows a multi-step f
 
 ${capabilitiesList(air)}
 
+## The ladder (work down it, never around it)
+Before writing any code or calling anything, walk these steps **in order** and
+stop at the first that answers:
+1. **Does an approved operation already do this?** \`${id} discover "<intent>"\` —
+   never hand-roll an HTTP call against the upstream when a compiled operation
+   exists.
+2. **Does an authored workflow do the whole job in one call?** Check
+   \`reference/workflows.md\` before chaining operations yourself.
+3. **Read the contract before calling.** \`${id} explain <operation-id>\` — inputs,
+   risk, idempotency, and confirmation posture, in one place.
+4. **Preview before executing.** \`--dry-run\` shows the exact request for free.
+5. **Not approved? Stop.** A pending or blocked operation is a human decision,
+   not an obstacle to code around. Ask, don't improvise.
+
 ## Use the CLI first
 Run \`${id} --help\` before guessing. Then \`${id} discover "<intent>"\` to find an
 operation, and \`${id} explain <operation-id>\` to read its contract.
