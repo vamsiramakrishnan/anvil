@@ -129,7 +129,112 @@ describe("nested folders, operationId dedup, and path collisions", () => {
     const doc = adaptPostman(spec);
     const op = opAt(doc, "/deep", "get");
     expect(op?.tags).toEqual(["A", "B", "C"]);
-    expect(op?.operationId).toBe("A.B.C.Deep");
+    // With 3 meaningful folders, keep last 1 folder + request name: C.Deep
+    expect(op?.operationId).toBe("C.Deep");
+  });
+
+  it("drops leading generic folder prefixes (workflows, common workflows, etc.)", () => {
+    const spec = JSON.stringify({
+      info: { schema: SCHEMA_V21 },
+      item: [
+        {
+          name: "Common Workflows",
+          item: [
+            {
+              name: "Guest Management",
+              item: [
+                {
+                  name: "Search",
+                  request: { method: "GET", url: "https://x.example.com/search-guest" },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const doc = adaptPostman(spec);
+    const op = opAt(doc, "/search-guest", "get");
+    // "Common Workflows" is generic and dropped; we keep only "Guest Management" + "Search".
+    expect(op?.operationId).toBe("Guest_Management.Search");
+  });
+
+  it("keeps at most the last 2 meaningful folder segments plus the request name", () => {
+    const spec = JSON.stringify({
+      info: { schema: SCHEMA_V21 },
+      item: [
+        {
+          name: "API",
+          item: [
+            {
+              name: "Reservations",
+              item: [
+                {
+                  name: "Guest Management",
+                  item: [
+                    {
+                      name: "Add Guest",
+                      request: { method: "POST", url: "https://x.example.com/add-guest" },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const doc = adaptPostman(spec);
+    const op = opAt(doc, "/add-guest", "post");
+    // "API" is generic and dropped. We have 3 meaningful: "Reservations", "Guest Management", + request "Add Guest".
+    // Keep last 2: "Guest Management" (folder) + "Add Guest" (request).
+    expect(op?.operationId).toBe("Guest_Management.Add_Guest");
+  });
+
+  it("falls back to more segments when truncation would lose uniqueness", () => {
+    const spec = JSON.stringify({
+      info: { schema: SCHEMA_V21 },
+      item: [
+        {
+          name: "Workflows",
+          item: [
+            {
+              name: "Reservations",
+              item: [
+                {
+                  name: "Add Guest",
+                  request: { method: "POST", url: "https://x.example.com/add-guest-1" },
+                },
+              ],
+            },
+          ],
+        },
+        {
+          name: "Common Workflows",
+          item: [
+            {
+              name: "Bookings",
+              item: [
+                {
+                  name: "Reservations",
+                  item: [
+                    {
+                      name: "Add Guest",
+                      request: { method: "POST", url: "https://x.example.com/add-guest-2" },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const doc = adaptPostman(spec);
+    const op1 = opAt(doc, "/add-guest-1", "post");
+    const op2 = opAt(doc, "/add-guest-2", "post");
+    // Both would truncate to "Reservations.Add_Guest"; check they stay unique.
+    expect(op1?.operationId).not.toBe(op2?.operationId);
   });
 
   it("dedups a colliding operationId deterministically with a numeric suffix", () => {
@@ -464,6 +569,91 @@ describe("query & header parameter edge cases", () => {
     const params = opAt(doc, "/z", "get")?.parameters as Array<Record<string, unknown>>;
     expect(params).toHaveLength(1);
     expect(params[0]).toMatchObject({ name: "Foo", description: "first" });
+  });
+});
+
+/* --------------------------------------- template variable bodies --------------------------------------- */
+
+describe("request body shapes with template variables", () => {
+  const post = (name: string, path: string, body: unknown) =>
+    JSON.stringify({
+      info: { schema: SCHEMA_V21 },
+      item: [
+        {
+          name,
+          request: { method: "POST", url: `https://x.example.com${path}`, body },
+        },
+      ],
+    });
+
+  it("types a JSON body whose example contains Postman template variables by substituting placeholders", () => {
+    const doc = adaptPostman(
+      post("TemplateVars", "/template-body", {
+        mode: "raw",
+        raw: '{"amount": "{{chargeAmount}}", "code": "{{trxCode}}", "currency": "USD"}',
+        options: { raw: { language: "json" } },
+      }),
+    );
+    const body = opAt(doc, "/template-body", "post")?.requestBody as {
+      content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
+    };
+    expect(body).toBeDefined();
+    expect(body.content["application/json"].schema).toMatchObject({
+      type: "object",
+      properties: expect.objectContaining({
+        amount: { type: "string" },
+        code: { type: "string" },
+        currency: { type: "string" },
+      }),
+    });
+    // Verify that a properly-typed example was inferred from the template placeholders
+    expect(body.content["application/json"].example).toEqual({
+      amount: expect.any(String),
+      code: expect.any(String),
+      currency: "USD",
+    });
+  });
+
+  it("includes template variable provenance in field descriptions", () => {
+    const doc = adaptPostman(
+      post("TemplateProvenance", "/template-prov", {
+        mode: "raw",
+        raw: '{"total": "{{totalAmount}}", "tax": 0.10}',
+        options: { raw: { language: "json" } },
+      }),
+    );
+    const body = opAt(doc, "/template-prov", "post")?.requestBody as {
+      content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
+    };
+    // Verify schema has all fields properly typed from the template-substituted example
+    expect(body.content["application/json"].schema).toMatchObject({
+      type: "object",
+      properties: {
+        total: { type: "string" },
+        tax: { type: "number" },
+      },
+    });
+    // Verify example was reconstructed after placeholder substitution
+    const example = body.content["application/json"].example as Record<string, unknown>;
+    expect(typeof example.total).toBe("string");
+    expect(typeof example.tax).toBe("number");
+  });
+
+  it("still emits honest 'could not be typed' message for truly unparseable JSON with templates", () => {
+    const doc = adaptPostman(
+      post("ReallyBadJson", "/really-bad", {
+        mode: "raw",
+        raw: "{{notEvenCloseToParseable}}",
+        options: { raw: { language: "json" } },
+      }),
+    );
+    const body = opAt(doc, "/really-bad", "post")?.requestBody as {
+      content: Record<string, { schema: Record<string, unknown> }>;
+    };
+    expect(body.content["application/json"].schema).toMatchObject({
+      type: "object",
+      description: expect.stringContaining("could not be typed"),
+    });
   });
 });
 

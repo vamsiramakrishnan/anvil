@@ -189,6 +189,71 @@ function wholeTemplateVar(s: string): string | undefined {
   return m ? (m[1] as string) : undefined;
 }
 
+/**
+ * Check if a folder name is a generic grouping name that should be dropped
+ * from the canonical operation ID. Case-insensitive matching.
+ */
+function isGenericFolder(name: string): boolean {
+  const normalized = name.toLowerCase().trim();
+  const genericNames = new Set([
+    "workflows",
+    "common workflows",
+    "examples",
+    "samples",
+    "api",
+    "apis",
+    "collection",
+  ]);
+  return genericNames.has(normalized);
+}
+
+/**
+ * Build a canonical operationId from folder path and request name, dropping
+ * leading generic folders and keeping at most the last 2 path segments
+ * (folder + request name). When truncation would lose uniqueness, fallback to
+ * more segments to stay unique.
+ */
+function buildOperationId(folders: string[], itemName: string, usedIds: Set<string>): string {
+  // Drop leading generic folders.
+  const meaningful = folders.filter((f) => !isGenericFolder(f));
+
+  // Keep at most the last 2 path segments total (last N folders such that
+  // N folders + 1 request name ≤ some reasonable depth; typically this means
+  // keep the last 1 folder + request name). When there are ≤1 meaningful folders,
+  // use all of them.
+  let segmentsToTry = meaningful.length <= 1 ? meaningful : meaningful.slice(-1);
+
+  // Build the ID and check for collisions.
+  const buildId = (folderSegments: string[], name: string): string =>
+    [...folderSegments, name].map(sanitize).join(".");
+
+  let baseId = buildId(segmentsToTry, itemName);
+  let id = baseId;
+  for (let n = 2; usedIds.has(id); n += 1) {
+    id = `${baseId}_${n}`;
+  }
+
+  // If we truncated (more than 1 meaningful folder) and still have a collision on the base ID,
+  // try with more folders progressively until we find a non-colliding ID or use all folders.
+  if (meaningful.length > 1 && usedIds.has(id)) {
+    // Try with 2 folders, then 3, etc., up to all of them.
+    for (let numFolders = 2; numFolders <= meaningful.length; numFolders++) {
+      segmentsToTry = meaningful.slice(-numFolders);
+      baseId = buildId(segmentsToTry, itemName);
+      id = baseId;
+      for (let n = 2; usedIds.has(id); n += 1) {
+        id = `${baseId}_${n}`;
+      }
+      if (!usedIds.has(baseId)) {
+        // Found a non-colliding base ID at this folder depth.
+        break;
+      }
+    }
+  }
+
+  return id;
+}
+
 /* ---------------------------- schema inference ---------------------------- */
 
 /**
@@ -218,6 +283,107 @@ function inferSchema(value: unknown): Record<string, unknown> {
     default:
       return { type: "string" };
   }
+}
+
+/**
+ * Replace all Postman template variables ({{var}}) in a JSON string with
+ * placeholders, track which fields were template variables, then try to parse.
+ * Returns { parsed, templateFields, variableNames } on success, undefined on failure.
+ */
+function tryParseJsonWithTemplates(
+  raw: string,
+):
+  | { parsed: unknown; templateFields: Set<string>; variableNames: Map<string, string> }
+  | undefined {
+  const templateFields = new Set<string>();
+  const variableNames = new Map<string, string>();
+  const placeholders = new Map<string, string>();
+  let counter = 0;
+
+  // Track which template variable names map to which placeholders.
+  const replaced = raw.replace(/\{\{([^{}]+)\}\}/g, (match) => {
+    if (!placeholders.has(match)) {
+      const placeholder = `__PLACEHOLDER_${counter++}__`;
+      placeholders.set(match, placeholder);
+      const varName = match.slice(2, -2); // Remove {{ and }}
+      variableNames.set(placeholder, varName);
+    }
+    return placeholders.get(match) as string;
+  });
+
+  try {
+    const parsed = JSON.parse(replaced);
+    // Track which fields had exactly a template variable (now a placeholder string).
+    const findTemplateFields = (obj: unknown, path: string[] = []): void => {
+      if (obj !== null && typeof obj === "object" && !Array.isArray(obj)) {
+        for (const [key, val] of Object.entries(obj as Record<string, unknown>)) {
+          if (typeof val === "string" && val.startsWith("__PLACEHOLDER_")) {
+            templateFields.add([...path, key].join("."));
+          }
+          findTemplateFields(val, [...path, key]);
+        }
+      }
+    };
+    findTemplateFields(parsed);
+
+    return { parsed, templateFields, variableNames };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Infer schema from a JSON example, enriching fields that were Postman
+ * template variables with descriptions showing the variable name.
+ */
+function inferSchemaWithTemplates(
+  value: unknown,
+  templateFields: Set<string>,
+  _variableNames: Map<string, string>,
+): Record<string, unknown> {
+  const schema = inferSchema(value);
+
+  // Enrich schema properties with template variable metadata.
+  const enrichProperties = (
+    s: Record<string, unknown>,
+    path: string[] = [],
+  ): Record<string, unknown> => {
+    if (s.type === "object" && typeof s.properties === "object" && s.properties !== null) {
+      const enriched: Record<string, unknown> = { ...s };
+      enriched.properties = { ...s.properties };
+      for (const [key, propSchema] of Object.entries(s.properties as Record<string, unknown>)) {
+        const fieldPath = [...path, key].join(".");
+        if (templateFields.has(fieldPath)) {
+          // This field was a template variable in the original JSON.
+          if (typeof propSchema === "object" && propSchema !== null) {
+            const propSchemaObj = propSchema as Record<string, unknown>;
+            const enrichedProp = enrichProperties(propSchemaObj, [...path, key]);
+            (enriched.properties as Record<string, unknown>)[key] = {
+              ...enrichedProp,
+              description:
+                'Postman collection template variable (original example: "{{variable}}")',
+            };
+          } else {
+            // Fallback: property is not an object (shouldn't happen for schemas).
+            (enriched.properties as Record<string, unknown>)[key] = propSchema;
+          }
+        } else if (typeof propSchema === "object" && propSchema !== null) {
+          // Recursively enrich nested objects.
+          (enriched.properties as Record<string, unknown>)[key] = enrichProperties(
+            propSchema as Record<string, unknown>,
+            [...path, key],
+          );
+        } else {
+          // Preserve non-template, non-object fields as-is.
+          (enriched.properties as Record<string, unknown>)[key] = propSchema;
+        }
+      }
+      return enriched;
+    }
+    return s;
+  };
+
+  return enrichProperties(schema);
 }
 
 /* ---------------------------------- auth ---------------------------------- */
@@ -536,8 +702,37 @@ function lowerBody(body: PostmanBody | null | undefined): Record<string, unknown
           };
         } catch {
           // Declared JSON but not parseable (usually `{{var}}` templates):
-          // a permissive object body, honestly untyped.
+          // try to parse after replacing template variables with placeholders.
           if (language === "json") {
+            const result = tryParseJsonWithTemplates(raw);
+            if (result !== undefined) {
+              // Successfully parsed after placeholder substitution.
+              // Infer schema with template variable metadata.
+              const schema = inferSchemaWithTemplates(
+                result.parsed,
+                result.templateFields,
+                result.variableNames,
+              );
+              // Build required array: all top-level fields in the example are required
+              // (Postman has no requiredness concept, so we document the assumption).
+              if (schema.type === "object" && typeof schema.properties === "object") {
+                schema.required = Object.keys(schema.properties as Record<string, unknown>);
+              }
+              return {
+                content: {
+                  "application/json": {
+                    schema: {
+                      ...schema,
+                      description:
+                        schema.description ??
+                        "Schema inferred from body example with placeholder substitution for template variables.",
+                    },
+                    example: result.parsed,
+                  },
+                },
+              };
+            }
+            // Still unparseable even with placeholder substitution: honest message.
             return {
               content: {
                 "application/json": {
@@ -724,10 +919,9 @@ export function adaptPostman(text: string): OpenApiDocument {
     const url = lowerUrl(leaf.request.url, variables);
     if (!servers.includes(url.base)) servers.push(url.base);
 
-    // Dotted folder-path id, made unique deterministically on collision.
-    const baseId = [...leaf.folders, leaf.item.name ?? "request"].map(sanitize).join(".");
-    let id = baseId;
-    for (let n = 2; usedIds.has(id); n += 1) id = `${baseId}_${n}`;
+    // Dotted folder-path id, dropping generic prefixes and keeping at most 2 meaningful
+    // folders + request name; collision handling is within buildOperationId.
+    const id = buildOperationId(leaf.folders, leaf.item.name ?? "request", usedIds);
     usedIds.add(id);
 
     const operation: Record<string, unknown> = {
