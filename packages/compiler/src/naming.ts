@@ -464,7 +464,11 @@ function resolveSurfaceCollisions(
     group.sort(byStableIdentity);
     const usedTokens = new Set<string>();
     for (const [index, op] of group.entries()) {
-      let token = distinguishingToken(op, group) ?? op.sourceRef.method ?? String(index + 1);
+      let token =
+        distinguishingToken(op, group) ??
+        subsetFallbackToken(op, group) ??
+        op.sourceRef.method ??
+        String(index + 1);
       let candidate = token;
       let n = 2;
       while (usedTokens.has(candidate)) candidate = `${token}_${n++}`;
@@ -488,6 +492,28 @@ function resolveSurfaceCollisions(
   return changed;
 }
 
+/**
+ * A truthful token for the subset-shaped remainder: an operation whose token
+ * pool is a strict subset of a sibling's has no positive distinguisher (POST
+ * `/refunds` vs POST `/refunds/{refund}`), so name what it IS — an item op
+ * takes `by_<last param>`, a collection op takes its distinctive concrete
+ * segments (those not shared by the whole group) plus `direct`, or bare
+ * `direct` at the group's root. Deterministic, and glanceable where the old
+ * method fallback was noise.
+ */
+function subsetFallbackToken(op: Operation, group: Operation[]): string | undefined {
+  const segments = (op.sourceRef.path ?? "").split("/").filter(Boolean);
+  const last = segments[segments.length - 1];
+  if (last?.startsWith("{") && last.endsWith("}")) {
+    return `by_${snakeCase(last.slice(1, -1))}`;
+  }
+  const sharedByAll = group
+    .map((o) => new Set(cleanPathTokens(o.sourceRef.path)))
+    .reduce((acc, set) => new Set([...acc].filter((t) => set.has(t))));
+  const distinctive = cleanPathTokens(op.sourceRef.path).filter((t) => !sharedByAll.has(t));
+  return distinctive.length > 0 ? `${distinctive.join("_")}_direct` : "direct";
+}
+
 /** Concrete path segments as cleaned word-tokens: format suffix stripped, RPC
  * dotted segments split into their parts. So a distinguishing token is always
  * a real word (`admin`, `local`), never a raw `Messages.json` or a whole
@@ -509,11 +535,24 @@ function cleanPathTokens(path: string | undefined): string[] {
  * shortest distinguishing PAIR of own tokens (joined `_`, kept in path order)
  * is tried before the caller falls back to the HTTP method / stable index.
  */
+/** Path parameter names as `by_<name>` pseudo-tokens (`/refunds/{refund}` →
+ * `by_refund`). Concrete tokens alone cannot distinguish routes that differ
+ * only in their parameters — Stripe's `/application_fees/{fee}/refunds/{id}`
+ * vs `/application_fees/{id}/refunds` clean to identical token lists — and the
+ * old method+counter fallback produced the meaningless `post`/`post_2` names a
+ * consuming agent cannot choose between. */
+function paramTokens(path: string | undefined): string[] {
+  return (path ?? "")
+    .split("/")
+    .filter((s) => s.startsWith("{") && s.endsWith("}"))
+    .map((s) => `by_${snakeCase(s.slice(1, -1))}`);
+}
+
 function distinguishingToken(op: Operation, group: Operation[]): string | undefined {
-  const mine = cleanPathTokens(op.sourceRef.path);
+  const mine = [...cleanPathTokens(op.sourceRef.path), ...paramTokens(op.sourceRef.path)];
   const others = group
     .filter((o) => o !== op)
-    .map((o) => new Set(cleanPathTokens(o.sourceRef.path)));
+    .map((o) => new Set([...cleanPathTokens(o.sourceRef.path), ...paramTokens(o.sourceRef.path)]));
 
   const unique = [...new Set(mine.filter((seg) => others.every((set) => !set.has(seg))))];
   if (unique.length > 0) return unique.sort(byShortestThenLex)[0];
