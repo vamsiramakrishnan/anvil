@@ -8,6 +8,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { generateBundle } from "./bundle.js";
 import { generateCapabilityBundle } from "./capability-view.js";
 import {
+  benchmarkEvidenceStatus,
   bundleHash,
   CERTIFICATION_FILE,
   type Certification,
@@ -657,6 +658,46 @@ describe("publication gating: executable evidence", () => {
     expect(statuses.selftest).toMatchObject({ state: "fresh", fresh: true, passed: true });
     expect(statuses.conformance).toMatchObject({ state: "fresh", fresh: true, passed: true });
     expect(statuses.simulation).toMatchObject({ state: "fresh", fresh: true, passed: true });
+  });
+
+  it("keeps the benchmark report outside the bundle identity", () => {
+    // Writing a score is a record ABOUT the bundle; if it entered the hash,
+    // running `anvil benchmark` would silently stale every other lane.
+    const withBenchmark = {
+      ...files,
+      "benchmark.report.json": JSON.stringify({
+        schemaVersion: 1,
+        bundleHash: bundleHash(files),
+        operations: [],
+        summary: { total: 10, passed: 10, score: 1 },
+      }),
+    };
+    expect(bundleHash(withBenchmark)).toBe(bundleHash(files));
+    const statuses = executableEvidenceStatuses({ ...withBenchmark, ...reportFiles() });
+    expect(executableEvidenceReady(statuses)).toBe(true);
+  });
+
+  it("tracks the benchmark as an advisory lane with the same freshness discipline", () => {
+    const subject = bundleHash(files);
+    const report = (hash: string) =>
+      JSON.stringify({
+        schemaVersion: 1,
+        bundleHash: hash,
+        operations: [],
+        summary: { total: 134, passed: 134, score: 1 },
+      });
+    const fresh = benchmarkEvidenceStatus({ ...files, "benchmark.report.json": report(subject) });
+    expect(fresh).toMatchObject({ state: "fresh", fresh: true, score: 1 });
+    const stale = benchmarkEvidenceStatus({
+      ...files,
+      "benchmark.report.json": report("0".repeat(64)),
+    });
+    expect(stale).toMatchObject({ state: "stale", fresh: false, score: 1 });
+    expect(benchmarkEvidenceStatus(files)).toMatchObject({ state: "missing", score: null });
+    expect(benchmarkEvidenceStatus({ ...files, "benchmark.report.json": "{" })).toMatchObject({
+      state: "corrupt",
+      score: null,
+    });
   });
 
   it("distinguishes stale passing proof from a current failure", () => {

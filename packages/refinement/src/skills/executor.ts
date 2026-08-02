@@ -61,6 +61,14 @@ function claimsAsserting(claims: Claim[], value: unknown): Claim[] {
   return claims.filter((c) => JSON.stringify(c.value) === JSON.stringify(value));
 }
 
+/** English plural good enough for spec nouns: category→categories, box→boxes, doc→docs. */
+function pluralize(noun: string): string {
+  if (noun.length === 0) return noun;
+  if (/[^aeiou]y$/.test(noun)) return `${noun.slice(0, -1)}ies`;
+  if (/(s|x|z|ch|sh)$/.test(noun)) return `${noun}es`;
+  return `${noun}s`;
+}
+
 function proposal(
   skill: RefinementSkill,
   context: SkillContext,
@@ -117,9 +125,89 @@ export class HeuristicSkillExecutor implements SkillExecutor {
         return this.classifyIdempotency(skill, context);
       case "document-pagination":
         return this.classifyPagination(skill, context);
+      case "author-intent-examples":
+        return this.authorIntentExamples(skill, context);
+      case "author-routing-phrases":
+        return this.authorRoutingPhrases(skill, context);
       default:
         return null;
     }
+  }
+
+  /**
+   * Capability routing phrases templated from the capability's own name and
+   * resource nouns — the discovery-surface sibling of intent examples.
+   */
+  private authorRoutingPhrases(
+    skill: RefinementSkill,
+    context: SkillContext,
+  ): SkillProposal | null {
+    const cap = context.capability;
+    if (!cap) return null;
+    const name = (cap.displayName ?? cap.id ?? "").replace(/_/g, " ").trim();
+    const phrases: string[] = [];
+    if (name) phrases.push(`work with ${name.toLowerCase()}`);
+    for (const resource of cap.resources ?? []) {
+      const noun = resource.replace(/_/g, " ").trim();
+      if (noun) phrases.push(`manage ${pluralize(noun)}`);
+    }
+    const intents = [...new Set(phrases)].slice(0, 4);
+    if (intents.length === 0) return null;
+    const claim: Claim = {
+      subject: cap.id,
+      predicate: "capability.intent_examples",
+      value: intents,
+      source: "spec",
+      sourceRef: `${cap.id}.resources`,
+      method: "template",
+      confidence: 0.85,
+    };
+    return proposal(skill, context, [claim], { intent_examples: intents });
+  }
+
+  /**
+   * Intent phrasings templated from the operation's own spec-derived semantics
+   * (effect action + resource + display name). This restates what the spec
+   * already names — in the form an agent routes by — and never asserts
+   * behavior the spec did not: grounded, not invented.
+   */
+  private authorIntentExamples(
+    skill: RefinementSkill,
+    context: SkillContext,
+  ): SkillProposal | null {
+    const op = context.operation;
+    if (!op) return null;
+    const resource = (op.effect.resource ?? "").replace(/_/g, " ").trim();
+    const action = op.effect.action ?? "";
+    const display = op.displayName.trim();
+
+    const phrases: string[] = [];
+    const plural = pluralize(resource);
+    const templates: Record<string, string> = {
+      list: `list the ${plural}`,
+      get: `get a ${resource} by id`,
+      search: `find ${plural} matching a filter`,
+      create: `create a new ${resource}`,
+      update: `update an existing ${resource}`,
+      delete: `delete a ${resource}`,
+    };
+    if (resource && templates[action]) phrases.push(templates[action] as string);
+    else if (resource && action) phrases.push(`${action.replace(/_/g, " ")} ${resource}`);
+    if (display) phrases.push(display.toLowerCase());
+
+    const intents = [...new Set(phrases.filter((p) => p.trim().length > 0))];
+    if (intents.length === 0) return null;
+
+    const claim: Claim = {
+      subject: op.id,
+      predicate: "operation.intent_examples",
+      value: intents,
+      source: "spec",
+      sourceRef: `${op.id}.effect`,
+      method: "template",
+      confidence: 0.85,
+    };
+    return proposal(skill, context, [claim], { intent_examples: intents });
   }
 
   private describe(skill: RefinementSkill, context: SkillContext): SkillProposal | null {

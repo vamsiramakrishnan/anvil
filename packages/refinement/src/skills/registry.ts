@@ -290,6 +290,77 @@ const classifyPagination: RefinementSkill = {
   ],
 };
 
+/**
+ * Author routing intents for an operation that has none. Intent examples are
+ * the phrases an agent (and the benchmark's tool-discovery tasks) route by;
+ * a compiled operation ships with zero, which leaves `anvil benchmark` with
+ * no derivable tasks and the skill's "Example intents" line empty.
+ *
+ * Grounding is deliberately narrow: the heuristic executor only *templates*
+ * phrases from the operation's own spec-derived semantics (effect action,
+ * resource, display name) — never behavior claims — so the proposal restates
+ * what the spec already names, in intent form. Documentation-tier risk, same
+ * class as `generate-examples`.
+ */
+const authorIntentExamples: RefinementSkill = {
+  name: "author-intent-examples",
+  version: 1,
+  triggers: ["operation_lacks_intent_examples"],
+  targetKind: "operation",
+  context: ["parent_operation", "capability", "source_evidence"],
+  evidence: {
+    allowed: ["spec", "doc_example", "postman"],
+    minimumStrength: "single",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["operation.intent_examples"],
+    supportingPredicates: [],
+    fields: ["intent_examples"],
+  },
+  constraints: ["do_not_invent_business_rules", "preserve_domain_terms"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+  ],
+};
+
+/**
+ * The capability-level sibling of `author-intent-examples`: routing phrases so
+ * an agent can match a request to a capability. Templated from the capability's
+ * own name and resource nouns — the same documentation-tier risk class.
+ */
+const authorRoutingPhrases: RefinementSkill = {
+  name: "author-routing-phrases",
+  version: 1,
+  triggers: ["capability_missing_routing_phrases"],
+  targetKind: "capability",
+  context: ["capability", "source_evidence"],
+  evidence: {
+    allowed: ["spec", "doc_example", "postman"],
+    minimumStrength: "single",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["capability.intent_examples"],
+    supportingPredicates: [],
+    fields: ["intent_examples"],
+  },
+  constraints: ["do_not_invent_business_rules", "preserve_domain_terms"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+  ],
+};
+
 /** Every skill Anvil ships today. Executors are separate; these are semantics only. */
 export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   describeField,
@@ -299,6 +370,8 @@ export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   investigateUiProjection,
   classifyIdempotency,
   classifyPagination,
+  authorIntentExamples,
+  authorRoutingPhrases,
 ];
 
 /** Discover the available skills (stable order). */

@@ -162,6 +162,10 @@ export const DERIVED_RECORD_FILES: ReadonlySet<string> = new Set([
   LIVE_CONFORMANCE_REPORT_FILE,
   SIMULATION_REPORT_FILE,
   REVIEW_REPORT_FILE,
+  // A benchmark score is a record about the bundle, not part of its content:
+  // leaving it inside the identity meant running `anvil benchmark` silently
+  // staled every OTHER lane's hash-bound evidence.
+  BENCHMARK_REPORT_FILE,
 ]);
 
 /**
@@ -234,6 +238,87 @@ export function executableEvidenceReady(statuses: ExecutableEvidenceStatuses): b
   return Object.values(statuses).every(
     (status) => status.state === "fresh" && status.fresh && status.passed === true,
   );
+}
+
+const BenchmarkEvidenceReport = z.object({
+  schemaVersion: z.literal(1),
+  bundleHash: z.string().regex(/^[0-9a-f]{64}$/),
+  summary: z.object({
+    total: z.number().int().nonnegative(),
+    passed: z.number().int().nonnegative(),
+    score: z.number().min(0).max(1),
+  }),
+});
+
+/**
+ * The benchmark's relationship to the current bundle digest. Deliberately an
+ * ADVISORY lane, not a member of `ExecutableEvidenceStatuses`: a score is a
+ * quality signal whose acceptable threshold is release policy (`anvil
+ * benchmark --check`), not a pass/fail proof the way selftest/conformance/
+ * simulation are — but it gets the same freshness discipline, so a stale or
+ * corrupt score can never masquerade as current.
+ */
+export interface BenchmarkEvidenceStatus {
+  file: typeof BENCHMARK_REPORT_FILE;
+  state: ExecutableEvidenceState;
+  fresh: boolean;
+  /** passed/total, when the report is readable; null otherwise. */
+  score: number | null;
+  bundleHash: string | null;
+  detail: string;
+}
+
+export function benchmarkEvidenceStatus(
+  files: Record<string, string>,
+  currentBundleHash = bundleHash(files),
+): BenchmarkEvidenceStatus {
+  const file = BENCHMARK_REPORT_FILE;
+  const raw = files[file];
+  if (raw === undefined) {
+    return {
+      file,
+      state: "missing",
+      fresh: false,
+      score: null,
+      bundleHash: null,
+      detail: `No ${file} is present.`,
+    };
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return {
+      file,
+      state: "corrupt",
+      fresh: false,
+      score: null,
+      bundleHash: null,
+      detail: `${file} is not valid JSON.`,
+    };
+  }
+  const parsed = BenchmarkEvidenceReport.safeParse(value);
+  if (!parsed.success) {
+    return {
+      file,
+      state: "corrupt",
+      fresh: false,
+      score: null,
+      bundleHash: null,
+      detail: `${file} does not match its report schema.`,
+    };
+  }
+  const report = parsed.data;
+  const fresh = report.bundleHash === currentBundleHash;
+  const summary = `${report.summary.passed}/${report.summary.total} tasks (${(report.summary.score * 100).toFixed(1)}%)`;
+  return {
+    file,
+    state: fresh ? "fresh" : "stale",
+    fresh,
+    score: report.summary.score,
+    bundleHash: report.bundleHash,
+    detail: fresh ? summary : `${summary} — recorded against a different bundle content digest.`,
+  };
 }
 
 function checkEvidenceStatus<Lane extends "selftest" | "conformance">(

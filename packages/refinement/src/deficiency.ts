@@ -235,7 +235,7 @@ export const DEFICIENCY_CATALOG: Record<DeficiencyCode, DeficiencyDef> = {
     "capability_missing_routing_phrases",
     "usability",
     "low",
-    "author-intent-examples",
+    "author-routing-phrases",
     "capability has no routing phrases",
     "refinementRequired",
     "the agent has no phrases to match a request to this capability",

@@ -193,6 +193,8 @@ describe("deficiency catalog", () => {
       "investigate-ui-projection",
       "classify-idempotency",
       "document-pagination",
+      "author-intent-examples",
+      "author-routing-phrases",
     ]);
     expect(implemented).toEqual(expectedImplemented);
     for (const def of Object.values(DEFICIENCY_CATALOG)) {

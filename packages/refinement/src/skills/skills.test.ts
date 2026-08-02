@@ -229,6 +229,48 @@ describe("generate-examples", () => {
   });
 });
 
+describe("author-intent-examples", () => {
+  const skill = skillByName("author-intent-examples")!;
+
+  it("templates intents from the operation's own semantics and validates", async () => {
+    const air = doc();
+    const op = air.operations[0];
+    if (!op) throw new Error("fixture has no operation");
+    op.skill.intentExamples = [];
+    op.effect.resource = "refund";
+    const ctx = contextFor(air, (code) => code === "operation_lacks_intent_examples");
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set.intent_examples).toEqual(["create a new refund", "create refund"]);
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("validated");
+  });
+});
+
+describe("author-routing-phrases", () => {
+  const skill = skillByName("author-routing-phrases")!;
+
+  it("templates routing phrases from the capability name and resources", async () => {
+    const air = doc();
+    air.capabilities.push({
+      id: "payments.refunds",
+      displayName: "Refunds",
+      description: "",
+      source: "resource",
+      resources: ["refund"],
+      operationIds: ["payments.refunds.create"],
+      workflowIds: [],
+      intentExamples: [],
+      state: "generated",
+      review: "proposed",
+    });
+    const ctx = contextFor(air, (code) => code === "capability_missing_routing_phrases");
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set.intent_examples).toEqual(["work with refunds", "manage refunds"]);
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("validated");
+  });
+});
+
 describe("enrich-errors", () => {
   const skill = skillByName("enrich-errors")!;
 

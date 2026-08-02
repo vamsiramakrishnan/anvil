@@ -143,6 +143,13 @@ function applyOne(
         op.retries.basis = value as Operation["retries"]["basis"];
         return;
       }
+      // Sole write path for `author-intent-examples` — validated upstream
+      // (boundary + grounding); templated from spec semantics, never invented.
+      if (key === "intent_examples" && Array.isArray(value)) {
+        record(key, op.skill.intentExamples, value);
+        op.skill.intentExamples = value.map((v) => String(v));
+        return;
+      }
       // The pagination carrier keys below are the sole write path for
       // `document-pagination` — validated upstream (pagination binding resolves).
       // Only `pagination_style` may create `op.pagination`: fabricating a default
@@ -179,11 +186,19 @@ function applyOne(
       return;
     }
     case "capability": {
-      if (key !== "description") return;
       const cap = findCapability(air, target.capabilityId);
       if (!cap) return;
-      record(key, cap.description, value);
-      cap.description = String(value);
+      if (key === "description") {
+        record(key, cap.description, value);
+        cap.description = String(value);
+        return;
+      }
+      // Sole write path for `author-routing-phrases` — validated upstream.
+      if (key === "intent_examples" && Array.isArray(value)) {
+        record(key, cap.intentExamples, value);
+        cap.intentExamples = value.map((v) => String(v));
+        return;
+      }
       return;
     }
     case "field":

@@ -1,12 +1,11 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AirDocument, Operation } from "@anvil/air";
-import { AirDocument as AirDocumentSchema } from "@anvil/air";
+import { propKey } from "@anvil/air";
 import { BENCHMARK_REPORT_FILE, bundleHash, exampleInput, readBundleDir } from "@anvil/generators";
 import type { Command } from "commander";
-import { parse as parseYaml } from "yaml";
 import type { CliIO } from "../io.js";
-import { resolveBundleDir } from "./certify.js";
+import { loadBundleAir, resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 
@@ -73,22 +72,17 @@ export async function runBenchmarkCommand(
 ): Promise<number> {
   const dir = resolveBundleDir(path);
 
-  // Check that the bundle exists
-  if (!existsSync(join(dir, "air.yaml")) && !existsSync(join(dir, "air.json"))) {
-    throw new Error(`No air.yaml or air.json in ${dir}. Run \`anvil compile\` first.`);
-  }
-
-  // Load the AIR document
-  const airPath = existsSync(join(dir, "air.json")) ? join(dir, "air.json") : join(dir, "air.yaml");
-  const airYaml = readFileSync(airPath, "utf8");
-  const airData = airPath.endsWith(".json") ? JSON.parse(airYaml) : parseYaml(airYaml);
-  const air = AirDocumentSchema.parse(airData);
+  // Load the canonical AIR the same way every other bundle command does:
+  // air.yaml first (the file `refine apply` mutates), then air.json. Reading
+  // json-first here made the benchmark score a stale projection after apply.
+  const files = readBundleDir(dir);
+  const air = loadBundleAir(dir, files);
 
   // Run the benchmark
   const report = await runBenchmark(dir, air, opts);
   const boundReport: BenchmarkReport = {
     ...report,
-    bundleHash: bundleHash(readBundleDir(dir)),
+    bundleHash: bundleHash(files),
   };
 
   // Write the report
@@ -210,16 +204,12 @@ async function scoreTask(
 }
 
 function validateExampleInput(op: Operation, exampleParams: Record<string, unknown>): void {
-  // Validate that required params have values in the example
-  const input = op.input;
-  if (!input) {
-    return;
-  }
-
-  for (const [paramName, paramSchema] of Object.entries(input.params ?? {})) {
-    if (paramSchema.required && !(paramName in exampleParams)) {
+  // `input.params` is an ARRAY, and `exampleInput` keys by the *surface* name
+  // (`propKey`, e.g. snake_case) — compare on those, not array indices.
+  for (const p of op.input.params) {
+    if (p.required && !(propKey(p.name) in exampleParams)) {
       throw new Error(
-        `Required parameter '${paramName}' not satisfiable from example for operation ${op.id}`,
+        `Required parameter '${p.name}' not satisfiable from example for operation ${op.id}`,
       );
     }
   }

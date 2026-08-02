@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { compile } from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { runAnvilCli } from "../anvil-cli.js";
 import { bufferIO } from "../io.js";
 import type { BenchmarkOperationResult, BenchmarkReport, BenchmarkTask } from "./benchmark.js";
@@ -173,6 +174,45 @@ describe("anvil benchmark — command and rendering", () => {
       expect(report.bundleHash).toBeDefined();
       expect(typeof report.bundleHash).toBe("string");
       expect(report.bundleHash.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("Task derivation from intent examples", () => {
+    it("passes a task whose required params are satisfiable from surface examples", async () => {
+      // Regression: the satisfiability check iterated Object.entries over the
+      // params ARRAY (param name '0') and compared raw wire names against the
+      // surface-keyed example input, failing every op with a required param.
+      const bundleDir = await buildBundle(
+        "payments/openapi.yaml",
+        "payments/anvil.yaml",
+        "payments",
+      );
+      const airPath = join(bundleDir, "air.yaml");
+      const air = parseYaml(readFileSync(airPath, "utf8")) as {
+        operations: Array<{
+          id: string;
+          state: string;
+          input: { params: Array<{ required?: boolean }> };
+          skill: { intentExamples: string[] };
+        }>;
+      };
+      const op = air.operations.find(
+        (o) => o.state === "approved" && o.input.params.some((p) => p.required),
+      );
+      if (!op) throw new Error("payments fixture has no approved op with a required param");
+      op.skill.intentExamples = ["get a payment by id"];
+      writeFileSync(airPath, stringifyYaml(air), "utf8");
+
+      const io = bufferIO();
+      const code = await runBenchmarkCommand(bundleDir, {}, io);
+      expect(code).toBe(0);
+      const report: BenchmarkReport = JSON.parse(
+        readFileSync(join(bundleDir, "benchmark.report.json"), "utf8"),
+      );
+      const scored = report.operations.find((o) => o.operationId === op.id);
+      expect(scored?.tasks).toHaveLength(1);
+      expect(scored?.tasks[0]?.pass).toBe(true);
+      expect(scored?.tasks[0]?.failReason).toBeUndefined();
     });
   });
 

@@ -76,6 +76,28 @@ describe("applyPatch", () => {
     ]);
   });
 
+  it("sets operation intent examples (the author-intent-examples write path)", () => {
+    const air = fixtureDoc();
+    const patch: SemanticPatch = {
+      target: { kind: "operation", operationId: OPERATION_ID },
+      set: { intent_examples: ["create a new refund", "refund a payment"] },
+    };
+    const result = applyPatch(air, patch);
+    const op = result.air.operations.find((o) => o.id === OPERATION_ID);
+    expect(op?.skill.intentExamples).toEqual(["create a new refund", "refund a payment"]);
+  });
+
+  it("sets capability routing phrases (the author-routing-phrases write path)", () => {
+    const air = fixtureDoc();
+    const patch: SemanticPatch = {
+      target: { kind: "capability", capabilityId: "payments.refunds" },
+      set: { intent_examples: ["work with refunds", "manage refunds"] },
+    };
+    const result = applyPatch(air, patch);
+    const cap = result.air.capabilities.find((c) => c.id === "payments.refunds");
+    expect(cap?.intentExamples).toEqual(["work with refunds", "manage refunds"]);
+  });
+
   it("sets a body field description", () => {
     const air = fixtureDoc();
     const patch: SemanticPatch = {

@@ -17,12 +17,14 @@ export interface ApprovalInput {
   groundingArtifacts?: VerifiableArtifact[];
 }
 
-/** The four skills whose output is eligible for automatic approval. */
+/** The skills whose output is eligible for automatic approval. */
 const AUTO_APPROVAL_SKILLS = new Set([
   "describe-field",
   "describe-operation",
   "generate-examples",
   "enrich-errors",
+  "author-intent-examples",
+  "author-routing-phrases",
 ]);
 
 /**
@@ -124,6 +126,15 @@ export function classifyApproval(input: ApprovalInput): ApprovalDecision {
       return { tier: "auto", reason: "tightening retryability is always safe" };
     }
     return { tier: "review", reason: "error enrichment needs corroborating evidence" };
+  }
+
+  // Rule 4b — intent examples: routing phrases templated from the operation's
+  // own spec semantics. Same risk class as example values — documentation of
+  // intent, not behavior — so grounding evidence is sufficient.
+  if (input.skill === "author-intent-examples" || input.skill === "author-routing-phrases") {
+    return input.evidence.length > 0
+      ? { tier: "auto", reason: "intent phrases templated from spec-derived semantics" }
+      : { tier: "review", reason: "intent phrases lack grounding" };
   }
 
   // Rule 5 — default: no rule above matched, so a human decides.
