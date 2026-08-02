@@ -111,3 +111,33 @@ WSDL) with zero crashes. Findings, in leverage order:
 - **Compile produces empty intentExamples**, so `anvil benchmark` has no
   tasks to derive on a raw compile — intent generation is enrichment work,
   but the benchmark's usefulness depends on it; sequence accordingly.
+
+## Industry-estate round (TM Forum, Coda, Zendesk, Zuora, Temenos, Coupa, Workday REST, Freshworks, ServiceNow, Notion, Veeva, Zoho, Amadeus — 315 operations)
+
+13 more estates compiled clean (api-evangelist mirrors keep specs as
+`openapi/*.yml`, not `.yaml` — the batch-find predicate had to learn that).
+Findings:
+
+- **Whole-projection bodies produced blank catalog signatures**: tmforum's
+  39 TMF `create` operations have zero params and rich nested bodies, so
+  `projection: "whole"` left `operationInputSignature` with nothing to say —
+  42/81 coverage on an estate whose bodies were fully typed. Fixed in
+  `packages/generators/src/input-signature.ts`: a whole body now lists its
+  top-level schema property names (required-first), lifting the corpus to
+  300/315 — and all 15 remaining are genuinely input-less ops (whoami,
+  keep-alive). The projection governs how a body is passed, not whether the
+  agent gets to see what goes in it.
+- **Zendesk pagination 2/13 is spec truth, not an inference miss**: 11 of 13
+  list operations in the mirror specs declare no pagination params at all.
+  Name-based inference can't conjure params the spec omits — a docs-tier
+  enrichment target, not a compiler gap.
+- **query_passthrough caught TMF hub filters**: the two hits are TMF event
+  `hub.create` registrations whose body `query` field is a free filter
+  expression ("status=active") routed to the notifier — a real passthrough
+  surface on a mutation, correctly blocked.
+- **Auth blocking split cleanly by class**: Coupa = the Stripe-class OR'd
+  alternatives (`auth/alternatives_unmodeled`, 2 requirements); Workday REST
+  and Zoho CRM = the Slack-class end-user OAuth
+  (`auth/end_user_flow_unexecutable`, per-caller OBO needed). Both diagnostics
+  say exactly what to model — the estates aren't mysteriously broken, they're
+  waiting on the two known auth work items.

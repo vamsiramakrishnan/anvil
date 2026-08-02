@@ -61,6 +61,35 @@ describe("operationInputSignature", () => {
     }
   });
 
+  it("lists top-level body property names for a whole-projection body", () => {
+    const op = air.operations.find((o) => o.id === "payments.refunds.create");
+    expect(op).toBeDefined();
+    const whole = OperationSchema.parse({
+      ...op!,
+      input: {
+        params: [],
+        body: {
+          contentType: "application/json",
+          required: true,
+          // Nested `metadata` forces projection "whole" in the compiler; the
+          // signature must still name the top-level fields, required first.
+          schema: {
+            type: "object",
+            required: ["amount"],
+            properties: {
+              amount: { type: "integer" },
+              reason: { type: "string" },
+              metadata: { type: "object", properties: { note: { type: "string" } } },
+            },
+          },
+          projection: "whole",
+          fields: [],
+        },
+      },
+    });
+    expect(operationInputSignature(whole)).toBe("body.amount*, body.reason, body.metadata");
+  });
+
   it("caps at 8 entries with ellipsis", () => {
     // Create a synthetic operation with >8 params to test the cap
     const testOp = {
