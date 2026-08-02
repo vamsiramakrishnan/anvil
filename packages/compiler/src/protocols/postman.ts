@@ -635,7 +635,10 @@ const RUNTIME_HEADERS = new Set(["content-type", "accept", "authorization"]);
  * Returns both the parameters array and a count of disabled query parameters
  * (for operation-level summary text).
  */
-function lowerParameters(url: LoweredUrl, header: PostmanKV[]): { params: Record<string, unknown>[]; disabledQueryCount: number } {
+function lowerParameters(
+  url: LoweredUrl,
+  header: PostmanKV[],
+): { params: Record<string, unknown>[]; disabledQueryCount: number } {
   const params: Record<string, unknown>[] = [];
   const seen = new Set<string>();
   let disabledQueryCount = 0;
@@ -1009,9 +1012,7 @@ export function adaptPostman(text: string): OpenApiDocument {
     if (disabledQueryCount > 0) {
       const totalQueryParams = url.query.filter((q) => q.key).length;
       const disabledSentence = `${disabledQueryCount} of ${totalQueryParams} documented query parameters are disabled in the source collection.`;
-      operationDesc = operationDesc
-        ? `${operationDesc}\n\n${disabledSentence}`
-        : disabledSentence;
+      operationDesc = operationDesc ? `${operationDesc}\n\n${disabledSentence}` : disabledSentence;
     }
 
     const operation: Record<string, unknown> = {
