@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { registerAgentify } from "./commands/agentify.js";
 import { registerApprove } from "./commands/approve.js";
 import { registerAssess } from "./commands/assess.js";
+import { registerBenchmark } from "./commands/benchmark.js";
 import { registerBuild } from "./commands/build.js";
 import { registerCapability } from "./commands/capability/capability.js";
 import { registerCase } from "./commands/case.js";
@@ -96,6 +97,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerCertify(program, ctx);
   registerSelftest(program, ctx);
   registerConformance(program, ctx);
+  registerBenchmark(program, ctx);
   registerSimulate(program, ctx);
   registerPublish(program, ctx);
   registerSync(program, ctx);

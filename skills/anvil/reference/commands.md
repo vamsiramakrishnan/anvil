@@ -660,6 +660,16 @@ Options:
 - `--live <config>` — probe a real deployed MCP endpoint named in this JSON config
 - `--json` — emit the full report as JSON
 
+### `anvil benchmark`
+`anvil benchmark [options] <dir>`
+
+Measure agent-task completion probability: tool discovery, param satisfiability, call success, pagination.
+
+Deterministic benchmark for each approved operation's agent-task potential. Derives one task per skill.intentExamples entry; scores each on tool discoverability in the MCP server, required-param satisfiability from synthesized examples, call success against the mock upstream, and (for paginated operations) cursor-param pagination. Writes benchmark.report.json with per-operation task results, pass/fail counts, and an aggregate score. Exit 0 only when aggregate score meets the threshold.
+
+Options:
+- `--check <threshold>` — exit non-zero if score < threshold (0..1)
+
 ### `anvil simulate`  *(mutates)*
 `anvil simulate [options] <dir>`
 

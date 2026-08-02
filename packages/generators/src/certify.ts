@@ -100,6 +100,8 @@ export const LIVE_CONFORMANCE_REPORT_FILE = "conformance.live.report.json";
 export const SIMULATION_REPORT_FILE = "simulation.report.json";
 /** Where `anvil review` writes model-review evidence. */
 export const REVIEW_REPORT_FILE = "review.report.json";
+/** Where `anvil benchmark` writes deterministic agent-task benchmark results. */
+export const BENCHMARK_REPORT_FILE = "benchmark.report.json";
 
 /** Injectable clock so assurance/deployment-plan records are testable. */
 export type Clock = () => string;
