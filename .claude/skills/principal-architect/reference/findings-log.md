@@ -142,6 +142,44 @@ Findings:
   say exactly what to model — the estates aren't mysteriously broken, they're
   waiting on the two known auth work items.
 
+## Full-pipeline estate runs (spec → compile → refine → approve → selftest → conformance → simulate → certify → review)
+
+Five estates driven through every stage, with real approvals and every gate
+green at the end: Coda (124 ops; 66 reads + confirmation-gated rows.create
+approved), Coupa (OR'd auth auto-selected), Workday REST and Zoho CRM (both
+via the one-line `auth: { type: oauth2_on_behalf_of }` service remodel),
+TMF621 Trouble Ticket (hub.create correctly blocked as query passthrough),
+and Stripe (589 ops; 40 core reads + refunds.create.direct approved;
+selftest 44 passed, simulate 298/298 cells). Three real defects found and
+fixed by the loop itself:
+
+- **Spec-declared examples that lie about their type** — Coda puts the wire
+  serialization on array params (`example: "fetcher,custom"`) and a boolean
+  example on a string enum; `exampleInput` used them verbatim, failing 8/72
+  selftest fidelity checks at the zod boundary. `surfaceExample()` in
+  `packages/generators/src/mock.ts` now repairs the comma-join and drops
+  type/enum-mismatched examples so synthesis wins.
+- **Spec-authored markdown headings fracture skill sections** — Coda's
+  rows.list description embeds `### Value results`, which terminated the
+  operation's section in `operations.md`. Headings inside descriptions are
+  demoted to bold (`demoteHeadings`, `packages/generators/src/skill.ts`).
+- **Fixed-window Semantics parsing in conformance** — the skill-claim check
+  scanned only 7 lines past a section header; a long real description pushed
+  `- Semantics:` out of the window, reading every posture flag as false and
+  reporting tri-surface drift where there was none. The parser
+  (`packages/harness/src/conformance.ts`) now scans to the next header.
+
+Also exercised for real: `certify`'s sibling-descriptions gate refused
+Coda's and Stripe's genuinely duplicated/missing descriptions until a
+manifest distinguished them (the intended human-authored fix); `refine run`
+proposed 17 example patches on Coda and correctly rejected the one whose
+value didn't validate; the Zoho mirror's flattened specs carry dangling
+`./Common.json` refs — the original self-contained specs under
+`openapi/zoho-crm/v8.0/` are the right compile input. The `anvil review`
+model pass on the finished Coda bundle returned zero grounded findings
+(its "operations.md truncated" note is the reviewer's own context cap —
+the file is complete on disk).
+
 ## Auth unblock work items — built (both classes closed)
 
 - **Carrier-equivalent OR alternatives now compile** (`resolveAlternatives`
