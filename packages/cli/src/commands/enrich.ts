@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { parseSources, runEnrichment } from "@anvil/harness";
+import type { HarnessAgent } from "@anvil/harness";
+import { AgentCliHarnessAgent, parseSources, runEnrichment } from "@anvil/harness";
 import { parseEnrichmentPlan } from "@anvil/refinement";
 import type { Command } from "commander";
 import { stringify as toYaml } from "yaml";
@@ -27,6 +28,9 @@ export function registerEnrich(parent: Command, ctx: CommandContext): void {
       )
       .option("--write <manifest>", "write the proposed manifest here instead of printing it")
       .option("--json", "emit the per-operation decisions as JSON")
+      .option("--agent <name>", "harness agent to use (heuristic|agent-cli; default: heuristic)")
+      .option("--agent-command <bin>", "CLI command for agent-cli (default: claude)")
+      .option("--agent-timeout <ms>", "timeout in milliseconds for agent-cli (default: 30000)")
       .action(async (path: string, opts: EnrichOptions) => {
         ctx.code = await runEnrich(path, opts, ctx.deps, ctx.io);
       }),
@@ -39,6 +43,9 @@ interface EnrichOptions {
   plan?: string;
   write?: string;
   json?: boolean;
+  agent?: string;
+  agentCommand?: string;
+  agentTimeout?: string;
 }
 
 async function runEnrich(
@@ -50,9 +57,21 @@ async function runEnrich(
   const air = loadAir(path);
   const sources = parseSources(readFileSync(opts.sources, "utf8"));
   const plan = opts.plan ? parseEnrichmentPlan(readFileSync(opts.plan, "utf8")) : undefined;
+
+  let agent: HarnessAgent | undefined;
+  if (opts.agent === "agent-cli") {
+    const timeoutMs = opts.agentTimeout ? parseInt(opts.agentTimeout, 10) : 30000;
+    agent = new AgentCliHarnessAgent({
+      command: opts.agentCommand ?? "claude",
+      args: ["-p"],
+      timeoutMs,
+    });
+  }
+
   const report = await runEnrichment(air, sources, {
     transportFactory: deps.transportFactory,
     plan,
+    agent,
   });
 
   if (plan) {
