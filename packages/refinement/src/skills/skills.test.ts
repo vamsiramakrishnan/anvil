@@ -253,3 +253,68 @@ describe("enrich-errors", () => {
     expect(await executor.execute(skill, ctx)).toBeNull();
   });
 });
+
+/** A mutation with no proven idempotency (mode=none), so `mutation_effect_unproven` fires. */
+function unprovenDoc(): AirDocument {
+  return loadAirDocument({
+    service: { id: "payments", displayName: "Payments", version: "1", source: { kind: "openapi" } },
+    operations: [
+      {
+        id: "payments.refunds.create",
+        canonicalName: "create_refund",
+        displayName: "Create refund",
+        description: "Creates a refund for a captured payment.",
+        sourceRef: { kind: "openapi", path: "/refunds", method: "post" },
+        effect: { kind: "mutation", action: "create", risk: "financial" },
+        input: { params: [] },
+        idempotency: { mode: "none" },
+        retries: { mode: "none" },
+        confirmation: { required: true, risk: "financial" },
+        auth: { type: "api_key" },
+        cli: { command: "payments refunds create" },
+        mcp: { toolName: "payments_create_refund" },
+        skill: { intentExamples: ["Refund a payment."] },
+      },
+    ],
+  });
+}
+
+describe("classify-idempotency", () => {
+  const skill = skillByName("classify-idempotency")!;
+
+  it("validates a proposal grounded by authoritative, verified evidence", async () => {
+    const ctx = contextFor(unprovenDoc(), (code) => code === "mutation_effect_unproven", [
+      claim("operation.idempotency_mode", "required", "source_impl", "refunds/service.ts:88"),
+      claim("operation.idempotency_mechanism", "header", "source_impl", "refunds/service.ts:88"),
+      claim("operation.idempotency_key", "Idempotency-Key", "source_impl", "refunds/service.ts:88"),
+    ]);
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set).toEqual({
+      idempotency_mode: "required",
+      idempotency_mechanism: "header",
+      idempotency_key: "Idempotency-Key",
+    });
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("validated");
+  });
+
+  it("proposes nothing when there is no admissible evidence", async () => {
+    const ctx = contextFor(unprovenDoc(), (code) => code === "mutation_effect_unproven");
+    expect(await executor.execute(skill, ctx)).toBeNull();
+  });
+
+  it("rejects a mode=required proposal with no carrier mechanism or key", async () => {
+    const ctx = contextFor(unprovenDoc(), (code) => code === "mutation_effect_unproven", [
+      claim("operation.idempotency_mode", "required", "source_impl", "refunds/service.ts:88"),
+    ]);
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set).toEqual({ idempotency_mode: "required" });
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("rejected");
+    const outcome = result.outcomes.find((o) => o.check === "idempotency_carrier_resolves");
+    expect(outcome?.ok).toBe(false);
+    expect(outcome?.reason).toBe(
+      "idempotency mode 'required' requires an explicit carrier mechanism",
+    );
+  });
+});

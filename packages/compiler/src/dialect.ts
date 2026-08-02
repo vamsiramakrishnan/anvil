@@ -14,14 +14,9 @@ import { ACTION_VERB_WORDS } from "./classify.js";
  * MCP surfaces and stay exactly as the per-op pass derived them.
  */
 
-export type NamingDialect =
-  | "verb_first"
-  | "namespace_method"
-  | "path_derived"
-  | "resource_only"
-  | "mixed";
+type NamingDialect = "verb_first" | "namespace_method" | "path_derived" | "resource_only" | "mixed";
 
-export type NamingCasing = "camel" | "snake" | "pascal" | "kebab" | "mixed";
+type NamingCasing = "camel" | "snake" | "pascal" | "kebab" | "mixed";
 
 export interface DialectReport {
   dialect: NamingDialect;
@@ -41,7 +36,7 @@ export interface DialectSample {
 }
 
 /** Below this many operations the sample is too small to call a house style. */
-export const MIN_SAMPLE = 5;
+const MIN_SAMPLE = 5;
 
 /** Majority threshold: a dialect must back more than half the operations. */
 const MAJORITY = 0.5;

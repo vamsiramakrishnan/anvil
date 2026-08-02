@@ -63,16 +63,25 @@ export interface HarnessAgent {
 }
 
 /**
- * Pick the source's search tool: explicit hint first, then the system profile's
+ * Pick a source's search tool: explicit hint first, then the system profile's
  * preferred tools (in order) if the server advertises them, then any tool whose
- * name looks like search.
+ * name looks like search. Shared by every prober against a source (per-operation
+ * safety probing, workflow-candidate probing, …) so tool selection never drifts
+ * between them.
  */
-function searchToolName(input: ProbeInput): string | undefined {
-  if (input.config.hints.searchTool) return input.config.hints.searchTool;
-  const available = new Set(input.tools.map((t) => t.name));
-  const preferred = profileFor(input.config.system).searchTools.find((t) => available.has(t));
+export function pickSearchTool(
+  tools: Array<{ name: string; description?: string }>,
+  config: SourceConfig,
+): string | undefined {
+  if (config.hints.searchTool) return config.hints.searchTool;
+  const available = new Set(tools.map((t) => t.name));
+  const preferred = profileFor(config.system).searchTools.find((t) => available.has(t));
   if (preferred) return preferred;
-  return input.tools.find((t) => /search|find|query|list/i.test(t.name))?.name;
+  return tools.find((t) => /search|find|query|list/i.test(t.name))?.name;
+}
+
+function searchToolName(input: ProbeInput): string | undefined {
+  return pickSearchTool(input.tools, input.config);
 }
 
 const IDEMPOTENT_KEY = /idempotenc/i;

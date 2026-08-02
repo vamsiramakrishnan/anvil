@@ -114,7 +114,7 @@ function targetCertificationChecks(
 }
 
 /** The gate-by-gate summary `anvil certify` prints (details live behind --json). */
-export function renderCertificationSummary(cert: Certification, dir: string): string {
+function renderCertificationSummary(cert: Certification, dir: string): string {
   const lines: string[] = [];
   lines.push(
     `Static assurance — ${cert.serviceId}${cert.capabilityId ? ` (${cert.capabilityId})` : ""}  bundle ${cert.bundleHash.slice(0, 12)}…`,

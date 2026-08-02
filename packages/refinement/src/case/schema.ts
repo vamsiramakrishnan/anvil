@@ -17,7 +17,7 @@ import { DEFICIENCY_CATALOG, type DeficiencyCode } from "../deficiency.js";
 /* -------------------------------- primitives ------------------------------ */
 
 /** A JSON value — the only thing a patch may carry (rejects functions, undefined, …). */
-export const zJsonValue: z.ZodType<JsonValue> = z.lazy(() =>
+const zJsonValue: z.ZodType<JsonValue> = z.lazy(() =>
   z.union([
     z.string(),
     z.number(),
@@ -29,24 +29,17 @@ export const zJsonValue: z.ZodType<JsonValue> = z.lazy(() =>
 );
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
 
-export const zEvidenceStrength = z.enum(["single", "corroborated", "authoritative"]);
-export const zSeverity = z.enum(["info", "low", "medium", "high", "blocking"]);
-export const zCasePhase = z.enum(["research", "extract", "synthesize", "critique", "test"]);
-export const zInvestigationStatus = z.enum([
-  "proposal_generated",
-  "supported",
-  "conflicted",
-  "insufficient_evidence",
-  "blocked_by_missing_source",
-]);
-export const zSkillConstraint = z.enum([
+const zEvidenceStrength = z.enum(["single", "corroborated", "authoritative"]);
+const zSeverity = z.enum(["info", "low", "medium", "high", "blocking"]);
+const zCasePhase = z.enum(["research", "extract", "synthesize", "critique", "test"]);
+const zSkillConstraint = z.enum([
   "do_not_invent_business_rules",
   "do_not_change_field_type",
   "do_not_change_requiredness",
   "preserve_domain_terms",
   "do_not_loosen_safety",
 ]);
-export const zValidationCheckId = z.enum([
+const zValidationCheckId = z.enum([
   "patch_within_boundary",
   "no_semantic_schema_change",
   "claims_from_allowed_sources",
@@ -57,8 +50,9 @@ export const zValidationCheckId = z.enum([
   "description_not_tautological",
   "examples_validate_against_schema",
   "error_message_nonempty",
+  "idempotency_carrier_resolves",
 ]);
-export const zEvalFamily = z.enum([
+const zEvalFamily = z.enum([
   "operation_routing",
   "argument_mapping",
   "field_interpretation",
@@ -67,7 +61,7 @@ export const zEvalFamily = z.enum([
 ]);
 
 /** Deficiency codes, validated against the catalog so an unknown code is rejected. */
-export const zDeficiencyCode = z.enum(
+const zDeficiencyCode = z.enum(
   Object.keys(DEFICIENCY_CATALOG) as [DeficiencyCode, ...DeficiencyCode[]],
 );
 
@@ -107,7 +101,7 @@ export const zEvidenceVerification = z.discriminatedUnion("status", [
 ]);
 
 /** The semantic target — a discriminated union, so a malformed target fails to parse. */
-export const zSemanticTarget = z.discriminatedUnion("kind", [
+const zSemanticTarget = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("service") }),
   z.object({ kind: z.literal("capability"), capabilityId: z.string() }),
   z.object({ kind: z.literal("operation"), operationId: z.string() }),
@@ -118,20 +112,20 @@ export const zSemanticTarget = z.discriminatedUnion("kind", [
 ]);
 
 /** A target-relative semantic patch. `set` values must be JSON. */
-export const zSemanticPatch = z.object({
+const zSemanticPatch = z.object({
   target: zSemanticTarget,
   set: z.record(z.string(), zJsonValue),
 });
 
 /* ------------------------------ workspace + run --------------------------- */
 
-export const zCaseWorkspace = z.object({
+const zCaseWorkspace = z.object({
   repositoryRoot: z.string(),
   repositoryRevision: z.string().optional(),
   inspectScopes: z.array(z.string()),
 });
 
-export const zRunIdentity = z.object({
+const zRunIdentity = z.object({
   runId: z.string(),
   caseKey: z.string(),
   airHash: z.string(),
@@ -286,7 +280,7 @@ export const zClauseVerdict = z.object({
   sourceRef: z.string().optional(),
   reason: z.string(),
 });
-export const zValidationOutcome = z.object({
+const zValidationOutcome = z.object({
   check: zValidationCheckId,
   ok: z.boolean(),
   reason: z.string(),
@@ -299,15 +293,6 @@ export const zValidationReport = z.object({
 
 export const zProposedCheck = z.object({ family: zEvalFamily, asserts: z.string() });
 export const zTestPlan = z.object({ checks: z.array(zProposedCheck) });
-
-/* --------------------------- inferred output types ------------------------ */
-
-export type SchemaEvidenceArtifact = z.infer<typeof zEvidenceArtifact>;
-export type SchemaEvidenceReport = z.infer<typeof zEvidenceReport>;
-export type SchemaClaimSet = z.infer<typeof zClaimSet>;
-export type SchemaCaseProposal = z.infer<typeof zCaseProposal>;
-export type SchemaValidationReport = z.infer<typeof zValidationReport>;
-export type SchemaTestPlan = z.infer<typeof zTestPlan>;
 
 /* --------------------------- expected-output schema ----------------------- */
 
@@ -325,7 +310,7 @@ export interface ExpectedOutputInfo {
   writableFields: string[];
 }
 
-export function expectedProposalSchema(info: ExpectedOutputInfo): z.ZodType {
+function expectedProposalSchema(info: ExpectedOutputInfo): z.ZodType {
   const targetLiteral = z
     .literal(JSON.stringify(info.target))
     .describe("must equal the case target exactly");

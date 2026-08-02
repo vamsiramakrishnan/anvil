@@ -1,5 +1,5 @@
 import { type AirDocument, confidenceFor, type Operation } from "@anvil/air";
-import type { AnvilManifest, OperationManifest } from "@anvil/compiler";
+import type { AnvilManifest, OperationManifest, WorkflowManifest } from "@anvil/compiler";
 import type { EnrichmentPlan } from "@anvil/refinement";
 import {
   type HarnessAgent,
@@ -12,6 +12,13 @@ import { connectSource, type TransportFactory } from "./mcp-source.js";
 import { sourceClassOf } from "./profiles.js";
 import { type ReconcileDecision, reconcile } from "./reconcile.js";
 import type { SourceConfig } from "./sources.js";
+import { detectWorkflowCandidates, type WorkflowCandidate } from "./workflow-candidates.js";
+import {
+  probeWorkflowCandidate,
+  reconcileWorkflow,
+  type WorkflowDecision,
+  type WorkflowFinding,
+} from "./workflow-probe.js";
 
 export interface EnrichOptions {
   agent?: HarnessAgent;
@@ -70,6 +77,8 @@ export interface OperationEnrichment {
 export interface EnrichmentReport {
   sources: string[];
   operations: OperationEnrichment[];
+  /** Structural workflow candidates probed against every connected source, and the resulting decision. */
+  workflows: WorkflowDecision[];
   /** A proposed manifest patch — NOT applied. Review, then `anvil compile --manifest`. */
   proposedManifest: AnvilManifest;
   graph: EvidenceGraph;
@@ -95,6 +104,14 @@ export async function runEnrichment(
   // operationId -> all findings across every source.
   const findingsByOp = new Map<string, HarnessFinding[]>();
 
+  // Structural candidates are plan-independent — they're a shape fact about AIR,
+  // not a question the plan chose to ask. Every connected source gets a chance to
+  // corroborate every candidate (the same as un-planned per-operation enrichment).
+  const byOpId = new Map(air.operations.map((o) => [o.id, o]));
+  const workflowCandidates = detectWorkflowCandidates(air);
+  const workflowFindingsByCandidate = new Map<WorkflowCandidate, WorkflowFinding[]>();
+  for (const c of workflowCandidates) workflowFindingsByCandidate.set(c, []);
+
   for (const config of sources) {
     let source: Awaited<ReturnType<typeof connectSource>> | undefined;
     try {
@@ -108,10 +125,38 @@ export async function runEnrichment(
         list.push(...findings);
         findingsByOp.set(op.id, list);
       }
+      for (const candidate of workflowCandidates) {
+        const fromOp = byOpId.get(candidate.fromOperationId);
+        const toOp = byOpId.get(candidate.toOperationId);
+        if (!fromOp || !toOp) continue;
+        const findings = await probeWorkflowCandidate(
+          candidate,
+          fromOp,
+          toOp,
+          source,
+          config,
+          tools,
+        );
+        workflowFindingsByCandidate.get(candidate)?.push(...findings);
+      }
     } catch {
       // Isolate connector failures; the enrichment continues with other sources.
     } finally {
       await source?.close().catch(() => {});
+    }
+  }
+
+  const proposedWorkflows: Record<string, WorkflowManifest> = {};
+  const workflowDecisions: WorkflowDecision[] = [];
+  for (const candidate of workflowCandidates) {
+    const fromOp = byOpId.get(candidate.fromOperationId);
+    const toOp = byOpId.get(candidate.toOperationId);
+    if (!fromOp || !toOp) continue;
+    const findings = workflowFindingsByCandidate.get(candidate) ?? [];
+    const { manifestEntry, decision } = reconcileWorkflow(candidate, fromOp, toOp, findings);
+    workflowDecisions.push(decision);
+    if (manifestEntry) {
+      proposedWorkflows[`${fromOp.canonicalName}_then_${toOp.canonicalName}`] = manifestEntry;
     }
   }
 
@@ -120,12 +165,11 @@ export async function runEnrichment(
 
   // In plan mode only the targeted operations were probed — report exactly those,
   // in the plan's priority order, so the output mirrors what was investigated.
-  const byId = new Map(air.operations.map((o) => [o.id, o]));
   const targetedIds = plan
-    ? [...new Set(plan.targets.map((t) => t.operationId))].filter((id) => byId.has(id))
+    ? [...new Set(plan.targets.map((t) => t.operationId))].filter((id) => byOpId.has(id))
     : undefined;
   const reported = targetedIds
-    ? (targetedIds.map((id) => byId.get(id) as Operation) as Operation[])
+    ? (targetedIds.map((id) => byOpId.get(id) as Operation) as Operation[])
     : air.operations;
 
   for (const op of reported) {
@@ -161,7 +205,8 @@ export async function runEnrichment(
   return {
     sources: connected,
     operations,
-    proposedManifest: { operations: proposed, workflows: {}, capabilities: {} },
+    workflows: workflowDecisions,
+    proposedManifest: { operations: proposed, workflows: proposedWorkflows, capabilities: {} },
     graph,
     targetedOperationIds: targetedIds,
   };

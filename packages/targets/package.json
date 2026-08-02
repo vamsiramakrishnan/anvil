@@ -24,7 +24,6 @@
   "dependencies": {
     "@anvil/air": "workspace:*",
     "@anvil/compiler": "workspace:*",
-    "@anvil/system-pack": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -47,7 +47,7 @@ export interface SimulateOptions {
   json?: boolean;
 }
 
-export interface SimulationReport {
+interface SimulationReport {
   schemaVersion: 1;
   bundle: string;
   /** Digest of the generated bundle content this evidence exercised. */
@@ -99,7 +99,7 @@ export function runSimulate(path: string, opts: SimulateOptions, io: CliIO): num
 }
 
 /** The dimension + mutation summary `anvil simulate` prints (cells behind --json). */
-export function renderSimulationSummary(report: SimulationReport, dir: string): string {
+function renderSimulationSummary(report: SimulationReport, dir: string): string {
   const { coverage, mutation } = report;
   const lines: string[] = [
     `Simulation coverage — ${coverage.capabilityId}  (seed ${coverage.seed})`,

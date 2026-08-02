@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { IdempotencyMode } from "./enums.js";
 import type {
   IdempotencyCarrierBinding,
   IdempotencyCarrierResolution,
@@ -10,6 +11,20 @@ import {
   resolveIdempotencyCarrier,
 } from "./idempotency-carrier.js";
 import type { Operation } from "./schema.js";
+
+/** Narrows a resolution to its rejected branch, asserting `ok: false` with a normal vitest diff. */
+function assertRejected(
+  res: IdempotencyCarrierResolution,
+): asserts res is { ok: false; issue: string } {
+  expect(res.ok).toBe(false);
+}
+
+/** Narrows a resolution to its accepted branch, asserting `ok: true` with a normal vitest diff. */
+function assertAccepted(
+  res: IdempotencyCarrierResolution,
+): asserts res is Extract<IdempotencyCarrierResolution, { ok: true }> {
+  expect(res.ok).toBe(true);
+}
 
 // Test fixture: minimal operation
 function makeOp(overrides: Partial<Operation> = {}): Operation {
@@ -32,14 +47,14 @@ function makeOp(overrides: Partial<Operation> = {}): Operation {
 }
 
 describe("idempotencyModeUsesCarrier", () => {
-  it.each([
+  it.each<{ mode: IdempotencyMode; expected: boolean }>([
     { mode: "required", expected: true },
     { mode: "key_supported", expected: true },
     { mode: "natural", expected: false },
     { mode: "client_id", expected: false },
     { mode: "none", expected: false },
   ])("returns $expected for mode $mode", ({ mode, expected }) => {
-    expect(idempotencyModeUsesCarrier(mode as any)).toBe(expected);
+    expect(idempotencyModeUsesCarrier(mode)).toBe(expected);
   });
 });
 
@@ -132,8 +147,8 @@ describe("resolveIdempotencyCarrier", () => {
         idempotency: { mode: "required", mechanism: "query" },
       });
       const res = resolveIdempotencyCarrier(op);
-      expect(res.ok).toBe(false);
-      expect((res as any).issue).toContain("requires an exact non-empty key name");
+      assertRejected(res);
+      expect(res.issue).toContain("requires an exact non-empty key name");
     });
 
     it("requires key for body mechanism", () => {
@@ -217,8 +232,8 @@ describe("resolveIdempotencyCarrier", () => {
         },
       });
       const res = resolveIdempotencyCarrier(op);
-      expect(res.ok).toBe(false);
-      expect((res as any).issue).toContain("not a valid HTTP field name");
+      assertRejected(res);
+      expect(res.issue).toContain("not a valid HTTP field name");
     });
 
     it("rejects runtime-owned headers", () => {
@@ -244,8 +259,10 @@ describe("resolveIdempotencyCarrier", () => {
           },
         });
         const res = resolveIdempotencyCarrier(op);
-        expect(res.ok).toBe(false, `Header '${header}' should be rejected as runtime-owned`);
-        expect((res as any).issue).toContain("owned by the HTTP/auth runtime");
+        assertRejected(res);
+        expect(res.issue, `Header '${header}' should be rejected as runtime-owned`).toContain(
+          "owned by the HTTP/auth runtime",
+        );
       }
     });
 
@@ -258,8 +275,8 @@ describe("resolveIdempotencyCarrier", () => {
         },
       });
       const res = resolveIdempotencyCarrier(op);
-      expect(res.ok).toBe(false);
-      expect((res as any).issue).toContain("owned by the HTTP/auth runtime");
+      assertRejected(res);
+      expect(res.issue).toContain("owned by the HTTP/auth runtime");
     });
 
     it("validates header schema accepts string", () => {
@@ -290,8 +307,8 @@ describe("resolveIdempotencyCarrier", () => {
         input: { params: [] },
       });
       const res = resolveIdempotencyCarrier(op);
-      expect(res.ok).toBe(true);
-      expect((res as any).binding?.schema).toBeUndefined();
+      assertAccepted(res);
+      expect(res.binding?.schema).toBeUndefined();
     });
 
     it("includes schema in binding when parameter exists and is valid", () => {
@@ -938,8 +955,8 @@ describe("resolveIdempotencyCarrier", () => {
         },
       });
       const res = resolveIdempotencyCarrier(op);
-      expect(res.ok).toBe(false);
-      expect((res as any).issue).toContain(
+      assertRejected(res);
+      expect(res.issue).toContain(
         "request-fingerprint keys cannot be proven to satisfy the modeled carrier schema",
       );
     });

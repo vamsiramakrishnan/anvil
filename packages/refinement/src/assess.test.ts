@@ -365,9 +365,10 @@ describe("assessment rendering", () => {
 
   it("is honest about unimplemented remediations", () => {
     const text = summarizeAssessment(viewAssessment(assessReadiness(fixture())));
-    // confirm-posture and classify-idempotency are catalog names, not shipped skills.
+    // confirm-posture is a catalog name with no shipped skill yet.
     expect(text).toContain("remediation: confirm-posture [not yet implemented]");
-    expect(text).toContain("remediation: classify-idempotency [not yet implemented]");
+    // classify-idempotency IS implemented now — its remediation prints a real command.
+    expect(text).toContain("remediation: classify-idempotency (anvil refine run --skill");
   });
 
   it("prints a remediation command only for an implemented skill", () => {

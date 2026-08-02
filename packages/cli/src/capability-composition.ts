@@ -12,7 +12,7 @@ import {
 import type { GatewayImportIdentity } from "@anvil/compiler";
 import { z } from "zod";
 
-export const COMPOSITION_REPORT_SCHEMA_VERSION = 1;
+const COMPOSITION_REPORT_SCHEMA_VERSION = 1 as const;
 export const COMPOSITION_REVIEW_SCHEMA_VERSION = 1;
 
 const MAX_SOURCES = 500;
@@ -98,7 +98,7 @@ export function compositionEvidenceKey(input: {
   return `${input.sourceRef}\u0000${input.artifactDigest}`;
 }
 
-export const CompositionReviewEntry = z.object({
+const CompositionReviewEntry = z.object({
   candidateId: NonEmpty,
   candidateDigest: Sha256Digest,
   eligibleSources: z.array(NonEmpty).min(2),
@@ -117,7 +117,7 @@ export const CompositionReviewEntry = z.object({
   acknowledgedContradictions: z.array(NonEmpty).default([]),
   note: z.string().optional(),
 });
-export type CompositionReviewEntry = z.infer<typeof CompositionReviewEntry>;
+type CompositionReviewEntry = z.infer<typeof CompositionReviewEntry>;
 
 export const CompositionReviewManifest = z.object({
   schemaVersion: z.literal(COMPOSITION_REVIEW_SCHEMA_VERSION),
@@ -128,7 +128,7 @@ export const CompositionReviewManifest = z.object({
 });
 export type CompositionReviewManifest = z.infer<typeof CompositionReviewManifest>;
 
-export interface CompositionSource {
+interface CompositionSource {
   id: string;
   serviceId: string;
   serviceVersion: string;
@@ -203,7 +203,7 @@ interface OperationSignature {
   outputDigest: string;
 }
 
-export interface CompositionContradiction {
+interface CompositionContradiction {
   id: string;
   kind: string;
   severity: "review_required" | "blocked";
@@ -280,7 +280,7 @@ interface ReviewedCandidate extends CandidateCore {
 }
 
 export interface CompositionAuditReport {
-  schemaVersion: 1;
+  schemaVersion: typeof COMPOSITION_REPORT_SCHEMA_VERSION;
   reportType: "anvil.cross-source-composition-audit";
   inputDigest: string;
   candidateDigest: string;
@@ -298,7 +298,7 @@ export interface CompositionAuditReport {
   };
   candidates: ReviewedCandidate[];
   compositionPlans: Array<{
-    schemaVersion: 1;
+    schemaVersion: typeof COMPOSITION_REPORT_SCHEMA_VERSION;
     candidateId: string;
     candidateDigest: string;
     reviewDigest: string;
@@ -2040,7 +2040,7 @@ export function analyzeComposition(
               );
             }
             return {
-              schemaVersion: 1 as const,
+              schemaVersion: COMPOSITION_REPORT_SCHEMA_VERSION,
               candidateId: candidate.id,
               candidateDigest: candidate.digest,
               reviewDigest,
@@ -2064,7 +2064,7 @@ export function analyzeComposition(
     reviewed: reviewedCandidates.filter((candidate) => candidate.disposition === "reviewed").length,
   };
   const reportWithoutHash: Omit<CompositionAuditReport, "reportHash"> = {
-    schemaVersion: 1,
+    schemaVersion: COMPOSITION_REPORT_SCHEMA_VERSION,
     reportType: "anvil.cross-source-composition-audit" as const,
     inputDigest,
     candidateDigest,

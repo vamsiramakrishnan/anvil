@@ -6,6 +6,7 @@
  * understand them.
  */
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
+import { axisMatches } from "../coordinate.js";
 import {
   type ExplicitGatewayIdentityConfiguration,
   projectConfiguredAuthType,
@@ -337,16 +338,12 @@ export class MulesoftGatewayAdapter implements GatewayAdapter<MulesoftConnection
   ): Promise<GatewayApiImport> {
     const origin = connection.origin ?? "mulesoft.yaml";
     const parsed = parseExport(connection.config, origin);
-    const apiIndex = parsed.apis.findIndex((candidate) => {
-      if (candidate.assetId !== api.id) return false;
-      // A caller-supplied axis is a constraint, never permission to attest a
-      // missing source value as if it matched.
-      if (api.version !== undefined && candidate.productVersion !== api.version) return false;
-      if (api.environmentId !== undefined && candidate.instanceLabel !== api.environmentId) {
-        return false;
-      }
-      return true;
-    });
+    const apiIndex = parsed.apis.findIndex(
+      (candidate) =>
+        candidate.assetId === api.id &&
+        axisMatches(api.version, candidate.productVersion) &&
+        axisMatches(api.environmentId, candidate.instanceLabel),
+    );
     const found = parsed.apis[apiIndex];
     if (!found) {
       const empty = buildGatewayApiImport({

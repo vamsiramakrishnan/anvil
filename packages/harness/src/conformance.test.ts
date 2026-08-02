@@ -217,6 +217,33 @@ describe("tri-surface conformance (payments, OpenAPI)", () => {
     expect(byId(report, "surface-agreement")[0]?.status).toBe("pass");
     expect(byId(report, "wire-agreement").every((c) => c.status === "skipped")).toBe(true);
   }, 120_000);
+
+  it("does not treat a not-yet-approved operation in catalog.json as a CLI leak", async () => {
+    // getPayment is left without `state: approved` — the ordinary, expected
+    // shape of a bundle mid-review. catalog.json (like `anvil inspect`) stays
+    // deliberately comprehensive and tags every operation with its state; it
+    // is documentation, not the exposed surface, so it must not be compared
+    // against MCP's approved-only tool list as if it were.
+    const manifest = read("payments/anvil.yaml").replace(
+      "  getPayment:\n    state: approved\n",
+      "  getPayment: {}\n",
+    );
+    const air = await compile({
+      spec: read("payments/openapi.yaml"),
+      manifest,
+      serviceId: "payments",
+    });
+    expect(air.operations.find((op) => op.canonicalName === "getPayment")?.state).not.toBe(
+      "approved",
+    );
+    const dir = mkdtempSync(join(tmpdir(), "anvil-conformance-partial-approval-"));
+    dirs.push(dir);
+    writeBundle(dir, generateBundle(air));
+
+    const report = await runConformance(dir, { cliPackageDir: CLI_PACKAGE_DIR });
+    expect(byId(report, "surface-agreement")[0]?.status).toBe("pass");
+    expect(report.summary.fail).toBe(0);
+  }, 120_000);
 });
 
 describe("tri-surface conformance (delegated identity)", () => {

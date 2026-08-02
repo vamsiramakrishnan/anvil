@@ -12,7 +12,7 @@
 
 // Same id the site's markdown renderer (github-slugger via Astro/Starlight)
 // produces for a heading — lowercase, drop punctuation, spaces → hyphens.
-export function headingSlug(heading) {
+function headingSlug(heading) {
   return heading
     .toLowerCase()
     .replace(/<[^>]+>/g, "")

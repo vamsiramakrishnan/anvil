@@ -15,7 +15,7 @@
     "rules": {
       "preset": "recommended",
       "suspicious": {
-        "noExplicitAny": "warn",
+        "noExplicitAny": "error",
         "noTemplateCurlyInString": "off"
       },
       "style": {

@@ -1,4 +1,11 @@
-import { type Claim, effectiveWeight } from "@anvil/air";
+import {
+  type Claim,
+  effectiveWeight,
+  IdempotencyMechanism,
+  IdempotencyMode,
+  KeyDerivation,
+  RetryBasis,
+} from "@anvil/air";
 import type {
   FieldContext,
   JsonValue,
@@ -105,6 +112,8 @@ export class HeuristicSkillExecutor implements SkillExecutor {
         return this.examples(skill, context);
       case "enrich-errors":
         return this.enrichError(skill, context);
+      case "classify-idempotency":
+        return this.classifyIdempotency(skill, context);
       default:
         return null;
     }
@@ -164,6 +173,45 @@ export class HeuristicSkillExecutor implements SkillExecutor {
     if (typeof retryable === "boolean") {
       set.retryable = retryable;
       used.push(...claimsAsserting(retryableClaims, retryable));
+    }
+
+    if (Object.keys(set).length === 0) return null;
+    return proposal(skill, context, used, set);
+  }
+
+  /**
+   * Idempotency classification: unlike every other heuristic here, a claim whose
+   * value is not an admissible enum member is never proposed — there is no
+   * validation check downstream that rejects a malformed mode/mechanism/
+   * derivation the way `examples_validate_against_schema` rejects a bad example,
+   * so this executor is the one place a garbage classification is filtered out
+   * before it can reach a human reviewer looking legitimate.
+   */
+  private classifyIdempotency(skill: RefinementSkill, context: SkillContext): SkillProposal | null {
+    const set: Record<string, JsonValue> = {};
+    const used: Claim[] = [];
+
+    const take = (suffix: string, validValues: readonly string[]): void => {
+      const claims = claimsFor(context, skill, suffix).filter((c) =>
+        (validValues as readonly unknown[]).includes(c.value),
+      );
+      const value = strongestValue(claims);
+      if (typeof value !== "string") return;
+      set[suffix.slice(1)] = value;
+      used.push(...claimsAsserting(claims, value));
+    };
+
+    take(".idempotency_mode", IdempotencyMode.options);
+    take(".idempotency_mechanism", IdempotencyMechanism.options);
+    take(".idempotency_key_derivation", KeyDerivation.options);
+    take(".retry_basis", RetryBasis.options);
+
+    // The key is a free-form field/header name, not an enum — grounded string only.
+    const keyClaims = claimsFor(context, skill, ".idempotency_key");
+    const key = strongestValue(keyClaims);
+    if (typeof key === "string" && key.trim().length > 0) {
+      set.idempotency_key = key;
+      used.push(...claimsAsserting(keyClaims, key));
     }
 
     if (Object.keys(set).length === 0) return null;

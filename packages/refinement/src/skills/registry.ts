@@ -189,6 +189,63 @@ const investigateUiProjection: RefinementSkill = {
   ],
 };
 
+/**
+ * Investigate whether a mutation's repeat-call effect, or an already-enabled
+ * retry posture, rests on real evidence.
+ *
+ * This is the highest-stakes skill Anvil ships: `idempotency.mode` gates
+ * whether the runtime will ever auto-retry this call, and every one of its
+ * outputs — mode, mechanism, key, key derivation, and the retry-basis label
+ * — is a `do_not_loosen_safety` field. Unlike `describe-field`, this skill's
+ * proposals are NEVER auto-approved (see approval.ts's idempotency guard):
+ * there is no safe-to-auto-apply "tightening" direction here the way
+ * `enrich-errors` has for `retryable=false`, because AIR's own default for
+ * an unclassified mutation (`mode: "none"`) is already the most conservative
+ * state possible — every reclassification moves away from that, never
+ * further from it, so a human always signs off. The skill may gather
+ * evidence and propose a specific claim; only a person may act on it.
+ *
+ * `contested_safety_semantic` also names this skill, for any safety-sensitive
+ * predicate whose evidence conflicts — not only idempotency. The heuristic
+ * executor still only ever gathers idempotency/retry-basis-shaped claims, so
+ * a contest over an unrelated predicate (auth, confirmation, ...) naturally
+ * grounds nothing here and the skill honestly proposes null, exactly as it
+ * would for any other insufficiently-evidenced target — no special-casing.
+ */
+const classifyIdempotency: RefinementSkill = {
+  name: "classify-idempotency",
+  version: 1,
+  triggers: ["mutation_effect_unproven", "retry_basis_unproven", "contested_safety_semantic"],
+  targetKind: "operation",
+  context: ["parent_operation", "source_evidence", "capability"],
+  evidence: {
+    allowed: ["source_impl", "test_fixture", "spec", "doc_example", "recorded_traffic", "incident"],
+    minimumStrength: "authoritative",
+    minimumVerification: "verified",
+  },
+  output: {
+    predicates: ["operation.idempotency_mode", "operation.retry_basis"],
+    supportingPredicates: ["operation.behavior", "operation.effect"],
+    fields: [
+      "idempotency_mode",
+      "idempotency_mechanism",
+      "idempotency_key",
+      "idempotency_key_derivation",
+      "retry_basis",
+    ],
+  },
+  constraints: ["do_not_loosen_safety", "do_not_invent_business_rules"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+    "idempotency_carrier_resolves",
+  ],
+};
+
 /** Every skill Anvil ships today. Executors are separate; these are semantics only. */
 export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   describeField,
@@ -196,6 +253,7 @@ export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   generateExamples,
   enrichErrors,
   investigateUiProjection,
+  classifyIdempotency,
 ];
 
 /** Discover the available skills (stable order). */

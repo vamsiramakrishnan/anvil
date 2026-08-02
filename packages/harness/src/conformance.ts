@@ -159,14 +159,23 @@ function loadManifestOps(dir: string): ManifestOp[] {
   }));
 }
 
-/** The CLI's own catalog (command + declared MCP tool), from `catalog.json`. */
+/**
+ * The CLI's own catalog (command + declared MCP tool), from `catalog.json`.
+ * catalog.json is a deliberately comprehensive discovery artifact — like
+ * `anvil inspect`, it lists every operation Anvil knows about, tagged with
+ * its state, not just the ones currently exposed. Only the approved ones are
+ * actually reachable through the CLI/MCP surfaces this check compares
+ * against, so a not-yet-approved entry here is documentation, not a leak.
+ */
 function loadCatalogOps(dir: string): Array<{ id: string; command: string; toolName: string }> {
   const raw = JSON.parse(readFileSync(join(dir, "catalog.json"), "utf8"));
-  return (raw.operations as Array<{ id: string; cli: string; mcpTool: string }>).map((o) => ({
-    id: o.id,
-    command: o.cli,
-    toolName: o.mcpTool,
-  }));
+  return (raw.operations as Array<{ id: string; cli: string; mcpTool: string; state: string }>)
+    .filter((o) => o.state === "approved")
+    .map((o) => ({
+      id: o.id,
+      command: o.cli,
+      toolName: o.mcpTool,
+    }));
 }
 
 /* -------------------------------------------------------------------------- */

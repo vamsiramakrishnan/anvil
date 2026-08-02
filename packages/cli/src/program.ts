@@ -3,7 +3,7 @@ import { registerAgentify } from "./commands/agentify.js";
 import { registerApprove } from "./commands/approve.js";
 import { registerAssess } from "./commands/assess.js";
 import { registerBuild } from "./commands/build.js";
-import { registerCapability } from "./commands/capability.js";
+import { registerCapability } from "./commands/capability/capability.js";
 import { registerCase } from "./commands/case.js";
 import { registerCertify } from "./commands/certify.js";
 import { registerCompile } from "./commands/compile.js";
@@ -13,7 +13,7 @@ import { registerDeploy } from "./commands/deploy.js";
 import { registerDistill } from "./commands/distill.js";
 import { registerDrift } from "./commands/drift.js";
 import { registerEnrich } from "./commands/enrich.js";
-import { registerEstate } from "./commands/estate.js";
+import { registerEstate } from "./commands/estate/estate.js";
 import { registerInspect } from "./commands/inspect.js";
 import { registerLint } from "./commands/lint.js";
 import { registerPackage } from "./commands/package.js";
@@ -69,6 +69,11 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
     );
 
   // Lifecycle order: discovery → review → quality → gates → operations.
+  // Within "gates": target/deploy sit BEFORE certify/selftest/conformance/
+  // simulate/publish because target and idempotency-store artifacts are
+  // deployment inputs that become part of what `certify` hashes (see
+  // skills/anvil/SKILL.md's numbered loop, steps 6-8) — generating them
+  // after certify would list them in an order a user can't actually follow.
   registerSource(program, ctx);
   registerAgentify(program, ctx);
   registerCompile(program, ctx);
@@ -86,13 +91,13 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerLint(program, ctx);
   registerBuild(program, ctx);
   registerReview(program, ctx);
+  registerTarget(program, ctx);
+  registerDeploy(program, ctx);
   registerCertify(program, ctx);
   registerSelftest(program, ctx);
   registerConformance(program, ctx);
   registerSimulate(program, ctx);
   registerPublish(program, ctx);
-  registerDeploy(program, ctx);
-  registerTarget(program, ctx);
   registerSync(program, ctx);
   registerDrift(program, ctx);
   registerRun(program, ctx);

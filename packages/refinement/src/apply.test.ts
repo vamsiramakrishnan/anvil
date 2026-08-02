@@ -119,6 +119,55 @@ describe("applyPatch", () => {
     expect(result.changes).toHaveLength(2);
   });
 
+  it("sets the idempotency carrier onto an operation", () => {
+    const air = fixtureDoc();
+    const result = applyPatches(air, [
+      {
+        target: { kind: "operation", operationId: OPERATION_ID },
+        set: {
+          idempotency_mode: "required",
+          idempotency_mechanism: "header",
+          idempotency_key: "Idempotency-Key",
+        },
+      },
+    ]);
+
+    const op = result.air.operations.find((o) => o.id === OPERATION_ID);
+    expect(op?.idempotency).toEqual({
+      mode: "required",
+      mechanism: "header",
+      key: "Idempotency-Key",
+      keyDerivation: "none",
+    });
+    expect(result.changes).toEqual([
+      { target: expect.anything(), key: "idempotency_mode", before: "none", after: "required" },
+      {
+        target: expect.anything(),
+        key: "idempotency_mechanism",
+        before: "none",
+        after: "header",
+      },
+      {
+        target: expect.anything(),
+        key: "idempotency_key",
+        before: undefined,
+        after: "Idempotency-Key",
+      },
+    ]);
+  });
+
+  it("sets the retry basis onto an operation without touching its idempotency carrier", () => {
+    const air = fixtureDoc();
+    const result = applyPatch(air, {
+      target: { kind: "operation", operationId: OPERATION_ID },
+      set: { retry_basis: "natural_idempotent" },
+    });
+
+    const op = result.air.operations.find((o) => o.id === OPERATION_ID);
+    expect(op?.retries.basis).toBe("natural_idempotent");
+    expect(op?.idempotency.mode).toBe("none");
+  });
+
   it("sets a capability description", () => {
     const air = fixtureDoc();
     const patch: SemanticPatch = {

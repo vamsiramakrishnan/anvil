@@ -122,7 +122,7 @@ export async function runReview(
 }
 
 /** The human triage: counts, then findings worst-first with their evidence. */
-export function renderReviewSummary(report: ReviewReport, reportPath: string): string {
+function renderReviewSummary(report: ReviewReport, reportPath: string): string {
   const lines: string[] = [];
   lines.push(
     `Artifact review — ${report.bundle.serviceId} @ ${report.bundle.serviceVersion}  (model ${report.model})`,

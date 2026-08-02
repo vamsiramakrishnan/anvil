@@ -4,6 +4,7 @@
  * adapter normalizes those into the common source + overlay; no WSO2 type escapes.
  */
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
+import { axisMatches, axisMatchesAny } from "../coordinate.js";
 import {
   type ExplicitGatewayIdentityConfiguration,
   projectConfiguredAuthType,
@@ -952,13 +953,9 @@ export class Wso2GatewayAdapter implements GatewayAdapter<Wso2Connection> {
     const matches = parsed.apis.filter(
       ({ api: candidate, revision, environmentIds, artifacts }) => {
         if (candidate.name !== api.id) return false;
-        // A caller-supplied axis is a constraint, never permission to attest a
-        // missing source value as if it matched.
-        if (api.version !== undefined && candidate.version !== api.version) return false;
-        if (api.revision !== undefined && revision !== api.revision) return false;
-        if (api.environmentId !== undefined && !environmentIds.includes(api.environmentId)) {
-          return false;
-        }
+        if (!axisMatches(api.version, candidate.version)) return false;
+        if (!axisMatches(api.revision, revision)) return false;
+        if (!axisMatchesAny(api.environmentId, environmentIds)) return false;
         if (api.sourceArtifact) {
           const containers = artifacts.filter(
             (artifact) => artifact.kind === "container" && artifact.role === "api_project",

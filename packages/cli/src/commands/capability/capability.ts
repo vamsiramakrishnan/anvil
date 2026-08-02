@@ -10,12 +10,12 @@ import {
   rejectCapability,
 } from "@anvil/compiler";
 import { type Command, Option } from "commander";
-import type { CliIO } from "../io.js";
-import { reportPreservedStaleArtifacts, reprojectBundleAtomically } from "./approve.js";
+import type { CliIO } from "../../io.js";
+import { reportPreservedStaleArtifacts, reprojectBundleAtomically } from "../approve.js";
+import type { CommandContext } from "../context.js";
+import { annotate } from "../meta.js";
+import { loadAir } from "../shared.js";
 import { registerCapabilityCompose } from "./capability-compose.js";
-import type { CommandContext } from "./context.js";
-import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /**
  * `anvil capability <subcommand>` — the capability review lifecycle. Discovery

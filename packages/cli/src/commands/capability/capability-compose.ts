@@ -25,10 +25,10 @@ import {
   type CompositionSourceProvenance,
   compositionEvidenceKey,
   type VerifiedCompositionEvidenceArtifact,
-} from "../capability-composition.js";
-import type { CliIO } from "../io.js";
-import type { CommandContext } from "./context.js";
-import { annotate } from "./meta.js";
+} from "../../capability-composition.js";
+import type { CliIO } from "../../io.js";
+import type { CommandContext } from "../context.js";
+import { annotate } from "../meta.js";
 
 interface ComposeOptions {
   out: string;

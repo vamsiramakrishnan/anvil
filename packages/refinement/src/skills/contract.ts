@@ -51,7 +51,8 @@ export type ValidationCheckId =
   | "description_nonempty"
   | "description_not_tautological"
   | "examples_validate_against_schema"
-  | "error_message_nonempty";
+  | "error_message_nonempty"
+  | "idempotency_carrier_resolves";
 
 /**
  * The minimal view of a frozen evidence artifact the `evidence_meets_verification`

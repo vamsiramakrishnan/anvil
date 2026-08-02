@@ -54,7 +54,7 @@ export async function runSelftest(path: string, opts: SelftestOptions, io: CliIO
 }
 
 /** The check-by-check summary `anvil selftest` prints (details behind --json). */
-export function renderLoopbackSummary(report: LoopbackReport, dir: string): string {
+function renderLoopbackSummary(report: LoopbackReport, dir: string): string {
   const lines: string[] = [`Loopback self-test — ${dir}`];
   if (report.identity.delegatedOperations > 0) {
     lines.push(

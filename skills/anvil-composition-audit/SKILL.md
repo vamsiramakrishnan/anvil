@@ -25,7 +25,8 @@ operations, and never emits a deployable MCP or multi-source tool surface.
 ## 1) Build the estate selection + imports per coordinate
 
 ```bash
-anvil estate connect <export> --vendor <vendor> --json
+anvil estate inventory <export> --vendor <vendor> --gateway-id <stable-gateway-id> --summary
+anvil estate audit <export> --vendor <vendor> --gateway-id <stable-gateway-id> --check
 anvil estate plan <export> --vendor <vendor> --gateway-id <stable-gateway-id> \
   --init-selection estate-selection.yaml --out estate-plan.json
 ```

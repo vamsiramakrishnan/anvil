@@ -1,4 +1,12 @@
-import type { Claim, EvidenceKind, JsonSchema } from "@anvil/air";
+import type {
+  Claim,
+  EvidenceKind,
+  IdempotencyMechanism,
+  IdempotencyMode,
+  JsonSchema,
+  KeyDerivation,
+} from "@anvil/air";
+import { resolveIdempotencyCarrier } from "@anvil/air";
 import {
   type EvidenceStrength,
   type JsonValue,
@@ -318,6 +326,46 @@ const CHECKS: Record<ValidationCheckId, Check> = {
     return typeof m === "string" && m.trim().length > 0
       ? ok("error_message_nonempty", "error message is non-empty")
       : fail("error_message_nonempty", "error message is missing or empty");
+  },
+
+  idempotency_carrier_resolves(_skill, proposal, context) {
+    const set = proposal.patch.set;
+    // retry_basis alone (no idempotency.* keys) touches no carrier — inert.
+    if (
+      !("idempotency_mode" in set) &&
+      !("idempotency_mechanism" in set) &&
+      !("idempotency_key" in set) &&
+      !("idempotency_key_derivation" in set)
+    ) {
+      return ok("idempotency_carrier_resolves", "patch does not touch the idempotency carrier");
+    }
+    const op = context.operation;
+    if (!op) {
+      return fail("idempotency_carrier_resolves", "no operation in context to resolve against");
+    }
+    // Merge the proposed values onto the operation's current idempotency block —
+    // never invent a candidate from the patch alone, so a proposal that only sets
+    // `idempotency_mechanism` is still checked against the operation's real mode.
+    const candidate = {
+      ...op,
+      idempotency: {
+        ...op.idempotency,
+        ...(typeof set.idempotency_mode === "string"
+          ? { mode: set.idempotency_mode as IdempotencyMode }
+          : {}),
+        ...(typeof set.idempotency_mechanism === "string"
+          ? { mechanism: set.idempotency_mechanism as IdempotencyMechanism }
+          : {}),
+        ...(typeof set.idempotency_key === "string" ? { key: set.idempotency_key } : {}),
+        ...(typeof set.idempotency_key_derivation === "string"
+          ? { keyDerivation: set.idempotency_key_derivation as KeyDerivation }
+          : {}),
+      },
+    };
+    const resolution = resolveIdempotencyCarrier(candidate);
+    return resolution.ok
+      ? ok("idempotency_carrier_resolves", "the proposed idempotency carrier resolves cleanly")
+      : fail("idempotency_carrier_resolves", resolution.issue);
   },
 };
 

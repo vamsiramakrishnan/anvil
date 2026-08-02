@@ -421,3 +421,50 @@ describe("classifyApproval verification guard", () => {
     });
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* classifyApproval — idempotency classification guard (Rule 0)               */
+/* -------------------------------------------------------------------------- */
+
+const opTarget: SemanticTarget = { kind: "operation", operationId: "payments.refunds.create" };
+
+describe("classifyApproval idempotency classification guard", () => {
+  it("routes a classify-idempotency proposal to review even with authoritative, verified evidence", () => {
+    const decision = classifyApproval({
+      skill: "classify-idempotency",
+      proposal: proposal("classify-idempotency", opTarget, {
+        idempotency_mode: "required",
+        idempotency_mechanism: "header",
+        idempotency_key: "Idempotency-Key",
+      }),
+      evidence: [
+        claim({
+          source: "source_impl",
+          sourceRef: "src/refunds.ts",
+          predicate: "operation.idempotency_mode",
+        }),
+      ],
+      groundingArtifacts: [artifact("src/refunds.ts", "verified")],
+    });
+    expect(decision).toEqual({
+      tier: "review",
+      reason: "an idempotency classification is always a person's decision, never automatic",
+    });
+  });
+
+  it("routes a bare retry_basis patch to review by the field guard, not skill membership", () => {
+    // Same guard fires even under a different skill name, since it checks patch keys
+    // directly rather than trusting AUTO_APPROVAL_SKILLS membership.
+    const decision = classifyApproval({
+      skill: "some-future-skill",
+      proposal: proposal("some-future-skill", opTarget, {
+        idempotency_key_derivation: "request_hash",
+      }),
+      evidence: [claim({ source: "source_impl", sourceRef: "src/refunds.ts" })],
+    });
+    expect(decision).toEqual({
+      tier: "review",
+      reason: "an idempotency classification is always a person's decision, never automatic",
+    });
+  });
+});

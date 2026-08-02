@@ -6,9 +6,9 @@ import {
   gatewaySupportRegistry,
 } from "@anvil/compiler";
 import type { Command } from "commander";
-import type { CliIO } from "../io.js";
-import type { CommandContext } from "./context.js";
-import { annotate } from "./meta.js";
+import type { CliIO } from "../../io.js";
+import type { CommandContext } from "../context.js";
+import { annotate } from "../meta.js";
 
 interface EstateSupportOptions {
   json?: boolean;
@@ -107,7 +107,7 @@ export function registerEstateSupport(parent: Command, ctx: CommandContext): voi
   );
 }
 
-export function runEstateSupport(
+function runEstateSupport(
   vendor: string | undefined,
   opts: EstateSupportOptions,
   io: CliIO,

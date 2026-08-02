@@ -5,6 +5,7 @@
  * overlay/inventory; `map`/custom assembly actions are classified **opaque**.
  */
 import type { AdapterContext, GatewayAdapter, GatewayConnection } from "../adapter.js";
+import { axisMatches } from "../coordinate.js";
 import {
   type ExplicitGatewayIdentityConfiguration,
   projectExplicitIdentityConfiguration,
@@ -363,9 +364,7 @@ export class ApiConnectGatewayAdapter implements GatewayAdapter<ApiConnectConnec
     const exp = parsed.exp;
     const apis = asObjects<ApicApi>(exp.apis);
     const apiIndex = apis.findIndex(
-      (candidate) =>
-        candidate.name === api.id &&
-        (api.version === undefined || candidate.version === api.version),
+      (candidate) => candidate.name === api.id && axisMatches(api.version, candidate.version),
     );
     const found = apis[apiIndex];
     if (!found) {

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/*.mjs", "tools/**/*.mjs"],
+      "project": ["scripts/**/*.mjs", "tools/**/*.mjs"]
+    },
+    "apps/docs": {
+      "entry": ["src/shims/*.js", "scripts/*.mjs"]
+    }
+  },
+  "ignoreDependencies": ["@fontsource/hanken-grotesk", "@fontsource/jetbrains-mono"]
+}

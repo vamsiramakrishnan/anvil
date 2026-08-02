@@ -218,6 +218,7 @@ describe("anvil refine skills", () => {
       "generate-examples",
       "enrich-errors",
       "investigate-ui-projection",
+      "classify-idempotency",
     ]);
 
     const textResult = await refine("skills");

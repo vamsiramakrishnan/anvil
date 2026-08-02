@@ -36,10 +36,10 @@ it, and whether that skill is implemented today.
 | `undocumented_pagination` | documentation | low | document-pagination | — |
 | `auth_principal_unclear` | safety | medium | clarify-auth | — |
 | `confirmation_posture_incomplete` | safety | blocking | confirm-posture | — |
-| `contested_safety_semantic` | safety | blocking | classify-idempotency | — |
+| `contested_safety_semantic` | safety | blocking | classify-idempotency | yes |
 | `error_retryability_unclear` | safety | medium | enrich-errors | yes |
-| `mutation_effect_unproven` | safety | high | classify-idempotency | — |
-| `retry_basis_unproven` | safety | high | classify-idempotency | — |
+| `mutation_effect_unproven` | safety | high | classify-idempotency | yes |
+| `retry_basis_unproven` | safety | high | classify-idempotency | yes |
 | `capability_missing_routing_phrases` | usability | low | author-intent-examples | — |
 | `cross_surface_disagreement` | usability | high | align-artifacts | — |
 | `indistinct_operation_descriptions` | usability | medium | disambiguate-operations | — |
