@@ -1,11 +1,28 @@
 import type { AirDocument, Operation } from "@anvil/air";
 import { evidenceConfidence, operationInputSchema, operationSafetyInputKeys } from "@anvil/air";
 
+/**
+ * Truncate a description to 160 chars at a word boundary, appending "…" if truncated.
+ * Returns undefined if input is empty or falsy.
+ */
+function truncateDescription(text?: string, maxChars = 160): string | undefined {
+  if (!text) return undefined;
+  if (text.length <= maxChars) return text;
+
+  // Find the last space before maxChars
+  const truncated = text.substring(0, maxChars);
+  const lastSpace = truncated.lastIndexOf(" ");
+  const cutPoint = lastSpace > 0 ? lastSpace : maxChars;
+
+  return `${text.substring(0, cutPoint)}…`;
+}
+
 export interface CatalogEntry {
   id: string;
   canonicalName: string;
   displayName: string;
-  description: string;
+  /** Glanceable one-line description (truncated to 160 chars at word boundary). */
+  description?: string;
   capability?: string;
   effect: string;
   action: string;
@@ -34,6 +51,8 @@ export interface CatalogEntry {
   longRunning?: boolean;
   /** How an agent should interact with this operation. */
   archetype?: string;
+  /** REST/GraphQL path and method when available (e.g., "post /v1/charges/{charge}/refunds"). */
+  path?: string;
 }
 
 /** A capability entry in the catalog — the primary index agents browse. */
@@ -82,7 +101,6 @@ export function operationCatalog(air: AirDocument): {
         id: op.id,
         canonicalName: op.canonicalName,
         displayName: op.displayName,
-        description: op.description,
         capability: op.capabilityId,
         effect: op.effect.kind,
         action: op.effect.action,
@@ -106,6 +124,15 @@ export function operationCatalog(air: AirDocument): {
         intentExamples: op.skill.intentExamples,
         confidence: evidenceConfidence(op.evidence),
       };
+      // Populate description if present, truncated for glanceability
+      const truncatedDescription = truncateDescription(op.description);
+      if (truncatedDescription) {
+        entry.description = truncatedDescription;
+      }
+      // Populate path if sourceRef has both method and path
+      if (op.sourceRef.method && op.sourceRef.path) {
+        entry.path = `${op.sourceRef.method} ${op.sourceRef.path}`;
+      }
       if (op.pagination) {
         entry.pagination = {
           style: op.pagination.style,

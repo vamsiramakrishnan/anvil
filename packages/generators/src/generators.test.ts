@@ -398,10 +398,37 @@ describe("capabilities in generated artifacts", () => {
     expect(unapproved.operations.every((o) => o.state !== "approved")).toBe(true);
     const { files } = generateBundle(unapproved);
     const capsRef = files["skill/reference/capabilities.md"] as string;
-    expect(capsRef).toContain("No approved capabilities");
+    // Should show pending capabilities instead of "No approved capabilities"
+    expect(capsRef).toContain("Pending approval");
+    expect(capsRef).toContain("review_required");
     expect(capsRef).not.toContain("payments refunds create");
     const skill = files["skill/SKILL.md"] as string;
+    expect(skill).toContain("operations compiled but await approval");
     expect(skill).not.toContain("payments refunds create");
+    // Operations reference should list unapproved operations in pending section
+    const opsRef = files["skill/reference/operations.md"] as string;
+    expect(opsRef).toContain("Pending approval");
+    expect(opsRef).toContain("review_required");
+  });
+
+  it("shows pending operations when some are unapproved alongside approved ones", async () => {
+    // Create a mixed scenario: some approved, some pending.
+    const mixed = structuredClone(air);
+    // Approve only the first operation
+    if (mixed.operations.length > 1) {
+      mixed.operations[0].state = "approved";
+      mixed.operations[1].state = "review_required";
+    }
+    const { files } = generateBundle(mixed);
+    const opsRef = files["skill/reference/operations.md"] as string;
+    // Should have both approved and pending sections
+    expect(opsRef).toContain("## Approved operations");
+    expect(opsRef).toContain("## Pending approval");
+    expect(opsRef).toContain("[review_required]");
+    // Docs should show counts
+    const docsOps = files["docs/OPERATIONS.md"] as string;
+    expect(docsOps).toContain("approved");
+    expect(docsOps).toContain("pending review");
   });
 
   it("gives the skill a valid Agent-Skill name slug", async () => {
@@ -565,6 +592,65 @@ describe("skill package format", () => {
 
     // Check for link-style pagination info
     expect(ref).toContain("Paginated (link)");
+  });
+
+  it("truncates long operation descriptions at word boundary in catalog", () => {
+    const testAir = structuredClone(air);
+    const op = testAir.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+
+    // Set a long description that exceeds 160 chars
+    const longDesc =
+      "This is a very long description that goes on and on and should definitely be truncated at the word boundary to ensure the catalog remains glanceable and readable by agents without requiring excessive token expenditure to parse";
+    op.description = longDesc;
+
+    const { files } = generateBundle(testAir);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const catalogOp = catalog.operations.find((o: { id: string }) => o.id === op.id);
+
+    expect(catalogOp).toBeDefined();
+    expect(catalogOp.description).toBeDefined();
+    expect(catalogOp.description).toContain("…");
+    expect(catalogOp.description.length).toBeLessThanOrEqual(161); // 160 + "…"
+    expect(catalogOp.description.length).toBeLessThan(longDesc.length);
+    // Verify it truncates at a word boundary — should end cleanly at "…"
+    expect(catalogOp.description).toMatch(/…$/);
+  });
+
+  it("populates path from sourceRef method and path in catalog", () => {
+    const testAir = structuredClone(air);
+    const op = testAir.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+
+    // Ensure sourceRef has both method and path
+    op.sourceRef.method = "post";
+    op.sourceRef.path = "/v1/charges/{charge_id}/refunds";
+
+    const { files } = generateBundle(testAir);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const catalogOp = catalog.operations.find((o: { id: string }) => o.id === op.id);
+
+    expect(catalogOp).toBeDefined();
+    expect(catalogOp.path).toBe("post /v1/charges/{charge_id}/refunds");
+  });
+
+  it("omits description and path from catalog when not available", () => {
+    const testAir = structuredClone(air);
+    const op = testAir.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+
+    // Clear description and sourceRef fields
+    op.description = "";
+    op.sourceRef.method = undefined;
+    op.sourceRef.path = undefined;
+
+    const { files } = generateBundle(testAir);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const catalogOp = catalog.operations.find((o: { id: string }) => o.id === op.id);
+
+    expect(catalogOp).toBeDefined();
+    expect(catalogOp.description).toBeUndefined();
+    expect(catalogOp.path).toBeUndefined();
   });
 
   it("omits pagination, longRunning, and archetype metadata when not set", () => {

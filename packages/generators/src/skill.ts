@@ -77,7 +77,7 @@ export function generateSkill(air: AirDocument): Record<string, string> {
     frontmatter(
       `${name}-operations`,
       "The full operation catalog — per-operation contract, inputs, safety posture (effect, risk, confirmation, idempotency, retry), and CLI/MCP names. Read this before invoking any operation.",
-    ) + operationsRef(exposed);
+    ) + operationsRef(air.operations);
   files["reference/errors.md"] =
     frontmatter(
       `${name}-errors`,
@@ -224,7 +224,7 @@ connecting to the MCP server directly (no CLI) gets the same tools, so
 - **Do not** retry a mutation unless the tool reports it as retry-safe. Reads and idempotent writes retry automatically; non-idempotent writes never do.
 
 ## What this skill exposes
-${ops.length === 0 ? "_No operations are approved yet. Run `anvil approve` to expose operations._" : `${ops.length} approved operation(s). For the full catalog, read \`reference/operations.md\`.`}
+${ops.length === 0 ? `_${air.operations.length} operations compiled but await approval (see \`reference/operations.md\` for the pending list). Run \`anvil approve\` to expose operations._` : `${ops.length} approved operation(s) out of ${air.operations.length} compiled. For the full catalog, read \`reference/operations.md\`.`}
 
 ## Where to look
 - \`reference/capabilities.md\` — the capabilities and what each one owns.
@@ -275,8 +275,22 @@ function capabilitiesRef(air: AirDocument): string {
   const visible = air.capabilities
     .map((cap) => ({ cap, ops: approvedMembers(air, cap) }))
     .filter(({ ops }) => ops.length > 0);
-  if (visible.length === 0) return "# Capabilities\n\n_No approved capabilities yet._\n";
-  const sections = visible.map(({ cap, ops }) => {
+
+  // Pending capabilities: those with no approved members but some operations exist
+  const pending = air.capabilities
+    .map((cap) => ({
+      cap,
+      ops: approvedMembers(air, cap),
+      allOps: cap.operationIds
+        .map((id) => air.operations.find((o) => o.id === id))
+        .filter((o): o is Operation => Boolean(o)),
+    }))
+    .filter(({ allOps }) => allOps.length > 0 && allOps.every((o) => o.state !== "approved"));
+
+  if (visible.length === 0 && pending.length === 0)
+    return "# Capabilities\n\n_No capabilities found._\n";
+
+  const approvedSections = visible.map(({ cap, ops }) => {
     const opLines = ops.map(
       (o) =>
         `- \`${o.cli.command}\` — ${o.effect.kind}${o.confirmation.required ? " (confirm)" : ""}`,
@@ -295,14 +309,35 @@ Operations:
 ${opLines.join("\n")}
 ${wfs.length ? `\nWorkflows:\n${wfs.join("\n")}` : ""}`;
   });
-  return `# Capabilities
+
+  const approvedSection =
+    visible.length > 0
+      ? `## Approved capabilities
 
 The primary abstraction: agents search for a capability, not a URL. Each
 capability owns operations and (authored) workflows. Only approved operations
 are listed.
 
-${sections.join("\n\n")}
-`;
+${approvedSections.join("\n\n")}`
+      : "";
+
+  const pendingLines = pending.map(({ cap, allOps }) => {
+    const stateCount = (state: string) => allOps.filter((o) => o.state === state).length;
+    const states = Array.from(new Set(allOps.map((o) => o.state))).sort();
+    const statesSummary = states.map((s) => `${stateCount(s)} ${s}`).join(", ");
+    return `- \`${cap.id}\` — ${cap.displayName} [${statesSummary}]`;
+  });
+  const pendingSection =
+    pending.length > 0
+      ? `## Pending approval (not callable)\n\nThese capabilities have no approved operations yet. None of their operations are exposed by the CLI or MCP server.\n\n${pendingLines.join("\n")}`
+      : "";
+
+  const sections = [approvedSection, pendingSection].filter(Boolean).join("\n\n");
+  const intro =
+    visible.length === 0 && pending.length > 0 ? "No approved capabilities yet.\n\n" : "";
+  return `# Capabilities
+
+${intro}${sections}\n`;
 }
 
 /** One line listing an operation's inputs (params + projected body). */
@@ -333,56 +368,60 @@ function confirmationCallout(op: Operation): string {
 }
 
 function operationsRef(ops: Operation[]): string {
-  const rows = ops.map((op) => {
-    const flags = [
-      op.effect.kind,
-      op.effect.kind === "mutation" ? op.effect.risk : null,
-      op.confirmation.required ? "confirm-required" : null,
-      op.idempotency.mode === "required" ? "idempotency-key-required" : null,
-      op.retries.mode === "safe" ? "retry-safe" : "not-retry-safe",
-    ]
-      .filter(Boolean)
-      .join(", ");
+  const approved = ops.filter((op) => op.state === "approved");
+  const pending = ops.filter((op) => op.state !== "approved");
 
-    // Build optional metadata lines for pagination, longRunning, and archetype
-    const metadataLines: string[] = [];
+  const buildApprovedRows = (approvedOps: Operation[]) => {
+    return approvedOps.map((op) => {
+      const flags = [
+        op.effect.kind,
+        op.effect.kind === "mutation" ? op.effect.risk : null,
+        op.confirmation.required ? "confirm-required" : null,
+        op.idempotency.mode === "required" ? "idempotency-key-required" : null,
+        op.retries.mode === "safe" ? "retry-safe" : "not-retry-safe",
+      ]
+        .filter(Boolean)
+        .join(", ");
 
-    // Pagination information
-    if (op.pagination) {
-      if (op.pagination.style === "link") {
-        metadataLines.push("- Paginated (link)");
-      } else {
-        let paginationLine = `- Paginated (${op.pagination.style})`;
-        if (op.pagination.cursorParam) {
-          paginationLine += `: pass \`${op.pagination.cursorParam}\``;
+      // Build optional metadata lines for pagination, longRunning, and archetype
+      const metadataLines: string[] = [];
+
+      // Pagination information
+      if (op.pagination) {
+        if (op.pagination.style === "link") {
+          metadataLines.push("- Paginated (link)");
+        } else {
+          let paginationLine = `- Paginated (${op.pagination.style})`;
+          if (op.pagination.cursorParam) {
+            paginationLine += `: pass \`${op.pagination.cursorParam}\``;
+          }
+          if (op.pagination.itemsField) {
+            paginationLine += `; items at \`${op.pagination.itemsField}\``;
+          }
+          metadataLines.push(paginationLine);
         }
-        if (op.pagination.itemsField) {
-          paginationLine += `; items at \`${op.pagination.itemsField}\``;
-        }
-        metadataLines.push(paginationLine);
       }
-    }
 
-    // Long-running information
-    if (op.longRunning) {
-      metadataLines.push("- Long-running: returns before completion; poll for status");
-    }
+      // Long-running information
+      if (op.longRunning) {
+        metadataLines.push("- Long-running: returns before completion; poll for status");
+      }
 
-    // Archetype search hint
-    if (op.archetype === "search") {
-      metadataLines.push("- Narrow with filters before paging");
-    }
+      // Archetype search hint
+      if (op.archetype === "search") {
+        metadataLines.push("- Narrow with filters before paging");
+      }
 
-    // Intent examples and metadata are both optional; the newline between them
-    // exists only when both are present, so metadata lines never glue onto the
-    // end of the intents line (and rows without either keep their exact shape).
-    const intentLine = op.skill.intentExamples.length
-      ? `- Example intents: ${op.skill.intentExamples.map((e) => `"${e}"`).join("; ")}`
-      : "";
-    const metadata = metadataLines.length ? `${metadataLines.join("\n")}\n` : "";
-    const tail = `${intentLine}${intentLine && metadata ? "\n" : ""}${metadata}`;
+      // Intent examples and metadata are both optional; the newline between them
+      // exists only when both are present, so metadata lines never glue onto the
+      // end of the intents line (and rows without either keep their exact shape).
+      const intentLine = op.skill.intentExamples.length
+        ? `- Example intents: ${op.skill.intentExamples.map((e) => `"${e}"`).join("; ")}`
+        : "";
+      const metadata = metadataLines.length ? `${metadataLines.join("\n")}\n` : "";
+      const tail = `${intentLine}${intentLine && metadata ? "\n" : ""}${metadata}`;
 
-    return `### \`${op.cli.command}\`  (id: \`${op.id}\`, tool: \`${op.mcp.toolName}\`)
+      return `### \`${op.cli.command}\`  (id: \`${op.id}\`, tool: \`${op.mcp.toolName}\`)
 ${op.description || op.displayName}
 ${confirmationCallout(op)}
 - Semantics: ${flags}
@@ -390,8 +429,22 @@ ${confirmationCallout(op)}
 - Inputs: ${inputList(op)}
 - Schema: \`../schemas/${op.canonicalName}.schema.json\` · Example: \`../examples/${op.canonicalName}.json\`
 ${tail}`;
-  });
-  return `# Operations\n\n\`*\` marks a required input.\n\n${rows.join("\n\n")}\n`;
+    });
+  };
+
+  const approvedRows = buildApprovedRows(approved);
+  const approvedSection =
+    approved.length > 0 ? `## Approved operations\n\n${approvedRows.join("\n\n")}` : "";
+  const pendingLines = pending.map(
+    (op) => `- \`${op.cli.command}\` — ${op.displayName || op.id} [${op.state}]`,
+  );
+  const pendingSection =
+    pending.length > 0
+      ? `## Pending approval (not callable)\n\nThese operations are compiled but not yet approved. They are not exposed by the CLI or MCP server.\n\n${pendingLines.join("\n")}`
+      : "";
+
+  const sections = [approvedSection, pendingSection].filter(Boolean).join("\n\n");
+  return `# Operations\n\n\`*\` marks a required input.\n\n${sections}\n`;
 }
 
 function idempotencyRef(ops: Operation[]): string {
