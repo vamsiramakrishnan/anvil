@@ -373,6 +373,9 @@ Options:
 - `--plan <file>` — an enrichment plan from `anvil distill --as-enrich-plan`: probe only its targeted operations, routing each question to the matching source pole (code loosens, docs tighten)
 - `--write <manifest>` — write the proposed manifest here instead of printing it
 - `--json` — emit the per-operation decisions as JSON
+- `--agent <name>` — harness agent to use (heuristic|agent-cli; default: heuristic)
+- `--agent-command <bin>` — CLI command for agent-cli (default: claude)
+- `--agent-timeout <ms>` — timeout in milliseconds for agent-cli (default: 30000)
 
 ### `anvil estate`
 `anvil estate [options] [command]`

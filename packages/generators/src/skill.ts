@@ -343,6 +343,45 @@ function operationsRef(ops: Operation[]): string {
     ]
       .filter(Boolean)
       .join(", ");
+
+    // Build optional metadata lines for pagination, longRunning, and archetype
+    const metadataLines: string[] = [];
+
+    // Pagination information
+    if (op.pagination) {
+      if (op.pagination.style === "link") {
+        metadataLines.push("- Paginated (link)");
+      } else {
+        let paginationLine = `- Paginated (${op.pagination.style})`;
+        if (op.pagination.cursorParam) {
+          paginationLine += `: pass \`${op.pagination.cursorParam}\``;
+        }
+        if (op.pagination.itemsField) {
+          paginationLine += `; items at \`${op.pagination.itemsField}\``;
+        }
+        metadataLines.push(paginationLine);
+      }
+    }
+
+    // Long-running information
+    if (op.longRunning) {
+      metadataLines.push("- Long-running: returns before completion; poll for status");
+    }
+
+    // Archetype search hint
+    if (op.archetype === "search") {
+      metadataLines.push("- Narrow with filters before paging");
+    }
+
+    // Intent examples and metadata are both optional; the newline between them
+    // exists only when both are present, so metadata lines never glue onto the
+    // end of the intents line (and rows without either keep their exact shape).
+    const intentLine = op.skill.intentExamples.length
+      ? `- Example intents: ${op.skill.intentExamples.map((e) => `"${e}"`).join("; ")}`
+      : "";
+    const metadata = metadataLines.length ? `${metadataLines.join("\n")}\n` : "";
+    const tail = `${intentLine}${intentLine && metadata ? "\n" : ""}${metadata}`;
+
     return `### \`${op.cli.command}\`  (id: \`${op.id}\`, tool: \`${op.mcp.toolName}\`)
 ${op.description || op.displayName}
 ${confirmationCallout(op)}
@@ -350,7 +389,7 @@ ${confirmationCallout(op)}
 - Auth: ${op.auth.type}${op.auth.scopes.length ? ` (${op.auth.scopes.join(", ")})` : ""}
 - Inputs: ${inputList(op)}
 - Schema: \`../schemas/${op.canonicalName}.schema.json\` · Example: \`../examples/${op.canonicalName}.json\`
-${op.skill.intentExamples.length ? `- Example intents: ${op.skill.intentExamples.map((e) => `"${e}"`).join("; ")}` : ""}`;
+${tail}`;
   });
   return `# Operations\n\n\`*\` marks a required input.\n\n${rows.join("\n\n")}\n`;
 }

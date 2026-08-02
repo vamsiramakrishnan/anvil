@@ -28,6 +28,12 @@ export interface CatalogEntry {
   state: string;
   intentExamples: string[];
   confidence: number;
+  /** Pagination configuration when present. */
+  pagination?: { style: string; cursorParam?: string; nextField?: string; itemsField?: string };
+  /** True when the operation returns before completion and requires polling. */
+  longRunning?: boolean;
+  /** How an agent should interact with this operation. */
+  archetype?: string;
 }
 
 /** A capability entry in the catalog — the primary index agents browse. */
@@ -72,7 +78,7 @@ export function operationCatalog(air: AirDocument): {
     })),
     operations: air.operations.map((op) => {
       const safety = operationSafetyInputKeys(op);
-      return {
+      const entry: CatalogEntry = {
         id: op.id,
         canonicalName: op.canonicalName,
         displayName: op.displayName,
@@ -100,6 +106,21 @@ export function operationCatalog(air: AirDocument): {
         intentExamples: op.skill.intentExamples,
         confidence: evidenceConfidence(op.evidence),
       };
+      if (op.pagination) {
+        entry.pagination = {
+          style: op.pagination.style,
+          cursorParam: op.pagination.cursorParam,
+          nextField: op.pagination.nextField,
+          itemsField: op.pagination.itemsField,
+        };
+      }
+      if (op.longRunning) {
+        entry.longRunning = true;
+      }
+      if (op.archetype) {
+        entry.archetype = op.archetype;
+      }
+      return entry;
     }),
   };
 }

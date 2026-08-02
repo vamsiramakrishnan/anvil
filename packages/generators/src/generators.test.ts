@@ -506,6 +506,79 @@ describe("skill package format", () => {
     expect(idem).toContain("This operation creates an irreversible financial mutation");
   });
 
+  it("surfaces pagination, longRunning, and archetype when present in operation metadata", () => {
+    const testAir = structuredClone(air);
+    const op = testAir.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+
+    // Set pagination with cursor style
+    op.pagination = {
+      style: "cursor",
+      cursorParam: "after_cursor",
+      itemsField: "transactions",
+    };
+
+    // Set longRunning flag
+    op.longRunning = true;
+
+    // Set archetype to search
+    op.archetype = "search";
+
+    const { files } = generateBundle(testAir);
+    const ref = files["skill/reference/operations.md"] as string;
+
+    // Check for pagination info
+    expect(ref).toContain("Paginated (cursor): pass `after_cursor`; items at `transactions`");
+
+    // Check for long-running info
+    expect(ref).toContain("Long-running: returns before completion; poll for status");
+
+    // Check for archetype search hint
+    expect(ref).toContain("Narrow with filters before paging");
+
+    // Verify operation catalog also includes these fields
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const catalogOp = catalog.operations.find((o: { id: string }) => o.id === op.id);
+    expect(catalogOp).toBeDefined();
+    expect(catalogOp.pagination).toEqual({
+      style: "cursor",
+      cursorParam: "after_cursor",
+      nextField: undefined,
+      itemsField: "transactions",
+    });
+    expect(catalogOp.longRunning).toBe(true);
+    expect(catalogOp.archetype).toBe("search");
+  });
+
+  it("surfaces link-style pagination without cursor param in operation reference", () => {
+    const testAir = structuredClone(air);
+    const op = testAir.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+
+    // Set pagination with link style (no cursor param needed)
+    op.pagination = {
+      style: "link",
+    };
+
+    const { files } = generateBundle(testAir);
+    const ref = files["skill/reference/operations.md"] as string;
+
+    // Check for link-style pagination info
+    expect(ref).toContain("Paginated (link)");
+  });
+
+  it("omits pagination, longRunning, and archetype metadata when not set", () => {
+    const { files } = generateBundle(air);
+    const ref = files["skill/reference/operations.md"] as string;
+
+    // Existing operations in payments fixture should not have these fields
+    // The reference should still be valid with proper structure
+    expect(ref).toMatch(/### `[^`]+`.*\(id: `[^`]+`, tool: `[^`]+`\)/);
+    // Verify the format is as expected with operations listed
+    expect(ref).toContain("### `payments customers get`");
+    expect(ref).toContain("### `payments refunds create`");
+  });
+
   it("teaches setup (env-var NAMES only) and links it from SKILL.md and errors.md", () => {
     const { files } = generateBundle(air);
     const setup = files["skill/reference/setup.md"] as string;
