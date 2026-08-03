@@ -167,6 +167,28 @@ export const OperationManifest = z.object({
       max_attempts: z.number().int().min(1).max(MAX_RETRY_ATTEMPTS).optional(),
     })
     .optional(),
+  /**
+   * Grammar policy for a query-passthrough operation. Declaring one is the
+   * reviewable act that unblocks a passthrough surface: the runtime parses the
+   * `query_param` value and refuses anything the policy cannot prove safe. Like
+   * every loosening, it is a human decision — declaring it moves the operation
+   * off `blocked` to `review_required`, never straight to `approved`.
+   */
+  query_policy: z
+    .object({
+      query_param: z.string(),
+      dialect: z.enum(["postgres", "mysql", "ansi"]).default("ansi"),
+      allowed_statements: z
+        .array(
+          z.enum(["select", "insert", "update", "delete", "merge", "call", "explain", "other"]),
+        )
+        .optional(),
+      single_statement_only: z.boolean().optional(),
+      forbid_comments: z.boolean().optional(),
+      max_rows: z.number().int().min(1).optional(),
+      allowed_tables: z.array(z.string()).optional(),
+    })
+    .optional(),
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
 });
 export type OperationManifest = z.infer<typeof OperationManifest>;
@@ -602,6 +624,26 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
         }
       }
     }
+  }
+
+  // Query grammar policy: declaring one is the reviewable unblock of a
+  // query-passthrough surface. The runtime enforces it; here we record it and,
+  // when the operation was blocked purely as an unguarded passthrough, lift it
+  // to review_required so a human still signs off before exposure.
+  if (m.query_policy) {
+    const qp = m.query_policy;
+    op.queryPolicy = {
+      queryParam: qp.query_param,
+      dialect: qp.dialect ?? "ansi",
+      allowedStatements: qp.allowed_statements ?? ["select"],
+      singleStatementOnly: qp.single_statement_only ?? true,
+      forbidComments: qp.forbid_comments ?? true,
+      ...(qp.max_rows !== undefined ? { maxRows: qp.max_rows } : {}),
+      ...(qp.allowed_tables !== undefined ? { allowedTables: qp.allowed_tables } : {}),
+    };
+    const note = "Query grammar policy declared — runtime parses and refuses unsafe queries.";
+    if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    if (op.state === "blocked") op.state = "review_required";
   }
 
   if (m.state) op.state = m.state;

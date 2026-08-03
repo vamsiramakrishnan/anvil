@@ -19,11 +19,11 @@ export interface PlaceholderSite {
   context: PlaceholderContext;
 }
 
-export interface TemplateAnalysisOk {
+interface TemplateAnalysisOk {
   ok: true;
   sites: PlaceholderSite[];
 }
-export interface TemplateAnalysisErr {
+interface TemplateAnalysisErr {
   ok: false;
   code: "tokenize_failed" | "placeholder_in_identifier_position" | "nested_or_adjacent_placeholder";
   message: string;

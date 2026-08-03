@@ -10,7 +10,7 @@ import {
   propKey,
   resolveIdempotencyCarrier,
 } from "@anvil/air";
-import { renderTemplate } from "@anvil/grammar";
+import { checkQuery, renderTemplate } from "@anvil/grammar";
 import {
   type AuthMaterial,
   applyAuth,
@@ -315,6 +315,35 @@ function buildRequest(
   const headers: Record<string, string> = { accept: "application/json" };
   const body: Record<string, unknown> = {};
   let hasBody = false;
+
+  // Grammar guard (parse-then-police): when the operation declares a
+  // `queryPolicy`, the value the agent supplied for the query param is tokenized
+  // and validated BEFORE any wire request. Anything the policy cannot prove safe
+  // — a non-SELECT statement, a stacked second statement, a comment, an
+  // unbounded read, an off-allowlist table, or a query that will not even
+  // tokenize — is refused here. Fail closed: a parse failure is a refusal.
+  if (op.queryPolicy) {
+    const raw = input[propKey(op.queryPolicy.queryParam)];
+    const queryText = raw === undefined || raw === null ? "" : String(raw);
+    const verdict = checkQuery(queryText, {
+      dialect: op.queryPolicy.dialect ?? "ansi",
+      allowedStatements: op.queryPolicy.allowedStatements,
+      singleStatementOnly: op.queryPolicy.singleStatementOnly,
+      forbidComments: op.queryPolicy.forbidComments,
+      maxRows: op.queryPolicy.maxRows,
+      allowedTables: op.queryPolicy.allowedTables,
+    });
+    if (!verdict.ok) {
+      throw new AnvilError({
+        code: "validation_error",
+        operation: op.id,
+        traceId: randomUUID(),
+        message: `Query refused by grammar policy: ${verdict.violations.map((v) => v.message).join("; ")}`,
+        retryable: false,
+        details: { violations: verdict.violations },
+      });
+    }
+  }
 
   // Query template rendering: render the parameterized template and place the
   // result at the base operation's targetParam. The derived operation's params

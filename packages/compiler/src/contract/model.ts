@@ -92,6 +92,8 @@ export const SemanticPredicate = z.enum([
   "retries.mode",
   "retries.maxAttempts",
   "retries.retryOn",
+  // query grammar policy (operator-declared; the runtime enforces it)
+  "queryPolicy",
 ]);
 export type SemanticPredicate = z.infer<typeof SemanticPredicate>;
 

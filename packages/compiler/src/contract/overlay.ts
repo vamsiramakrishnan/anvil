@@ -219,6 +219,10 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
       }
     }
 
+    // Carry the operator-declared query policy verbatim; it round-trips back to
+    // `m.query_policy` in projectOperationManifest and is applied there.
+    if (m.query_policy) assertions.push(set(ref, "queryPolicy", m.query_policy));
+
     if (m.state) assertions.push(set(ref, "state", m.state));
   }
   return makeOverlay({ origin: "manifest", assertions });
@@ -319,6 +323,9 @@ export function projectOperationManifest(
     if (retryOnly) m.retries.only_on = retryOnly;
     if (retryMax !== undefined) m.retries.max_attempts = retryMax;
   }
+
+  const queryPolicy = v<OperationManifest["query_policy"]>("queryPolicy");
+  if (queryPolicy) m.query_policy = queryPolicy;
 
   const state = v<OperationManifest["state"]>("state");
   if (state) m.state = state;

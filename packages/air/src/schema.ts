@@ -737,6 +737,8 @@ export const Operation = z.object({
    */
   queryPolicy: z
     .object({
+      /** The input param whose value carries the query text to police. */
+      queryParam: z.string(),
       dialect: z.enum(["postgres", "mysql", "ansi"]).default("ansi"),
       allowedStatements: z
         .array(
