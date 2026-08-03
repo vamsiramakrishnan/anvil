@@ -10,6 +10,7 @@ import {
   propKey,
   resolveIdempotencyCarrier,
 } from "@anvil/air";
+import { checkQuery, lexicalFamily, renderTemplate } from "@anvil/grammar";
 import {
   type AuthMaterial,
   applyAuth,
@@ -315,48 +316,85 @@ function buildRequest(
   const body: Record<string, unknown> = {};
   let hasBody = false;
 
+  // Grammar guard (parse-then-police): when the operation declares a
+  // `queryPolicy`, the value the agent supplied for the query param is tokenized
+  // and validated BEFORE any wire request. Anything the policy cannot prove safe
+  // — a non-SELECT statement, a stacked second statement, a comment, an
+  // unbounded read, an off-allowlist table, or a query that will not even
+  // tokenize — is refused here. Fail closed: a parse failure is a refusal.
+  if (op.queryPolicy) {
+    const raw = input[propKey(op.queryPolicy.queryParam)];
+    const queryText = raw === undefined || raw === null ? "" : String(raw);
+    const verdict = checkQuery(queryText, {
+      dialect: lexicalFamily(op.queryPolicy.dialect ?? "ansi"),
+      allowedStatements: op.queryPolicy.allowedStatements,
+      singleStatementOnly: op.queryPolicy.singleStatementOnly,
+      forbidComments: op.queryPolicy.forbidComments,
+      maxRows: op.queryPolicy.maxRows,
+      allowedTables: op.queryPolicy.allowedTables,
+    });
+    if (!verdict.ok) {
+      throw new AnvilError({
+        code: "validation_error",
+        operation: op.id,
+        traceId: randomUUID(),
+        message: `Query refused by grammar policy: ${verdict.violations.map((v) => v.message).join("; ")}`,
+        retryable: false,
+        details: { violations: verdict.violations },
+      });
+    }
+  }
+
   // Query template rendering: render the parameterized template and place the
   // result at the base operation's targetParam. The derived operation's params
   // are the template variables; they are NOT sent as normal request params.
-  let renderedTemplate: string | undefined;
+  //
+  // Grammar-aware substitution (`@anvil/grammar`): each placeholder's lexical
+  // context is resolved and its value substituted as an escaped literal for
+  // exactly that context. A value can never terminate the literal it lives in,
+  // and a value that cannot render safely (a non-numeric in a numeric slot, an
+  // unanalyzable template) raises rather than reaching the wire. This replaces
+  // the old character-splice renderer and its documented quoting caveat.
   if (op.queryTemplate) {
-    renderedTemplate = op.queryTemplate.template;
-    // Replace each {paramName} placeholder with the validated arg value.
-    // split/join, never a regex replace: `{`/`}` are quantifier chars, and a
-    // regex replacement string would expand `$&`/`$'`/`$1` patterns inside the
-    // VALUE — letting a crafted argument splice surrounding query text into
-    // itself. Substitution is literal characters only.
+    const values: Record<string, unknown> = {};
     for (const p of op.input.params) {
       const value = input[propKey(p.name)];
-      if (value === undefined || value === null) {
-        // Missing template param would be caught during validation; skip silently here.
-        continue;
-      }
-      const placeholder = `{${p.name}}`;
-      renderedTemplate = renderedTemplate.split(placeholder).join(String(value));
+      if (value !== undefined && value !== null) values[p.name] = value;
     }
+    const rendered = renderTemplate(
+      op.queryTemplate.template,
+      values,
+      lexicalFamily(op.queryTemplate.dialect ?? "ansi"),
+    );
+    if (!rendered.ok) {
+      throw new AnvilError({
+        code: "validation_error",
+        operation: op.id,
+        traceId: randomUUID(),
+        message: `Query template could not be safely rendered: ${rendered.message}`,
+        retryable: false,
+      });
+    }
+    const rt = rendered.query;
     // Determine where to place the rendered template: use the location of the first
     // derived param (all derived params have the same in: location by design).
     const paramLocation = op.input.params[0]?.in ?? "body";
     switch (paramLocation) {
       case "query":
-        query.set(op.queryTemplate.targetParam, renderedTemplate);
+        query.set(op.queryTemplate.targetParam, rt);
         break;
       case "header":
-        headers[op.queryTemplate.targetParam] = renderedTemplate;
+        headers[op.queryTemplate.targetParam] = rt;
         break;
       case "body":
-        body[op.queryTemplate.targetParam] = renderedTemplate;
+        body[op.queryTemplate.targetParam] = rt;
         hasBody = true;
         break;
       case "path":
-        path = path.replace(
-          `{${op.queryTemplate.targetParam}}`,
-          encodeURIComponent(renderedTemplate),
-        );
+        path = path.replace(`{${op.queryTemplate.targetParam}}`, encodeURIComponent(rt));
         break;
       case "cookie":
-        headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${op.queryTemplate.targetParam}=${renderedTemplate}`;
+        headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${op.queryTemplate.targetParam}=${rt}`;
         break;
     }
     // Skip normal param processing; all template params have been consumed.

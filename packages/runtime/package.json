@@ -22,7 +22,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@anvil/air": "workspace:*"
+    "@anvil/air": "workspace:*",
+    "@anvil/grammar": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.5.0",

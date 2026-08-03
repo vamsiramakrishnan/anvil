@@ -152,6 +152,9 @@ importers:
       '@anvil/air':
         specifier: workspace:*
         version: link:../air
+      '@anvil/grammar':
+        specifier: workspace:*
+        version: link:../grammar
       '@scalar/openapi-parser':
         specifier: ^0.28.8
         version: 0.28.8
@@ -164,6 +167,9 @@ importers:
       graphql:
         specifier: ^17.0.2
         version: 17.0.2
+      node-sql-parser:
+        specifier: ^5.4.0
+        version: 5.4.0
       protobufjs:
         specifier: ^8.7.0
         version: 8.7.0
@@ -222,6 +228,18 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.16)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.27.7)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/grammar:
     devDependencies:
       tsup:
         specifier: ^8.5.0
@@ -303,6 +321,9 @@ importers:
       '@anvil/air':
         specifier: workspace:*
         version: link:../air
+      '@anvil/grammar':
+        specifier: workspace:*
+        version: link:../grammar
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -325,6 +346,9 @@ importers:
       '@anvil/air':
         specifier: workspace:*
         version: link:../air
+      '@anvil/grammar':
+        specifier: workspace:*
+        version: link:../grammar
     devDependencies:
       tsup:
         specifier: ^8.5.0
@@ -1819,6 +1843,9 @@ packages:
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
+  '@types/pegjs@0.10.6':
+    resolution: {integrity: sha512-eLYXDbZWXh2uxf+w8sXS8d6KSoXTswfps6fvCUuVAGN8eRpfe7h9eSRydxiSJvo9Bf+GzifsDOr9TMQlmJdmkw==}
+
   '@types/sax@1.2.7':
     resolution: {integrity: sha512-rO73L89PJxeYM3s3pPPjiPgVVcymqU490g0YO5n5By0k2Erzj6tay/4lr1CHAAU4JyOWd1rpQ8bCf6cZfHU96A==}
 
@@ -1983,6 +2010,10 @@ packages:
 
   bcp-47@2.1.1:
     resolution: {integrity: sha512-KLw+H/gd2p4zly1X7Yh/qziuyae5/w/QFnvTng9eZL5fvszL7Whl3MBoWF8yxL7ksUjBfOD+OxkytiqbBpG+Fw==}
+
+  big-integer@1.6.52:
+    resolution: {integrity: sha512-QxD8cf2eVqJOOz63z6JIN9BzvVs/dlySa5HGSBH5xtR8dPteIRQnBxxKqkNTiT6jbDTF6jAfrd4oMcND9RGbQg==}
+    engines: {node: '>=0.6'}
 
   body-parser@2.3.0:
     resolution: {integrity: sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==}
@@ -3066,6 +3097,10 @@ packages:
 
   node-readfiles@0.2.0:
     resolution: {integrity: sha512-SU00ZarexNlE4Rjdm83vglt5Y9yiQ+XI1XpflWlb7q7UTN1JUItm69xMeiQCTxtTfnzt+83T8Cx+vI2ED++VDA==}
+
+  node-sql-parser@5.4.0:
+    resolution: {integrity: sha512-jVe6Z61gPcPjCElPZ6j8llB3wnqGcuQzefim1ERsqIakxnEy5JlzV7XKdO1KmacRG5TKwPc4vJTgSRQ0LfkbFw==}
+    engines: {node: '>=8'}
 
   normalize-path@3.0.0:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
@@ -5082,6 +5117,8 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
+  '@types/pegjs@0.10.6': {}
+
   '@types/sax@1.2.7':
     dependencies:
       '@types/node': 22.20.1
@@ -5347,6 +5384,8 @@ snapshots:
       is-alphabetical: 2.0.1
       is-alphanumerical: 2.0.1
       is-decimal: 2.0.1
+
+  big-integer@1.6.52: {}
 
   body-parser@2.3.0:
     dependencies:
@@ -6818,6 +6857,11 @@ snapshots:
   node-readfiles@0.2.0:
     dependencies:
       es6-promise: 3.3.1
+
+  node-sql-parser@5.4.0:
+    dependencies:
+      '@types/pegjs': 0.10.6
+      big-integer: 1.6.52
 
   normalize-path@3.0.0: {}
 

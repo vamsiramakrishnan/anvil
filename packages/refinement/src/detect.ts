@@ -676,6 +676,38 @@ const contestedSafety: Detector = {
   },
 };
 
+/**
+ * The precise, structured need Anvil emits for an unguarded query surface — the
+ * shape of the answer it will accept. This is the reframe made concrete: Anvil
+ * (a connector, not the intelligence) says exactly what would make this surface
+ * safe AND callable, so the coding harness — which can see the data catalog —
+ * knows what to gather and supply back through the manifest. The harness fills
+ * `query_policy` (the enforced safety contract) and, for text-to-SQL quality,
+ * `query_schema` (catalog facts Anvil grounds and renders into the skill card).
+ */
+function passthroughResolutionNeeds(paramName: string): Record<string, unknown> {
+  return {
+    resolutionNeeds: {
+      supply: ["query_policy", "query_schema"],
+      query_policy: {
+        query_param: paramName,
+        must_declare: ["dialect", "allowed_statements", "max_rows", "allowed_tables"],
+        note: "The runtime enforces this. allowed_tables must be a subset of the schema tables.",
+      },
+      query_schema: {
+        source: "the data catalog you can reach (Dataplex / Unity Catalog / INFORMATION_SCHEMA)",
+        gather: [
+          "tables + typed columns",
+          "column sensitivity (PII)",
+          "blessed example queries",
+          "glossary",
+        ],
+        note: "Anvil grounds this (allowlisted tables must exist here) and renders it into the skill's schema card.",
+      },
+    },
+  };
+}
+
 const queryLanguagePassthrough: Detector = {
   name: "query-language-passthrough",
   detect(air) {
@@ -689,7 +721,7 @@ const queryLanguagePassthrough: Detector = {
               "query_language_passthrough",
               { kind: "field", operationId: op.id, path: `input.params.${p.name}` },
               `Parameter '${p.name}' of '${op.id}' accepts unconstrained query-language injection.`,
-              { fieldName: p.name, paramType: "query" },
+              { fieldName: p.name, paramType: "query", ...passthroughResolutionNeeds(p.name) },
               "high",
             ),
           );
@@ -705,7 +737,7 @@ const queryLanguagePassthrough: Detector = {
                 "query_language_passthrough",
                 { kind: "field", operationId: op.id, path: `input.body.${f.name}` },
                 `Body field '${f.name}' of '${op.id}' accepts unconstrained query-language injection.`,
-                { fieldName: f.name, paramType: "body" },
+                { fieldName: f.name, paramType: "body", ...passthroughResolutionNeeds(f.name) },
                 "high",
               ),
             );

@@ -168,7 +168,11 @@ export function validate(operations: Operation[]): ValidationResult {
 
     // Query-language passthrough operations are blocked by default — unconstrained
     // query injection is a critical safety issue requiring explicit human decision.
-    if (op.archetype === "query_passthrough") {
+    // A declared `queryPolicy` is the sanctioned exemption: the runtime now parses
+    // the query and refuses anything it cannot prove safe, so the operation is no
+    // longer *unconstrained*. It still lands `review_required` (never auto-exposed)
+    // unless a manifest `state` already moved it — the human decision remains.
+    if (op.archetype === "query_passthrough" && !op.queryPolicy) {
       flag(
         "error",
         "query_language_passthrough",
@@ -177,8 +181,37 @@ export function validate(operations: Operation[]): ValidationResult {
       op.state = "blocked";
       notes.push(
         "Blocked: this operation passes unconstrained query-language strings; " +
-          "use query templates with constrained parameters instead, or provide evidence this is safe.",
+          "use query templates with constrained parameters instead, declare a `query_policy`, " +
+          "or provide evidence this is safe.",
       );
+    } else if (op.archetype === "query_passthrough" && op.queryPolicy) {
+      // Grounding — refuse a sloppy answer: when catalog schema was supplied,
+      // every table the policy allowlists must exist in it. This keeps the
+      // harness honest — it cannot allowlist a table the catalog it cited does
+      // not actually contain. A grounding failure BLOCKS, overriding the
+      // exemption below (this runs after manifest application, so it wins).
+      const ungrounded =
+        op.queryPolicy.allowedTables && op.querySchema && op.querySchema.tables.length > 0
+          ? op.queryPolicy.allowedTables.filter(
+              (t) => !op.querySchema?.tables.some((s) => s.name.toLowerCase() === t.toLowerCase()),
+            )
+          : [];
+      if (ungrounded.length > 0) {
+        flag(
+          "error",
+          "query_language_passthrough",
+          `Operation '${op.id}' allowlists table(s) not present in the supplied schema: ${ungrounded.join(", ")}.`,
+        );
+        op.state = "blocked";
+        notes.push(
+          `Blocked: query policy allowlists table(s) not present in the supplied schema: ${ungrounded.join(", ")}. Correct the allowlist or the schema before approval.`,
+        );
+      } else if (op.state !== "approved" && op.state !== "deprecated") {
+        // Guarded passthrough without an explicit approval — hold for review. A
+        // human can still `anvil approve` it or set `state: approved` in the
+        // manifest; the guard makes that a defensible decision, not automatic.
+        op.state = "review_required";
+      }
     }
 
     op.reviewNotes = notes;

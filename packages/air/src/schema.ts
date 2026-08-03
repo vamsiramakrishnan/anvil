@@ -661,6 +661,23 @@ export type Pagination = z.infer<typeof Pagination>;
 /* Operation                                                                  */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * SQL dialects an operation may declare for a query template or policy. The
+ * portable trio (`ansi`/`postgres`/`mysql`) plus the named warehouses the
+ * authoring-time analyzer parses against their real grammar. At runtime each
+ * collapses to a lexical family (see `@anvil/grammar`'s `lexicalFamily`); the
+ * deployed tokenizer never carries warehouse-specific rules.
+ */
+export const SQL_DIALECTS = [
+  "ansi",
+  "postgres",
+  "mysql",
+  "bigquery",
+  "snowflake",
+  "redshift",
+  "databricks",
+] as const;
+
 export const Operation = z.object({
   /** Stable, dotted operation id, e.g. payments.refund.create. */
   id: z.string(),
@@ -719,6 +736,87 @@ export const Operation = z.object({
       baseOperationId: z.string(),
       template: z.string(),
       targetParam: z.string(),
+      /**
+       * SQL dialect the template is written in — governs how the runtime
+       * escapes substituted values (e.g. MySQL backslash escapes) and how a
+       * `queryPolicy` tokenizes. Warehouse dialects (bigquery/snowflake/
+       * redshift/databricks) are validated against their real grammar at
+       * authoring time and collapse to a lexical family at runtime. Defaults to
+       * the portable ANSI subset.
+       */
+      dialect: z.enum(SQL_DIALECTS).default("ansi"),
+    })
+    .optional(),
+  /**
+   * Grammar policy for a query-passthrough surface: the runtime parses the
+   * rendered/incoming query and refuses anything it cannot prove safe (statement
+   * class, single-statement, no comments, row bound, table allowlist). Present
+   * only on operations whose `interactionArchetype` is `query_passthrough` and an
+   * operator has declared a policy. Absent = no grammar guard (the operation
+   * stays blocked-by-default per the passthrough rule).
+   */
+  queryPolicy: z
+    .object({
+      /** The input param whose value carries the query text to police. */
+      queryParam: z.string(),
+      dialect: z.enum(SQL_DIALECTS).default("ansi"),
+      allowedStatements: z
+        .array(
+          z.enum(["select", "insert", "update", "delete", "merge", "call", "explain", "other"]),
+        )
+        .default(["select"]),
+      singleStatementOnly: z.boolean().default(true),
+      forbidComments: z.boolean().default(true),
+      maxRows: z.number().int().min(1).optional(),
+      allowedTables: z.array(z.string()).optional(),
+      /**
+       * The operator's natural-language posture that justified this policy — the
+       * intent the harness translated into the bounds above. RECORDED verbatim
+       * as review-gate provenance, never interpreted or enforced: the runtime
+       * ignores it (only the fields above are policed); it exists so a human
+       * reviewer sees the stated rationale next to the machine-checked grounding.
+       */
+      posture: z.string().optional(),
+    })
+    .optional(),
+  /**
+   * Catalog-derived schema knowledge for a query surface — the *quality* payload
+   * (distinct from `queryPolicy`, which is the *safety* contract the runtime
+   * enforces). This is context an agent reads to author correct queries without
+   * guessing table names, join keys, or column meanings: the real tables and
+   * typed columns, glossary terms, and blessed example queries. Anvil never
+   * fetches or interprets a data catalog itself — the coding harness (which can
+   * see Dataplex / Unity Catalog / INFORMATION_SCHEMA) supplies these facts
+   * through the manifest, and Anvil grounds them (a policy's `allowedTables`
+   * must exist here) and projects them into the skill's schema card. Compile-
+   * and skill-time only; the runtime never reads it, so the deployed unit stays
+   * lean.
+   */
+  querySchema: z
+    .object({
+      tables: z
+        .array(
+          z.object({
+            name: z.string(),
+            description: z.string().optional(),
+            columns: z
+              .array(
+                z.object({
+                  name: z.string(),
+                  type: z.string().optional(),
+                  description: z.string().optional(),
+                  /** Sensitivity classification from the catalog; `pii` columns should not be selected. */
+                  sensitivity: z.enum(["public", "internal", "sensitive", "pii"]).optional(),
+                }),
+              )
+              .default([]),
+          }),
+        )
+        .default([]),
+      /** Blessed example queries (often mined from query history) — intent → sql. */
+      exampleQueries: z.array(z.object({ intent: z.string(), sql: z.string() })).default([]),
+      /** Business-glossary terms the agent may encounter. */
+      glossary: z.array(z.object({ term: z.string(), definition: z.string() })).default([]),
     })
     .optional(),
 });

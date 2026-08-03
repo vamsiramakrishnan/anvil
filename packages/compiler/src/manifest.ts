@@ -7,13 +7,16 @@ import {
   MAX_RETRY_ATTEMPTS,
   type Operation,
   type RetryCondition,
+  SQL_DIALECTS,
   snakeCase,
   type Workflow,
 } from "@anvil/air";
+import { analyzeTemplate, lexicalFamily } from "@anvil/grammar";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
 import { projectRoutingNames, singularize } from "./naming.js";
+import { analyzeSqlTemplate, supportedSqlDialects } from "./sql-grammar.js";
 
 const ManifestAuthProvider = z.object({
   token_endpoint: z.string().url().optional(),
@@ -166,6 +169,69 @@ export const OperationManifest = z.object({
       max_attempts: z.number().int().min(1).max(MAX_RETRY_ATTEMPTS).optional(),
     })
     .optional(),
+  /**
+   * Grammar policy for a query-passthrough operation. Declaring one is the
+   * reviewable act that unblocks a passthrough surface: the runtime parses the
+   * `query_param` value and refuses anything the policy cannot prove safe. Like
+   * every loosening, it is a human decision — declaring it moves the operation
+   * off `blocked` to `review_required`, never straight to `approved`.
+   */
+  query_policy: z
+    .object({
+      query_param: z.string(),
+      dialect: z.enum(SQL_DIALECTS).default("ansi"),
+      allowed_statements: z
+        .array(
+          z.enum(["select", "insert", "update", "delete", "merge", "call", "explain", "other"]),
+        )
+        .optional(),
+      single_statement_only: z.boolean().optional(),
+      forbid_comments: z.boolean().optional(),
+      max_rows: z.number().int().min(1).optional(),
+      allowed_tables: z.array(z.string()).optional(),
+      /**
+       * The operator's natural-language posture that justified this policy —
+       * the intent the harness translated into the concrete bounds above (e.g.
+       * "analysts get read-only access to customer tables, never PII"). Anvil
+       * RECORDS this verbatim as review-gate provenance and never interprets or
+       * enforces it: it is the rationale a human reviewer reads next to the
+       * machine-checked grounding, not part of the enforced contract.
+       */
+      posture: z.string().optional(),
+    })
+    .optional(),
+  /**
+   * Catalog-derived schema knowledge for a query surface — the quality payload
+   * the coding harness supplies from a data catalog (Dataplex / Unity Catalog /
+   * INFORMATION_SCHEMA). Anvil grounds it (a policy's allowed_tables must exist
+   * here) and renders it into the skill's schema card; the runtime never reads
+   * it. Anvil never fetches a catalog itself — this is the ingest channel for
+   * the intelligence the harness gathered.
+   */
+  query_schema: z
+    .object({
+      tables: z
+        .array(
+          z.object({
+            name: z.string(),
+            description: z.string().optional(),
+            columns: z
+              .array(
+                z.object({
+                  name: z.string(),
+                  type: z.string().optional(),
+                  description: z.string().optional(),
+                  sensitivity: z.enum(["public", "internal", "sensitive", "pii"]).optional(),
+                }),
+              )
+              .optional(),
+          }),
+        )
+        .optional(),
+      example_queries: z.array(z.object({ intent: z.string(), sql: z.string() })).optional(),
+      glossary: z.array(z.object({ term: z.string(), definition: z.string() })).optional(),
+    })
+    .optional(),
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
 });
 export type OperationManifest = z.infer<typeof OperationManifest>;
@@ -271,6 +337,8 @@ export const QueryTemplateManifest = z
     ),
     read_only: z.literal(true),
     max_rows: z.number().int().min(1).optional(),
+    /** SQL dialect for grammar-aware substitution and (later) the query guard. */
+    dialect: z.enum(SQL_DIALECTS).default("ansi"),
   })
   .superRefine((template, ctx) => {
     // Extract placeholders from the template string (e.g., {param_name})
@@ -295,6 +363,50 @@ export const QueryTemplateManifest = z
           code: "custom",
           path: ["params"],
           message: `Parameter '${paramName}' is declared but never used in the template.`,
+        });
+      }
+    }
+
+    // Grammar gate: every placeholder must sit in a LITERAL position, and the
+    // template must be a single read statement. This is authoring-time, so it
+    // uses a REAL parser (node-sql-parser via analyzeSqlTemplate) for an exact
+    // verdict — a placeholder in an identifier position (`FROM {table}`), a
+    // multi-statement template, or anything that does not parse is rejected here
+    // and can never reach the runtime renderer. The lean tokenizer-based
+    // `analyzeTemplate` is a portable fallback for dialects the parser does not
+    // cover, so the gate degrades safe rather than open.
+    const dialect = template.dialect ?? "ansi";
+    const parsed = supportedSqlDialects().includes(dialect)
+      ? analyzeSqlTemplate(template.template, dialect)
+      : undefined;
+    // Use the real parser when it produced a verdict; fall back to the lean
+    // tokenizer analyzer for an unsupported dialect OR when the parser is
+    // unavailable (a browser bundle with no Node require). Either way the gate
+    // degrades safe — never open.
+    const parserVerdict = parsed && !(parsed.ok === false && parsed.code === "parser_unavailable");
+    if (parsed && parserVerdict) {
+      if (!parsed.ok) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["template"],
+          message: `Template is not grammar-safe: ${parsed.message}`,
+        });
+      } else if (parsed.statementType !== "select") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["template"],
+          message: `Query templates must be read-only SELECT statements; got '${parsed.statementType}'.`,
+        });
+      }
+    } else {
+      // The lean fallback tokenizes under a lexical family, not the warehouse
+      // name — collapse it so a browser-bundle `bigquery` template still lexes.
+      const analysis = analyzeTemplate(template.template, lexicalFamily(dialect));
+      if (!analysis.ok) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["template"],
+          message: `Template is not grammar-safe: ${analysis.message}`,
         });
       }
     }
@@ -587,6 +699,55 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     }
   }
 
+  // Query grammar policy: declaring one is the reviewable unblock of a
+  // query-passthrough surface. The runtime enforces it; here we record it and,
+  // when the operation was blocked purely as an unguarded passthrough, lift it
+  // to review_required so a human still signs off before exposure.
+  if (m.query_policy) {
+    const qp = m.query_policy;
+    op.queryPolicy = {
+      queryParam: qp.query_param,
+      dialect: qp.dialect ?? "ansi",
+      allowedStatements: qp.allowed_statements ?? ["select"],
+      singleStatementOnly: qp.single_statement_only ?? true,
+      forbidComments: qp.forbid_comments ?? true,
+      ...(qp.max_rows !== undefined ? { maxRows: qp.max_rows } : {}),
+      ...(qp.allowed_tables !== undefined ? { allowedTables: qp.allowed_tables } : {}),
+      ...(qp.posture !== undefined ? { posture: qp.posture } : {}),
+    };
+    const note = "Query grammar policy declared — runtime parses and refuses unsafe queries.";
+    if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    // Record the operator's stated posture verbatim as review-gate provenance —
+    // the rationale a human reads next to the machine-checked grounding. Anvil
+    // records it, never interprets it, so it lands in review notes, not the
+    // enforced policy checks.
+    if (qp.posture !== undefined) {
+      const provenance = `Policy authored under operator posture (recorded, not interpreted): "${qp.posture}"`;
+      if (!op.reviewNotes.includes(provenance)) op.reviewNotes.push(provenance);
+    }
+    if (op.state === "blocked") op.state = "review_required";
+  }
+
+  // Catalog-derived schema knowledge (quality context, not runtime-enforced).
+  // Grounding — the "refuse a sloppy answer" check — happens in validate(), so
+  // it wins over the passthrough-exemption's state lift.
+  if (m.query_schema) {
+    op.querySchema = {
+      tables: (m.query_schema.tables ?? []).map((t) => ({
+        name: t.name,
+        ...(t.description !== undefined ? { description: t.description } : {}),
+        columns: (t.columns ?? []).map((c) => ({
+          name: c.name,
+          ...(c.type !== undefined ? { type: c.type } : {}),
+          ...(c.description !== undefined ? { description: c.description } : {}),
+          ...(c.sensitivity !== undefined ? { sensitivity: c.sensitivity } : {}),
+        })),
+      })),
+      exampleQueries: m.query_schema.example_queries ?? [],
+      glossary: m.query_schema.glossary ?? [],
+    };
+  }
+
   if (m.state) op.state = m.state;
 
   const authIssues = authCoherenceIssues(op.auth);
@@ -875,6 +1036,7 @@ export function buildQueryTemplates(
         baseOperationId: baseOp.id,
         template: template.template,
         targetParam: template.target_param,
+        dialect: template.dialect ?? "ansi",
       },
     };
 

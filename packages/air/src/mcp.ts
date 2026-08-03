@@ -60,5 +60,22 @@ export function mcpToolDescription(op: Operation): string {
   }
   if (op.longRunning) parts.push("Long-running: returns before completion; poll for status.");
   if (op.archetype === "search") parts.push("Narrow with filters before paging.");
+  // Query grammar policy: teach the agent the exact constraints the runtime
+  // will enforce, so it authors a compliant query instead of guessing and
+  // getting refused. Same source feeds the skill's query-grammar card.
+  if (op.queryPolicy) parts.push(queryPolicySentence(op.queryPolicy));
   return parts.join(" ");
+}
+
+/** One human line describing what a query grammar policy allows and forbids. */
+export function queryPolicySentence(policy: NonNullable<Operation["queryPolicy"]>): string {
+  const bits: string[] = [];
+  const stmts = policy.allowedStatements?.length ? policy.allowedStatements : ["select"];
+  bits.push(`${stmts.map((s) => s.toUpperCase()).join("/")}-only`);
+  bits.push(`${policy.dialect} dialect`);
+  if (policy.singleStatementOnly !== false) bits.push("single statement");
+  if (policy.forbidComments !== false) bits.push("no comments");
+  if (policy.maxRows !== undefined) bits.push(`LIMIT ≤ ${policy.maxRows} required`);
+  if (policy.allowedTables?.length) bits.push(`tables: ${policy.allowedTables.join(", ")}`);
+  return `Query grammar-checked (param '${policy.queryParam}'): ${bits.join("; ")}. The runtime parses and refuses anything else.`;
 }

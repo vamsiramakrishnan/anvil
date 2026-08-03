@@ -61,6 +61,25 @@ describe("QueryTemplateManifest validation", () => {
   it("rejects read_only: false — templates cannot wrap writes", () => {
     expect(() => AnvilManifest.parse(manifest({ ...template, read_only: false }))).toThrow();
   });
+
+  it("rejects a placeholder in an identifier position at authoring time", () => {
+    // `FROM {tbl}` puts the placeholder in a table-name position — the grammar
+    // gate refuses it before it can ever reach the runtime renderer.
+    expect(() =>
+      AnvilManifest.parse(
+        manifest({
+          ...template,
+          template: "SELECT * FROM {tbl} LIMIT 10",
+          params: { tbl: { schema: { type: "string" } } },
+        }),
+      ),
+    ).toThrow(/not grammar-safe/);
+  });
+
+  it("accepts an ansi-dialect template and defaults the dialect", () => {
+    const parsed = AnvilManifest.parse(manifest(template));
+    expect(parsed.query_templates.branch_names?.dialect).toBe("ansi");
+  });
 });
 
 describe("buildQueryTemplates", () => {
@@ -84,6 +103,7 @@ describe("buildQueryTemplates", () => {
       baseOperationId: "warehouse.reports.query",
       template: template.template,
       targetParam: "sql",
+      dialect: "ansi",
     });
     // Template params are all required, typed inputs — never optional.
     expect(derived?.input.params).toHaveLength(1);

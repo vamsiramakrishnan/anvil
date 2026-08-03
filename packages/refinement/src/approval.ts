@@ -78,6 +78,17 @@ export function classifyApproval(input: ApprovalInput): ApprovalDecision {
     };
   }
 
+  // Rule 0b — query-policy guard: proposing a grammar policy UNBLOCKS a
+  // query-passthrough surface. Exposing a query surface to an agent is a human
+  // decision on the same footing as idempotency — checked on the FIELD, so it
+  // holds regardless of which skill produced it.
+  if ("query_policy" in set) {
+    return {
+      tier: "review",
+      reason: "exposing a query-passthrough surface is always a person's decision, never automatic",
+    };
+  }
+
   // Rule 1 — safety loosening guard: enabling retries reduces safety, so it is
   // never auto-approved on anything less than authoritative evidence.
   if (set.retryable === true && strength !== "authoritative") {

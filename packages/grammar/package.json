@@ -1,7 +1,7 @@
 {
-  "name": "@anvil/refinement",
+  "name": "@anvil/grammar",
   "version": "0.1.0",
-  "description": "Anvil refinement — deterministic deficiency detection over AIR; the front half of the quality flywheel (no agents).",
+  "description": "Dependency-free grammar awareness for query-passthrough surfaces — a security-focused SQL tokenizer and structural validator that proves what a query cannot do.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -18,16 +18,11 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --root ../.. packages/refinement/src",
+    "test": "vitest run --root ../.. packages/grammar/src",
     "clean": "rm -rf dist"
   },
-  "dependencies": {
-    "@anvil/air": "workspace:*",
-    "@anvil/grammar": "workspace:*",
-    "zod": "^4.4.3"
-  },
+  "dependencies": {},
   "devDependencies": {
-    "@anvil/compiler": "workspace:*",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
