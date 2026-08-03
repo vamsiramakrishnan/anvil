@@ -48,6 +48,68 @@ operations:
     expect(op?.reviewNotes.join(" ")).toMatch(/grammar policy/i);
   });
 
+  it("ingests harness-supplied schema and grounds the policy against it", async () => {
+    const air = await compile({
+      spec: passthroughSpec,
+      serviceId: "warehouse",
+      manifest: `
+operations:
+  runReport:
+    query_policy:
+      query_param: sql
+      dialect: postgres
+      max_rows: 1000
+      allowed_tables: [accounts, ledger]
+    query_schema:
+      tables:
+        - name: accounts
+          description: One row per customer account
+          columns:
+            - { name: id, type: bigint }
+            - { name: ssn, type: text, sensitivity: pii }
+        - name: ledger
+          columns:
+            - { name: acct_id, type: bigint }
+      example_queries:
+        - { intent: recent balances, sql: "SELECT id FROM accounts LIMIT 10" }
+      glossary:
+        - { term: MRR, definition: monthly recurring revenue }
+`,
+    });
+    const op = air.operations.find((o) => o.sourceRef.operationId === "runReport");
+    expect(op?.querySchema?.tables.map((t) => t.name)).toEqual(["accounts", "ledger"]);
+    expect(op?.querySchema?.tables[0]?.columns[1]).toMatchObject({
+      name: "ssn",
+      sensitivity: "pii",
+    });
+    expect(op?.querySchema?.exampleQueries).toHaveLength(1);
+    // Every allowlisted table exists in the schema — grounding passes, so the
+    // guarded op is held for review (not re-blocked).
+    expect(op?.state).toBe("review_required");
+  });
+
+  it("refuses a sloppy answer — an allowlisted table absent from the schema re-blocks the op", async () => {
+    const air = await compile({
+      spec: passthroughSpec,
+      serviceId: "warehouse",
+      manifest: `
+operations:
+  runReport:
+    query_policy:
+      query_param: sql
+      dialect: postgres
+      allowed_tables: [accounts, secrets]
+    query_schema:
+      tables:
+        - name: accounts
+          columns: [{ name: id, type: bigint }]
+`,
+    });
+    const op = air.operations.find((o) => o.sourceRef.operationId === "runReport");
+    expect(op?.state).toBe("blocked");
+    expect(op?.reviewNotes.join(" ")).toMatch(/not present in the supplied schema: secrets/);
+  });
+
   it("defaults to SELECT-only with statement/comment guards when only the param is named", async () => {
     const air = await compile({
       spec: passthroughSpec,

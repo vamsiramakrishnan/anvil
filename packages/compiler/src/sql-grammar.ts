@@ -16,13 +16,28 @@
  * that module-load cost just for importing the compiler.
  */
 
-import { createRequire } from "node:module";
+// A NAMESPACE import of node:module (not a named import): a browser bundler
+// externalizes `node:module` to an empty stub, and a named `createRequire`
+// import would then fail to resolve at build time. Namespace access is resolved
+// at runtime, so the browser docs playground bundles cleanly and simply finds
+// `createRequire` undefined — at which point analyzeSqlTemplate falls back to
+// the lean tokenizer analyzer. node-sql-parser is loaded via runtime `require`,
+// so it is never followed into a browser bundle.
+import * as nodeModule from "node:module";
 
 // biome-ignore lint/suspicious/noExplicitAny: node-sql-parser ships no ESM types we consume here.
 type ParserCtor = new () => any;
 let parserCtor: ParserCtor | undefined;
+
+/** True when a real Node `require` is reachable (false in a browser bundle). */
+function parserAvailable(): boolean {
+  return typeof (nodeModule as { createRequire?: unknown }).createRequire === "function";
+}
+
 function loadParser(): ParserCtor {
   if (!parserCtor) {
+    const createRequire = (nodeModule as { createRequire: (url: string) => NodeRequire })
+      .createRequire;
     const require = createRequire(import.meta.url);
     parserCtor = (require("node-sql-parser") as { Parser: ParserCtor }).Parser;
   }
@@ -46,7 +61,12 @@ interface SqlTemplateAnalysisOk {
 }
 interface SqlTemplateAnalysisErr {
   ok: false;
-  code: "unsupported_dialect" | "parse_failed" | "multiple_statements" | "placeholder_position";
+  code:
+    | "unsupported_dialect"
+    | "parser_unavailable"
+    | "parse_failed"
+    | "multiple_statements"
+    | "placeholder_position";
   message: string;
 }
 export type SqlTemplateAnalysis = SqlTemplateAnalysisOk | SqlTemplateAnalysisErr;
@@ -68,6 +88,16 @@ export function analyzeSqlTemplate(template: string, dialect: string): SqlTempla
       ok: false,
       code: "unsupported_dialect",
       message: `SQL dialect '${dialect}' is not supported by the grammar analyzer.`,
+    };
+  }
+  if (!parserAvailable()) {
+    // Browser bundle (docs playground) — no Node require. The caller falls back
+    // to the lean tokenizer analyzer, so validation still happens, just without
+    // the deep AST checks.
+    return {
+      ok: false,
+      code: "parser_unavailable",
+      message: "The SQL parser is not available in this environment.",
     };
   }
   // A `:name` bind marker is a value-only token in every SQL grammar, so the

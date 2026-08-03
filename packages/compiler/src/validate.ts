@@ -184,16 +184,34 @@ export function validate(operations: Operation[]): ValidationResult {
           "use query templates with constrained parameters instead, declare a `query_policy`, " +
           "or provide evidence this is safe.",
       );
-    } else if (
-      op.archetype === "query_passthrough" &&
-      op.queryPolicy &&
-      op.state !== "approved" &&
-      op.state !== "deprecated"
-    ) {
-      // Guarded passthrough without an explicit approval — hold for review. A
-      // human can still `anvil approve` it or set `state: approved` in the
-      // manifest; the guard makes that a defensible decision, not an automatic one.
-      op.state = "review_required";
+    } else if (op.archetype === "query_passthrough" && op.queryPolicy) {
+      // Grounding — refuse a sloppy answer: when catalog schema was supplied,
+      // every table the policy allowlists must exist in it. This keeps the
+      // harness honest — it cannot allowlist a table the catalog it cited does
+      // not actually contain. A grounding failure BLOCKS, overriding the
+      // exemption below (this runs after manifest application, so it wins).
+      const ungrounded =
+        op.queryPolicy.allowedTables && op.querySchema && op.querySchema.tables.length > 0
+          ? op.queryPolicy.allowedTables.filter(
+              (t) => !op.querySchema?.tables.some((s) => s.name.toLowerCase() === t.toLowerCase()),
+            )
+          : [];
+      if (ungrounded.length > 0) {
+        flag(
+          "error",
+          "query_language_passthrough",
+          `Operation '${op.id}' allowlists table(s) not present in the supplied schema: ${ungrounded.join(", ")}.`,
+        );
+        op.state = "blocked";
+        notes.push(
+          `Blocked: query policy allowlists table(s) not present in the supplied schema: ${ungrounded.join(", ")}. Correct the allowlist or the schema before approval.`,
+        );
+      } else if (op.state !== "approved" && op.state !== "deprecated") {
+        // Guarded passthrough without an explicit approval — hold for review. A
+        // human can still `anvil approve` it or set `state: approved` in the
+        // manifest; the guard makes that a defensible decision, not automatic.
+        op.state = "review_required";
+      }
     }
 
     op.reviewNotes = notes;

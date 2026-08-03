@@ -638,6 +638,7 @@ function queryGrammarRef(ops: Operation[]): string {
         "embedded comment, an unbounded read, an off-allowlist table, or a query",
         "that does not parse. A refusal is a `validation_error`, not an upstream",
         "error: fix the query and retry. Nothing is sent until it passes.",
+        schemaCard(op),
       ].join("\n");
     }
     // A query-template operation: constrained parameters, no raw SQL surface.
@@ -647,6 +648,7 @@ function queryGrammarRef(ops: Operation[]): string {
       "parameters — never raw query text. Each value is substituted as an",
       "escaped literal in its exact position, so a value can never change the",
       "query's structure. Read the operation's inputs for the parameters it takes.",
+      schemaCard(op),
     ].join("\n");
   });
 
@@ -663,6 +665,39 @@ error names exactly what was rejected, so you can fix and retry for free.
 
 ${sections.join("\n\n")}
 `;
+}
+
+/**
+ * The schema card — catalog-derived facts about a query surface, so the agent
+ * authors correct queries against real tables/columns instead of guessing. This
+ * is the text-to-SQL quality payload: the harness gathered it from a data
+ * catalog, Anvil grounded it and made it durable here. `pii` columns are shown
+ * with a do-not-select marker. Empty string when no schema was supplied.
+ */
+function schemaCard(op: Operation): string {
+  const schema = op.querySchema;
+  if (!schema || (schema.tables.length === 0 && schema.exampleQueries.length === 0)) return "";
+  const lines: string[] = ["", "**Schema (from the data catalog — query these, don't guess):**"];
+  for (const t of schema.tables) {
+    lines.push("", `- \`${t.name}\`${t.description ? ` — ${t.description}` : ""}`);
+    for (const c of t.columns) {
+      const type = c.type ? ` \`${c.type}\`` : "";
+      const pii = c.sensitivity === "pii" ? " ⚠ PII — do not select" : "";
+      const desc = c.description ? ` — ${c.description}` : "";
+      lines.push(`  - ${c.name}${type}${pii}${desc}`);
+    }
+  }
+  if (schema.glossary.length > 0) {
+    lines.push("", "**Glossary:**");
+    for (const g of schema.glossary) lines.push(`- **${g.term}** — ${g.definition}`);
+  }
+  if (schema.exampleQueries.length > 0) {
+    lines.push("", "**Example queries:**");
+    for (const e of schema.exampleQueries) {
+      lines.push(`- ${e.intent}:`, "  ```sql", `  ${e.sql}`, "  ```");
+    }
+  }
+  return lines.join("\n");
 }
 
 function workflowsRef(air: AirDocument, ops: Operation[]): string {

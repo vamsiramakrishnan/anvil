@@ -751,6 +751,46 @@ export const Operation = z.object({
       allowedTables: z.array(z.string()).optional(),
     })
     .optional(),
+  /**
+   * Catalog-derived schema knowledge for a query surface — the *quality* payload
+   * (distinct from `queryPolicy`, which is the *safety* contract the runtime
+   * enforces). This is context an agent reads to author correct queries without
+   * guessing table names, join keys, or column meanings: the real tables and
+   * typed columns, glossary terms, and blessed example queries. Anvil never
+   * fetches or interprets a data catalog itself — the coding harness (which can
+   * see Dataplex / Unity Catalog / INFORMATION_SCHEMA) supplies these facts
+   * through the manifest, and Anvil grounds them (a policy's `allowedTables`
+   * must exist here) and projects them into the skill's schema card. Compile-
+   * and skill-time only; the runtime never reads it, so the deployed unit stays
+   * lean.
+   */
+  querySchema: z
+    .object({
+      tables: z
+        .array(
+          z.object({
+            name: z.string(),
+            description: z.string().optional(),
+            columns: z
+              .array(
+                z.object({
+                  name: z.string(),
+                  type: z.string().optional(),
+                  description: z.string().optional(),
+                  /** Sensitivity classification from the catalog; `pii` columns should not be selected. */
+                  sensitivity: z.enum(["public", "internal", "sensitive", "pii"]).optional(),
+                }),
+              )
+              .default([]),
+          }),
+        )
+        .default([]),
+      /** Blessed example queries (often mined from query history) — intent → sql. */
+      exampleQueries: z.array(z.object({ intent: z.string(), sql: z.string() })).default([]),
+      /** Business-glossary terms the agent may encounter. */
+      glossary: z.array(z.object({ term: z.string(), definition: z.string() })).default([]),
+    })
+    .optional(),
 });
 export type Operation = z.infer<typeof Operation>;
 

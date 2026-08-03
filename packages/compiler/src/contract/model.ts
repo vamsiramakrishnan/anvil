@@ -94,6 +94,8 @@ export const SemanticPredicate = z.enum([
   "retries.retryOn",
   // query grammar policy (operator-declared; the runtime enforces it)
   "queryPolicy",
+  // catalog-derived schema knowledge (harness-supplied; skill-card context)
+  "querySchema",
 ]);
 export type SemanticPredicate = z.infer<typeof SemanticPredicate>;
 

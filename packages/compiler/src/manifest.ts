@@ -190,6 +190,38 @@ export const OperationManifest = z.object({
       allowed_tables: z.array(z.string()).optional(),
     })
     .optional(),
+  /**
+   * Catalog-derived schema knowledge for a query surface — the quality payload
+   * the coding harness supplies from a data catalog (Dataplex / Unity Catalog /
+   * INFORMATION_SCHEMA). Anvil grounds it (a policy's allowed_tables must exist
+   * here) and renders it into the skill's schema card; the runtime never reads
+   * it. Anvil never fetches a catalog itself — this is the ingest channel for
+   * the intelligence the harness gathered.
+   */
+  query_schema: z
+    .object({
+      tables: z
+        .array(
+          z.object({
+            name: z.string(),
+            description: z.string().optional(),
+            columns: z
+              .array(
+                z.object({
+                  name: z.string(),
+                  type: z.string().optional(),
+                  description: z.string().optional(),
+                  sensitivity: z.enum(["public", "internal", "sensitive", "pii"]).optional(),
+                }),
+              )
+              .optional(),
+          }),
+        )
+        .optional(),
+      example_queries: z.array(z.object({ intent: z.string(), sql: z.string() })).optional(),
+      glossary: z.array(z.object({ term: z.string(), definition: z.string() })).optional(),
+    })
+    .optional(),
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
 });
 export type OperationManifest = z.infer<typeof OperationManifest>;
@@ -334,8 +366,15 @@ export const QueryTemplateManifest = z
     // `analyzeTemplate` is a portable fallback for dialects the parser does not
     // cover, so the gate degrades safe rather than open.
     const dialect = template.dialect ?? "ansi";
-    if (supportedSqlDialects().includes(dialect)) {
-      const parsed = analyzeSqlTemplate(template.template, dialect);
+    const parsed = supportedSqlDialects().includes(dialect)
+      ? analyzeSqlTemplate(template.template, dialect)
+      : undefined;
+    // Use the real parser when it produced a verdict; fall back to the lean
+    // tokenizer analyzer for an unsupported dialect OR when the parser is
+    // unavailable (a browser bundle with no Node require). Either way the gate
+    // degrades safe — never open.
+    const parserVerdict = parsed && !(parsed.ok === false && parsed.code === "parser_unavailable");
+    if (parsed && parserVerdict) {
       if (!parsed.ok) {
         ctx.addIssue({
           code: "custom",
@@ -666,6 +705,26 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     const note = "Query grammar policy declared — runtime parses and refuses unsafe queries.";
     if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
     if (op.state === "blocked") op.state = "review_required";
+  }
+
+  // Catalog-derived schema knowledge (quality context, not runtime-enforced).
+  // Grounding — the "refuse a sloppy answer" check — happens in validate(), so
+  // it wins over the passthrough-exemption's state lift.
+  if (m.query_schema) {
+    op.querySchema = {
+      tables: (m.query_schema.tables ?? []).map((t) => ({
+        name: t.name,
+        ...(t.description !== undefined ? { description: t.description } : {}),
+        columns: (t.columns ?? []).map((c) => ({
+          name: c.name,
+          ...(c.type !== undefined ? { type: c.type } : {}),
+          ...(c.description !== undefined ? { description: c.description } : {}),
+          ...(c.sensitivity !== undefined ? { sensitivity: c.sensitivity } : {}),
+        })),
+      })),
+      exampleQueries: m.query_schema.example_queries ?? [],
+      glossary: m.query_schema.glossary ?? [],
+    };
   }
 
   if (m.state) op.state = m.state;

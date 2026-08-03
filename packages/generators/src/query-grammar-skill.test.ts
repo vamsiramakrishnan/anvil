@@ -70,6 +70,31 @@ describe("skill query-grammar card", () => {
     expect(card).toContain("--dry-run");
   });
 
+  it("renders the catalog schema card — tables, PII markers, glossary, examples", () => {
+    const air = grammarAir();
+    air.operations[0]!.querySchema = {
+      tables: [
+        {
+          name: "accounts",
+          description: "One row per account",
+          columns: [
+            { name: "id", type: "bigint" },
+            { name: "ssn", type: "text", sensitivity: "pii" },
+          ],
+        },
+      ],
+      exampleQueries: [{ intent: "recent", sql: "SELECT id FROM accounts LIMIT 10" }],
+      glossary: [{ term: "MRR", definition: "monthly recurring revenue" }],
+    };
+    const card = generateSkill(air)["reference/query-grammar.md"];
+    expect(card).toBeDefined();
+    expect(card).toContain("`accounts`");
+    expect(card).toContain("id `bigint`");
+    expect(card).toContain("⚠ PII — do not select");
+    expect(card).toContain("**MRR**");
+    expect(card).toContain("SELECT id FROM accounts LIMIT 10");
+  });
+
   it("omits the card entirely when no operation is grammar-checked", () => {
     const air = grammarAir();
     // Strip the policy — now it is just an approved read with no grammar surface.
