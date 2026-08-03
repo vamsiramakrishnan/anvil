@@ -15,6 +15,7 @@ import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
 import { projectRoutingNames, singularize } from "./naming.js";
+import { analyzeSqlTemplate, supportedSqlDialects } from "./sql-grammar.js";
 
 const ManifestAuthProvider = z.object({
   token_endpoint: z.string().url().optional(),
@@ -324,18 +325,39 @@ export const QueryTemplateManifest = z
       }
     }
 
-    // Grammar gate: every placeholder must sit in a LITERAL position. A
-    // placeholder in an identifier position (e.g. `FROM {table}`) or an
-    // unanalyzable template is rejected here, at authoring time, so it can never
-    // reach the runtime renderer. This is what makes template injection
-    // grammatically impossible rather than merely discouraged.
-    const analysis = analyzeTemplate(template.template, template.dialect ?? "ansi");
-    if (!analysis.ok) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["template"],
-        message: `Template is not grammar-safe: ${analysis.message}`,
-      });
+    // Grammar gate: every placeholder must sit in a LITERAL position, and the
+    // template must be a single read statement. This is authoring-time, so it
+    // uses a REAL parser (node-sql-parser via analyzeSqlTemplate) for an exact
+    // verdict — a placeholder in an identifier position (`FROM {table}`), a
+    // multi-statement template, or anything that does not parse is rejected here
+    // and can never reach the runtime renderer. The lean tokenizer-based
+    // `analyzeTemplate` is a portable fallback for dialects the parser does not
+    // cover, so the gate degrades safe rather than open.
+    const dialect = template.dialect ?? "ansi";
+    if (supportedSqlDialects().includes(dialect)) {
+      const parsed = analyzeSqlTemplate(template.template, dialect);
+      if (!parsed.ok) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["template"],
+          message: `Template is not grammar-safe: ${parsed.message}`,
+        });
+      } else if (parsed.statementType !== "select") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["template"],
+          message: `Query templates must be read-only SELECT statements; got '${parsed.statementType}'.`,
+        });
+      }
+    } else {
+      const analysis = analyzeTemplate(template.template, dialect);
+      if (!analysis.ok) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["template"],
+          message: `Template is not grammar-safe: ${analysis.message}`,
+        });
+      }
     }
   });
 export type QueryTemplateManifest = z.infer<typeof QueryTemplateManifest>;
