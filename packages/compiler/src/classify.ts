@@ -1,4 +1,5 @@
 import {
+  type AsyncContract,
   type AuthPrincipal,
   type AuthType,
   type BodyField,
@@ -9,6 +10,8 @@ import {
   type Idempotency,
   type InteractionArchetype,
   isQueryPassthroughParam,
+  type JsonSchema,
+  type Operation,
   type OperationAction,
   type Param,
   type RetryBasis,
@@ -649,5 +652,465 @@ export function classifyPagination(
     ...(nextField ? { nextField } : {}),
     ...(itemsField ? { itemsField } : {}),
     ...(size ?? {}),
+  };
+}
+
+/* --- long-running (asynchronous) inference --------------------------------- */
+
+/**
+ * What an operation's OWN declared responses say about finishing after it
+ * returns. Passed in rather than read from AIR because AIR keeps no response
+ * headers and folds 200/201/202 into one `output` — the two facts that carry
+ * nearly all of the declared evidence for asynchrony. Everything here is a
+ * quotation from the document, never an inference over it; the inference is
+ * `classifyLongRunning`'s job and stays in one place.
+ */
+export interface AsyncResponseSignals {
+  /**
+   * Declared response header names, snake_cased, keyed by the status code as
+   * the document wrote it: `{ "202": ["location", "retry_after"] }`. Per-status
+   * rather than flattened because the same header means opposite things on
+   * different codes — see the `Location` note in `classifyLongRunning`.
+   */
+  headersByStatus: Readonly<Record<string, readonly string[]>>;
+  /** Every declared response status code, as written ("202", "default", …). */
+  statusCodes: readonly string[];
+  /**
+   * A positive integer `default` declared for a `Retry-After` response header on
+   * the 202. The server stating how long to wait — not a value we computed.
+   */
+  retryAfterDefaultSeconds?: number;
+}
+
+/** Declared evidence that an operation returns before its work is finished. */
+export interface LongRunningDetection {
+  /** The declared facts that fired, in a fixed order, for the evidence claim. */
+  signals: string[];
+  /** Carried into the contract only when the document stated it. */
+  pollIntervalSeconds?: number;
+}
+
+/** 2xx keys in a `responses` map. `default` and ranges (`2XX`) are not 2xx facts. */
+const isSuccessStatus = (code: string): boolean => /^2\d\d$/.test(code);
+
+/**
+ * Decide whether an operation hands back before the work is done.
+ *
+ * The bar is the same one `classifyPagination` sets: a signal must *definitionally*
+ * mean the thing, not merely co-occur with it. A false positive here is not a
+ * missing field — it tells an agent to poll a call that already returned its
+ * answer, so it either loops against a status route that does not exist or, worse,
+ * reports "still running" for work that finished. Anything short of a declared
+ * fact stays unset for the refinement layer to prove from live evidence.
+ *
+ * ACCEPTED, each with why the name can only be read one way:
+ *
+ *  - **A declared `202`.** RFC 9110 defines 202 as "the request has been accepted
+ *    for processing, but the processing has not been completed" — that sentence
+ *    *is* the definition of `longRunning`. It is declared by the document, not
+ *    read off a name. The residual risk is a spec that pastes a shared response
+ *    table onto every route; the mutation gate below is what keeps that from
+ *    spreading across an estate.
+ *  - **An `Operation-Location` response header** on any 2xx. Azure's async
+ *    convention, and a header invented for exactly one purpose: it carries the
+ *    URL of the *operation's* status monitor. There is no synchronous reading of
+ *    it, so it stands alone even without a 202 (some Azure routes answer 200).
+ *  - **A `Location` header ON THE 202.** RFC 9110 gives `Location` two different
+ *    meanings by status: on a 201 it is the created resource (a *synchronous*
+ *    create — the single largest false-positive source in this whole area), and
+ *    on a 202 it "refers to a status monitor". So it counts only where the
+ *    document put it, which is why `headersByStatus` is keyed by code.
+ *
+ * REJECTED, each with the tempting real-world instance and why it still loses:
+ *
+ *  - **Name-shaped signals** — `async`, `job`, `batch`, `import`, `submit`,
+ *    `*Async` operationIds. The strongest of them (`async`) still names a
+ *    *client* calling convention as often as a server one, `exportUsers` is
+ *    routinely a synchronous download, and `createBatch` routinely returns the
+ *    batch inline. A name asserts nothing about when the work finishes, and
+ *    unlike a status code nothing in the document contradicts a wrong guess.
+ *  - **`Retry-After` on its own.** Overwhelmingly a 429/503 backoff header; on
+ *    those codes it means "your request did not happen", the opposite of "your
+ *    request is running". It is read only for its *value*, and only off a 202.
+ *  - **A `status`/`state`/`id` field in the response body.** Nearly every create
+ *    returns an id, and plenty of domain objects carry their own `status`
+ *    (`order.status`), which has nothing to do with a background job. These are
+ *    used to *locate* the job handle once asynchrony is already established —
+ *    never to establish it.
+ *  - **The mere existence of a sibling status route.** `POST /jobs` +
+ *    `GET /jobs/{id}` is also the shape of an ordinary synchronous create plus
+ *    an ordinary item read. The pairing tells us where to poll *if* the call is
+ *    async; it cannot tell us that it is.
+ *  - **`204 No Content` / an empty 200.** A body-less success says the response
+ *    carries nothing, not that the work is unfinished — fire-and-forget and
+ *    completed-with-nothing-to-say are indistinguishable here.
+ *
+ * Gated on `effect.kind === "mutation"` on purpose. A read that returns 202 is
+ * reporting on *someone else's* job — an Azure status route answers 202 while
+ * the work runs — so marking it long-running would tell an agent to poll the
+ * poller, and would flip its archetype to `long_running` away from the search
+ * or read semantics its callers depend on. The gate is stated in terms of the
+ * classified effect rather than the HTTP method so a POST search reclassified to
+ * a read (or an adapter-asserted read) is excluded by the same rule.
+ */
+export function classifyLongRunning(
+  effect: Effect,
+  signals: AsyncResponseSignals,
+): LongRunningDetection | undefined {
+  if (effect.kind !== "mutation") return undefined;
+
+  const accepted = signals.headersByStatus["202"] ?? [];
+  // A 202 counts whether the document listed it in `responses` or only ever
+  // attached headers to it; both are the document saying the code exists.
+  const declares202 = signals.statusCodes.includes("202") || "202" in signals.headersByStatus;
+
+  const evidence: string[] = [];
+  if (declares202) evidence.push("declares a 202 Accepted response");
+  const operationLocation = Object.entries(signals.headersByStatus).some(
+    ([code, headers]) => isSuccessStatus(code) && headers.includes("operation_location"),
+  );
+  if (operationLocation) evidence.push("declares an Operation-Location response header");
+  if (declares202 && accepted.includes("location")) {
+    evidence.push("declares a Location header on its 202 (a status monitor, per RFC 9110)");
+  }
+  if (evidence.length === 0) return undefined;
+
+  // An operation that declares 200/201 *and* 202 may answer either way. It is
+  // still reported as long-running: an agent prepared to poll handles the
+  // synchronous answer fine (it simply has nothing to poll for), while an agent
+  // that assumed synchrony is stranded the first time a 202 comes back. Same
+  // asymmetry the rest of the classifier runs on — the unsafe assumption loses.
+  return {
+    signals: evidence,
+    ...(declares202 && signals.retryAfterDefaultSeconds !== undefined
+      ? { pollIntervalSeconds: signals.retryAfterDefaultSeconds }
+      : {}),
+  };
+}
+
+/**
+ * Nouns that name a unit of *background work*. A handle field or wrapper object
+ * built from one of these is a job handle by construction, which is what lets
+ * `<noun>_id` be trusted where a bare `id` cannot be.
+ *
+ * `request`, `correlation` and `trace` are deliberately absent: `request_id` /
+ * `correlation_id` / `trace_id` are support and observability identifiers,
+ * present on synchronous responses too, and pointing an agent at one to poll
+ * with would send it round a loop with a value the status route never knew.
+ * `result` is absent for the mirror reason — a `result_id` names the artifact
+ * the work produces, which may not exist until the work is over.
+ */
+const JOB_NOUNS = [
+  "job",
+  "task",
+  "operation",
+  "batch",
+  "execution",
+  "run",
+  "import",
+  "export",
+  "transfer",
+  "process",
+  "workflow",
+] as const;
+const JOB_NOUN_SET: ReadonlySet<string> = new Set(JOB_NOUNS);
+const JOB_HANDLE_NAMES: ReadonlySet<string> = new Set(JOB_NOUNS.map((noun) => `${noun}_id`));
+
+/**
+ * Job states that mean the work has STOPPED — success and failure alike, since
+ * either ends the poll. Every word had to pass the same test as the page-size
+ * names: read alone, out of context, does it plainly mean the job is over?
+ */
+const TERMINAL_STATE_WORDS: ReadonlySet<string> = new Set([
+  "succeeded",
+  "success",
+  "successful",
+  "completed",
+  "complete",
+  "done",
+  "finished",
+  "failed",
+  "failure",
+  "error",
+  "errored",
+  "cancelled",
+  "canceled",
+  "aborted",
+  "terminated",
+  "expired",
+  "timed_out",
+  "rejected",
+]);
+
+/** States that plainly mean "still working". Advisory only (see `AsyncContract`). */
+const PENDING_STATE_WORDS: ReadonlySet<string> = new Set([
+  "pending",
+  "queued",
+  "waiting",
+  "scheduled",
+  "accepted",
+  "submitted",
+  "created",
+  "not_started",
+  "notstarted",
+  "starting",
+  "started",
+  "running",
+  "in_progress",
+  "inprogress",
+  "processing",
+  "working",
+  "active",
+  "retrying",
+]);
+
+/**
+ * Property names that carry a job's current state: `status`/`state` themselves,
+ * or a qualified form of one (`processing_status`, `job_state`, `upload_status`).
+ *
+ * The qualified form is not a loosening in practice, because two further gates
+ * stand behind it: only ONE such property may exist on the response (two is an
+ * ambiguity, and ambiguity yields no contract), and its declared enum must carry
+ * a value from the terminal vocabulary. An `order.payment_status` would have to
+ * be the sole state-shaped field on an operation already established as a poll
+ * target AND declare job-completion states before it could mislead anyone.
+ * GitHub's SARIF upload status — `processing_status: [pending, complete, failed]`
+ * — is the corpus case that showed the bare-name-only rule leaving real, fully
+ * declared contracts on the floor.
+ */
+function isStateFieldName(name: string): boolean {
+  const n = snakeCase(name);
+  return n === "status" || n === "state" || n.endsWith("_status") || n.endsWith("_state");
+}
+
+const propertiesOf = (schema: JsonSchema | undefined): Record<string, JsonSchema> | undefined => {
+  const props = schema?.properties;
+  if (!props || typeof props !== "object" || Array.isArray(props)) return undefined;
+  return props as Record<string, JsonSchema>;
+};
+
+/** The last segment of a dotted path — the part a parameter name is matched against. */
+const leafOf = (path: string): string => snakeCase(path.slice(path.lastIndexOf(".") + 1));
+
+/**
+ * Find the response field carrying the job handle, as a dotted path.
+ *
+ * Ranked, most-specific-first, and silent on ambiguity — the same posture the
+ * page-size tiers take. Two candidates of equal specificity is a genuine
+ * ambiguity (which id does the status route want?), and picking either is a coin
+ * flip an agent would then act on, so we pick neither and emit no contract.
+ *
+ * Tier 1 is a `<job noun>_id`: the noun makes it a background-work identifier by
+ * construction. Tier 1b is the same fact spelled as a wrapper — `{ job: { id } }`
+ * — where the *parent* carries the noun. Tier 2 is a bare `id`, admissible only
+ * because this function is unreachable unless a declared 202 or Operation-Location
+ * has already established that the call is asynchronous; under that gate the id
+ * a 202 hands back is the handle for the accepted work.
+ *
+ * Google's LRO shape (`{ name, done, metadata }`) is deliberately NOT detected:
+ * its handle is a bare `name`, which on an ordinary create is the resource's
+ * display name, and its state is a boolean `done` that declares no terminal
+ * state *string* — so no contract could resolve even if the handle were found.
+ * Refinement, which can read a real response, is the right layer for it.
+ */
+function findJobHandleField(schema: JsonSchema | undefined): string | undefined {
+  const props = propertiesOf(schema);
+  if (!props) return undefined;
+  const names = Object.keys(props);
+
+  const explicit = names.filter((name) => JOB_HANDLE_NAMES.has(snakeCase(name)));
+  if (explicit.length > 0) return explicit.length === 1 ? explicit[0] : undefined;
+
+  const wrapped: string[] = [];
+  for (const name of names) {
+    if (!JOB_NOUN_SET.has(snakeCase(name))) continue;
+    const inner = propertiesOf(props[name]);
+    if (!inner) continue;
+    const innerKey = Object.keys(inner).find(
+      (key) => snakeCase(key) === "id" || JOB_HANDLE_NAMES.has(snakeCase(key)),
+    );
+    if (innerKey) wrapped.push(`${name}.${innerKey}`);
+  }
+  if (wrapped.length > 0) return wrapped.length === 1 ? wrapped[0] : undefined;
+
+  const bare = names.filter((name) => snakeCase(name) === "id");
+  return bare.length === 1 ? bare[0] : undefined;
+}
+
+/**
+ * Whether a status operation's parameter accepts the handle we found.
+ *
+ * Exact (case- and separator-insensitive) match first: `job_id` accepts a
+ * `jobId` path param. The one relaxation is the resource-shortening every REST
+ * dialect does — `POST /jobs` returns `{ job_id }` and the status route spells
+ * the same value `{id}` because the route already says "jobs". It is allowed
+ * only when the dropped token IS the status route's own resource, so `id` on
+ * `/jobs/{id}` accepts a `job_id` while `id` on `/users/{id}` never does.
+ */
+function paramAcceptsHandle(param: Param, handleLeaf: string, statusOp: Operation): boolean {
+  const name = snakeCase(param.name);
+  if (name === handleLeaf) return true;
+  const resource = snakeCase(statusOp.effect.resource ?? "");
+  if (!resource) return false;
+  if (name === "id" && handleLeaf === `${resource}_id`) return true;
+  if (handleLeaf === "id" && name === `${resource}_id`) return true;
+  return false;
+}
+
+/** `/jobs` → `/jobs/{jobId}`: the status path is the submit path plus one template segment. */
+function isItemReadOf(submitPath: string, statusPath: string): boolean {
+  const submit = submitPath.split("/").filter(Boolean);
+  const status = statusPath.split("/").filter(Boolean);
+  if (status.length !== submit.length + 1) return false;
+  if (!(status[status.length - 1] ?? "").startsWith("{")) return false;
+  return submit.every((segment, i) => segment === status[i]);
+}
+
+/**
+ * The status field on the poll response, plus the states it declares.
+ *
+ * Terminal states are taken ONLY from an enum the document declares. There is no
+ * fallback vocabulary, by design: a guessed `"succeeded"` that the service spells
+ * `"COMPLETE"` makes an agent poll forever, and a guessed `"failed"` that is
+ * really an intermediate makes it stop early and report a half-finished job as
+ * done — the confidently-wrong failure this codebase treats as worse than an
+ * error. No enum therefore means no contract, and refinement proves the states
+ * from a real response later.
+ *
+ * A declared value in neither vocabulary is listed as NEITHER terminal nor
+ * pending. That is the deliberate direction to fail in: an unlisted state that
+ * was really terminal leaves the agent polling, which fails loudly and visibly,
+ * whereas calling it terminal would stop the poll early and hand back a partial
+ * result dressed as a complete one. One recognized terminal state is still a
+ * usable stopping condition, so an odd extra value does not sink the contract.
+ */
+function findStateField(
+  schema: JsonSchema | undefined,
+): { path: string; terminal: string[]; pending: string[] } | undefined {
+  const props = propertiesOf(schema);
+  if (!props) return undefined;
+
+  const candidates: Array<{ path: string; schema: JsonSchema }> = [];
+  for (const [name, propSchema] of Object.entries(props)) {
+    if (isStateFieldName(name)) candidates.push({ path: name, schema: propSchema });
+  }
+  // Only descend when the top level offers nothing, so `{ status, job: { status } }`
+  // resolves to the outer one rather than becoming an artificial ambiguity.
+  if (candidates.length === 0) {
+    for (const [name, propSchema] of Object.entries(props)) {
+      if (!JOB_NOUN_SET.has(snakeCase(name))) continue;
+      const inner = propertiesOf(propSchema);
+      if (!inner) continue;
+      for (const [innerName, innerSchema] of Object.entries(inner)) {
+        if (isStateFieldName(innerName)) {
+          candidates.push({ path: `${name}.${innerName}`, schema: innerSchema });
+        }
+      }
+    }
+  }
+  // Two state fields on one response is an ambiguity, not a choice to make.
+  if (candidates.length !== 1) return undefined;
+  const found = candidates[0] as { path: string; schema: JsonSchema };
+
+  const declared = found.schema.enum;
+  if (!Array.isArray(declared)) return undefined;
+  const values = declared.filter((value): value is string => typeof value === "string");
+  if (values.length === 0) return undefined;
+
+  // Declaration order is preserved so the same document always yields the same
+  // arrays (and the same content hash downstream).
+  const terminal = values.filter((value) => TERMINAL_STATE_WORDS.has(snakeCase(value)));
+  const pending = values.filter((value) => PENDING_STATE_WORDS.has(snakeCase(value)));
+  if (terminal.length === 0) return undefined;
+  return { path: found.path, terminal, pending };
+}
+
+/**
+ * Build the contract an agent follows to finish a long-running call — or nothing.
+ *
+ * Every coordinate has to be grounded in the document before any of it is
+ * emitted: the handle field in this operation's response, a real read operation
+ * to poll, a parameter on it that accepts the handle, and at least one declared
+ * terminal state. Missing any one of them means the agent could not follow the
+ * contract anyway, and a contract it cannot follow is strictly worse than none
+ * (see the header of `@anvil/air`'s `async-contract.ts`) — so this returns
+ * `undefined` rather than a partial answer, and never invents a coordinate.
+ *
+ * Pure and order-independent: it reads only declared structure, resolves ties by
+ * refusing rather than by position, and preserves declaration order in the state
+ * lists. The same document always produces the same contract.
+ */
+export function classifyAsyncContract(
+  operation: Operation,
+  operations: readonly Operation[],
+  pollIntervalSeconds?: number,
+): AsyncContract | undefined {
+  const jobIdField = findJobHandleField(operation.output.schema);
+  if (!jobIdField) return undefined;
+  const handleLeaf = leafOf(jobIdField);
+
+  // Score the poll candidates rather than take the first plausible one: the
+  // relations below are independent kinds of evidence, and an operation that
+  // satisfies several is more surely the status route than one that squeaks past
+  // a single test. A tie means the document does not distinguish them, which is
+  // the case where guessing hurts most — so a tie yields no contract.
+  let best: { op: Operation; param: Param; score: number } | undefined;
+  let tied = false;
+  // Optional in AIR because non-REST sources have no path; a missing path simply
+  // withholds the item-read evidence rather than disqualifying the candidate.
+  const submitPath = operation.sourceRef.path;
+  for (const candidate of operations) {
+    // A call cannot poll itself, and the poll target must be a read — polling
+    // repeats by definition, so anything with an effect would apply it over and
+    // over. `resolveAsyncContract` refuses this too; refusing here as well means
+    // the compiler never writes a contract it knows is unusable.
+    if (candidate.id === operation.id) continue;
+    if (candidate.effect.kind !== "read") continue;
+    const param = candidate.input.params.find((p) => paramAcceptsHandle(p, handleLeaf, candidate));
+    if (!param) continue;
+
+    let score = 0;
+    // The submitted collection's item read — `POST /jobs` → `GET /jobs/{jobId}`.
+    const statusPath = candidate.sourceRef.path;
+    if (
+      submitPath !== undefined &&
+      statusPath !== undefined &&
+      isItemReadOf(submitPath, statusPath)
+    ) {
+      score += 2;
+    }
+    // A poll-family verb in its name/path (`status`, `progress`, `poll`, `wait`),
+    // via the one shared action vocabulary so this can never drift from naming.
+    if (candidate.effect.action === "poll") score += 2;
+    // Same resource family: a job's status route lives with the job, not across
+    // the estate. Weakest of the three, so it never carries a match alone.
+    if (
+      operation.effect.resource !== undefined &&
+      candidate.effect.resource === operation.effect.resource
+    ) {
+      score += 1;
+    }
+    if (score === 0) continue;
+
+    if (!best || score > best.score) {
+      best = { op: candidate, param, score };
+      tied = false;
+    } else if (score === best.score) {
+      tied = true;
+    }
+  }
+  if (!best || tied) return undefined;
+
+  const state = findStateField(best.op.output.schema);
+  if (!state) return undefined;
+
+  return {
+    statusOperationId: best.op.id,
+    jobIdField,
+    statusJobIdParam: best.param.name,
+    stateField: state.path,
+    terminalStates: state.terminal,
+    pendingStates: state.pending,
+    ...(pollIntervalSeconds !== undefined ? { pollIntervalSeconds } : {}),
   };
 }
