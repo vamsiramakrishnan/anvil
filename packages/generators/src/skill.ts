@@ -1,5 +1,5 @@
 import type { AirDocument, Operation } from "@anvil/air";
-import { evidenceConfidence, kebabCase } from "@anvil/air";
+import { evidenceConfidence, kebabCase, queryPolicySentence } from "@anvil/air";
 import { stringify as toYaml } from "yaml";
 import { credentialContract } from "./deploy.js";
 import { operationInputSignature } from "./input-signature.js";
@@ -99,6 +99,17 @@ export function generateSkill(air: AirDocument): Record<string, string> {
       `${name}-setup`,
       "Auth, credential env-var names, base URL, and environment configuration needed before the first call. Read this when setting up, or when a call fails with auth_required or policy_denied.",
     ) + setupRef(air, exposed);
+  // Query-grammar card: only when the exposed surface has a grammar-checked
+  // query operation. Teaches the agent the exact constraints the runtime
+  // enforces, so it authors compliant queries instead of getting refused.
+  const grammarOps = exposed.filter((op) => op.queryPolicy || op.queryTemplate);
+  if (grammarOps.length > 0) {
+    files["reference/query-grammar.md"] =
+      frontmatter(
+        `${name}-query-grammar`,
+        "How the grammar-checked query operations validate input — allowed statements, the refusal rules, and how to iterate cheaply. Read this before calling any query operation.",
+      ) + queryGrammarRef(grammarOps);
+  }
   return files;
 }
 
@@ -606,6 +617,51 @@ ${baseUrl ? `Declared server: \`${baseUrl}\`.` : "_The source spec declares no s
 - \`ANVIL_LEDGER_RESULT_TTL_SECONDS\` — completed replay-result retention
   (default seven days; 60 seconds to one year). In-progress reservations never
   auto-expire.
+`;
+}
+
+/**
+ * The query-grammar card: for each grammar-checked query operation, the exact
+ * constraints the runtime enforces, plus the iterate-cheaply loop. The point is
+ * that the agent authors a compliant query up front rather than discovering the
+ * rules by getting refused.
+ */
+function queryGrammarRef(ops: Operation[]): string {
+  const sections = ops.map((op) => {
+    if (op.queryPolicy) {
+      return [
+        `### \`${op.cli.command}\`  (tool: \`${op.mcp.toolName}\`)`,
+        `${queryPolicySentence(op.queryPolicy)}`,
+        "",
+        "The runtime tokenizes your query and refuses — before any request — a",
+        "statement class that is not allowed, a second statement after `;`, an",
+        "embedded comment, an unbounded read, an off-allowlist table, or a query",
+        "that does not parse. A refusal is a `validation_error`, not an upstream",
+        "error: fix the query and retry. Nothing is sent until it passes.",
+      ].join("\n");
+    }
+    // A query-template operation: constrained parameters, no raw SQL surface.
+    return [
+      `### \`${op.cli.command}\`  (tool: \`${op.mcp.toolName}\`)`,
+      "A constrained query template. You supply only the typed template",
+      "parameters — never raw query text. Each value is substituted as an",
+      "escaped literal in its exact position, so a value can never change the",
+      "query's structure. Read the operation's inputs for the parameters it takes.",
+    ].join("\n");
+  });
+
+  return `# Query grammar
+
+Some operations here accept a query rather than fixed parameters. They are
+**grammar-checked**: the runtime parses what you send and refuses anything it
+cannot prove safe. This is not a limitation to work around — it is the contract
+that lets a query operation be exposed to an agent at all.
+
+**Iterate cheaply.** Author the query, then preview with \`--dry-run\` (or the
+tool's dry-run) before executing. A grammar refusal costs no upstream call — the
+error names exactly what was rejected, so you can fix and retry for free.
+
+${sections.join("\n\n")}
 `;
 }
 
