@@ -649,6 +649,22 @@ export const ErrorSpec = z.object({
 });
 export type ErrorSpec = z.infer<typeof ErrorSpec>;
 
+/**
+ * Zod mirror of the `AsyncContract` interface in `async-contract.ts`, which owns
+ * the semantics and the resolution rules. Declared here because `Operation` is
+ * defined in this file and a schema cannot reference a type across the cycle;
+ * the two are kept structurally identical on purpose.
+ */
+export const AsyncContractSchema = z.object({
+  statusOperationId: z.string(),
+  jobIdField: z.string(),
+  statusJobIdParam: z.string(),
+  stateField: z.string().optional(),
+  terminalStates: z.array(z.string()).default([]),
+  pendingStates: z.array(z.string()).default([]),
+  pollIntervalSeconds: z.number().int().positive().optional(),
+});
+
 export const Pagination = z.object({
   style: z.enum(["cursor", "page", "offset", "link"]),
   cursorParam: z.string().optional(),
@@ -776,6 +792,15 @@ export const Operation = z.object({
   disclosureCost: DisclosureCost.optional(),
   streaming: z.boolean().default(false),
   longRunning: z.boolean().default(false),
+  /**
+   * How an agent finishes a call that returns before its work does. `longRunning`
+   * says a wait exists; this says how to complete it — which operation to poll,
+   * where the handle is, and what stopping looks like. Optional because most
+   * operations are synchronous, and because a contract that cannot be resolved
+   * (see `resolveAsyncContract`) must be omitted rather than half-stated: an
+   * agent polling a tool it cannot call is worse off than one told nothing.
+   */
+  asyncContract: AsyncContractSchema.optional(),
   /** How an agent should interact with this operation (transaction, search, long_running, etc.). */
   archetype: InteractionArchetype.optional(),
   deprecated: z.boolean().default(false),
