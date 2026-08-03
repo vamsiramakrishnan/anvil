@@ -181,6 +181,61 @@ the serving path; no phantom `@anvil/*` dependency; knip clean; no non-determini
 iteration found in the compiler's collision-resolution path (groups are sorted by
 stable identity and keyed order-independently).
 
+## Verification after the first wave
+
+Re-run from a clean `pnpm install --frozen-lockfile`, all commands from the
+repository root.
+
+| Command | Before | After |
+| --- | --- | --- |
+| `pnpm install --frozen-lockfile` | pass, 1 warning (`sharp`) | pass, **no warnings** |
+| `pnpm lint` | pass, 11 warnings + 1 info | pass, **0 warnings** |
+| `pnpm knip` | clean | clean |
+| `pnpm typecheck` | pass 14/14 | pass 14/14 |
+| `pnpm build` | pass 14/14 | pass 14/14 |
+| `pnpm test` | 197 files, 3,315 passed, 1 skipped | **200 files, 3,341 passed, 1 skipped, 0 failed** |
+| `node tools/corpus/run.mjs estates` | — | **6/6 estates green** (import-completes, determinism, opaque-accounting, operations-accounting) |
+
+**+26 tests, +3 files.** 13 architectural ratchets, 5 manifest checks, 6
+certification characterisations, and a net +2 in the WSO2 suite (one vacuous test
+removed, three real ones added).
+
+**No dependency changes.** The package graph is byte-identical to the baseline;
+the ratchet records it rather than altering it.
+
+**Deleted:** the swallowed `catch` around the FIFO assertion, the self-comparing
+digest test, a dead `CLI_PACKAGE_DIR`, and nine stale imports across four
+bug-bash suites. No production module was deleted — this wave moved no ownership.
+
+**Behaviour changes:** none intended. The only production edits are
+`naming.ts` (intersection computed without a per-member `Set`; provably
+equivalent, and the full 740-test compiler suite plus the estate corpus
+differential agree) and a one-line optional chain in `skills/executor.ts`.
+
+**Remaining hotspots**, unchanged and now ratcheted: `estate.ts` 3,327 ·
+`capability-composition.ts` 2,163 · `deploy.ts` 1,630 · `self-skill.ts` 1,575 ·
+`status.ts` 1,554 · `certify.ts` 1,427 · `tool-cli.ts` 1,425 · `executor.ts`
+1,322. Full list with per-module plans in `module-size-baseline.json`.
+
+**Known limitations.**
+
+- The module-size ratchet counts lines. It cannot tell a long cohesive module
+  from a long confused one; that judgement is the `plan` field, which is prose a
+  human has to keep honest.
+- The phantom-builtin check covers `node:` modules only, and only named value
+  imports. It is a stopgap for the real fix (typechecking test source), not a
+  substitute.
+- The certification characterisation tests assert current behaviour, including
+  behaviour the audit argues is wrong. They will need replacing — deliberately —
+  when the split is resolved.
+- Two certification tests scan source text (for `executable: true` and for which
+  call sites import `@anvil/certification`). Source scanning is brittle; it is
+  used because the property is "no code anywhere does X", which cannot be
+  observed from behaviour alone.
+- The FIFO-based tests skip on Windows and in sandboxes without `mkfifo(1)`. The
+  skip names its reason, so a silent gap is not possible, but coverage there is
+  genuinely absent rather than merely unreported.
+
 ## Deferred, with reasons
 
 | Item | Why not now |
