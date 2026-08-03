@@ -240,10 +240,18 @@ function capabilityLine(capability: CapabilityBom): string {
 function responseSection(bom: DisclosureBom, dir: string): string[] {
   const { measurement } = bom;
   if (measurement.projectedOperations === 0) {
+    // This used to tell the reader to run `anvil simulate` to record projections.
+    // It does not: `simulate` measures response cost to reach its own coverage
+    // verdict but keeps the merged figure local, writing simulation.report.json
+    // and never touching AIR — deliberately, since AIR is the certified contract
+    // and a verification command must not move the hash it was verified against.
+    // So the projections live in that report, not here, and pointing at a command
+    // that cannot satisfy the hint is worse than admitting the gap.
     return [
       "  Response cost: NOT MEASURED.",
-      `    Response size depends on a tenant's data, so it is projected by driving the simulator,`,
-      `    not derived from the contract. Run \`anvil simulate ${dir}\` to record projections.`,
+      `    Response size depends on a tenant's data, so it is projected by driving the`,
+      `    simulator, not derived from the contract. \`anvil simulate ${dir}\` records those`,
+      `    projections in its own report; this report does not read them back yet.`,
     ];
   }
   const seeds = measurement.seeds.length > 0 ? measurement.seeds.join(", ") : "unrecorded";
