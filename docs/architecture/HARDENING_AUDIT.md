@@ -181,6 +181,42 @@ the serving path; no phantom `@anvil/*` dependency; knip clean; no non-determini
 iteration found in the compiler's collision-resolution path (groups are sorted by
 stable identity and keyed order-independently).
 
+## Verification after the second wave (estate decomposition, steps 0–1)
+
+| Command | Wave 1 | Wave 2 |
+| --- | --- | --- |
+| `pnpm lint` | 0 warnings | 0 warnings |
+| `pnpm knip` | clean | clean |
+| `pnpm typecheck` | 14/14 | 14/14 |
+| `pnpm build` | 14/14 | 14/14 |
+| `pnpm test` | 3,341 passed | **3,378 passed, 1 skipped, 0 failed** |
+| `node tools/corpus/run.mjs estates` | 6/6 green | 6/6 green |
+
+`estate.ts` **3,327 → 2,712** (−615), across two modules:
+
+| Module | Lines | Shape |
+| --- | --- | --- |
+| `estate-bundle-install.ts` | 592 | transactional install; no `CliIO`, discriminated result |
+| `estate-import-policy.ts` | 168 | pure rules; rejection-or-`undefined` |
+
+**+37 tests** (16 install, 21 policy). Ten mutants were used to confirm the new
+suites bite before they were trusted: removing the unmanaged-output refusal, the
+identity-collision check, the rollback, the backup-cleanup warning, the
+non-WSO2 attestation refusal, the HTTPS constraint, the credential constraint,
+the `unscoped` reservation, the strict-identity requirement, and an off-by-one on
+the reason-length bound each turn a suite red.
+
+**Deliberately preserved**, each recorded as a finding rather than tidied: two
+import refusals carry no machine-readable code; two error codes emit a JSON
+envelope shape that differs from the rest under the same `reportType`; and
+`runVerify` re-implements bundle-vs-receipt verification inline with a different
+code set. All three are contract changes, not mechanical moves.
+
+**Still uncovered:** four error codes in `runImport`'s contract-attestation
+branch (`formal_definition_source_missing`, `route_set_ambiguous`,
+`runtime_coordinate_attested`, `unnecessary_spec_override`). They become
+reachable when that branch is extracted.
+
 ## Verification after the first wave
 
 Re-run from a clean `pnpm install --frozen-lockfile`, all commands from the
