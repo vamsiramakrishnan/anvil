@@ -654,8 +654,67 @@ export const Pagination = z.object({
   cursorParam: z.string().optional(),
   nextField: z.string().optional(),
   itemsField: z.string().optional(),
+  /**
+   * The parameter that controls page *size* (`per_page`, `limit`, `maxResults`,
+   * `page_size`, `top`, …). Distinct from `cursorParam`, which only controls
+   * *continuation*. This is the single knob that lets a serving surface hold a
+   * response inside a token budget by asking for less, rather than fetching
+   * everything and cutting it afterwards — so without it, truncation is the
+   * only tool available and the upstream cost is paid regardless.
+   */
+  pageSizeParam: z.string().optional(),
+  /**
+   * The largest page the upstream will actually honor, when the contract states
+   * it. Recorded because exceeding it is *silent*: an agent that asks for 500
+   * and receives 100 has no way to tell a full page from a capped one, and will
+   * report a partial read as complete. A serving surface clamps to this and can
+   * treat `returned === maxPageSize && no continuation` as suspicious.
+   */
+  maxPageSize: z.number().int().positive().optional(),
+  /** The page size the upstream applies when the caller omits one. */
+  defaultPageSize: z.number().int().positive().optional(),
 });
 export type Pagination = z.infer<typeof Pagination>;
+
+/**
+ * What this operation costs an agent *in context*, measured rather than guessed.
+ *
+ * Two different kinds of number live here, and conflating them is the mistake
+ * this shape exists to prevent:
+ *
+ *  - `toolTokens` is a **fact about the contract** — a pure function of the
+ *    generated tool surface (name, description, input schema, safety metadata).
+ *    It is exact, deterministic, and knowable at compile time from AIR alone.
+ *  - `responseTokens` / `responseItemTokens` are a **prediction about data**.
+ *    Real payload size depends on a tenant's records, which no contract knows.
+ *    They are measured mechanically by driving the contract-faithful simulator
+ *    under a recorded `seed`, which makes them reproducible — not certain.
+ *
+ * `estimator` pins which tokenizer produced every figure. Token counts are
+ * model-specific, so an unrecorded estimator would make a certified disclosure
+ * report drift silently with an unrelated model release; recording it keeps the
+ * measurement reproducible and the report meaningful.
+ *
+ * `charsPerToken` is the calibration the *serving* path uses: the deployed unit
+ * stays free of a multi-megabyte BPE table and estimates from character length
+ * instead. That is deliberately an approximation, and it is only ever used for
+ * the truncation failsafe — never for a certified claim.
+ */
+export const DisclosureCost = z.object({
+  /** Exact tokens for the agent-facing tool surface (name + description + input schema + meta). */
+  toolTokens: z.number().int().nonnegative(),
+  /** Tokens for one representative response item; 0 when the contract yields no item shape. */
+  responseItemTokens: z.number().int().nonnegative().default(0),
+  /** Tokens for a full representative response under `seed`; 0 when not measured. */
+  responseTokens: z.number().int().nonnegative().default(0),
+  /** Characters per token observed while measuring — the serve-time cheap estimate. */
+  charsPerToken: z.number().positive().default(4),
+  /** Tokenizer identity behind these figures, e.g. "o200k_base". */
+  estimator: z.string(),
+  /** Simulator seed behind the response figures; absent when only the tool surface was measured. */
+  seed: z.number().int().optional(),
+});
+export type DisclosureCost = z.infer<typeof DisclosureCost>;
 
 /* -------------------------------------------------------------------------- */
 /* Operation                                                                  */
@@ -709,6 +768,12 @@ export const Operation = z.object({
   confirmation: Confirmation,
   auth: AuthRequirement,
   pagination: Pagination.optional(),
+  /**
+   * Measured context cost of this operation. Optional because a document may be
+   * authored, hand-written, or loaded from an older bundle without ever having
+   * been measured — absence means "not measured", never "free".
+   */
+  disclosureCost: DisclosureCost.optional(),
   streaming: z.boolean().default(false),
   longRunning: z.boolean().default(false),
   /** How an agent should interact with this operation (transaction, search, long_running, etc.). */

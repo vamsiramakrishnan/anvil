@@ -6,6 +6,7 @@
  * MCP server, skill package, docs, tests) compiles *from* AIR. If a semantic is
  * not expressible here, it cannot reach an agent — which is the point.
  */
+export * from "./disclosure.js";
 export * from "./enums.js";
 export * from "./hash.js";
 export * from "./idempotency-carrier.js";
