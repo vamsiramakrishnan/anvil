@@ -235,6 +235,19 @@
       "notes": "Thirteen of the seventeen were in the transactional bundle-install path and are now covered after that subsystem was extracted. The remaining four (formal_definition_source_missing, route_set_ambiguous, runtime_coordinate_attested, unnecessary_spec_override) are in runImport's contract-attestation branch and are covered when that is extracted."
     },
     {
+      "id": "estate-import-error-envelope-inconsistent",
+      "package": "cli",
+      "subsystem": "gateway estate",
+      "categories": ["gateway-estate-identity", "surface-conformance"],
+      "invariant": "One reportType means one envelope shape, so a caller can parse any instance of it with the same code.",
+      "reproducer": "Compare the JSON emitted for `gateway/spec_override_without_spec` (via emitEstateImportError) with `gateway_selection/invalid_gateway_id` (an inline envelope). Both declare reportType `anvil.gateway-estate-import-error`; only the first carries `output: {created:false}` and `receipt: {created:false}`.",
+      "disposition": "product",
+      "whyMissed": "Each envelope is asserted by the test that produced it. Nothing compares two envelopes bearing the same reportType, so a caller reading `output.created` gets `false` from one refusal and `undefined` from another.",
+      "regressionTest": "packages/cli/src/commands/estate/estate-import-policy.test.ts",
+      "status": "open",
+      "notes": "Found while extracting the import policy. Preserved exactly, with a comment at the emission site: unifying the shapes changes a machine-readable contract and belongs with the renderer extraction, not a policy move. Two other refusals (--spec without --gateway-url, and an unusable --gateway-url) carry no code at all and are emitted as bare stderr messages; same disposition."
+    },
+    {
       "id": "runverify-duplicates-bundle-verification",
       "package": "cli",
       "subsystem": "gateway estate",

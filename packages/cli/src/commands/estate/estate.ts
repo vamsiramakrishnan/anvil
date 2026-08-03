@@ -78,6 +78,14 @@ import {
   listBundleFiles,
   prepareBundleInstall,
 } from "./estate-bundle-install.js";
+import {
+  gatewayIdentityRejection,
+  invalidGatewayId,
+  resolveGatewayUrl,
+  specOverrideReason,
+  specOverrideRejection,
+  suppliedContractRejection,
+} from "./estate-import-policy.js";
 import { registerEstateSupport } from "./estate-support.js";
 import {
   blocksGatewayImport,
@@ -377,51 +385,18 @@ interface ImportOptions extends InventoryOptions {
   replaceDerived?: boolean;
   json?: boolean;
 }
-interface ConnectOptions extends Pick<InventoryOptions, "entry" | "gatewayId" | "json"> {
-  vendor: string;
-}
-
-function normalizeGatewayUrl(value: string): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`Invalid --gateway-url '${value}': expected an absolute HTTPS URL.`);
-  }
-  if (url.protocol !== "https:") {
-    throw new Error(`Invalid --gateway-url '${value}': the public gateway URL must use HTTPS.`);
-  }
-  if (url.username || url.password) {
-    throw new Error(`Invalid --gateway-url '${value}': embedded credentials are not allowed.`);
-  }
-  if (url.search || url.hash) {
-    throw new Error(
-      `Invalid --gateway-url '${value}': query strings and fragments are not allowed.`,
-    );
-  }
-  url.pathname = url.pathname === "/" ? "/" : url.pathname.replace(/\/+$/, "");
-  return url.toString();
-}
 interface VerifyOptions {
   root?: string;
   bundle?: string;
   json?: boolean;
 }
 
-function collectOption(value: string, previous: string[]): string[] {
-  return [...previous, value];
+interface ConnectOptions extends Pick<InventoryOptions, "entry" | "gatewayId" | "json"> {
+  vendor: string;
 }
 
-function invalidGatewayId(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  const normalized = value.trim();
-  if (normalized.length === 0) {
-    return "Invalid --gateway-id: expected a non-empty stable control-plane/org/instance id.";
-  }
-  if (normalized.toLowerCase() === "unscoped") {
-    return "Invalid --gateway-id: 'unscoped' is reserved for compatibility lineage whose gateway identity is not proven; provide the real stable control-plane/org/instance id.";
-  }
-  return undefined;
+function collectOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function pathsAlias(left: string, right: string): boolean {
@@ -1700,48 +1675,26 @@ async function runImport(
   io: CliIO,
   deps: Pick<CommandContext["deps"], "cleanupGatewayBundleBackup"> = {},
 ): Promise<number> {
-  const specOverrideReason = opts.attestSpecOverride?.trim();
-  if (opts.attestSpecOverride !== undefined) {
-    if (!opts.spec) {
-      return emitEstateImportError(
-        io,
-        opts.json,
-        "gateway/spec_override_without_spec",
-        "`--attest-spec-override` requires `--spec`; there is no supplied contract to attest.",
-      );
-    }
-    if (opts.vendor !== "wso2") {
-      return emitEstateImportError(
-        io,
-        opts.json,
-        "gateway/spec_override_wrong_vendor",
-        "`--attest-spec-override` is currently defined only for WSO2 native Definitions lineage.",
-      );
-    }
-    if (!specOverrideReason || specOverrideReason.length > 2_000) {
-      return emitEstateImportError(
-        io,
-        opts.json,
-        "gateway/invalid_spec_override_attestation",
-        "`--attest-spec-override <reason>` requires a non-empty reason of at most 2,000 characters.",
-      );
-    }
+  // Policy rules live in estate-import-policy.ts; they are consulted here, in the
+  // order the inline checks used to run, because which refusal a caller sees when
+  // two things are wrong at once is observable behaviour.
+  const overrideRejected = specOverrideRejection(opts);
+  if (overrideRejected?.code) {
+    return emitEstateImportError(io, opts.json, overrideRejected.code, overrideRejected.message);
   }
-  if (opts.spec && !opts.gatewayUrl) {
-    io.err(
-      "`--gateway-url <https://gateway.example/base>` is required with `--spec`; Anvil will not trust a contract's server as proof that calls still traverse the imported gateway.",
-    );
+  const attestationReason = specOverrideReason(opts);
+
+  const contractRejected = suppliedContractRejection(opts);
+  if (contractRejected) {
+    io.err(contractRejected.message);
     return 1;
   }
-  let gatewayUrl: string | undefined;
-  if (opts.gatewayUrl) {
-    try {
-      gatewayUrl = normalizeGatewayUrl(opts.gatewayUrl);
-    } catch (err) {
-      io.err(err instanceof Error ? err.message : String(err));
-      return 1;
-    }
+  const resolvedGatewayUrl = resolveGatewayUrl(opts);
+  if ("rejection" in resolvedGatewayUrl) {
+    io.err(resolvedGatewayUrl.rejection.message);
+    return 1;
   }
+  const gatewayUrl = resolvedGatewayUrl.url;
   let manifest: string | undefined;
   let compilerInput: GatewayImportReceiptDraft["compilerInput"];
   if (opts.manifest) {
@@ -1767,44 +1720,28 @@ async function runImport(
   if (!loaded) return 1;
 
   const explicitGatewayId = opts.gatewayId?.trim();
-  const gatewayIdError = invalidGatewayId(opts.gatewayId);
-  if (gatewayIdError) {
+  const identityRejected = gatewayIdentityRejection(opts);
+  if (identityRejected?.code) {
+    // NOTE: this envelope deliberately omits the `output`/`receipt` created:false
+    // pair that emitEstateImportError adds, because it always has. Two shapes
+    // share one reportType; see the bug-bash manifest finding
+    // `estate-import-error-envelope-inconsistent`. Unifying them would change a
+    // machine-readable contract and is not a mechanical extraction.
     if (opts.json) {
       io.out(
         JSON.stringify(
           {
             schemaVersion: 1,
             reportType: "anvil.gateway-estate-import-error",
-            code: "gateway_selection/invalid_gateway_id",
-            message: gatewayIdError,
+            code: identityRejected.code,
+            message: identityRejected.message,
           },
           null,
           2,
         ),
       );
     } else {
-      io.err(gatewayIdError);
-    }
-    return 1;
-  }
-  if (opts.strictIdentity && !explicitGatewayId) {
-    const message =
-      "`--strict-identity` requires `--gateway-id <id>` because this offline export does not prove its control-plane identity.";
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-import-error",
-            code: "gateway_selection/gateway_id_required",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
+      io.err(identityRejected.message);
     }
     return 1;
   }
@@ -2045,7 +1982,7 @@ async function runImport(
       };
       const exactMatch =
         formalDefinitions.length === 1 && formalDefinitions[0]?.digest === supplied.digest;
-      if (exactMatch && specOverrideReason) {
+      if (exactMatch && attestationReason) {
         return emitEstateImportError(
           io,
           opts.json,
@@ -2060,14 +1997,14 @@ async function runImport(
           candidates: formalDefinitions,
           supplied,
         };
-      } else if (specOverrideReason) {
+      } else if (attestationReason) {
         formalDefinitionLineage = {
           mode: "operator_override",
           candidates: formalDefinitions,
           supplied,
           override: {
             attestation: "operator",
-            reason: specOverrideReason,
+            reason: attestationReason,
           },
         };
       } else {
