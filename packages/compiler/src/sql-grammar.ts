@@ -9,9 +9,25 @@
  * fail-closed placeholder-position check. node-sql-parser bundles ~15 SQL
  * dialects, so this is also the seam that scales the SQL grammar family across
  * Postgres, MySQL, BigQuery, Snowflake, Redshift, Hive, and friends.
+ *
+ * node-sql-parser is ~89MB (it bundles every dialect grammar), so it is loaded
+ * LAZILY via `require` — only when a query template actually needs validating.
+ * The overwhelming majority of compiles have no SQL templates and must not pay
+ * that module-load cost just for importing the compiler.
  */
 
-import { Parser } from "node-sql-parser";
+import { createRequire } from "node:module";
+
+// biome-ignore lint/suspicious/noExplicitAny: node-sql-parser ships no ESM types we consume here.
+type ParserCtor = new () => any;
+let parserCtor: ParserCtor | undefined;
+function loadParser(): ParserCtor {
+  if (!parserCtor) {
+    const require = createRequire(import.meta.url);
+    parserCtor = (require("node-sql-parser") as { Parser: ParserCtor }).Parser;
+  }
+  return parserCtor;
+}
 
 /** Anvil dialect → node-sql-parser `database` option. */
 const DIALECT_TO_DATABASE: Record<string, string> = {
@@ -57,6 +73,7 @@ export function analyzeSqlTemplate(template: string, dialect: string): SqlTempla
   // A `:name` bind marker is a value-only token in every SQL grammar, so the
   // parser itself enforces "placeholders live in literal positions".
   const probed = template.replace(PLACEHOLDER, (_m, name: string) => `:${name}`);
+  const Parser = loadParser();
   const parser = new Parser();
   let ast: unknown;
   try {
