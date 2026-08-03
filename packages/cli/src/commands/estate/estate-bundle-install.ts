@@ -58,7 +58,7 @@ export interface BundleInstallDiagnostic {
   path?: string;
 }
 
-export interface BundleCommitResult {
+interface BundleCommitResult {
   retainedBackup?: string;
   warning?: string;
 }

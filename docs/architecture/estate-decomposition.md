@@ -107,11 +107,35 @@ that.
 Behaviour-preserving throughout. One commit per step; the estate corpus
 differential (`node tools/corpus/run.mjs estates`) gates every one.
 
-1. **Characterise.** Extend `estate.bugbash.test.ts` so every error code
-   currently reachable from `runImport`, `runPlan`, `runAudit`, `runInventory`,
-   and `runVerify` is asserted from the outside — both text and `--json`. This is
-   the safety net and must land before any extraction. Today's coverage tests
-   guard clauses; it does not enumerate the code surface.
+0. **✅ Done — lift the transactional bundle install.** Not the first step this
+   plan originally listed, and the reason for the change is worth recording.
+
+   Mapping every error code `estate.ts` can emit against every assertion in the
+   workspace found 40 of 57 covered and **17 not** — and thirteen of the
+   seventeen were in this one subsystem, the one that deletes and replaces
+   directories. They were uncovered *because* they were unreachable: private
+   functions inside a 3,327-line module, reachable only by driving the whole CLI
+   with a fixture elaborate enough to hit one branch. Coverage was a function of
+   module size rather than of risk.
+
+   That inverts the "characterise first" rule for this subsystem: extraction is
+   what makes characterisation possible, so it has to come first. The move was
+   mechanical (the code already had no `CliIO` and already returned a
+   discriminated result), and the existing 115 estate tests plus the corpus
+   differential guarded it. `estate-bundle-install.test.ts` followed
+   immediately, and four mutants — removing the unmanaged-output refusal, the
+   identity-collision check, the rollback, and the backup-cleanup warning — each
+   turn it red.
+
+   Result: estate.ts 3,327 → 2,775.
+
+1. **Characterise the rest.** Extend `estate.bugbash.test.ts` so the error codes
+   still reachable only through `runImport`, `runPlan`, `runAudit`,
+   `runInventory`, and `runVerify` are asserted from the outside — both text and
+   `--json`. Four codes remain unasserted, all in `runImport`'s
+   contract-attestation branch: `formal_definition_source_missing`,
+   `route_set_ambiguous`, `runtime_coordinate_attested`,
+   `unnecessary_spec_override`.
 2. **Extract the renderer.** Move envelope construction and text formatting into
    `estate-render.ts`, still called from the same places. Pure move; the 29
    `JSON.stringify` sites collapse into a handful of projections.
@@ -123,7 +147,10 @@ differential (`node tools/corpus/run.mjs estates`) gates every one.
 5. **Lift the service.** `estate-service.ts` takes the orchestration body of
    `runImport`; `runImport` becomes decode → service → render.
 6. **Repeat for the smaller verbs** — `runPlan`, `runAudit`, `runInventory`,
-   `runVerify` — reusing the same seam.
+   `runVerify` — reusing the same seam. `runVerify` carries a known duplication:
+   it re-implements bundle-vs-receipt verification inline, with different error
+   handling and a different code set from `verifyBundleDirectory`. Deduplicating
+   is a semantic change and belongs in this step, not in a mechanical move.
 7. **Delete.** The old helpers, the per-branch emitters (`emitPlanError`,
    `emitEstateImportError`), and the duplicated JSON envelopes go. If both the
    old and new paths remain, the migration is not done.

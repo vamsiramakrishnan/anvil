@@ -222,6 +222,32 @@
       "notes": "Not a fail-open: anvil publish does require fresh, hash-bound selftest/conformance/simulation evidence with prod failing closed. The defect is duplicate authority plus a stale ADR. Resolution options are in docs/architecture/certification-authority.md; the choice is a product decision and is deliberately not taken in this change."
     },
     {
+      "id": "estate-error-codes-unasserted",
+      "package": "cli",
+      "subsystem": "gateway estate",
+      "categories": ["gateway-estate-identity", "filesystem-boundaries"],
+      "invariant": "Every machine-readable error code a command can emit is asserted somewhere, because the codes are a contract that callers parse.",
+      "reproducer": "Map the codes emitted by estate.ts against every assertion in packages/cli tests: 40 of 57 covered, 17 not.",
+      "disposition": "test",
+      "whyMissed": "The uncovered codes were unreachable from a test. They lived in module-private functions inside a 3,327-line file, so the only way to reach them was to drive the whole CLI with a fixture elaborate enough to hit that specific branch. Coverage was a function of module size, not of anyone's judgement about risk.",
+      "regressionTest": "packages/cli/src/commands/estate/estate-bundle-install.test.ts",
+      "status": "open",
+      "notes": "Thirteen of the seventeen were in the transactional bundle-install path and are now covered after that subsystem was extracted. The remaining four (formal_definition_source_missing, route_set_ambiguous, runtime_coordinate_attested, unnecessary_spec_override) are in runImport's contract-attestation branch and are covered when that is extracted."
+    },
+    {
+      "id": "runverify-duplicates-bundle-verification",
+      "package": "cli",
+      "subsystem": "gateway estate",
+      "categories": ["gateway-estate-identity", "surface-conformance"],
+      "invariant": "Verifying a bundle against its receipt yields the same verdict regardless of which command performs it.",
+      "reproducer": "Compare runVerify's inline verification body against verifyBundleDirectory in estate-bundle-install.ts: both compare a bundle to its receipt, with different error handling and different code sets.",
+      "disposition": "product",
+      "whyMissed": "Both paths are tested against their own expectations. Nothing tests that they agree, so the two can drift apart without any test noticing.",
+      "regressionTest": "packages/cli/src/commands/estate/estate-bundle-install.test.ts",
+      "status": "open",
+      "notes": "Found while extracting the install subsystem. Deduplicating is a semantic change and was deliberately kept out of a mechanical extraction; it belongs with the runVerify extraction."
+    },
+    {
       "id": "certification-merge-rule-owned-by-cli",
       "package": "cli",
       "subsystem": "certification authority",
