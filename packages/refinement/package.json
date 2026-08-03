@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@anvil/air": "workspace:*",
+    "@anvil/grammar": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -247,6 +247,43 @@ const classifyIdempotency: RefinementSkill = {
 };
 
 /**
+ * Propose a conservative grammar policy for an unguarded query-passthrough
+ * operation — the reviewable path off `blocked`. Like `classify-idempotency`
+ * this is safety-sensitive and NEVER auto-approved: the proposal restricts the
+ * surface (SELECT-only, single-statement, no comments) but *exposing* a query
+ * surface at all is a human's decision, and the tighter bounds an operator
+ * should add — a row cap, a table allowlist — need estate knowledge the
+ * detector does not have. The heuristic executor proposes the safe skeleton and
+ * names exactly what a reviewer still must decide.
+ */
+const reviewQueryPassthrough: RefinementSkill = {
+  name: "review-query-passthrough",
+  version: 1,
+  triggers: ["query_language_passthrough"],
+  targetKind: "operation",
+  context: ["parent_operation", "source_evidence", "capability"],
+  evidence: {
+    allowed: ["source_impl", "test_fixture", "spec", "doc_example", "recorded_traffic", "incident"],
+    minimumStrength: "single",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["operation.query_policy"],
+    supportingPredicates: ["operation.behavior", "operation.effect"],
+    fields: ["query_policy"],
+  },
+  constraints: ["do_not_loosen_safety", "do_not_invent_business_rules"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+  ],
+};
+
+/**
  * Document how a paginated operation's results are fetched: the pagination style
  * (cursor/page/offset/link), the parameter name used to pass a cursor/page/offset,
  * the field containing the next cursor/page/offset or link, and the field containing
@@ -372,6 +409,7 @@ export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   classifyPagination,
   authorIntentExamples,
   authorRoutingPhrases,
+  reviewQueryPassthrough,
 ];
 
 /** Discover the available skills (stable order). */

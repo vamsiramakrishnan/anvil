@@ -150,6 +150,15 @@ function applyOne(
         op.skill.intentExamples = value.map((v) => String(v));
         return;
       }
+      // Sole write path for `review-query-passthrough`. Recording a policy is the
+      // reviewable unblock: it lifts an unguarded (blocked) passthrough to
+      // review_required — never to approved. A human still signs off.
+      if (key === "query_policy" && value && typeof value === "object") {
+        record(key, op.queryPolicy, value);
+        op.queryPolicy = value as typeof op.queryPolicy;
+        if (op.state === "blocked") op.state = "review_required";
+        return;
+      }
       // The pagination carrier keys below are the sole write path for
       // `document-pagination` — validated upstream (pagination binding resolves).
       // Only `pagination_style` may create `op.pagination`: fabricating a default

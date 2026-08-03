@@ -7,6 +7,7 @@ import {
   Pagination,
   RetryBasis,
 } from "@anvil/air";
+import type { SqlDialect } from "@anvil/grammar";
 import type {
   FieldContext,
   JsonValue,
@@ -129,9 +130,49 @@ export class HeuristicSkillExecutor implements SkillExecutor {
         return this.authorIntentExamples(skill, context);
       case "author-routing-phrases":
         return this.authorRoutingPhrases(skill, context);
+      case "review-query-passthrough":
+        return this.reviewQueryPassthrough(skill, context);
       default:
         return null;
     }
+  }
+
+  /**
+   * A conservative starter query policy for an unguarded passthrough operation.
+   * The executor names the query param (the unconstrained string that triggered
+   * the passthrough) and infers the dialect from its name/description, then
+   * proposes the safe skeleton: SELECT-only, single statement, no comments. It
+   * deliberately does NOT invent a row cap or table allowlist — those need
+   * estate knowledge — leaving them for the reviewer. The proposal always routes
+   * to review (see approval.ts); exposing a query surface is a human decision.
+   */
+  private reviewQueryPassthrough(
+    skill: RefinementSkill,
+    context: SkillContext,
+  ): SkillProposal | null {
+    const op = context.operation;
+    if (!op) return null;
+    const queryParam = passthroughQueryParam(op);
+    if (!queryParam) return null;
+    const dialect = inferDialect(queryParam, op);
+    const policy = {
+      queryParam,
+      dialect,
+      allowedStatements: ["select"],
+      singleStatementOnly: true,
+      forbidComments: true,
+    };
+    const claim: Claim = {
+      subject: op.id,
+      predicate: "operation.query_policy",
+      value: policy,
+      source: "spec",
+      sourceRef: `${op.id}.input.${queryParam}`,
+      method: "template",
+      confidence: 0.7,
+      note: "conservative starter policy — reviewer should add a row cap and table allowlist",
+    };
+    return proposal(skill, context, [claim], { query_policy: policy });
   }
 
   /**
@@ -355,4 +396,37 @@ export class HeuristicSkillExecutor implements SkillExecutor {
     if (Object.keys(set).length === 0) return null;
     return proposal(skill, context, used, set);
   }
+}
+
+/** The unconstrained string param/body-field that makes an operation a passthrough. */
+function passthroughQueryParam(op: SkillContext["operation"]): string | undefined {
+  if (!op) return undefined;
+  const isUnconstrainedString = (schema: Record<string, unknown> | undefined): boolean => {
+    if (!schema || schema.type !== "string") return false;
+    return (
+      schema.enum === undefined && schema.maxLength === undefined && schema.pattern === undefined
+    );
+  };
+  const languageName = /sql|jql|cql|kql|xpath|dsl|where|expression|query|filter/i;
+  for (const p of op.input.params) {
+    if (languageName.test(p.name) && isUnconstrainedString(p.schema as Record<string, unknown>)) {
+      return p.name;
+    }
+  }
+  if (op.input.body?.projection === "fields") {
+    for (const f of op.input.body.fields) {
+      if (languageName.test(f.name) && isUnconstrainedString(f.schema as Record<string, unknown>)) {
+        return f.name;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Infer the SQL dialect from the query param's name and the op's description. */
+function inferDialect(param: string, op: NonNullable<SkillContext["operation"]>): SqlDialect {
+  const hay = `${param} ${op.description ?? ""} ${op.displayName ?? ""}`.toLowerCase();
+  if (/postgres|postgresql|\bpg\b|redshift/.test(hay)) return "postgres";
+  if (/mysql|mariadb/.test(hay)) return "mysql";
+  return "ansi";
 }

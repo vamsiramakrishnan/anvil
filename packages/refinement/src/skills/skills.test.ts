@@ -246,6 +246,34 @@ describe("author-intent-examples", () => {
   });
 });
 
+describe("review-query-passthrough", () => {
+  const skill = skillByName("review-query-passthrough")!;
+
+  it("proposes a conservative SELECT-only starter policy for the passthrough param", async () => {
+    const air = doc();
+    const op = air.operations[0];
+    if (!op) throw new Error("fixture has no operation");
+    // Turn the fixture op into an unguarded passthrough: an unconstrained `sql`.
+    op.archetype = "query_passthrough";
+    op.effect.kind = "read";
+    op.input.params = [
+      { name: "sql", in: "query", required: true, schema: { type: "string" } },
+    ] as typeof op.input.params;
+    op.description = "Run a Postgres report query";
+    const ctx = contextFor(air, (code) => code === "query_language_passthrough");
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set.query_policy).toEqual({
+      queryParam: "sql",
+      dialect: "postgres",
+      allowedStatements: ["select"],
+      singleStatementOnly: true,
+      forbidComments: true,
+    });
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("validated");
+  });
+});
+
 describe("author-routing-phrases", () => {
   const skill = skillByName("author-routing-phrases")!;
 
