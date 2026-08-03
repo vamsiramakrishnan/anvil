@@ -101,7 +101,8 @@ export function analyzeSqlTemplate(template: string, dialect: string): SqlTempla
   let tables: string[] = [];
   try {
     // tableList entries are "type::schema::table"; project to schema.table.
-    tables = parser.tableList(probed, { database }).map((t) => {
+    const rawTables = parser.tableList(probed, { database }) as string[];
+    tables = rawTables.map((t: string) => {
       const [, schema, table] = t.split("::");
       return schema && schema !== "null" ? `${schema}.${table}` : (table ?? t);
     });
