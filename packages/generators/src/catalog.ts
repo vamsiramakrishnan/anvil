@@ -1,5 +1,11 @@
 import type { AirDocument, Operation } from "@anvil/air";
-import { evidenceConfidence, operationInputSchema, operationSafetyInputKeys } from "@anvil/air";
+import {
+  asyncContractSentence,
+  evidenceConfidence,
+  operationInputSchema,
+  operationSafetyInputKeys,
+  resolveAsyncContract,
+} from "@anvil/air";
 import { operationInputSignature } from "./input-signature.js";
 
 /**
@@ -63,6 +69,29 @@ export interface CatalogEntry {
   pagination?: { style: string; cursorParam?: string; nextField?: string; itemsField?: string };
   /** True when the operation returns before completion and requires polling. */
   longRunning?: boolean;
+  /**
+   * How to finish a call that returned before its work did — present ONLY when
+   * the contract resolves. `longRunning` says a wait exists, which is exactly
+   * enough information to be stuck; these are the coordinates a consumer can act
+   * on: the handle to read, the operation to poll on either surface, the
+   * parameter that carries the handle, and the states that mean stop. An
+   * unresolvable contract is omitted entirely rather than half-published,
+   * because a consumer polling a tool it cannot call is worse off than one told
+   * nothing. `instruction` is the shared sentence, carried so a consumer that
+   * renders prose renders the *same* prose as the skill and the tool metadata.
+   */
+  asyncContract?: {
+    statusOperationId: string;
+    statusTool: string;
+    statusCli: string;
+    jobIdField: string;
+    statusJobIdParam: string;
+    stateField?: string;
+    terminalStates: string[];
+    pendingStates?: string[];
+    pollIntervalSeconds?: number;
+    instruction: string;
+  };
   /** How an agent should interact with this operation. */
   archetype?: string;
   /** REST/GraphQL path and method when available (e.g., "post /v1/charges/{charge}/refunds"). */
@@ -90,6 +119,10 @@ export function operationCatalog(air: AirDocument): {
   const publicWorkflowIds = new Set(
     air.workflows.filter((workflow) => workflow.state !== "blocked").map((workflow) => workflow.id),
   );
+  // Built once for the whole document: an async contract only means something
+  // relative to the operation it points at, so resolution needs the index — and
+  // resolution, not the presence of the field, is what decides publishability.
+  const operationsById = new Map<string, Operation>(air.operations.map((op) => [op.id, op]));
   return {
     service: {
       id: air.service.id,
@@ -162,6 +195,34 @@ export function operationCatalog(air: AirDocument): {
       }
       if (op.longRunning) {
         entry.longRunning = true;
+      }
+      // All-or-nothing, per the contract's own rule: a resolution that failed
+      // for any reason (missing, unapproved, or mutating status operation; no
+      // parameter to carry the handle; no terminal state) publishes nothing at
+      // all. There is deliberately no partial shape and no vague fallback — the
+      // absence is the signal, and it is a truthful one.
+      const completion = resolveAsyncContract(op, operationsById);
+      const instruction = asyncContractSentence(completion);
+      if (completion.ok && instruction) {
+        entry.asyncContract = {
+          statusOperationId: completion.statusOperation.id,
+          // Both bindings, because the catalog serves both surfaces: an MCP
+          // client needs the tool name, a CLI caller needs the command, and
+          // making either derive the other invites the two to disagree.
+          statusTool: completion.statusOperation.mcp.toolName,
+          statusCli: completion.statusOperation.cli.command,
+          jobIdField: completion.contract.jobIdField,
+          statusJobIdParam: completion.contract.statusJobIdParam,
+          stateField: completion.contract.stateField,
+          terminalStates: completion.contract.terminalStates,
+          // Advisory and frequently empty; an empty list would read as "nothing
+          // is a working state", which is the opposite of "unstated".
+          ...(completion.contract.pendingStates.length > 0
+            ? { pendingStates: completion.contract.pendingStates }
+            : {}),
+          pollIntervalSeconds: completion.contract.pollIntervalSeconds,
+          instruction,
+        };
       }
       if (op.archetype) {
         entry.archetype = op.archetype;
