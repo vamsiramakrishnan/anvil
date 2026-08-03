@@ -98,6 +98,9 @@ function deeplyNestedSchema(depth: number): JsonSchema {
   return schema;
 }
 
+/** Compiled fixtures, keyed by the exact spec text they were compiled from. */
+const compileCache = new Map<string, AirDocument>();
+
 async function writeAirBundle(input: {
   serviceId: string;
   operationId: string;
@@ -122,10 +125,22 @@ async function writeAirBundle(input: {
       },
     },
   };
-  const air = await compile({
-    spec: JSON.stringify(spec),
-    serviceId: input.serviceId,
-  });
+  // Four tests each build the same five-bundle estate, so this compiled twenty
+  // times per run for five distinct results. Compiling is the expensive half —
+  // it now measures every operation's disclosure cost on top of the usual
+  // normalize/classify/validate work — and it is a pure function of the spec, so
+  // the result is cached and handed out as a clone.
+  //
+  // The clone is load-bearing: callers mutate `state` and `auth` immediately
+  // below, and each writes its own directory, so sharing the object rather than
+  // a copy would leak one test's edits into the next.
+  const cacheKey = JSON.stringify(spec);
+  let compiled = compileCache.get(cacheKey);
+  if (!compiled) {
+    compiled = await compile({ spec: cacheKey, serviceId: input.serviceId });
+    compileCache.set(cacheKey, compiled);
+  }
+  const air = structuredClone(compiled);
   const operation = air.operations[0];
   if (!operation) throw new Error("fixture compile produced no operation");
   operation.state = "approved";
@@ -555,15 +570,39 @@ describe("anvil capability compose", () => {
     ).toEqual(["/customer/id", "/customer/name"]);
   }, 30_000);
 
-  it("blocks zero-confidence, missing-freshness, fake provenance, and acknowledged blockers", async () => {
+  /**
+   * The shared preamble every rejection case needs: the estate, a first audit,
+   * the review scaffold it produced, and a frozen evidence artifact to cite.
+   *
+   * Extracted when the five rejection cases below were split out of a single
+   * test. That test asserted five unrelated refusals under one name, so a
+   * failure in the fourth reported as all five failing and told a reader
+   * nothing; it was also the heaviest case in the suite and timed out under CI
+   * contention. Splitting fixed both — each case now names the one rule it
+   * pins, and each does a fraction of the work.
+   */
+  async function reviewBaseline(): Promise<{
+    bundles: string[];
+    initial: ReturnType<typeof report>;
+    artifact: ReturnType<typeof writeEvidenceArtifact>;
+    scaffoldPath: string;
+  }> {
     const bundles = await fiveApiEstate();
     const auditPath = join(work, "initial.json");
     const scaffoldPath = join(work, "initial.yaml");
     expect((await compose(bundles, ["--out", auditPath, "--init-review", scaffoldPath])).code).toBe(
       0,
     );
-    const initial = report(auditPath);
-    const artifact = writeEvidenceArtifact();
+    return {
+      bundles,
+      initial: report(auditPath),
+      artifact: writeEvidenceArtifact(),
+      scaffoldPath,
+    };
+  }
+
+  it("blocks a projection reviewed at zero confidence, and one evidenced by a generated mock", async () => {
+    const { bundles, initial, artifact, scaffoldPath } = await reviewBaseline();
 
     const zero = review(scaffoldPath);
     setReviewedProjection(zero, initial, artifact, 0);
@@ -601,6 +640,10 @@ describe("anvil capability compose", () => {
     );
     expect(mockCandidate?.review.issues.join("\n")).toContain("canonical source reliability");
     expect(report(mockOut).compositionPlans).toEqual([]);
+  });
+
+  it("blocks a projection missing freshness evidence, and refuses one whose provenance was stripped", async () => {
+    const { bundles, initial, artifact, scaffoldPath } = await reviewBaseline();
 
     const noFreshness = review(scaffoldPath);
     setReviewedProjection(noFreshness, initial, artifact);
@@ -647,6 +690,10 @@ describe("anvil capability compose", () => {
       code: "composition/review_invalid",
     });
     expect(existsSync(fakeOut)).toBe(false);
+  });
+
+  it("keeps a blocked contradiction blocked even when a reviewer acknowledges it", async () => {
+    const { bundles, initial, artifact, scaffoldPath } = await reviewBaseline();
 
     const blocked = review(scaffoldPath);
     const blockedCandidate = initial.candidates.find(
@@ -691,7 +738,7 @@ describe("anvil capability compose", () => {
     expect(
       report(blockedOut).compositionPlans.some((plan) => plan.candidateId === blockedCandidate.id),
     ).toBe(false);
-  }, 30_000);
+  });
 
   it("does not call leaf-only similarity an exact output or semantic duplicate", async () => {
     const customer = await writeAirBundle({
