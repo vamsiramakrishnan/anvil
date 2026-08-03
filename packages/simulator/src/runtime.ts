@@ -7,7 +7,15 @@
  * Everything is a pure function of (seed, call sequence): no clock, no
  * randomness beyond the seeded `Rng`, so a run reproduces exactly.
  */
-import { type AirDocument, type ErrorCode, hashCanonical, type Operation } from "@anvil/air";
+import {
+  type AirDocument,
+  DEFAULT_RESPONSE_BUDGET_TOKENS,
+  type ErrorCode,
+  hashCanonical,
+  type Operation,
+  type PageSizeBasis,
+  safePageSize,
+} from "@anvil/air";
 import { type SurfaceSignature, surfaceSignatureFor } from "@anvil/compiler";
 import type { SimulatorDefinition } from "./model.js";
 import { Rng } from "./rng.js";
@@ -37,7 +45,51 @@ interface Entity {
   [k: string]: unknown;
 }
 
-const PAGE_SIZE = 2;
+/**
+ * The page size used when AIR declines to derive one — an operation whose
+ * per-item cost was never measured, or one the contract never described as
+ * paginated but whose action is `list`. Deliberately tiny: with the default
+ * three fixtures it guarantees a second page, so cursor behaviour is actually
+ * exercised rather than accidentally fitting in one page. It is a *fixture*
+ * number, not a disclosure claim, which is why nothing may certify against it.
+ */
+const FALLBACK_PAGE_SIZE = 2;
+
+/**
+ * A representative response for one operation, produced under the simulator's
+ * seed so a per-item token cost can be measured over something an agent would
+ * actually receive.
+ *
+ * Response size is a fact about a tenant's data, which no contract states — so
+ * it can only be measured, never read off the spec. This is the seam that makes
+ * the measurement possible without calling the real API, and everything in it
+ * comes from the same `invoke` path a caller is served by: a sample drawn from
+ * a parallel code path would describe a response nobody is ever sent.
+ */
+export interface DisclosureSample {
+  /** The public (MCP) tool name that was sampled. */
+  toolName: string;
+  /** Verbatim `output` from `invoke` — the whole response, to be tokenized as-is. */
+  response: unknown;
+  /**
+   * One item out of that response: the unit `responseItemTokens` is measured
+   * over, and the unit `safePageSize` divides a budget by. Absent when the
+   * response carries no items at all (a read that found nothing).
+   */
+  item?: unknown;
+  /**
+   * Items actually in `response`. Compare against `pageSize` before tokenizing
+   * `response` as a whole-page cost: the fixture set is small, so a page sized
+   * for a generous budget is routinely served short. A caller that wants a
+   * full-page figure should scale `item` by `pageSize` rather than measure a
+   * response that happened to run out of fixtures.
+   */
+  itemCount: number;
+  /** The page size the simulator served, and why. */
+  pageSize: number;
+  /** Straight from AIR's solver: `unmeasured`/`not_paginated` means the figure rests on the fixture fallback. */
+  pageSizeBasis: PageSizeBasis;
+}
 
 /** A stateful, seeded, contract-faithful simulator for one capability. */
 export class Simulator {
@@ -46,6 +98,13 @@ export class Simulator {
   private replayLog = new Map<string, SimResult>();
   private rng: Rng;
   private callIndex = 0;
+  /**
+   * The seed currently in force — `def.seed` until someone calls `reset(other)`.
+   * Tracked because `disclosureSample` has to re-seed around itself, and
+   * re-seeding to `def.seed` would silently discard a caller's chosen seed and
+   * make a sample describe a different data set than the run it belongs to.
+   */
+  private activeSeed: number;
 
   constructor(
     private readonly air: AirDocument,
@@ -65,6 +124,7 @@ export class Simulator {
     const inCapability = (op: Operation) => isService || memberIds.has(op.id);
     this.ops = air.operations.filter((op) => op.state === "approved" && inCapability(op));
     this.rng = new Rng(def.seed);
+    this.activeSeed = def.seed;
     this.reset();
   }
 
@@ -77,7 +137,8 @@ export class Simulator {
 
   /** Re-seed and repopulate deterministic fixtures. Clears state and replay log. */
   reset(seed?: number): void {
-    this.rng = new Rng(seed ?? this.def.seed);
+    this.activeSeed = seed ?? this.def.seed;
+    this.rng = new Rng(this.activeSeed);
     this.callIndex = 0;
     this.store = new Map();
     this.replayLog = new Map();
@@ -194,12 +255,100 @@ export class Simulator {
     return result;
   }
 
+  /**
+   * Draw a representative response for one operation so its context cost can be
+   * measured. Returns `undefined` when there is nothing honest to tokenize —
+   * the tool is not served here, or the contract's own gates refused the call.
+   *
+   * Two properties make this certifiable rather than merely indicative:
+   *
+   *  - It is a pure function of (contract, seed). It re-seeds before drawing so
+   *    it cannot observe whatever calls preceded it, and re-seeds after so it
+   *    leaves nothing behind — a disclosure figure that drifted with call
+   *    history would be unreproducible, and an unreproducible figure is a guess
+   *    wearing a number's clothes.
+   *  - It goes through `invoke`, not around it. Any shortcut that assembled a
+   *    "representative" payload directly would measure a response the serving
+   *    path never emits, which is the precise failure this whole increment
+   *    exists to prevent.
+   *
+   * The cost of purity is that this *resets the simulator*: call it before
+   * building up state, or expect to rebuild it.
+   */
+  disclosureSample(toolName: string): DisclosureSample | undefined {
+    const op = this.resolve(toolName);
+    if (!op) return undefined;
+
+    const seed = this.activeSeed;
+    this.reset(seed);
+    const result = this.invoke(toolName, {}, this.samplingContext(op));
+    this.reset(seed);
+    // A refused call carries an error payload, not a response. Measuring it
+    // would report a confirmation refusal as an operation's response cost —
+    // wrong, and wrong in the flattering direction. Decline instead, and let
+    // the caller record the operation as unmeasured.
+    if (!result.ok) return undefined;
+
+    const items = itemsOf(result.output);
+    const page = this.pageSizeFor(op);
+    return {
+      toolName,
+      response: result.output,
+      item: items ? items[0] : (result.output ?? undefined),
+      itemCount: items ? items.length : result.output == null ? 0 : 1,
+      pageSize: page.size,
+      pageSizeBasis: page.basis,
+    };
+  }
+
+  /**
+   * The weakest context that still gets past the contract's gates. Sampling is
+   * not the place to assert them — coverage already drives every gate as its
+   * own matrix cell — so a scoped or confirm-gated operation must not measure
+   * as an error payload just because the sampler arrived empty-handed.
+   */
+  private samplingContext(op: Operation): InvokeContext {
+    const principal = this.def.authProfiles.find((p) =>
+      op.auth.scopes.every((s) => p.scopes.includes(s)),
+    );
+    return {
+      principalId: principal?.id,
+      confirm: true,
+      // A fixed key, not a generated one: the fingerprint must be a function of
+      // the seed like everything else here.
+      idempotencyKey: op.idempotency.mode === "none" ? undefined : "disclosure-sample",
+    };
+  }
+
+  /**
+   * How many items one simulated page carries.
+   *
+   * A page size chosen by the simulator would make the simulator useless as a
+   * measurement instrument: whatever we tokenized would describe a response no
+   * agent is ever served. So the arithmetic comes from AIR's `safePageSize` —
+   * the identical solver the compiler, the MCP runtime and the certification
+   * pass call — and the simulator contributes only the budget. Four surfaces
+   * each deriving their own "what fits in context" is exactly how a certified
+   * disclosure figure ends up describing a surface nobody serves.
+   *
+   * When AIR declines to size the page (nothing measured, or the contract never
+   * declared pagination) we keep the fixture constant rather than inventing a
+   * confident-looking number. That is what holds behaviour byte-identical for
+   * the contracts that carry no disclosure measurement — still most of them.
+   */
+  private pageSizeFor(op: Operation): { size: number; basis: PageSizeBasis } {
+    const budget = this.def.responseBudgetTokens ?? DEFAULT_RESPONSE_BUDGET_TOKENS;
+    const derived = safePageSize(op, budget);
+    return { size: derived.size ?? FALLBACK_PAGE_SIZE, basis: derived.basis };
+  }
+
   private read(op: Operation, ctx: InvokeContext): SimResult {
     const table = [...this.tableFor(op).values()];
     if (op.effect.action === "list" || op.pagination) {
+      const pageSize = this.pageSizeFor(op).size;
       const start = ctx.cursor ? Number.parseInt(ctx.cursor, 10) || 0 : 0;
-      const page = table.slice(start, start + PAGE_SIZE);
-      const nextCursor = start + PAGE_SIZE < table.length ? String(start + PAGE_SIZE) : undefined;
+      const page = table.slice(start, start + pageSize);
+      const nextCursor = start + pageSize < table.length ? String(start + pageSize) : undefined;
       return { ok: true, output: { items: page }, nextCursor };
     }
     return { ok: true, output: table[0] ?? null };
@@ -222,6 +371,19 @@ export class Simulator {
     table.set(id, entity);
     return { ok: true, output: entity };
   }
+}
+
+/**
+ * The item array inside a simulated response, when there is one. Mirrors the
+ * envelope `read` emits rather than guessing at a shape, so the two cannot
+ * drift: if the paginated envelope ever changes, this must change with it.
+ */
+function itemsOf(output: unknown): unknown[] | undefined {
+  if (output !== null && typeof output === "object" && "items" in output) {
+    const items = (output as { items: unknown }).items;
+    if (Array.isArray(items)) return items;
+  }
+  return undefined;
 }
 
 function hashScenario(s: string): number {

@@ -3,12 +3,15 @@ import {
   type BodyField,
   type Capability,
   conflictedSafetyPredicates,
+  DEFAULT_RESPONSE_BUDGET_TOKENS,
+  DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS,
   type ErrorCode,
   isQueryPassthroughParam,
   type NameWeakness,
   nameWeaknesses,
   type Operation,
   type Param,
+  toolSurfaceFitsBudget,
 } from "@anvil/air";
 import { compareSeverity, type Deficiency, makeDeficiency, severityRank } from "./deficiency.js";
 import { type SemanticTarget, targetKey, targetOperationId } from "./target.js";
@@ -30,9 +33,6 @@ const TRANSIENT_ERROR_CODES: ReadonlySet<ErrorCode> = new Set([
   "upstream_unavailable",
   "rate_limited",
 ]);
-
-/** More input properties than this is too much to disclose to an agent up front. */
-export const SCHEMA_DISCLOSURE_THRESHOLD = 25;
 
 /** A flat view over an operation's surfaced input fields (params + projected body). */
 interface FieldRef {
@@ -83,7 +83,11 @@ function surfacedFields(op: Operation): FieldRef[] {
   return fields;
 }
 
-/** Count of top-level input properties, used to judge disclosure size. */
+/**
+ * Count of top-level input properties. No longer the *trigger* for a disclosure
+ * finding — measured tokens are — but still the most useful hint about where the
+ * cost sits, so it rides along as a fact for whoever has to shrink the surface.
+ */
 function inputSurfaceSize(op: Operation): number {
   let n = op.input.params.length;
   const body = op.input.body;
@@ -471,22 +475,109 @@ const operationIntentExamples: Detector = {
   },
 };
 
+/**
+ * Tool-surface cost against the disclosure budget, from the MEASURED figure.
+ *
+ * This used to key on a structural proxy — "more than 25 input properties" —
+ * which is neither necessary nor sufficient: a 40-field surface of terse enums
+ * can be cheaper than a 6-field one carrying three paragraphs of prose per field,
+ * and a property count is not a number an API owner can argue with. `toolTokens`
+ * is a fact about the generated surface (see `DisclosureCost`), exact and
+ * reproducible, so the finding can state what the surface costs and what it was
+ * allowed to cost.
+ *
+ * An operation that was never measured carries no `disclosureCost` and fires
+ * nothing: absence of measurement is not evidence of a problem, and a bundle
+ * compiled before disclosure measurement existed must not sprout findings the
+ * moment this detector ships. `toolSurfaceFitsBudget` already encodes that.
+ */
 const schemaDisclosure: Detector = {
   name: "schema-disclosure",
   detect(air) {
     const out: Deficiency[] = [];
     for (const op of air.operations) {
-      const size = inputSurfaceSize(op);
-      if (size > SCHEMA_DISCLOSURE_THRESHOLD) {
-        out.push(
-          makeDeficiency(
-            "schema_too_large_for_disclosure",
-            { kind: "operation", operationId: op.id },
-            `Operation '${op.id}' exposes ${size} input properties (> ${SCHEMA_DISCLOSURE_THRESHOLD}).`,
-            { size, threshold: SCHEMA_DISCLOSURE_THRESHOLD },
-          ),
-        );
-      }
+      const cost = op.disclosureCost;
+      if (!cost || toolSurfaceFitsBudget(op, DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS)) continue;
+      const overBy = cost.toolTokens - DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS;
+      out.push(
+        makeDeficiency(
+          "schema_too_large_for_disclosure",
+          { kind: "operation", operationId: op.id },
+          `Operation '${op.id}' costs ${cost.toolTokens} tokens to disclose, ` +
+            `${overBy} over the ${DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS}-token tool budget ` +
+            `(${inputSurfaceSize(op)} input properties, measured with ${cost.estimator}).`,
+          {
+            toolTokens: cost.toolTokens,
+            budgetTokens: DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS,
+            overBudgetTokens: overBy,
+            inputProperties: inputSurfaceSize(op),
+            estimator: cost.estimator,
+          },
+        ),
+      );
+    }
+    return out;
+  },
+};
+
+/**
+ * A measured response over budget with no way to ask for a smaller one.
+ *
+ * The two conditions are load-bearing together. Over budget alone is survivable
+ * when a page-size parameter exists — the serving surface solves for a page that
+ * fits (`safePageSize`) and the upstream never sends what nobody reads. Without
+ * that parameter the only remaining tool is truncation: the full response is
+ * fetched, paid for, and then mostly discarded, and the agent is handed a
+ * prefix it cannot distinguish from the whole.
+ *
+ * The measured whole response is the right figure here even for an operation
+ * that declares `pagination`. `responseFitsBudget` judges a paginated operation
+ * on the page it would serve, which presumes a page size can be *requested*;
+ * this detector's entire premise is that it cannot, so a derived page size would
+ * describe a request nobody can make.
+ *
+ * Deliberately NOT flagged: paginated-but-uncapped — a `pageSizeParam` with no
+ * `maxPageSize`. It is tempting (an uncapped ask can be silently clamped, and a
+ * clamped page reads as a complete one), but the agent can still ask for less,
+ * which is the thing this code exists to name. More decisively, AIR cannot tell
+ * "the upstream states no cap" from "the spec never mentioned one", so the
+ * detector would fire on every honestly-uncapped API and teach readers to ignore
+ * it. When the cap matters it is a *documentation* gap about pagination, which
+ * `undocumented_pagination` and its skill already own.
+ */
+const unpaginatedLargeResponse: Detector = {
+  name: "unpaginated-large-response",
+  detect(air) {
+    const out: Deficiency[] = [];
+    for (const op of air.operations) {
+      const cost = op.disclosureCost;
+      // Unmeasured, or measured only at the tool surface (`responseTokens: 0`):
+      // there is no response figure to judge, and inventing one is the guess
+      // Anvil exists to stop.
+      if (!cost || cost.responseTokens <= DEFAULT_RESPONSE_BUDGET_TOKENS) continue;
+      if (op.pagination?.pageSizeParam) continue;
+      const overBy = cost.responseTokens - DEFAULT_RESPONSE_BUDGET_TOKENS;
+      out.push(
+        makeDeficiency(
+          "unpaginated_large_response",
+          { kind: "operation", operationId: op.id },
+          `Operation '${op.id}' returns ${cost.responseTokens} tokens per call, ` +
+            `${overBy} over the ${DEFAULT_RESPONSE_BUDGET_TOKENS}-token response budget, ` +
+            `and exposes no page-size parameter — the agent cannot ask for less.`,
+          {
+            responseTokens: cost.responseTokens,
+            budgetTokens: DEFAULT_RESPONSE_BUDGET_TOKENS,
+            overBudgetTokens: overBy,
+            paginationStyle: op.pagination?.style,
+            hasPageSizeParam: false,
+            estimator: cost.estimator,
+            // The seed behind the figure: `responseTokens` is a prediction about
+            // data, not a fact about the contract, so the finding carries what
+            // makes it reproducible rather than presenting it as certain.
+            seed: cost.seed,
+          },
+        ),
+      );
     }
     return out;
   },
@@ -792,6 +883,7 @@ export const DETECTORS: readonly Detector[] = [
   capabilityRouting,
   operationIntentExamples,
   schemaDisclosure,
+  unpaginatedLargeResponse,
   uiProjectionContract,
   idempotencyUnproven,
   retryBasisUnproven,

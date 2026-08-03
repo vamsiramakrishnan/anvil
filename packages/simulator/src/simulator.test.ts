@@ -1,4 +1,9 @@
-import type { AirDocument } from "@anvil/air";
+import {
+  type AirDocument,
+  DEFAULT_RESPONSE_BUDGET_TOKENS,
+  type Operation,
+  safePageSize,
+} from "@anvil/air";
 import { approveOperations, compile, surfaceSignatureFor } from "@anvil/compiler";
 import { beforeEach, describe, expect, it } from "vitest";
 import { simulatorDefinitionFor } from "./define.js";
@@ -44,6 +49,38 @@ const build = () => {
 };
 const toolName = (opId: string) =>
   air.operations.find((o) => o.sourceRef.operationId === opId)?.mcp.toolName as string;
+const operation = (opId: string) =>
+  air.operations.find((o) => o.sourceRef.operationId === opId) as Operation;
+
+/**
+ * Give the list operation a measured per-item cost and whatever pagination
+ * facts a case is about. Everything a page size is derived from arrives this
+ * way — the base contract deliberately carries none of it, so the unmeasured
+ * path stays the default the other tests exercise.
+ */
+const measureList = (
+  responseItemTokens: number,
+  pagination: Partial<NonNullable<Operation["pagination"]>> = {},
+): void => {
+  const op = operation("listRefunds");
+  // `pageSizeParam` is part of the baseline because a budget can only be solved
+  // against a knob that exists: an operation that pages but exposes no size
+  // control gets whatever page the upstream chooses, and `safePageSize` reports
+  // `no_size_control` rather than computing a number nobody can request. A case
+  // that wants that path omits it explicitly.
+  op.pagination = { style: "cursor", cursorParam: "cursor", pageSizeParam: "limit", ...pagination };
+  op.disclosureCost = {
+    toolTokens: 120,
+    responseItemTokens,
+    responseTokens: responseItemTokens * 3,
+    charsPerToken: 4,
+    estimator: "o200k_base",
+    seed: 42,
+  };
+};
+
+const items = (result: unknown): unknown[] =>
+  (result as { output: { items: unknown[] } }).output.items;
 
 describe("hard invariant: simulator surface == generated MCP surface", () => {
   it("the simulator signature is identical to the contract's MCP signature", () => {
@@ -118,7 +155,7 @@ describe("contract-faithful behaviour", () => {
 
   it("paginates a list read with a stable cursor", () => {
     const { sim } = build();
-    // Seed more entities so there is a second page (PAGE_SIZE = 2, 3 fixtures).
+    // Seed more entities so there is a second page (fallback page size 2, 3 fixtures).
     const page1 = sim.invoke(toolName("listRefunds"));
     expect(page1.ok).toBe(true);
     if (!page1.ok) return;
@@ -127,6 +164,150 @@ describe("contract-faithful behaviour", () => {
     const page2 = sim.invoke(toolName("listRefunds"), {}, { cursor: page1.nextCursor });
     expect(page2.ok).toBe(true);
     if (page2.ok) expect((page2.output as { items: unknown[] }).items.length).toBe(1);
+  });
+});
+
+describe("budget-derived page size", () => {
+  const buildWith = (fixturesPerEntity: number, responseBudgetTokens?: number) => {
+    const def = simulatorDefinitionFor(air, {
+      seed: 42,
+      fixturesPerEntity,
+      ...(responseBudgetTokens !== undefined ? { responseBudgetTokens } : {}),
+    });
+    return new Simulator(air, def);
+  };
+
+  it("keeps the fixture fallback for a contract that carries no measurement", () => {
+    // The regression that matters most: most contracts have never been measured,
+    // and for those the simulator must behave exactly as it did before.
+    const { sim } = build();
+    const page = sim.invoke(toolName("listRefunds"));
+    expect(page.ok).toBe(true);
+    expect(items(page).length).toBe(2);
+  });
+
+  it("solves the page against the response budget once an item cost is measured", () => {
+    // 1600 tokens an item against the 8000-token default budget → five items.
+    measureList(1600);
+    const sim = buildWith(10);
+    const page = sim.invoke(toolName("listRefunds"));
+    expect(items(page).length).toBe(5);
+    expect(page.ok && page.nextCursor).toBe("5");
+  });
+
+  it("agrees with AIR's solver rather than reimplementing it", () => {
+    // The point of the whole change: the number the simulator serves is the
+    // number the shared helper returns, so compiler/runtime/certification cannot
+    // certify a page size the simulator never served.
+    measureList(900);
+    const sim = buildWith(20);
+    const expected = safePageSize(operation("listRefunds"), DEFAULT_RESPONSE_BUDGET_TOKENS);
+    expect(expected.basis).toBe("budget_derived");
+    expect(items(sim.invoke(toolName("listRefunds"))).length).toBe(expected.size);
+  });
+
+  it("clamps to the upstream's maximum page size", () => {
+    // The budget fits five; the upstream honours three. Asking for five would
+    // silently get three back, so the simulated page must be the honoured one.
+    measureList(1600, { maxPageSize: 3 });
+    const sim = buildWith(10);
+    expect(items(sim.invoke(toolName("listRefunds"))).length).toBe(3);
+    expect(safePageSize(operation("listRefunds")).basis).toBe("capped_by_upstream");
+  });
+
+  it("uses the upstream's stated default when nothing was measured", () => {
+    // Not an inference — a fact the contract states — so it beats the fixture
+    // constant even with no disclosure cost recorded.
+    const op = operation("listRefunds");
+    op.pagination = { style: "cursor", defaultPageSize: 4 };
+    const sim = buildWith(10);
+    expect(items(sim.invoke(toolName("listRefunds"))).length).toBe(4);
+  });
+
+  it("honours a definition-level response budget", () => {
+    // Half the budget, half the page: the definition is the single place the
+    // budget is stated, so a served page and a measured page cannot diverge.
+    measureList(1600);
+    const sim = buildWith(10, DEFAULT_RESPONSE_BUDGET_TOKENS / 2);
+    expect(items(sim.invoke(toolName("listRefunds"))).length).toBe(2);
+  });
+});
+
+describe("disclosure sample — the measurement seam", () => {
+  it("returns exactly what invoke returns, not a parallel construction", () => {
+    const a = build().sim;
+    const b = build().sim;
+    const sample = a.disclosureSample(toolName("listRefunds"));
+    const served = b.invoke(toolName("listRefunds"));
+    expect(sample).toBeDefined();
+    expect(served.ok && sample?.response).toEqual((served as { output: unknown }).output);
+    expect(sample?.item).toEqual(items(served)[0]);
+    expect(sample?.itemCount).toBe(2);
+  });
+
+  it("reports the page size and its basis", () => {
+    measureList(1600, { maxPageSize: 3 });
+    const sim = new Simulator(
+      air,
+      simulatorDefinitionFor(air, { seed: 42, fixturesPerEntity: 10 }),
+    );
+    const sample = sim.disclosureSample(toolName("listRefunds"));
+    expect(sample?.pageSize).toBe(3);
+    expect(sample?.pageSizeBasis).toBe("capped_by_upstream");
+    expect(sample?.itemCount).toBe(3);
+  });
+
+  it("is a pure function of (contract, seed), whatever preceded it", () => {
+    const { sim } = build();
+    const first = sim.disclosureSample(toolName("listRefunds"));
+    // Mutate the world between samples: a figure that moved with call history
+    // could not be certified, because two runs of the same bundle would differ.
+    sim.invoke(toolName("createRefund"), { amount: 5 }, { principalId: "admin", confirm: true });
+    sim.invoke(toolName("createRefund"), { amount: 9 }, { principalId: "admin", confirm: true });
+    expect(sim.disclosureSample(toolName("listRefunds"))).toEqual(first);
+  });
+
+  it("leaves the simulator at its seeded starting state", () => {
+    const { sim } = build();
+    const before = sim.invoke(toolName("listRefunds"));
+    sim.reset();
+    sim.disclosureSample(toolName("createRefund"));
+    expect(sim.invoke(toolName("listRefunds"))).toEqual(before);
+  });
+
+  it("re-seeds to the active seed, not the definition's", () => {
+    const { sim } = build();
+    sim.reset(7);
+    const sample = sim.disclosureSample(toolName("listRefunds"));
+    const seeded = new Simulator(air, simulatorDefinitionFor(air, { seed: 7 }));
+    expect(sample?.response).toEqual(
+      (seeded.invoke(toolName("listRefunds")) as { output: unknown }).output,
+    );
+  });
+
+  it("gets a scoped, confirm-gated mutation past its gates", () => {
+    // Sampling measures the response, not the safety gates; arriving without a
+    // principal would measure a refusal payload as the operation's cost.
+    const { sim } = build();
+    const sample = sim.disclosureSample(toolName("createRefund"));
+    expect(sample).toBeDefined();
+    expect(sample?.itemCount).toBe(1);
+    expect(sample?.item).toMatchObject({ status: "active" });
+  });
+
+  it("declines an unknown tool rather than inventing a response", () => {
+    const { sim } = build();
+    expect(sim.disclosureSample("no_such_tool")).toBeUndefined();
+  });
+
+  it("declines when no principal can satisfy the operation's scopes", () => {
+    // Unmeasurable is a legitimate outcome; a fabricated figure is not.
+    const def = simulatorDefinitionFor(air, { seed: 42 });
+    const sim = new Simulator(air, {
+      ...def,
+      authProfiles: def.authProfiles.filter((p) => p.id === "limited"),
+    });
+    expect(sim.disclosureSample(toolName("createRefund"))).toBeUndefined();
   });
 });
 

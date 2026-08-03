@@ -60,6 +60,15 @@ export function charsForTokenBudget(tokens: number, charsPerToken?: number): num
 /** Why a page size came out the way it did — surfaced so a report can explain itself. */
 export type PageSizeBasis =
   | "not_paginated"
+  /**
+   * The operation pages, but exposes no parameter to size a page with. Distinct
+   * from `not_paginated` because the difference decides what a caller can do:
+   * a cursor with no size knob can be walked but not narrowed, so the page you
+   * get is the page the upstream chose. Solving a budget against it would name
+   * a page size no caller can actually request — a number that reads as a
+   * certified guarantee while no serving path can honor it.
+   */
+  | "no_size_control"
   | "unmeasured"
   | "budget_derived"
   | "capped_by_upstream"
@@ -96,6 +105,26 @@ export function safePageSize(
 
   const itemTokens = itemTokensOverride ?? operation.disclosureCost?.responseItemTokens ?? 0;
   const max = pagination.maxPageSize;
+
+  // Two different facts hide behind "how big is a page": what the upstream will
+  // serve, and whether the caller can influence it. Without a size parameter
+  // only the first is in play — the page is whatever the upstream decides, and
+  // solving a budget here would compute a number with no knob to put it in,
+  // certifying a page that no serving path can request. So report the bound when
+  // the contract states one, and otherwise admit we cannot say.
+  if (!pagination.pageSizeParam) {
+    if (max !== undefined) {
+      return {
+        size: max,
+        basis: "capped_by_upstream",
+        ...(itemTokens > 0 ? { projectedTokens: max * itemTokens } : {}),
+      };
+    }
+    if (pagination.defaultPageSize !== undefined) {
+      return { size: pagination.defaultPageSize, basis: "upstream_default" };
+    }
+    return { basis: "no_size_control" };
+  }
 
   // Nothing measured: we know the operation pages, but not what a page costs.
   // Report the upstream's own default if it stated one — that is a fact about
@@ -142,8 +171,10 @@ export function responseFitsBudget(
   if (operation.pagination) {
     const page = safePageSize(operation, budgetTokens);
     if (page.projectedTokens !== undefined) return page.projectedTokens <= budgetTokens;
-    // Sized by the upstream's default or not sized at all — fall back to the
-    // measured whole response, which is the only figure we actually have.
+    // No projection available — the operation exposes no size control, was never
+    // measured, or is sized by an upstream default we cannot cost. In every one
+    // of those cases the caller receives whatever the upstream sends, so the
+    // measured whole response is not a fallback but the honest figure.
   }
   return cost.responseTokens === 0 || cost.responseTokens <= budgetTokens;
 }

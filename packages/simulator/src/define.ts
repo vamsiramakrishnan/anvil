@@ -18,6 +18,8 @@ export interface DefineOptions {
   capabilityId?: string;
   seed?: number;
   fixturesPerEntity?: number;
+  /** Override the per-response context budget pages are sized against; AIR's default otherwise. */
+  responseBudgetTokens?: number;
 }
 
 /** The served operations: approved, and in the capability when one is named. */
@@ -83,6 +85,12 @@ export function simulatorDefinitionFor(
     capabilityId,
     surfaceSignatureDigest,
     seed: options.seed ?? 1,
+    // Only present when asked for: an absent key and an explicit default are
+    // different statements, and a definition that always carried a budget would
+    // pin a number the caller never chose into anything that hashes it.
+    ...(options.responseBudgetTokens !== undefined
+      ? { responseBudgetTokens: options.responseBudgetTokens }
+      : {}),
     entities,
     machines,
     fixtures,

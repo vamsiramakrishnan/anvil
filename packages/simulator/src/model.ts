@@ -64,6 +64,15 @@ export const SimulatorDefinition = z.object({
   /** The surface this simulator must match — identical to the generated MCP's. */
   surfaceSignatureDigest: z.string(),
   seed: z.number().int(),
+  /**
+   * The per-response context budget a simulated page is sized against. Lives on
+   * the definition rather than on a call so the served page and the measured
+   * page are the same page by construction — a budget passed per-call would let
+   * a measurement describe a page the simulator never serves, which is the
+   * whole failure mode measuring against a simulator is supposed to close.
+   * Absent means AIR's default.
+   */
+  responseBudgetTokens: z.number().int().positive().optional(),
   entities: z.array(EntityDefinition).default([]),
   machines: z.array(StateMachineDefinition).default([]),
   fixtures: z.array(FixtureSet).default([]),
