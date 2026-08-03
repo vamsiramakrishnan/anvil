@@ -36,10 +36,18 @@ function specWithOps(count: number, description = ""): string {
   return `openapi: 3.0.0\ninfo: { title: things, version: 1.0.0 }\npaths:\n${paths}\n`;
 }
 
-/** Stamp a chosen tool-surface cost on the first `measured` operations. */
+/**
+ * Stamp a chosen tool-surface cost on the first `measured` operations, and clear
+ * it from the rest. Clearing is the load-bearing half: `compile` measures every
+ * operation it produces, so a partial-measurement case has to *remove* the real
+ * figures it does not want rather than assume they were never there.
+ */
 function stampCost(air: AirDocument, toolTokens: number, measured = air.operations.length): void {
   air.operations.forEach((operation, index) => {
-    if (index >= measured) return;
+    if (index >= measured) {
+      operation.disclosureCost = undefined;
+      return;
+    }
     operation.disclosureCost = {
       toolTokens,
       responseTokens: 0,
@@ -48,6 +56,15 @@ function stampCost(air: AirDocument, toolTokens: number, measured = air.operatio
       estimator: TOKEN_ESTIMATOR_ID,
     };
   });
+}
+
+/**
+ * Strip every measurement, standing in for a document that predates disclosure
+ * measurement — a bundle compiled by an older Anvil, or AIR loaded from disk.
+ * Those documents still have to flow through review untouched.
+ */
+function clearCosts(air: AirDocument): void {
+  for (const operation of air.operations) operation.disclosureCost = undefined;
 }
 
 function onlyCapability(air: AirDocument): string {
@@ -113,8 +130,10 @@ describe("unmeasured capabilities behave exactly as before", () => {
   it("never newly blocks a capability nobody has measured", async () => {
     // 15 operations, none measured: absence of evidence is not evidence of a
     // problem, and approval must not depend on whether a measurement pass
-    // happened to run over this document.
+    // happened to run over this document. `compile` measures what it produces,
+    // so the unmeasured document under test is one that predates it.
     const air = await compile({ spec: specWithOps(15), serviceId: "things" });
+    clearCosts(air);
     const id = onlyCapability(air);
     const check = capabilityDisclosureBudget(air, id);
     expect(check.verdict).toBe("ok");

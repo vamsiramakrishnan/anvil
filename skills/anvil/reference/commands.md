@@ -675,7 +675,7 @@ Options:
 
 Drive the full safety matrix through the simulator and report coverage.
 
-Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the safety dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control and proving the surface signature detects it. Reports per-dimension coverage and mutants killed. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.
+Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination, and disclosure cost against the agent's context budget) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control and proving the surface signature detects it. Reports per-dimension coverage and mutants killed. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.
 
 Options:
 - `--seed <n>` — deterministic simulator seed

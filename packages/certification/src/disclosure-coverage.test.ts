@@ -59,6 +59,14 @@ beforeEach(async () => {
     if (op.sourceRef.operationId === "listRefunds") {
       op.effect.action = "list";
     }
+    // `compile` measures everything it produces, so start each case from an
+    // explicitly unmeasured document and let the cases that want a measurement
+    // call `measure()`. Two reasons, and the second is the substantive one:
+    // the unmeasured path has to stay reachable in tests because bundles built
+    // before this existed are unmeasured, and the edits just above rewrite auth,
+    // idempotency, confirmation and action — so any cost measured at compile
+    // time describes a tool surface these fixtures no longer have.
+    op.disclosureCost = undefined;
   }
 });
 

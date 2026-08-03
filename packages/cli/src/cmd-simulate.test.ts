@@ -55,6 +55,10 @@ describe("anvil simulate", () => {
       "idempotency",
       "fault",
       "pagination",
+      // Context cost is a certified dimension alongside the safety ones. It
+      // rolls up even with zero cells, so an unmeasured bundle reads as
+      // "nothing measured" rather than silently omitting the dimension.
+      "disclosure",
     ]);
   });
 

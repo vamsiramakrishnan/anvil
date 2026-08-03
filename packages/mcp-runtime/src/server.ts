@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
 import {
   type AirDocument,
+  DEFAULT_RESPONSE_BUDGET_TOKENS,
+  estimateTokens,
   mcpToolAnnotations,
   mcpToolDescription,
   type Operation,
@@ -9,7 +12,14 @@ import {
 import { type ExecuteContext, execute } from "@anvil/runtime";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { truncateResultText } from "./truncation.js";
+import { derivePageSize, detectSilentCap, silentCapNotice } from "./page-budget.js";
+import {
+  applyProjection,
+  projectionShape,
+  takeProjectionArg,
+  validateProjection,
+} from "./projection.js";
+import { type ResultBudget, truncateResultText } from "./truncation.js";
 import { MCP_RESERVED, operationZodShape, reservedSafetyShape } from "./zodshape.js";
 
 /**
@@ -47,9 +57,23 @@ export interface McpBuildOptions {
    */
   resources?: ServedResource[];
   /**
-   * Character budget for serialized results (default 50_000; 0 disables
-   * truncation). Results exceeding this budget are truncated at the boundary
-   * without splitting UTF-16 surrogate pairs, with a marker appended.
+   * Token budget for one served result (default `DEFAULT_RESPONSE_BUDGET_TOKENS`;
+   * 0 disables both the truncation failsafe and budget-derived page sizing).
+   *
+   * This is the number the whole disclosure story is denominated in: it sizes
+   * the page requested upstream (the control path) and bounds the payload that
+   * reaches the agent if that page still came back too large (the failure path).
+   * Tokens rather than characters because tokens are what the agent spends —
+   * see `truncation.ts` for why the conversion is an estimate and says so.
+   */
+  resultTokenBudget?: number;
+  /**
+   * @deprecated Use `resultTokenBudget`. Raw UTF-16 character budget for
+   * serialized results (0 disables truncation). Still honored verbatim — the cut
+   * lands exactly where it always did — but a character budget cannot describe
+   * what a response costs an agent, and it is converted to a token figure for
+   * page sizing anyway. When both are set this one wins, since a caller still
+   * speaking in characters has calibrated a boundary we should not move.
    */
   resultCharacterBudget?: number;
   /**
@@ -120,6 +144,12 @@ function buildWorkflowInputShape(
     .optional()
     .describe("Preview the wire request without executing it (no upstream call).");
 
+  // …and the projection view control. A composite's final payload is the last
+  // step's response and is exactly as expensive; the caller needs the same knob
+  // here that it has on a single operation. It applies only to that final
+  // payload — intermediate step outputs are bindings, not disclosure.
+  Object.assign(shape, projectionShape());
+
   if (!anyStepRequiresConfirmation) return { shape, confirmKey: undefined };
 
   if (firstStepOp.confirmation.required) {
@@ -162,7 +192,10 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         // Operation input + the reserved safety controls (anvil_dry_run /
         // anvil_confirm / anvil_idempotency_key), so a client — the CLI over its
         // MCP transport, or any direct MCP caller — can dry-run and confirm.
-        inputSchema: { ...operationZodShape(op), ...reservedSafetyShape(op) },
+        // Plus the reserved view control (anvil_projection): the caller's only
+        // way to lower what a response costs it, as opposed to discovering after
+        // the fact that it cost too much.
+        inputSchema: { ...operationZodShape(op), ...reservedSafetyShape(op), ...projectionShape() },
         // Shared with the Agent Registry toolspec (@anvil/air) — no drift.
         annotations: mcpToolAnnotations(op),
         _meta: {
@@ -186,30 +219,70 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         const dryRun = args[MCP_RESERVED.dryRun] === true;
         const input = { ...args };
         delete input[MCP_RESERVED.dryRun];
+        // Peel the view control too. Reserved controls never travel upstream.
+        const projection = takeProjectionArg(input);
+        const { budget, tokens: budgetTokens } = resolveResultBudget(options, op);
+
+        // Parse-check the projection BEFORE the upstream call. A malformed
+        // expression is the caller's mistake, and there is no reason to make an
+        // upstream request — possibly a rate-limited or metered one — only to
+        // discard its result. The trace id is minted here so the refusal carries
+        // the same envelope shape as any executor failure.
+        if (projection !== undefined) {
+          const invalid = validateProjectionArg(projection, op);
+          if (invalid) return invalid;
+        }
+
+        // Ask upstream for a page that fits, rather than cutting one that does
+        // not. Injects nothing unless the contract names the size knob and the
+        // operation was measured — see page-budget.ts for each refusal.
+        const page = derivePageSize(op, input, budgetTokens);
+        if (page) input[page.key] = page.size;
+
         const result = await execute(op, { input, dryRun }, options.contextFor(op));
-        const charBudget = options.resultCharacterBudget ?? 50_000;
         if (result.outcome === "success") {
-          const data = result.data ?? null;
+          const raw = result.data ?? null;
+
+          // ORDERING IS LOAD-BEARING: the projection is applied here, before the
+          // payload is serialized and measured against the budget. Applying it
+          // after truncation would be pointless — the tokens would already have
+          // been counted, and the caller would pay full context cost for a
+          // narrowed view. Failure returns a validation_error and never the
+          // unprojected payload.
+          let data = raw;
+          if (projection !== undefined) {
+            const projected = applyProjection(raw, projection, op, `trace_${randomUUID()}`);
+            if (!projected.ok) return errorResult(projected.envelope, op, budget);
+            data = projected.data ?? null;
+          }
+
           let text = JSON.stringify(data, null, 2);
-          text = truncateResultText(text, op, charBudget);
+          text = truncateResultText(text, op, budget);
+
+          // Measured on the raw response: a projection can drop the very fields
+          // (items, continuation marker) the cap check reads, and the cap is a
+          // fact about the upstream page, not about the caller's view of it.
+          // Appended after truncation so the warning cannot itself be cut off.
+          const cap = detectSilentCap(op, raw);
+          if (cap) text = `${text}\n\n${silentCapNotice(cap)}`;
+
           return {
             content: [{ type: "text" as const, text }],
             structuredContent: isRecord(data) ? data : { result: data },
           };
         }
         if (result.outcome === "dry_run") {
+          // The plan is a preview of the wire request, not response data, so a
+          // response projection has nothing to say about it. It does show the
+          // injected page size, which is the point: a caller can see what the
+          // budget decided before spending anything.
           let text = JSON.stringify(result.plan, null, 2);
-          text = truncateResultText(text, op, charBudget);
+          text = truncateResultText(text, op, budget);
           return {
             content: [{ type: "text" as const, text }],
           };
         }
-        let text = JSON.stringify(result.envelope, null, 2);
-        text = truncateResultText(text, op, charBudget);
-        return {
-          content: [{ type: "text" as const, text }],
-          isError: true,
-        };
+        return errorResult(result.envelope, op, budget);
       },
     );
   }
@@ -308,6 +381,16 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         const dryRun = args[MCP_RESERVED.dryRun] === true;
         const input = { ...args };
         delete input[MCP_RESERVED.dryRun];
+        const projection = takeProjectionArg(input);
+        // Checked before step 1 runs: a composite may mutate, and refusing a
+        // malformed expression after the writes have landed would be a much
+        // worse deal than refusing it before any of them do. Attributed to the
+        // last step, whose response is the one the expression will address.
+        const projectionOp = stepOps[stepOps.length - 1] ?? firstStepOp;
+        if (projection !== undefined) {
+          const invalid = validateProjectionArg(projection, projectionOp);
+          if (invalid) return invalid;
+        }
 
         const stepResults: Array<{
           operationId: string;
@@ -374,7 +457,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
               operationId: step.operationId,
               success: false,
             });
-            const charBudget = options.resultCharacterBudget ?? 50_000;
+            const { budget } = resolveResultBudget(options, stepOp);
             let text = JSON.stringify(
               {
                 error: "workflow step failed",
@@ -390,14 +473,14 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
               null,
               2,
             );
-            text = truncateResultText(text, stepOp, charBudget);
+            text = truncateResultText(text, stepOp, budget);
             return {
               content: [{ type: "text" as const, text }],
               isError: true,
             };
           } else if (result.outcome === "dry_run") {
             // For dry-run, return the plan
-            const charBudget = options.resultCharacterBudget ?? 50_000;
+            const { budget } = resolveResultBudget(options, stepOp);
             let text = JSON.stringify(
               {
                 dryRun: true,
@@ -409,7 +492,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
               null,
               2,
             );
-            text = truncateResultText(text, stepOp, charBudget);
+            text = truncateResultText(text, stepOp, budget);
             return {
               content: [{ type: "text" as const, text }],
             };
@@ -441,10 +524,24 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
             isError: true,
           };
         }
-        const finalData = lastStepResult.data ?? null;
-        const charBudget = options.resultCharacterBudget ?? 50_000;
+        const rawFinal = lastStepResult.data ?? null;
+        const { budget } = resolveResultBudget(options, lastStepOp);
+
+        // Same ordering rule as a single operation: project before measuring.
+        let finalData = rawFinal;
+        if (projection !== undefined) {
+          const projected = applyProjection(
+            rawFinal,
+            projection,
+            lastStepOp,
+            `trace_${randomUUID()}`,
+          );
+          if (!projected.ok) return errorResult(projected.envelope, lastStepOp, budget);
+          finalData = projected.data ?? null;
+        }
+
         let text = JSON.stringify(finalData, null, 2);
-        text = truncateResultText(text, lastStepOp, charBudget);
+        text = truncateResultText(text, lastStepOp, budget);
 
         // Append trace as structured content
         const trace = stepResults
@@ -485,4 +582,59 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** The one shape every failure takes on the way out: normalized envelope, truncated, flagged. */
+function errorResult(
+  envelope: unknown,
+  op: Operation,
+  budget: ResultBudget,
+): { content: Array<{ type: "text"; text: string }>; isError: true } {
+  const text = truncateResultText(JSON.stringify(envelope, null, 2), op, budget);
+  return { content: [{ type: "text" as const, text }], isError: true };
+}
+
+/**
+ * Refuse a malformed projection before anything is executed. Returns the
+ * ready-to-serve error result, or undefined when the expression is usable.
+ */
+function validateProjectionArg(
+  expression: string,
+  op: Operation,
+): { content: Array<{ type: "text"; text: string }>; isError: true } | undefined {
+  const invalid = validateProjection(expression, op, `trace_${randomUUID()}`);
+  if (!invalid) return undefined;
+  // No budget conversion needed: a validation envelope is a few hundred
+  // characters by construction, and truncating an error message that explains
+  // how to fix the request would be self-defeating.
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(invalid.envelope, null, 2) }],
+    isError: true,
+  };
+}
+
+/**
+ * Collapse the two budget options onto the pair the serving path needs: the
+ * budget the truncator cuts against, and the token figure the page solver uses.
+ *
+ * The legacy character budget still wins when set — a caller who calibrated a
+ * character boundary should keep exactly that boundary — but it is converted to
+ * tokens for page sizing, because `safePageSize` reasons in tokens and there is
+ * no honest way to express a character budget to it otherwise. When truncation
+ * is disabled (0), page sizing is disabled with it: a caller who declared no
+ * budget should not then find one applied to the page it fetches.
+ */
+function resolveResultBudget(
+  options: McpBuildOptions,
+  op: Operation,
+): { budget: ResultBudget; tokens: number } {
+  if (options.resultCharacterBudget !== undefined) {
+    const chars = options.resultCharacterBudget;
+    return {
+      budget: { chars },
+      tokens: chars === 0 ? 0 : estimateTokens(chars, op.disclosureCost?.charsPerToken),
+    };
+  }
+  const tokens = options.resultTokenBudget ?? DEFAULT_RESPONSE_BUDGET_TOKENS;
+  return { budget: { tokens }, tokens };
 }
