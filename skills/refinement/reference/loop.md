@@ -26,7 +26,7 @@ it, and whether that skill is implemented today.
 | code | category | severity | skill | implemented |
 | --- | --- | --- | --- | --- |
 | `required_field_no_example` | coverage | low | generate-examples | yes |
-| `missing_capability_description` | documentation | low | describe-capability | — |
+| `missing_capability_description` | documentation | low | describe-capability | yes |
 | `missing_field_description` | documentation | medium | describe-field | yes |
 | `missing_operation_description` | documentation | medium | describe-operation | yes |
 | `missing_service_description` | documentation | low | describe-service | — |
@@ -43,11 +43,12 @@ it, and whether that skill is implemented today.
 | `retry_basis_unproven` | safety | high | classify-idempotency | yes |
 | `capability_missing_routing_phrases` | usability | low | author-routing-phrases | yes |
 | `cross_surface_disagreement` | usability | high | align-artifacts | — |
-| `indistinct_operation_descriptions` | usability | medium | disambiguate-operations | — |
+| `indistinct_operation_descriptions` | usability | medium | disambiguate-operations | yes |
 | `operation_lacks_intent_examples` | usability | low | author-intent-examples | yes |
-| `schema_too_large_for_disclosure` | usability | info | reduce-schema-disclosure | — |
+| `schema_too_large_for_disclosure` | usability | medium | reduce-schema-disclosure | yes |
 | `ui_projection_contract` | usability | high | investigate-ui-projection | yes |
-| `weak_operation_name` | usability | low | rename-operation | — |
+| `unpaginated_large_response` | usability | medium | constrain-response-size | — |
+| `weak_operation_name` | usability | low | rename-operation | yes |
 
 ## A refinement pack
 `anvil refine run --out <dir>` writes a reviewable, auditable record — one facet per file:

@@ -24,6 +24,7 @@
   "dependencies": {
     "@anvil/air": "workspace:*",
     "@anvil/runtime": "workspace:*",
+    "@jmespath-community/jmespath": "^1.3.0",
     "@modelcontextprotocol/sdk": "^1.22.0",
     "zod": "^4.4.3"
   },

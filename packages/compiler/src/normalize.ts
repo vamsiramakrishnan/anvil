@@ -11,12 +11,15 @@ import type {
   ParamLocation,
   RequestBody,
 } from "@anvil/air";
-import { snakeCase } from "@anvil/air";
+import { resolveAsyncContract, snakeCase } from "@anvil/air";
+import type { AsyncResponseSignals, LongRunningDetection } from "./classify.js";
 import {
   classifyArchetype,
+  classifyAsyncContract,
   classifyAuth,
   classifyConfirmation,
   classifyEffect,
+  classifyLongRunning,
   classifyPagination,
   classifyRetry,
 } from "./classify.js";
@@ -48,7 +51,19 @@ interface RawOperation {
   };
   responses?: Record<
     string,
-    { description?: string; content?: Record<string, { schema?: JsonSchema }> }
+    {
+      description?: string;
+      content?: Record<string, { schema?: JsonSchema }>;
+      /**
+       * Declared response headers. AIR keeps none of these, yet they carry the
+       * clearest declared evidence that a call finishes after it returns
+       * (`Operation-Location`, `Location` on a 202), so they are read here and
+       * handed to the classifier. OAS3 nests the value under `schema`; Swagger
+       * 2.0 puts `type`/`default` directly on the header object, so both
+       * spellings are accepted.
+       */
+      headers?: Record<string, { schema?: JsonSchema; default?: unknown }>;
+    }
   >;
   security?: Array<Record<string, string[]>>;
   /** Vendor extension: the spec author declares a repeat call is a no-op. */
@@ -197,6 +212,106 @@ function errorSpecs(responses?: RawOperation["responses"]): ErrorSpec[] {
     out.push({ code, upstream: { httpStatus: Number(status) }, message: res.description });
   }
   return out;
+}
+
+/** A positive integer, in either of the two places a header can declare one. */
+function declaredPositiveInteger(header: {
+  schema?: JsonSchema;
+  default?: unknown;
+}): number | undefined {
+  // A schema `default` is the contract stating the value the server uses; a
+  // schema `example` is illustrative and is deliberately ignored, because
+  // `AsyncContract.pollIntervalSeconds` may only ever hold a number the service
+  // actually stated — a guessed interval is a self-inflicted rate limit or a
+  // stampede, never a neutral default.
+  const value = header.schema?.default ?? header.default;
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * Quote what an operation's declared responses say about asynchrony, for
+ * `classifyLongRunning` to judge. Extraction only: no decision is taken here, so
+ * the "is this long-running" rule lives in exactly one place (classify.ts) and
+ * this function stays a faithful reading of the document.
+ */
+function asyncResponseSignals(responses: RawOperation["responses"]): AsyncResponseSignals {
+  const headersByStatus: Record<string, string[]> = {};
+  let retryAfterDefaultSeconds: number | undefined;
+  for (const [status, response] of Object.entries(responses ?? {})) {
+    const headers = response.headers;
+    if (!headers) continue;
+    // Header names are case-insensitive on the wire and specs spell them every
+    // way ("Operation-Location", "operation-location", "Retry-After"), so match
+    // on the same snake_cased form the rest of the compiler compares names in.
+    headersByStatus[status] = Object.keys(headers).map((name) => snakeCase(name));
+    if (status !== "202") continue;
+    for (const [name, header] of Object.entries(headers)) {
+      if (snakeCase(name) === "retry_after") {
+        retryAfterDefaultSeconds = declaredPositiveInteger(header);
+      }
+    }
+  }
+  return {
+    headersByStatus,
+    statusCodes: Object.keys(responses ?? {}),
+    ...(retryAfterDefaultSeconds !== undefined ? { retryAfterDefaultSeconds } : {}),
+  };
+}
+
+/**
+ * Second pass: link each long-running operation to the operation an agent polls.
+ *
+ * Detection (`classifyLongRunning`) reads only an operation's own responses, so
+ * it runs inline. The contract cannot: its status operation may be declared
+ * later in the document than the call that starts the job — `POST /jobs` above
+ * `GET /jobs/{jobId}` is the common ordering, but `paths` order is arbitrary and
+ * a spec may put either first. Resolving against the finished operation array
+ * makes the outcome identical whichever way the document is written, which is
+ * the determinism guarantee the rest of the compiler depends on.
+ *
+ * Every attached contract is self-checked through `resolveAsyncContract` — the
+ * same function certification and the serving path use — so the compiler can
+ * never emit a contract those layers would reject. The single exception is
+ * `status_operation_not_approved`: approval is a *later* lifecycle stage
+ * (`approveOperations` runs after normalization, from the manifest), so at this
+ * point nothing in the document is approved yet and treating that as fatal would
+ * delete every contract ever built. It is safe to defer precisely because it is
+ * re-checked: consumers re-resolve at serve time and drop the contract if the
+ * status operation is still unapproved, so the agent is never pointed at a tool
+ * it cannot call. Every other issue is structural and final here.
+ */
+function attachAsyncContracts(
+  operations: Operation[],
+  detections: ReadonlyMap<Operation, LongRunningDetection>,
+): void {
+  if (detections.size === 0) return;
+  const byId = new Map(operations.map((op) => [op.id, op]));
+  for (const op of operations) {
+    const detection = detections.get(op);
+    if (!detection) continue;
+    const contract = classifyAsyncContract(op, operations, detection.pollIntervalSeconds);
+    if (!contract) continue;
+    // Resolve a probe rather than the operation itself, so a contract that fails
+    // the check is never momentarily attached to a live operation.
+    const resolution = resolveAsyncContract({ ...op, asyncContract: contract }, byId);
+    if (!resolution.ok && resolution.issue !== "status_operation_not_approved") continue;
+    op.asyncContract = contract;
+    op.evidence.claims.push({
+      subject: op.id,
+      predicate: "asyncContract",
+      value: contract.statusOperationId,
+      source: "inferred",
+      sourceRef: `${op.sourceRef.method?.toUpperCase() ?? ""} ${op.sourceRef.path ?? ""}`.trim(),
+      method: "async_contract_linkage",
+      note:
+        `polls '${contract.statusOperationId}' with '${contract.statusJobIdParam}' from ` +
+        `'${contract.jobIdField}'; terminal states declared: ${contract.terminalStates.join(", ")}`,
+      // Structure-derived, but every coordinate is a declared fact of the
+      // document (a named field, a named parameter, a declared enum) — higher
+      // than a naming heuristic, below anything the service itself demonstrated.
+      confidence: 0.6,
+    });
+  }
 }
 
 interface AuthResolution {
@@ -476,6 +591,9 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
   const namedSchemas = doc.components?.schemas ?? {};
   const operations: Operation[] = [];
   const diagnostics: Diagnostic[] = [];
+  // Long-running detections carried to the second pass that links each one to
+  // the operation an agent polls.
+  const asyncDetections = new Map<Operation, LongRunningDetection>();
 
   for (const [path, pathItem] of Object.entries(paths)) {
     // Path-item-level parameters apply to every method below (this is how
@@ -529,9 +647,14 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
       if (declaredIdempotent && idempotency.mode === "none") idempotency.mode = "natural";
       const retries = classifyRetry(effect, idempotency);
       const confirmation = classifyConfirmation(effect, idempotency);
-      // No spec dialect sets long-running yet; keep the operation field and the
-      // archetype input tied to one value so they can never disagree.
-      const longRunning = false;
+      // Whether the call finishes after it returns, from the operation's OWN
+      // declared responses (a 202, an Operation-Location header, a Location on
+      // the 202). Local by construction, so it is decided here and the operation
+      // field and the archetype input stay tied to one value, as before — they
+      // can never disagree. The *contract* for finishing the job needs the whole
+      // document and is linked in a second pass (`attachAsyncContracts`).
+      const longRunningDetection = classifyLongRunning(effect, asyncResponseSignals(raw.responses));
+      const longRunning = longRunningDetection !== undefined;
 
       const params: Param[] = [];
       for (const rp of mergeParams(pathParams, raw.parameters ?? [])) {
@@ -572,7 +695,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         });
       }
 
-      operations.push({
+      const operation: Operation = {
         id,
         canonicalName: names.canonicalName,
         displayName: names.displayName,
@@ -633,6 +756,23 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
                   note: "effect/idempotency inferred from HTTP method",
                   confidence: 0.5,
                 },
+            ...(longRunningDetection
+              ? [
+                  {
+                    subject: id,
+                    predicate: "longRunning",
+                    value: true,
+                    source: "spec" as const,
+                    sourceRef: `${method.toUpperCase()} ${path} responses`,
+                    method: "declared",
+                    note: `the document ${longRunningDetection.signals.join("; ")}`,
+                    // Declared status codes and response headers are facts of
+                    // the contract, so this ranks with `x-idempotent` rather
+                    // than with the method heuristics above.
+                    confidence: 0.8,
+                  },
+                ]
+              : []),
             ...(declaredIdempotent
               ? [
                   {
@@ -658,9 +798,17 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
             },
           ],
         },
-      });
+      };
+      operations.push(operation);
+      // Keyed by the operation OBJECT, not its id: ids are not yet unique at
+      // this point (the collision pass runs later, in compile), and keying by a
+      // duplicated id would hand one operation's async detection to its twin —
+      // attaching a poll contract to a synchronous call.
+      if (longRunningDetection) asyncDetections.set(operation, longRunningDetection);
     }
   }
+
+  attachAsyncContracts(operations, asyncDetections);
 
   return { operations, diagnostics };
 }

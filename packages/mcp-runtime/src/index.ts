@@ -7,5 +7,9 @@
  */
 
 export * from "./inbound-auth.js";
+export * from "./lane.js";
+export * from "./page-budget.js";
+export * from "./projection.js";
 export * from "./server.js";
+export * from "./truncation.js";
 export * from "./zodshape.js";

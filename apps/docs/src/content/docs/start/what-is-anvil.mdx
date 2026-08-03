@@ -8,28 +8,102 @@ sidebar:
 import WhichSurfaceDiagram from '../../../components/diagrams/WhichSurfaceDiagram.astro';
 import LifecycleDiagram from '../../../components/diagrams/LifecycleDiagram.astro';
 
-Anvil is a compiler for agent tools. Point it at an API spec you already have,
-and it produces four things that stay in sync: a **CLI**, an **MCP server**, an
-agent **skill**, and enforcement **hooks**. All four are built from one shared
-model — AIR, the Anvil Intermediate Representation — so they can't disagree
-about what an operation does or whether it's safe to run.
+You have an API. You want an agent to use it without breaking anything.
 
-## The problem it solves
+Wire the two together by hand and the agent has to guess: what does this
+endpoint *do*, is it safe to retry, will it charge a card twice, does someone
+need to approve it? Those answers live in a person's head, not in the tool. And
+when the same API becomes a CLI, an MCP server, and a skill, the three copies
+drift apart as the API changes — so the agent guesses differently on each.
 
-Wire an agent to an API by hand and the agent has to guess: what does this
-endpoint *do*, is it safe to retry, will it charge a card twice, does it need
-confirmation? Those answers live in a person's head, not in the tool. And when
-the same API becomes a CLI, an MCP server, and a skill, the three copies drift
-apart as the API changes — so the agent guesses differently on each.
+Anvil removes the guessing. Point it at a spec you already have and it produces
+four things that agree with each other, then keeps them agreeing.
 
-Anvil removes the guessing. It builds one model of every operation — what it
-does (read or mutation), how risky it is, whether it can be undone, whether it's
-safe to repeat, and whether it needs confirmation — and generates every tool
-from that one model. The result: the agent stops guessing.
+## What you get
+
+- **CLI** — a typed command per approved operation. People and CI script this.
+- **MCP server** — the same operations as MCP tools, with risk visible in tool
+  metadata. This is what an agent calls.
+- **Skill** — a progressive-disclosure operating manual an agent reads before
+  it calls anything.
+- **Enforcement hooks** — installable Antigravity, Claude Code, and Codex hooks
+  that refuse unsafe calls before the model burns a turn.
+
+<WhichSurfaceDiagram />
+
+Which one you use depends only on who's calling. What matters is that all four
+say the same thing about every operation — what it does (read or mutation), how
+risky it is, whether it can be undone, whether it's safe to repeat, and whether
+it needs confirmation.
+
+They can't disagree because none of them is hand-written. Anvil compiles your
+spec into one canonical model — AIR, the Anvil Intermediate Representation —
+and every surface is a generated view of it. The practical consequence for you:
+**never edit generated code.** To change what a tool does, change the model and
+recompile, and all four move together.
+
+## Your agent doesn't drown in your API
+
+A large service compiles to hundreds of tools. An agent that has to read the
+whole list before it finds the one call it needs has spent its context on
+routing rather than on your task.
+
+Anvil measures exactly what each tool costs an agent to read. When a flat
+listing won't fit the context budget, the MCP server serves **capability lanes**
+instead — the agent opens the one lane it needs. On a 100-operation service
+that's 7.4× fewer tokens to reach an operation (29,300 → 3,956 median), for one
+extra round trip. It's automatic, and it declines to engage when it wouldn't
+help, so a small service still gets a plain flat list.
+
+Responses are handled the same way: page sizes are solved against a token
+budget rather than fetched and then truncated, and an agent can narrow a
+response with a JMESPath projection.
+
+```bash
+anvil disclosure <dir>          # where the context budget actually goes
+anvil disclosure <dir> --check  # gate a pipeline on it
+```
+
+`disclosure` ranks operations by what they cost and attributes each cost to the
+field responsible — a description, an input property, the safety metadata — so
+you get a ticket you can close rather than "make your API agent-friendly".
+Tool-surface figures are exact measurements and can fail a build under
+`--check`; response figures are projections from the simulator, are labelled as
+such, and never gate.
+
+## The safety contract
+
+- Only **approved** operations are exposed by the generated tools. Unapproved
+  ones aren't hidden either — the skill lists them as not callable, so the agent
+  knows they exist and knows not to try.
+- Mutations that can't be safely repeated are **never** retried automatically
+  and require `--confirm`. A refund that isn't provably safe to repeat stays
+  un-retried no matter what the network did.
+- Unsafe operations get the missing facts filled in with a manifest — a small
+  YAML file where you add what the spec left out — rather than being approved
+  blindly. Loosening a safety rule takes strong evidence; tightening one is
+  cheap.
+- Secrets are never logged; the runtime redacts auth material from records.
+  `--dry-run` shows you the exact request that would go out, redacted.
+
+Every operation moves through a fixed set of states before an agent can call
+it: it starts `generated`, waits at `review_required` until a person reads its
+risk, and only then becomes `approved`.
+
+<LifecycleDiagram />
+
+Each bundle also proves this about itself rather than asking you to trust it.
+`anvil selftest` calls every approved tool over the real MCP transport and
+checks that confirmation gates refuse *before* a side effect; `anvil
+conformance` checks the skill, CLI, and MCP tool list document the same posture
+the runtime enforces; `anvil certify` checks every surface still agrees with the
+model. Evidence is bound to the bundle's content hash, so it goes stale the
+moment the bundle changes.
 
 ## What it compiles
 
-Every format lands in the same shared model and the same aligned outputs:
+Every format lands in the same model and the same aligned outputs, so
+everything above works the same regardless of protocol:
 
 - OpenAPI 3.x
 - Swagger 2.0
@@ -37,48 +111,18 @@ Every format lands in the same shared model and the same aligned outputs:
 - GraphQL SDL
 - gRPC / proto3 (multi-file)
 - SOAP / WSDL (multi-file)
+- OData v2/v4
 - Postman Collections
 
-When the API lives behind a gateway, Anvil can assess its *estate*, but the
-accepted bytes differ by vendor. WSO2 `apictl` collections are native
-estate input; Kong accepts one native declarative state file. Apigee, MuleSoft,
-and IBM API Connect currently require Anvil's documented normalized
-interchange—native proxy bundles, Mule JARs, and `x-ibm-configuration` are not
-decoded. Run `anvil estate support --json` for the versioned input, semantic,
-authority, fixture, and scale-proof contract before preparing a capture.
+When the API lives behind a gateway, Anvil can assess its *estate* first — but
+check what your gateway can actually hand over before you plan a capture,
+because the accepted bytes differ by vendor. WSO2 `apictl` collections are
+native estate input; Kong accepts one native declarative state file. Apigee,
+MuleSoft, and IBM API Connect currently require Anvil's documented normalized
+interchange — native proxy bundles, Mule JARs, and `x-ibm-configuration` are
+not decoded. Run `anvil estate support --json` for the versioned input,
+semantic, authority, fixture, and scale-proof contract.
 [Read the exact boundaries →](/anvil/concepts/gateway-estates/)
-
-## What it produces
-
-- **CLI** — a typed command per approved operation.
-- **MCP server** — the same operations as MCP tools, risk visible in tool
-  metadata.
-- **Skill** — a progressive-disclosure operating manual for agents.
-- **Enforcement hooks** — installable Antigravity, Claude Code, and Codex hooks
-  that refuse unsafe calls before the model burns a turn.
-
-<WhichSurfaceDiagram />
-
-Which tool you use depends only on who's calling: people and CI script the CLI,
-an agent in a harness reads the skill and calls the MCP server, and a platform
-team installs the hooks. All four are generated from the same model and
-regenerated together — so they can't disagree.
-
-## The safety contract
-
-- Only **approved** operations are exposed by the generated tools.
-- Mutations that can't be safely repeated are **never** retried automatically
-  and require `--confirm`.
-- Unsafe operations get the missing facts filled in with a manifest — a small
-  YAML file where you add what the spec left out — rather than being approved
-  blindly.
-- Secrets are never logged; the runtime redacts auth material from records.
-
-Every operation moves through a fixed set of states before an agent can call
-it: it starts `generated`, waits at `review_required` until a person reads its
-risk, and only then becomes `approved`.
-
-<LifecycleDiagram />
 
 Read [Operating Anvil](/anvil/guides/operating-anvil/) for the day-to-day loop,
 or the [Quickstart](/anvil/start/quickstart/) to build your first bundle.

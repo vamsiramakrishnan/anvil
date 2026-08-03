@@ -398,6 +398,199 @@ const authorRoutingPhrases: RefinementSkill = {
   ],
 };
 
+/**
+ * Propose a routable `verb_resource` name for an operation whose current name an
+ * agent cannot route on — `do_transition` (vague verb), `get_object` (generic
+ * resource), a bare `refunds` (no verb at all).
+ *
+ * A name is not decoration; it is the primary routing surface, and it is *three*
+ * surfaces at once. The canonical name, the CLI command, and the MCP tool name
+ * are one projection of the same (service, resource, action) triple, so they are
+ * all in the boundary together: proposing a canonical name alone would leave the
+ * CLI help and the tool list disagreeing with it, which is precisely the drift
+ * Anvil exists to prevent.
+ *
+ * The operation `id` is deliberately NOT in the boundary. It is the coordinate
+ * capability membership, workflow steps, cases, and every proposal target point
+ * at; re-homing it is a migration, not a refinement.
+ *
+ * Documentation-tier evidence, and `single` on purpose: the proposal is a
+ * *projection* of axes the spec already states (`effect.resource`,
+ * `effect.action`, the route), so a second source cannot corroborate it — it can
+ * only restate the first, the same reason `generate-examples` accepts a
+ * schema-lifted value. No approval rule names this skill, so it always routes to
+ * a human, which is right for a change that moves an agent-facing name (and is
+ * the seam where a cross-document name collision — invisible from one
+ * operation's context — gets caught).
+ */
+const renameOperation: RefinementSkill = {
+  name: "rename-operation",
+  version: 1,
+  triggers: ["weak_operation_name"],
+  targetKind: "operation",
+  context: ["parent_operation", "capability", "source_evidence"],
+  evidence: {
+    allowed: ["spec", "doc_example", "postman"],
+    minimumStrength: "single",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["operation.canonical_name", "operation.cli_command", "operation.tool_name"],
+    supportingPredicates: ["operation.name_weaknesses"],
+    fields: ["canonical_name", "cli_command", "tool_name"],
+  },
+  constraints: ["do_not_invent_business_rules", "preserve_domain_terms"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+  ],
+};
+
+/**
+ * Give two siblings that describe themselves identically a description that says
+ * which is which.
+ *
+ * The gap here is *distinctness*, not absence — the shared sentence is often
+ * perfectly good prose, it just fits both operations — so this skill never
+ * replaces the existing text. It keeps it verbatim and appends the axis on which
+ * the spec ALREADY separates the siblings: the route, the required parameters,
+ * the effect action. That ordering is the whole safety argument. Rewriting the
+ * shared sentence would put invented business meaning where the spec's own words
+ * used to be; appending a fact the spec states cannot.
+ *
+ * Same documentation tier as `describe-operation`, but a lower strength bar for
+ * the same reason as `rename-operation`: the appended clause is read off this
+ * operation's own contract, and asking a second source to corroborate the
+ * contract is asking it to restate the spec.
+ */
+const disambiguateOperations: RefinementSkill = {
+  name: "disambiguate-operations",
+  version: 1,
+  triggers: ["indistinct_operation_descriptions"],
+  targetKind: "operation",
+  context: ["parent_operation", "capability", "source_evidence"],
+  evidence: {
+    allowed: ["spec", "source_impl", "test_fixture", "doc_example", "postman"],
+    minimumStrength: "single",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["operation.description"],
+    supportingPredicates: ["operation.effect", "operation.behavior"],
+    fields: ["description"],
+  },
+  constraints: ["do_not_invent_business_rules", "preserve_domain_terms"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+    "description_nonempty",
+    "description_not_tautological",
+  ],
+};
+
+/**
+ * Template a capability description from its own membership.
+ *
+ * A capability is *a view over operations* (see `Capability.operationIds`), so
+ * its members are not outside evidence about it — they are what it is. Saying
+ * "create, get, and list refunds" restates the grouping the compiler already
+ * derived, in the sentence an agent reads while routing. What this skill must
+ * never do is say what the capability is *for* in business terms; that needs
+ * evidence, and the executor proposes nothing when membership yields no verbs
+ * and no resource nouns rather than padding the sentence out.
+ *
+ * The documentation tier of `author-routing-phrases`, its sibling on the same
+ * node, and the same `single` bar for the same reason.
+ */
+const describeCapability: RefinementSkill = {
+  name: "describe-capability",
+  version: 1,
+  triggers: ["missing_capability_description"],
+  targetKind: "capability",
+  context: ["capability", "source_evidence"],
+  evidence: {
+    allowed: ["spec", "doc_example", "postman"],
+    minimumStrength: "single",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["capability.description"],
+    supportingPredicates: [],
+    fields: ["description"],
+  },
+  constraints: ["do_not_invent_business_rules", "preserve_domain_terms"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+    "description_nonempty",
+    "description_not_tautological",
+  ],
+};
+
+/**
+ * Bring an operation's tool surface back under the per-operation disclosure
+ * budget — the cost every agent in the session pays before it can route
+ * anywhere.
+ *
+ * The boundary is one field wide, and the omission is the design. An oversized
+ * surface has exactly two kinds of contributor: prose, and contract. Prose (the
+ * operation description, a field's paragraph of documentation) can be bounded
+ * without changing what calls are legal. Contract — a 400-value enum, a
+ * forty-property body — cannot: dropping enum members changes which requests the
+ * API will accept, which is a schema change, which is why `enum`/`schema`/`type`
+ * are in `STRUCTURAL_KEYS` and no skill may write them. So this skill acts on the
+ * prose and *reports* the contract: the ranked contributors ride along as a
+ * supporting claim so the owner reads a line item about a field ("enum with 412
+ * values") instead of a verdict about their API.
+ *
+ * `do_not_invent_business_rules` is doing unusually literal work here. The
+ * executor never rewrites the description — it keeps a verbatim leading run of
+ * whole sentences and drops the tail, so the proposal is a prefix of the spec's
+ * own text and the full wording stays in the source spec. A paraphrase that
+ * happened to be shorter would be a new assertion about the operation wearing
+ * the old one's provenance.
+ */
+const reduceSchemaDisclosure: RefinementSkill = {
+  name: "reduce-schema-disclosure",
+  version: 1,
+  triggers: ["schema_too_large_for_disclosure"],
+  targetKind: "operation",
+  context: ["parent_operation", "field_schema", "source_evidence"],
+  evidence: {
+    allowed: ["spec"],
+    minimumStrength: "single",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["operation.description"],
+    supportingPredicates: ["operation.disclosure_contributors"],
+    fields: ["description"],
+  },
+  constraints: ["do_not_invent_business_rules", "preserve_domain_terms"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+    "description_nonempty",
+    "description_not_tautological",
+  ],
+};
+
 /** Every skill Anvil ships today. Executors are separate; these are semantics only. */
 export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   describeField,
@@ -410,6 +603,10 @@ export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   authorIntentExamples,
   authorRoutingPhrases,
   reviewQueryPassthrough,
+  renameOperation,
+  disambiguateOperations,
+  describeCapability,
+  reduceSchemaDisclosure,
 ];
 
 /** Discover the available skills (stable order). */

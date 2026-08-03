@@ -46,6 +46,7 @@ export type DeficiencyCode =
   | "capability_missing_routing_phrases"
   | "operation_lacks_intent_examples"
   | "schema_too_large_for_disclosure"
+  | "unpaginated_large_response"
   | "ui_projection_contract"
   // safety
   | "mutation_effect_unproven"
@@ -249,15 +250,49 @@ export const DEFICIENCY_CATALOG: Record<DeficiencyCode, DeficiencyDef> = {
     "refinementRequired",
     "the agent has no example phrasings to match a request to this operation",
   ),
-  // Info-only: a large surface costs context, but nothing is wrong or unsafe.
+  // This was info/none on the reasoning that "a large surface costs context, but
+  // nothing is wrong or unsafe" — which treated the agent's context as free. It
+  // is not. Every agent that reads `tools/list` pays this surface before it can
+  // route anywhere, so an oversized one degrades every call in the session,
+  // including calls to other tools that had nothing to do with it; for a product
+  // whose claim is agent-readiness, measuring that cost and then shrugging at it
+  // is the under-call. Refinement, not human decision: `toolTokens` is a *fact
+  // about the contract* (a pure function of the generated surface), so there is
+  // no contested judgment to defer to a person, and the ways to close it —
+  // tightening a description, projecting a body, trimming enum prose — touch no
+  // safety semantic. Real constraint, closable by a narrow skill.
   schema_too_large_for_disclosure: def(
     "schema_too_large_for_disclosure",
     "usability",
-    "info",
+    "medium",
     "reduce-schema-disclosure",
-    "schema too large for initial disclosure",
-    "none",
+    "tool surface exceeds the disclosure budget",
+    "refinementRequired",
     "the agent pays a large context cost before it can call this",
+  ),
+  // Refinement rather than human decision for the same reason: nothing here is
+  // contested. The response size is a reproducible measurement and the absence of
+  // a page-size parameter is a fact about the contract. But it is a constraint,
+  // not an observation — with no way to ask for less, the serving path's only
+  // remaining tool is truncation, which pays the whole upstream cost and then
+  // throws most of it away, and leaves the agent unable to tell a complete answer
+  // from a cut one.
+  //
+  // The suggested skill is deliberately NOT `document-pagination`: that skill's
+  // output boundary is style / cursor param / next field / items field — it
+  // cannot introduce a page-size knob — and the real resolution is usually
+  // upstream (the API grows a size parameter) or an Anvil manifest recording one
+  // the spec omitted. Naming a skill that does not ship yet keeps the
+  // assessment's `automatable: false` honest, which is better than pointing at a
+  // skill that would open the case and then decline it.
+  unpaginated_large_response: def(
+    "unpaginated_large_response",
+    "usability",
+    "medium",
+    "constrain-response-size",
+    "unpaginated response exceeds the context budget",
+    "refinementRequired",
+    "the agent must consume the entire response or none of it — there is no way to ask for less",
   ),
   // A route and response that are both explicitly UI-shaped are not necessarily
   // bad, but neither are they automatically a durable agent capability. The

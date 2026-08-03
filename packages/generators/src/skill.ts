@@ -1,5 +1,11 @@
-import type { AirDocument, Operation } from "@anvil/air";
-import { evidenceConfidence, kebabCase, queryPolicySentence } from "@anvil/air";
+import type { AirDocument, AsyncContract, Operation } from "@anvil/air";
+import {
+  asyncContractSentence,
+  evidenceConfidence,
+  kebabCase,
+  queryPolicySentence,
+  resolveAsyncContract,
+} from "@anvil/air";
 import { stringify as toYaml } from "yaml";
 import { credentialContract } from "./deploy.js";
 import { operationInputSignature } from "./input-signature.js";
@@ -52,8 +58,12 @@ export function generateSkill(air: AirDocument): Record<string, string> {
   const workflows = publicWorkflows(air);
   const name = skillName(air);
   const files: Record<string, string> = {};
+  // Resolved once, rendered in three places (the SKILL.md pointer, the
+  // per-operation line, and the card). Resolving per call site is how the same
+  // contract ends up described three slightly different ways.
+  const asyncOps = asyncSurfaces(air, exposed);
 
-  files["SKILL.md"] = skillMd(air, exposed);
+  files["SKILL.md"] = skillMd(air, exposed, asyncOps);
   files["manifest.yaml"] = toYaml({
     name,
     description: `Machine-readable index of the ${svc.displayName ?? svc.id} skill package: identity, auth, and surface counts. Read SKILL.md first; this file is for tooling.`,
@@ -78,7 +88,7 @@ export function generateSkill(air: AirDocument): Record<string, string> {
     frontmatter(
       `${name}-operations`,
       "The full operation catalog — per-operation contract, inputs, safety posture (effect, risk, confirmation, idempotency, retry), and CLI/MCP names. Read this before invoking any operation.",
-    ) + operationsRef(air.operations);
+    ) + operationsRef(air.operations, asyncOps);
   files["reference/errors.md"] =
     frontmatter(
       `${name}-errors`,
@@ -89,6 +99,16 @@ export function generateSkill(air: AirDocument): Record<string, string> {
       `${name}-idempotency`,
       "Per-mutation idempotency and retry rules. Read this before any write, and whenever you see confirmation_required or idempotency_required.",
     ) + idempotencyRef(exposed);
+  // Conditional, like the query-grammar card: a surface with nothing to wait on
+  // must not carry a page about waiting. The gate is a *resolved* contract, so
+  // this file can only ever contain instructions an agent can actually follow.
+  if (asyncOps.length > 0) {
+    files["reference/long-running.md"] =
+      frontmatter(
+        `${name}-long-running`,
+        "How to finish operations that return before their work does — which operation to poll, where the job handle lives, and the states that mean stop. Read this when a call returns a job handle instead of a result.",
+      ) + longRunningRef(asyncOps);
+  }
   files["reference/workflows.md"] =
     frontmatter(
       `${name}-workflows`,
@@ -155,8 +175,15 @@ function skillDescription(air: AirDocument, ops: Operation[]): string {
   return full.length <= 1024 ? full : describe("");
 }
 
-function skillMd(air: AirDocument, ops: Operation[]): string {
+function skillMd(air: AirDocument, ops: Operation[], asyncOps: AsyncSurface[]): string {
   const id = air.service.id;
+  // The router points at the card; it never inlines the polling contract. A
+  // pointer is routing, a job handle and a terminal-state list are detail — but
+  // a card nothing points at is the failure this whole surface exists to avoid,
+  // so the line appears exactly when the card does.
+  const longRunningLink = asyncOps.length
+    ? "\n- `reference/long-running.md` — how to finish an operation that returns before its work does."
+    : "";
   return `---
 name: ${skillName(air)}
 description: ${skillDescription(air, ops)}
@@ -255,7 +282,7 @@ ${ops.length === 0 ? `_${air.operations.length} operations compiled but await ap
 ## Where to look
 - \`reference/capabilities.md\` — the capabilities and what each one owns.
 - \`reference/operations.md\` — every operation, its inputs, and its safety posture.
-- \`reference/idempotency.md\` — the rules for unsafe operations.
+- \`reference/idempotency.md\` — the rules for unsafe operations.${longRunningLink}
 - \`reference/errors.md\` — the error taxonomy and how to recover.
 - \`reference/workflows.md\` — authored multi-step flows.
 - \`reference/setup.md\` — auth env-var names, base URL, and environment configuration.
@@ -404,8 +431,100 @@ function confirmationCallout(op: Operation): string {
   return `\n> ⚠ **Confirmation required** — ${tier}-risk ${op.effect.kind}${reason}\n`;
 }
 
-function operationsRef(ops: Operation[]): string {
+/**
+ * An exposed operation whose completion contract *resolves*, with everything the
+ * skill needs to describe it already in hand.
+ */
+interface AsyncSurface {
+  op: Operation;
+  /** The operation to poll — approved, read-only, and proven to exist. */
+  statusOperation: Operation;
+  contract: AsyncContract;
+  /** The shared sentence, so no surface here composes wording of its own. */
+  sentence: string;
+}
+
+/**
+ * The exposed operations an agent can actually finish, resolved once.
+ *
+ * Resolution — never the mere presence of `asyncContract` — is the gate. A
+ * contract naming a missing, unapproved, or mutating status operation, or one
+ * with no terminal state, produces no entry, and therefore no polling text
+ * anywhere in this skill. That silence is deliberate: an agent following a
+ * broken contract loops against a tool it cannot call and cannot distinguish
+ * that from a job that has not finished, which is strictly worse than being
+ * told nothing and asking a human.
+ */
+function asyncSurfaces(air: AirDocument, exposed: Operation[]): AsyncSurface[] {
+  const byId = new Map<string, Operation>(air.operations.map((op) => [op.id, op]));
+  const surfaces: AsyncSurface[] = [];
+  for (const op of exposed) {
+    const resolution = resolveAsyncContract(op, byId);
+    const sentence = asyncContractSentence(resolution);
+    if (!resolution.ok || !sentence) continue;
+    surfaces.push({
+      op,
+      statusOperation: resolution.statusOperation,
+      contract: resolution.contract,
+      sentence,
+    });
+  }
+  return surfaces;
+}
+
+/**
+ * The long-running card: one section per operation an agent can finish, built
+ * from the shared sentence plus the coordinates that sentence cannot carry.
+ *
+ * The sentence names the MCP tool, which is right for an agent calling tools but
+ * incomplete for this package — SKILL.md drives the CLI. So the card adds the
+ * status operation's CLI command rather than restating the contract in different
+ * words; one sentence, one set of facts, two bindings.
+ */
+function longRunningRef(surfaces: AsyncSurface[]): string {
+  const sections = surfaces.map(({ op, statusOperation, contract, sentence }) => {
+    const lines = [
+      `### \`${op.cli.command}\`  (tool: \`${op.mcp.toolName}\`)`,
+      sentence,
+      "",
+      `- Poll with \`${statusOperation.cli.command}\` (tool: \`${statusOperation.mcp.toolName}\`), passing the handle as \`${contract.statusJobIdParam}\`.`,
+    ];
+    // Pending states are advisory — stated only when the contract states them,
+    // because an invented "still working" value makes an agent stop early.
+    if (contract.pendingStates.length > 0) {
+      lines.push(`- Still working while the state is: ${contract.pendingStates.join(", ")}.`);
+    }
+    return lines.join("\n");
+  });
+
+  return `# Long-running operations
+
+These operations return before their work is done: the response carries a job
+handle, not a result. Treat the first response as a receipt, then follow the
+contract below literally — it names the field the handle lives in, the operation
+to poll, the parameter that carries the handle, and the states that mean stop.
+Do not invent a polling loop, a timeout, or a success condition around it.
+
+Polling is a read, and every status operation named here is an approved read, so
+it is safe to repeat. The **original** call is not — if it was a mutation, do not
+re-issue it because you are unsure whether it landed; poll instead, and consult
+\`reference/idempotency.md\` before any retry.
+
+Only operations with a complete, checkable contract appear here. If an operation
+tells you it returned before completion but is absent from this file, Anvil could
+not prove where its handle lives or what finished looks like: report that, and do
+not guess a status call.
+
+${sections.join("\n\n")}
+`;
+}
+
+// `asyncOps` is required, not defaulted: a caller that forgets it would silently
+// drop every polling contract, which is precisely the class of quiet omission
+// this surface exists to close.
+function operationsRef(ops: Operation[], asyncOps: AsyncSurface[]): string {
   const approved = ops.filter((op) => op.state === "approved");
+  const asyncByOperationId = new Map(asyncOps.map((surface) => [surface.op.id, surface]));
   const pending = ops.filter((op) => op.state !== "approved");
 
   const buildApprovedRows = (approvedOps: Operation[]) => {
@@ -439,8 +558,18 @@ function operationsRef(ops: Operation[]): string {
         }
       }
 
-      // Long-running information
-      if (op.longRunning) {
+      // Long-running information. A resolved contract *replaces* the flag's
+      // hint rather than joining it: "poll for status" and the contract say the
+      // same thing at two different levels of usefulness, and printing both
+      // reads as two instructions. Where no contract resolves, the flag's hint
+      // stands exactly as before — it is the honest limit of what is known, and
+      // it is deliberately not dressed up with invented coordinates.
+      const asyncSurface = asyncByOperationId.get(op.id);
+      if (asyncSurface) {
+        metadataLines.push(
+          `- ${asyncSurface.sentence} See \`long-running.md\` for the polling command.`,
+        );
+      } else if (op.longRunning) {
         metadataLines.push("- Long-running: returns before completion; poll for status");
       }
 

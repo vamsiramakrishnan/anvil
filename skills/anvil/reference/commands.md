@@ -675,11 +675,24 @@ Options:
 
 Drive the full safety matrix through the simulator and report coverage.
 
-Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the safety dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control and proving the surface signature detects it. Reports per-dimension coverage and mutants killed. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.
+Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination, and disclosure cost against the agent's context budget) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control and proving the surface signature detects it. Reports per-dimension coverage and mutants killed. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.
 
 Options:
 - `--seed <n>` — deterministic simulator seed
 - `--json` — emit the full report as JSON
+
+### `anvil disclosure`
+`anvil disclosure [options] <dir>`
+
+Report where an agent's context budget goes, attributed to fields.
+
+Read-only. A disclosure bill of materials for a compiled bundle: every operation ranked by the exact tokens its MCP tool surface costs an agent in `tools/list`, with that cost attributed to the specific contributors that produced it — the description, each input schema property, the safety metadata — so the output names the field to fix rather than the service to blame. Rolls up per capability and per service, and reports the disclosure ladder's verdict (what laddering already saved, and what remains over the surface budget) alongside tokens-to-reach — what an agent must read, starting cold, before it holds one operation's input schema, with the round trips that cost buys. Tool-surface and reach figures are exact measurements of the bytes the runtime publishes, counted under o200k_base. Response figures are projections read from `simulation.report.json` under a recorded seed and are labelled as such everywhere; a report bound to different bundle content is reported as stale and refused rather than used, and a bundle whose responses were never measured says so rather than reporting zeros. A report that completed exits 0; `--check` gates non-zero on operations whose measured tool surface exceeds the per-tool budget.
+
+Options:
+- `--top <n>` — how many operations to detail (default 10; 0 for all)
+- `--reach` — detail the tokens-to-reach distribution and its round trips
+- `--check` — gate: exit non-zero when a tool surface exceeds its budget
+- `--json` — emit the full bill of materials as JSON
 
 ### `anvil publish`  *(mutates)*
 `anvil publish [options] <dir>`

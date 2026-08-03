@@ -1,18 +1,69 @@
-import type { Operation } from "@anvil/air";
+import {
+  charsForTokenBudget,
+  DEFAULT_RESPONSE_BUDGET_TOKENS,
+  estimateTokens,
+  FALLBACK_CHARS_PER_TOKEN,
+  type Operation,
+} from "@anvil/air";
 
 /**
- * Truncate text at a character budget without splitting UTF-16 surrogate pairs.
- * Returns the original text if under budget or if budget is 0 (disabled).
+ * The truncation failsafe — deliberately the *failure* path, not the control
+ * path.
  *
- * A truncation marker is appended when truncation occurs:
- * `[truncated: served N of M chars. Narrow the request<, or page with '<cursorParam>'>]`
+ * By the time this function runs the damage is largely done: the upstream call
+ * was made, the full page was paid for, and the payload was serialized. All we
+ * can still do is stop the oversized result from entering the agent's context,
+ * and tell the agent how to not end up here again. The control paths — the
+ * `anvil_projection` view control and the operation's own cursor — are named in
+ * the marker for exactly that reason.
+ *
+ * The budget is denominated in TOKENS, because tokens are what the agent
+ * actually spends; characters were only ever a proxy for them. Conversion uses
+ * the operation's measured `disclosureCost.charsPerToken` calibration via the
+ * AIR helpers, so the arithmetic is the same one the compiler, simulator, and
+ * certification pass use. It is an estimate and the marker says so: the deployed
+ * unit carries no BPE table on purpose (a multi-megabyte tokenizer in the thin
+ * serving path would cost more than it saves), so a marker implying an exact
+ * count would be claiming precision this code cannot have.
+ */
+
+/**
+ * A serving budget for one result.
+ *
+ * `tokens` is the supported form. `chars` is the legacy raw-character form kept
+ * so existing callers keep working; it is converted to a token figure only for
+ * the marker, never for the cut itself, so a character budget still cuts at
+ * exactly the character it always did.
+ */
+export interface ResultBudget {
+  /** Token budget for the serialized result. 0 disables truncation. */
+  tokens?: number;
+  /**
+   * @deprecated Raw UTF-16 character budget. Prefer `tokens`: characters are a
+   * proxy for the quantity that actually matters, and the proxy drifts per
+   * operation with how densely its payload tokenizes.
+   */
+  chars?: number;
+}
+
+/**
+ * Truncate a serialized result to a budget without splitting UTF-16 surrogate
+ * pairs. Returns the original text when it fits, or when the budget is 0
+ * (truncation disabled).
+ *
+ * The third argument accepts a bare number for backward compatibility, which is
+ * interpreted as a character budget exactly as before.
  */
 export function truncateResultText(
   text: string,
   operation: Operation,
-  budgetChars: number,
+  budget: number | ResultBudget,
 ): string {
-  // Budget 0 disables truncation
+  const charsPerToken = operation.disclosureCost?.charsPerToken;
+  const budgetChars = resolveBudgetChars(budget, charsPerToken);
+
+  // Budget 0 disables truncation. A caller that says "no budget" gets no
+  // failsafe — that is a deliberate choice, not an oversight to correct here.
   if (budgetChars === 0) {
     return text;
   }
@@ -38,29 +89,63 @@ export function truncateResultText(
   }
 
   const truncated = text.substring(0, safeLength);
-  const servedChars = truncated.length;
-  const totalChars = text.length;
-
-  // Build the marker with pagination hint if available
-  const marker = buildTruncationMarker(servedChars, totalChars, operation);
+  const marker = buildTruncationMarker(truncated.length, text.length, operation, charsPerToken);
 
   return truncated + marker;
 }
 
 /**
- * Build the truncation marker appended to truncated results.
- * Includes pagination hint only when op.pagination names a cursorParam.
+ * Resolve a budget onto the character position where the cut lands.
+ *
+ * An explicit `chars` wins over `tokens` when both are present: a caller who
+ * still speaks in characters is asking for the old behavior verbatim, and
+ * silently re-deriving their boundary from a token figure would move a cut they
+ * had already calibrated.
+ */
+function resolveBudgetChars(budget: number | ResultBudget, charsPerToken?: number): number {
+  if (typeof budget === "number") return budget;
+  if (budget.chars !== undefined) return budget.chars;
+  if (budget.tokens !== undefined) return charsForTokenBudget(budget.tokens, charsPerToken);
+  return charsForTokenBudget(DEFAULT_RESPONSE_BUDGET_TOKENS, charsPerToken);
+}
+
+/**
+ * Build the marker appended to a truncated result.
+ *
+ * It names both recovery routes the caller actually has, because "narrow the
+ * request" on its own is advice without a mechanism. `anvil_projection` is
+ * always available (it is a reserved control on every tool); the cursor param is
+ * named only when the operation models one, since inventing a parameter name
+ * would be the exact class of guess this system exists to eliminate.
  */
 function buildTruncationMarker(
   servedChars: number,
   totalChars: number,
   operation: Operation,
+  charsPerToken?: number,
 ): string {
-  const base = `[truncated: served ${servedChars} of ${totalChars} chars. Narrow the request`;
+  const servedTokens = estimateTokens(servedChars, charsPerToken);
+  const totalTokens = estimateTokens(totalChars, charsPerToken);
+  const ratio = charsPerToken && charsPerToken > 0 ? charsPerToken : FALLBACK_CHARS_PER_TOKEN;
+  const calibration = operation.disclosureCost?.charsPerToken
+    ? `~${round2(ratio)} chars/token measured for this operation`
+    : `~${round2(ratio)} chars/token assumed, this operation was never measured`;
 
-  if (operation.pagination?.cursorParam) {
-    return `${base}, or page with '${operation.pagination.cursorParam}']`;
-  }
+  const recovery =
+    `Narrow the request with 'anvil_projection' to select fewer fields` +
+    (operation.pagination?.cursorParam
+      ? `, or page with '${operation.pagination.cursorParam}'`
+      : "");
 
-  return `${base}]`;
+  return (
+    `[truncated: ~${servedTokens} of ~${totalTokens} estimated tokens — ` +
+    `served ${servedChars} of ${totalChars} chars (${calibration}; ` +
+    `the serving path carries no tokenizer, so token figures are estimates). ` +
+    `${recovery}]`
+  );
+}
+
+/** Two decimals, without the trailing-zero noise of toFixed. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }

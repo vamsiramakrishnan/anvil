@@ -43,6 +43,8 @@ import {
   computeBackoffMs,
   conditionIsRetryable,
   httpStatusToRetryCondition,
+  resolveRetryDelay,
+  retryAfterFromHeaders,
   retryIsSafe,
 } from "./retry.js";
 import {
@@ -1171,24 +1173,58 @@ export async function execute(
         }
 
         const condition = httpStatusToRetryCondition(res.status);
+        // The upstream's stated backpressure (RFC 9110 §10.2.3), read once per
+        // response and off the retry decision entirely: it is diagnostics the
+        // terminal envelope carries even when nothing here retries, so a caller
+        // that is not allowed to auto-retry still learns when to come back.
+        const retryAfterMs = retryAfterFromHeaders(res.headers, now());
         const canRetry =
           condition !== null &&
           retriesEnabled &&
           attempt < maxAttempts &&
           conditionIsRetryable(condition, op.retries);
+        // `retryAfterMs` is consulted strictly INSIDE this branch. A header can
+        // only ever lengthen a wait or end a retry loop that `retryIsSafe`
+        // already opened; it can never make a non-idempotent mutation eligible
+        // (spec §2.4, §11).
+        let stoppedByRetryAfter = false;
         if (canRetry) {
-          await sleep(computeBackoffMs(attempt, op.retries, ctx.rng));
-          continue;
+          const decision = resolveRetryDelay(attempt, op.retries, retryAfterMs, ctx.rng);
+          if (decision.action === "wait") {
+            await sleep(decision.delayMs);
+            continue;
+          }
+          // The server asked for longer than the runtime is willing to hold a
+          // call open. Spend no further attempts: retrying at the ceiling would
+          // arrive earlier than it asked. Fall through to the terminal envelope
+          // with the wait attached as the caller's next action.
+          stoppedByRetryAfter = true;
         }
         const code = httpStatusToErrorCode(res.status);
         finalError = new AnvilError({
           code,
-          message: `Upstream returned ${res.status} for ${op.id}.`,
+          message: stoppedByRetryAfter
+            ? `Upstream returned ${res.status} for ${op.id} and asked to be left alone for ` +
+              `${retryAfterMs} ms, beyond the ${MAX_RETRY_DELAY_MS} ms runtime retry ceiling. ` +
+              `Anvil stopped retrying rather than return early; retry after the stated wait.`
+            : `Upstream returned ${res.status} for ${op.id}.`,
           operation: op.id,
           traceId,
           upstream: { status: res.status, requestId: res.headers["x-request-id"] },
           retryable: isRetryableCode(code),
           safeToRetry: retrySafe && isRetryableCode(code),
+          details:
+            retryAfterMs === null
+              ? undefined
+              : {
+                  retry_after_ms: retryAfterMs,
+                  ...(stoppedByRetryAfter
+                    ? {
+                        retry_stopped: "retry_after_exceeds_ceiling",
+                        max_delay_ms: MAX_RETRY_DELAY_MS,
+                      }
+                    : {}),
+                },
         });
         break;
       } catch (err) {

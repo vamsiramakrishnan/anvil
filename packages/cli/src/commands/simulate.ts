@@ -17,7 +17,7 @@ import { annotate } from "./meta.js";
  * `anvil simulate <dir>` — the mechanistic coverage lane. It generates the full
  * safety matrix from the contract (every approved operation crossed with every
  * dimension that applies to it — auth, confirmation, idempotency, fault,
- * pagination) and drives every cell through the contract-faithful, deterministic
+ * pagination, disclosure) and drives every cell through the contract-faithful, deterministic
  * simulator, then runs the safety mutation battery. Where `anvil selftest` and
  * `anvil conformance` prove the generated surfaces, this proves the *coverage*:
  * a number for how much of the safety contract was actually exercised, plus
@@ -30,7 +30,7 @@ export function registerSimulate(parent: Command, ctx: CommandContext): void {
       .command("simulate")
       .summary("Drive the full safety matrix through the simulator and report coverage.")
       .description(
-        "Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the safety dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control and proving the surface signature detects it. Reports per-dimension coverage and mutants killed. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.",
+        "Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination, and disclosure cost against the agent's context budget) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control and proving the surface signature detects it. Reports per-dimension coverage and mutants killed. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.",
       )
       .argument("<dir>", "generated bundle directory (or its air.yaml)")
       .option("--seed <n>", "deterministic simulator seed", "1")
@@ -106,13 +106,28 @@ function renderSimulationSummary(report: SimulationReport, dir: string): string 
     "",
     "  Coverage by dimension:",
   ];
+  // A cell driven against synthetic fixtures is a prediction, not a fact about
+  // the contract, and on a terminal the two otherwise render identically — a
+  // green row would read as "certified" when it means "held under seed N with
+  // simulator data". The JSON has carried the distinction since the disclosure
+  // dimension landed; the summary has to show it, or the report launders a
+  // projection into a guarantee at the last hop.
+  const projected = new Set(
+    coverage.cells.filter((c) => c.basis === "simulated-data").map((c) => c.dimension),
+  );
   for (const d of coverage.dimensions) {
     const mark = d.cells === 0 ? "–" : d.passed === d.cells ? "✓" : "✗";
     const applies =
       d.cells === 0
         ? "no applicable operations"
         : `${d.operations} op(s), ${d.passed}/${d.cells} cells`;
-    lines.push(`    ${mark} ${d.dimension.padEnd(13)} ${applies}`);
+    const note = projected.has(d.dimension) ? "  (projected from simulated data)" : "";
+    lines.push(`    ${mark} ${d.dimension.padEnd(13)} ${applies}${note}`);
+  }
+  if (projected.size > 0) {
+    lines.push(
+      `    Projected figures are estimates under seed ${coverage.seed}, not measurements of live traffic.`,
+    );
   }
   const failed = coverage.cells.filter((c) => !c.ok);
   for (const c of failed) {

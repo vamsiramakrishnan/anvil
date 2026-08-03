@@ -1,15 +1,34 @@
+import { randomUUID } from "node:crypto";
 import {
   type AirDocument,
+  type AsyncContractResolution,
+  asyncContractSentence,
+  DEFAULT_RESPONSE_BUDGET_TOKENS,
+  estimateTokens,
   mcpToolAnnotations,
   mcpToolDescription,
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
+  resolveAsyncContract,
 } from "@anvil/air";
 import { type ExecuteContext, execute } from "@anvil/runtime";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { truncateResultText } from "./truncation.js";
+import {
+  createLaneSurface,
+  type DisclosableTool,
+  type DisclosureMode,
+  decideLadder,
+} from "./lane.js";
+import { derivePageSize, detectSilentCap, silentCapNotice } from "./page-budget.js";
+import {
+  applyProjection,
+  projectionShape,
+  takeProjectionArg,
+  validateProjection,
+} from "./projection.js";
+import { type ResultBudget, truncateResultText } from "./truncation.js";
 import { MCP_RESERVED, operationZodShape, reservedSafetyShape } from "./zodshape.js";
 
 /**
@@ -47,9 +66,23 @@ export interface McpBuildOptions {
    */
   resources?: ServedResource[];
   /**
-   * Character budget for serialized results (default 50_000; 0 disables
-   * truncation). Results exceeding this budget are truncated at the boundary
-   * without splitting UTF-16 surrogate pairs, with a marker appended.
+   * Token budget for one served result (default `DEFAULT_RESPONSE_BUDGET_TOKENS`;
+   * 0 disables both the truncation failsafe and budget-derived page sizing).
+   *
+   * This is the number the whole disclosure story is denominated in: it sizes
+   * the page requested upstream (the control path) and bounds the payload that
+   * reaches the agent if that page still came back too large (the failure path).
+   * Tokens rather than characters because tokens are what the agent spends —
+   * see `truncation.ts` for why the conversion is an estimate and says so.
+   */
+  resultTokenBudget?: number;
+  /**
+   * @deprecated Use `resultTokenBudget`. Raw UTF-16 character budget for
+   * serialized results (0 disables truncation). Still honored verbatim — the cut
+   * lands exactly where it always did — but a character budget cannot describe
+   * what a response costs an agent, and it is converted to a token figure for
+   * page sizing anyway. When both are set this one wins, since a caller still
+   * speaking in characters has calibrated a boundary we should not move.
    */
   resultCharacterBudget?: number;
   /**
@@ -57,6 +90,20 @@ export interface McpBuildOptions {
    * Called with workflow id and reason.
    */
   onSkipWorkflow?: (workflowId: string, reason: string) => void;
+  /**
+   * How the tool surface is disclosed at rest: `auto` (default) follows the
+   * ladder projection, `flat` never ladders, `laddered` ladders whenever lanes
+   * can be projected. See `lane.ts` — the ladder decides *when* an approved
+   * operation's schema is listed and never whether it may be called.
+   */
+  disclosure?: DisclosureMode;
+  /**
+   * Budget for the at-rest surface — everything in `tools/list` before an agent
+   * has opened a lane. Only consulted when laddering is in play; the default
+   * lives in `@anvil/air` so the served surface and the certified one are
+   * measured against the same number.
+   */
+  surfaceBudgetTokens?: number;
 }
 
 /**
@@ -120,6 +167,12 @@ function buildWorkflowInputShape(
     .optional()
     .describe("Preview the wire request without executing it (no upstream call).");
 
+  // …and the projection view control. A composite's final payload is the last
+  // step's response and is exactly as expensive; the caller needs the same knob
+  // here that it has on a single operation. It applies only to that final
+  // payload — intermediate step outputs are bindings, not disclosure.
+  Object.assign(shape, projectionShape());
+
   if (!anyStepRequiresConfirmation) return { shape, confirmKey: undefined };
 
   if (firstStepOp.confirmation.required) {
@@ -152,17 +205,58 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
 
   const ops = air.operations.filter((op) => options.includeUnapproved || op.state === "approved");
   const opsById = new Map(ops.map((op) => [op.id, op]));
+  // The SDK hands back a live handle per tool. Held so the disclosure ladder can
+  // close a laned tool *after* it is fully registered — see the ladder block
+  // below for why disclosure is a state on a registered tool rather than a
+  // decision about whether to register one.
+  const opTools = new Map<string, DisclosableTool>();
+  const registeredToolNames = new Set<string>();
+
+  // Async contracts resolve against the WHOLE document, never against `ops`.
+  // `ops` is the served subset, and `resolveAsyncContract` reports
+  // `status_operation_not_approved` — a decision somebody made — separately from
+  // `status_operation_missing` — a coordinate that was never real. Handing it a
+  // pre-filtered map would relabel the first as the second, and would also make
+  // the answer depend on `includeUnapproved`: a dev-mode server would advertise
+  // polling instructions that vanish in production. The contract's approval rule
+  // is the contract's own, so this map makes the served sentence identical to the
+  // one `@anvil/certification` certified from the same function.
+  const allOpsById = new Map(air.operations.map((operation) => [operation.id, operation]));
 
   for (const op of ops) {
-    server.registerTool(
+    // Resolved once, outside the handler: it is a pure function of the document,
+    // and the tool surface is what carries it. An agent that has to call the
+    // operation to find out how to finish it has already spent the round trip
+    // this is meant to save.
+    const asyncContract = resolveAsyncContract(op, allOpsById);
+    const asyncSentence = asyncContractSentence(asyncContract);
+    const registered = server.registerTool(
       op.mcp.toolName,
       {
         title: op.displayName,
-        description: mcpToolDescription(op),
+        // Appended to the compiled description rather than left in `_meta`
+        // alone. `_meta` is where a *client* reads Anvil's posture; the
+        // description is the only part of a tool a model is guaranteed to see,
+        // and "how do I finish this job" is a question the model asks, not the
+        // client. Both are emitted, from one resolution, so they cannot disagree.
+        //
+        // When the contract does not resolve there is no sentence and nothing is
+        // appended — deliberately leaving `mcpToolDescription`'s bare
+        // "poll for status" line as the only thing said. That line is already
+        // vague, but it is honest about being vague; dressing an unusable
+        // contract up in the mechanical register of a usable one would make a
+        // broken linkage indistinguishable from a working one at the exact
+        // moment the difference is a silent poll loop.
+        description: asyncSentence
+          ? `${mcpToolDescription(op)} ${asyncSentence}`
+          : mcpToolDescription(op),
         // Operation input + the reserved safety controls (anvil_dry_run /
         // anvil_confirm / anvil_idempotency_key), so a client — the CLI over its
         // MCP transport, or any direct MCP caller — can dry-run and confirm.
-        inputSchema: { ...operationZodShape(op), ...reservedSafetyShape(op) },
+        // Plus the reserved view control (anvil_projection): the caller's only
+        // way to lower what a response costs it, as opposed to discovering after
+        // the fact that it cost too much.
+        inputSchema: { ...operationZodShape(op), ...reservedSafetyShape(op), ...projectionShape() },
         // Shared with the Agent Registry toolspec (@anvil/air) — no drift.
         annotations: mcpToolAnnotations(op),
         _meta: {
@@ -174,6 +268,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           "anvil/idempotency": op.idempotency.mode,
           "anvil/principal": op.auth.principal,
           "anvil/operation_id": op.id,
+          ...asyncContractMeta(asyncContract),
         },
       },
       async (args: Record<string, unknown>) => {
@@ -186,32 +281,74 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         const dryRun = args[MCP_RESERVED.dryRun] === true;
         const input = { ...args };
         delete input[MCP_RESERVED.dryRun];
+        // Peel the view control too. Reserved controls never travel upstream.
+        const projection = takeProjectionArg(input);
+        const { budget, tokens: budgetTokens } = resolveResultBudget(options, op);
+
+        // Parse-check the projection BEFORE the upstream call. A malformed
+        // expression is the caller's mistake, and there is no reason to make an
+        // upstream request — possibly a rate-limited or metered one — only to
+        // discard its result. The trace id is minted here so the refusal carries
+        // the same envelope shape as any executor failure.
+        if (projection !== undefined) {
+          const invalid = validateProjectionArg(projection, op);
+          if (invalid) return invalid;
+        }
+
+        // Ask upstream for a page that fits, rather than cutting one that does
+        // not. Injects nothing unless the contract names the size knob and the
+        // operation was measured — see page-budget.ts for each refusal.
+        const page = derivePageSize(op, input, budgetTokens);
+        if (page) input[page.key] = page.size;
+
         const result = await execute(op, { input, dryRun }, options.contextFor(op));
-        const charBudget = options.resultCharacterBudget ?? 50_000;
         if (result.outcome === "success") {
-          const data = result.data ?? null;
+          const raw = result.data ?? null;
+
+          // ORDERING IS LOAD-BEARING: the projection is applied here, before the
+          // payload is serialized and measured against the budget. Applying it
+          // after truncation would be pointless — the tokens would already have
+          // been counted, and the caller would pay full context cost for a
+          // narrowed view. Failure returns a validation_error and never the
+          // unprojected payload.
+          let data = raw;
+          if (projection !== undefined) {
+            const projected = applyProjection(raw, projection, op, `trace_${randomUUID()}`);
+            if (!projected.ok) return errorResult(projected.envelope, op, budget);
+            data = projected.data ?? null;
+          }
+
           let text = JSON.stringify(data, null, 2);
-          text = truncateResultText(text, op, charBudget);
+          text = truncateResultText(text, op, budget);
+
+          // Measured on the raw response: a projection can drop the very fields
+          // (items, continuation marker) the cap check reads, and the cap is a
+          // fact about the upstream page, not about the caller's view of it.
+          // Appended after truncation so the warning cannot itself be cut off.
+          const cap = detectSilentCap(op, raw);
+          if (cap) text = `${text}\n\n${silentCapNotice(cap)}`;
+
           return {
             content: [{ type: "text" as const, text }],
             structuredContent: isRecord(data) ? data : { result: data },
           };
         }
         if (result.outcome === "dry_run") {
+          // The plan is a preview of the wire request, not response data, so a
+          // response projection has nothing to say about it. It does show the
+          // injected page size, which is the point: a caller can see what the
+          // budget decided before spending anything.
           let text = JSON.stringify(result.plan, null, 2);
-          text = truncateResultText(text, op, charBudget);
+          text = truncateResultText(text, op, budget);
           return {
             content: [{ type: "text" as const, text }],
           };
         }
-        let text = JSON.stringify(result.envelope, null, 2);
-        text = truncateResultText(text, op, charBudget);
-        return {
-          content: [{ type: "text" as const, text }],
-          isError: true,
-        };
+        return errorResult(result.envelope, op, budget);
       },
     );
+    opTools.set(op.id, registered);
+    registeredToolNames.add(op.mcp.toolName);
   }
 
   // Register workflows as composite tools.
@@ -308,6 +445,16 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         const dryRun = args[MCP_RESERVED.dryRun] === true;
         const input = { ...args };
         delete input[MCP_RESERVED.dryRun];
+        const projection = takeProjectionArg(input);
+        // Checked before step 1 runs: a composite may mutate, and refusing a
+        // malformed expression after the writes have landed would be a much
+        // worse deal than refusing it before any of them do. Attributed to the
+        // last step, whose response is the one the expression will address.
+        const projectionOp = stepOps[stepOps.length - 1] ?? firstStepOp;
+        if (projection !== undefined) {
+          const invalid = validateProjectionArg(projection, projectionOp);
+          if (invalid) return invalid;
+        }
 
         const stepResults: Array<{
           operationId: string;
@@ -374,7 +521,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
               operationId: step.operationId,
               success: false,
             });
-            const charBudget = options.resultCharacterBudget ?? 50_000;
+            const { budget } = resolveResultBudget(options, stepOp);
             let text = JSON.stringify(
               {
                 error: "workflow step failed",
@@ -390,14 +537,14 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
               null,
               2,
             );
-            text = truncateResultText(text, stepOp, charBudget);
+            text = truncateResultText(text, stepOp, budget);
             return {
               content: [{ type: "text" as const, text }],
               isError: true,
             };
           } else if (result.outcome === "dry_run") {
             // For dry-run, return the plan
-            const charBudget = options.resultCharacterBudget ?? 50_000;
+            const { budget } = resolveResultBudget(options, stepOp);
             let text = JSON.stringify(
               {
                 dryRun: true,
@@ -409,7 +556,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
               null,
               2,
             );
-            text = truncateResultText(text, stepOp, charBudget);
+            text = truncateResultText(text, stepOp, budget);
             return {
               content: [{ type: "text" as const, text }],
             };
@@ -441,10 +588,24 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
             isError: true,
           };
         }
-        const finalData = lastStepResult.data ?? null;
-        const charBudget = options.resultCharacterBudget ?? 50_000;
+        const rawFinal = lastStepResult.data ?? null;
+        const { budget } = resolveResultBudget(options, lastStepOp);
+
+        // Same ordering rule as a single operation: project before measuring.
+        let finalData = rawFinal;
+        if (projection !== undefined) {
+          const projected = applyProjection(
+            rawFinal,
+            projection,
+            lastStepOp,
+            `trace_${randomUUID()}`,
+          );
+          if (!projected.ok) return errorResult(projected.envelope, lastStepOp, budget);
+          finalData = projected.data ?? null;
+        }
+
         let text = JSON.stringify(finalData, null, 2);
-        text = truncateResultText(text, lastStepOp, charBudget);
+        text = truncateResultText(text, lastStepOp, budget);
 
         // Append trace as structured content
         const trace = stepResults
@@ -459,6 +620,51 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         };
       },
     );
+    registeredToolNames.add(workflowToolName);
+  }
+
+  // The disclosure ladder, applied strictly on top of a fully registered
+  // surface. Everything above ran exactly as it always has, which is the whole
+  // compatibility argument: a flat plan — an unmeasured bundle, a service that
+  // fits its budget, an operator who set `disclosure: "flat"` — reaches this
+  // point with an untouched server and leaves with one. Laddering only closes
+  // tools that are already registered, so nothing it does can change which
+  // operations exist, what they accept, or what the runtime enforces on a call.
+  const ladder = decideLadder(air, options);
+  if (ladder.laddered) {
+    const surface = createLaneSurface({
+      lanes: ladder.lanes,
+      operations: opsById,
+      tools: opTools,
+      reservedToolNames: registeredToolNames,
+    });
+    for (const card of surface.cards) {
+      server.registerTool(
+        card.toolName,
+        {
+          title: card.title,
+          description: card.description,
+          // Opening a lane is navigation, not business: it makes no upstream
+          // call, changes nothing an agent could regret, and converges on the
+          // same surface however many times it runs. Saying so in the standard
+          // hints keeps a cautious client from treating routing as risk.
+          annotations: {
+            title: card.title,
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+          },
+          _meta: card.meta,
+        },
+        async () => card.open(),
+      );
+    }
+    // Closing happens after the cards are registered and before the server is
+    // connected, so no client ever observes the flat surface it briefly was —
+    // and the SDK's `tools/list_changed` notification, which it fires on every
+    // enable/disable, is suppressed while disconnected.
+    surface.closeLanes();
   }
 
   // Advertise precomputed resources (skill + CLI install manifest + catalog) so
@@ -485,4 +691,98 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * The machine-readable half of a resolved async contract, in the same `anvil/*`
+ * register as the effect/risk/idempotency posture beside it: flat keys, one fact
+ * each, values a client can branch on without parsing prose. A client that wants
+ * to drive the poll loop itself gets coordinates; the model gets the sentence in
+ * the description. Same resolution behind both.
+ *
+ * An unresolved contract returns `{}` — not a partial block, not a marker saying
+ * a contract was attempted. Emitting `anvil/async_status_tool` alone would name
+ * a tool with no way to reach it and no way to stop; emitting a "broken" flag
+ * would invite a client to route around it. The failure mode this whole shape
+ * exists to prevent is an agent acting on half a contract, and the only value
+ * that cannot be acted on halfway is nothing at all.
+ */
+function asyncContractMeta(resolution: AsyncContractResolution): Record<string, unknown> {
+  if (!resolution.ok) return {};
+  const { contract, statusOperation } = resolution;
+  return {
+    // The tool NAME, not the operation id: this is the string a client passes to
+    // `tools/call`. The id is already carried by the status tool's own
+    // `anvil/operation_id`, so nothing is lost and nothing must be translated.
+    "anvil/async_status_tool": statusOperation.mcp.toolName,
+    "anvil/async_job_id_field": contract.jobIdField,
+    "anvil/async_status_job_id_param": contract.statusJobIdParam,
+    "anvil/async_terminal_states": contract.terminalStates,
+    ...(contract.stateField ? { "anvil/async_state_field": contract.stateField } : {}),
+    ...(contract.pendingStates.length > 0
+      ? { "anvil/async_pending_states": contract.pendingStates }
+      : {}),
+    // Only ever present when the service stated it. An absent key means "the
+    // service did not say", which a client can back off on however it likes; a
+    // defaulted number here would be Anvil inventing a rate limit or a stampede
+    // and attributing it to the upstream.
+    ...(contract.pollIntervalSeconds !== undefined
+      ? { "anvil/async_poll_interval_seconds": contract.pollIntervalSeconds }
+      : {}),
+  };
+}
+
+/** The one shape every failure takes on the way out: normalized envelope, truncated, flagged. */
+function errorResult(
+  envelope: unknown,
+  op: Operation,
+  budget: ResultBudget,
+): { content: Array<{ type: "text"; text: string }>; isError: true } {
+  const text = truncateResultText(JSON.stringify(envelope, null, 2), op, budget);
+  return { content: [{ type: "text" as const, text }], isError: true };
+}
+
+/**
+ * Refuse a malformed projection before anything is executed. Returns the
+ * ready-to-serve error result, or undefined when the expression is usable.
+ */
+function validateProjectionArg(
+  expression: string,
+  op: Operation,
+): { content: Array<{ type: "text"; text: string }>; isError: true } | undefined {
+  const invalid = validateProjection(expression, op, `trace_${randomUUID()}`);
+  if (!invalid) return undefined;
+  // No budget conversion needed: a validation envelope is a few hundred
+  // characters by construction, and truncating an error message that explains
+  // how to fix the request would be self-defeating.
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(invalid.envelope, null, 2) }],
+    isError: true,
+  };
+}
+
+/**
+ * Collapse the two budget options onto the pair the serving path needs: the
+ * budget the truncator cuts against, and the token figure the page solver uses.
+ *
+ * The legacy character budget still wins when set — a caller who calibrated a
+ * character boundary should keep exactly that boundary — but it is converted to
+ * tokens for page sizing, because `safePageSize` reasons in tokens and there is
+ * no honest way to express a character budget to it otherwise. When truncation
+ * is disabled (0), page sizing is disabled with it: a caller who declared no
+ * budget should not then find one applied to the page it fetches.
+ */
+function resolveResultBudget(
+  options: McpBuildOptions,
+  op: Operation,
+): { budget: ResultBudget; tokens: number } {
+  if (options.resultCharacterBudget !== undefined) {
+    const chars = options.resultCharacterBudget;
+    return {
+      budget: { chars },
+      tokens: chars === 0 ? 0 : estimateTokens(chars, op.disclosureCost?.charsPerToken),
+    };
+  }
+  const tokens = options.resultTokenBudget ?? DEFAULT_RESPONSE_BUDGET_TOKENS;
+  return { budget: { tokens }, tokens };
 }

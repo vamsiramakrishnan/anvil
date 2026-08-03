@@ -17,6 +17,7 @@ import type { AppliedOverlay, PolicyOverlay, SemanticConflict } from "./contract
 import { manifestToOverlay } from "./contract/overlay.js";
 import { applyResolved, resolveOverlays } from "./contract/resolution.js";
 import { applyDialectAdjustment, detectNamingDialect } from "./dialect.js";
+import { measureAirDisclosure } from "./disclosure-cost.js";
 import {
   type AnvilManifest,
   airAuthProviderToManifest,
@@ -418,42 +419,51 @@ async function buildAir(
     secretSource: "none",
   };
 
-  const air = loadAirDocument({
-    anvilVersion: "0.1.0",
-    service: {
-      id: serviceId,
-      version: manifest.service?.environment
-        ? `${(doc.info?.version as string) ?? "0.0.0"}-${manifest.service.environment}`
-        : ((doc.info?.version as string) ?? "0.0.0"),
-      displayName: manifest.service?.display_name ?? title,
-      owner: manifest.service?.owner,
-      environment: manifest.service?.environment,
-      source: {
-        kind: parsed.kind,
-        uri: provenance.origin.uri,
-        snapshotId: provenance.snapshotId,
-        sourceHash: provenance.sourceHash,
-        origin: { kind: provenance.origin.kind, uri: provenance.origin.uri },
-        entrypoint: provenance.entrypoint.path,
+  // Measure the disclosure cost as part of compiling, not as an opt-in pass.
+  // A measurement nobody runs is indistinguishable from no measurement: the
+  // token dimension of the capability budget stays dormant, certification finds
+  // nothing to certify, and the refinement detectors that fire only on measured
+  // operations never fire at all. Measuring here — after validation and naming
+  // have settled the surface, before capability review reads the budget — means
+  // the figure describes the tool surface this compile actually produced.
+  const air = measureAirDisclosure(
+    loadAirDocument({
+      anvilVersion: "0.1.0",
+      service: {
+        id: serviceId,
+        version: manifest.service?.environment
+          ? `${(doc.info?.version as string) ?? "0.0.0"}-${manifest.service.environment}`
+          : ((doc.info?.version as string) ?? "0.0.0"),
+        displayName: manifest.service?.display_name ?? title,
+        owner: manifest.service?.owner,
+        environment: manifest.service?.environment,
+        source: {
+          kind: parsed.kind,
+          uri: provenance.origin.uri,
+          snapshotId: provenance.snapshotId,
+          sourceHash: provenance.sourceHash,
+          origin: { kind: provenance.origin.kind, uri: provenance.origin.uri },
+          entrypoint: provenance.entrypoint.path,
+        },
+        auth: serviceAuth,
+        servers: (doc.servers ?? []).map((s) => ({ url: s.url, description: s.description })),
       },
-      auth: serviceAuth,
-      servers: (doc.servers ?? []).map((s) => ({ url: s.url, description: s.description })),
-    },
-    operations: allOperations,
-    capabilities,
-    workflows,
-    schemas: (doc.components?.schemas as Record<string, JsonSchema> | undefined) ?? {},
-    diagnostics: [
-      ...parsed.diagnostics,
-      ...normalized.diagnostics,
-      ...serviceAuthDefaults.diagnostics,
-      ...diagnostics,
-      ...namingDiagnostics,
-      ...workflowDiagnostics,
-      ...queryTemplateDiagnostics,
-      ...overlayDiagnostics,
-    ],
-  });
+      operations: allOperations,
+      capabilities,
+      workflows,
+      schemas: (doc.components?.schemas as Record<string, JsonSchema> | undefined) ?? {},
+      diagnostics: [
+        ...parsed.diagnostics,
+        ...normalized.diagnostics,
+        ...serviceAuthDefaults.diagnostics,
+        ...diagnostics,
+        ...namingDiagnostics,
+        ...workflowDiagnostics,
+        ...queryTemplateDiagnostics,
+        ...overlayDiagnostics,
+      ],
+    }),
+  );
 
   // Capability review is declarative compiler input when it appears in the
   // supplemental manifest. Apply it only after deterministic discovery and

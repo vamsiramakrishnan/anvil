@@ -87,7 +87,11 @@ describe("root help", () => {
     // Concise: one summary line per command, no long descriptions or options.
     // The bound carries headroom for new commands (each adds one line); a
     // multi-line description leaking into root help would still trip it.
-    expect(text.split("\n").length).toBeLessThan(45);
+    // Re-baselined when `anvil disclosure` landed and the previous headroom ran
+    // out. Raise it by the number of commands you added, deliberately — the
+    // point of the bound is that a description leaking into root help costs
+    // many lines at once, not that the command list can never grow.
+    expect(text.split("\n").length).toBeLessThan(52);
     expect(text).not.toContain("--manifest");
   });
 

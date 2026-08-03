@@ -1,4 +1,5 @@
 import type { AirDocument, Capability, Diagnostic, Operation } from "@anvil/air";
+import { DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS } from "@anvil/air";
 import { discoverCapabilities } from "./capabilities.js";
 
 /**
@@ -9,8 +10,9 @@ import { discoverCapabilities } from "./capabilities.js";
  * reviewer approves what the grouping *is now*, not what it once was.
  *
  * Everything is deterministic: the budget check is a pure function of the
- * member count, and diff/propose re-run the same discovery pass the compiler
- * uses (on cloned operations, so review never mutates the loaded model).
+ * member count and of the members' *recorded* disclosure measurements, and
+ * diff/propose re-run the same discovery pass the compiler uses (on cloned
+ * operations, so review never mutates the loaded model).
  */
 
 /**
@@ -29,6 +31,30 @@ export const CAPABILITY_TOOL_BUDGET = {
   blockAbove: 20,
 } as const;
 
+/**
+ * The same band, expressed in the unit it was always a proxy for.
+ *
+ * Counting tools is a stand-in for "how much of the agent's context does loading
+ * this capability consume" — and a poor one, because it cannot tell eight small
+ * tools from eight monsters. Both score 8; only one of them fits. So once an
+ * operation carries a *measured* tool surface (`disclosureCost.toolTokens`, see
+ * `disclosure-cost.ts`), the capability is judged on the real quantity as well.
+ *
+ * The thresholds are derived rather than invented: the count band already
+ * encodes a judgement about how many per-operation disclosure budgets an agent
+ * will absorb, so the token band is that same band times the per-operation
+ * budget. One knob (`DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS`) moves both, and a
+ * capability of averagely-sized tools lands on the same verdict either way —
+ * the dimensions diverge only when tool *size* is the thing going wrong, which
+ * is exactly the case the count band was blind to.
+ */
+export const CAPABILITY_TOKEN_BUDGET = {
+  /** Above this the measured disclosure is larger than agents navigate well. */
+  idealMax: DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS * CAPABILITY_TOOL_BUDGET.idealMax,
+  /** Above this approval is blocked without an explicit override. */
+  blockAbove: DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS * CAPABILITY_TOOL_BUDGET.blockAbove,
+} as const;
+
 /** Diagnostic code for a capability over the ideal band (warning, non-blocking). */
 export const BUDGET_WARNING_CODE = "capability_tool_budget";
 /** Diagnostic code for a capability over the hard limit (blocks approval). */
@@ -36,23 +62,57 @@ export const BUDGET_BLOCKED_CODE = "capability_tool_budget_exceeded";
 /** Durable audit signal when a reviewer deliberately waives the hard limit. */
 export const BUDGET_WAIVED_CODE = "capability_tool_budget_waived";
 
+/** Measured-token counterpart of {@link BUDGET_WARNING_CODE}. */
+export const BUDGET_TOKEN_WARNING_CODE = "capability_disclosure_token_budget";
+/** Measured-token counterpart of {@link BUDGET_BLOCKED_CODE}. */
+export const BUDGET_TOKEN_BLOCKED_CODE = "capability_disclosure_token_budget_exceeded";
+/** Measured-token counterpart of {@link BUDGET_WAIVED_CODE}. */
+export const BUDGET_TOKEN_WAIVED_CODE = "capability_disclosure_token_budget_waived";
+
 export type CapabilityBudgetVerdict = "ok" | "warning" | "blocked";
 
 /** The deterministic result of the tool-budget check for one capability. */
 export interface CapabilityBudgetCheck {
   capabilityId: string;
   toolCount: number;
+  /**
+   * Summed measured tool-surface tokens over the disclosed operations, or
+   * `undefined` when not one of them was measured. When only some were, this is
+   * a *lower bound* — see `measuredOperations` / `unmeasuredOperations`. Absent
+   * means "not measured", never "free": a capability nobody measured is not
+   * evidence of a problem and never produces a token finding.
+   */
+  disclosureTokens?: number;
+  /** How many disclosed operations carried a measurement (0 when unmeasured). */
+  measuredOperations?: number;
+  /** How many disclosed operations did not — the slack in the lower bound. */
+  unmeasuredOperations?: number;
   verdict: CapabilityBudgetVerdict;
-  /** Present unless the verdict is `ok` — the typed, machine-readable finding. */
+  /**
+   * The governing finding: whichever dimension produced the worse verdict, with
+   * the count dimension winning ties. Consumers that predate the token
+   * dimension keep reading exactly what they read before — an unmeasured
+   * capability has no token finding to govern anything — while a `blocked`
+   * verdict always carries the diagnostic that explains the block.
+   */
   diagnostic?: Diagnostic;
+  /** The count-dimension finding on its own, when it has one. */
+  countDiagnostic?: Diagnostic;
+  /** The token-dimension finding on its own, when the measurement produced one. */
+  tokenDiagnostic?: Diagnostic;
 }
 
 /**
  * Check one capability against the tool-disclosure budget. Pure and
- * deterministic: the verdict depends only on the member-operation count.
+ * deterministic. `operations` is optional because a caller may hold only the
+ * grouping (a proposal, a manifest row) and not the model behind it; without it
+ * the check is exactly the count band it has always been.
  */
-export function capabilityToolBudget(capability: Capability): CapabilityBudgetCheck {
-  return budgetForOperationIds(capability, capability.operationIds);
+export function capabilityToolBudget(
+  capability: Capability,
+  operations: readonly Operation[] = [],
+): CapabilityBudgetCheck {
+  return budgetForOperationIds(capability, capability.operationIds, operations);
 }
 
 /**
@@ -66,25 +126,67 @@ export function capabilityDisclosureBudget(
   capabilityId: string,
 ): CapabilityBudgetCheck {
   const capability = requireCapability(air, capabilityId);
-  return budgetForOperationIds(capability, disclosedOperationIds(air, capability));
+  return budgetForOperationIds(capability, disclosedOperationIds(air, capability), air.operations);
 }
 
 function budgetForOperationIds(
   capability: Capability,
   operationIds: readonly string[],
+  operations: readonly Operation[] = [],
 ): CapabilityBudgetCheck {
-  const toolCount = new Set(operationIds).size;
-  const base = { capabilityId: capability.id, toolCount };
+  const unique = new Set(operationIds);
+  const toolCount = unique.size;
+  const count = countBand(capability.id, toolCount);
+  const tokens = tokenBand(capability.id, unique, operations);
+  return {
+    capabilityId: capability.id,
+    toolCount,
+    ...tokens.measurement,
+    // The worse of the two dimensions governs: a capability that is fine on one
+    // and blocked on the other is blocked. Tokens can only ever be *worse* than
+    // the count verdict, never better — a measured overrun is evidence, an
+    // absent measurement is not, so the token dimension never clears a count
+    // finding it knows nothing about.
+    verdict: worst(count.verdict, tokens.verdict),
+    // The worse dimension explains the verdict — a block must never be reported
+    // through a warning-level message about the other dimension. Ties go to the
+    // count band, which keeps the field byte-identical for every document that
+    // predates measurement.
+    diagnostic:
+      VERDICT_SEVERITY[count.verdict] >= VERDICT_SEVERITY[tokens.verdict]
+        ? (count.diagnostic ?? tokens.diagnostic)
+        : tokens.diagnostic,
+    countDiagnostic: count.diagnostic,
+    tokenDiagnostic: tokens.diagnostic,
+  };
+}
+
+interface BandResult {
+  verdict: CapabilityBudgetVerdict;
+  diagnostic?: Diagnostic;
+}
+
+const VERDICT_SEVERITY: Record<CapabilityBudgetVerdict, number> = {
+  ok: 0,
+  warning: 1,
+  blocked: 2,
+};
+
+function worst(a: CapabilityBudgetVerdict, b: CapabilityBudgetVerdict): CapabilityBudgetVerdict {
+  return VERDICT_SEVERITY[a] >= VERDICT_SEVERITY[b] ? a : b;
+}
+
+/** The original count band, unchanged — tokens are an addition, not a rewrite. */
+function countBand(capabilityId: string, toolCount: number): BandResult {
   if (toolCount > CAPABILITY_TOOL_BUDGET.blockAbove) {
     return {
-      ...base,
       verdict: "blocked",
       diagnostic: {
         level: "error",
         code: BUDGET_BLOCKED_CODE,
-        capabilityId: capability.id,
+        capabilityId,
         message:
-          `Capability '${capability.id}' would disclose ${toolCount} tools ` +
+          `Capability '${capabilityId}' would disclose ${toolCount} tools ` +
           `(hard limit ${CAPABILITY_TOOL_BUDGET.blockAbove}). Split the grouping, or approve ` +
           `deliberately with --allow-large.`,
       },
@@ -92,20 +194,105 @@ function budgetForOperationIds(
   }
   if (toolCount > CAPABILITY_TOOL_BUDGET.idealMax) {
     return {
-      ...base,
       verdict: "warning",
       diagnostic: {
         level: "warning",
         code: BUDGET_WARNING_CODE,
-        capabilityId: capability.id,
+        capabilityId,
         message:
-          `Capability '${capability.id}' discloses ${toolCount} tools; the default ` +
+          `Capability '${capabilityId}' discloses ${toolCount} tools; the default ` +
           `disclosure band is ${CAPABILITY_TOOL_BUDGET.idealMin}–${CAPABILITY_TOOL_BUDGET.idealMax}. ` +
           `Consider splitting it.`,
       },
     };
   }
-  return { ...base, verdict: "ok" };
+  return { verdict: "ok" };
+}
+
+interface TokenBandResult extends BandResult {
+  measurement: Pick<
+    CapabilityBudgetCheck,
+    "disclosureTokens" | "measuredOperations" | "unmeasuredOperations"
+  >;
+}
+
+/**
+ * The measured dimension. Sums whatever tool surfaces were measured and judges
+ * that sum, which is a *lower bound* on the true disclosure whenever some
+ * members are unmeasured. Judging a lower bound is sound in one direction only,
+ * and that is the direction we use it: a sum that already exceeds a threshold
+ * can only grow once the rest is measured, so the finding stands. The converse
+ * — concluding a partly-measured capability is fine — is not claimed; silence
+ * from this band means "no evidence of an overrun", never "verified small".
+ */
+function tokenBand(
+  capabilityId: string,
+  operationIds: ReadonlySet<string>,
+  operations: readonly Operation[],
+): TokenBandResult {
+  let disclosureTokens = 0;
+  let measuredOperations = 0;
+  let unmeasuredOperations = 0;
+  for (const id of operationIds) {
+    const operation = operations.find((candidate) => candidate.id === id);
+    const cost = operation?.disclosureCost;
+    // A dependency the document does not contain is counted as unmeasured
+    // rather than as absent: it is still disclosed, we simply cannot price it.
+    if (!cost) {
+      unmeasuredOperations += 1;
+      continue;
+    }
+    disclosureTokens += cost.toolTokens;
+    measuredOperations += 1;
+  }
+
+  // Nothing measured: behave precisely as before this dimension existed. An
+  // unmeasured capability is not a suspicious one — it is a capability nobody
+  // has run `measureAirDisclosure` over — and inferring a problem from missing
+  // evidence would make approval depend on whether a build step happened to run.
+  if (measuredOperations === 0) {
+    return { verdict: "ok", measurement: { measuredOperations: 0, unmeasuredOperations } };
+  }
+
+  const measurement = { disclosureTokens, measuredOperations, unmeasuredOperations };
+  const partial =
+    unmeasuredOperations > 0
+      ? ` (measured ${measuredOperations} of ${measuredOperations + unmeasuredOperations} disclosed operations, so the real figure is higher)`
+      : "";
+
+  if (disclosureTokens > CAPABILITY_TOKEN_BUDGET.blockAbove) {
+    return {
+      verdict: "blocked",
+      measurement,
+      diagnostic: {
+        level: "error",
+        code: BUDGET_TOKEN_BLOCKED_CODE,
+        capabilityId,
+        message:
+          `Capability '${capabilityId}' would disclose ${disclosureTokens} measured tool-surface ` +
+          `tokens${partial} (hard limit ${CAPABILITY_TOKEN_BUDGET.blockAbove}). The tool count is ` +
+          `not the binding constraint here — the tools themselves are large. Split the grouping, ` +
+          `trim descriptions and input schemas, or approve deliberately with --allow-large.`,
+      },
+    };
+  }
+  if (disclosureTokens > CAPABILITY_TOKEN_BUDGET.idealMax) {
+    return {
+      verdict: "warning",
+      measurement,
+      diagnostic: {
+        level: "warning",
+        code: BUDGET_TOKEN_WARNING_CODE,
+        capabilityId,
+        message:
+          `Capability '${capabilityId}' discloses ${disclosureTokens} measured tool-surface ` +
+          `tokens${partial}; the default band is ${CAPABILITY_TOKEN_BUDGET.idealMax} ` +
+          `(${CAPABILITY_TOOL_BUDGET.idealMax} tools x ${DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS} ` +
+          `tokens). Consider splitting it, or trimming oversized descriptions and input schemas.`,
+      },
+    };
+  }
+  return { verdict: "ok", measurement };
 }
 
 /** A structured, typed failure from a capability review action. */
@@ -173,24 +360,56 @@ export function approveCapability(
   }
   capability.lifecycle = "approved";
   if (options.note) capability.reviewNote = options.note;
-  const acceptedBudget =
-    budget.verdict === "blocked"
-      ? {
-          ...budget,
-          verdict: "warning" as const,
-          diagnostic: {
-            level: "warning" as const,
-            code: BUDGET_WAIVED_CODE,
-            capabilityId,
-            message:
-              `Capability '${capabilityId}' discloses ${budget.toolCount} tools, above the hard ` +
-              `limit ${CAPABILITY_TOOL_BUDGET.blockAbove}; the reviewer explicitly waived the limit` +
-              `${options.note ? `: ${options.note}` : "."}`,
-          },
-        }
-      : budget;
-  recordBudgetDiagnostic(air, capabilityId, acceptedBudget.diagnostic);
+  const acceptedBudget = budget.verdict === "blocked" ? waive(budget, options.note) : budget;
+  recordBudgetDiagnostics(air, capabilityId, acceptedBudget);
   return acceptedBudget;
+}
+
+/**
+ * Turn a blocked verdict into the durable audit record of a deliberate waiver.
+ * Each dimension is waived in its own voice: a reviewer who accepted 24 tools
+ * has not thereby accepted 60,000 tokens of surface, so a token overrun keeps
+ * its own code and its own number in the record rather than being folded into
+ * a message about tool counts.
+ */
+function waive(budget: CapabilityBudgetCheck, note: string | undefined): CapabilityBudgetCheck {
+  const suffix = note ? `: ${note}` : ".";
+  const capabilityId = budget.capabilityId;
+  // Only a *blocked* dimension is waived. A dimension that merely warned keeps
+  // its warning: the reviewer accepted a hard limit, not everything the check
+  // had to say.
+  const countDiagnostic: Diagnostic | undefined =
+    budget.countDiagnostic?.code === BUDGET_BLOCKED_CODE
+      ? {
+          level: "warning",
+          code: BUDGET_WAIVED_CODE,
+          capabilityId,
+          message:
+            `Capability '${capabilityId}' discloses ${budget.toolCount} tools, above the hard ` +
+            `limit ${CAPABILITY_TOOL_BUDGET.blockAbove}; the reviewer explicitly waived the limit` +
+            suffix,
+        }
+      : budget.countDiagnostic;
+  const tokenDiagnostic: Diagnostic | undefined =
+    budget.tokenDiagnostic?.code === BUDGET_TOKEN_BLOCKED_CODE
+      ? {
+          level: "warning",
+          code: BUDGET_TOKEN_WAIVED_CODE,
+          capabilityId,
+          message:
+            `Capability '${capabilityId}' discloses ${budget.disclosureTokens} measured ` +
+            `tool-surface tokens, above the hard limit ${CAPABILITY_TOKEN_BUDGET.blockAbove}; ` +
+            `the reviewer explicitly waived the limit${suffix}`,
+        }
+      : budget.tokenDiagnostic;
+  return {
+    ...budget,
+    verdict: "warning",
+    // Both dimensions are now at most a warning, so the tie rule applies again.
+    diagnostic: countDiagnostic ?? tokenDiagnostic,
+    countDiagnostic,
+    tokenDiagnostic,
+  };
 }
 
 /**
@@ -206,7 +425,7 @@ export function rejectCapability(
   const capability = requireCapability(air, capabilityId);
   capability.lifecycle = "rejected";
   if (reason) capability.reviewNote = reason;
-  recordBudgetDiagnostic(air, capabilityId, undefined);
+  recordBudgetDiagnostics(air, capabilityId, undefined);
   return capability;
 }
 
@@ -236,7 +455,11 @@ export function proposeCapabilities(air: AirDocument): CapabilityProposal[] {
     }
     return {
       capability,
-      budget: budgetForOperationIds(capability, disclosedOperationIds(air, capability)),
+      budget: budgetForOperationIds(
+        capability,
+        disclosedOperationIds(air, capability),
+        air.operations,
+      ),
       isNew: !prior,
     };
   });
@@ -312,17 +535,37 @@ function disclosedOperationIds(air: AirDocument, capability: Capability): string
   ];
 }
 
-function recordBudgetDiagnostic(
+/**
+ * Every budget code this module is allowed to leave behind on the document. The
+ * recorded set is replaced wholesale on each decision, so a grouping that was
+ * re-reviewed never accumulates two generations of contradictory findings.
+ * Blocked codes are absent by construction: a blocked verdict refuses approval,
+ * so it is carried in the thrown error, never persisted as an accepted state.
+ */
+const RECORDED_BUDGET_CODES = new Set<string>([
+  BUDGET_WARNING_CODE,
+  BUDGET_WAIVED_CODE,
+  BUDGET_TOKEN_WARNING_CODE,
+  BUDGET_TOKEN_WAIVED_CODE,
+]);
+
+function recordBudgetDiagnostics(
   air: AirDocument,
   capabilityId: string,
-  diagnostic: Diagnostic | undefined,
+  budget: CapabilityBudgetCheck | undefined,
 ): void {
   air.diagnostics = air.diagnostics.filter(
     (candidate) =>
-      !(
-        candidate.capabilityId === capabilityId &&
-        (candidate.code === BUDGET_WARNING_CODE || candidate.code === BUDGET_WAIVED_CODE)
-      ),
+      !(candidate.capabilityId === capabilityId && RECORDED_BUDGET_CODES.has(candidate.code)),
   );
-  if (diagnostic) air.diagnostics.push(diagnostic);
+  // The two dimensions can report the same finding object (a token-only
+  // finding governs `diagnostic` when the count band is clean), so dedupe by
+  // code rather than pushing both blindly.
+  const seen = new Set<string>();
+  for (const diagnostic of [budget?.diagnostic, budget?.tokenDiagnostic]) {
+    if (!diagnostic || !RECORDED_BUDGET_CODES.has(diagnostic.code)) continue;
+    if (seen.has(diagnostic.code)) continue;
+    seen.add(diagnostic.code);
+    air.diagnostics.push(diagnostic);
+  }
 }
