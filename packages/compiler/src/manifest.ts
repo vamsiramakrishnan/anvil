@@ -7,10 +7,11 @@ import {
   MAX_RETRY_ATTEMPTS,
   type Operation,
   type RetryCondition,
+  SQL_DIALECTS,
   snakeCase,
   type Workflow,
 } from "@anvil/air";
-import { analyzeTemplate } from "@anvil/grammar";
+import { analyzeTemplate, lexicalFamily } from "@anvil/grammar";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
@@ -178,7 +179,7 @@ export const OperationManifest = z.object({
   query_policy: z
     .object({
       query_param: z.string(),
-      dialect: z.enum(["postgres", "mysql", "ansi"]).default("ansi"),
+      dialect: z.enum(SQL_DIALECTS).default("ansi"),
       allowed_statements: z
         .array(
           z.enum(["select", "insert", "update", "delete", "merge", "call", "explain", "other"]),
@@ -328,7 +329,7 @@ export const QueryTemplateManifest = z
     read_only: z.literal(true),
     max_rows: z.number().int().min(1).optional(),
     /** SQL dialect for grammar-aware substitution and (later) the query guard. */
-    dialect: z.enum(["postgres", "mysql", "ansi"]).default("ansi"),
+    dialect: z.enum(SQL_DIALECTS).default("ansi"),
   })
   .superRefine((template, ctx) => {
     // Extract placeholders from the template string (e.g., {param_name})
@@ -389,7 +390,9 @@ export const QueryTemplateManifest = z
         });
       }
     } else {
-      const analysis = analyzeTemplate(template.template, dialect);
+      // The lean fallback tokenizes under a lexical family, not the warehouse
+      // name — collapse it so a browser-bundle `bigquery` template still lexes.
+      const analysis = analyzeTemplate(template.template, lexicalFamily(dialect));
       if (!analysis.ok) {
         ctx.addIssue({
           code: "custom",

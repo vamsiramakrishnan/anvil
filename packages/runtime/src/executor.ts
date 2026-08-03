@@ -10,7 +10,7 @@ import {
   propKey,
   resolveIdempotencyCarrier,
 } from "@anvil/air";
-import { checkQuery, renderTemplate } from "@anvil/grammar";
+import { checkQuery, lexicalFamily, renderTemplate } from "@anvil/grammar";
 import {
   type AuthMaterial,
   applyAuth,
@@ -326,7 +326,7 @@ function buildRequest(
     const raw = input[propKey(op.queryPolicy.queryParam)];
     const queryText = raw === undefined || raw === null ? "" : String(raw);
     const verdict = checkQuery(queryText, {
-      dialect: op.queryPolicy.dialect ?? "ansi",
+      dialect: lexicalFamily(op.queryPolicy.dialect ?? "ansi"),
       allowedStatements: op.queryPolicy.allowedStatements,
       singleStatementOnly: op.queryPolicy.singleStatementOnly,
       forbidComments: op.queryPolicy.forbidComments,
@@ -364,7 +364,7 @@ function buildRequest(
     const rendered = renderTemplate(
       op.queryTemplate.template,
       values,
-      op.queryTemplate.dialect ?? "ansi",
+      lexicalFamily(op.queryTemplate.dialect ?? "ansi"),
     );
     if (!rendered.ok) {
       throw new AnvilError({

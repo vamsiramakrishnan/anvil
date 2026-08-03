@@ -661,6 +661,23 @@ export type Pagination = z.infer<typeof Pagination>;
 /* Operation                                                                  */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * SQL dialects an operation may declare for a query template or policy. The
+ * portable trio (`ansi`/`postgres`/`mysql`) plus the named warehouses the
+ * authoring-time analyzer parses against their real grammar. At runtime each
+ * collapses to a lexical family (see `@anvil/grammar`'s `lexicalFamily`); the
+ * deployed tokenizer never carries warehouse-specific rules.
+ */
+export const SQL_DIALECTS = [
+  "ansi",
+  "postgres",
+  "mysql",
+  "bigquery",
+  "snowflake",
+  "redshift",
+  "databricks",
+] as const;
+
 export const Operation = z.object({
   /** Stable, dotted operation id, e.g. payments.refund.create. */
   id: z.string(),
@@ -722,9 +739,12 @@ export const Operation = z.object({
       /**
        * SQL dialect the template is written in — governs how the runtime
        * escapes substituted values (e.g. MySQL backslash escapes) and how a
-       * `queryPolicy` tokenizes. Defaults to the portable ANSI subset.
+       * `queryPolicy` tokenizes. Warehouse dialects (bigquery/snowflake/
+       * redshift/databricks) are validated against their real grammar at
+       * authoring time and collapse to a lexical family at runtime. Defaults to
+       * the portable ANSI subset.
        */
-      dialect: z.enum(["postgres", "mysql", "ansi"]).default("ansi"),
+      dialect: z.enum(SQL_DIALECTS).default("ansi"),
     })
     .optional(),
   /**
@@ -739,7 +759,7 @@ export const Operation = z.object({
     .object({
       /** The input param whose value carries the query text to police. */
       queryParam: z.string(),
-      dialect: z.enum(["postgres", "mysql", "ansi"]).default("ansi"),
+      dialect: z.enum(SQL_DIALECTS).default("ansi"),
       allowedStatements: z
         .array(
           z.enum(["select", "insert", "update", "delete", "merge", "call", "explain", "other"]),

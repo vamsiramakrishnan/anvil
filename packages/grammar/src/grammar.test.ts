@@ -1,7 +1,44 @@
 import { describe, expect, it } from "vitest";
 import { checkQuery, type QueryPolicy } from "./policy.js";
 import { analyzeTemplate, escapeStringLiteralBody, renderTemplate } from "./template.js";
-import { significantTokens, tokenize } from "./tokenize.js";
+import { lexicalFamily, significantTokens, tokenize } from "./tokenize.js";
+
+describe("lexicalFamily — warehouse dialects collapse to a lean lexer family", () => {
+  it("maps Postgres-lineage warehouses (redshift, snowflake) to the postgres family", () => {
+    expect(lexicalFamily("postgres")).toBe("postgres");
+    expect(lexicalFamily("redshift")).toBe("postgres");
+    expect(lexicalFamily("snowflake")).toBe("postgres");
+  });
+
+  it("maps backtick/backslash warehouses (bigquery, databricks) to the mysql family", () => {
+    expect(lexicalFamily("mysql")).toBe("mysql");
+    expect(lexicalFamily("bigquery")).toBe("mysql");
+    expect(lexicalFamily("databricks")).toBe("mysql");
+    expect(lexicalFamily("hive")).toBe("mysql");
+  });
+
+  it("falls back to ansi for the portable subset and any unrecognized dialect", () => {
+    expect(lexicalFamily("ansi")).toBe("ansi");
+    expect(lexicalFamily("cql")).toBe("ansi");
+    expect(lexicalFamily("")).toBe("ansi");
+  });
+
+  it("polices a BigQuery query with backtick-quoted tables under the mysql family", () => {
+    // A BigQuery table reference uses backticks; the mysql-family lexer decodes
+    // the identifier so the allowlist match works and injection past it fails.
+    const policy: QueryPolicy = {
+      dialect: lexicalFamily("bigquery"),
+      allowedStatements: ["select"],
+      singleStatementOnly: true,
+      forbidComments: true,
+      allowedTables: ["events"],
+    };
+    const ok = checkQuery("SELECT id FROM `events` LIMIT 10", policy);
+    expect(ok.ok).toBe(true);
+    const bad = checkQuery("SELECT id FROM `secrets` LIMIT 10", policy);
+    expect(bad.ok).toBe(false);
+  });
+});
 
 describe("tokenize", () => {
   it("keeps string literals whole, including doubled-quote escapes", () => {

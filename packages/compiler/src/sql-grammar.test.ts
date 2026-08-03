@@ -48,6 +48,50 @@ describe("analyzeSqlTemplate — real-parser authoring gate", () => {
     expect(r.statementType).toBe("update");
   });
 
+  it("parses BigQuery backtick-qualified tables against the real BigQuery grammar", () => {
+    const r = analyzeSqlTemplate(
+      "SELECT event FROM `analytics.events` WHERE user = '{user}' LIMIT {n}",
+      "bigquery",
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.statementType).toBe("select");
+    expect(r.tables.join(" ")).toContain("events");
+  });
+
+  it("parses a Snowflake SELECT and extracts its table", () => {
+    const r = analyzeSqlTemplate(
+      "SELECT id FROM accounts WHERE tier = '{tier}' LIMIT 5",
+      "snowflake",
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.statementType).toBe("select");
+    expect(r.tables).toContain("accounts");
+  });
+
+  it("parses a Redshift SELECT and extracts its table", () => {
+    const r = analyzeSqlTemplate("SELECT id FROM ledger WHERE region = '{region}'", "redshift");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.tables).toContain("ledger");
+  });
+
+  it("validates a Databricks template via the closest shipped (hive) grammar", () => {
+    const r = analyzeSqlTemplate("SELECT col FROM warehouse WHERE k = '{k}'", "databricks");
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.statementType).toBe("select");
+    expect(r.tables).toContain("warehouse");
+  });
+
+  it("still rejects a placeholder in an identifier position for a warehouse dialect", () => {
+    const r = analyzeSqlTemplate("SELECT * FROM {table} LIMIT 1", "bigquery");
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe("placeholder_position");
+  });
+
   it("falls back with an unsupported-dialect verdict rather than guessing", () => {
     const r = analyzeSqlTemplate("SELECT 1", "cql");
     expect(r.ok).toBe(false);
@@ -55,7 +99,17 @@ describe("analyzeSqlTemplate — real-parser authoring gate", () => {
     expect(r.code).toBe("unsupported_dialect");
   });
 
-  it("lists the SQL dialects the analyzer covers", () => {
-    expect(supportedSqlDialects()).toEqual(expect.arrayContaining(["ansi", "postgres", "mysql"]));
+  it("lists the SQL dialects the analyzer covers, warehouses included", () => {
+    expect(supportedSqlDialects()).toEqual(
+      expect.arrayContaining([
+        "ansi",
+        "postgres",
+        "mysql",
+        "bigquery",
+        "snowflake",
+        "redshift",
+        "databricks",
+      ]),
+    );
   });
 });

@@ -12,6 +12,47 @@
 
 export type SqlDialect = "postgres" | "mysql" | "ansi";
 
+/**
+ * Collapse a broad, warehouse-named SQL dialect (as authored on an AIR
+ * `queryPolicy`/`queryTemplate`) onto one of the three *lexical* families this
+ * tokenizer implements. The deployed runtime deliberately keeps only three
+ * families — growing it per-warehouse would put warehouse-specific lexing on the
+ * safety hot path — so each warehouse maps to the family that shares its
+ * security-relevant lexical forms (identifier quoting, comment markers, string
+ * escaping):
+ *
+ * - `bigquery`, `databricks`/`hive`/`spark` → **mysql** family: backtick-quoted
+ *   identifiers and backslash string escapes (BigQuery also honors `#` line
+ *   comments — a `#` outside a string in a Databricks query would be over-read
+ *   as a comment and, if `forbidComments`, refused; fail-closed and rare).
+ * - `snowflake`, `redshift` → **postgres** family: dollar-quoted string bodies
+ *   (Snowflake procedures, Redshift is Postgres-derived) and `"`-quoted
+ *   identifiers.
+ * - everything else, including an unrecognized dialect → **ansi**, the portable
+ *   subset.
+ *
+ * This governs only the runtime tokenizer's fail-closed lexing. The precise,
+ * warehouse-specific grammar lives in the compiler's authoring-time analyzer
+ * (`node-sql-parser`), never in the deployed unit.
+ */
+export function lexicalFamily(dialect: string): SqlDialect {
+  switch (dialect) {
+    case "postgres":
+    case "redshift":
+    case "snowflake":
+      return "postgres";
+    case "mysql":
+    case "bigquery":
+    case "databricks":
+    case "hive":
+    case "spark":
+    case "sparksql":
+      return "mysql";
+    default:
+      return "ansi";
+  }
+}
+
 export type TokenKind =
   | "word" // keyword or bare identifier (not yet distinguished)
   | "quoted_identifier" // "x" / `x` / [x]

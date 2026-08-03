@@ -44,12 +44,22 @@ function loadParser(): ParserCtor {
   return parserCtor;
 }
 
-/** Anvil dialect → node-sql-parser `database` option. */
+/**
+ * Anvil dialect → node-sql-parser `database` option. Each warehouse maps to the
+ * grammar node-sql-parser actually ships for it, so a declared template/policy
+ * is validated against real BigQuery/Snowflake/Redshift syntax — not a generic
+ * approximation. `databricks` has no dedicated grammar; Databricks SQL derives
+ * from Spark/Hive, so it maps to the `hive` grammar as the closest available
+ * (an authoring-time approximation only — the runtime guard is grammar-neutral).
+ */
 const DIALECT_TO_DATABASE: Record<string, string> = {
   ansi: "postgresql", // the portable subset; postgres is the strictest common parser
   postgres: "postgresql",
   mysql: "mysql",
-  // Future families plug in here: bigquery, snowflake, redshift, hive, mariadb…
+  bigquery: "bigquery",
+  snowflake: "snowflake",
+  redshift: "redshift",
+  databricks: "hive", // closest shipped grammar (Databricks SQL ⊃ Spark ⊃ Hive)
 };
 
 interface SqlTemplateAnalysisOk {

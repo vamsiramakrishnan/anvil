@@ -28,6 +28,7 @@ export {
   type TemplateAnalysis,
 } from "./template.js";
 export {
+  lexicalFamily,
   type SqlDialect,
   significantTokens,
   type Token,
