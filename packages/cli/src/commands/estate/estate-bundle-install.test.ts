@@ -402,3 +402,127 @@ describe("exactFileSetDiagnostics", () => {
     ]);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Derived state: lifecycle artifacts and stale lineage                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * After an import, later commands write derived state next to the bundle —
+ * `certification.json`, `*.report.json`, target kits. `anvil approve` records
+ * that the output has moved on from its receipt by marking the view's lineage
+ * `stale` and pinning the exact staged state it approved.
+ *
+ * These are the paths that decide what a re-import may delete, so they get the
+ * same treatment as the refusals above.
+ */
+function staleView(current: Record<string, string>, receipt: GatewayImportReceipt) {
+  const view = redactGatewayImportReceipt(receipt, { workspaceRoot: work });
+  // `current` is the exact staged state approval recorded — not the whole
+  // directory. Paths in it that are neither deterministic compiler output nor
+  // recognized lifecycle state are refused before their integrity is checked.
+  const manifest = gatewayBundleManifest(current);
+  return {
+    ...view,
+    lineage: {
+      status: "stale" as const,
+      reason: "approval staged derived state",
+      currentOutputDigest: manifest.digest,
+      currentOutputFiles: manifest.files,
+    },
+  };
+}
+
+function writeWithView(dir: string, files: Record<string, string>, view: unknown) {
+  writeInstalled(dir, files);
+  writeFileSync(join(dir, "import.receipt.json"), `${JSON.stringify(view, null, 2)}\n`, "utf8");
+}
+
+describe("prepareBundleInstall — derived state", () => {
+  it("refuses to discard deliberately-changed output without --replace-derived", async () => {
+    const old = await scenario(bundleFiles());
+    const out = join(work, "bundle");
+    const onDisk = { ...bundleFiles(), "certification.json": "{}\n" };
+    writeWithView(out, onDisk, staleView({ "certification.json": "{}\n" }, old.receipt));
+
+    const next = await scenario(bundleFiles());
+    expect(codes(await install(out, next.files, next.receipt))).toEqual([
+      "gateway_receipt/stale_output_requires_replace",
+    ]);
+    expect(existsSync(join(out, "certification.json"))).toBe(true);
+  });
+
+  it("refuses when the recorded stale state no longer matches what is on disk", async () => {
+    const old = await scenario(bundleFiles());
+    const out = join(work, "bundle");
+    const onDisk = { ...bundleFiles(), "certification.json": "{}\n" };
+    // The approval recorded only the lifecycle artifact, so the untrusted-path
+    // check passes and the integrity check is the one under test.
+    writeWithView(out, onDisk, staleView({ "certification.json": "{}\n" }, old.receipt));
+    // Someone edited the approved state after its digest was recorded.
+    writeFileSync(join(out, "certification.json"), '{"tampered":true}\n', "utf8");
+
+    const next = await scenario(bundleFiles());
+    expect(codes(await install(out, next.files, next.receipt, true))).toEqual([
+      "gateway_receipt/stale_output_changed",
+    ]);
+  });
+
+  it("refuses to delete a stale-manifest path that is neither compiler output nor lifecycle state", async () => {
+    const old = await scenario(bundleFiles());
+    const out = join(work, "bundle");
+    // `notes.txt` is not deterministic compiler output and is not a recognized
+    // lifecycle artifact, so even --replace-derived will not delete it.
+    const onDisk = { ...bundleFiles(), "notes.txt": "hand written\n" };
+    writeWithView(out, onDisk, staleView({ "notes.txt": "hand written\n" }, old.receipt));
+
+    const next = await scenario(bundleFiles());
+    const result = await install(out, next.files, next.receipt, true);
+    expect(codes(result)).toEqual(["gateway_receipt/stale_manifest_untrusted_path"]);
+    expect(existsSync(join(out, "notes.txt"))).toBe(true);
+  });
+
+  it("refuses when a lifecycle artifact collides with a compiler-owned candidate file", async () => {
+    const old = await scenario(bundleFiles());
+    const out = join(work, "bundle");
+    const onDisk = { ...bundleFiles(), "certification.json": "{}\n" };
+    writeInstalled(out, { ...onDisk, "import.receipt.json": old.files["import.receipt.json"] });
+
+    // The new bundle itself claims `certification.json`, so preserving the
+    // existing lifecycle artifact would silently overwrite generated output.
+    const next = await scenario({ ...bundleFiles(), "certification.json": "{}\n" });
+    expect(codes(await install(out, next.files, next.receipt))).toEqual([
+      "gateway_receipt/lifecycle_collision",
+    ]);
+  });
+
+  it("refuses when the candidate AIR cannot validate the lifecycle artifacts it would keep", async () => {
+    const old = await scenario(bundleFiles());
+    const out = join(work, "bundle");
+    const onDisk = { ...bundleFiles(), "certification.json": "{}\n" };
+    writeInstalled(out, { ...onDisk, "import.receipt.json": old.files["import.receipt.json"] });
+
+    const next = await scenario({ "air.json": "{ not json", "README.md": "# acct\n" });
+    expect(codes(await install(out, next.files, next.receipt))).toContain(
+      "gateway_receipt/candidate_air_unreadable",
+    );
+  });
+
+  it("refuses a staged bundle whose own receipt view will not parse", async () => {
+    const { receipt } = await scenario(bundleFiles());
+    const corrupt = { ...bundleFiles(), "import.receipt.json": "{ not a receipt view\n" };
+    expect(codes(await install(join(work, "bundle"), corrupt, receipt))).toContain(
+      "gateway_receipt/bundle_receipt_unparseable",
+    );
+    expect(existsSync(join(work, "bundle"))).toBe(false);
+  });
+
+  it("reports an install that throws part-way as a failure, not a success", async () => {
+    const { receipt } = await scenario(bundleFiles());
+    // `a` cannot be both a file and a directory; writeBundle throws mid-stage.
+    const impossible = { a: "file\n", "a/b": "child\n" };
+    const result = await install(join(work, "bundle"), impossible, receipt);
+    expect(codes(result)).toEqual(["gateway_receipt/output_install_failed"]);
+    expect(existsSync(join(work, "bundle"))).toBe(false);
+  });
+});

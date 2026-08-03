@@ -232,7 +232,7 @@
       "whyMissed": "The uncovered codes were unreachable from a test. They lived in module-private functions inside a 3,327-line file, so the only way to reach them was to drive the whole CLI with a fixture elaborate enough to hit that specific branch. Coverage was a function of module size, not of anyone's judgement about risk.",
       "regressionTest": "packages/cli/src/commands/estate/estate-bundle-install.test.ts",
       "status": "open",
-      "notes": "Thirteen of the seventeen were in the transactional bundle-install path and are now covered after that subsystem was extracted. The remaining four (formal_definition_source_missing, route_set_ambiguous, runtime_coordinate_attested, unnecessary_spec_override) are in runImport's contract-attestation branch and are covered when that is extracted."
+      "notes": "13 of the 17 covered so far. The scan was scoped to estate.ts; widening it to the whole estate directory shows 73 codes with 62 asserted. Four of the remaining eleven (bundle_receipt_missing, output_lineage_stale, output_unreadable, and a second bundle_receipt_unparseable site) are in runVerify and need that verb extracted; lifecycle_incompatible needs a target kit that validates under one AIR and not another, which is not constructible from a hand-written fixture; five (audit_inventory_mismatch, baseline_vendor_mismatch, duplicate_inventory_coordinate, duplicate_selection, vendor_mismatch) and gateway/missing_contract live in estate-audit.ts and estate-adoption.ts, which the original estate.ts-only scan never covered."
     },
     {
       "id": "estate-import-error-envelope-inconsistent",

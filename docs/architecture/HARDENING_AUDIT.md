@@ -189,22 +189,33 @@ stable identity and keyed order-independently).
 | `pnpm knip` | clean | clean |
 | `pnpm typecheck` | 14/14 | 14/14 |
 | `pnpm build` | 14/14 | 14/14 |
-| `pnpm test` | 3,341 passed | **3,378 passed, 1 skipped, 0 failed** |
+| `pnpm test` | 3,341 passed | **3,404 passed, 1 skipped, 0 failed** |
 | `node tools/corpus/run.mjs estates` | 6/6 green | 6/6 green |
 
-`estate.ts` **3,327 → 2,712** (−615), across two modules:
+`estate.ts` **3,327 → 2,498** (−829), across three modules:
 
 | Module | Lines | Shape |
 | --- | --- | --- |
 | `estate-bundle-install.ts` | 592 | transactional install; no `CliIO`, discriminated result |
+| `estate-contract-attestation.ts` | 314 | pure attestation; diagnostics and decisions out |
 | `estate-import-policy.ts` | 168 | pure rules; rejection-or-`undefined` |
 
-**+37 tests** (16 install, 21 policy). Ten mutants were used to confirm the new
-suites bite before they were trusted: removing the unmanaged-output refusal, the
-identity-collision check, the rollback, the backup-cleanup warning, the
-non-WSO2 attestation refusal, the HTTPS constraint, the credential constraint,
-the `unscoped` reservation, the strict-identity requirement, and an off-by-one on
-the reason-length bound each turn a suite red.
+**+63 tests** (23 install, 21 policy, 19 attestation). **Twenty-two mutants** were used to confirm the new suites bite before they were
+trusted. Each of these turns a suite red: removing the unmanaged-output refusal,
+the identity-collision check, the rollback, the backup-cleanup warning, the
+stale-output replace gate, the stale-state integrity check, the untrusted-path
+guard, the lifecycle-collision check, the install-failure code, the non-WSO2
+attestation refusal, the HTTPS constraint, the credential constraint, the
+`unscoped` reservation, the strict-identity requirement, the unnecessary-override
+refusal, the absent-entrypoint refusal, the missing-coordinate supersession, the
+duplicate-route flag, the unattestable-coordinate flag, path-parameter
+normalization, inferring authority among several definitions, and an off-by-one
+on the reason-length bound.
+
+One mutant initially appeared to survive. It had not been applied — the search
+string contained `$1`, which the shell expanded to nothing. Re-run with correct
+quoting, it was killed. Worth recording: a mutation harness can lie in exactly
+the direction that flatters it.
 
 **Deliberately preserved**, each recorded as a finding rather than tidied: two
 import refusals carry no machine-readable code; two error codes emit a JSON
@@ -212,10 +223,19 @@ envelope shape that differs from the rest under the same `reportType`; and
 `runVerify` re-implements bundle-vs-receipt verification inline with a different
 code set. All three are contract changes, not mechanical moves.
 
-**Still uncovered:** four error codes in `runImport`'s contract-attestation
-branch (`formal_definition_source_missing`, `route_set_ambiguous`,
-`runtime_coordinate_attested`, `unnecessary_spec_override`). They become
-reachable when that branch is extracted.
+**Error-code coverage.** 12 of the 17 originally-uncovered `estate.ts` codes are
+now asserted. A correction to an earlier claim in this document: the first pass
+covered 6, not 13 — 13 codes *lived in* the extracted subsystem, but only 6 had
+tests at that point.
+
+Widening the scan from `estate.ts` to the whole estate directory shows **73
+codes, 62 asserted, 11 not**. The eleven, with why:
+
+| Codes | Why not yet |
+| --- | --- |
+| `bundle_receipt_missing`, `output_lineage_stale`, `output_unreadable` | Inside `runVerify`; reachable when that verb is extracted (step 6). |
+| `lifecycle_incompatible` | Needs a target kit that validates under one AIR and not another. Not constructible from a hand-written fixture; needs real target generation. |
+| `audit_inventory_mismatch`, `baseline_vendor_mismatch`, `duplicate_inventory_coordinate`, `duplicate_selection`, `vendor_mismatch`, `gateway/missing_contract` | In `estate-audit.ts` and `estate-adoption.ts`, which the original `estate.ts`-only scan never looked at. Their own gap, not this one's. |
 
 ## Verification after the first wave
 

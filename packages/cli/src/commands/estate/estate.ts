@@ -30,12 +30,10 @@ import {
   gatewayImportIdentity,
   gatewayImportIdentitySlug,
   gatewayManifestDigest,
-  gatewayOperationRef,
   gatewaySha256,
   isGatewayLifecycleArtifact,
   KongGatewayAdapter,
   MulesoftGatewayAdapter,
-  makeOverlay,
   parseManifest,
   readArchive,
   reconcileGatewayIdentity,
@@ -78,6 +76,13 @@ import {
   listBundleFiles,
   prepareBundleInstall,
 } from "./estate-bundle-install.js";
+import {
+  attestGatewayRouteSet,
+  attestRuntimeCoordinate,
+  operationKeys,
+  resolveFormalDefinitionLineage,
+  retargetGatewayOverlay,
+} from "./estate-contract-attestation.js";
 import {
   gatewayIdentityRejection,
   invalidGatewayId,
@@ -893,184 +898,6 @@ function strictIdentityDimensions(
   }
   if (operation.auth.scopes.length > 0) required.add("scopes");
   return required;
-}
-
-function operationKeys(operation: Operation): string[] {
-  const route =
-    operation.sourceRef.method && operation.sourceRef.path
-      ? gatewayOperationRef(operation.sourceRef.method, operation.sourceRef.path)
-      : undefined;
-  return [operation.id, operation.canonicalName, operation.sourceRef.operationId, route].filter(
-    (key): key is string => key !== undefined,
-  );
-}
-
-function normalizedRoutePath(value: string): string | undefined {
-  const path = value.trim();
-  if (path === "") return undefined;
-  const leadingSlash = path.startsWith("/") ? path : `/${path}`;
-  return leadingSlash.replace(/\{\+?[^/{]+\}/g, "{}").replace(/(^|\/):[^/]+/g, "$1{}");
-}
-
-function routeKey(operation: Operation): string | undefined {
-  const { method, path } = operation.sourceRef;
-  const normalizedPath = path ? normalizedRoutePath(path) : undefined;
-  return method && normalizedPath ? `${method.toUpperCase()} ${normalizedPath}` : undefined;
-}
-
-function routeMultiset(operations: readonly Operation[]): {
-  routes: Map<string, Operation[]>;
-  unattested: Operation[];
-} {
-  const routes = new Map<string, Operation[]>();
-  const unattested: Operation[] = [];
-  for (const operation of operations) {
-    const key = routeKey(operation);
-    if (!key) {
-      unattested.push(operation);
-      continue;
-    }
-    routes.set(key, [...(routes.get(key) ?? []), operation]);
-  }
-  return { routes, unattested };
-}
-
-/**
- * A supplied contract is authoritative only for API shape, not gateway
- * membership. Prove that it describes exactly the gateway's selected route
- * multiset before allowing any operation to escape the import guard.
- */
-function attestGatewayRouteSet(
-  synthesized: readonly Operation[],
-  supplied: readonly Operation[],
-  coordinate: GatewayContractProvenance["location"],
-): GatewayDiagnostic[] {
-  const gateway = routeMultiset(synthesized);
-  const contract = routeMultiset(supplied);
-  const diagnostics: GatewayDiagnostic[] = [];
-
-  for (const operation of gateway.unattested) {
-    diagnostics.push({
-      level: "warning",
-      code: "gateway/route_set_ambiguous",
-      message: `Gateway operation '${operation.id}' has no attestable HTTP method/path coordinate.`,
-      coordinate,
-    });
-  }
-  for (const operation of contract.unattested) {
-    diagnostics.push({
-      level: "warning",
-      code: "gateway/route_set_ambiguous",
-      message: `Supplied contract operation '${operation.id}' has no attestable HTTP method/path coordinate.`,
-      coordinate,
-    });
-  }
-
-  const keys = [...new Set([...gateway.routes.keys(), ...contract.routes.keys()])].sort();
-  for (const key of keys) {
-    const gatewayCount = gateway.routes.get(key)?.length ?? 0;
-    const contractCount = contract.routes.get(key)?.length ?? 0;
-    if (gatewayCount > 1) {
-      diagnostics.push({
-        level: "warning",
-        code: "gateway/route_set_ambiguous",
-        message: `Gateway route '${key}' appears ${gatewayCount} times; an explicit reviewed route mapping is required.`,
-        coordinate,
-      });
-    }
-    if (contractCount > 1) {
-      diagnostics.push({
-        level: "warning",
-        code: "gateway/route_set_ambiguous",
-        message: `Supplied contract route '${key}' appears ${contractCount} times; an explicit reviewed route mapping is required.`,
-        coordinate,
-      });
-    }
-    if (gatewayCount > contractCount) {
-      diagnostics.push({
-        level: "warning",
-        code: "gateway/route_set_missing",
-        message: `Supplied contract is missing ${gatewayCount - contractCount} gateway operation(s) at '${key}'.`,
-        coordinate,
-      });
-    } else if (contractCount > gatewayCount) {
-      diagnostics.push({
-        level: "warning",
-        code: "gateway/route_set_extra",
-        message: `Supplied contract contains ${contractCount - gatewayCount} operation(s) at '${key}' that are absent from the selected gateway API.`,
-        coordinate,
-      });
-    }
-  }
-  return diagnostics;
-}
-
-/**
- * A native spec may use different operationIds from the gateway export. Match
- * policy targets through the route-only source's method/path and fail closed
- * when a target has no unique method/path peer in the supplied contract.
- */
-function retargetGatewayOverlay(
-  overlay: GatewayPolicyOverlay,
-  synthesized: readonly Operation[],
-  supplied: readonly Operation[],
-  coordinate: GatewayContractProvenance["location"],
-): { overlay: GatewayPolicyOverlay; diagnostics: GatewayDiagnostic[] } {
-  const synthesizedByKey = new Map<string, Operation>();
-  for (const operation of synthesized) {
-    for (const key of operationKeys(operation)) synthesizedByKey.set(key, operation);
-  }
-  const suppliedByRoute = new Map<string, Operation[]>();
-  for (const operation of supplied) {
-    const key = routeKey(operation);
-    if (key) suppliedByRoute.set(key, [...(suppliedByRoute.get(key) ?? []), operation]);
-  }
-
-  const diagnostics: GatewayDiagnostic[] = [];
-  const diagnosed = new Set<string>();
-  const assertions = overlay.assertions.flatMap((assertion) => {
-    if (assertion.target.scope !== "operation") return [assertion];
-    const synthesizedOperation = synthesizedByKey.get(assertion.target.ref);
-    const key = synthesizedOperation ? routeKey(synthesizedOperation) : undefined;
-    const candidates = key ? (suppliedByRoute.get(key) ?? []) : [];
-    if (candidates.length === 1) {
-      const suppliedOperation = candidates[0] as Operation;
-      return [
-        {
-          ...assertion,
-          target: {
-            ...assertion.target,
-            // Use the AIR id rather than a possibly colliding operationId.
-            ref: suppliedOperation.id,
-          },
-        },
-      ];
-    }
-    if (!diagnosed.has(assertion.target.ref)) {
-      diagnostics.push({
-        level: "warning",
-        code: "gateway/policy_target_unmatched",
-        message:
-          candidates.length > 1
-            ? `Gateway policy target '${assertion.target.ref}' maps to ${candidates.length} supplied operations at ${key}; no policy was applied automatically.`
-            : `Gateway policy target '${assertion.target.ref}' has no unique method/path match in the supplied contract; no policy was applied automatically.`,
-        coordinate,
-      });
-      diagnosed.add(assertion.target.ref);
-    }
-    // Do not leave a stale assertion in place: a colliding operationId could
-    // otherwise make the resolver apply gateway policy to the wrong route.
-    return [];
-  });
-  return {
-    overlay: makeOverlay({
-      origin: overlay.origin,
-      id: `${overlay.id}_retargeted`,
-      assertions,
-      evidence: overlay.evidence,
-    }),
-    diagnostics,
-  };
 }
 
 function gatewayGuardOverlay(
@@ -1968,69 +1795,36 @@ async function runImport(
       const suppliedFile = added.snapshot.files.find(
         (file) => file.path === bound.source?.entrypoint.path,
       );
-      if (!suppliedFile) {
-        return emitEstateImportError(
-          io,
-          opts.json,
-          "gateway/formal_definition_source_missing",
-          "The locked supplied contract entrypoint is absent from its own source manifest; no lineage can be established.",
-        );
-      }
-      const supplied = {
-        path: suppliedFile.path,
-        digest: `sha256:${suppliedFile.sha256.replace(/^sha256:/, "")}`,
-      };
-      const exactMatch =
-        formalDefinitions.length === 1 && formalDefinitions[0]?.digest === supplied.digest;
-      if (exactMatch && attestationReason) {
-        return emitEstateImportError(
-          io,
-          opts.json,
-          "gateway/unnecessary_spec_override",
-          "The supplied contract already exactly matches the selected embedded WSO2 definition. Remove `--attest-spec-override`; no override is needed or recorded.",
-          { formalDefinitions, supplied },
-        );
-      }
-      if (exactMatch) {
-        formalDefinitionLineage = {
-          mode: "embedded_digest_match",
-          candidates: formalDefinitions,
-          supplied,
-        };
-      } else if (attestationReason) {
-        formalDefinitionLineage = {
-          mode: "operator_override",
-          candidates: formalDefinitions,
-          supplied,
-          override: {
-            attestation: "operator",
-            reason: attestationReason,
-          },
-        };
-      } else {
-        const code =
-          formalDefinitions.length === 0
-            ? "gateway/formal_definition_missing"
-            : formalDefinitions.length > 1
-              ? "gateway/formal_definition_ambiguous"
-              : "gateway/formal_definition_digest_mismatch";
-        const message =
-          formalDefinitions.length === 0
-            ? "The selected WSO2 project has no validated embedded Definitions OpenAPI/Swagger contract to bind to the supplied --spec. Review the project and, only for a legitimate external contract, repeat with `--attest-spec-override <reason>`."
-            : formalDefinitions.length > 1
-              ? `The selected WSO2 project has ${formalDefinitions.length} validated embedded Definitions contracts. Anvil will not infer which one is authoritative; select deliberately and repeat with \`--attest-spec-override <reason>\`.`
-              : `The supplied contract digest ${supplied.digest} does not match the selected embedded WSO2 definition ${formalDefinitions[0]?.digest}. Route compatibility is not byte lineage. Supply the exact extracted member or explicitly attest a legitimate override with \`--attest-spec-override <reason>\`.`;
+      const resolved = resolveFormalDefinitionLineage({
+        formalDefinitions,
+        supplied: suppliedFile
+          ? {
+              path: suppliedFile.path,
+              digest: `sha256:${suppliedFile.sha256.replace(/^sha256:/, "")}`,
+            }
+          : undefined,
+        attestationReason,
+      });
+      if ("rejection" in resolved) {
+        const { code, message, details } = resolved.rejection;
         return emitEstateImportError(io, opts.json, code, message, {
-          formalDefinitions,
-          supplied,
-          selection: {
-            id: apiRef.id,
-            ...(apiVersion ? { apiVersion } : {}),
-            revision,
-            environment,
-          },
+          ...details,
+          // The selection is delivery context, not part of the lineage decision.
+          ...(code === "gateway/formal_definition_missing" ||
+          code === "gateway/formal_definition_ambiguous" ||
+          code === "gateway/formal_definition_digest_mismatch"
+            ? {
+                selection: {
+                  id: apiRef.id,
+                  ...(apiVersion ? { apiVersion } : {}),
+                  revision,
+                  environment,
+                },
+              }
+            : {}),
         });
       }
+      formalDefinitionLineage = resolved.lineage;
     }
 
     source = {
@@ -2104,15 +1898,7 @@ async function runImport(
     diagnostics.push(...retargeted.diagnostics);
   }
 
-  if (gatewayUrl) {
-    diagnostics = diagnostics.filter((d) => d.code !== "gateway/missing_runtime_coordinate");
-    diagnostics.push({
-      level: "info",
-      code: "gateway/runtime_coordinate_attested",
-      message: `Operator attested '${gatewayUrl}' as the public gateway base URL; generated runtime coordinates are pinned to it.`,
-      coordinate: contract.location,
-    });
-  }
+  diagnostics = attestRuntimeCoordinate(diagnostics, gatewayUrl, contract.location);
 
   let result = await compileContract(source, [overlay], {
     serviceId,
