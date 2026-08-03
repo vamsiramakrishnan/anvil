@@ -1,10 +1,18 @@
 import {
   type AirDocument,
   DEFAULT_RESPONSE_BUDGET_TOKENS,
+  type JsonSchema,
   type Operation,
+  responseFitsBudget,
   safePageSize,
 } from "@anvil/air";
-import { approveOperations, compile, surfaceSignatureFor } from "@anvil/compiler";
+import {
+  approveOperations,
+  compile,
+  countTokens,
+  surfaceSignatureFor,
+  withResponseMeasurement,
+} from "@anvil/compiler";
 import { beforeEach, describe, expect, it } from "vitest";
 import { simulatorDefinitionFor } from "./define.js";
 import { surfaceParity } from "./index.js";
@@ -308,6 +316,179 @@ describe("disclosure sample — the measurement seam", () => {
       authProfiles: def.authProfiles.filter((p) => p.id === "limited"),
     });
     expect(sim.disclosureSample(toolName("createRefund"))).toBeUndefined();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Declared-shape response bodies                                              */
+/* -------------------------------------------------------------------------- */
+
+/** A declared record of `groups` sub-objects, each carrying `fields` string leaves. */
+const wideRecord = (groups: number, fields: number): JsonSchema => ({
+  type: "object",
+  properties: Object.fromEntries(
+    Array.from({ length: groups }, (_, g) => [
+      `section_${String(g).padStart(3, "0")}`,
+      {
+        type: "object",
+        properties: Object.fromEntries(
+          Array.from({ length: fields }, (_, f) => [
+            `attribute_${String(f).padStart(2, "0")}`,
+            { type: "string" },
+          ]),
+        ),
+      },
+    ]),
+  ),
+});
+
+/** Declare a list operation's response envelope around an item schema. */
+const declareListItem = (item: JsonSchema): void => {
+  operation("listRefunds").output = {
+    schema: { type: "object", properties: { items: { type: "array", items: item } } },
+  };
+};
+
+/**
+ * Exactly what `certification`'s `response-page` cell does with a sample:
+ * tokenize the served item, fold it into the operation's measurement, and ask
+ * AIR whether the page that would be served fits the budget.
+ */
+const pageFits = (sample: { item?: unknown; response: unknown }): boolean => {
+  const op = operation("listRefunds");
+  const measured = withResponseMeasurement(
+    op.disclosureCost as NonNullable<typeof op.disclosureCost>,
+    {
+      responseTokens: countTokens(JSON.stringify(sample.response)),
+      responseItemTokens: countTokens(JSON.stringify(sample.item)),
+      seed: 42,
+    },
+  );
+  return responseFitsBudget({ ...op, disclosureCost: measured }, DEFAULT_RESPONSE_BUDGET_TOKENS);
+};
+
+describe("response bodies come from the declared response schema", () => {
+  it("keeps the historical {id, status} body when the contract declares nothing", () => {
+    // The regression that guards everyone else's numbers: most contracts carry
+    // no response schema at all, and for those the served bytes must not move.
+    const { sim } = build();
+    const page = sim.invoke(toolName("listRefunds"));
+    expect(Object.keys(items(page)[0] as object).sort()).toEqual(["id", "status"]);
+  });
+
+  it("serves the fields the schema declares, and only those", () => {
+    declareListItem({
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        amount_cents: { type: "integer" },
+        currency: { type: "string", enum: ["usd"] },
+        reason: { type: "string" },
+      },
+    });
+    const { sim } = build();
+    const item = items(sim.invoke(toolName("listRefunds")))[0] as Record<string, unknown>;
+    // `status` is the store's, not the schema's — state survives projection.
+    expect(Object.keys(item).sort()).toEqual([
+      "amount_cents",
+      "currency",
+      "id",
+      "reason",
+      "status",
+    ]);
+    expect(item.currency).toBe("usd");
+    expect(typeof item.amount_cents).toBe("number");
+    // The id is the store's fixture id, never a synthesized string.
+    expect(item.id).toMatch(/^refund_/);
+  });
+
+  it("lets stored state win over anything synthesis produced", () => {
+    // A schema may well declare `status`; the state machine owns its value, and
+    // a projection that could overwrite it would break cancel/replay silently.
+    declareListItem({
+      type: "object",
+      properties: { id: { type: "string" }, status: { type: "string", enum: ["archived"] } },
+    });
+    const { sim } = build();
+    expect(items(sim.invoke(toolName("listRefunds")))[0]).toMatchObject({ status: "active" });
+  });
+
+  it("is a pure function of (contract, seed)", () => {
+    declareListItem(wideRecord(3, 3));
+    const a = new Simulator(air, simulatorDefinitionFor(air, { seed: 11 }));
+    const b = new Simulator(air, simulatorDefinitionFor(air, { seed: 11 }));
+    expect(a.invoke(toolName("listRefunds"))).toEqual(b.invoke(toolName("listRefunds")));
+    // …and reproducible across a reset, not merely across construction.
+    const first = a.invoke(toolName("listRefunds"));
+    a.reset();
+    expect(a.invoke(toolName("listRefunds"))).toEqual(first);
+  });
+
+  it("gives distinct entities distinct bodies", () => {
+    declareListItem(wideRecord(2, 2));
+    const { sim } = build();
+    const page = items(sim.invoke(toolName("listRefunds"))) as Record<string, unknown>[];
+    expect(JSON.stringify(page[0])).not.toEqual(JSON.stringify(page[1]));
+  });
+
+  it("shapes a mutation's response from its own declared schema", () => {
+    operation("createRefund").output = {
+      schema: { type: "object", properties: { receipt_url: { type: "string", format: "uri" } } },
+    };
+    const { sim } = build();
+    const created = sim.invoke(
+      toolName("createRefund"),
+      { amount: 5 },
+      { principalId: "admin", confirm: true },
+    );
+    expect(created.ok && (created.output as Record<string, unknown>).receipt_url).toBe(
+      "https://example.com/resource",
+    );
+  });
+
+  it("measures the response it serves, not a parallel construction", () => {
+    // The seam certification measures through must stay the serving path: a
+    // sample that skipped projection would report a payload nobody receives.
+    declareListItem(wideRecord(4, 4));
+    const sampled = build().sim.disclosureSample(toolName("listRefunds"));
+    const served = build().sim.invoke(toolName("listRefunds"));
+    expect(sampled?.response).toEqual((served as { output: unknown }).output);
+    expect(sampled?.item).toEqual(items(served)[0]);
+  });
+});
+
+describe("response cost tracks declared size — the fail branch is reachable", () => {
+  it("a genuinely large declared schema simulates over the response budget", () => {
+    // 200 sections × 6 attributes: a real enterprise record (DocuSign's
+    // envelope, Salesforce's account), not padding invented to fail a budget.
+    measureList(1600);
+    declareListItem(wideRecord(200, 6));
+    const sim = new Simulator(air, simulatorDefinitionFor(air, { seed: 42 }));
+    const sample = sim.disclosureSample(toolName("listRefunds"));
+    expect(sample).toBeDefined();
+    if (!sample) return;
+    // One item alone exceeds the budget, so no page size ≥ 1 can fit — which is
+    // exactly the verdict the `{id, status}` body could never produce.
+    expect(countTokens(JSON.stringify(sample.item))).toBeGreaterThan(
+      DEFAULT_RESPONSE_BUDGET_TOKENS,
+    );
+    expect(pageFits(sample)).toBe(false);
+  });
+
+  it("a small declared schema still fits, and stays small", () => {
+    // Faithfulness cuts both ways: the same code path must leave a two-field
+    // contract cheap, or the instrument has simply been recalibrated to fail.
+    measureList(1600);
+    declareListItem({
+      type: "object",
+      properties: { id: { type: "string" }, amount_cents: { type: "integer" } },
+    });
+    const sim = new Simulator(air, simulatorDefinitionFor(air, { seed: 42 }));
+    const sample = sim.disclosureSample(toolName("listRefunds"));
+    expect(sample).toBeDefined();
+    if (!sample) return;
+    expect(countTokens(JSON.stringify(sample.item))).toBeLessThan(50);
+    expect(pageFits(sample)).toBe(true);
   });
 });
 

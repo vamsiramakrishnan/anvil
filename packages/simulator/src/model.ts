@@ -12,13 +12,23 @@
  */
 import { z } from "zod";
 
-/** A domain entity the simulator stores and mutates. */
+/**
+ * A domain entity the simulator stores and mutates.
+ *
+ * This describes STATE, not the payload an agent receives. The store holds the
+ * identity and the state-machine field, because those are the facts the
+ * simulator is authoritative about; the shape of a *response* is owned by the
+ * operation's declared response schema and is projected over this state at
+ * serve time (see `project` in runtime.ts). The split is deliberate: two
+ * operations on one resource may declare different representations of it, so no
+ * single stored body could be faithful to both.
+ */
 export const EntityDefinition = z.object({
   /** The resource noun, e.g. "refund". */
   name: z.string(),
   /** The id field used as the store key. */
   idField: z.string().default("id"),
-  /** Field names seeded onto a fixture entity (values are seeded deterministically). */
+  /** State fields seeded onto a fixture entity (values are seeded deterministically). */
   fields: z.array(z.string()).default([]),
 });
 export type EntityDefinition = z.infer<typeof EntityDefinition>;
