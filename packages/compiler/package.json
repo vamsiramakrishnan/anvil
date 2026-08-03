@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@anvil/air": "workspace:*",
+    "@anvil/grammar": "workspace:*",
     "@scalar/openapi-parser": "^0.28.8",
     "fast-xml-parser": "^5.9.3",
     "fflate": "^0.8.3",

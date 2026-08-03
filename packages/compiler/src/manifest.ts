@@ -10,6 +10,7 @@ import {
   snakeCase,
   type Workflow,
 } from "@anvil/air";
+import { analyzeTemplate } from "@anvil/grammar";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
@@ -271,6 +272,8 @@ export const QueryTemplateManifest = z
     ),
     read_only: z.literal(true),
     max_rows: z.number().int().min(1).optional(),
+    /** SQL dialect for grammar-aware substitution and (later) the query guard. */
+    dialect: z.enum(["postgres", "mysql", "ansi"]).default("ansi"),
   })
   .superRefine((template, ctx) => {
     // Extract placeholders from the template string (e.g., {param_name})
@@ -297,6 +300,20 @@ export const QueryTemplateManifest = z
           message: `Parameter '${paramName}' is declared but never used in the template.`,
         });
       }
+    }
+
+    // Grammar gate: every placeholder must sit in a LITERAL position. A
+    // placeholder in an identifier position (e.g. `FROM {table}`) or an
+    // unanalyzable template is rejected here, at authoring time, so it can never
+    // reach the runtime renderer. This is what makes template injection
+    // grammatically impossible rather than merely discouraged.
+    const analysis = analyzeTemplate(template.template, template.dialect ?? "ansi");
+    if (!analysis.ok) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["template"],
+        message: `Template is not grammar-safe: ${analysis.message}`,
+      });
     }
   });
 export type QueryTemplateManifest = z.infer<typeof QueryTemplateManifest>;
@@ -875,6 +892,7 @@ export function buildQueryTemplates(
         baseOperationId: baseOp.id,
         template: template.template,
         targetParam: template.target_param,
+        dialect: template.dialect ?? "ansi",
       },
     };
 

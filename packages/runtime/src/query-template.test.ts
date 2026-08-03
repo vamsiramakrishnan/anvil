@@ -67,16 +67,19 @@ describe("query template rendering", () => {
     expect(url.searchParams.get("branch")).toBeNull();
   });
 
-  it("substitutes literally — regex replacement patterns in a value cannot splice query text", async () => {
+  it("passes regex-replacement patterns through and escapes an embedded quote", async () => {
     const transport = new MockTransport(() => ok({ rows: [] }));
     const op = templateOp("SELECT name FROM accounts WHERE branch = '{branch}'");
-    // "$&" and "$'" are replacement-string expansions under String.replace; a
-    // literal substitution must pass them through untouched.
+    // "$&"/"$'" are String.replace expansions — the grammar renderer never uses
+    // regex replacement, so they pass through untouched. The embedded `'` is the
+    // real hazard: it must be escaped (doubled) so it cannot terminate the
+    // literal — closing the old renderer's documented quoting caveat.
     const res = await execute(op, { input: { branch: "x$&y$'z" } }, ctx(transport));
 
     expect(res.outcome).toBe("success");
     const url = new URL(transport.requests[0]?.url ?? "");
-    expect(url.searchParams.get("sql")).toBe("SELECT name FROM accounts WHERE branch = 'x$&y$'z'");
+    // The `'` became `''`; the result is a single, un-escapable string literal.
+    expect(url.searchParams.get("sql")).toBe("SELECT name FROM accounts WHERE branch = 'x$&y$''z'");
   });
 
   it("replaces every occurrence of a repeated placeholder", async () => {

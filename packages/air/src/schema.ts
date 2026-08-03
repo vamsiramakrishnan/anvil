@@ -719,6 +719,34 @@ export const Operation = z.object({
       baseOperationId: z.string(),
       template: z.string(),
       targetParam: z.string(),
+      /**
+       * SQL dialect the template is written in — governs how the runtime
+       * escapes substituted values (e.g. MySQL backslash escapes) and how a
+       * `queryPolicy` tokenizes. Defaults to the portable ANSI subset.
+       */
+      dialect: z.enum(["postgres", "mysql", "ansi"]).default("ansi"),
+    })
+    .optional(),
+  /**
+   * Grammar policy for a query-passthrough surface: the runtime parses the
+   * rendered/incoming query and refuses anything it cannot prove safe (statement
+   * class, single-statement, no comments, row bound, table allowlist). Present
+   * only on operations whose `interactionArchetype` is `query_passthrough` and an
+   * operator has declared a policy. Absent = no grammar guard (the operation
+   * stays blocked-by-default per the passthrough rule).
+   */
+  queryPolicy: z
+    .object({
+      dialect: z.enum(["postgres", "mysql", "ansi"]).default("ansi"),
+      allowedStatements: z
+        .array(
+          z.enum(["select", "insert", "update", "delete", "merge", "call", "explain", "other"]),
+        )
+        .default(["select"]),
+      singleStatementOnly: z.boolean().default(true),
+      forbidComments: z.boolean().default(true),
+      maxRows: z.number().int().min(1).optional(),
+      allowedTables: z.array(z.string()).optional(),
     })
     .optional(),
 });
