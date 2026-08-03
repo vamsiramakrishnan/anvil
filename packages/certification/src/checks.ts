@@ -5,8 +5,21 @@
  * confirmation refusal, idempotent replay, injected faults, and error
  * normalization. A check that has no applicable operation is a pass with a note,
  * so certification generalizes across contracts.
+ *
+ * That convention is right *here* and wrong one layer over: a check asks "did
+ * anything violate this?", where nothing to violate is genuine vacuous truth,
+ * whereas the coverage matrix asks "how much did we exercise?", where a vacuous
+ * pass would inflate the very fraction it reports. See the `disclosure` block in
+ * `coverage.ts`, which deliberately emits no cell rather than a free pass.
  */
-import { type AirDocument, ErrorCode, type Operation, resolveIdempotencyCarrier } from "@anvil/air";
+import {
+  type AirDocument,
+  DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS,
+  ErrorCode,
+  type Operation,
+  resolveIdempotencyCarrier,
+  toolSurfaceFitsBudget,
+} from "@anvil/air";
 import { surfaceSignatureFor } from "@anvil/compiler";
 import { type SimResult, Simulator, simulatorDefinitionFor } from "@anvil/simulator";
 import { type AgentSystemPack, type PackContents, verifyPack } from "@anvil/system-pack";
@@ -72,6 +85,46 @@ export function staticChecks(
       invalidCarriers
         .map(({ operation, carrier }) => `${operation.id}: ${carrier.issue}`)
         .join("; "),
+    ),
+  );
+
+  // What an operation costs an agent before it is useful is a static property:
+  // the tool-surface figure is taken over the exact bytes `tools/list` publishes,
+  // so it is derivable from the contract alone and cannot move between tenants
+  // or runs. That is why it belongs in this phase and not the executable one.
+  //
+  // Its sibling — what a *response* costs — deliberately does not appear here.
+  // Payload size is a property of somebody's data, knowable only by driving the
+  // simulator under a recorded seed, so it is certified as a `disclosure` cell
+  // in the coverage matrix where the seed and estimator travel with the number.
+  // Admitting a seeded projection into the static phase is the single easiest
+  // way to make a prediction wear a fact's clothes.
+  //
+  // Operations with no measurement are not counted either way. `toolSurfaceFits-
+  // Budget` returns true for them by design ("cannot fail a budget it was never
+  // measured against"), so they are excluded before the predicate rather than
+  // being allowed to pad a pass — an unmeasured surface is a refinement gap, and
+  // certifying it here would hide the gap behind a green check.
+  const measured = air.operations.filter((o) => o.state === "approved" && o.disclosureCost);
+  const overBudget = measured.filter((o) => !toolSurfaceFitsBudget(o));
+  checks.push(
+    check(
+      "static/tool_surface_within_disclosure_budget",
+      "static",
+      overBudget.length === 0,
+      overBudget.length > 0
+        ? overBudget
+            .map(
+              (o) =>
+                `${o.id}: ${o.disclosureCost?.toolTokens} > ${DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS} tokens`,
+            )
+            .join("; ")
+        : // Following this module's convention: an inapplicable check passes,
+          // but says loudly that it decided nothing, so a reader can tell a
+          // measured surface from an unmeasured one at a glance.
+          measured.length === 0
+          ? "no approved operation carries a disclosure measurement"
+          : `${measured.length} operation(s) within ${DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS} tokens`,
     ),
   );
 
