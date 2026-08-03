@@ -704,7 +704,7 @@ export class HeuristicSkillExecutor implements SkillExecutor {
 function passthroughQueryParam(op: SkillContext["operation"]): string | undefined {
   if (!op) return undefined;
   const isUnconstrainedString = (schema: Record<string, unknown> | undefined): boolean => {
-    if (!schema || schema.type !== "string") return false;
+    if (schema?.type !== "string") return false;
     return (
       schema.enum === undefined && schema.maxLength === undefined && schema.pattern === undefined
     );

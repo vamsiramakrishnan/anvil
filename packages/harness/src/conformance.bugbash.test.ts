@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,8 +7,6 @@ import { generateBundle, writeBundle } from "@anvil/generators";
 import { afterAll, describe, expect, it, test } from "vitest";
 import {
   type CliProcessResult,
-  type ConformanceCheck,
-  type ConformanceReport,
   ConformanceReport as ConformanceReportSchema,
   isTransientWorkspaceModuleFailure,
   parseCliErrorCode,
@@ -25,8 +23,6 @@ import {
 
 const read = (rel: string) =>
   readFileSync(fileURLToPath(new URL(`../../../examples/${rel}`, import.meta.url)), "utf8");
-
-const CLI_PACKAGE_DIR = fileURLToPath(new URL("../../cli", import.meta.url));
 
 const dirs: string[] = [];
 

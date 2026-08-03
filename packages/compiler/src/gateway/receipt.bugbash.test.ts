@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   FileSystemGatewayImportReceiptStore,
   finalizeGatewayImportReceipt,
-  type GatewayImportReceipt,
   type GatewayImportReceiptDraft,
   gatewayBundleManifest,
   gatewayCapabilityReviewInput,

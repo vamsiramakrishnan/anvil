@@ -507,10 +507,14 @@ function subsetFallbackToken(op: Operation, group: Operation[]): string | undefi
   if (last?.startsWith("{") && last.endsWith("}")) {
     return `by_${snakeCase(last.slice(1, -1))}`;
   }
-  const sharedByAll = group
-    .map((o) => new Set(cleanPathTokens(o.sourceRef.path)))
-    .reduce((acc, set) => new Set([...acc].filter((t) => set.has(t))));
-  const distinctive = cleanPathTokens(op.sourceRef.path).filter((t) => !sharedByAll.has(t));
+  // A token is distinctive when at least one group member's path lacks it — the
+  // complement of "shared by all". Testing membership directly avoids rebuilding
+  // an intersection Set per member, and avoids a reduce with no initial value
+  // (which would throw on an empty group rather than return a token).
+  const groupTokens = group.map((o) => new Set(cleanPathTokens(o.sourceRef.path)));
+  const distinctive = cleanPathTokens(op.sourceRef.path).filter((t) =>
+    groupTokens.some((tokens) => !tokens.has(t)),
+  );
   return distinctive.length > 0 ? `${distinctive.join("_")}_direct` : "direct";
 }
 
