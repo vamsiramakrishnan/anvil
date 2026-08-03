@@ -11,6 +11,7 @@ import { registerCompile } from "./commands/compile.js";
 import { registerConformance } from "./commands/conformance.js";
 import type { AnvilCliDeps, CommandContext } from "./commands/context.js";
 import { registerDeploy } from "./commands/deploy.js";
+import { registerDisclosure } from "./commands/disclosure.js";
 import { registerDistill } from "./commands/distill.js";
 import { registerDrift } from "./commands/drift.js";
 import { registerEnrich } from "./commands/enrich.js";
@@ -99,6 +100,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerConformance(program, ctx);
   registerBenchmark(program, ctx);
   registerSimulate(program, ctx);
+  registerDisclosure(program, ctx);
   registerPublish(program, ctx);
   registerSync(program, ctx);
   registerDrift(program, ctx);
