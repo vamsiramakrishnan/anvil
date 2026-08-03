@@ -58,6 +58,15 @@ export function mcpToolDescription(op: Operation): string {
       );
     }
   }
+  // Kept unconditional, and the alternative is instructive. Suppressing this when
+  // `asyncContract` is set would avoid ~15 tokens of overlap with the precise
+  // instructions the serving path appends — but only resolution decides whether
+  // those instructions exist, and resolution needs the whole document while this
+  // function sees one operation. Keying off the field's presence therefore
+  // silences the hint for exactly the operations whose contract could NOT be
+  // proven, which are the ones that most need to say a wait exists. A true but
+  // vague sentence beside a precise one is a rounding error; a long-running call
+  // that admits nothing is a stranded agent.
   if (op.longRunning) parts.push("Long-running: returns before completion; poll for status.");
   if (op.archetype === "search") parts.push("Narrow with filters before paging.");
   // Query grammar policy: teach the agent the exact constraints the runtime

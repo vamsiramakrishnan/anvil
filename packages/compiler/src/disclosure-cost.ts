@@ -1,5 +1,11 @@
-import type { AirDocument, DisclosureCost, JsonSchema, Operation } from "@anvil/air";
-import { mcpToolAnnotations, mcpToolDescription, operationInputSchema } from "@anvil/air";
+import type { AirDocument, AsyncContract, DisclosureCost, JsonSchema, Operation } from "@anvil/air";
+import {
+  asyncContractSentence,
+  mcpToolAnnotations,
+  mcpToolDescription,
+  operationInputSchema,
+  resolveAsyncContract,
+} from "@anvil/air";
 import { countTokens as encodeAndCount } from "gpt-tokenizer/encoding/o200k_base";
 
 /**
@@ -69,6 +75,30 @@ const RESERVED_DRY_RUN_SCHEMA: JsonSchema = {
   type: "boolean",
 };
 
+/**
+ * The projection control, mirrored from `@anvil/mcp-runtime`'s `projectionShape`
+ * for the same reason as the dry-run key: the compiler must not depend on the
+ * serving unit, so the bytes it measures are reconstructed rather than imported.
+ *
+ * This one is worth its own note because it is by far the largest reserved
+ * control — its description is ~70 tokens of prose published on *every* tool.
+ * Omitting it, as this reconstruction previously did, made the certified
+ * per-tool figure understate every operation on the surface by that much, which
+ * is precisely the "certifying a surface nobody serves" failure the measurement
+ * exists to rule out.
+ */
+const RESERVED_PROJECTION_KEY = "anvil_projection";
+const RESERVED_PROJECTION_SCHEMA: JsonSchema = {
+  description:
+    "JMESPath expression (as in `aws --query`) applied to a successful response " +
+    "before it is measured against the context budget, e.g. " +
+    "`items[].{id: id, name: name}`. Selecting fewer fields lowers the cost per " +
+    "item, which raises the number of items that fit in one page. It may only " +
+    "narrow the response, never expand it; an invalid expression fails the call " +
+    "rather than returning the unprojected payload.",
+  type: "string",
+};
+
 /** The MCP tool descriptor as it appears in a `tools/list` result. */
 interface ToolSurface {
   name: string;
@@ -105,7 +135,11 @@ function publishedInputSchema(operation: Operation): JsonSchema {
     // Insertion order is the AIR order (params, body, safety keys) with the
     // reserved control appended last — exactly the order the runtime builds its
     // shape in, so the serialization matches key for key.
-    properties: { ...properties, [RESERVED_DRY_RUN_KEY]: RESERVED_DRY_RUN_SCHEMA },
+    properties: {
+      ...properties,
+      [RESERVED_DRY_RUN_KEY]: RESERVED_DRY_RUN_SCHEMA,
+      [RESERVED_PROJECTION_KEY]: RESERVED_PROJECTION_SCHEMA,
+    },
     required: [...required],
     additionalProperties: false,
   };
@@ -118,11 +152,31 @@ function publishedInputSchema(operation: Operation): JsonSchema {
  * the standard annotation hints, and Anvil's `_meta` posture block. Nothing here
  * is optional from the agent's point of view — it is all context it must hold.
  */
-function toolSurface(operation: Operation): ToolSurface {
+function toolSurface(
+  operation: Operation,
+  operationsById?: ReadonlyMap<string, Operation>,
+): ToolSurface {
+  // The serving path appends the polling instructions and a block of
+  // `anvil/async_*` coordinates, but only for a contract that RESOLVES — which
+  // needs the whole document, not one operation. Without an index we cannot
+  // resolve, so we measure the operation alone and accept an understated figure
+  // for that case rather than guessing at bytes.
+  const asyncResolution = operationsById
+    ? resolveAsyncContract(operation, operationsById)
+    : undefined;
+  const asyncMeta =
+    asyncResolution?.ok === true
+      ? asyncMetaFor(asyncResolution.contract, asyncResolution.statusOperation)
+      : {};
+  const asyncSentence =
+    asyncResolution?.ok === true ? asyncContractSentence(asyncResolution) : undefined;
+  const description = asyncSentence
+    ? `${mcpToolDescription(operation)} ${asyncSentence}`
+    : mcpToolDescription(operation);
   return {
     name: operation.mcp.toolName,
     title: operation.displayName,
-    description: mcpToolDescription(operation),
+    description,
     inputSchema: publishedInputSchema(operation),
     annotations: mcpToolAnnotations(operation),
     _meta: {
@@ -134,7 +188,34 @@ function toolSurface(operation: Operation): ToolSurface {
       "anvil/idempotency": operation.idempotency.mode,
       "anvil/principal": operation.auth.principal,
       "anvil/operation_id": operation.id,
+      ...asyncMeta,
     },
+  };
+}
+
+/**
+ * The `anvil/async_*` block, mirrored key-for-key from what `@anvil/mcp-runtime`
+ * publishes for a resolved contract. Same mirroring rationale as the reserved
+ * controls above: the compiler cannot import the serving unit, so it reconstructs
+ * the bytes. Drift here costs an under- or over-stated figure, never a wrong
+ * safety decision.
+ */
+function asyncMetaFor(
+  contract: AsyncContract,
+  statusOperation: Operation,
+): Record<string, unknown> {
+  return {
+    "anvil/async_status_tool": statusOperation.mcp.toolName,
+    "anvil/async_job_id_field": contract.jobIdField,
+    "anvil/async_status_job_id_param": contract.statusJobIdParam,
+    "anvil/async_terminal_states": contract.terminalStates,
+    ...(contract.stateField ? { "anvil/async_state_field": contract.stateField } : {}),
+    ...(contract.pendingStates.length > 0
+      ? { "anvil/async_pending_states": contract.pendingStates }
+      : {}),
+    ...(contract.pollIntervalSeconds !== undefined
+      ? { "anvil/async_poll_interval_seconds": contract.pollIntervalSeconds }
+      : {}),
   };
 }
 
@@ -143,8 +224,11 @@ function toolSurface(operation: Operation): ToolSurface {
  * on the JSON-RPC wire. Exported so a report, a test, or a reviewer arguing with
  * a number can see the measured bytes rather than trusting the total.
  */
-export function toolSurfaceJson(operation: Operation): string {
-  return JSON.stringify(toolSurface(operation));
+export function toolSurfaceJson(
+  operation: Operation,
+  operationsById?: ReadonlyMap<string, Operation>,
+): string {
+  return JSON.stringify(toolSurface(operation, operationsById));
 }
 
 /**
@@ -169,8 +253,11 @@ function charsPerToken(chars: number, tokens: number): number {
  * Response figures are left at zero because this layer genuinely cannot know
  * them; see {@link withResponseMeasurement}.
  */
-export function measureToolSurface(operation: Operation): DisclosureCost {
-  const payload = toolSurfaceJson(operation);
+export function measureToolSurface(
+  operation: Operation,
+  operationsById?: ReadonlyMap<string, Operation>,
+): DisclosureCost {
+  const payload = toolSurfaceJson(operation, operationsById);
   const toolTokens = countTokens(payload);
   return {
     toolTokens,
@@ -227,11 +314,16 @@ export function withResponseMeasurement(
  * measurement is cheap; a silently stale certified number is not.
  */
 export function measureAirDisclosure(air: AirDocument): AirDocument {
+  // Built once and shared: a resolved async contract adds a sentence and a
+  // coordinate block to the published surface, and resolving needs to see every
+  // operation. Measuring each in isolation would understate exactly the
+  // operations carrying the most extra prose.
+  const operationsById = new Map(air.operations.map((operation) => [operation.id, operation]));
   return {
     ...air,
     operations: air.operations.map((operation) => ({
       ...operation,
-      disclosureCost: measureToolSurface(operation),
+      disclosureCost: measureToolSurface(operation, operationsById),
     })),
   };
 }
