@@ -1,0 +1,238 @@
+{
+  "$schema": "./manifest.schema.md",
+  "$comment": "Validated by packages/cli/src/bugbash-manifest.test.ts. See TAXONOMY.md for what the categories mean and what a finding must carry.",
+  "categories": [
+    "spec-parsing",
+    "canonicalization",
+    "operation-naming",
+    "risk-classification",
+    "idempotency-carriers",
+    "confirmation-gates",
+    "identity-and-auth",
+    "redaction-observability",
+    "filesystem-boundaries",
+    "gateway-estate-identity",
+    "capability-composition",
+    "disclosure-budgets",
+    "pagination-projection",
+    "long-running-operations",
+    "surface-conformance",
+    "certification-freshness",
+    "deployment-config",
+    "simulator-realism"
+  ],
+  "suites": [
+    {
+      "path": "packages/air/src/idempotency-carrier.bugbash.test.ts",
+      "subsystem": "idempotency carrier modelling",
+      "categories": ["idempotency-carriers"]
+    },
+    {
+      "path": "packages/cli/src/capability-composition.bugbash.test.ts",
+      "subsystem": "capability composition",
+      "categories": ["capability-composition"]
+    },
+    {
+      "path": "packages/cli/src/commands/approve.bugbash.test.ts",
+      "subsystem": "approve",
+      "categories": ["risk-classification", "gateway-estate-identity", "filesystem-boundaries"]
+    },
+    {
+      "path": "packages/cli/src/commands/benchmark.bugbash.test.ts",
+      "subsystem": "benchmark",
+      "categories": ["surface-conformance"]
+    },
+    {
+      "path": "packages/cli/src/commands/capability/capability-compose.bugbash.test.ts",
+      "subsystem": "capability compose",
+      "categories": ["capability-composition", "gateway-estate-identity"]
+    },
+    {
+      "path": "packages/cli/src/commands/case.bugbash.test.ts",
+      "subsystem": "case workflow",
+      "categories": ["canonicalization"]
+    },
+    {
+      "path": "packages/cli/src/commands/conformance.bugbash.test.ts",
+      "subsystem": "conformance",
+      "categories": ["surface-conformance"]
+    },
+    {
+      "path": "packages/cli/src/commands/estate/estate.bugbash.test.ts",
+      "subsystem": "gateway estate",
+      "categories": ["gateway-estate-identity", "spec-parsing"]
+    },
+    {
+      "path": "packages/cli/src/commands/idempotency-store.bugbash.test.ts",
+      "subsystem": "idempotency ledger wiring",
+      "categories": ["idempotency-carriers", "deployment-config"]
+    },
+    {
+      "path": "packages/cli/src/commands/refine.bugbash.test.ts",
+      "subsystem": "refine",
+      "categories": ["risk-classification"]
+    },
+    {
+      "path": "packages/cli/src/commands/sources.bugbash.test.ts",
+      "subsystem": "sources",
+      "categories": ["spec-parsing"]
+    },
+    {
+      "path": "packages/cli/src/commands/status.bugbash.test.ts",
+      "subsystem": "status",
+      "categories": ["certification-freshness", "surface-conformance"]
+    },
+    {
+      "path": "packages/cli/src/tool-cli.bugbash.test.ts",
+      "subsystem": "generated tool CLI engine",
+      "categories": ["surface-conformance", "confirmation-gates"]
+    },
+    {
+      "path": "packages/cli/src/wso2-apictl.bugbash.test.ts",
+      "subsystem": "WSO2 apictl collection loading",
+      "categories": ["filesystem-boundaries", "canonicalization", "gateway-estate-identity"]
+    },
+    {
+      "path": "packages/compiler/src/gateway/receipt.bugbash.test.ts",
+      "subsystem": "gateway import receipts",
+      "categories": ["gateway-estate-identity", "redaction-observability"]
+    },
+    {
+      "path": "packages/compiler/src/protocols/postman.bugbash.test.ts",
+      "subsystem": "Postman collection parser",
+      "categories": ["spec-parsing", "operation-naming"]
+    },
+    {
+      "path": "packages/harness/src/conformance.bugbash.test.ts",
+      "subsystem": "conformance harness",
+      "categories": ["surface-conformance", "redaction-observability", "identity-and-auth"]
+    },
+    {
+      "path": "packages/harness/src/live.bugbash.test.ts",
+      "subsystem": "live evidence harness",
+      "categories": ["identity-and-auth", "deployment-config"]
+    },
+    {
+      "path": "packages/harness/src/loopback.bugbash.test.ts",
+      "subsystem": "loopback self-test",
+      "categories": ["surface-conformance"]
+    },
+    {
+      "path": "packages/refinement/src/case/battery/effectiveness.bugbash.test.ts",
+      "subsystem": "investigator effectiveness metrics",
+      "categories": ["simulator-realism"]
+    },
+    {
+      "path": "packages/refinement/src/case/battery/run.bugbash.test.ts",
+      "subsystem": "investigator battery",
+      "categories": ["simulator-realism"]
+    },
+    {
+      "path": "packages/runtime/src/credentials.bugbash.test.ts",
+      "subsystem": "credential resolution",
+      "categories": ["identity-and-auth", "redaction-observability"]
+    },
+    {
+      "path": "packages/runtime/src/executor.bugbash.test.ts",
+      "subsystem": "safety executor",
+      "categories": [
+        "confirmation-gates",
+        "idempotency-carriers",
+        "redaction-observability",
+        "identity-and-auth"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "wso2-fifo-assertion-never-ran",
+      "package": "cli",
+      "subsystem": "WSO2 apictl collection loading",
+      "categories": ["filesystem-boundaries"],
+      "invariant": "A WSO2 apictl collection containing a non-regular filesystem node is refused with wso2/unsupported_collection_node before the node is read.",
+      "reproducer": "Place a FIFO inside a directory alongside a valid api.yaml and call loadWso2ApictlDirectory.",
+      "disposition": "test",
+      "whyMissed": "The test imported `mkfifoSync` from `node:fs`, which does not exist. The call threw TypeError into a bare `catch` commented 'FIFO creation may not be supported on all systems', so the assertion after it never executed. Test files are excluded from tsc in every package, so the phantom import was never reported. The suite was green and the coverage was zero.",
+      "regressionTest": "packages/cli/src/wso2-apictl.bugbash.test.ts",
+      "status": "fixed",
+      "notes": "Mutating `!stat.isFile()` to `false` does not merely mislabel the node — readFileSync on a FIFO blocks until a writer opens it, so the import hangs indefinitely. The refusal is a liveness boundary, not only a correctness one."
+    },
+    {
+      "id": "phantom-node-builtin-imports",
+      "package": "workspace",
+      "subsystem": "test infrastructure",
+      "categories": ["filesystem-boundaries"],
+      "invariant": "A named value import from a `node:` module names an export that exists, so the call cannot throw TypeError at runtime.",
+      "reproducer": "Import any non-existent name from a node builtin in a test file; tsc never sees it and the suite stays green.",
+      "disposition": "infrastructure",
+      "whyMissed": "Every packages/*/tsconfig.json excludes src/**/*.test.ts, so roughly 70k lines of test source have no type coverage at all. This is the defect class behind wso2-fifo-assertion-never-ran.",
+      "regressionTest": "packages/cli/src/boundaries.test.ts",
+      "status": "fixed",
+      "notes": "Narrow class-level guard. The general fix — typechecking test source — is tracked as typecheck-excludes-all-tests."
+    },
+    {
+      "id": "typecheck-excludes-all-tests",
+      "package": "workspace",
+      "subsystem": "build configuration",
+      "categories": ["surface-conformance"],
+      "invariant": "Test source is typechecked, so a test cannot reference an API that does not exist.",
+      "reproducer": "Add src/**/*.test.ts back to any package's tsconfig include and run tsc.",
+      "disposition": "infrastructure",
+      "whyMissed": "Not missed — never attempted. The exclusion is uniform across all 13 packages and predates the current test volume.",
+      "regressionTest": "packages/cli/src/boundaries.test.ts",
+      "status": "deferred",
+      "notes": "Measured budget, errors per package with tests included: air 126, cli 82, compiler 41, generators 27, runtime 22, harness 18, mcp-runtime 18, refinement 10, system-pack 2, certification/grammar/simulator/targets 0. Total 366. Many are deliberate invalid inputs in negative tests and must not be forced through with casts, so this is its own change."
+    },
+    {
+      "id": "wso2-semantic-digest-test-overclaimed",
+      "package": "cli",
+      "subsystem": "WSO2 apictl collection loading",
+      "categories": ["canonicalization", "gateway-estate-identity"],
+      "invariant": "semanticDigest is a content identity: it survives repacking (compression level, member order) and moves when a member's content changes.",
+      "reproducer": "Load the same members as a stored ZIP, a deflated ZIP, and a member-reordered ZIP; compare digests.",
+      "disposition": "test",
+      "whyMissed": "A test named 'produces identical digest for same content regardless of load method' compared a directory load against different fixture content, then asserted only that a directory load equals itself. Directory and ZIP loads key members at different roots and are not comparable, so the named invariant was never the one under test, and the real repacking property had no coverage.",
+      "regressionTest": "packages/cli/src/wso2-apictl.bugbash.test.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "review-special-file-non-portable",
+      "package": "refinement",
+      "subsystem": "artifact review context assembly",
+      "categories": ["filesystem-boundaries", "redaction-observability"],
+      "invariant": "A non-regular filesystem node under an admitted review context root is refused before any of its bytes can enter model context.",
+      "reproducer": "Bind a Unix-domain socket inside the bundle's docs/ directory and call assembleReviewContext.",
+      "disposition": "infrastructure",
+      "whyMissed": "The test passes where sockets can be bound and fails with EPERM where they cannot; the failure mode was environmental, not a coverage gap. The risk was that the environmental failure would be 'fixed' by weakening it into a silent return.",
+      "regressionTest": "packages/refinement/src/review/review.test.ts",
+      "status": "fixed",
+      "notes": "Falls back to a FIFO, then skips with the reason printed. A skip that names why is honest; a silent return is not."
+    },
+    {
+      "id": "certification-executable-phase-unreachable",
+      "package": "certification",
+      "subsystem": "certification authority",
+      "categories": ["certification-freshness"],
+      "invariant": "ADR-0018 states a pack is `certified` only after its generated surfaces were booted and exercised and every safety mutant was killed. A status the product documents should be a status the product can reach.",
+      "reproducer": "grep the workspace for `executable: true`; the only caller of certify(air, {executable:true}) is packages/certification/src/certification.test.ts.",
+      "disposition": "documentation",
+      "whyMissed": "The symbols are exported from the package index, so knip sees them as public API rather than dead code. No test asserts that a documented status is reachable from a shipped command.",
+      "regressionTest": "packages/cli/src/certification-authority.test.ts",
+      "status": "open",
+      "notes": "Not a fail-open: anvil publish does require fresh, hash-bound selftest/conformance/simulation evidence with prod failing closed. The defect is duplicate authority plus a stale ADR. Resolution options are in docs/architecture/certification-authority.md; the choice is a product decision and is deliberately not taken in this change."
+    },
+    {
+      "id": "certification-merge-rule-owned-by-cli",
+      "package": "cli",
+      "subsystem": "certification authority",
+      "categories": ["certification-freshness", "surface-conformance"],
+      "invariant": "Whether a bundle passes contract certification does not depend on which command asks.",
+      "reproducer": "Compare the checks produced by runCertify (which bridges @anvil/certification and appends target-kit checks) against the bare certifyBundle call in approve.ts, capability-compose.ts, and idempotency-store.ts.",
+      "disposition": "product",
+      "whyMissed": "Each call site is tested against its own expectations. Nothing tests that the call sites agree with each other, which is the property that actually matters.",
+      "regressionTest": "packages/cli/src/certification-authority.test.ts",
+      "status": "open",
+      "notes": "Characterised, not changed. Moving the merge rule out of the CLI is the follow-up; doing it here would mix a semantic change into a baseline PR."
+    }
+  ]
+}
