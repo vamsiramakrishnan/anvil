@@ -7,6 +7,8 @@ import {
   safePageSize,
 } from "@anvil/air";
 import { countTokens, TOKEN_ESTIMATOR_ID, toolSurfaceJson } from "./disclosure-cost.js";
+import type { ReachProfile } from "./disclosure-metric.js";
+import { reachProfile } from "./disclosure-metric.js";
 
 /**
  * The disclosure **bill of materials**: where an agent's context budget actually
@@ -48,8 +50,25 @@ import { countTokens, TOKEN_ESTIMATOR_ID, toolSurfaceJson } from "./disclosure-c
  * the measured half, {@link ResponseProjection} for the projected half — and
  * every finding carries a `basis` saying which kind it rests on.
  *
- * Pure and deterministic: same document and same budgets, same BOM, forever.
- * It returns data and prints nothing; rendering is the CLI's job.
+ * ## Where the projected half comes in from
+ *
+ * A freshly compiled bundle carries no response figures at all: `anvil simulate`
+ * is what drives the simulator, and it deliberately keeps its merged figures in
+ * `simulation.report.json` rather than writing them back into AIR — AIR is the
+ * certified contract and a verification command must not move the hash it was
+ * verified against. So projections reach this module through
+ * {@link DisclosureBomOptions.responseProjections}, extracted from that report by
+ * {@link responseProjectionsFromSimulationReport}. Deciding whether that report
+ * still describes the bundle in front of you is a question about *bundle
+ * identity*, which lives in `@anvil/generators` (`bundleHash`,
+ * `executableEvidenceStatuses`) and stays there: this module never reads a file
+ * and never guesses at freshness, it is handed projections a caller has already
+ * vouched for. Each row records which of the two sources it came from so a
+ * renderer can attribute it (see {@link ResponseProjectionSource}).
+ *
+ * Pure and deterministic: same document, same budgets, same supplied
+ * projections, same BOM, forever. It returns data and prints nothing; rendering
+ * is the CLI's job.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -103,6 +122,21 @@ export interface DisclosureContributor {
  */
 export type ToolTokensBasis = "recorded" | "derived";
 
+/**
+ * Which body of evidence a projection was read out of.
+ *
+ * `recorded` — the bundle's own AIR carries the figure on `disclosureCost`. It
+ * is part of the certified contract, and everything downstream (the ladder's
+ * lane sizing, the page a `safePageSize` solve admits) was shaped by it.
+ *
+ * `simulation-report` — the figure came from `simulation.report.json`, a record
+ * *about* the bundle rather than part of it. Same provenance as any projection
+ * (a seeded simulator run) and no less honest, but it is evidence a caller had
+ * to freshness-check first, so a renderer that attributes it can say against
+ * which bundle content it was taken.
+ */
+export type ResponseProjectionSource = "recorded" | "simulation-report";
+
 /** The projected half of an operation's cost. Absent figures stay absent. */
 export interface ResponseProjection {
   /**
@@ -112,12 +146,19 @@ export interface ResponseProjection {
   projected: boolean;
   /** Projected tokens for a whole response under `seed`. */
   responseTokens?: number;
-  /** Projected tokens for one representative item under `seed`. */
+  /**
+   * Projected tokens for one representative item under `seed`. Present only on
+   * a `recorded` projection: a simulation report publishes the served page, not
+   * the per-item breakdown behind it, and synthesizing one by division would
+   * invent a figure nothing measured.
+   */
   responseItemTokens?: number;
   /** The simulator seed that makes the projection reproducible. */
   seed?: number;
   /** Tokenizer identity behind the recorded figures. */
   estimator?: string;
+  /** Which evidence the figures came from. Absent when `projected` is false. */
+  source?: ResponseProjectionSource;
   /** Whether the contract describes pagination at all. */
   paginated: boolean;
   /** Whether a caller can ask for *less* — the knob, not merely continuation. */
@@ -265,6 +306,16 @@ export interface DisclosureMeasurement {
   seeds: number[];
   /** Distinct estimator ids on recorded figures; two entries means mixed units. */
   recordedEstimators: string[];
+  /**
+   * Distinct estimator ids behind the *projected* figures. Carried apart from
+   * `recordedEstimators` because a projection can arrive from a report produced
+   * by a different tokenizer than the one that counted the tool surface — and a
+   * response figure printed beside a tool figure in another unit is the exact
+   * false comparison the estimator id exists to expose.
+   */
+  projectedEstimators: string[];
+  /** Which evidence the projections came from, sorted; empty when none. */
+  projectionSources: ResponseProjectionSource[];
 }
 
 export interface DisclosureBom {
@@ -283,8 +334,39 @@ export interface DisclosureBom {
   /** Ranked by tool tokens descending. */
   operations: OperationBom[];
   ladder: LadderVerdict;
+  /**
+   * What it costs an agent, starting cold, to *reach* an operation — the figure
+   * behind the project's headline ladder claim, and the one number here that is
+   * about the agent's reading path rather than about one tool's size.
+   *
+   * Carried on the BOM rather than left to a separate command because it is
+   * derived from the same document and the same ladder plan already resolved
+   * three lines above: computing it twice would be two chances to compute it
+   * against different budgets, and a headline figure that disagrees with the
+   * report it appears in is worse than no figure. `hops` travels inside the
+   * profile so no consumer can render the token saving without the round trip
+   * that bought it.
+   */
+  reach: ReachProfile;
   /** Ranked by overage descending — most actionable first. */
   findings: DisclosureFinding[];
+}
+
+/**
+ * A response projection recovered from evidence outside AIR, already
+ * freshness-checked by whoever read it. Deliberately the narrow set of fields a
+ * projection needs to be *reportable* — a figure, the seed that reproduces it,
+ * and the unit it is in. Anything less and the number cannot be labelled; there
+ * is nothing more this module could honestly use.
+ */
+export interface SuppliedResponseProjection {
+  operationId: string;
+  /** Projected tokens for the response an agent receives, under `seed`. */
+  responseTokens: number;
+  /** The simulator seed; absent only if the producing report omitted it. */
+  seed?: number;
+  /** Tokenizer identity — a token count without one is a number without a unit. */
+  estimator: string;
 }
 
 export interface DisclosureBomOptions {
@@ -294,6 +376,18 @@ export interface DisclosureBomOptions {
   responseBudgetTokens?: number;
   /** Budget for the whole at-rest surface, used for the ladder verdict. */
   surfaceBudgetTokens?: number;
+  /**
+   * Projections for operations whose AIR carries none, from evidence the caller
+   * has confirmed describes *this* bundle. Passing a stale set would publish
+   * figures for a surface that no longer exists, which is the failure this whole
+   * report exists to prevent — so the freshness decision is the caller's, and it
+   * is made against bundle identity (`@anvil/generators`), not re-invented here.
+   *
+   * AIR wins where both exist: a recorded figure is what the served surface was
+   * actually shaped by, and preferring an external report over it would describe
+   * a page the runtime does not serve.
+   */
+  responseProjections?: readonly SuppliedResponseProjection[];
 }
 
 /**
@@ -311,8 +405,17 @@ export function disclosureBom(air: AirDocument, options: DisclosureBomOptions = 
   const responseBudget = options.responseBudgetTokens ?? DEFAULT_RESPONSE_BUDGET_TOKENS;
   const surfaceBudget = options.surfaceBudgetTokens ?? DEFAULT_SURFACE_DISCLOSURE_BUDGET_TOKENS;
 
+  // Indexed once rather than scanned per operation: an estate-scale document
+  // walked against a report of the same size would otherwise be quadratic for a
+  // lookup that is a map by construction. First entry wins, so a report that
+  // somehow repeats an operation cannot make the BOM depend on array order.
+  const supplied = new Map<string, SuppliedResponseProjection>();
+  for (const projection of options.responseProjections ?? []) {
+    if (!supplied.has(projection.operationId)) supplied.set(projection.operationId, projection);
+  }
+
   const rows = air.operations.map((operation) =>
-    operationBom(operation, toolBudget, responseBudget),
+    operationBom(operation, toolBudget, responseBudget, supplied.get(operation.id)),
   );
   const totalToolTokens = rows.reduce((total, row) => total + row.toolTokens, 0);
   for (const row of rows) row.share = ratio(row.toolTokens, totalToolTokens);
@@ -341,8 +444,67 @@ export function disclosureBom(air: AirDocument, options: DisclosureBomOptions = 
     capabilities: capabilityBoms(air, rows, totalToolTokens),
     operations: rows,
     ladder: ladderVerdict(plan, surfaceBudget),
+    // The plan is threaded through rather than re-projected: reach must be taken
+    // over the surface this report just described, not over a second plan that
+    // happens to agree today.
+    reach: reachProfile(air, {
+      plan,
+      surfaceBudgetTokens: surfaceBudget,
+      toolBudgetTokens: toolBudget,
+    }),
     findings: findings(air, rows, toolBudget, responseBudget),
   };
+}
+
+/**
+ * Pull the response projections out of an `anvil simulate` report.
+ *
+ * The report is a file on disk that some other command wrote, possibly under a
+ * different version of Anvil, so this parses defensively and *drops* anything it
+ * cannot fully vouch for rather than coercing it: a projection missing its
+ * estimator is a number without a unit, and a projection missing its seed cannot
+ * be reproduced. Neither is worth rendering, and a partially-trusted figure on a
+ * cost report is indistinguishable from a trusted one once it reaches a terminal.
+ *
+ * Only `disclosure`/`response-page` cells qualify. The sibling `tool-surface`
+ * cell is deliberately ignored even though it carries tokens: that half is a
+ * pure function of the contract and is re-derived here from the published bytes,
+ * so importing a copy of it would introduce a second, older answer to a question
+ * that already has an exact one.
+ *
+ * Says nothing about whether the report is current — see
+ * {@link DisclosureBomOptions.responseProjections}.
+ */
+export function responseProjectionsFromSimulationReport(
+  report: unknown,
+): SuppliedResponseProjection[] {
+  if (!isRecord(report)) return [];
+  const coverage = report.coverage;
+  if (!isRecord(coverage) || !Array.isArray(coverage.cells)) return [];
+
+  const out: SuppliedResponseProjection[] = [];
+  for (const cell of coverage.cells) {
+    if (!isRecord(cell)) continue;
+    if (cell.dimension !== "disclosure" || cell.variant !== "response-page") continue;
+    const { operationId, figure } = cell;
+    if (typeof operationId !== "string" || operationId === "" || !isRecord(figure)) continue;
+    const { tokens, estimator, seed } = figure;
+    // A zero or negative figure is not a cheap response, it is an unmeasured
+    // one — the same rule `responseProjection` applies to a recorded cost, so
+    // the two sources cannot disagree about what "measured" means.
+    if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens <= 0) continue;
+    if (typeof estimator !== "string" || estimator === "") continue;
+    out.push({
+      operationId,
+      responseTokens: tokens,
+      ...(typeof seed === "number" && Number.isFinite(seed) ? { seed } : {}),
+      estimator,
+    });
+  }
+  // Sorted so the extraction is a function of the report's content and not of
+  // the order its producer happened to emit cells in.
+  out.sort((a, b) => a.operationId.localeCompare(b.operationId));
+  return out;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -353,6 +515,7 @@ function operationBom(
   operation: Operation,
   toolBudget: number,
   responseBudget: number,
+  supplied: SuppliedResponseProjection | undefined,
 ): OperationBom {
   // The exact bytes `measureToolSurface` counts. Tokenizing them here rather
   // than trusting `disclosureCost.toolTokens` is what lets the contributors be
@@ -385,7 +548,7 @@ function operationBom(
     overBudgetTokens: Math.max(0, toolTokens - toolBudget),
     contributors,
     envelopeTokens: toolTokens - attributed,
-    response: responseProjection(operation, responseBudget),
+    response: responseProjection(operation, responseBudget, supplied),
   };
 }
 
@@ -489,10 +652,22 @@ function textNote(value: unknown): string | undefined {
 
 /**
  * The projected half. Nothing here is derived: unlike the tool surface, a
- * response cost depends on a tenant's data, so when the bundle carries no
- * measurement the figures are omitted and `projected` says why.
+ * response cost depends on a tenant's data, so when neither the bundle nor a
+ * vouched-for report carries a measurement the figures are omitted and
+ * `projected` says why.
+ *
+ * The pagination fields stay a read of the *contract* under either source, and
+ * `pageSize` is solved from AIR alone even when the figure came from a report.
+ * The solver needs a per-item cost, and a simulation report publishes the served
+ * page rather than the item behind it; back-solving one by division would put an
+ * invented figure into the same struct as measured ones. So the knob a caller
+ * has is reported from the contract, which is where it actually lives.
  */
-function responseProjection(operation: Operation, responseBudget: number): ResponseProjection {
+function responseProjection(
+  operation: Operation,
+  responseBudget: number,
+  supplied: SuppliedResponseProjection | undefined,
+): ResponseProjection {
   const cost = operation.disclosureCost;
   const pagination = operation.pagination;
   const base = {
@@ -500,18 +675,30 @@ function responseProjection(operation: Operation, responseBudget: number): Respo
     hasPageSizeParam: pagination?.pageSizeParam !== undefined,
     pageSize: safePageSize(operation, responseBudget),
   };
-  if (cost === undefined || cost.responseTokens <= 0) {
-    return { projected: false, ...base, overBudgetTokens: 0 };
+  if (cost !== undefined && cost.responseTokens > 0) {
+    return {
+      projected: true,
+      responseTokens: cost.responseTokens,
+      responseItemTokens: cost.responseItemTokens,
+      ...(cost.seed !== undefined ? { seed: cost.seed } : {}),
+      estimator: cost.estimator,
+      source: "recorded",
+      ...base,
+      overBudgetTokens: Math.max(0, cost.responseTokens - responseBudget),
+    };
   }
-  return {
-    projected: true,
-    responseTokens: cost.responseTokens,
-    responseItemTokens: cost.responseItemTokens,
-    ...(cost.seed !== undefined ? { seed: cost.seed } : {}),
-    estimator: cost.estimator,
-    ...base,
-    overBudgetTokens: Math.max(0, cost.responseTokens - responseBudget),
-  };
+  if (supplied !== undefined) {
+    return {
+      projected: true,
+      responseTokens: supplied.responseTokens,
+      ...(supplied.seed !== undefined ? { seed: supplied.seed } : {}),
+      estimator: supplied.estimator,
+      source: "simulation-report",
+      ...base,
+      overBudgetTokens: Math.max(0, supplied.responseTokens - responseBudget),
+    };
+  }
+  return { projected: false, ...base, overBudgetTokens: 0 };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -519,9 +706,14 @@ function responseProjection(operation: Operation, responseBudget: number): Respo
 /* -------------------------------------------------------------------------- */
 
 function measurementSummary(air: AirDocument, rows: OperationBom[]): DisclosureMeasurement {
-  const costs = air.operations.map((operation) => operation.disclosureCost);
-  const recorded = costs.filter((cost) => cost !== undefined);
-  const projected = recorded.filter((cost) => cost.responseTokens > 0);
+  const recorded = air.operations
+    .map((operation) => operation.disclosureCost)
+    .filter((cost) => cost !== undefined);
+  // Counted off the resolved rows rather than off AIR, because a projection may
+  // have arrived from outside AIR entirely. Summarizing the contract here would
+  // report "0 projected" while the rows beneath carry figures — the coverage
+  // line and the figures under it would then contradict each other.
+  const projected = rows.map((row) => row.response).filter((response) => response.projected);
   return {
     operations: rows.length,
     servedOperations: rows.filter((row) => row.served).length,
@@ -530,11 +722,25 @@ function measurementSummary(air: AirDocument, rows: OperationBom[]): DisclosureM
     seeds: [
       ...new Set(
         projected
-          .map((cost) => cost.seed)
+          .map((response) => response.seed)
           .filter((seed): seed is number => typeof seed === "number"),
       ),
     ].sort((a, b) => a - b),
     recordedEstimators: [...new Set(recorded.map((cost) => cost.estimator))].sort(),
+    projectedEstimators: [
+      ...new Set(
+        projected
+          .map((response) => response.estimator)
+          .filter((estimator): estimator is string => estimator !== undefined),
+      ),
+    ].sort(),
+    projectionSources: [
+      ...new Set(
+        projected
+          .map((response) => response.source)
+          .filter((source): source is ResponseProjectionSource => source !== undefined),
+      ),
+    ].sort(),
   };
 }
 
