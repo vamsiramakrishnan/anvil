@@ -146,6 +146,30 @@ describe("ladderPlan when the surface is genuinely too large", () => {
     expect([...reachable].sort()).toEqual([...approved].sort());
   });
 
+  it("declines when the entry cards would cost more than the tools they replace", () => {
+    // Many lanes over cheap operations: per-card cost is capped but the lane
+    // COUNT is not, so the at-rest surface can end up larger than the flat one.
+    // Laddering here would charge an agent a round trip to read more.
+    const ops = Array.from({ length: 60 }, (_, i) => op(`svc.op${i}`, `tool_${i}`, 400));
+    const capabilities = Array.from({ length: 30 }, (_, i) => ({
+      id: `svc.cap${i}`,
+      operationIds: [`svc.op${i * 2}`, `svc.op${i * 2 + 1}`],
+    }));
+    const air = doc(ops, capabilities);
+    const verbose = {
+      ...air,
+      capabilities: air.capabilities.map((capability) => ({
+        ...capability,
+        description: "x".repeat(20_000),
+        intentExamples: Array.from({ length: 5 }, () => "y".repeat(4_000)),
+      })),
+    } as AirDocument;
+    const plan = ladderPlan(verbose);
+    expect(plan.flatTokens).toBeGreaterThan(DEFAULT_SURFACE_DISCLOSURE_BUDGET_TOKENS);
+    expect(plan.mode).toBe("flat");
+    expect(plan.reason).toBe("no_token_benefit");
+  });
+
   it("is a stable projection — same contract, same lanes, same order", () => {
     const air = oversizedDoc();
     expect(JSON.stringify(ladderPlan(air))).toBe(JSON.stringify(ladderPlan(air)));
@@ -199,6 +223,32 @@ describe("entry cards share a namespace with operation tools", () => {
     expect(plan.lanes.map((lane) => lane.capabilityId)).not.toContain("svc.things");
     // Losing the lane costs tokens; losing the tool would cost a capability.
     expect(plan.unlanedOperationIds).toEqual(["svc.a", "svc.b", "svc.c"]);
+  });
+
+  it("demotes a second capability whose id sanitizes onto the same card name", () => {
+    // `svc.pay` and `svc_pay` both mint `open_svc_pay`. Shipping both would let
+    // one shadow the other at registration while the shadowed lane's operations
+    // still counted as laned — reachable through nothing at all.
+    const ops = [
+      op("a1", "tool_a1", 15_000),
+      op("a2", "tool_a2", 15_000),
+      op("b1", "tool_b1", 15_000),
+      op("b2", "tool_b2", 15_000),
+    ];
+    const plan = ladderPlan(
+      doc(ops, [
+        { id: "svc.pay", operationIds: ["a1", "a2"] },
+        { id: "svc_pay", operationIds: ["b1", "b2"] },
+      ]),
+    );
+    expect(plan.lanes).toHaveLength(1);
+    // The demoted lane's operations must come back to the flat surface, not
+    // vanish between the two.
+    const reachable = new Set([
+      ...plan.lanes.flatMap((lane) => lane.operationIds),
+      ...plan.unlanedOperationIds,
+    ]);
+    expect([...reachable].sort()).toEqual(["a1", "a2", "b1", "b2"]);
   });
 
   it("produces MCP-safe card names from dotted capability ids", () => {

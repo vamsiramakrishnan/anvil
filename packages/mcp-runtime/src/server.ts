@@ -12,6 +12,12 @@ import {
 import { type ExecuteContext, execute } from "@anvil/runtime";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import {
+  createLaneSurface,
+  type DisclosableTool,
+  type DisclosureMode,
+  decideLadder,
+} from "./lane.js";
 import { derivePageSize, detectSilentCap, silentCapNotice } from "./page-budget.js";
 import {
   applyProjection,
@@ -81,6 +87,20 @@ export interface McpBuildOptions {
    * Called with workflow id and reason.
    */
   onSkipWorkflow?: (workflowId: string, reason: string) => void;
+  /**
+   * How the tool surface is disclosed at rest: `auto` (default) follows the
+   * ladder projection, `flat` never ladders, `laddered` ladders whenever lanes
+   * can be projected. See `lane.ts` — the ladder decides *when* an approved
+   * operation's schema is listed and never whether it may be called.
+   */
+  disclosure?: DisclosureMode;
+  /**
+   * Budget for the at-rest surface — everything in `tools/list` before an agent
+   * has opened a lane. Only consulted when laddering is in play; the default
+   * lives in `@anvil/air` so the served surface and the certified one are
+   * measured against the same number.
+   */
+  surfaceBudgetTokens?: number;
 }
 
 /**
@@ -182,9 +202,15 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
 
   const ops = air.operations.filter((op) => options.includeUnapproved || op.state === "approved");
   const opsById = new Map(ops.map((op) => [op.id, op]));
+  // The SDK hands back a live handle per tool. Held so the disclosure ladder can
+  // close a laned tool *after* it is fully registered — see the ladder block
+  // below for why disclosure is a state on a registered tool rather than a
+  // decision about whether to register one.
+  const opTools = new Map<string, DisclosableTool>();
+  const registeredToolNames = new Set<string>();
 
   for (const op of ops) {
-    server.registerTool(
+    const registered = server.registerTool(
       op.mcp.toolName,
       {
         title: op.displayName,
@@ -285,6 +311,8 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         return errorResult(result.envelope, op, budget);
       },
     );
+    opTools.set(op.id, registered);
+    registeredToolNames.add(op.mcp.toolName);
   }
 
   // Register workflows as composite tools.
@@ -556,6 +584,51 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         };
       },
     );
+    registeredToolNames.add(workflowToolName);
+  }
+
+  // The disclosure ladder, applied strictly on top of a fully registered
+  // surface. Everything above ran exactly as it always has, which is the whole
+  // compatibility argument: a flat plan — an unmeasured bundle, a service that
+  // fits its budget, an operator who set `disclosure: "flat"` — reaches this
+  // point with an untouched server and leaves with one. Laddering only closes
+  // tools that are already registered, so nothing it does can change which
+  // operations exist, what they accept, or what the runtime enforces on a call.
+  const ladder = decideLadder(air, options);
+  if (ladder.laddered) {
+    const surface = createLaneSurface({
+      lanes: ladder.lanes,
+      operations: opsById,
+      tools: opTools,
+      reservedToolNames: registeredToolNames,
+    });
+    for (const card of surface.cards) {
+      server.registerTool(
+        card.toolName,
+        {
+          title: card.title,
+          description: card.description,
+          // Opening a lane is navigation, not business: it makes no upstream
+          // call, changes nothing an agent could regret, and converges on the
+          // same surface however many times it runs. Saying so in the standard
+          // hints keeps a cautious client from treating routing as risk.
+          annotations: {
+            title: card.title,
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+          },
+          _meta: card.meta,
+        },
+        async () => card.open(),
+      );
+    }
+    // Closing happens after the cards are registered and before the server is
+    // connected, so no client ever observes the flat surface it briefly was —
+    // and the SDK's `tools/list_changed` notification, which it fires on every
+    // enable/disable, is suppressed while disconnected.
+    surface.closeLanes();
   }
 
   // Advertise precomputed resources (skill + CLI install manifest + catalog) so

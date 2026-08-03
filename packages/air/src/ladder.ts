@@ -54,6 +54,12 @@ export type LadderReason =
   | "no_capabilities"
   /** Every lane would hold one operation — the ladder is pure indirection. */
   | "no_grouping_benefit"
+  /**
+   * Lanes group real work, but the entry cards cost at least as much as the flat
+   * surface they replace. Distinct from `no_grouping_benefit`, which is about the
+   * shape of the grouping; this is about the arithmetic coming out against it.
+   */
+  | "no_token_benefit"
   /** The flat surface exceeds the budget and lanes are available. */
   | "over_budget";
 
@@ -186,17 +192,46 @@ export function ladderPlan(air: AirDocument, options: LadderOptions = {}): Ladde
   if (served.length === 0 || unmeasuredOperations === served.length) return flat("unmeasured");
 
   // Sorted so the projection is stable regardless of capability discovery order.
-  const capabilities = [...air.capabilities].sort((a, b) => a.id.localeCompare(b.id));
+  // The `?? []` is load-bearing rather than defensive noise: `loadAirDocument`
+  // fills these arrays in, but hand-built fixtures and AIR written by an older
+  // Anvil reach this function without them, and a serving path that threw
+  // mid-build on such a document would be a far worse regression than serving it
+  // flat.
+  const capabilities = [...(air.capabilities ?? [])].sort((a, b) => a.id.localeCompare(b.id));
   // Entry cards share a namespace with operation tools. A capability whose
   // generated card name collides with a real tool would shadow or be shadowed by
   // it depending on registration order — so a colliding lane is dropped and its
   // operations stay registered flat. Losing a lane costs tokens; losing a tool
   // costs the agent a capability it was approved to call.
-  const takenToolNames = new Set(served.map((operation) => operation.mcp.toolName));
-  const laneCandidates = capabilities
-    .map((capability) => buildLane(capability, servedIds, air))
-    .filter((lane): lane is LadderLane => lane !== undefined)
-    .filter((lane) => !takenToolNames.has(lane.entryToolName));
+  //
+  // Cards must also be unique against EACH OTHER, and that is the subtler half:
+  // the name sanitizer collapses every character outside the MCP-safe set to an
+  // underscore, so `estate.payments` and `estate_payments` mint the same card.
+  // Ship both and one shadows the other at registration — while the shadowed
+  // lane's operations still count as laned, so they fall out of the unlaned set
+  // too and become reachable through nothing at all. That is an approved
+  // operation made uncallable by a layout decision, which is the one thing this
+  // projection must never do. First lane by sorted id keeps the name; any later
+  // claimant is demoted and its operations return to the flat surface.
+  // Workflows occupy the same tool namespace as operations, and an MCP server
+  // throws outright on a duplicate registration — so a card colliding with a
+  // workflow does not degrade the surface, it fails the build. Their tool names
+  // are derived rather than stored, so the derivation is mirrored here; keep it
+  // in step with how the serving path names workflow tools.
+  const workflowToolNames = (air.workflows ?? []).map((workflow) =>
+    workflow.id.replace(/[^A-Za-z0-9_-]/g, "_"),
+  );
+  const takenNames = new Set([
+    ...served.map((operation) => operation.mcp.toolName),
+    ...workflowToolNames,
+  ]);
+  const laneCandidates: LadderLane[] = [];
+  for (const capability of capabilities) {
+    const lane = buildLane(capability, servedIds, air);
+    if (!lane || takenNames.has(lane.entryToolName)) continue;
+    takenNames.add(lane.entryToolName);
+    laneCandidates.push(lane);
+  }
 
   if (laneCandidates.length === 0) return flat("no_capabilities");
 
@@ -227,6 +262,14 @@ export function ladderPlan(air: AirDocument, options: LadderOptions = {}): Ladde
     .filter((operation) => !lanedIds.has(operation.id))
     .reduce((total, operation) => total + operationTokens(operation), 0);
   const restTokens = entryTokens + unlanedTokens;
+
+  // "It declines when it cannot help" has to be enforced, not asserted. Nothing
+  // above guarantees the ladder is cheaper: per-lane card cost is capped, but the
+  // NUMBER of lanes is not, so a contract with many verbose capability
+  // descriptions over cheap operations can produce an at-rest surface larger than
+  // the flat one it replaced. Laddering there would charge an agent an extra round
+  // trip to read MORE — indirection sold as an optimization.
+  if (restTokens >= flatTokens) return flat("no_token_benefit");
 
   return {
     mode: "laddered",
