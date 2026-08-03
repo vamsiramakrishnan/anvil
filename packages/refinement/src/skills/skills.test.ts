@@ -229,6 +229,48 @@ describe("generate-examples", () => {
   });
 });
 
+describe("author-intent-examples", () => {
+  const skill = skillByName("author-intent-examples")!;
+
+  it("templates intents from the operation's own semantics and validates", async () => {
+    const air = doc();
+    const op = air.operations[0];
+    if (!op) throw new Error("fixture has no operation");
+    op.skill.intentExamples = [];
+    op.effect.resource = "refund";
+    const ctx = contextFor(air, (code) => code === "operation_lacks_intent_examples");
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set.intent_examples).toEqual(["create a new refund", "create refund"]);
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("validated");
+  });
+});
+
+describe("author-routing-phrases", () => {
+  const skill = skillByName("author-routing-phrases")!;
+
+  it("templates routing phrases from the capability name and resources", async () => {
+    const air = doc();
+    air.capabilities.push({
+      id: "payments.refunds",
+      displayName: "Refunds",
+      description: "",
+      source: "resource",
+      resources: ["refund"],
+      operationIds: ["payments.refunds.create"],
+      workflowIds: [],
+      intentExamples: [],
+      state: "generated",
+      review: "proposed",
+    });
+    const ctx = contextFor(air, (code) => code === "capability_missing_routing_phrases");
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set.intent_examples).toEqual(["work with refunds", "manage refunds"]);
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("validated");
+  });
+});
+
 describe("enrich-errors", () => {
   const skill = skillByName("enrich-errors")!;
 
@@ -316,5 +358,85 @@ describe("classify-idempotency", () => {
     expect(outcome?.reason).toBe(
       "idempotency mode 'required' requires an explicit carrier mechanism",
     );
+  });
+});
+
+/** An operation with no pagination documented. */
+function paginatedDoc(): AirDocument {
+  return loadAirDocument({
+    service: { id: "search", displayName: "Search", version: "1", source: { kind: "openapi" } },
+    operations: [
+      {
+        id: "search.results.list",
+        canonicalName: "list_results",
+        displayName: "List results",
+        description: "Search results.",
+        capabilityId: "search.results",
+        sourceRef: { kind: "openapi", path: "/results", method: "get" },
+        effect: { kind: "read", action: "list" },
+        input: {
+          params: [
+            { name: "query", in: "query", required: true, schema: { type: "string" } },
+            { name: "after", in: "query", required: false, schema: { type: "string" } },
+          ],
+          body: { projection: "whole" },
+        },
+        errors: [],
+        idempotency: { mode: "none" },
+        retries: { mode: "safe" },
+        confirmation: { required: false },
+        auth: { type: "api_key" },
+        cli: { command: "search results list" },
+        mcp: { toolName: "search_list_results" },
+        skill: { intentExamples: ["Search for results."] },
+      },
+    ],
+  });
+}
+
+describe("document-pagination", () => {
+  const skill = skillByName("document-pagination")!;
+
+  it("validates a proposal grounded by corroborated evidence", async () => {
+    const ctx = contextFor(paginatedDoc(), (code) => code === "undocumented_pagination", [
+      claim("operation.pagination_style", "cursor", "spec", "api.yaml:42"),
+      claim("operation.pagination_cursor_param", "after", "spec", "api.yaml:42"),
+      claim("operation.pagination_items_field", "items", "spec", "api.yaml:42"),
+      claim("operation.pagination_style", "cursor", "doc_example", "docs/pagination.md:5"),
+      claim("operation.pagination_cursor_param", "after", "doc_example", "docs/pagination.md:5"),
+      claim("operation.pagination_items_field", "items", "doc_example", "docs/pagination.md:5"),
+    ]);
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set).toEqual({
+      pagination_style: "cursor",
+      pagination_cursor_param: "after",
+      pagination_items_field: "items",
+    });
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("validated");
+  });
+
+  it("proposes nothing when there is no admissible evidence", async () => {
+    const ctx = contextFor(paginatedDoc(), (code) => code === "undocumented_pagination");
+    expect(await executor.execute(skill, ctx)).toBeNull();
+  });
+
+  it("rejects a cursor style with a nonexistent cursor param", async () => {
+    const ctx = contextFor(paginatedDoc(), (code) => code === "undocumented_pagination", [
+      claim("operation.pagination_style", "cursor", "spec", "api.yaml:42"),
+      claim("operation.pagination_cursor_param", "token", "spec", "api.yaml:42"),
+      claim("operation.pagination_items_field", "results", "spec", "api.yaml:42"),
+    ]);
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set).toEqual({
+      pagination_style: "cursor",
+      pagination_cursor_param: "token",
+      pagination_items_field: "results",
+    });
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("rejected");
+    const outcome = result.outcomes.find((o) => o.check === "pagination_binding_resolves");
+    expect(outcome?.ok).toBe(false);
+    expect(outcome?.reason).toContain("does not name an existing input parameter");
   });
 });

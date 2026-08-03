@@ -21,6 +21,7 @@ import {
   type AnvilManifest,
   airAuthProviderToManifest,
   applyOperationManifest,
+  buildQueryTemplates,
   buildWorkflows,
   manifestAuthProviderToAir,
   parseManifest,
@@ -164,6 +165,38 @@ function applyServiceAuthDefaults(
         next = applyOperationManifest(operation, {
           auth: { ...auth, type: config.type },
         });
+      } else if (
+        config.type === "oauth2_on_behalf_of" &&
+        operation.auth.type === "oauth2_authorization_code"
+      ) {
+        // The ONE sanctioned service-wide type remodel: authorization-code (an
+        // unexecutable shared-token shape, blocked at normalize) becomes
+        // on-behalf-of — the same end-user authority story, executed per caller
+        // via RFC 8693 token exchange with the imported token endpoint
+        // preserved. Authority never swaps (service↔end_user stays refused
+        // below), and approval remains a human act.
+        const { scopes: _scopes, type: _type, ...auth } = config;
+        next = applyOperationManifest(operation, { auth: { ...auth, type: config.type } });
+        // Drop the now-resolved unblock-recipe note; normalize is the only
+        // source of notes at this stage and its end-user messages carry the
+        // recipe literal.
+        next.reviewNotes = next.reviewNotes.filter((note) => !note.includes("oauth2_on_behalf_of"));
+        if (next.state === "blocked") {
+          // At this point in the pipeline the only blocked cause is the auth
+          // issue this remodel just resolved; composite-auth, overlay, and
+          // validation blocks all run later and can still re-block.
+          next.state = "review_required";
+        }
+        const note =
+          "End-user authorization-code remodeled to on-behalf-of (RFC 8693 per-caller " +
+          "token exchange). Review the delegation contract and approve before exposure.";
+        if (!next.reviewNotes.includes(note)) next.reviewNotes.push(note);
+        diagnostics.push({
+          level: "info",
+          code: "auth/end_user_flow_remodeled",
+          message: note,
+          operationId: operation.id,
+        });
       } else if (config.type && operation.auth.type !== config.type) {
         diagnostics.push({
           level: "info",
@@ -255,7 +288,7 @@ async function buildAir(
   const doc = parsed.document;
   const manifest: AnvilManifest = options.manifest
     ? parseManifest(options.manifest)
-    : { operations: {}, workflows: {}, capabilities: {} };
+    : { operations: {}, workflows: {}, capabilities: {}, query_templates: {} };
 
   const title = (doc.info?.title as string | undefined) ?? "service";
   const serviceId = options.serviceId ?? manifest.service?.name ?? snakeCase(title) ?? "service";
@@ -372,7 +405,13 @@ async function buildAir(
     capabilities,
   );
 
-  const serviceAuth: AuthRequirement = validated.find((o) => o.auth.type !== "none")?.auth ?? {
+  // Build derived operations from query templates. Each template produces a new
+  // operation that safely wraps an unconstrained query-language parameter.
+  const { operations: queryTemplateDerived, diagnostics: queryTemplateDiagnostics } =
+    buildQueryTemplates(manifest, validated, capabilities);
+  const allOperations = [...validated, ...queryTemplateDerived];
+
+  const serviceAuth: AuthRequirement = allOperations.find((o) => o.auth.type !== "none")?.auth ?? {
     type: "none",
     scopes: [],
     principal: "anonymous",
@@ -400,7 +439,7 @@ async function buildAir(
       auth: serviceAuth,
       servers: (doc.servers ?? []).map((s) => ({ url: s.url, description: s.description })),
     },
-    operations: validated,
+    operations: allOperations,
     capabilities,
     workflows,
     schemas: (doc.components?.schemas as Record<string, JsonSchema> | undefined) ?? {},
@@ -411,6 +450,7 @@ async function buildAir(
       ...diagnostics,
       ...namingDiagnostics,
       ...workflowDiagnostics,
+      ...queryTemplateDiagnostics,
       ...overlayDiagnostics,
     ],
   });

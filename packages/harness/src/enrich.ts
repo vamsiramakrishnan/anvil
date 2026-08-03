@@ -206,7 +206,12 @@ export async function runEnrichment(
     sources: connected,
     operations,
     workflows: workflowDecisions,
-    proposedManifest: { operations: proposed, workflows: proposedWorkflows, capabilities: {} },
+    proposedManifest: {
+      operations: proposed,
+      workflows: proposedWorkflows,
+      capabilities: {},
+      query_templates: {},
+    },
     graph,
     targetedOperationIds: targetedIds,
   };

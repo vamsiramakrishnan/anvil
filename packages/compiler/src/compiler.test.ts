@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { confidenceFor } from "@anvil/air";
 import { describe, expect, it } from "vitest";
-import { classifyConfirmation, classifyEffect } from "./classify.js";
+import {
+  classifyArchetype,
+  classifyConfirmation,
+  classifyEffect,
+  classifyPagination,
+} from "./classify.js";
 import { approveOperations, compile } from "./compile.js";
 
 const read = (rel: string) =>
@@ -122,6 +127,169 @@ describe("classifier", () => {
     // An unhinted POST with the same signal stays a conservative mutation.
     expect(classifyEffect("post", signal).effect.kind).toBe("mutation");
   });
+
+  it("classifies search and list reads as archetype search", () => {
+    const search = classifyEffect("get", "searchPayments /payments/search");
+    expect(classifyArchetype(search.effect, search.effect.action, false)).toBe("search");
+
+    const list = classifyEffect("get", "listPayments /payments");
+    expect(classifyArchetype(list.effect, list.effect.action, false)).toBe("search");
+  });
+
+  it("classifies all mutations as archetype transaction", () => {
+    const create = classifyEffect("post", "createPayment /payments");
+    expect(classifyArchetype(create.effect, create.effect.action, false)).toBe("transaction");
+
+    const update = classifyEffect("patch", "updatePayment /payments/{id}");
+    expect(classifyArchetype(update.effect, update.effect.action, false)).toBe("transaction");
+
+    const delete_ = classifyEffect("delete", "deletePayment /payments/{id}");
+    expect(classifyArchetype(delete_.effect, delete_.effect.action, false)).toBe("transaction");
+  });
+
+  it("classifies longRunning operations as archetype long_running regardless of other attributes", () => {
+    // Even a search or list operation that would normally map to "search" archetype
+    // becomes "long_running" if the operation has longRunning: true.
+    const search = classifyEffect("get", "searchPayments /payments/search");
+    expect(classifyArchetype(search.effect, search.effect.action, true)).toBe("long_running");
+
+    // A mutation with longRunning also becomes long_running (not transaction).
+    const mutation = classifyEffect("post", "initiateAsyncJob /jobs");
+    expect(classifyArchetype(mutation.effect, mutation.effect.action, true)).toBe("long_running");
+  });
+
+  it("leaves unclassified operations with undefined archetype", () => {
+    // A non-list, non-search read that is not long_running stays unclassified.
+    const simpleGet = classifyEffect("get", "getPayment /payments/{id}");
+    expect(classifyArchetype(simpleGet.effect, "get", false)).toBeUndefined();
+
+    // Polling is a read-family verb but not search/list, so it stays unclassified.
+    const poll = classifyEffect("get", "pollStatus /jobs/{id}/status");
+    expect(classifyArchetype(poll.effect, "poll", false)).toBeUndefined();
+  });
+
+  it("classifies query_passthrough archetype for unconstrained query params", () => {
+    const mutationEffect = classifyEffect("post", "createPayment /payments").effect;
+    const params = [
+      { name: "sql", in: "query" as const, required: true, schema: { type: "string" } },
+    ];
+    expect(classifyArchetype(mutationEffect, "create", false, params)).toBe("query_passthrough");
+  });
+
+  it("does not classify query_passthrough when query param is constrained by maxLength", () => {
+    const mutationEffect = classifyEffect("post", "createPayment /payments").effect;
+    const params = [
+      {
+        name: "sql",
+        in: "query" as const,
+        required: true,
+        schema: { type: "string", maxLength: 1000 },
+      },
+    ];
+    expect(classifyArchetype(mutationEffect, "create", false, params)).toBe("transaction");
+  });
+
+  it("classifies query_passthrough for unconstrained body field", () => {
+    const mutationEffect = classifyEffect("post", "createPayment /payments").effect;
+    const body = {
+      projection: "fields" as const,
+      fields: [{ name: "query", required: true, schema: { type: "string" } }],
+    };
+    expect(classifyArchetype(mutationEffect, "create", false, [], body)).toBe("query_passthrough");
+  });
+
+  it("query_passthrough does not override long_running", () => {
+    const mutationEffect = classifyEffect("post", "createPayment /payments").effect;
+    const params = [
+      { name: "jql", in: "query" as const, required: true, schema: { type: "string" } },
+    ];
+    expect(classifyArchetype(mutationEffect, "create", true, params)).toBe("long_running");
+  });
+});
+
+describe("classifyPagination", () => {
+  const param = (name: string, type = "string") => ({
+    name,
+    in: "query" as const,
+    required: false,
+    schema: { type },
+    inferred: false,
+  });
+  const listRead = classifyEffect("get", "listCharges /charges");
+
+  it("infers cursor pagination from a starting_after param and a single array output", () => {
+    const out = {
+      type: "object",
+      properties: { data: { type: "array" }, has_more: { type: "boolean" } },
+    };
+    expect(
+      classifyPagination(listRead.effect, listRead.effect.action, [param("starting_after")], out),
+    ).toEqual({ style: "cursor", cursorParam: "starting_after", itemsField: "data" });
+  });
+
+  it("prefers a cursor-style name over a page-style name when both are present", () => {
+    const pag = classifyPagination(
+      listRead.effect,
+      listRead.effect.action,
+      [param("Page", "integer"), param("PageToken")],
+      undefined,
+    );
+    expect(pag).toMatchObject({ style: "cursor", cursorParam: "PageToken" });
+  });
+
+  it("infers page and offset styles, and a unique next field", () => {
+    const out = {
+      type: "object",
+      properties: { values: { type: "array" }, nextPage: { type: "string" } },
+    };
+    expect(
+      classifyPagination(
+        listRead.effect,
+        listRead.effect.action,
+        [param("startAt", "integer")],
+        out,
+      ),
+    ).toEqual({
+      style: "offset",
+      cursorParam: "startAt",
+      nextField: "nextPage",
+      itemsField: "values",
+    });
+    expect(
+      classifyPagination(
+        listRead.effect,
+        listRead.effect.action,
+        [param("page", "integer")],
+        undefined,
+      ),
+    ).toEqual({ style: "page", cursorParam: "page" });
+  });
+
+  it("stays unset without a continuation param, on mutations, and with ambiguous arrays", () => {
+    expect(
+      classifyPagination(
+        listRead.effect,
+        listRead.effect.action,
+        [param("limit", "integer")],
+        undefined,
+      ),
+    ).toBeUndefined();
+    const create = classifyEffect("post", "createCharge /charges");
+    expect(
+      classifyPagination(create.effect, create.effect.action, [param("starting_after")], undefined),
+    ).toBeUndefined();
+    const twoArrays = {
+      type: "object",
+      properties: { a: { type: "array" }, b: { type: "array" } },
+    };
+    const pag = classifyPagination(
+      listRead.effect,
+      listRead.effect.action,
+      [param("cursor")],
+      twoArrays,
+    );
+    expect(pag).toEqual({ style: "cursor", cursorParam: "cursor" }); // no itemsField guessed
+  });
 });
 
 describe("compile pipeline (spec only)", () => {
@@ -159,7 +327,7 @@ paths:
           application/json:
             schema:
               type: object
-              properties: { name: { type: string }, query: { type: string } }
+              properties: { name: { type: string }, pattern: { type: string } }
       responses: { "201": { description: saved } }
 `;
     const air = await compile({ spec: viewApi, serviceId: "application_views" });
@@ -168,6 +336,30 @@ paths:
     expect(op?.cli.command).toBe("application_views filter create");
     expect(op?.idempotency.mode).toBe("none");
     expect(op?.state).toBe("review_required");
+  });
+
+  it("detects and blocks query_passthrough archetype operations", async () => {
+    const queryApi = `openapi: 3.0.3
+info: { title: Database Query, version: 1.0.0 }
+paths:
+  /query:
+    post:
+      operationId: executeQuery
+      summary: Execute a SQL query
+      parameters:
+        - name: sql
+          in: query
+          required: true
+          schema: { type: string }
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({ spec: queryApi, serviceId: "database" });
+    const op = air.operations[0];
+    expect(op?.archetype).toBe("query_passthrough");
+    expect(op?.state).toBe("blocked");
+    expect(air.diagnostics.some((d) => d.code === "query_language_passthrough")).toBe(true);
+    const diagnostic = air.diagnostics.find((d) => d.code === "query_language_passthrough");
+    expect(diagnostic?.level).toBe("error");
   });
 });
 

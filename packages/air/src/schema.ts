@@ -10,6 +10,7 @@ import {
   HttpMethod,
   IdempotencyMechanism,
   IdempotencyMode,
+  InteractionArchetype,
   KeyDerivation,
   OperationAction,
   OperationState,
@@ -693,6 +694,8 @@ export const Operation = z.object({
   pagination: Pagination.optional(),
   streaming: z.boolean().default(false),
   longRunning: z.boolean().default(false),
+  /** How an agent should interact with this operation (transaction, search, long_running, etc.). */
+  archetype: InteractionArchetype.optional(),
   deprecated: z.boolean().default(false),
   /** Agent-facing bindings — one operation, three aligned surfaces. */
   cli: z.object({ command: z.string(), aliases: z.array(z.string()).default([]) }),
@@ -705,6 +708,19 @@ export const Operation = z.object({
   evidence: Evidence.default({ claims: [] }),
   /** The primary capability this operation belongs to (see `Capability`). */
   capabilityId: z.string().optional(),
+  /**
+   * Optional query template for derived operations. A derived operation's
+   * fixed query text with {param} placeholders is rendered and sent as the
+   * base operation's target param; substitution is literal-value only (no
+   * expression evaluation, no nesting).
+   */
+  queryTemplate: z
+    .object({
+      baseOperationId: z.string(),
+      template: z.string(),
+      targetParam: z.string(),
+    })
+    .optional(),
 });
 export type Operation = z.infer<typeof Operation>;
 

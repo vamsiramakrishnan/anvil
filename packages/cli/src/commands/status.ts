@@ -8,6 +8,7 @@ import {
   verifyGatewayImportIdentity,
 } from "@anvil/compiler";
 import {
+  benchmarkEvidenceStatus,
   bundleHash,
   CERTIFICATION_FILE,
   Certification as CertificationSchema,
@@ -358,6 +359,17 @@ export async function buildStatusReport(
       severity: "warning",
       detail: status.detail,
       path: status.path,
+    });
+  }
+  // Advisory lane: the benchmark score gets the same freshness discipline but
+  // never blocks — the acceptable threshold is release policy, not a proof.
+  const benchmark = benchmarkEvidenceStatus(files, currentBundleHash);
+  if (benchmark.state !== "missing" && benchmark.state !== "fresh") {
+    diagnostics.push({
+      code: `status.evidence.benchmark.${benchmark.state}`,
+      severity: "warning",
+      detail: benchmark.detail,
+      path: join(bundle, benchmark.file),
     });
   }
   const publication = publicationStatus(bundle, files, currentBundleHash, canonical.air);

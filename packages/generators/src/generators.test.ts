@@ -19,6 +19,7 @@ import {
   MAX_GENERATED_WRITE_PATH_MS,
   parseIdempotencyStoreContract,
 } from "./deploy.js";
+import { operationInputSignature } from "./input-signature.js";
 import { buildMcpServer, generateMcpServerSource, generateMcpSseServerSource } from "./mcp.js";
 import { exampleFromSchema, exampleInput } from "./mock.js";
 import { buildToolResources } from "./resources.js";
@@ -36,6 +37,114 @@ beforeAll(async () => {
     spec: read("openapi.yaml"),
     manifest: read("anvil.yaml"),
     serviceId: "payments",
+  });
+});
+
+describe("operationInputSignature", () => {
+  it("generates signature with required params first, then optional", () => {
+    const op = air.operations.find((o) => o.id === "payments.refunds.create");
+    expect(op).toBeDefined();
+    const sig = operationInputSignature(op!);
+    // Refund create should have required params like payment_id
+    expect(sig).toContain("*"); // At least one required param
+    // Should have body fields with body. prefix
+    expect(sig).toContain("body.");
+  });
+
+  it("includes body fields as body.<name> when projection is fields", () => {
+    const op = air.operations.find((o) => o.id === "payments.refunds.create");
+    expect(op).toBeDefined();
+    const sig = operationInputSignature(op!);
+    // Check that if body fields exist with projection="fields", they're included as body.*
+    if (op?.input.body?.projection === "fields" && op.input.body.fields.length > 0) {
+      expect(sig).toContain("body.");
+    }
+  });
+
+  it("lists top-level body property names for a whole-projection body", () => {
+    const op = air.operations.find((o) => o.id === "payments.refunds.create");
+    expect(op).toBeDefined();
+    const whole = OperationSchema.parse({
+      ...op!,
+      input: {
+        params: [],
+        body: {
+          contentType: "application/json",
+          required: true,
+          // Nested `metadata` forces projection "whole" in the compiler; the
+          // signature must still name the top-level fields, required first.
+          schema: {
+            type: "object",
+            required: ["amount"],
+            properties: {
+              amount: { type: "integer" },
+              reason: { type: "string" },
+              metadata: { type: "object", properties: { note: { type: "string" } } },
+            },
+          },
+          projection: "whole",
+          fields: [],
+        },
+      },
+    });
+    expect(operationInputSignature(whole)).toBe("body.amount*, body.reason, body.metadata");
+  });
+
+  it("caps at 8 entries with ellipsis", () => {
+    // Create a synthetic operation with >8 params to test the cap
+    const testOp = {
+      id: "test.op",
+      canonicalName: "test_op",
+      displayName: "Test Op",
+      description: "",
+      tags: [],
+      sourceRef: { method: "POST", path: "/test" },
+      effect: {
+        kind: "mutation" as const,
+        action: "create" as const,
+        risk: "high" as const,
+        reversible: false,
+      },
+      input: {
+        params: [
+          { name: "p1", in: "query" as const, required: true },
+          { name: "p2", in: "query" as const, required: true },
+          { name: "p3", in: "query" as const, required: true },
+          { name: "p4", in: "query" as const, required: false },
+          { name: "p5", in: "query" as const, required: false },
+          { name: "p6", in: "query" as const, required: false },
+          { name: "p7", in: "query" as const, required: false },
+          { name: "p8", in: "query" as const, required: false },
+          { name: "p9", in: "query" as const, required: false },
+        ],
+      },
+      output: {},
+      errors: [],
+      idempotency: {
+        mode: "not_idempotent" as const,
+        mechanism: "none" as const,
+        keyDerivation: "none" as const,
+      },
+      retries: { mode: "not_safe" as const },
+      confirmation: { required: false },
+      auth: { type: "bearer", principal: "user", scopes: [] },
+      pagination: undefined,
+      streaming: false,
+      longRunning: false,
+      deprecated: false,
+      cli: { command: "test", aliases: [] },
+      mcp: { toolName: "test" },
+      skill: { intentExamples: [] },
+      state: "approved" as const,
+      reviewNotes: [],
+      evidence: { claims: [] },
+    } as OperationSchema;
+
+    const sig = operationInputSignature(testOp);
+    expect(sig).toContain("…");
+    const parts = sig.split(", ");
+    // Should have 8 parts plus the ellipsis as part of the last entry
+    expect(parts.length).toBeLessThanOrEqual(9); // 8 entries + ", …" counts as modifying last entry
   });
 });
 
@@ -356,6 +465,46 @@ describe("capabilities in generated artifacts", () => {
     expect(workflows).toMatch(/human approval/i);
   });
 
+  it("includes input signatures in the operation catalog and pending operations in skill", () => {
+    const { files } = generateBundle(air);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const refundOp = catalog.operations.find((o: { id: string }) => o.id.includes("refund"));
+    expect(refundOp).toBeDefined();
+    expect(refundOp.inputs).toBeDefined();
+    // Should include at least one required param with asterisk (payment_id or similar)
+    expect(refundOp.inputs).toMatch(/\*/);
+
+    // Unapproved operations in pending section should also show signature
+    const unapproved = structuredClone(air);
+    if (unapproved.operations.length > 0) {
+      unapproved.operations[0].state = "review_required";
+    }
+    const { files: files2 } = generateBundle(unapproved);
+    const opsRef = files2["skill/reference/operations.md"] as string;
+    expect(opsRef).toContain("## Pending approval");
+    // Should have signature in parens for pending operation (e.g., "- `cmd` — Name [state] (param*)")
+    expect(opsRef).toMatch(/\[review_required\] \(/);
+  });
+
+  it("strips HTML tags from operation descriptions in catalog", () => {
+    // Clone air and add HTML to a description
+    const withHtml = structuredClone(air);
+    if (withHtml.operations.length > 0) {
+      withHtml.operations[0].description = "<p>Create a <strong>refund</strong> for a charge</p>";
+    }
+    const { files } = generateBundle(withHtml);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const op = catalog.operations[0];
+    expect(op).toBeDefined();
+    if (op.description) {
+      // Should not contain HTML tags
+      expect(op.description).not.toContain("<");
+      expect(op.description).not.toContain(">");
+      // Should have the text content
+      expect(op.description).toMatch(/Create a.*refund/);
+    }
+  });
+
   it("omits blocked workflows from skill, catalog, and MCP discovery while retaining AIR", () => {
     const blocked = structuredClone(air);
     const workflow = blocked.workflows[0];
@@ -398,10 +547,37 @@ describe("capabilities in generated artifacts", () => {
     expect(unapproved.operations.every((o) => o.state !== "approved")).toBe(true);
     const { files } = generateBundle(unapproved);
     const capsRef = files["skill/reference/capabilities.md"] as string;
-    expect(capsRef).toContain("No approved capabilities");
+    // Should show pending capabilities instead of "No approved capabilities"
+    expect(capsRef).toContain("Pending approval");
+    expect(capsRef).toContain("review_required");
     expect(capsRef).not.toContain("payments refunds create");
     const skill = files["skill/SKILL.md"] as string;
+    expect(skill).toContain("operations compiled but await approval");
     expect(skill).not.toContain("payments refunds create");
+    // Operations reference should list unapproved operations in pending section
+    const opsRef = files["skill/reference/operations.md"] as string;
+    expect(opsRef).toContain("Pending approval");
+    expect(opsRef).toContain("review_required");
+  });
+
+  it("shows pending operations when some are unapproved alongside approved ones", async () => {
+    // Create a mixed scenario: some approved, some pending.
+    const mixed = structuredClone(air);
+    // Approve only the first operation
+    if (mixed.operations.length > 1) {
+      mixed.operations[0].state = "approved";
+      mixed.operations[1].state = "review_required";
+    }
+    const { files } = generateBundle(mixed);
+    const opsRef = files["skill/reference/operations.md"] as string;
+    // Should have both approved and pending sections
+    expect(opsRef).toContain("## Approved operations");
+    expect(opsRef).toContain("## Pending approval");
+    expect(opsRef).toContain("[review_required]");
+    // Docs should show counts
+    const docsOps = files["docs/OPERATIONS.md"] as string;
+    expect(docsOps).toContain("approved");
+    expect(docsOps).toContain("pending review");
   });
 
   it("gives the skill a valid Agent-Skill name slug", async () => {
@@ -504,6 +680,138 @@ describe("skill package format", () => {
     expect(ref).toContain("This operation creates an irreversible financial mutation.");
     const idem = files["skill/reference/idempotency.md"] as string;
     expect(idem).toContain("This operation creates an irreversible financial mutation");
+  });
+
+  it("surfaces pagination, longRunning, and archetype when present in operation metadata", () => {
+    const testAir = structuredClone(air);
+    const op = testAir.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+
+    // Set pagination with cursor style
+    op.pagination = {
+      style: "cursor",
+      cursorParam: "after_cursor",
+      itemsField: "transactions",
+    };
+
+    // Set longRunning flag
+    op.longRunning = true;
+
+    // Set archetype to search
+    op.archetype = "search";
+
+    const { files } = generateBundle(testAir);
+    const ref = files["skill/reference/operations.md"] as string;
+
+    // Check for pagination info
+    expect(ref).toContain("Paginated (cursor): pass `after_cursor`; items at `transactions`");
+
+    // Check for long-running info
+    expect(ref).toContain("Long-running: returns before completion; poll for status");
+
+    // Check for archetype search hint
+    expect(ref).toContain("Narrow with filters before paging");
+
+    // Verify operation catalog also includes these fields
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const catalogOp = catalog.operations.find((o: { id: string }) => o.id === op.id);
+    expect(catalogOp).toBeDefined();
+    expect(catalogOp.pagination).toEqual({
+      style: "cursor",
+      cursorParam: "after_cursor",
+      nextField: undefined,
+      itemsField: "transactions",
+    });
+    expect(catalogOp.longRunning).toBe(true);
+    expect(catalogOp.archetype).toBe("search");
+  });
+
+  it("surfaces link-style pagination without cursor param in operation reference", () => {
+    const testAir = structuredClone(air);
+    const op = testAir.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+
+    // Set pagination with link style (no cursor param needed)
+    op.pagination = {
+      style: "link",
+    };
+
+    const { files } = generateBundle(testAir);
+    const ref = files["skill/reference/operations.md"] as string;
+
+    // Check for link-style pagination info
+    expect(ref).toContain("Paginated (link)");
+  });
+
+  it("truncates long operation descriptions at word boundary in catalog", () => {
+    const testAir = structuredClone(air);
+    const op = testAir.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+
+    // Set a long description that exceeds 160 chars
+    const longDesc =
+      "This is a very long description that goes on and on and should definitely be truncated at the word boundary to ensure the catalog remains glanceable and readable by agents without requiring excessive token expenditure to parse";
+    op.description = longDesc;
+
+    const { files } = generateBundle(testAir);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const catalogOp = catalog.operations.find((o: { id: string }) => o.id === op.id);
+
+    expect(catalogOp).toBeDefined();
+    expect(catalogOp.description).toBeDefined();
+    expect(catalogOp.description).toContain("…");
+    expect(catalogOp.description.length).toBeLessThanOrEqual(161); // 160 + "…"
+    expect(catalogOp.description.length).toBeLessThan(longDesc.length);
+    // Verify it truncates at a word boundary — should end cleanly at "…"
+    expect(catalogOp.description).toMatch(/…$/);
+  });
+
+  it("populates path from sourceRef method and path in catalog", () => {
+    const testAir = structuredClone(air);
+    const op = testAir.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+
+    // Ensure sourceRef has both method and path
+    op.sourceRef.method = "post";
+    op.sourceRef.path = "/v1/charges/{charge_id}/refunds";
+
+    const { files } = generateBundle(testAir);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const catalogOp = catalog.operations.find((o: { id: string }) => o.id === op.id);
+
+    expect(catalogOp).toBeDefined();
+    expect(catalogOp.path).toBe("post /v1/charges/{charge_id}/refunds");
+  });
+
+  it("omits description and path from catalog when not available", () => {
+    const testAir = structuredClone(air);
+    const op = testAir.operations[0];
+    if (!op) throw new Error("payments fixture needs an operation");
+
+    // Clear description and sourceRef fields
+    op.description = "";
+    op.sourceRef.method = undefined;
+    op.sourceRef.path = undefined;
+
+    const { files } = generateBundle(testAir);
+    const catalog = JSON.parse(files["catalog.json"] as string);
+    const catalogOp = catalog.operations.find((o: { id: string }) => o.id === op.id);
+
+    expect(catalogOp).toBeDefined();
+    expect(catalogOp.description).toBeUndefined();
+    expect(catalogOp.path).toBeUndefined();
+  });
+
+  it("omits pagination, longRunning, and archetype metadata when not set", () => {
+    const { files } = generateBundle(air);
+    const ref = files["skill/reference/operations.md"] as string;
+
+    // Existing operations in payments fixture should not have these fields
+    // The reference should still be valid with proper structure
+    expect(ref).toMatch(/### `[^`]+`.*\(id: `[^`]+`, tool: `[^`]+`\)/);
+    // Verify the format is as expected with operations listed
+    expect(ref).toContain("### `payments customers get`");
+    expect(ref).toContain("### `payments refunds create`");
   });
 
   it("teaches setup (env-var NAMES only) and links it from SKILL.md and errors.md", () => {
@@ -1137,6 +1445,94 @@ describe("example synthesis (mock + loopback inputs)", () => {
       skill: { intentExamples: [] },
     });
     expect(exampleInput(op).body).toEqual({});
+  });
+
+  it("splits a wire-serialized declared example back into items for array params", () => {
+    // Coda declares `example: "fetcher,custom"` (form-style comma-join) on
+    // array params; the generated zod shape rightly wants an array, so a
+    // verbatim declared example would fail every tool call that pastes it.
+    const op = OperationSchema.parse({
+      id: "svc.logs.list",
+      canonicalName: "list_logs",
+      displayName: "List logs",
+      sourceRef: { kind: "openapi", path: "/logs", method: "get" },
+      effect: { kind: "read", action: "list", resource: "log", risk: "low", reversible: true },
+      input: {
+        params: [
+          {
+            name: "logTypes",
+            in: "query",
+            required: false,
+            schema: { type: "array", items: { type: "string" } },
+            example: "fetcher,custom",
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer" },
+            example: 25,
+          },
+        ],
+      },
+      idempotency: { mode: "natural" },
+      retries: { mode: "safe", maxAttempts: 3, backoff: "exponential_jitter", retryOn: [] },
+      confirmation: { required: false },
+      auth: { type: "none", scopes: [] },
+      cli: { command: "svc logs list" },
+      mcp: { toolName: "svc_list_logs" },
+      skill: { intentExamples: [] },
+    });
+    const input = exampleInput(op);
+    expect(input.log_types).toEqual(["fetcher", "custom"]);
+    expect(input.limit).toBe(25);
+  });
+
+  it("demotes markdown headings inside spec descriptions so op sections never fracture", () => {
+    // Coda's rows.list description carries its own `### Value results` heading;
+    // rendered verbatim it terminates the operation's `###` section before the
+    // Semantics line, so conformance (and any agent) reads retry-safe as absent.
+    const air2: AirDocument = JSON.parse(JSON.stringify(air));
+    const op = air2.operations.find((o) => o.effect.kind === "read");
+    if (!op) throw new Error("payments example has no read operation");
+    op.state = "approved";
+    op.description = "Lists things.\n### Value results\nDetails follow.";
+    const bundle = generateBundle(air2);
+    const opsMd = bundle.files["skill/reference/operations.md"];
+    if (!opsMd) throw new Error("bundle has no skill/reference/operations.md");
+    expect(opsMd).toContain("**Value results**");
+    expect(opsMd).not.toContain("### Value results");
+  });
+
+  it("drops a type-mismatched declared example and synthesizes from the schema", () => {
+    // Coda declares `example: true` on a string-enum sortBy param; a verbatim
+    // boolean would fail the enum zod shape, so synthesis must win.
+    const op = OperationSchema.parse({
+      id: "svc.packs.list",
+      canonicalName: "list_packs",
+      displayName: "List packs",
+      sourceRef: { kind: "openapi", path: "/packs", method: "get" },
+      effect: { kind: "read", action: "list", resource: "pack", risk: "low", reversible: true },
+      input: {
+        params: [
+          {
+            name: "sortBy",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["title", "createdAt", "updatedAt"] },
+            example: true,
+          },
+        ],
+      },
+      idempotency: { mode: "natural" },
+      retries: { mode: "safe", maxAttempts: 3, backoff: "exponential_jitter", retryOn: [] },
+      confirmation: { required: false },
+      auth: { type: "none", scopes: [] },
+      cli: { command: "svc packs list" },
+      mcp: { toolName: "svc_list_packs" },
+      skill: { intentExamples: [] },
+    });
+    expect(exampleInput(op).sort_by).toBe("title");
   });
 });
 

@@ -45,5 +45,20 @@ export function mcpToolDescription(op: Operation): string {
   } else {
     parts.push("Read-only.");
   }
+  // Interaction-shape facts (never invented: pagination only *names* params the
+  // spec already declares). The skill reference teaches the same lines, so the
+  // MCP and skill surfaces stay in agreement about how to call the operation.
+  if (op.pagination) {
+    if (op.pagination.style === "link" || !op.pagination.cursorParam) {
+      parts.push(`Paginated (${op.pagination.style}).`);
+    } else {
+      const items = op.pagination.itemsField ? `; items at '${op.pagination.itemsField}'` : "";
+      parts.push(
+        `Paginated (${op.pagination.style}): pass '${op.pagination.cursorParam}'${items}.`,
+      );
+    }
+  }
+  if (op.longRunning) parts.push("Long-running: returns before completion; poll for status.");
+  if (op.archetype === "search") parts.push("Narrow with filters before paging.");
   return parts.join(" ");
 }

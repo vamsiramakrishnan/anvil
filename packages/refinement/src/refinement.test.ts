@@ -192,6 +192,9 @@ describe("deficiency catalog", () => {
       "enrich-errors",
       "investigate-ui-projection",
       "classify-idempotency",
+      "document-pagination",
+      "author-intent-examples",
+      "author-routing-phrases",
     ]);
     expect(implemented).toEqual(expectedImplemented);
     for (const def of Object.values(DEFICIENCY_CATALOG)) {
@@ -438,5 +441,136 @@ describe("refinement plan", () => {
       "confirmation.required",
       "idempotency.mode",
     ]);
+  });
+
+  it("detect query-language passthrough on unconstrained param", () => {
+    const air = loadAirDocument({
+      service: {
+        id: "database",
+        displayName: "Database",
+        version: "1",
+        source: { kind: "openapi" },
+      },
+      operations: [
+        {
+          id: "db.query.run",
+          canonicalName: "run_query",
+          displayName: "Run query",
+          description: "Run a SQL query.",
+          sourceRef: { kind: "openapi", path: "/query", method: "post" },
+          effect: { kind: "read", action: "search", risk: "none" },
+          input: {
+            params: [
+              {
+                name: "sql",
+                in: "query",
+                required: true,
+                schema: { type: "string" },
+              },
+            ],
+          },
+          idempotency: { mode: "natural" },
+          retries: { mode: "safe", basis: "read_safe", maxAttempts: 3, retryOn: ["http_503"] },
+          confirmation: { required: false },
+          auth: { type: "api_key" },
+          cli: { command: "db query run" },
+          mcp: { toolName: "db_run_query" },
+          skill: { intentExamples: ["Run a SQL query."] },
+        },
+      ],
+    });
+    const deficiencies = runDetectors(air);
+    const passthrough = deficiencies.filter((d) => d.code === "query_language_passthrough");
+    expect(passthrough).toHaveLength(1);
+    expect(passthrough[0]?.message).toContain("sql");
+  });
+
+  it("do NOT detect query-language passthrough when constrained by enum", () => {
+    const air = loadAirDocument({
+      service: {
+        id: "database",
+        displayName: "Database",
+        version: "1",
+        source: { kind: "openapi" },
+      },
+      operations: [
+        {
+          id: "db.query.predefined",
+          canonicalName: "run_predefined",
+          displayName: "Run predefined query",
+          description: "Run a predefined SQL query.",
+          sourceRef: { kind: "openapi", path: "/query/predefined", method: "post" },
+          effect: { kind: "read", action: "search", risk: "none" },
+          input: {
+            params: [
+              {
+                name: "sql",
+                in: "query",
+                required: true,
+                schema: {
+                  type: "string",
+                  enum: ["SELECT * FROM users", "SELECT COUNT(*) FROM logs"],
+                },
+              },
+            ],
+          },
+          idempotency: { mode: "natural" },
+          retries: { mode: "safe", basis: "read_safe", maxAttempts: 3, retryOn: ["http_503"] },
+          confirmation: { required: false },
+          auth: { type: "api_key" },
+          cli: { command: "db query predefined" },
+          mcp: { toolName: "db_run_predefined" },
+          skill: { intentExamples: ["Run a predefined query."] },
+        },
+      ],
+    });
+    const deficiencies = runDetectors(air);
+    const passthrough = deficiencies.filter((d) => d.code === "query_language_passthrough");
+    expect(passthrough).toHaveLength(0);
+  });
+
+  it("detect query-language passthrough on body field", () => {
+    const air = loadAirDocument({
+      service: {
+        id: "elasticsearch",
+        displayName: "Elasticsearch",
+        version: "1",
+        source: { kind: "openapi" },
+      },
+      operations: [
+        {
+          id: "es.search",
+          canonicalName: "search",
+          displayName: "Search",
+          description: "Search documents.",
+          sourceRef: { kind: "openapi", path: "/_search", method: "post" },
+          effect: { kind: "read", action: "search", risk: "none" },
+          input: {
+            params: [],
+            body: {
+              projection: "fields",
+              fields: [
+                {
+                  name: "query",
+                  required: true,
+                  schema: { type: "string" },
+                },
+              ],
+            },
+          },
+          idempotency: { mode: "natural" },
+          retries: { mode: "safe", basis: "read_safe", maxAttempts: 3, retryOn: ["http_503"] },
+          confirmation: { required: false },
+          auth: { type: "api_key" },
+          cli: { command: "es search" },
+          mcp: { toolName: "es_search" },
+          skill: { intentExamples: ["Search for documents."] },
+        },
+      ],
+    });
+    const deficiencies = runDetectors(air);
+    const passthrough = deficiencies.filter((d) => d.code === "query_language_passthrough");
+    expect(passthrough).toHaveLength(1);
+    expect(passthrough[0]?.message).toContain("query");
   });
 });

@@ -504,6 +504,13 @@ function runCapabilityCompose(bundlePaths: string[], opts: ComposeOptions, io: C
       io.out(
         `  dispositions: ${report.summary.dispositions.unresolved} unresolved, ${report.summary.dispositions.candidate} candidate, ${report.summary.dispositions.reviewed} reviewed`,
       );
+      if (report.suppressedEnvelopeCoordinates && report.suppressedEnvelopeCoordinates.length > 0) {
+        for (const coord of report.suppressedEnvelopeCoordinates) {
+          io.out(
+            `  suppressed envelope: ${coord.pointer} (${coord.sourceCount} sources, ${coord.memberCount} member(s))`,
+          );
+        }
+      }
       io.out(`  report: ${opts.out}`);
       io.out(`  reportHash: ${report.reportHash}`);
       if (opts.initReview) io.out(`  review scaffold: ${opts.initReview}`);

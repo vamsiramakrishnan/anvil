@@ -124,7 +124,18 @@ function parseSkillOps(md: string): SkillOpDoc[] {
     const m = header.exec(lines[i] as string);
     if (!m) continue;
     const [, cliCommand, id, toolName] = m as unknown as [string, string, string, string];
-    const semantics = lines.slice(i + 1, i + 8).find((l) => l.startsWith("- Semantics:")) ?? "";
+    // Scan to the next section header, not a fixed window: a real spec's
+    // description (Coda's rows.list) runs a dozen lines before the Semantics
+    // line, and a window that stops early reads every posture flag as false.
+    let semantics = "";
+    for (let j = i + 1; j < lines.length; j++) {
+      const line = lines[j] as string;
+      if (line.startsWith("### ") || line.startsWith("## ")) break;
+      if (line.startsWith("- Semantics:")) {
+        semantics = line;
+        break;
+      }
+    }
     docs.push({
       id,
       cliCommand,

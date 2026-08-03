@@ -2,6 +2,7 @@ import type { AirDocument, Operation } from "@anvil/air";
 import { evidenceConfidence, kebabCase } from "@anvil/air";
 import { stringify as toYaml } from "yaml";
 import { credentialContract } from "./deploy.js";
+import { operationInputSignature } from "./input-signature.js";
 
 /**
  * The source formats Anvil can compile, phrased for agents. THE single place to
@@ -77,7 +78,7 @@ export function generateSkill(air: AirDocument): Record<string, string> {
     frontmatter(
       `${name}-operations`,
       "The full operation catalog — per-operation contract, inputs, safety posture (effect, risk, confirmation, idempotency, retry), and CLI/MCP names. Read this before invoking any operation.",
-    ) + operationsRef(exposed);
+    ) + operationsRef(air.operations);
   files["reference/errors.md"] =
     frontmatter(
       `${name}-errors`,
@@ -162,6 +163,20 @@ and workflows a capability owns; \`${id} workflows <name>\` shows a multi-step f
 
 ${capabilitiesList(air)}
 
+## The ladder (work down it, never around it)
+Before writing any code or calling anything, walk these steps **in order** and
+stop at the first that answers:
+1. **Does an approved operation already do this?** \`${id} discover "<intent>"\` —
+   never hand-roll an HTTP call against the upstream when a compiled operation
+   exists.
+2. **Does an authored workflow do the whole job in one call?** Check
+   \`reference/workflows.md\` before chaining operations yourself.
+3. **Read the contract before calling.** \`${id} explain <operation-id>\` — inputs,
+   risk, idempotency, and confirmation posture, in one place.
+4. **Preview before executing.** \`--dry-run\` shows the exact request for free.
+5. **Not approved? Stop.** A pending or blocked operation is a human decision,
+   not an obstacle to code around. Ask, don't improvise.
+
 ## Use the CLI first
 Run \`${id} --help\` before guessing. Then \`${id} discover "<intent>"\` to find an
 operation, and \`${id} explain <operation-id>\` to read its contract.
@@ -224,7 +239,7 @@ connecting to the MCP server directly (no CLI) gets the same tools, so
 - **Do not** retry a mutation unless the tool reports it as retry-safe. Reads and idempotent writes retry automatically; non-idempotent writes never do.
 
 ## What this skill exposes
-${ops.length === 0 ? "_No operations are approved yet. Run `anvil approve` to expose operations._" : `${ops.length} approved operation(s). For the full catalog, read \`reference/operations.md\`.`}
+${ops.length === 0 ? `_${air.operations.length} operations compiled but await approval (see \`reference/operations.md\` for the pending list). Approval is a human decision recorded with \`anvil approve <bundle> <operation-ids>\`; blocked operations need their noted issue resolved first._` : `${ops.length} approved operation(s) out of ${air.operations.length} compiled. For the full catalog, read \`reference/operations.md\`.`}
 
 ## Where to look
 - \`reference/capabilities.md\` — the capabilities and what each one owns.
@@ -275,8 +290,22 @@ function capabilitiesRef(air: AirDocument): string {
   const visible = air.capabilities
     .map((cap) => ({ cap, ops: approvedMembers(air, cap) }))
     .filter(({ ops }) => ops.length > 0);
-  if (visible.length === 0) return "# Capabilities\n\n_No approved capabilities yet._\n";
-  const sections = visible.map(({ cap, ops }) => {
+
+  // Pending capabilities: those with no approved members but some operations exist
+  const pending = air.capabilities
+    .map((cap) => ({
+      cap,
+      ops: approvedMembers(air, cap),
+      allOps: cap.operationIds
+        .map((id) => air.operations.find((o) => o.id === id))
+        .filter((o): o is Operation => Boolean(o)),
+    }))
+    .filter(({ allOps }) => allOps.length > 0 && allOps.every((o) => o.state !== "approved"));
+
+  if (visible.length === 0 && pending.length === 0)
+    return "# Capabilities\n\n_No capabilities found._\n";
+
+  const approvedSections = visible.map(({ cap, ops }) => {
     const opLines = ops.map(
       (o) =>
         `- \`${o.cli.command}\` — ${o.effect.kind}${o.confirmation.required ? " (confirm)" : ""}`,
@@ -295,17 +324,49 @@ Operations:
 ${opLines.join("\n")}
 ${wfs.length ? `\nWorkflows:\n${wfs.join("\n")}` : ""}`;
   });
-  return `# Capabilities
+
+  const approvedSection =
+    visible.length > 0
+      ? `## Approved capabilities
 
 The primary abstraction: agents search for a capability, not a URL. Each
 capability owns operations and (authored) workflows. Only approved operations
 are listed.
 
-${sections.join("\n\n")}
-`;
+${approvedSections.join("\n\n")}`
+      : "";
+
+  const pendingLines = pending.map(({ cap, allOps }) => {
+    const stateCount = (state: string) => allOps.filter((o) => o.state === state).length;
+    const states = Array.from(new Set(allOps.map((o) => o.state))).sort();
+    const statesSummary = states.map((s) => `${stateCount(s)} ${s}`).join(", ");
+    return `- \`${cap.id}\` — ${cap.displayName} [${statesSummary}]`;
+  });
+  const pendingSection =
+    pending.length > 0
+      ? `## Pending approval (not callable)\n\nThese capabilities have no approved operations yet. None of their operations are exposed by the CLI or MCP server.\n\n${pendingLines.join("\n")}`
+      : "";
+
+  const sections = [approvedSection, pendingSection].filter(Boolean).join("\n\n");
+  const intro =
+    visible.length === 0 && pending.length > 0 ? "No approved capabilities yet.\n\n" : "";
+  return `# Capabilities
+
+${intro}${sections}\n`;
 }
 
 /** One line listing an operation's inputs (params + projected body). */
+/**
+ * Spec-authored descriptions may carry their own markdown headings (Coda's
+ * `### Value results`), which would fracture the per-operation `###` sections
+ * this file's structure — and every parser of it, conformance included — relies
+ * on. Demote embedded heading lines to bold text so injected prose can never
+ * terminate an operation's section early.
+ */
+function demoteHeadings(text: string): string {
+  return text.replace(/^#{1,6}\s+(.+)$/gm, "**$1**");
+}
+
 function inputList(op: Operation): string {
   const parts = op.input.params.map((p) => `\`${p.name}\`${p.required ? "*" : ""}`);
   const body = op.input.body;
@@ -333,26 +394,85 @@ function confirmationCallout(op: Operation): string {
 }
 
 function operationsRef(ops: Operation[]): string {
-  const rows = ops.map((op) => {
-    const flags = [
-      op.effect.kind,
-      op.effect.kind === "mutation" ? op.effect.risk : null,
-      op.confirmation.required ? "confirm-required" : null,
-      op.idempotency.mode === "required" ? "idempotency-key-required" : null,
-      op.retries.mode === "safe" ? "retry-safe" : "not-retry-safe",
-    ]
-      .filter(Boolean)
-      .join(", ");
-    return `### \`${op.cli.command}\`  (id: \`${op.id}\`, tool: \`${op.mcp.toolName}\`)
-${op.description || op.displayName}
+  const approved = ops.filter((op) => op.state === "approved");
+  const pending = ops.filter((op) => op.state !== "approved");
+
+  const buildApprovedRows = (approvedOps: Operation[]) => {
+    return approvedOps.map((op) => {
+      const flags = [
+        op.effect.kind,
+        op.effect.kind === "mutation" ? op.effect.risk : null,
+        op.confirmation.required ? "confirm-required" : null,
+        op.idempotency.mode === "required" ? "idempotency-key-required" : null,
+        op.retries.mode === "safe" ? "retry-safe" : "not-retry-safe",
+      ]
+        .filter(Boolean)
+        .join(", ");
+
+      // Build optional metadata lines for pagination, longRunning, and archetype
+      const metadataLines: string[] = [];
+
+      // Pagination information
+      if (op.pagination) {
+        if (op.pagination.style === "link") {
+          metadataLines.push("- Paginated (link)");
+        } else {
+          let paginationLine = `- Paginated (${op.pagination.style})`;
+          if (op.pagination.cursorParam) {
+            paginationLine += `: pass \`${op.pagination.cursorParam}\``;
+          }
+          if (op.pagination.itemsField) {
+            paginationLine += `; items at \`${op.pagination.itemsField}\``;
+          }
+          metadataLines.push(paginationLine);
+        }
+      }
+
+      // Long-running information
+      if (op.longRunning) {
+        metadataLines.push("- Long-running: returns before completion; poll for status");
+      }
+
+      // Archetype search hint
+      if (op.archetype === "search") {
+        metadataLines.push("- Narrow with filters before paging");
+      }
+
+      // Intent examples and metadata are both optional; the newline between them
+      // exists only when both are present, so metadata lines never glue onto the
+      // end of the intents line (and rows without either keep their exact shape).
+      const intentLine = op.skill.intentExamples.length
+        ? `- Example intents: ${op.skill.intentExamples.map((e) => `"${e}"`).join("; ")}`
+        : "";
+      const metadata = metadataLines.length ? `${metadataLines.join("\n")}\n` : "";
+      const tail = `${intentLine}${intentLine && metadata ? "\n" : ""}${metadata}`;
+
+      return `### \`${op.cli.command}\`  (id: \`${op.id}\`, tool: \`${op.mcp.toolName}\`)
+${demoteHeadings(op.description || op.displayName)}
 ${confirmationCallout(op)}
 - Semantics: ${flags}
 - Auth: ${op.auth.type}${op.auth.scopes.length ? ` (${op.auth.scopes.join(", ")})` : ""}
 - Inputs: ${inputList(op)}
 - Schema: \`../schemas/${op.canonicalName}.schema.json\` · Example: \`../examples/${op.canonicalName}.json\`
-${op.skill.intentExamples.length ? `- Example intents: ${op.skill.intentExamples.map((e) => `"${e}"`).join("; ")}` : ""}`;
+${tail}`;
+    });
+  };
+
+  const approvedRows = buildApprovedRows(approved);
+  const approvedSection =
+    approved.length > 0 ? `## Approved operations\n\n${approvedRows.join("\n\n")}` : "";
+  const pendingLines = pending.map((op) => {
+    const signature = operationInputSignature(op);
+    const sigPart = signature ? ` (${signature})` : "";
+    return `- \`${op.cli.command}\` — ${op.displayName || op.id} [${op.state}]${sigPart}`;
   });
-  return `# Operations\n\n\`*\` marks a required input.\n\n${rows.join("\n\n")}\n`;
+  const pendingSection =
+    pending.length > 0
+      ? `## Pending approval (not callable)\n\nThese operations are compiled but not yet approved. They are not exposed by the CLI or MCP server.\n\n${pendingLines.join("\n")}`
+      : "";
+
+  const sections = [approvedSection, pendingSection].filter(Boolean).join("\n\n");
+  return `# Operations\n\n\`*\` marks a required input.\n\n${sections}\n`;
 }
 
 function idempotencyRef(ops: Operation[]): string {

@@ -49,7 +49,7 @@ stops for human review.
 
 ```bash
 pnpm install && pnpm build
-alias anvil='node packages/cli/dist/bin-anvil.js'
+alias anvil='pnpm anvil'   # `pnpm anvil <cmd>` works immediately; the alias just shortens it
 
 # 1. Discover: lock an immutable source snapshot, compile from it, assess, and
 #    propose capabilities — nothing is approved, certified, or published.
@@ -110,6 +110,65 @@ For an OAuth-protected remote Streamable HTTP endpoint, store the bearer token
 in an environment variable and pass only its name with
 `--mcp-token-env <ENV_NAME>` (`ANVIL_MCP_TOKEN_ENV` sets the default name);
 tokens never belong in the target URL or command arguments.
+
+## How good is the generated MCP server & skill? Prove it — per bundle.
+
+Quality is not a claim in this README; it is a property **each generated bundle
+demonstrates about itself**, with evidence bound to the bundle's content hash:
+
+| Proof | Command | What it demonstrates |
+|---|---|---|
+| Loopback selftest | `anvil selftest` | Boots the generated mock + MCP server and invokes **every approved tool over the real MCP transport**: arguments reach the wire faithfully, confirmation gates refuse before side effects, non-idempotent mutations are never auto-retried. |
+| Tri-surface conformance | `anvil conformance` | The skill, CLI catalog, and MCP tool list name the same operations; the skill documents the **exact** posture the runtime enforces; the same input hits the wire identically via MCP and CLI. |
+| Safety simulation | `anvil simulate` | Drives the full safety matrix (auth gating, confirmation, idempotent replay, injected faults, pagination) through a deterministic simulator — then **mutates each safety control and proves the surface detects it**. |
+| Static certification | `anvil certify` | Byte-level agreement of every generated surface with canonical AIR, plus semantic gates (e.g. sibling operations may not share a description). |
+| Agent-task benchmark | `anvil benchmark` | Derives tasks from each operation's intent examples and scores tool discovery, parameter satisfiability, and call success. `--check <threshold>` gates CI. |
+
+All evidence is **hash-bound and freshness-checked**: a report recorded against
+older bundle content is *stale*, never silently trusted, and `anvil publish`
+fails closed for production without all fresh proof lanes. On the public-corpus
+gauntlet (5,500+ operations compiled across Stripe, GitHub, Jira, Twilio, Slack,
+Coda, Zendesk, TM Forum, Coupa, Workday, Zoho, Oracle OPERA, NOAA SOAP, and
+more), fully-driven bundles pass **every** lane — e.g. Coda: 72/72 selftest,
+136/136 conformance, 504/504 simulation cells with 4/4 safety mutants killed,
+134/134 benchmark tasks.
+
+The generated skill itself follows a strict operating ladder (discover an
+approved operation → use an authored workflow → read the contract → dry-run →
+stop and ask when unapproved), progressive disclosure (a compact SKILL.md router
+over `reference/` detail), and honest exposure: unapproved operations are
+listed as **not callable**, never hidden and never advertised.
+
+## Shape the surface without forking the spec
+
+The compiled surface is **malleable by declaration**, not by editing generated
+code or forking the vendor spec. One manifest layer reshapes everything at once
+— and every loosening stays review-gated:
+
+```yaml
+# anvil.yaml — the same file, shaping very different things
+auth:
+  type: oauth2_on_behalf_of        # remodel a blocked end-user OAuth estate to
+                                   # per-caller RFC 8693 token exchange (one line)
+operations:
+  sendSms:
+    idempotency: { strategy: required_request_key }   # turn "please don't re-run"
+                                                      # into an enforced guarantee
+  get_refund_by_id:
+    description: Retrieve one refund by its refund id.  # fix a vendor's duplicate docs
+query_templates:
+  branch_names:                    # expose a constrained, read-only query instead
+    operation: run_query           # of a raw SQL passthrough
+    template: "SELECT name FROM accounts WHERE branch = '{branch}' LIMIT 10"
+    target_param: sql
+    params: { branch: { schema: { type: string, pattern: "^[A-Z0-9]+$" } } }
+    read_only: true
+```
+
+`anvil refine run` closes documentation gaps the same way — evidence-gated
+proposals (descriptions, examples, intent phrases, pagination) that a policy
+auto-approves only when grounded, and `anvil refine apply` writes them back to
+AIR. Recompile, and all three surfaces move together.
 
 ## Architecture
 

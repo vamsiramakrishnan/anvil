@@ -54,6 +54,7 @@ export type DeficiencyCode =
   | "auth_principal_unclear"
   | "error_retryability_unclear"
   | "contested_safety_semantic"
+  | "query_language_passthrough"
   // mock / eval coverage
   | "required_field_no_example"
   // artifact review (raised by the model-driven review in review/, not detectors)
@@ -234,7 +235,7 @@ export const DEFICIENCY_CATALOG: Record<DeficiencyCode, DeficiencyDef> = {
     "capability_missing_routing_phrases",
     "usability",
     "low",
-    "author-intent-examples",
+    "author-routing-phrases",
     "capability has no routing phrases",
     "refinementRequired",
     "the agent has no phrases to match a request to this capability",
@@ -340,6 +341,17 @@ export const DEFICIENCY_CATALOG: Record<DeficiencyCode, DeficiencyDef> = {
     "contested safety semantic",
     "blocked",
     "the agent would act on a safety semantic its own evidence disputes",
+  ),
+  // An unconstrained query language parameter allows arbitrary injection —
+  // only a person can decide whether to constrain it, gate it, or use templates.
+  query_language_passthrough: def(
+    "query_language_passthrough",
+    "safety",
+    "high",
+    "review-query-passthrough",
+    "unconstrained query-language passthrough",
+    "humanDecisionRequired",
+    "the agent would inject arbitrary logic through an unguarded query parameter",
   ),
   required_field_no_example: def(
     "required_field_no_example",

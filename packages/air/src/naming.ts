@@ -104,3 +104,35 @@ export function nameWeaknesses(args: {
   if (!args.hasResource) out.push("no_resource");
   return out;
 }
+
+/**
+ * Detect an unconstrained query-language passthrough field. An agent cannot
+ * safely call an endpoint that accepts arbitrary logic through a single string —
+ * the risk is arbitrary injection — but the rule must not swallow ordinary
+ * search terms. Two tiers, split by where the field lives:
+ *
+ * - Names that only ever mean a query LANGUAGE (sql, jql, cql, kql, xpath, dsl,
+ *   where, expression) fire in any location.
+ * - Names that usually mean free-text search DATA in a query string but a query
+ *   DOCUMENT in a request body (q, query, filter — think `GET /search?q=coffee`
+ *   vs. a POSTed GraphQL/Elasticsearch body) fire only as body fields. Blocking
+ *   every search API's `q` param would make the conservative rung meaningless.
+ *
+ * Either way, only a plain string with no narrowing constraint (enum, maxLength,
+ * pattern) counts — a constrained value is not an open-ended language carrier.
+ */
+export function isQueryPassthroughParam(
+  name: string,
+  schema: Record<string, unknown> | undefined,
+  location: "param" | "body",
+): boolean {
+  if (!schema || typeof schema !== "object") return false;
+  // Must be a string type with no type alternatives (allOf/oneOf/anyOf/etc).
+  if (schema.type !== "string") return false;
+  // Must have no constraints that would narrow the injection risk.
+  if (schema.enum || schema.maxLength || schema.pattern) return false;
+  const languageOnly = /^(sql|jql|cql|kql|xpath|dsl|where|expression)$/i;
+  if (languageOnly.test(name)) return true;
+  const bodyContextual = /^(q|query|filter)$/i;
+  return location === "body" && bodyContextual.test(name);
+}

@@ -9,6 +9,8 @@ export function generateDocs(air: AirDocument): Record<string, string> {
 }
 
 function operationsDoc(air: AirDocument): string {
+  const approved = air.operations.filter((op) => op.state === "approved").length;
+  const pending = air.operations.length - approved;
   const header =
     "| Operation | Effect | Risk | Idempotency | Retry-safe | Confirm | State |\n| --- | --- | --- | --- | --- | --- | --- |";
   const rows = air.operations.map(
@@ -17,7 +19,7 @@ function operationsDoc(air: AirDocument): string {
   );
   return `# ${air.service.displayName ?? air.service.id} — Operations
 
-Service \`${air.service.id}\` @ \`${air.service.version}\` — ${air.operations.length} operations.
+Service \`${air.service.id}\` @ \`${air.service.version}\` — ${air.operations.length} operations compiled (${approved} approved, ${pending} pending review and NOT exposed).
 
 ${header}
 ${rows.join("\n")}

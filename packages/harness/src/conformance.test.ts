@@ -207,6 +207,24 @@ describe("tri-surface conformance (payments, OpenAPI)", () => {
     expect(report.summary.fail).toBeGreaterThan(0);
   }, 120_000);
 
+  it("reads the Semantics line past a long spec-authored description", async () => {
+    // Coda's rows.list carries a ~12-line description between the section
+    // header and the Semantics line; a fixed-window parser read every posture
+    // flag as false and reported drift where there was none.
+    const dir = await buildBundle("payments/openapi.yaml", "payments/anvil.yaml", "payments");
+    const opsPath = join(dir, "skill", "reference", "operations.md");
+    const filler = Array.from({ length: 12 }, (_, k) => `description filler line ${k}`).join("\n");
+    const doc = readFileSync(opsPath, "utf8").replace(
+      /(### `payments refunds create`[^\n]*\n)/,
+      `$1${filler}\n`,
+    );
+    writeFileSync(opsPath, doc, "utf8");
+
+    const report = await runConformance(dir);
+    const claim = byId(report, "skill-claim", "payments.refunds.create")[0];
+    expect(claim?.status).toBe("pass");
+  }, 120_000);
+
   it("runs MCP↔skill only, skipping cross-surface checks, when the CLI is not linked", async () => {
     const dir = await buildBundle("payments/openapi.yaml", "payments/anvil.yaml", "payments");
     const report = await runConformance(dir); // no cliPackageDir

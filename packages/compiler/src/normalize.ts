@@ -12,7 +12,14 @@ import type {
   RequestBody,
 } from "@anvil/air";
 import { snakeCase } from "@anvil/air";
-import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import {
+  classifyArchetype,
+  classifyAuth,
+  classifyConfirmation,
+  classifyEffect,
+  classifyPagination,
+  classifyRetry,
+} from "./classify.js";
 import { materializeSchema } from "./decycle.js";
 import { deriveNames, singularize } from "./naming.js";
 import type { OpenApiDocument, ParsedSpec, SecurityScheme } from "./parse.js";
@@ -285,7 +292,10 @@ function oauthAuth(schemeName: string, scheme: SecurityScheme, scopes: string[])
       issue: {
         code: "auth/end_user_flow_unexecutable",
         message:
-          "End-user OAuth cannot use one shared runtime token. Model per-caller OBO/token acquisition before approval.",
+          "End-user OAuth cannot use one shared runtime token. To unblock, model per-caller " +
+          "delegation in the manifest — `auth: { type: oauth2_on_behalf_of }` — and the runtime " +
+          "will exchange each caller's inbound token (RFC 8693 token exchange; the imported " +
+          "token endpoint is preserved). Then set the operation state and approve.",
         blocked: true,
       },
     };
@@ -303,9 +313,34 @@ function resolveAuth(
   doc: OpenApiDocument,
   opSecurity: Array<Record<string, string[]>> | undefined,
 ): AuthResolution {
-  const schemes = doc.components?.securitySchemes ?? {};
   const security = opSecurity ?? doc.security ?? [];
-  if (security.length > 1) {
+  if (security.length > 1) return resolveAlternatives(doc, security);
+  return resolveSingleRequirement(doc, security[0]);
+}
+
+/**
+ * OR'd security alternatives. AIR still refuses to *guess* between authorities,
+ * but when every credentialed alternative resolves cleanly to the SAME
+ * principal class — e.g. Stripe's basic-OR-bearer for one API key, Coupa's
+ * client-credentials-OR-api-key service identity — the choice carries no
+ * safety weight: whichever carrier is used, the call runs under the same
+ * authority. Selecting the first alternative then trades a wholesale-blocked
+ * estate for a review_required one with an explicit note, and the human
+ * approving the operation sees exactly what was picked and what was bypassed.
+ * Any disagreement in principal, or any alternative that does not itself
+ * resolve cleanly, keeps the conservative block.
+ */
+function resolveAlternatives(
+  doc: OpenApiDocument,
+  security: Array<Record<string, string[]>>,
+): AuthResolution {
+  const credentialed = security.filter((s) => Object.keys(s).length > 0);
+  if (credentialed.length === 0) return { auth: authOf("none", []) };
+  const anonymousAllowed = credentialed.length < security.length;
+  const resolutions = credentialed.map((s) => resolveSingleRequirement(doc, s));
+  const principals = new Set(resolutions.map((r) => r.auth.principal));
+  const equivalent = resolutions.every((r) => !r.issue) && principals.size === 1;
+  if (!equivalent) {
     return unresolvedAuth(
       [],
       "auth/alternatives_unmodeled",
@@ -313,7 +348,29 @@ function resolveAuth(
       true,
     );
   }
-  const first = security[0];
+  const chosen = resolutions[0] as AuthResolution;
+  const names = credentialed.map((s) => Object.keys(s).join("+"));
+  const bypassed = names.slice(1).map((n) => `"${n}"`);
+  return {
+    auth: chosen.auth,
+    issue: {
+      code: "auth/alternative_selected",
+      message:
+        `OpenAPI declares ${security.length} alternative security requirements (OR) that all ` +
+        `carry ${chosen.auth.principal} authority and differ only in credential carrier. ` +
+        `Compiled the first ("${names[0]}"), bypassing ${bypassed.join(", ")}` +
+        `${anonymousAllowed ? " and an anonymous alternative" : ""}. ` +
+        `Override auth in the manifest to select a different carrier.`,
+    },
+  };
+}
+
+function resolveSingleRequirement(
+  doc: OpenApiDocument,
+  requirement: Record<string, string[]> | undefined,
+): AuthResolution {
+  const schemes = doc.components?.securitySchemes ?? {};
+  const first = requirement;
   if (!first || Object.keys(first).length === 0) {
     return { auth: authOf("none", []) };
   }
@@ -381,7 +438,11 @@ function resolveAuth(
       issue: {
         code: "auth/end_user_flow_unexecutable",
         message:
-          "OpenID Connect end-user auth needs per-caller token propagation/exchange; a shared runtime bearer is forbidden.",
+          "OpenID Connect end-user auth needs per-caller token propagation/exchange; a shared " +
+          "runtime bearer is forbidden. To unblock, model per-caller delegation in the manifest " +
+          "— `auth: { type: oauth2_on_behalf_of, provider: { token_endpoint: <STS URL> } }` — " +
+          "and the runtime will exchange each caller's inbound token (RFC 8693). Then set the " +
+          "operation state and approve.",
         blocked: true,
       },
     };
@@ -468,6 +529,9 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
       if (declaredIdempotent && idempotency.mode === "none") idempotency.mode = "natural";
       const retries = classifyRetry(effect, idempotency);
       const confirmation = classifyConfirmation(effect, idempotency);
+      // No spec dialect sets long-running yet; keep the operation field and the
+      // archetype input tied to one value so they can never disagree.
+      const longRunning = false;
 
       const params: Param[] = [];
       for (const rp of mergeParams(pathParams, raw.parameters ?? [])) {
@@ -492,8 +556,12 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         namedSchemas,
       );
 
+      const archetype = classifyArchetype(effect, effect.action, longRunning, params, body);
+
       const successRes =
         raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;
+      const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas);
+      const pagination = classifyPagination(effect, effect.action, params, outputSchema);
       const auth = resolveAuth(doc, raw.security);
       if (auth.issue) {
         diagnostics.push({
@@ -514,7 +582,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         effect,
         input: { params, body },
         output: {
-          schema: jsonSchemaOf(successRes?.content, namedSchemas),
+          schema: outputSchema,
           description: successRes?.description,
         },
         errors: errorSpecs(raw.responses),
@@ -523,7 +591,9 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         confirmation,
         auth: auth.auth,
         streaming: false,
-        longRunning: false,
+        longRunning,
+        archetype,
+        ...(pagination ? { pagination } : {}),
         deprecated: Boolean(raw.deprecated),
         cli: { command: names.cliCommand, aliases: [] },
         mcp: { toolName: names.toolName },

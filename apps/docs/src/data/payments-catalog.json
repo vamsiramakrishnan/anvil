@@ -50,7 +50,6 @@
       "id": "payments.customers.get",
       "canonicalName": "get_customer",
       "displayName": "Get a customer",
-      "description": "Get a customer",
       "capability": "payments.customers",
       "effect": "read",
       "action": "get",
@@ -74,13 +73,15 @@
       "mcpTool": "payments_get_customer",
       "state": "approved",
       "intentExamples": [],
-      "confidence": 0.19999999999999996
+      "confidence": 0.19999999999999996,
+      "description": "Get a customer",
+      "inputs": "customer_id*",
+      "path": "get /customers/{customer_id}"
     },
     {
       "id": "payments.payments.get",
       "canonicalName": "get_payment",
       "displayName": "Get a payment",
-      "description": "Get a payment",
       "capability": "payments.payments",
       "effect": "read",
       "action": "get",
@@ -104,13 +105,15 @@
       "mcpTool": "payments_get_payment",
       "state": "approved",
       "intentExamples": [],
-      "confidence": 0.19999999999999996
+      "confidence": 0.19999999999999996,
+      "description": "Get a payment",
+      "inputs": "payment_id*",
+      "path": "get /payments/{payment_id}"
     },
     {
       "id": "payments.refunds.create",
       "canonicalName": "create_refund",
       "displayName": "Create a refund",
-      "description": "Creates a refund for a captured payment. Irreversible.",
       "capability": "payments.refunds",
       "effect": "mutation",
       "action": "create",
@@ -135,13 +138,16 @@
       "mcpTool": "payments_create_refund",
       "state": "approved",
       "intentExamples": [],
-      "confidence": 0.19999999999999996
+      "confidence": 0.19999999999999996,
+      "description": "Creates a refund for a captured payment. Irreversible.",
+      "inputs": "payment_id*, body.amount*, body.currency*, body.reason",
+      "path": "post /payments/{payment_id}/refunds",
+      "archetype": "transaction"
     },
     {
       "id": "payments.capture.create",
       "canonicalName": "capture_payment",
       "displayName": "Capture a payment",
-      "description": "Capture a payment",
       "capability": "payments.payments",
       "effect": "mutation",
       "action": "create",
@@ -166,7 +172,11 @@
       "mcpTool": "payments_capture_payment",
       "state": "approved",
       "intentExamples": [],
-      "confidence": 0.19999999999999996
+      "confidence": 0.19999999999999996,
+      "description": "Capture a payment",
+      "inputs": "payment_id*",
+      "path": "post /payments/{payment_id}/capture",
+      "archetype": "transaction"
     }
   ]
 }

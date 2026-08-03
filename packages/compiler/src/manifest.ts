@@ -244,6 +244,63 @@ export const CapabilityReviewManifest = z
   });
 export type CapabilityReviewManifest = z.infer<typeof CapabilityReviewManifest>;
 
+/**
+ * A parameterized, read-only, capped query template that safely wraps an
+ * unconstrained query-language operation. Templates declare fixed query text
+ * with {param} placeholders and typed param definitions. Each template compiles
+ * into a new derived operation with archetype "search" and state "review_required".
+ *
+ * Substitution at runtime is literal characters only — Anvil does not know the
+ * target query language's quoting rules, so a param value containing quotes can
+ * still terminate a string literal inside the template. Authors should constrain
+ * each param's schema (pattern, enum, maxLength) to the shape the query slot
+ * actually needs; the reviewer approving the derived operation is signing off on
+ * those constraints as much as on the template text.
+ */
+export const QueryTemplateManifest = z
+  .object({
+    operation: z.string(),
+    template: z.string(),
+    target_param: z.string(),
+    params: z.record(
+      z.string(),
+      z.object({
+        schema: z.record(z.string(), z.unknown()),
+        description: z.string().optional(),
+      }),
+    ),
+    read_only: z.literal(true),
+    max_rows: z.number().int().min(1).optional(),
+  })
+  .superRefine((template, ctx) => {
+    // Extract placeholders from the template string (e.g., {param_name})
+    const placeholderMatch = template.template.match(/\{[^}]+\}/g) || [];
+    const placeholders = new Set(placeholderMatch.map((p) => p.slice(1, -1)));
+
+    // Check that every placeholder has a corresponding params entry
+    for (const placeholder of placeholders) {
+      if (!(placeholder in template.params)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["template"],
+          message: `Template contains placeholder '{${placeholder}}' but no matching entry in params.`,
+        });
+      }
+    }
+
+    // Check that every params entry is used in the template
+    for (const paramName of Object.keys(template.params)) {
+      if (!placeholders.has(paramName)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["params"],
+          message: `Parameter '${paramName}' is declared but never used in the template.`,
+        });
+      }
+    }
+  });
+export type QueryTemplateManifest = z.infer<typeof QueryTemplateManifest>;
+
 export const AnvilManifest = z.object({
   service: z
     .object({
@@ -262,6 +319,7 @@ export const AnvilManifest = z.object({
   operations: z.record(z.string(), OperationManifest).default({}),
   workflows: z.record(z.string(), WorkflowManifest).default({}),
   capabilities: z.record(z.string(), CapabilityReviewManifest).default({}),
+  query_templates: z.record(z.string(), QueryTemplateManifest).default({}),
 });
 export type AnvilManifest = z.infer<typeof AnvilManifest>;
 
@@ -689,6 +747,149 @@ export function buildWorkflows(
   }
 
   return { workflows, diagnostics };
+}
+
+/**
+ * Build derived operations from query templates, resolving each template's base
+ * operation and creating a new operation whose input params are the template's
+ * typed params. A template on a mutation base op is a manifest validation error
+ * and blocks derivation. Returns the derived operations plus diagnostics, and
+ * mutates capabilities to record ownership.
+ */
+export function buildQueryTemplates(
+  manifest: AnvilManifest,
+  operations: Operation[],
+  capabilities: Capability[],
+): { operations: Operation[]; diagnostics: Diagnostic[] } {
+  const derived: Operation[] = [];
+  const diagnostics: Diagnostic[] = [];
+
+  for (const [name, template] of Object.entries(manifest.query_templates)) {
+    // Resolve the base operation
+    const baseOp = operations.find((o) => matches(o, template.operation));
+    if (!baseOp) {
+      diagnostics.push({
+        level: "error",
+        code: "query_template_operation_unresolved",
+        message: `Query template "${name}" references unknown operation "${template.operation}"; the template is skipped.`,
+      });
+      continue;
+    }
+
+    // Reject templates on mutation operations
+    if (baseOp.effect.kind === "mutation") {
+      diagnostics.push({
+        level: "error",
+        code: "query_template_mutation_invalid",
+        message: `Query template "${name}" targets mutation operation "${template.operation}"; templates are read-only and cannot wrap mutations.`,
+        operationId: baseOp.id,
+      });
+      continue;
+    }
+
+    // Resolve the target param on the base operation to determine its location.
+    // Derived operation params have in: set to match the base operation's targetParam location.
+    // If targetParam is in "body", derived params are in "body"; otherwise use the target's location
+    // (typically "query" for parameterized query templates).
+    const targetParam = baseOp.input.params.find((p) => p.name === template.target_param);
+    const derivedParamIn =
+      targetParam && targetParam.in === "body"
+        ? ("body" as const)
+        : (targetParam?.in ?? ("query" as const));
+
+    // Create derived operation with input params from the template
+    const templateId = `${baseOp.id}.tpl.${snakeCase(name)}`;
+    const templateCanonicalName = `${baseOp.canonicalName}_tpl_${snakeCase(name)}`;
+    const projected = projectRoutingNames(
+      templateId.split(".")[0] ?? "",
+      baseOp.effect.resource ?? "template",
+      templateCanonicalName,
+    );
+
+    const derivedOp: Operation = {
+      id: templateId,
+      canonicalName: templateCanonicalName,
+      displayName: `${baseOp.displayName} (${name})`,
+      description: `Safe parameterized query: ${template.template}`,
+      tags: [...baseOp.tags],
+      sourceRef: baseOp.sourceRef,
+      effect: {
+        kind: "read",
+        action: "search",
+        risk: "low",
+        reversible: true,
+      },
+      input: {
+        params: Object.entries(template.params).map(([paramName, paramSpec]) => ({
+          name: paramName,
+          in: derivedParamIn,
+          required: true,
+          schema: paramSpec.schema ?? { type: "string" },
+          description: paramSpec.description,
+          inferred: false,
+        })),
+      },
+      output: baseOp.output,
+      errors: baseOp.errors,
+      idempotency: { mode: "natural", mechanism: "none", keyDerivation: "none" },
+      retries: {
+        mode: "safe",
+        // A derived template op is a read by construction (mutation bases are
+        // rejected above) — "unproven" here would be the very deficiency the
+        // retry-basis detector flags.
+        basis: "read_safe",
+        maxAttempts: 3,
+        backoff: "exponential_jitter",
+        baseDelayMs: 200,
+        maxDelayMs: 20000,
+        retryOn: ["timeout", "grpc_unavailable"],
+      },
+      confirmation: { required: false },
+      auth: baseOp.auth,
+      archetype: "search",
+      streaming: false,
+      longRunning: false,
+      deprecated: false,
+      cli: { command: projected.cliCommand, aliases: [] },
+      mcp: { toolName: projected.toolName },
+      skill: { intentExamples: [] },
+      state: "review_required",
+      reviewNotes: ["Query template — requires explicit review before approval."],
+      evidence: {
+        claims: [
+          {
+            subject: templateId,
+            predicate: "authored",
+            value: true,
+            source: "spec",
+            sourceRef: "anvil-manifest",
+            method: "manifest",
+            note: "authored query template",
+            confidence: 0.95,
+            review: "accepted",
+          },
+        ],
+      },
+      capabilityId: baseOp.capabilityId,
+      queryTemplate: {
+        baseOperationId: baseOp.id,
+        template: template.template,
+        targetParam: template.target_param,
+      },
+    };
+
+    derived.push(derivedOp);
+
+    // Record ownership in the base operation's capability
+    if (baseOp.capabilityId) {
+      const cap = capabilities.find((c) => c.id === baseOp.capabilityId);
+      if (cap) {
+        cap.operationIds.push(templateId);
+      }
+    }
+  }
+
+  return { operations: derived, diagnostics };
 }
 
 function resolveCapabilityId(

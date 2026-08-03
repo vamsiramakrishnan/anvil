@@ -315,32 +315,80 @@ function buildRequest(
   const body: Record<string, unknown> = {};
   let hasBody = false;
 
-  for (const p of op.input.params) {
-    const value =
-      idempotencyKey && isModeledIdempotencyCarrierInput(binding, p.in, p.name)
-        ? idempotencyKey
-        : input[propKey(p.name)];
-    if (value === undefined || value === null) continue;
-    switch (p.in) {
-      case "path":
-        path = path.replace(`{${p.name}}`, encodeURIComponent(String(value)));
-        break;
+  // Query template rendering: render the parameterized template and place the
+  // result at the base operation's targetParam. The derived operation's params
+  // are the template variables; they are NOT sent as normal request params.
+  let renderedTemplate: string | undefined;
+  if (op.queryTemplate) {
+    renderedTemplate = op.queryTemplate.template;
+    // Replace each {paramName} placeholder with the validated arg value.
+    // split/join, never a regex replace: `{`/`}` are quantifier chars, and a
+    // regex replacement string would expand `$&`/`$'`/`$1` patterns inside the
+    // VALUE — letting a crafted argument splice surrounding query text into
+    // itself. Substitution is literal characters only.
+    for (const p of op.input.params) {
+      const value = input[propKey(p.name)];
+      if (value === undefined || value === null) {
+        // Missing template param would be caught during validation; skip silently here.
+        continue;
+      }
+      const placeholder = `{${p.name}}`;
+      renderedTemplate = renderedTemplate.split(placeholder).join(String(value));
+    }
+    // Determine where to place the rendered template: use the location of the first
+    // derived param (all derived params have the same in: location by design).
+    const paramLocation = op.input.params[0]?.in ?? "body";
+    switch (paramLocation) {
       case "query":
-        query.set(p.name, String(value));
+        query.set(op.queryTemplate.targetParam, renderedTemplate);
         break;
       case "header":
-        headers[p.name] = String(value);
-        break;
-      case "cookie":
-        headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${p.name}=${String(value)}`;
+        headers[op.queryTemplate.targetParam] = renderedTemplate;
         break;
       case "body":
-        // Legacy AIR (bundles compiled before the body-model change) still carry
-        // body fields as in:"body" params. Honor them so an old bundle does not
-        // silently execute with an empty body; new AIR uses `input.body` below.
-        body[p.name] = value;
+        body[op.queryTemplate.targetParam] = renderedTemplate;
         hasBody = true;
         break;
+      case "path":
+        path = path.replace(
+          `{${op.queryTemplate.targetParam}}`,
+          encodeURIComponent(renderedTemplate),
+        );
+        break;
+      case "cookie":
+        headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${op.queryTemplate.targetParam}=${renderedTemplate}`;
+        break;
+    }
+    // Skip normal param processing; all template params have been consumed.
+  } else {
+    // Normal param processing (no query template).
+    for (const p of op.input.params) {
+      const value =
+        idempotencyKey && isModeledIdempotencyCarrierInput(binding, p.in, p.name)
+          ? idempotencyKey
+          : input[propKey(p.name)];
+      if (value === undefined || value === null) continue;
+      switch (p.in) {
+        case "path":
+          path = path.replace(`{${p.name}}`, encodeURIComponent(String(value)));
+          break;
+        case "query":
+          query.set(p.name, String(value));
+          break;
+        case "header":
+          headers[p.name] = String(value);
+          break;
+        case "cookie":
+          headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${p.name}=${String(value)}`;
+          break;
+        case "body":
+          // Legacy AIR (bundles compiled before the body-model change) still carry
+          // body fields as in:"body" params. Honor them so an old bundle does not
+          // silently execute with an empty body; new AIR uses `input.body` below.
+          body[p.name] = value;
+          hasBody = true;
+          break;
+      }
     }
   }
 

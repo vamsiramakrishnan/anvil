@@ -373,6 +373,9 @@ Options:
 - `--plan <file>` — an enrichment plan from `anvil distill --as-enrich-plan`: probe only its targeted operations, routing each question to the matching source pole (code loosens, docs tighten)
 - `--write <manifest>` — write the proposed manifest here instead of printing it
 - `--json` — emit the per-operation decisions as JSON
+- `--agent <name>` — harness agent to use (heuristic|agent-cli; default: heuristic)
+- `--agent-command <bin>` — CLI command for agent-cli (default: claude)
+- `--agent-timeout <ms>` — timeout in milliseconds for agent-cli (default: 30000)
 
 ### `anvil estate`
 `anvil estate [options] [command]`
@@ -656,6 +659,16 @@ With --live <config.json>, probes a REAL deployed MCP endpoint instead of the mo
 Options:
 - `--live <config>` — probe a real deployed MCP endpoint named in this JSON config
 - `--json` — emit the full report as JSON
+
+### `anvil benchmark`
+`anvil benchmark [options] <dir>`
+
+Measure agent-task completion probability: tool discovery, param satisfiability, call success, pagination.
+
+Deterministic benchmark for each approved operation's agent-task potential. Derives one task per skill.intentExamples entry; scores each on tool discoverability in the MCP server, required-param satisfiability from synthesized examples, call success against the mock upstream, and (for paginated operations) cursor-param pagination. Writes benchmark.report.json with per-operation task results, pass/fail counts, and an aggregate score. Exit 0 only when aggregate score meets the threshold.
+
+Options:
+- `--check <threshold>` — exit non-zero if score < threshold (0..1)
 
 ### `anvil simulate`  *(mutates)*
 `anvil simulate [options] <dir>`

@@ -10,6 +10,7 @@ import {
   evidenceConfidence,
   kebabCase,
   loadAirDocument,
+  mcpToolDescription,
   type Operation,
   operationBusinessInputCliFlag,
   operationInputSchema,
@@ -312,5 +313,39 @@ describe("operationInputSchema", () => {
       "--input-idempotency-key",
     );
     expect(operationBusinessInputCliFlag(operation, "query", "confirm")).toBe("--input-confirm");
+  });
+});
+
+describe("mcpToolDescription interaction-shape lines", () => {
+  const base = () => loadAirDocument(doc).operations[0];
+
+  it("teaches cursor pagination, long-running polling, and the search hint when present", () => {
+    const op = base();
+    op.effect = { kind: "read", action: "search", risk: "none", reversible: true };
+    op.archetype = "search";
+    op.longRunning = true;
+    op.pagination = { style: "cursor", cursorParam: "after", itemsField: "items" };
+
+    const text = mcpToolDescription(op);
+    expect(text).toContain("Paginated (cursor): pass 'after'; items at 'items'.");
+    expect(text).toContain("Long-running: returns before completion; poll for status.");
+    expect(text).toContain("Narrow with filters before paging.");
+  });
+
+  it("degrades to a bare pagination note for link style or a missing cursor param", () => {
+    const op = base();
+    op.pagination = { style: "link" };
+    expect(mcpToolDescription(op)).toContain("Paginated (link).");
+
+    const op2 = base();
+    op2.pagination = { style: "page" };
+    expect(mcpToolDescription(op2)).toContain("Paginated (page).");
+  });
+
+  it("says nothing about interaction shape when the fields are absent", () => {
+    const text = mcpToolDescription(base());
+    expect(text).not.toContain("Paginated");
+    expect(text).not.toContain("Long-running");
+    expect(text).not.toContain("Narrow with filters");
   });
 });

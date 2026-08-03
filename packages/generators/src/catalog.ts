@@ -1,11 +1,42 @@
 import type { AirDocument, Operation } from "@anvil/air";
 import { evidenceConfidence, operationInputSchema, operationSafetyInputKeys } from "@anvil/air";
+import { operationInputSignature } from "./input-signature.js";
+
+/**
+ * Strip HTML tags from text (e.g., <p>…</p> → plain text).
+ */
+function stripHtmlTags(text: string): string {
+  return text.replace(/<[^>]+>/g, "");
+}
+
+/**
+ * Truncate a description to 160 chars at a word boundary, appending "…" if truncated.
+ * Returns undefined if input is empty or falsy.
+ * First strips HTML tags if present.
+ */
+function truncateDescription(text?: string, maxChars = 160): string | undefined {
+  if (!text) return undefined;
+
+  // Strip HTML tags first
+  const clean = stripHtmlTags(text);
+  if (clean.length <= maxChars) return clean;
+
+  // Find the last space before maxChars
+  const truncated = clean.substring(0, maxChars);
+  const lastSpace = truncated.lastIndexOf(" ");
+  const cutPoint = lastSpace > 0 ? lastSpace : maxChars;
+
+  return `${clean.substring(0, cutPoint)}…`;
+}
 
 export interface CatalogEntry {
   id: string;
   canonicalName: string;
   displayName: string;
-  description: string;
+  /** Glanceable one-line description (truncated to 160 chars at word boundary). */
+  description?: string;
+  /** Compact input signature: required params first with `*`, then optional, then body.fields. Capped at 8 entries with ellipsis. */
+  inputs?: string;
   capability?: string;
   effect: string;
   action: string;
@@ -28,6 +59,14 @@ export interface CatalogEntry {
   state: string;
   intentExamples: string[];
   confidence: number;
+  /** Pagination configuration when present. */
+  pagination?: { style: string; cursorParam?: string; nextField?: string; itemsField?: string };
+  /** True when the operation returns before completion and requires polling. */
+  longRunning?: boolean;
+  /** How an agent should interact with this operation. */
+  archetype?: string;
+  /** REST/GraphQL path and method when available (e.g., "post /v1/charges/{charge}/refunds"). */
+  path?: string;
 }
 
 /** A capability entry in the catalog — the primary index agents browse. */
@@ -72,11 +111,10 @@ export function operationCatalog(air: AirDocument): {
     })),
     operations: air.operations.map((op) => {
       const safety = operationSafetyInputKeys(op);
-      return {
+      const entry: CatalogEntry = {
         id: op.id,
         canonicalName: op.canonicalName,
         displayName: op.displayName,
-        description: op.description,
         capability: op.capabilityId,
         effect: op.effect.kind,
         action: op.effect.action,
@@ -100,6 +138,35 @@ export function operationCatalog(air: AirDocument): {
         intentExamples: op.skill.intentExamples,
         confidence: evidenceConfidence(op.evidence),
       };
+      // Populate description if present, truncated for glanceability
+      const truncatedDescription = truncateDescription(op.description);
+      if (truncatedDescription) {
+        entry.description = truncatedDescription;
+      }
+      // Populate inputs signature
+      const signature = operationInputSignature(op);
+      if (signature) {
+        entry.inputs = signature;
+      }
+      // Populate path if sourceRef has both method and path
+      if (op.sourceRef.method && op.sourceRef.path) {
+        entry.path = `${op.sourceRef.method} ${op.sourceRef.path}`;
+      }
+      if (op.pagination) {
+        entry.pagination = {
+          style: op.pagination.style,
+          cursorParam: op.pagination.cursorParam,
+          nextField: op.pagination.nextField,
+          itemsField: op.pagination.itemsField,
+        };
+      }
+      if (op.longRunning) {
+        entry.longRunning = true;
+      }
+      if (op.archetype) {
+        entry.archetype = op.archetype;
+      }
+      return entry;
     }),
   };
 }

@@ -64,6 +64,33 @@ export function generateScenarios(air: AirDocument): MockScenario[] {
  * surface as snake_case inputs, and an example an agent cannot paste back into
  * the tool would be a lie.
  */
+/**
+ * A declared example is only usable when the tool surface would accept it. Real
+ * specs (Coda) put the *wire serialization* on array params (`example:
+ * "fetcher,custom"` for a form-style comma-join) and even type-mismatched
+ * values (`example: true` on a string enum) — which the generated zod shape
+ * rightly rejects. Repair the recoverable shape (split the comma-join back
+ * into items) and drop anything else that would not validate, so the caller
+ * falls back to schema synthesis instead of teaching the lie.
+ */
+function surfaceExample(example: unknown, schema: JsonSchema | undefined): unknown {
+  if (example === undefined || schema === undefined) return example;
+  if (schema.type === "array" && !Array.isArray(example)) {
+    if (typeof example === "string") return example.split(",").map((item) => item.trim());
+    return [example];
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.includes(example)) return undefined;
+  const primitive: Record<string, string> = {
+    string: "string",
+    integer: "number",
+    number: "number",
+    boolean: "boolean",
+  };
+  const expected = typeof schema.type === "string" ? primitive[schema.type] : undefined;
+  if (expected && typeof example !== expected) return undefined;
+  return example;
+}
+
 export function exampleInput(op: Operation): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const carrier = resolveIdempotencyCarrier(op);
@@ -78,7 +105,11 @@ export function exampleInput(op: Operation): Record<string, unknown> {
   };
   for (const p of op.input.params) {
     if (isModeledIdempotencyCarrierInput(binding, p.in, p.name)) continue;
-    set(propKey(p.name), p.example ?? exampleFromSchema(p.schema), p.required);
+    set(
+      propKey(p.name),
+      surfaceExample(p.example, p.schema) ?? exampleFromSchema(p.schema),
+      p.required,
+    );
   }
   const body = op.input.body;
   if (body?.projection === "fields") {

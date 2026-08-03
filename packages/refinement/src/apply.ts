@@ -84,7 +84,13 @@ export function applyPatch(air: AirDocument, patch: SemanticPatch): ApplyResult 
     changes.push({ target: patch.target, key, before, after });
   };
 
-  for (const [key, value] of Object.entries(patch.set)) {
+  // `pagination_style` must apply before the other pagination keys: it is the
+  // only key allowed to create `op.pagination` (the rest refuse to fabricate a
+  // style that was never proposed), and a proposal's key order is not a contract.
+  const entries = Object.entries(patch.set).sort(
+    (a, b) => Number(b[0] === "pagination_style") - Number(a[0] === "pagination_style"),
+  );
+  for (const [key, value] of entries) {
     applyOne(next, patch.target, key, value, record);
   }
 
@@ -137,14 +143,62 @@ function applyOne(
         op.retries.basis = value as Operation["retries"]["basis"];
         return;
       }
+      // Sole write path for `author-intent-examples` — validated upstream
+      // (boundary + grounding); templated from spec semantics, never invented.
+      if (key === "intent_examples" && Array.isArray(value)) {
+        record(key, op.skill.intentExamples, value);
+        op.skill.intentExamples = value.map((v) => String(v));
+        return;
+      }
+      // The pagination carrier keys below are the sole write path for
+      // `document-pagination` — validated upstream (pagination binding resolves).
+      // Only `pagination_style` may create `op.pagination`: fabricating a default
+      // style to anchor a field-only patch would invent a business fact no
+      // evidence claimed. Field-only patches on a style-less operation are
+      // rejected by validation; if one slips through, skip rather than invent.
+      if (key === "pagination_style") {
+        record(key, op.pagination?.style, value);
+        if (op.pagination) {
+          op.pagination.style = value as never;
+        } else {
+          op.pagination = { style: value as never };
+        }
+        return;
+      }
+      if (key === "pagination_cursor_param") {
+        if (!op.pagination) return;
+        record(key, op.pagination.cursorParam, value);
+        op.pagination.cursorParam = String(value);
+        return;
+      }
+      if (key === "pagination_next_field") {
+        if (!op.pagination) return;
+        record(key, op.pagination.nextField, value);
+        op.pagination.nextField = String(value);
+        return;
+      }
+      if (key === "pagination_items_field") {
+        if (!op.pagination) return;
+        record(key, op.pagination.itemsField, value);
+        op.pagination.itemsField = String(value);
+        return;
+      }
       return;
     }
     case "capability": {
-      if (key !== "description") return;
       const cap = findCapability(air, target.capabilityId);
       if (!cap) return;
-      record(key, cap.description, value);
-      cap.description = String(value);
+      if (key === "description") {
+        record(key, cap.description, value);
+        cap.description = String(value);
+        return;
+      }
+      // Sole write path for `author-routing-phrases` — validated upstream.
+      if (key === "intent_examples" && Array.isArray(value)) {
+        record(key, cap.intentExamples, value);
+        cap.intentExamples = value.map((v) => String(v));
+        return;
+      }
       return;
     }
     case "field":

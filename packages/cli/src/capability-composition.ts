@@ -15,6 +15,12 @@ import { z } from "zod";
 const COMPOSITION_REPORT_SCHEMA_VERSION = 1 as const;
 export const COMPOSITION_REVIEW_SCHEMA_VERSION = 1;
 
+// Envelope commonality pre-filter: coordinates present in ≥ ENVELOPE_SOURCE_FRACTION
+// of all sources AND >= ENVELOPE_MIN_SOURCES are classified as transport envelopes
+// and excluded from structural_leaf_overlap candidate generation.
+export const ENVELOPE_SOURCE_FRACTION = 0.8;
+export const ENVELOPE_MIN_SOURCES = 3;
+
 const MAX_SOURCES = 500;
 const MAX_OPERATIONS = 10_000;
 const MAX_DATA_POINTS = 200_000;
@@ -296,6 +302,11 @@ export interface CompositionAuditReport {
     dispositions: Record<"unresolved" | "candidate" | "reviewed", number>;
     reviewedPlanCount: number;
   };
+  suppressedEnvelopeCoordinates?: Array<{
+    pointer: string;
+    sourceCount: number;
+    memberCount: number;
+  }>;
   candidates: ReviewedCandidate[];
   compositionPlans: Array<{
     schemaVersion: typeof COMPOSITION_REPORT_SCHEMA_VERSION;
@@ -1228,13 +1239,52 @@ function finalizeCandidate(input: Omit<CandidateCore, "id" | "digest">): Candida
 function dataPointCandidates(
   points: readonly DataPoint[],
   operations: ReadonlyMap<string, OperationSignature>,
-): CandidateCore[] {
+  totalSources: number,
+): {
+  candidates: CandidateCore[];
+  suppressedEnvelopeCoordinates: Array<{
+    pointer: string;
+    sourceCount: number;
+    memberCount: number;
+  }>;
+} {
   const groups = new Map<string, DataPoint[]>();
   for (const point of points) {
     const group = groups.get(point.groupKey) ?? [];
     group.push(point);
     groups.set(point.groupKey, group);
   }
+
+  // Identify envelope coordinates: present in >= ENVELOPE_MIN_SOURCES sources
+  // AND >= ENVELOPE_SOURCE_FRACTION of all sources.
+  const envelopeCoordinates = new Set<string>();
+  const suppressedEnvelopeCoordinates: Array<{
+    pointer: string;
+    sourceCount: number;
+    memberCount: number;
+  }> = [];
+  for (const [groupKey, occurrences] of groups.entries()) {
+    const sources = uniqueSorted(occurrences.map((point) => point.sourceId));
+    const sourceCount = sources.length;
+    const fraction = sourceCount / totalSources;
+    if (sourceCount >= ENVELOPE_MIN_SOURCES && fraction >= ENVELOPE_SOURCE_FRACTION) {
+      envelopeCoordinates.add(groupKey);
+      // Suppress only if this would be a structural_leaf_overlap candidate
+      const explicitlyDeclared = occurrences.every(
+        (point) => point.evidenceBasis === "explicit_data_point_id",
+      );
+      if (!explicitlyDeclared) {
+        // Extract the pointer (for structural overlaps, the pointer is in the first occurrence)
+        const pointer = occurrences[0]?.pointer ?? groupKey;
+        suppressedEnvelopeCoordinates.push({
+          pointer,
+          sourceCount,
+          memberCount: occurrences.length,
+        });
+      }
+    }
+  }
+
   const candidates: CandidateCore[] = [];
   for (const [groupKey, occurrences] of [...groups.entries()].sort(([a], [b]) =>
     a.localeCompare(b),
@@ -1275,6 +1325,10 @@ function dataPointCandidates(
           "Matching pointer/schema leaves are investigation evidence only. A frozen semantic-relation attestation targeted to these exact members is required before they can be treated as the same fact.",
         ),
       );
+      // Skip this candidate if it's an envelope coordinate (and not explicitly declared)
+      if (envelopeCoordinates.has(groupKey)) {
+        continue;
+      }
     }
     candidates.push(
       finalizeCandidate({
@@ -1324,7 +1378,7 @@ function dataPointCandidates(
       }),
     );
   }
-  return candidates;
+  return { candidates, suppressedEnvelopeCoordinates };
 }
 
 function uniqueOperationSignatures(
@@ -1974,8 +2028,10 @@ export function analyzeComposition(
       signature,
     ]),
   );
+  const { candidates: dataPointCandidatesList, suppressedEnvelopeCoordinates } =
+    dataPointCandidates(points, operationMap, records.length);
   const candidates = [
-    ...dataPointCandidates(points, operationMap),
+    ...dataPointCandidatesList,
     ...outputDuplicateCandidates(signatures),
     ...outputProjectionCandidates(signatures),
   ].sort((left, right) => left.id.localeCompare(right.id));
@@ -2079,6 +2135,13 @@ export function analyzeComposition(
       dispositions,
       reviewedPlanCount: compositionPlans.length,
     },
+    ...(suppressedEnvelopeCoordinates.length > 0
+      ? {
+          suppressedEnvelopeCoordinates: suppressedEnvelopeCoordinates.sort((a, b) =>
+            a.pointer.localeCompare(b.pointer),
+          ),
+        }
+      : {}),
     candidates: reviewedCandidates,
     compositionPlans,
     boundary: {
