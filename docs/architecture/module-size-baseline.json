@@ -1,0 +1,130 @@
+{
+  "$comment": [
+    "A ratchet, not a style rule. There is no line count that is inherently wrong;",
+    "what is wrong is a module that concentrates change while quietly accumulating",
+    "ownership that belongs elsewhere. This file records where those modules stand",
+    "today so the number can go down and not up.",
+    "",
+    "Enforced by packages/cli/src/boundaries.test.ts:",
+    "  - a recorded module may not exceed its recorded line count;",
+    "  - a module that drops more than `slack` lines below its record must have the",
+    "    record lowered in the same change, so an improvement is banked rather than",
+    "    left as headroom for the next regression;",
+    "  - a production module that crosses `threshold` and is not recorded here fails",
+    "    the build, so a new hotspot is a deliberate, reviewed entry rather than a",
+    "    silent arrival;",
+    "  - every entry needs a `plan`, so an exception is a decision with an owner and",
+    "    not an indefinite grandfather clause.",
+    "",
+    "Generated files and *.test.ts are out of scope: tests are allowed to be long,",
+    "and a generator's output is owned by its generator."
+  ],
+  "threshold": 800,
+  "slack": 100,
+  "modules": {
+    "packages/cli/src/commands/estate/estate.ts": {
+      "lines": 3327,
+      "plan": "Decomposing first — see docs/architecture/estate-decomposition.md. Its sibling modules (estate-audit.ts, estate-adoption.ts) are already pure domain with rendering split out; this is the un-migrated residue."
+    },
+    "packages/cli/src/capability-composition.ts": {
+      "lines": 2163,
+      "plan": "Split graph construction / coordinate resolution / overlap analysis / policy / report projection. Composition stays audit-only. Queued behind estate."
+    },
+    "packages/generators/src/deploy.ts": {
+      "lines": 1630,
+      "plan": "Split provider-neutral deploy-plan validation from Cloud Run projection so a second target does not fork the file. Queued."
+    },
+    "packages/cli/src/self-skill.ts": {
+      "lines": 1575,
+      "plan": "Must stay derived from the command registry. Separate registry metadata from document projection; no manually maintained parallel command description."
+    },
+    "packages/cli/src/commands/status.ts": {
+      "lines": 1554,
+      "plan": "Separate lane-freshness computation (domain) from the status rendering. Shares the certification-reading logic that certify.ts duplicates."
+    },
+    "packages/generators/src/certify.ts": {
+      "lines": 1427,
+      "plan": "Holds a second certification model alongside @anvil/certification. See docs/architecture/certification-authority.md; do not grow it until that is resolved."
+    },
+    "packages/cli/src/tool-cli.ts": {
+      "lines": 1425,
+      "plan": "The shared generated-CLI engine. Separate argument decoding from execution and rendering. Queued."
+    },
+    "packages/runtime/src/executor.ts": {
+      "lines": 1322,
+      "plan": "Deliberately NOT queued for decomposition. execute() is a strictly ordered safety gauntlet; splitting it into stages trades a readable sequence for a reorderable pipeline. The control here is an ordering test, not a file split."
+    },
+    "packages/cli/src/commands/estate/estate-adoption.ts": {
+      "lines": 1264,
+      "plan": "Already pure domain with rendering separated — the shape estate.ts is being moved toward. Long, but not misowned; revisit only if it grows."
+    },
+    "packages/compiler/src/classify.ts": {
+      "lines": 1116,
+      "plan": "Cohesive: one inference pass over AIR. Watch for growth rather than split speculatively."
+    },
+    "packages/compiler/src/gateway/support-contract.ts": {
+      "lines": 1098,
+      "plan": "Cohesive vendor-support surface. Watch."
+    },
+    "packages/compiler/src/protocols/postman.ts": {
+      "lines": 1084,
+      "plan": "One parser, one format. Splitting parsers by size would not improve ownership."
+    },
+    "packages/air/src/schema.ts": {
+      "lines": 1081,
+      "plan": "The canonical model definition. Length is inherent to being the single source of truth; splitting it would scatter the authority."
+    },
+    "packages/compiler/src/manifest.ts": {
+      "lines": 1077,
+      "plan": "Cohesive: manifest parsing plus enrichment application. Watch."
+    },
+    "packages/compiler/src/gateway/receipt.ts": {
+      "lines": 1060,
+      "plan": "Cohesive: receipt identity, digests, verification. Safety-adjacent; prefer tests over splitting."
+    },
+    "packages/compiler/src/gateway/wso2/adapter.ts": {
+      "lines": 1048,
+      "plan": "One vendor adapter. Per-vendor files are the intended boundary."
+    },
+    "packages/refinement/src/skills/executor.ts": {
+      "lines": 995,
+      "plan": "Watch."
+    },
+    "packages/compiler/src/disclosure-bom.ts": {
+      "lines": 992,
+      "plan": "Watch."
+    },
+    "packages/runtime/src/idempotency.ts": {
+      "lines": 977,
+      "plan": "Safety-critical. Prefer tests over splitting, as with executor.ts."
+    },
+    "packages/harness/src/conformance.ts": {
+      "lines": 974,
+      "plan": "Watch."
+    },
+    "packages/refinement/src/detect.ts": {
+      "lines": 948,
+      "plan": "Deterministic deficiency detection over AIR; cohesive. Watch."
+    },
+    "packages/compiler/src/decycle.ts": {
+      "lines": 922,
+      "plan": "Watch."
+    },
+    "packages/targets/src/agent-registry.ts": {
+      "lines": 894,
+      "plan": "Watch."
+    },
+    "packages/certification/src/checks.ts": {
+      "lines": 884,
+      "plan": "Expected to grow if certification truth consolidates here; raise deliberately with that change, not incidentally."
+    },
+    "packages/generators/src/skill.ts": {
+      "lines": 883,
+      "plan": "Watch."
+    },
+    "packages/compiler/src/normalize.ts": {
+      "lines": 814,
+      "plan": "Watch."
+    }
+  }
+}
