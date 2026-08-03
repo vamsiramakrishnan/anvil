@@ -110,6 +110,39 @@ operations:
     expect(op?.reviewNotes.join(" ")).toMatch(/not present in the supplied schema: secrets/);
   });
 
+  it("records the operator's posture verbatim as review-gate provenance (never interpreted)", async () => {
+    const posture = "analysts get read-only access to customer tables, never PII columns";
+    const air = await compile({
+      spec: passthroughSpec,
+      serviceId: "warehouse",
+      manifest: `
+operations:
+  runReport:
+    query_policy:
+      query_param: sql
+      dialect: bigquery
+      allowed_tables: [accounts, ledger]
+      posture: "${posture}"
+    query_schema:
+      tables:
+        - name: accounts
+          columns: [{ name: id, type: bigint }]
+        - name: ledger
+          columns: [{ name: acct_id, type: bigint }]
+`,
+    });
+    const op = air.operations.find((o) => o.sourceRef.operationId === "runReport");
+    // Recorded on the structured policy…
+    expect(op?.queryPolicy?.posture).toBe(posture);
+    // …and surfaced verbatim on the human-facing review path, marked as recorded-not-interpreted.
+    expect(op?.reviewNotes.join("\n")).toMatch(
+      /operator posture \(recorded, not interpreted\): "analysts get read-only access/,
+    );
+    // The posture is provenance only — it never becomes an enforced constraint.
+    expect(op?.queryPolicy?.allowedTables).toEqual(["accounts", "ledger"]);
+    expect(op?.state).toBe("review_required");
+  });
+
   it("defaults to SELECT-only with statement/comment guards when only the param is named", async () => {
     const air = await compile({
       spec: passthroughSpec,

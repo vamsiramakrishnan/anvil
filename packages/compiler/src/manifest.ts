@@ -189,6 +189,15 @@ export const OperationManifest = z.object({
       forbid_comments: z.boolean().optional(),
       max_rows: z.number().int().min(1).optional(),
       allowed_tables: z.array(z.string()).optional(),
+      /**
+       * The operator's natural-language posture that justified this policy —
+       * the intent the harness translated into the concrete bounds above (e.g.
+       * "analysts get read-only access to customer tables, never PII"). Anvil
+       * RECORDS this verbatim as review-gate provenance and never interprets or
+       * enforces it: it is the rationale a human reviewer reads next to the
+       * machine-checked grounding, not part of the enforced contract.
+       */
+      posture: z.string().optional(),
     })
     .optional(),
   /**
@@ -704,9 +713,18 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
       forbidComments: qp.forbid_comments ?? true,
       ...(qp.max_rows !== undefined ? { maxRows: qp.max_rows } : {}),
       ...(qp.allowed_tables !== undefined ? { allowedTables: qp.allowed_tables } : {}),
+      ...(qp.posture !== undefined ? { posture: qp.posture } : {}),
     };
     const note = "Query grammar policy declared — runtime parses and refuses unsafe queries.";
     if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    // Record the operator's stated posture verbatim as review-gate provenance —
+    // the rationale a human reads next to the machine-checked grounding. Anvil
+    // records it, never interprets it, so it lands in review notes, not the
+    // enforced policy checks.
+    if (qp.posture !== undefined) {
+      const provenance = `Policy authored under operator posture (recorded, not interpreted): "${qp.posture}"`;
+      if (!op.reviewNotes.includes(provenance)) op.reviewNotes.push(provenance);
+    }
     if (op.state === "blocked") op.state = "review_required";
   }
 

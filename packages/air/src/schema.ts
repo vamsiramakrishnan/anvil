@@ -769,6 +769,14 @@ export const Operation = z.object({
       forbidComments: z.boolean().default(true),
       maxRows: z.number().int().min(1).optional(),
       allowedTables: z.array(z.string()).optional(),
+      /**
+       * The operator's natural-language posture that justified this policy — the
+       * intent the harness translated into the bounds above. RECORDED verbatim
+       * as review-gate provenance, never interpreted or enforced: the runtime
+       * ignores it (only the fields above are policed); it exists so a human
+       * reviewer sees the stated rationale next to the machine-checked grounding.
+       */
+      posture: z.string().optional(),
     })
     .optional(),
   /**
