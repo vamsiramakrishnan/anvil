@@ -14,13 +14,16 @@
  */
 import {
   type AirDocument,
+  type AsyncContract,
   DEFAULT_SURFACE_DISCLOSURE_BUDGET_TOKENS,
   DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS,
   ErrorCode,
+  type JsonSchema,
   type LadderPlan,
   ladderPlan,
   laneEntryToolName,
   type Operation,
+  resolveAsyncContract,
   resolveIdempotencyCarrier,
   toolSurfaceFitsBudget,
 } from "@anvil/air";
@@ -133,6 +136,7 @@ export function staticChecks(
   );
 
   checks.push(...ladderChecks(air, approved));
+  checks.push(...asyncContractChecks(air, approved));
 
   if (pack) {
     const verify = verifyPack(pack.pack, pack.contents);
@@ -435,6 +439,352 @@ function justifyLadderReason(
         because: `the flat surface is ${plan.flatTokens}/${budget} tokens over ${groupings}, served as ${plan.lanes.length} lane(s)`,
       };
   }
+}
+
+/**
+ * Certify the long-running contract — the linkage that turns a `202 Accepted`
+ * into a job an agent can actually finish.
+ *
+ * The asymmetry stated in `async-contract.ts` is the whole reason this block
+ * exists: an operation with no contract fails *visibly* — the agent is handed a
+ * job handle it does not know what to do with, notices, and stops. A contract
+ * that names a tool the agent cannot call, or no state that means "stop", fails
+ * *invisibly* — the agent follows it into a loop and reports nothing wrong. So
+ * the thing certification must never allow through is a contract that is present
+ * and wrong, which is exactly what every arm below is aimed at.
+ *
+ * Each arm is re-derived from the contract rather than read off
+ * `resolveAsyncContract`'s issue code, for the same reason the ladder block
+ * re-derives the plan: the resolver is a pure function that the serving path and
+ * the certifier both consume, and a certifier that took its verdict on trust
+ * would be checking nothing. Re-deriving also reports *every* defect an
+ * operation has, where the resolver — which returns at the first one — reports
+ * only the earliest in its fixed precedence. An unapproved mutation used as a
+ * poll target is two distinct bugs for two distinct owners, and a report that
+ * names one and hides the other sends only half the fix.
+ *
+ * Module convention holds: a document with no async contract passes every arm.
+ * The notes say which of "verified" and "nothing to verify" happened, and name
+ * the operations, because a green tick that could mean either is worth nothing.
+ */
+function asyncContractChecks(
+  air: AirDocument,
+  approved: ReadonlySet<string>,
+): CertificationCheck[] {
+  // Resolved against the WHOLE document, not the approved subset. The resolver
+  // distinguishes "no such operation" (a typo, the compiler's bug) from "not
+  // approved" (a governance decision, a human's call), and handing it a
+  // pre-filtered map would collapse the second into the first and route the
+  // report to the wrong person.
+  const byId = new Map(air.operations.map((operation) => [operation.id, operation]));
+  const checks: CertificationCheck[] = [];
+
+  // Built by hand rather than with `filter(...)` + a cast: `asyncContract` is
+  // optional, and pairing the operation with the narrowed contract here is what
+  // lets every arm below read coordinates without re-testing for presence.
+  const carrying: Array<{ operation: Operation; contract: AsyncContract }> = [];
+  const longRunningIds: string[] = [];
+  for (const operation of air.operations) {
+    if (operation.state !== "approved") continue;
+    if (operation.longRunning) longRunningIds.push(operation.id);
+    const contract = operation.asyncContract;
+    if (contract) carrying.push({ operation, contract });
+  }
+  const scope =
+    carrying.length === 0
+      ? "no approved operation carries an async contract"
+      : `${carrying.length} approved operation(s) carry an async contract`;
+
+  // --- 1. the contract resolves at all --------------------------------------
+  // The composite verdict, in the runtime's own vocabulary. It is the one arm
+  // that must agree exactly with what the serving path decided, because the
+  // serving path emits polling instructions if and only if this resolves —
+  // certifying a contract the server would refuse to serve (or vice versa) would
+  // make the certificate describe a surface nobody runs.
+  //
+  // The issue code travels beside the prose deliberately: `detail` reads well and
+  // `issue` is the thing a report can group, count, and route without parsing a
+  // sentence — so a reviewer sees which *kind* of contract is broken across an
+  // estate, not just a list of individually broken ones.
+  const unresolved: string[] = [];
+  for (const { operation } of carrying) {
+    const resolution = resolveAsyncContract(operation, byId);
+    if (!resolution.ok) unresolved.push(`${resolution.issue}: ${resolution.detail}`);
+  }
+  checks.push(
+    check(
+      "static/async_contracts_resolve",
+      "static",
+      unresolved.length === 0,
+      unresolved.length > 0
+        ? unresolved.join("; ")
+        : carrying.length === 0
+          ? scope
+          : `${scope}, each resolving to an approved read with a stopping condition`,
+    ),
+  );
+
+  // --- 2. the poll target is exposed ----------------------------------------
+  // The failure this arm exists for is silent for the agent and only for the
+  // agent: it follows the contract, calls a tool that was never registered, and
+  // gets back "unknown tool" — which it cannot distinguish from a transport
+  // blip, so the sane response (retry the poll) is the wrong one, forever. The
+  // approved set is the same one the surface checks above use, so what is
+  // asserted is precisely "the tool this contract names is on the surface this
+  // certificate covers".
+  const unexposed: string[] = [];
+  for (const { operation, contract } of carrying) {
+    const status = byId.get(contract.statusOperationId);
+    if (!status) {
+      unexposed.push(`${operation.id} polls '${contract.statusOperationId}', which does not exist`);
+    } else if (!approved.has(status.id)) {
+      unexposed.push(`${operation.id} polls '${status.id}', which is ${status.state}, not served`);
+    }
+  }
+  checks.push(
+    check(
+      "static/async_status_operation_approved",
+      "static",
+      unexposed.length === 0,
+      unexposed.length > 0
+        ? unexposed.join("; ")
+        : carrying.length === 0
+          ? scope
+          : `${scope}, each naming a poll target that is approved and served`,
+    ),
+  );
+
+  // --- 3. the poll target is a read -----------------------------------------
+  // Polling repeats by definition, so a mutation used as a status call is
+  // applied once per poll — the one shape that converts a safe wait into an
+  // unbounded write, and it converts *harder* the longer the job takes. Judged
+  // only where the target resolves to a real operation: a missing one has no
+  // effect kind to read, and arms 1 and 2 already own that failure.
+  const mutatingTargets: string[] = [];
+  let judgedTargets = 0;
+  for (const { operation, contract } of carrying) {
+    const status = byId.get(contract.statusOperationId);
+    if (!status) continue;
+    judgedTargets += 1;
+    if (status.effect.kind !== "read") {
+      mutatingTargets.push(
+        `${operation.id} polls '${status.id}', a ${status.effect.risk}-risk ${status.effect.action} ${status.effect.kind} that every poll would apply again`,
+      );
+    }
+  }
+  checks.push(
+    check(
+      "static/async_status_operation_is_read",
+      "static",
+      mutatingTargets.length === 0,
+      mutatingTargets.length > 0
+        ? mutatingTargets.join("; ")
+        : carrying.length === 0
+          ? scope
+          : `${judgedTargets} of ${carrying.length} contract(s) name an operation that exists, and all of those are reads`,
+    ),
+  );
+
+  // --- 4. the poll loop has an exit -----------------------------------------
+  // Two ways to have no stopping condition, and both end the same way. Declaring
+  // no terminal state is the obvious one. The second is not caught by the
+  // resolver at all: a state listed as both terminal and pending makes one
+  // response mean "stop" and "keep going" simultaneously, so whether the agent
+  // halts depends on which list its client consults first — a poll loop whose
+  // termination is an implementation detail of the reader is not a contract.
+  const noExit: string[] = [];
+  for (const { operation, contract } of carrying) {
+    if (contract.terminalStates.length === 0) {
+      noExit.push(`${operation.id} declares no terminal state, so a poll loop has no exit`);
+      continue;
+    }
+    const ambiguous = contract.terminalStates.filter((state) =>
+      contract.pendingStates.includes(state),
+    );
+    if (ambiguous.length > 0) {
+      noExit.push(
+        `${operation.id} lists ${ambiguous.join(", ")} as both terminal and pending, so one response means both stop and continue`,
+      );
+    }
+  }
+  checks.push(
+    check(
+      "static/async_poll_loop_terminates",
+      "static",
+      noExit.length === 0,
+      noExit.length > 0
+        ? noExit.join("; ")
+        : carrying.length === 0
+          ? scope
+          : `${scope}, each with at least one terminal state and no state that is terminal and pending at once`,
+    ),
+  );
+
+  // --- 5. the coordinates address something ---------------------------------
+  // `statusJobIdParam` is checked against a modeled parameter by the resolver.
+  // Its two siblings are not: `jobIdField` (where the handle is in THIS response)
+  // and `stateField` (where the state is in the STATUS response) are accepted as
+  // arbitrary strings, so a contract can resolve, certify, and serve an agent a
+  // path into a response that has no such path. The agent then polls with
+  // `undefined` or compares `undefined` against the terminal states forever —
+  // the exact silent loop the shape exists to prevent, reached through the two
+  // coordinates nothing was validating. So they are validated here.
+  //
+  // Absence is only asserted against a schema that enumerates its properties and
+  // does not say extras arrive. JSON Schema's open world means a missing key is
+  // not strictly proof, but a modeled response that lists its fields and omits
+  // the one the contract addresses is a defect whichever way the spec leans —
+  // and where the schema is absent, partial, or explicitly open, this declines
+  // to judge and says so rather than inventing a verdict.
+  const misaddressed: string[] = [];
+  let judgedCoordinates = 0;
+  let unverifiableCoordinates = 0;
+  for (const { operation, contract } of carrying) {
+    const status = byId.get(contract.statusOperationId);
+    const coordinates: Array<{ label: string; schema: JsonSchema | undefined; path: string }> = [
+      {
+        label: `handle field '${contract.jobIdField}'`,
+        schema: operation.output.schema,
+        path: contract.jobIdField,
+      },
+    ];
+    if (contract.stateField && status) {
+      coordinates.push({
+        label: `state field '${contract.stateField}' on '${status.id}'`,
+        schema: status.output.schema,
+        path: contract.stateField,
+      });
+    }
+    for (const coordinate of coordinates) {
+      const verdict = dottedPathVerdict(coordinate.schema, coordinate.path);
+      if (verdict === "unverifiable") {
+        unverifiableCoordinates += 1;
+        continue;
+      }
+      judgedCoordinates += 1;
+      if (verdict === "absent") {
+        misaddressed.push(`${operation.id}: ${coordinate.label} is not in the modeled response`);
+      }
+    }
+  }
+  checks.push(
+    check(
+      "static/async_contract_fields_addressable",
+      "static",
+      misaddressed.length === 0,
+      misaddressed.length > 0
+        ? misaddressed.join("; ")
+        : carrying.length === 0
+          ? scope
+          : judgedCoordinates === 0
+            ? `${scope}, but no response schema is modeled closely enough to locate a handle or state field — the coordinates are unverified, not verified`
+            : `${judgedCoordinates} handle/state coordinate(s) located in a modeled response schema${
+                unverifiableCoordinates > 0
+                  ? `, ${unverifiableCoordinates} left unverified against a schema that could not answer`
+                  : ""
+              }`,
+    ),
+  );
+
+  // --- 6. the flag and the contract say the same thing ----------------------
+  // The two directions of a `longRunning`/`asyncContract` disagreement are not
+  // the same defect, and only one of them is a lie.
+  //
+  // A contract WITHOUT the flag is a lie by omission on the surface the model
+  // actually reads: `mcpToolDescription` keys the "returns before completion"
+  // sentence off `longRunning`, so an agent is told the call is synchronous
+  // while the tool ships polling coordinates. It will take the response as the
+  // finished answer. That fails.
+  //
+  // The flag WITHOUT a contract is the opposite: incomplete, but true. The agent
+  // is told a wait exists and not how to end it — which is where every
+  // long-running operation Anvil has ever compiled already stands, since the
+  // flag predates the contract by an increment. Failing it would make the
+  // verdict swing on whether a source spec happened to model its status
+  // endpoint, and — worse — the cheapest way to go green would be to clear the
+  // flag: delete a true statement to pass a check. A check whose least-effort
+  // remedy is erasing a fact is a badly designed check. The gap is real and
+  // belongs to `@anvil/refinement`, which raises it as a deficiency with
+  // evidence and a proposal; certification's job here is that nothing *stated*
+  // is false. So it is a pass — but never a quiet one: the ids are named, every
+  // time, so nobody reads this tick as "the long-running story is complete".
+  const contractWithoutFlag = carrying
+    .filter(({ operation }) => !operation.longRunning)
+    .map(({ operation }) => operation.id);
+  const flagWithoutContract = longRunningIds.filter(
+    (id) => !carrying.some(({ operation }) => operation.id === id),
+  );
+  checks.push(
+    check(
+      "static/async_long_running_flag_coherent",
+      "static",
+      contractWithoutFlag.length === 0,
+      contractWithoutFlag.length > 0
+        ? `carries an async contract but is not flagged long-running, so its description tells an agent nothing about the wait: ${contractWithoutFlag.join(", ")}`
+        : flagWithoutContract.length > 0
+          ? `${flagWithoutContract.length} operation(s) state a wait with no contract to finish it — a gap refinement raises, not a false claim, so not failed here: ${flagWithoutContract.join(", ")}`
+          : longRunningIds.length === 0
+            ? "no approved operation is flagged long-running"
+            : `all ${longRunningIds.length} long-running operation(s) carry a contract`,
+    ),
+  );
+
+  return checks;
+}
+
+/** Whether a dotted coordinate can be located in a modeled response schema. */
+type CoordinateVerdict = "present" | "absent" | "unverifiable";
+
+/**
+ * Walk a dotted path through a JSON Schema, distinguishing "this field is not
+ * there" from "this schema cannot answer".
+ *
+ * The third verdict is the load-bearing one. A bundle compiled from a spec with
+ * bare `200: description: ok` responses has nothing to check against, and a
+ * walker that returned `absent` for it would fail every such contract for a
+ * property of the *spec* rather than of the contract — the fastest way to teach
+ * a reader that this check is noise. So absence is claimed only from a schema
+ * that enumerates properties and does not advertise extras; anything else
+ * (combinators, `$ref`s left unresolved, open objects, a missing schema) is
+ * reported as unverifiable and passes with a note saying so.
+ */
+function dottedPathVerdict(schema: JsonSchema | undefined, path: string): CoordinateVerdict {
+  if (!schema || path.length === 0) return "unverifiable";
+  let node: Record<string, unknown> = schema;
+  for (const segment of path.split(".")) {
+    // A list response addresses its items directly: `items[].id` is written
+    // `items.id` in a contract, and unwrapping here is what makes the two agree.
+    while (node.type === "array" && isSchemaRecord(node.items)) node = node.items;
+    // A composed or referenced shape needs a resolver this package does not
+    // have. Guessing through it would produce confident nonsense in both
+    // directions, so it declines.
+    if (
+      node.$ref !== undefined ||
+      Array.isArray(node.allOf) ||
+      Array.isArray(node.anyOf) ||
+      Array.isArray(node.oneOf)
+    ) {
+      return "unverifiable";
+    }
+    const properties = node.properties;
+    if (!isSchemaRecord(properties) || Object.keys(properties).length === 0) return "unverifiable";
+    const next = properties[segment];
+    if (isSchemaRecord(next)) {
+      node = next;
+      continue;
+    }
+    // `additionalProperties: true` (or a schema) is the author saying fields
+    // arrive that are not listed — the one case where an unlisted coordinate is
+    // still plausible. Absent or `false` means the listing is the response.
+    return node.additionalProperties === undefined || node.additionalProperties === false
+      ? "absent"
+      : "unverifiable";
+  }
+  return "present";
+}
+
+function isSchemaRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Boot the simulator and exercise the live surface. */

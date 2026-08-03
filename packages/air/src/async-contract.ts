@@ -65,7 +65,49 @@ export type AsyncContractIssue =
   | "status_operation_not_approved"
   | "status_operation_is_mutation"
   | "status_param_missing"
+  /** The handle path is provably absent from the submit operation's response. */
+  | "job_id_field_absent"
+  /** The state path is provably absent from the status operation's response. */
+  | "state_field_absent"
+  /** A state means both "stop" and "keep going". */
+  | "overlapping_states"
   | "no_terminal_states";
+
+/**
+ * Whether a dotted path is *provably* absent from a modeled JSON Schema.
+ *
+ * Deliberately timid, and the asymmetry is the whole point: returning `true`
+ * refuses a contract, so it may only be said when the schema actually enumerates
+ * what it contains. A schema with no `properties`, or one that permits
+ * `additionalProperties`, is not evidence of absence — it is a schema that
+ * declined to answer, and refusing on that would reject every honest contract
+ * built over a loosely-typed response.
+ */
+function pathProvablyAbsent(schema: unknown, dottedPath: string): boolean {
+  const segments = dottedPath.split(".").filter(Boolean);
+  if (segments.length === 0) return false;
+
+  let node: unknown = schema;
+  for (const segment of segments) {
+    if (typeof node !== "object" || node === null) return false;
+    const record = node as Record<string, unknown>;
+    // An array in the path means the next segment addresses the item shape.
+    const unwrapped =
+      record.type === "array" && typeof record.items === "object" && record.items !== null
+        ? (record.items as Record<string, unknown>)
+        : record;
+    const properties = unwrapped.properties;
+    if (typeof properties !== "object" || properties === null) return false;
+    // An open schema can always carry the field without declaring it.
+    if (unwrapped.additionalProperties !== false && unwrapped.additionalProperties !== undefined) {
+      return false;
+    }
+    const next = (properties as Record<string, unknown>)[segment];
+    if (next === undefined) return true;
+    node = next;
+  }
+  return false;
+}
 
 export type AsyncContractResolution =
   | { ok: true; contract: AsyncContract; statusOperation: Operation }
@@ -125,6 +167,39 @@ export function resolveAsyncContract(
       ok: false,
       issue: "status_param_missing",
       detail: `'${status.id}' has no parameter '${contract.statusJobIdParam}' to carry the job handle`,
+    };
+  }
+
+  // The handle and state paths used to be accepted as arbitrary strings while
+  // only `statusJobIdParam` was checked against something real. That asymmetry
+  // was the bug: a contract naming `job.identifier` over a response carrying
+  // `job.id` resolved cleanly, certified, and served an agent a path that reads
+  // `undefined` on every poll — the silent loop this shape exists to prevent,
+  // reached through the one coordinate nobody validated.
+  if (pathProvablyAbsent(operation.output.schema, contract.jobIdField)) {
+    return {
+      ok: false,
+      issue: "job_id_field_absent",
+      detail: `'${contract.jobIdField}' is not a field of ${operation.id}'s response`,
+    };
+  }
+  if (contract.stateField && pathProvablyAbsent(status.output.schema, contract.stateField)) {
+    return {
+      ok: false,
+      issue: "state_field_absent",
+      detail: `'${contract.stateField}' is not a field of ${status.id}'s response`,
+    };
+  }
+
+  // A state in both lists means one response says "stop" and "keep going" at
+  // once, and which wins depends on the order a client happens to read them in.
+  // That is a coin flip between halting early and never halting.
+  const overlap = contract.terminalStates.filter((state) => contract.pendingStates.includes(state));
+  if (overlap.length > 0) {
+    return {
+      ok: false,
+      issue: "overlapping_states",
+      detail: `${operation.id} lists ${overlap.join(", ")} as both terminal and pending`,
     };
   }
 

@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   type AirDocument,
+  type AsyncContractResolution,
+  asyncContractSentence,
   DEFAULT_RESPONSE_BUDGET_TOKENS,
   estimateTokens,
   mcpToolAnnotations,
@@ -8,6 +10,7 @@ import {
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
+  resolveAsyncContract,
 } from "@anvil/air";
 import { type ExecuteContext, execute } from "@anvil/runtime";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -209,12 +212,44 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
   const opTools = new Map<string, DisclosableTool>();
   const registeredToolNames = new Set<string>();
 
+  // Async contracts resolve against the WHOLE document, never against `ops`.
+  // `ops` is the served subset, and `resolveAsyncContract` reports
+  // `status_operation_not_approved` — a decision somebody made — separately from
+  // `status_operation_missing` — a coordinate that was never real. Handing it a
+  // pre-filtered map would relabel the first as the second, and would also make
+  // the answer depend on `includeUnapproved`: a dev-mode server would advertise
+  // polling instructions that vanish in production. The contract's approval rule
+  // is the contract's own, so this map makes the served sentence identical to the
+  // one `@anvil/certification` certified from the same function.
+  const allOpsById = new Map(air.operations.map((operation) => [operation.id, operation]));
+
   for (const op of ops) {
+    // Resolved once, outside the handler: it is a pure function of the document,
+    // and the tool surface is what carries it. An agent that has to call the
+    // operation to find out how to finish it has already spent the round trip
+    // this is meant to save.
+    const asyncContract = resolveAsyncContract(op, allOpsById);
+    const asyncSentence = asyncContractSentence(asyncContract);
     const registered = server.registerTool(
       op.mcp.toolName,
       {
         title: op.displayName,
-        description: mcpToolDescription(op),
+        // Appended to the compiled description rather than left in `_meta`
+        // alone. `_meta` is where a *client* reads Anvil's posture; the
+        // description is the only part of a tool a model is guaranteed to see,
+        // and "how do I finish this job" is a question the model asks, not the
+        // client. Both are emitted, from one resolution, so they cannot disagree.
+        //
+        // When the contract does not resolve there is no sentence and nothing is
+        // appended — deliberately leaving `mcpToolDescription`'s bare
+        // "poll for status" line as the only thing said. That line is already
+        // vague, but it is honest about being vague; dressing an unusable
+        // contract up in the mechanical register of a usable one would make a
+        // broken linkage indistinguishable from a working one at the exact
+        // moment the difference is a silent poll loop.
+        description: asyncSentence
+          ? `${mcpToolDescription(op)} ${asyncSentence}`
+          : mcpToolDescription(op),
         // Operation input + the reserved safety controls (anvil_dry_run /
         // anvil_confirm / anvil_idempotency_key), so a client — the CLI over its
         // MCP transport, or any direct MCP caller — can dry-run and confirm.
@@ -233,6 +268,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           "anvil/idempotency": op.idempotency.mode,
           "anvil/principal": op.auth.principal,
           "anvil/operation_id": op.id,
+          ...asyncContractMeta(asyncContract),
         },
       },
       async (args: Record<string, unknown>) => {
@@ -655,6 +691,45 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * The machine-readable half of a resolved async contract, in the same `anvil/*`
+ * register as the effect/risk/idempotency posture beside it: flat keys, one fact
+ * each, values a client can branch on without parsing prose. A client that wants
+ * to drive the poll loop itself gets coordinates; the model gets the sentence in
+ * the description. Same resolution behind both.
+ *
+ * An unresolved contract returns `{}` — not a partial block, not a marker saying
+ * a contract was attempted. Emitting `anvil/async_status_tool` alone would name
+ * a tool with no way to reach it and no way to stop; emitting a "broken" flag
+ * would invite a client to route around it. The failure mode this whole shape
+ * exists to prevent is an agent acting on half a contract, and the only value
+ * that cannot be acted on halfway is nothing at all.
+ */
+function asyncContractMeta(resolution: AsyncContractResolution): Record<string, unknown> {
+  if (!resolution.ok) return {};
+  const { contract, statusOperation } = resolution;
+  return {
+    // The tool NAME, not the operation id: this is the string a client passes to
+    // `tools/call`. The id is already carried by the status tool's own
+    // `anvil/operation_id`, so nothing is lost and nothing must be translated.
+    "anvil/async_status_tool": statusOperation.mcp.toolName,
+    "anvil/async_job_id_field": contract.jobIdField,
+    "anvil/async_status_job_id_param": contract.statusJobIdParam,
+    "anvil/async_terminal_states": contract.terminalStates,
+    ...(contract.stateField ? { "anvil/async_state_field": contract.stateField } : {}),
+    ...(contract.pendingStates.length > 0
+      ? { "anvil/async_pending_states": contract.pendingStates }
+      : {}),
+    // Only ever present when the service stated it. An absent key means "the
+    // service did not say", which a client can back off on however it likes; a
+    // defaulted number here would be Anvil inventing a rate limit or a stampede
+    // and attributing it to the upstream.
+    ...(contract.pollIntervalSeconds !== undefined
+      ? { "anvil/async_poll_interval_seconds": contract.pollIntervalSeconds }
+      : {}),
+  };
 }
 
 /** The one shape every failure takes on the way out: normalized envelope, truncated, flagged. */

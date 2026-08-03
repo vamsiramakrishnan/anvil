@@ -116,6 +116,53 @@ describe("a contract that cannot be honored is refused", () => {
     }
   });
 
+  it("refuses a handle path the response provably does not carry", () => {
+    // `statusJobIdParam` was always checked against a real parameter while its
+    // two sibling coordinates were not — so this contract used to resolve and
+    // serve an agent a path that reads `undefined` on every poll.
+    const submit = op({
+      output: {
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            job: { type: "object", additionalProperties: false, properties: { id: {} } },
+          },
+        },
+      },
+      asyncContract: contract({ jobIdField: "job.identifier" }),
+    });
+    const r = resolveAsyncContract(submit, index(submit, statusOp()));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.issue).toBe("job_id_field_absent");
+  });
+
+  it("does not refuse a path a schema merely declined to describe", () => {
+    // Absence of evidence is not evidence of absence: an open or untyped
+    // response schema cannot disprove a field, and refusing there would reject
+    // every honest contract over a loosely-typed API.
+    const submit = op({
+      output: { schema: { type: "object" } },
+      asyncContract: contract({ jobIdField: "job.identifier" }),
+    });
+    expect(resolveAsyncContract(submit, index(submit, statusOp())).ok).toBe(true);
+  });
+
+  it("refuses a state that means both stop and keep going", () => {
+    const submit = op({
+      asyncContract: contract({
+        terminalStates: ["failed", "running"],
+        pendingStates: ["running"],
+      }),
+    });
+    const r = resolveAsyncContract(submit, index(submit, statusOp()));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.issue).toBe("overlapping_states");
+      expect(r.detail).toContain("running");
+    }
+  });
+
   it("refuses a contract with no stopping condition", () => {
     const submit = op({ asyncContract: contract({ terminalStates: [] }) });
     const r = resolveAsyncContract(submit, index(submit, statusOp()));
