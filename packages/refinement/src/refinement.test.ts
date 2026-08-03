@@ -196,6 +196,10 @@ describe("deficiency catalog", () => {
       "author-intent-examples",
       "author-routing-phrases",
       "review-query-passthrough",
+      "rename-operation",
+      "disambiguate-operations",
+      "describe-capability",
+      "reduce-schema-disclosure",
     ]);
     expect(implemented).toEqual(expectedImplemented);
     for (const def of Object.values(DEFICIENCY_CATALOG)) {

@@ -223,6 +223,10 @@ describe("anvil refine skills", () => {
       "author-intent-examples",
       "author-routing-phrases",
       "review-query-passthrough",
+      "rename-operation",
+      "disambiguate-operations",
+      "describe-capability",
+      "reduce-schema-disclosure",
     ]);
 
     const textResult = await refine("skills");
