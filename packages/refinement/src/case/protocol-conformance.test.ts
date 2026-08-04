@@ -793,7 +793,7 @@ describe("CaseInvestigationHarness end-to-end", () => {
     const air = doc();
     const dir = openCase(air, reasonDeficiency(air), { root: scratch() }).dir;
     // An investigation that finds nothing and finalizes.
-    await new ScriptedAgentDriver((d) => finalize(d)).run(dir);
+    await new ScriptedAgentDriver((d) => void finalize(d)).run(dir);
     const result = readInvestigation(dir);
     expect(result.status).toBe("insufficient_evidence");
     expect(result.proposal).toBeUndefined();
@@ -985,13 +985,13 @@ describe("varied field investigations produce honest outcomes", () => {
     },
     {
       name: "generic name, no evidence anywhere",
-      investigate: (dir) => finalize(dir),
+      investigate: (dir) => void finalize(dir),
       expected: "insufficient_evidence",
     },
     {
       name: "blocked by a missing source",
       investigate: (dir) =>
-        finalize(dir, {
+        void finalize(dir, {
           status: "blocked_by_missing_source",
           blockedSources: [
             { source: "postman", reason: "collection not shared with the investigation" },

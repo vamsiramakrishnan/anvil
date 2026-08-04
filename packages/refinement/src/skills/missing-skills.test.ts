@@ -241,6 +241,8 @@ function capabilityDoc(resources: string[], operationIds: string[]): AirDocument
     workflowIds: [],
     intentExamples: ["manage refunds"],
     state: "generated",
+    lifecycle: "proposed",
+    evidence: { claims: [] },
   });
   return air;
 }
