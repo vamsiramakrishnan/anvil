@@ -172,6 +172,21 @@ can flatter itself:
 | every test set must be green unmutated | a red baseline, against which every mutant dies for free |
 | a run collecting zero tests is failure | a renamed or deleted test file reading as a kill |
 
+**The third guard misfired on its first CI run, and the fix is the point.** It
+counted tests by matching vitest's printed summary. On a runner that colorises,
+`Tests  21 passed` arrives as `Tests ␛[22m ␛[1m␛[32m21 passed`; there is no
+`\s+\d+` to match, and the gate called five green baselines "collected no
+tests". It failed closed — a red build, not a fake pass — which is the correct
+direction for a guard to fail, and worth separating from the four
+self-flattering measurements elsewhere in this document: those reported success
+they had not earned, this reported failure it could not substantiate.
+
+The repair is not a better regular expression. A gate whose purpose is to
+distrust self-reported success should not read a human display at all, so the
+count now comes from vitest's json reporter. `numTotalTests` is a contract; the
+summary line is a rendering. Verified by replacing the captured stdout with a
+placeholder and confirming the verdict is unchanged.
+
 **One control hangs rather than fails**, and the gate treats that as a kill.
 Without `isFile()`, `readFileSync` on a FIFO blocks until a writer opens it;
 vitest's `testTimeout` cannot interrupt it, because a blocking sync call never

@@ -30,7 +30,8 @@
 // uncommitted work.
 
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -42,6 +43,8 @@ const VITEST = join(ROOT, "node_modules", ".bin", "vitest");
 // tight enough that the one mutant that hangs rather than fails costs three
 // minutes instead of the whole job. `--timeout <seconds>` overrides it.
 const DEFAULT_TIMEOUT_MS = 180_000;
+
+let runCounter = 0; // keeps each run's json report path distinct
 
 function parseArgs(argv) {
   const args = { filter: null, list: false, timeoutMs: DEFAULT_TIMEOUT_MS };
@@ -83,14 +86,31 @@ function gitIsClean(file) {
 // `detached` for a fresh process group and `kill(-pid)` to take the group with
 // it. Spawning the vitest binary directly rather than through `npx` keeps that
 // group small.
+//
+// How many tests ran is read from vitest's json reporter, not from its printed
+// summary. Scraping the summary is what the first version did, and it broke the
+// first time it met a runner that colorises: `Tests  21 passed` arrives as
+// `Tests \x1b[22m \x1b[1m\x1b[32m21 passed`, no `\s+\d+` to match, and the gate
+// reported "collected no tests" for five green baselines. It failed closed, so
+// the cost was a red build rather than a fake pass — but a gate whose whole
+// purpose is to distrust self-reported success has no business reading a human
+// display. `numTotalTests` is a contract; the summary line is a rendering.
 function runTests(testFiles, timeoutMs) {
   return new Promise((resolve) => {
-    const child = spawn(VITEST, ["run", "--root", ".", ...testFiles], {
-      cwd: ROOT,
-      env: { ...process.env, CI: "1" },
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const reportPath = join(
+      tmpdir(),
+      `anvil-mutation-${process.pid}-${runCounter++}.json`,
+    );
+    const child = spawn(
+      VITEST,
+      ["run", "--root", ".", "--reporter=default", "--reporter=json", `--outputFile.json=${reportPath}`, ...testFiles],
+      {
+        cwd: ROOT,
+        env: { ...process.env, CI: "1" },
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     let output = "";
     child.stdout.on("data", (d) => {
       output += d;
@@ -111,11 +131,17 @@ function runTests(testFiles, timeoutMs) {
 
     child.on("close", (code) => {
       clearTimeout(timer);
-      // Vitest's summary line is `Tests  21 passed (21)` or `Tests  1 failed |
-      // 20 passed (21)`. A file that defines no matching test prints `Tests  no
-      // tests` and exits 0; "No test files found" exits 1 with no summary at
-      // all. Neither may be counted as a kill.
-      const collected = /Tests\s+\d+\s+(passed|failed)/.test(output);
+      // No report file means vitest never got as far as running anything —
+      // "No test files found", a config error, or the SIGKILL above. Zero
+      // collected tests means the files exist but define none. Neither may be
+      // counted as a kill.
+      let collected = 0;
+      try {
+        collected = JSON.parse(readFileSync(reportPath, "utf8")).numTotalTests ?? 0;
+      } catch {
+        collected = 0;
+      }
+      rmSync(reportPath, { force: true });
       resolve({ ok: !timedOut && code === 0, collected, timedOut, output });
     });
   });
@@ -170,10 +196,10 @@ console.log(`Baseline: ${testSets.size} test set(s) must pass unmutated.`);
 const redBaselines = [];
 for (const [key, files] of testSets) {
   const res = await runTests(files, args.timeoutMs);
-  if (res.ok && res.collected) {
-    console.log(`  ok    ${key}`);
+  if (res.ok && res.collected > 0) {
+    console.log(`  ok    ${key} (${res.collected} tests)`);
   } else {
-    const why = res.timedOut ? " (timed out)" : res.collected ? "" : " (collected no tests)";
+    const why = res.timedOut ? " (timed out)" : res.collected === 0 ? " (collected no tests)" : "";
     console.log(`  RED   ${key}${why}`);
     redBaselines.push({ key, output: res.output });
   }
@@ -215,7 +241,7 @@ for (const m of mutants) {
     // a control can be.
     killed++;
     console.log(`  killed ${m.id} (hung — deleting this control blocks forever)`);
-  } else if (!res.collected) {
+  } else if (res.collected === 0) {
     console.log(`  ERROR ${m.id} — the declared tests collected nothing`);
     misapplied.push({ id: m.id, reason: "no tests collected" });
   } else if (res.ok) {

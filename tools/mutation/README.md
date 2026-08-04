@@ -66,6 +66,16 @@ gate is decorative.
 **The tests never ran.** A vitest invocation that collects zero tests is
 failure, not a pass. Otherwise a renamed or deleted test file reads as a kill.
 
+That last count comes from vitest's **json reporter**, not from its printed
+summary. The first version scraped the summary and broke the first time it met a
+runner that colorises: `Tests  21 passed` arrives as
+`Tests ␛[22m ␛[1m␛[32m21 passed`, there is no `\s+\d+` to match, and the gate
+called five green baselines "collected no tests". It failed closed, so the cost
+was a red build rather than a fake pass. But a gate whose entire purpose is to
+distrust self-reported success has no business reading a human display —
+`numTotalTests` is a contract, the summary line is a rendering. Nothing in the
+verdict now depends on stdout; stdout is kept only to print on failure.
+
 ## Hangs count as kills
 
 One control's removal does not fail — it hangs. Without the `isFile()` check,
