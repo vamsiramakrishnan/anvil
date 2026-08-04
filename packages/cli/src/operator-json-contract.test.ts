@@ -1,10 +1,13 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Command } from "commander";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runAnvilCli } from "./anvil-cli.js";
 import { bufferIO } from "./io.js";
+import { createAnvilProgram } from "./program.js";
+import { visibleSubcommands } from "./self-skill.js";
 
 /**
  * The operator contract.
@@ -35,8 +38,24 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(work, { recursive: true, force: true }));
 
+/**
+ * Command paths this file has actually driven with `--json`, recorded as it
+ * happens.
+ *
+ * Deliberately observed rather than declared. A hand-maintained "these are
+ * covered" list is a claim the file cannot check, and this programme has
+ * already found four measurements that flattered themselves that way. Moving a
+ * command into a declared set without writing a test would be exactly that
+ * mistake; here, the only way in is to run the command.
+ */
+const exercised = new Set<string>();
+
 /** Run a command as an operator's script would, capturing the two streams apart. */
 async function run(argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  if (argv.includes("--json")) {
+    const path = commandPathOf(argv);
+    if (path) exercised.add(path);
+  }
   const io = bufferIO();
   const code = await runAnvilCli(argv, { io });
   return { code, stdout: io.stdout.join("\n"), stderr: io.stderr.join("\n") };
@@ -503,5 +522,156 @@ describe("status --require makes the computed verdict gateable", () => {
     const result = await run(["status", await bundle(), "--require", "releese"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("Unknown --require");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* The ratchet: no --json command arrives unnoticed                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Everything above pins the contract for the commands it drives. That is a spot
+ * check, not a boundary — the defect it was written for can walk straight back
+ * in through a command written next week, and nothing here would go red.
+ *
+ * This closes that. The set of commands declaring `--json` is read from the
+ * live Commander tree — the same tree that parses every invocation, and the
+ * same one `self-skill.ts` derives the command reference from, so it cannot
+ * drift from what Anvil actually offers. Every one of them must be accounted
+ * for: either this file drives it, or `UNEXERCISED` records why it does not.
+ *
+ * A new `--json` command therefore fails this file until somebody makes a
+ * decision about it. That is the whole point. It does not force a test to be
+ * written — it forces the gap to be named, which is the difference between a
+ * known limitation and an unknown one.
+ */
+
+/**
+ * Commands that declare `--json` and are not driven here, with the reason.
+ *
+ * This is a floor to be lowered, not a permanent exemption. Delete an entry
+ * when you add coverage; the partition test below fails if an entry is listed
+ * while the command is in fact exercised, so a stale waiver cannot linger.
+ *
+ * The reasons are honest about kind: "needs a fixture" is a cost, "cannot run
+ * offline" is a boundary. Only the second is a real exemption.
+ */
+const UNEXERCISED: Record<string, string> = {
+  // Need a compiled bundle plus lifecycle state to reach their refusal paths.
+  agentify: "needs a compiled bundle fixture",
+  certify: "needs a compiled bundle fixture",
+  conformance: "needs a compiled bundle fixture",
+  disclosure: "needs a compiled bundle fixture",
+  inspect: "needs a compiled bundle fixture",
+  publish: "needs a compiled bundle plus executable evidence",
+  selftest: "needs a compiled bundle fixture",
+  simulate: "needs a compiled bundle fixture",
+  sync: "needs a compiled bundle fixture",
+  target: "needs a compiled bundle fixture",
+  "capability show": "needs a compiled bundle fixture",
+  "capability compose": "needs two verified bundle fixtures",
+  "deploy credentials": "needs a compiled bundle fixture",
+  "deploy ledger": "needs a compiled bundle fixture",
+  // Need a source/spec corpus.
+  assess: "needs a source fixture",
+  distill: "needs a source fixture",
+  enrich: "needs a source fixture plus a manifest",
+  review: "needs a source fixture",
+  "source add": "needs a source fixture",
+  "source list": "needs a populated source store",
+  "source show": "needs a populated source store",
+  "source validate": "needs a source fixture",
+  "sources init": "writes a scaffold; needs a temp-root harness",
+  // Need refinement/case state.
+  "case battery": "needs a case store fixture",
+  "case close": "needs a case store fixture",
+  "case list": "needs a case store fixture",
+  "refine plan": "needs an AIR fixture with detectable deficiencies",
+  "refine run": "needs an AIR fixture with detectable deficiencies",
+  "refine skills": "needs an AIR fixture with detectable deficiencies",
+  // Need drift records.
+  "drift accept": "needs a stored drift record",
+  "drift list": "needs a stored drift record",
+  "drift show": "needs a stored drift record",
+  // Remaining estate verbs.
+  "estate support":
+    "covered by cmd-estate-support.test.ts, not through this file's contract helper",
+  "estate verify": "needs a completed import receipt",
+};
+
+/** Leading non-flag tokens, resolved to the longest matching command path. */
+function commandPathOf(argv: string[]): string | undefined {
+  const words: string[] = [];
+  for (const token of argv) {
+    if (token.startsWith("-")) break;
+    words.push(token);
+  }
+  for (let n = words.length; n > 0; n--) {
+    const candidate = words.slice(0, n).join(" ");
+    if (JSON_COMMANDS.has(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+/** Every command in the live tree that offers `--json`, by full path. */
+function jsonCommandPaths(): Set<string> {
+  const found = new Set<string>();
+  const walk = (command: Command, path: string[]): void => {
+    if (path.length > 0) {
+      const offersJson = command
+        .createHelp()
+        .visibleOptions(command)
+        .some((option) => option.long === "--json");
+      if (offersJson) found.add(path.join(" "));
+    }
+    for (const sub of visibleSubcommands(command)) walk(sub, [...path, sub.name()]);
+  };
+  walk(createAnvilProgram({ io: bufferIO() }), []);
+  return found;
+}
+
+const JSON_COMMANDS = jsonCommandPaths();
+
+describe("every --json command is accounted for", () => {
+  it("has at least one --json command, so an empty walk cannot pass vacuously", () => {
+    // A tree walk that finds nothing satisfies every assertion below. That is
+    // the failure this whole file exists to make impossible, so it is checked
+    // before anything is concluded from the walk.
+    expect(JSON_COMMANDS.size).toBeGreaterThan(20);
+  });
+
+  it("classifies every one of them as exercised or explicitly unexercised", () => {
+    const unclassified = [...JSON_COMMANDS]
+      .filter((path) => !exercised.has(path) && !(path in UNEXERCISED))
+      .sort();
+    expect(
+      unclassified,
+      "These commands offer --json but this file neither drives them nor records why not. " +
+        "Add a case above, or add an entry to UNEXERCISED with the reason. A --json command " +
+        "that nobody has consumed as an interface is how `exit 1` with zero bytes on stdout " +
+        "reached an operator the first time.",
+    ).toEqual([]);
+  });
+
+  it("records no waiver for a command that is in fact exercised", () => {
+    const stale = Object.keys(UNEXERCISED)
+      .filter((path) => exercised.has(path))
+      .sort();
+    expect(
+      stale,
+      "These are listed in UNEXERCISED but this file drives them. Delete the entries — " +
+        "banking the improvement is what keeps the floor meaningful.",
+    ).toEqual([]);
+  });
+
+  it("names no command that has since been renamed or removed", () => {
+    const phantom = Object.keys(UNEXERCISED)
+      .filter((path) => !JSON_COMMANDS.has(path))
+      .sort();
+    expect(
+      phantom,
+      "These are recorded in UNEXERCISED but no longer offer --json. A waiver for a command " +
+        "that does not exist makes the floor look lower than it is.",
+    ).toEqual([]);
   });
 });
