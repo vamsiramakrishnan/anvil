@@ -1,4 +1,4 @@
-import { type AirDocument, type AsyncContract, Operation } from "@anvil/air";
+import { type AirDocument, type AsyncContract, loadAirDocument, Operation } from "@anvil/air";
 import type { HttpRequest, HttpResponse, Transport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -80,11 +80,11 @@ const contract = (over: Partial<AsyncContract> = {}): AsyncContract => ({
 });
 
 async function connect(operations: Operation[], options?: Partial<McpBuildOptions>) {
-  const air: AirDocument = {
-    service: { id: "test", version: "1.0.0", canonicalName: "test" },
+  const air: AirDocument = loadAirDocument({
+    service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
     operations,
     workflows: [],
-  };
+  });
   const server = buildMcpServer(air, {
     contextFor: () => ({
       transport,
@@ -216,7 +216,13 @@ describe("a contract that does not resolve produces nothing", () => {
       operations: () => [
         createExport({ asyncContract: contract() }),
         exportStatus({
-          effect: { kind: "mutation", action: "update", resource: "export", risk: "low" },
+          effect: {
+            kind: "mutation",
+            action: "update",
+            resource: "export",
+            risk: "low",
+            reversible: true,
+          },
         }),
       ],
     },

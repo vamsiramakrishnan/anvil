@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { type AuthRequirement, AuthRequirement as AuthSchema } from "@anvil/air";
 import { describe, expect, it } from "vitest";
+import type { RuntimeConfig } from "./config.js";
 import {
   isSecretRef,
   registerCredentialBackend,
@@ -56,6 +57,12 @@ function smRoutes(secretValue: string, opts: { accessStatus?: number } = {}) {
       return { status: opts.accessStatus ?? 200, json: { payload: { data: b64(secretValue) } } };
     return { status: 404 };
   };
+}
+
+/** A complete RuntimeConfig. Partial literals silently drift from the real
+ * shape, which is how these fixtures diverged from what the runtime loads. */
+function runtimeConfig(env: string): RuntimeConfig {
+  return { env, allowedHosts: [], upstreamTimeoutMs: 5_000, ledgerResultTtlSeconds: 604_800 };
 }
 
 describe("isSecretRef", () => {
@@ -628,8 +635,8 @@ describe("TokenExchangeResolver — other grants", () => {
     expect(form.get("grant_type")).toBe("urn:ietf:params:oauth:grant-type:jwt-bearer");
     const assertion = form.get("assertion") ?? "";
     expect(assertion.split(".")).toHaveLength(3);
-    const header = JSON.parse(Buffer.from(assertion.split(".")[0], "base64url").toString());
-    const payload = JSON.parse(Buffer.from(assertion.split(".")[1], "base64url").toString());
+    const header = JSON.parse(Buffer.from(assertion.split(".")[0]!, "base64url").toString());
+    const payload = JSON.parse(Buffer.from(assertion.split(".")[1]!, "base64url").toString());
     expect(header.alg).toBe("RS256");
     expect(payload.sub).toBe("boss@corp.com");
     expect(payload.aud).toBe("https://idp.example.com/token");
@@ -650,10 +657,7 @@ describe("resolveCredentials — fail-closed routing", () => {
     const devFetch = fakeFetch(() => ({
       json: { access_token: "LOCAL", expires_in: 3600 },
     }));
-    const dev = resolveCredentials(
-      { env: "dev", allowedHosts: [] },
-      { env, fetchImpl: devFetch.fn },
-    );
+    const dev = resolveCredentials(runtimeConfig("dev"), { env, fetchImpl: devFetch.fn });
     expect(await dev.resolve("def", requirement)).toEqual({
       headers: { Authorization: "Bearer LOCAL" },
     });
@@ -662,19 +666,17 @@ describe("resolveCredentials — fail-closed routing", () => {
     const prodFetch = fakeFetch(() => ({
       json: { access_token: "MUST_NOT_MINT", expires_in: 3600 },
     }));
-    const prod = resolveCredentials(
-      { env: "prod", allowedHosts: [] },
-      { env, fetchImpl: prodFetch.fn, allowLoopbackHttp: true },
-    );
+    const prod = resolveCredentials(runtimeConfig("prod"), {
+      env,
+      fetchImpl: prodFetch.fn,
+      allowLoopbackHttp: true,
+    });
     expect(await prod.resolve("def", requirement)).toBeNull();
     expect(prodFetch.calls).toHaveLength(0);
   });
 
   it("passes a literal static api_key through by default", async () => {
-    const r = resolveCredentials(
-      { env: "dev", allowedHosts: [] },
-      { env: { ANVIL_DEF_API_KEY: "k" } },
-    );
+    const r = resolveCredentials(runtimeConfig("dev"), { env: { ANVIL_DEF_API_KEY: "k" } });
     expect(await r.resolve("def", auth({ type: "api_key" }))).toEqual({
       headers: { "X-API-Key": "k" },
     });
@@ -708,23 +710,21 @@ describe("resolveCredentials — fail-closed routing", () => {
     expected,
   }) => {
     const { fn } = fakeFetch(smRoutes("resolved"));
-    const r = resolveCredentials(
-      { env: "dev", allowedHosts: [] },
-      { env, fetchImpl: fn, metadataToken: async () => "metadata-token" },
-    );
+    const r = resolveCredentials(runtimeConfig("dev"), {
+      env,
+      fetchImpl: fn,
+      metadataToken: async () => "metadata-token",
+    });
     expect(await r.resolve("def", requirement)).toEqual(expected);
   });
 
   it("routes secret_manager secretSource to the SM resolver", async () => {
     const { fn } = fakeFetch(smRoutes("resolved"));
-    const r = resolveCredentials(
-      { env: "dev", allowedHosts: [] },
-      {
-        env: { ANVIL_DEF_API_KEY: "sm://projects/p/secrets/k/versions/1" },
-        fetchImpl: fn,
-        metadataToken: async () => "m",
-      },
-    );
+    const r = resolveCredentials(runtimeConfig("dev"), {
+      env: { ANVIL_DEF_API_KEY: "sm://projects/p/secrets/k/versions/1" },
+      fetchImpl: fn,
+      metadataToken: async () => "m",
+    });
     expect(
       await r.resolve("def", auth({ type: "api_key", secretSource: "secret_manager" })),
     ).toEqual({
@@ -734,17 +734,14 @@ describe("resolveCredentials — fail-closed routing", () => {
 
   it("routes a delegated principal to the exchange resolver", async () => {
     const { fn } = fakeFetch(() => ({ json: { access_token: "E", expires_in: 3600 } }));
-    const r = resolveCredentials(
-      { env: "dev", allowedHosts: [] },
-      {
-        env: {
-          ANVIL_DEF_TOKEN_ENDPOINT: "https://sts/token",
-          ANVIL_DEF_CLIENT_ID: "c",
-          ANVIL_DEF_CLIENT_SECRET: "s",
-        },
-        fetchImpl: fn,
+    const r = resolveCredentials(runtimeConfig("dev"), {
+      env: {
+        ANVIL_DEF_TOKEN_ENDPOINT: "https://sts/token",
+        ANVIL_DEF_CLIENT_ID: "c",
+        ANVIL_DEF_CLIENT_SECRET: "s",
       },
-    );
+      fetchImpl: fn,
+    });
     const mat = await r.resolve(
       "def",
       auth({ type: "oauth2_on_behalf_of", principal: "delegated", audience: "https://up" }),
@@ -757,10 +754,10 @@ describe("resolveCredentials — fail-closed routing", () => {
     const { fn, calls } = fakeFetch(() => ({
       json: { access_token: "wrong", expires_in: 3600 },
     }));
-    const r = resolveCredentials(
-      { env: "dev", allowedHosts: [] },
-      { env: { ANVIL_DEF_TOKEN: "pre-issued" }, fetchImpl: fn },
-    );
+    const r = resolveCredentials(runtimeConfig("dev"), {
+      env: { ANVIL_DEF_TOKEN: "pre-issued" },
+      fetchImpl: fn,
+    });
     expect(await r.resolve("def", auth({ type: "jwt_bearer" }))).toEqual({
       headers: { Authorization: "Bearer pre-issued" },
     });
@@ -771,18 +768,15 @@ describe("resolveCredentials — fail-closed routing", () => {
     const { fn, calls } = fakeFetch(() => ({
       json: { access_token: "must-not-use", expires_in: 3600 },
     }));
-    const r = resolveCredentials(
-      { env: "dev", allowedHosts: [] },
-      {
-        env: {
-          ANVIL_DEF_API_KEY: "must-not-send",
-          ANVIL_DEF_TOKEN_ENDPOINT: "https://sts.example/token",
-          ANVIL_DEF_CLIENT_ID: "c",
-          ANVIL_DEF_CLIENT_ASSERTION_KEY: "k",
-        },
-        fetchImpl: fn,
+    const r = resolveCredentials(runtimeConfig("dev"), {
+      env: {
+        ANVIL_DEF_API_KEY: "must-not-send",
+        ANVIL_DEF_TOKEN_ENDPOINT: "https://sts.example/token",
+        ANVIL_DEF_CLIENT_ID: "c",
+        ANVIL_DEF_CLIENT_ASSERTION_KEY: "k",
       },
-    );
+      fetchImpl: fn,
+    });
     expect(
       await r.resolve("def", auth({ type: "api_key", provider: { grant: "jwt_bearer" } })),
     ).toBeNull();
@@ -794,15 +788,14 @@ describe("resolveCredentials — fail-closed routing", () => {
     "custom_header",
     "oauth2_authorization_code",
   ] as const)("fails closed for unmodeled %s instead of leaking a bearer", async (type) => {
-    const r = resolveCredentials(
-      { env: "dev", allowedHosts: [] },
-      { env: { ANVIL_DEF_TOKEN: "must-not-leak" } },
-    );
+    const r = resolveCredentials(runtimeConfig("dev"), {
+      env: { ANVIL_DEF_TOKEN: "must-not-leak" },
+    });
     expect(await r.resolve("def", auth({ type }))).toBeNull();
   });
 
   it("throws (fails closed) for an unregistered vault secretSource", () => {
-    const r = resolveCredentials({ env: "dev", allowedHosts: [] }, opts);
+    const r = resolveCredentials(runtimeConfig("dev"), opts);
     expect(() => r.resolve("def", auth({ type: "api_key", secretSource: "vault" }))).toThrow(
       /vault/,
     );
@@ -810,17 +803,17 @@ describe("resolveCredentials — fail-closed routing", () => {
 
   it("limits ANVIL_CREDENTIALS to static secret storage and throws on a grant override", () => {
     const forced = resolveCredentials(
-      { env: "dev", allowedHosts: [], credentials: "env" },
+      { ...runtimeConfig("dev"), credentials: "env" },
       { env: { ANVIL_DEF_API_KEY: "k" } },
     );
     expect(forced).toBeDefined();
     expect(() =>
-      resolveCredentials({ env: "dev", allowedHosts: [], credentials: "delegated" }, opts),
+      resolveCredentials({ ...runtimeConfig("dev"), credentials: "delegated" }, opts),
     ).toThrow(/always selected per operation/);
   });
 
   it("routes expectedCredentials to the same backend", () => {
-    const r = resolveCredentials({ env: "dev", allowedHosts: [] }, opts);
+    const r = resolveCredentials(runtimeConfig("dev"), opts);
     const names = r.expectedCredentials?.(
       "def",
       auth({ type: "oauth2_on_behalf_of", principal: "delegated" }),
@@ -834,7 +827,7 @@ describe("resolveCredentials — fail-closed routing", () => {
         return { headers: { "X-Test": "1" } };
       },
     }));
-    const r = resolveCredentials({ env: "dev", allowedHosts: [] }, opts);
+    const r = resolveCredentials(runtimeConfig("dev"), opts);
     expect(await r.resolve("def", auth({ type: "api_key", secretSource: "vault" }))).toEqual({
       headers: { "X-Test": "1" },
     });

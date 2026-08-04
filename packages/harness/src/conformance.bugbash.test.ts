@@ -358,7 +358,9 @@ describe("retry logic — boundary conditions", () => {
     const delays: number[] = [];
     const result = await retryTransientCliLaunch(
       async () => cliProcessResult({ exitCode: 0 }),
-      async (ms) => delays.push(ms),
+      async (ms) => {
+        delays.push(ms);
+      },
     );
     expect(result.attempts).toBe(1);
     expect(delays).toEqual([]);

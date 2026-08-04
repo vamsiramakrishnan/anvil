@@ -485,7 +485,9 @@ describe("request body reconstruction", () => {
     expect(res.outcome).toBe("error");
     if (res.outcome !== "error") return;
     expect(res.envelope.error.code).toBe("validation_error");
-    expect(res.envelope.error.details?.missing).toContain("body");
+    expect((res.envelope.error.details as { missing?: string[] } | undefined)?.missing).toContain(
+      "body",
+    );
     expect(transport.requests).toHaveLength(0);
   });
 });
@@ -1511,7 +1513,7 @@ describe("durable ledger (prod fail-closed)", () => {
 
 /** A ledger that reports itself durable — stands in for Firestore/Spanner in tests. */
 class DurableTestLedger extends InMemoryLedger {
-  override readonly durable = true;
+  override readonly durable: boolean = true;
 }
 
 describe("production defaults fail closed (no dev fallback)", () => {
