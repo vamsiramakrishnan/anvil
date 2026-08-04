@@ -486,7 +486,7 @@ describe("prepareBundleInstall — derived state", () => {
     const old = await scenario(bundleFiles());
     const out = join(work, "bundle");
     const onDisk = { ...bundleFiles(), "certification.json": "{}\n" };
-    writeInstalled(out, { ...onDisk, "import.receipt.json": old.files["import.receipt.json"] });
+    writeInstalled(out, { ...onDisk, "import.receipt.json": old.files["import.receipt.json"]! });
 
     // The new bundle itself claims `certification.json`, so preserving the
     // existing lifecycle artifact would silently overwrite generated output.
@@ -500,7 +500,7 @@ describe("prepareBundleInstall — derived state", () => {
     const old = await scenario(bundleFiles());
     const out = join(work, "bundle");
     const onDisk = { ...bundleFiles(), "certification.json": "{}\n" };
-    writeInstalled(out, { ...onDisk, "import.receipt.json": old.files["import.receipt.json"] });
+    writeInstalled(out, { ...onDisk, "import.receipt.json": old.files["import.receipt.json"]! });
 
     const next = await scenario({ "air.json": "{ not json", "README.md": "# acct\n" });
     expect(codes(await install(out, next.files, next.receipt))).toContain(

@@ -223,11 +223,15 @@ describe("anvil estate plan", () => {
       ]),
     );
     expect(
-      plan.workflow.stages.find((stage) => stage.id === "release_configuration")?.guard,
+      plan.workflow.stages.find(
+        (stage: { id: string; guard?: string }) => stage.id === "release_configuration",
+      )?.guard,
     ).toContain("separate planes");
-    expect(plan.workflow.stages.find((stage) => stage.id === "live_proof")?.guard).toContain(
-      "never invokes a mutation",
-    );
+    expect(
+      plan.workflow.stages.find(
+        (stage: { id: string; guard?: string }) => stage.id === "live_proof",
+      )?.guard,
+    ).toContain("never invokes a mutation");
   });
 
   it("inherits reviewed selections and gateway identity, then gates deterministic re-export drift", async () => {

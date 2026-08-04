@@ -180,8 +180,8 @@
       "disposition": "infrastructure",
       "whyMissed": "Not missed — never attempted. The exclusion is uniform across all 13 packages and predates the current test volume.",
       "regressionTest": "packages/cli/src/boundaries.test.ts",
-      "status": "deferred",
-      "notes": "Measured budget, errors per package with tests included: air 126, cli 82, compiler 41, generators 27, runtime 22, harness 18, mcp-runtime 18, refinement 10, system-pack 2, certification/grammar/simulator/targets 0. Total 366. Many are deliberate invalid inputs in negative tests and must not be forced through with casts, so this is its own change."
+      "status": "fixed",
+      "notes": "All 13 packages now typecheck their tests; the 366-error budget is closed. The expectation that most were deliberate invalid inputs was wrong — almost none were. They were fixtures that lied about their type, and the compiler found tests written against values that do not exist: investigationStatus \"declined\", ClaimSource \"source_docs\", Capability field \"review\", IdempotencyMode \"not_idempotent\", RetryMode \"not_safe\", auth type \"bearer\", conformance proof \"none\"/\"jwt\", virtualWiring \"N/A\"/\"gcp:sts\", status \"skip\", surface \"mock\". Five mcp-runtime files built AirDocuments Zod would reject because service.source is required with no default. Two vacuous patterns: expect().toBe(x, msg) silently drops the message, and `if (res.ok && res.binding) { ...assertions... }` skipped rather than failed. Nothing was forced through with `any`."
     },
     {
       "id": "wso2-semantic-digest-test-overclaimed",

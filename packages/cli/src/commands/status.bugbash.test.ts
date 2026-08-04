@@ -127,7 +127,7 @@ describe("buildStatusReport — missing and corrupt canonical AIR", () => {
     const report = await buildStatusReport(dir);
     expect(report.paths.canonicalAir).toBe(join(dir, "air.json"));
     expect(report.core.projections[0]).toMatchObject({ id: "canonical", state: "corrupt" });
-    expect(report.core.projections[0].detail).toContain("Canonical AIR is corrupt:");
+    expect(report.core.projections[0]!.detail).toContain("Canonical AIR is corrupt:");
   });
 
   it("prefers air.yaml over air.json when both exist, even when air.yaml is the corrupt one", async () => {
@@ -136,7 +136,7 @@ describe("buildStatusReport — missing and corrupt canonical AIR", () => {
     writeFileSync(join(dir, "air.yaml"), "not: [valid\n");
     const report = await buildStatusReport(dir);
     expect(report.paths.canonicalAir).toBe(join(dir, "air.yaml"));
-    expect(report.core.projections[0].state).toBe("corrupt");
+    expect(report.core.projections[0]!.state).toBe("corrupt");
     expect(report.serviceId).toBeNull();
   });
 
@@ -166,7 +166,7 @@ describe("buildStatusReport — missing and corrupt canonical AIR", () => {
     writeFileSync(customPath, "not: [valid\n");
     const report = await buildStatusReport(customPath);
     expect(report.paths.canonicalAir).toBe(customPath);
-    expect(report.core.projections[0].state).toBe("corrupt");
+    expect(report.core.projections[0]!.state).toBe("corrupt");
   });
 });
 
