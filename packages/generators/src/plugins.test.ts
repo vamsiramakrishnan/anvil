@@ -43,7 +43,9 @@ describe("harness plugin emission", () => {
   });
 
   it("declares an Antigravity PreToolUse hook per the official schema", () => {
-    const hooks = JSON.parse(generateHarnessPlugins(air)["plugin/antigravity/hooks.json"]);
+    const hooks = JSON.parse(
+      generateHarnessPlugins(air)["plugin/antigravity/hooks.json"] as string,
+    );
     const cfg = hooks["anvil-payments-guard"];
     expect(cfg.PreToolUse[0].matcher).toBe("*"); // shim self-scopes; matcher fires on all
     expect(cfg.PreToolUse[0].hooks[0]).toMatchObject({ type: "command" });
@@ -57,7 +59,9 @@ describe("harness plugin emission", () => {
   });
 
   it("names the plugin and pins its version to the service (updates track approvals)", () => {
-    const manifest = JSON.parse(generateHarnessPlugins(air)[".claude-plugin/plugin.json"]);
+    const manifest = JSON.parse(
+      generateHarnessPlugins(air)[".claude-plugin/plugin.json"] as string,
+    );
     expect(manifest.name).toBe(pluginName(air));
     expect(manifest.name).toBe("anvil-payments");
     expect(manifest.version).toBe(air.service.version);
@@ -72,14 +76,17 @@ describe("harness plugin emission", () => {
     snake.service.id = "payments_api";
     expect(pluginName(snake)).toBe("anvil-payments-api");
     const files = generateHarnessPlugins(snake);
-    expect(JSON.parse(files[".claude-plugin/plugin.json"]).name).toBe("anvil-payments-api");
+    expect(JSON.parse(files[".claude-plugin/plugin.json"] as string).name).toBe(
+      "anvil-payments-api",
+    );
     // The plugin-scoped matcher uses the same sanitized name, so it stays consistent.
-    const matcher = JSON.parse(files["plugin/claude/hooks.json"]).hooks.PreToolUse[0].matcher;
+    const matcher = JSON.parse(files["plugin/claude/hooks.json"] as string).hooks.PreToolUse[0]
+      .matcher;
     expect(matcher).toContain("mcp__plugin_anvil-payments-api_");
   });
 
   it("scopes the PreToolUse matcher to this server's plugin-namespaced tools", () => {
-    const hooks = JSON.parse(generateHarnessPlugins(air)["plugin/claude/hooks.json"]);
+    const hooks = JSON.parse(generateHarnessPlugins(air)["plugin/claude/hooks.json"] as string);
     const matcher = hooks.hooks.PreToolUse[0].matcher;
     // A bare-name matcher never fires for a plugin-bundled server (its tools are
     // mcp__plugin_<plugin>_<server>__<tool>); the generated matcher must include

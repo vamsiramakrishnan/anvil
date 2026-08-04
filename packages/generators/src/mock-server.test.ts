@@ -130,6 +130,7 @@ describe("generated mock server", () => {
     });
     expect(res.status).toBe(201);
     const [req] = await capture();
+    if (!req) throw new Error("mock server captured no request");
     expect(req.matchedOpId).toBe("payments.refunds.create");
     expect(req.pathParams).toEqual({ payment_id: "p_1" });
   });
@@ -174,6 +175,7 @@ describe("generated mock server", () => {
       headers: { authorization: "Bearer super-secret", "x-api-key": "also-secret" },
     });
     const [req] = await capture();
+    if (!req) throw new Error("mock server captured no request");
     expect(req.matchedOpId).toBe("payments.customers.get");
     expect(req.query).toEqual({ verbose: "1" });
     expect(req.headers.authorization).toBe("***");
@@ -289,6 +291,7 @@ describe("generated mock server", () => {
     await reset();
     await fetch(`${base}/customers/c_1`);
     const [req] = await capture();
+    if (!req) throw new Error("mock server captured no request");
     expect(req.matchedCandidates).toEqual(["payments.customers.get"]);
   });
 });
@@ -372,6 +375,7 @@ operations:
     const res = await fetch(`${commsBase}/v1/calls/CA123.json`);
     expect(res.status).toBe(200);
     const [req] = await commsCapture();
+    if (!req) throw new Error("mock server captured no request");
     expect(req.matchedOpId).toBe(opIdFor("/v1/calls/{sid}.json"));
     expect(req.pathParams).toEqual({ sid: "CA123" });
   });
@@ -381,6 +385,7 @@ operations:
     const res = await fetch(`${commsBase}/v1/calls/CA%20123.json`);
     expect(res.status).toBe(200);
     const [req] = await commsCapture();
+    if (!req) throw new Error("mock server captured no request");
     expect(req.pathParams).toEqual({ sid: "CA 123" });
   });
 
@@ -390,6 +395,7 @@ operations:
     // the fully-literal template must win regardless of table order.
     await fetch(`${commsBase}/v1/calls/latest.json`);
     const [req] = await commsCapture();
+    if (!req) throw new Error("mock server captured no request");
     const literal = opIdFor("/v1/calls/latest.json");
     const embedded = opIdFor("/v1/calls/{sid}.json");
     expect(req.matchedOpId).toBe(literal);
