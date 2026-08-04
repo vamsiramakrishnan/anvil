@@ -287,6 +287,19 @@
       "notes": "`anvil status --require <action>` gates on the verdict status already computes; default behaviour unchanged. An unrecognized action fails closed — a gate that passes because its expected action was misspelled is worse than no gate. Does not resolve the wider naming hazard that `certify` is not the release gate; that is tracked in docs/architecture/certification-authority.md."
     },
     {
+      "id": "error-codes-unratcheted",
+      "package": "workspace",
+      "subsystem": "operator contract",
+      "categories": ["surface-conformance"],
+      "invariant": "A machine-readable error code cannot be added, removed, or renamed without a reviewed diff, and its assertion coverage cannot regress.",
+      "reproducer": "Extract every string used as a `code` across packages/*/src and cross-reference the test corpus: 305 codes, 76 with no assertion anywhere.",
+      "disposition": "product",
+      "whyMissed": "Codes are asserted incidentally, by whichever test happened to exercise the branch that emits them. Nothing treated the set of codes as a contract in its own right, so a code with no branch coverage also had no contract coverage, and nothing noticed the difference.",
+      "regressionTest": "packages/cli/src/error-code-registry.test.ts",
+      "status": "fixed",
+      "notes": "The registry does not assert the 76 are correct — it makes them visible and prevents the number rising. The extractor counts position rather than shape; a shape-only first draft reported 435 codes, a third of them file paths and MIME types."
+    },
+    {
       "id": "runverify-duplicates-bundle-verification",
       "package": "cli",
       "subsystem": "gateway estate",

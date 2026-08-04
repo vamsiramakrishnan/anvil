@@ -100,6 +100,48 @@ harness could not know the gateway-estate flow existed at all. The drift guard w
 exhaustive over *files* and blind to a second *destination*; it now covers both
 roots, verified by dirtying the new one.
 
+## The error-code contract (wave 5)
+
+Anvil emits **305 machine-readable error codes**. An operator writing
+`if (r.code === "gateway_receipt/output_lineage_stale")` depends on that exact
+string; rename or drop it and their branch stops matching silently on an upgrade,
+with the `else` path — usually "proceed" — taking over. That is worse than a
+crash, because nothing reports it.
+
+**76 of the 305 had no assertion anywhere in the workspace.** A refactor could
+have changed any of them without a single test going red. The estate-only scan
+earlier in this document found 11; widening to every package found the real
+number.
+
+`error-code-registry.json` records all 305 with the package that owns each and
+whether a test names it. `error-code-registry.test.ts` ratchets it four ways, each
+verified by breaking it:
+
+| Rule | Prevents |
+| --- | --- |
+| every emitted code is registered | a new public string arriving without review |
+| every registered code is still emitted | a silent removal breaking whoever matched on it |
+| `asserted` never regresses | a code losing its only assertion, so a rename goes unnoticed |
+| improvements are banked | coverage rising in the code but not in the floor |
+
+**The extractor counts position, not shape.** A first draft matched any
+`namespace/word` literal and reported 435 codes — a third of them file paths like
+`reference/workflow.md` and MIME types like `application/json`. It now counts a
+string only where it is *used* as a code: a `code:` property, a `code =`
+assignment, the first argument to a `*Error` constructor, or an argument to a
+shared `emit*`/`refuse*`/`reject*` helper.
+
+Two self-inflicted bugs worth recording, both of the same family this programme
+keeps finding. The test first walked `packages/` wholesale, so `dist/*.d.ts` passed
+its `.ts` filter — mis-attributing every code to whichever package built last, and
+taking three minutes. And the file is now excluded from its own corpus: its doc
+comment quotes a real unasserted code, which counted as an assertion. A
+measurement that flatters itself is the recurring failure mode here, not an
+occasional one.
+
+**Deliberately out of scope**, as different contracts: certification check ids
+(`static/*`, `exec/*`), AIR predicate names (`anvil/*`), MIME types.
+
 ## Ranked findings
 
 Ranked by (invariant at risk) × (evidence that it is real), not by module size.
@@ -232,7 +274,7 @@ stable identity and keyed order-independently).
 | `pnpm knip` | clean | clean |
 | `pnpm typecheck` | 14/14 | 14/14 |
 | `pnpm build` | 14/14 | 14/14 |
-| `pnpm test` | 3,341 passed | **3,427 passed, 1 skipped, 0 failed** |
+| `pnpm test` | 3,341 passed | **3,433 passed, 1 skipped, 0 failed** |
 | `node tools/corpus/run.mjs estates` | 6/6 green | 6/6 green |
 
 `estate.ts` **3,327 → 2,498** (−829), across three modules:
