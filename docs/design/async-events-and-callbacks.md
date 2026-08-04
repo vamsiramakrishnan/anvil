@@ -1,11 +1,12 @@
-# Async completion, unified — webhooks as a second way to answer a poll
+# Async completion, unified — stateless MCP over a durable ledger
 
-Status: design (researched 2026-08-03, updated 2026-08-04 with corpus-grounded
-upstream deep dives and a stakeholder-benefits analysis; primary sources cited
-inline). Nothing here is implemented; the staged plan is at the end. Written
-to be handed to an implementing agent directly — every section names the real
-files it touches, and every vendor claim is checked against this repo's own
-backtest evidence rather than asserted from general knowledge.
+Status: design (researched 2026-08-03, substantially revised 2026-08-04 after
+folding in a human-approval mechanism, a queue-systems deep dive, and a
+corrected DLQ-triage pattern — all resolved through one underlying principle,
+§2). Nothing here is implemented; the staged plan is at the end. Written to
+be handed to an implementing agent directly — every section names the real
+files it touches, and every vendor/protocol claim is checked against this
+repo's own backtest evidence or flagged as unverified.
 
 ## 1. Why
 
@@ -16,120 +17,145 @@ stop. `resolveAsyncContract` validates it; `asyncContractSentence` renders it
 for the agent. It works, and the agent-facing shape of it is exactly right:
 one tool, a handle, a poll loop, a stopping condition.
 
-What's missing is *only* this: some APIs don't make you poll — they push a
-webhook when the job finishes (Stripe, GitHub deployments, most payment and
-CI providers). Today Anvil has no ingestion path for that at all — confirmed
-by grep, zero hits for `callbacks`/`webhooks` anywhere under
-`packages/compiler/src`. An operation compiled from such a spec either loses
-the completion signal entirely or gets miscompiled as pure-poll against an
-API that never intended polling.
+Three gaps sit on top of that primitive, and this document used to treat them
+as three separate problems:
 
-The fix is **not** a second, parallel primitive that teaches agents a new
-concept ("webhooks exist, here's how to register one"). It's making the
-*existing* poll contract resilient to two different backends. The agent
-still calls the same status tool, reads the same `stateField`, watches for
-the same `terminalStates`. Underneath, the generated status handler checks
-one more place before it calls upstream: a durable ledger that a webhook
-receiver may have already written to. If the webhook beat the poll, the
-answer comes back instantly. If not, it polls exactly as it does today.
-The agent never learns the difference exists — which is the actual "no
-old-world API baggage" deliverable: the baggage disappears into the runtime
-that already carries the idempotency ledger for an unrelated reason.
+1. Some APIs push a webhook instead of accepting a poll (Stripe, GitHub,
+   most payment/CI providers).
+2. Some mutations need a human to answer a question mid-job, not just
+   confirm before it starts (`confirmation.humanApproval` exists in AIR but
+   has no real channel today).
+3. Some completion signals arrive over a message queue, not HTTP at all —
+   and, per an outside pitch reviewed during this design's development, a
+   *bidirectional* pattern (read a failed message, repair it, write it back)
+   is a real, named use case (dead-letter-queue triage) with real safety
+   gaps as usually built.
 
-**This isn't a novel move for Anvil — it's the same doctrine that already
-shipped once, for a different per-vendor dialect problem.** `findings-log.md`'s
-public-corpus gauntlet record: pagination inference started at 0 of 938
-search operations despite trivially name-inferable params, and conservative,
-evidenced, per-vendor name matching (`classifyPagination`) lifted that to
-572/938 (60%) — Stripe's `starting_after`→cursor matched 89% of the time,
-Twilio's `PageToken`→cursor 96%, Jira's `startAt`→offset, GitHub's `page`→page.
-The lesson that transfers directly here: providers don't share one wire
-convention, a compiler that assumes they do silently fails most of them, and
-the fix is *conservative per-provider inference with a named fallback*, never
-a guess presented as certainty. §10 below applies exactly this doctrine to
-webhook signature schemes, which vary by provider even more than pagination
-params do.
+They are not three problems. §2 is the single mechanism that resolves all
+three, and it's not a new invention — it's Anvil's own existing architecture,
+taken seriously.
 
-## 2. Non-goals (say these out loud before starting)
+## 2. The throughline: stateless MCP over a durable ledger
+
+**"Stateless" is doing real, checkable work in Anvil's architecture, not
+just an adjective.** `docs/PRODUCT_BOUNDARY.md` §1 states it as a design
+law: *"The deployed unit is a thin, stateless runtime — nothing on the hot
+path parses specs or runs an LLM."* Concretely, that's already true of two
+different things in the shipped code:
+
+- **The compute layer is stateless.** `packages/generators/src/deploy.ts`
+  targets Cloud Run — a request/response service with a bounded per-request
+  timeout (`GENERATED_CLOUD_RUN_TIMEOUT_SECONDS`, `deploy.ts:34`), no
+  server affinity, scale-to-zero between requests. Any instance can serve
+  any request.
+- **Durable state is externalized, not held in the process.**
+  `packages/runtime/src/idempotency.ts`'s `IdempotencyLedger` is where
+  anything that must survive past one request lives — a reservation, a
+  cached result, now (this doc) a webhook completion.
+
+There is exactly one place Anvil's MCP server holds real in-memory session
+state today: `packages/mcp-runtime/src/lane.ts`'s progressive tool-disclosure
+ladder — which operations are currently visible in `tools/list` for this
+connection. And it's instructive *because* it's the exception: that state is
+deliberately disposable. `lane.ts:171-175` designs for a dropped
+`tools/list_changed` notification by making a second "open" idempotent and
+byte-identical to the first — losing the in-memory lane state costs a
+re-list, never a wrong answer, because it's presentation state, not business
+state. Nothing about *what an operation means* or *whether a job is done*
+is allowed to live only in server memory. That discipline — safety- and
+completion-relevant state lives in the ledger; the serving process is a
+disposable, horizontally-scalable front end over it — is the actual
+generalizable primitive this whole document exercises three times.
+
+**The unifying move: a "pending" thing is a ledger row, not an open
+connection or a blocked thread.** Once that's true:
+
+- Any stateless server instance can *write* a completion into the ledger
+  (a webhook receiver handling one POST).
+- Any stateless server instance can *read* a completion out of the ledger
+  (a status-tool call, from any agent, any time later).
+- "Answering" a pending job — with a webhook payload, a human's decision, or
+  a repaired message — is always the same shape: **one more stateless
+  mutation that writes into the same durable row**, callable from whatever
+  surface happens to be available when the answer is ready, with no
+  requirement that anything stayed alive in between.
+
+That last point is what kills the daemon idea from earlier drafts of this
+document (§8 resolves it) and what makes the queue-systems slice (§10)
+almost free: neither mid-call human approval nor most queue integrations
+actually need a new *runtime shape*. They need one more `pendingState` and
+one more operation that writes to the ledger — the same two moves §5–§7
+already make for webhooks.
+
+## 3. Three problems, one mechanism
+
+| | Trigger | New `pendingState` | Who can answer, and when | Answered via |
+|---|---|---|---|---|
+| **Webhook completion** (§9–§11) | Third-party POST | *(none new — resolves an existing `terminalState`)* | The provider, whenever its job finishes | Receiver route writes ledger row |
+| **Human approval mid-job** (§8) | `confirmation.humanApproval` gate hit | `awaiting_human_input` | Any surface (CLI, MCP client, a Slack bot) — no session, no attach required | `anvil job answer <id>` — one more stateless mutation |
+| **DLQ triage** (§12) | A message lands in a dead-letter queue | *(the DLQ message itself is the pending row — no new ledger shape needed, it's a queue, not `AsyncContract`)* | An agent (or human) reading the DLQ, whenever it gets around to it | `publish_to_reprocess_queue` — a normal, safety-classified mutation |
+
+Reading down the "Answered via" column is the point: every row ends at "a
+stateless mutation, callable independently of whatever was live when the
+question was asked." That's not a coincidence produced by writing this
+table — it's why the table has three rows and one mechanism.
+
+## 4. Non-goals (say these out loud before starting)
 
 - **Not a hosted event-gateway product.** No general routing, fan-out, or
   multi-tenant ingestion service (contrast: Hookdeck). One receiver route
   per deployed Cloud Run service, scoped to that service's own operations.
-- **Not MCP elicitation/sampling.** Confirmation stays the explicit `confirm`
-  param (`packages/mcp-runtime/src/server.ts:141-191`) because it has to
-  project identically onto the CLI today — and today's generated CLI
-  (`packages/cli/src/tool-cli.ts`) is a one-shot process (spawn, run one
-  command, exit), with no session to hold a mid-call question open. That's
-  a property of *the CLI Anvil currently generates*, not a law of nature: a
-  daemon-backed CLI (a persistent process a thin CLI talks to over a local
-  socket, the same shape `anvil serve mcp` already uses for the MCP surface
-  — `packages/cli/src/commands/serve.ts:28-65`) could hold a job open across
-  invocations and let elicitation-shaped human input land through any
-  attached surface. That is real, but it is a separate, larger design
-  (job/session model, process lifecycle, socket protocol) and explicitly
-  out of scope here — tracked as an open question in §16, not designed in
-  this document.
+- **Not MCP elicitation/sampling.** Confirmation-to-*start* stays the
+  explicit `confirm` param (`packages/mcp-runtime/src/server.ts:141-191`).
+  Confirmation-*mid-job* is §8's `awaiting_human_input` state — a stateless
+  answer, not a held-open elicitation request. Neither needs a live
+  server-to-client callback channel.
 - **Not resource subscriptions.** `packages/generators/src/resources.ts`
   resources are static per build; nothing here changes that.
-- **Not a new trust tier.** A webhook is an inbound, unauthenticated-until-
-  verified network write from the open internet. It gets the *same*
-  asymmetric-trust treatment as every other capability that can loosen
-  something (§12) — signature verification is mandatory, not a v2 nicety.
-- **Not a general enterprise-integration story.** See §10's closing note —
-  this design targets webhook-shaped completion (public HTTPS, signed POST),
-  which is a consumer/platform-SaaS pattern. It is explicitly not a design
-  for the message-queue/ESB-fronted completion shape Anvil's actual
-  largest-scale real estates (FLEXCUBE, OBDX) use instead.
+- **Not a new trust tier.** A webhook, a human's answer, and a queue-publish
+  are all inbound writes from outside the safety boundary. Every one of
+  them gets the same asymmetric-trust treatment (§13) — verified before
+  trusted, `review`-gated before automatic.
+- **Not raw broker consumption.** §10 draws a hard line: pull/push queue
+  APIs reachable over plain HTTP (SQS, Pub/Sub, a Kafka REST proxy,
+  RabbitMQ's management API) are in scope and near-free on top of this
+  design. A persistent consumer holding a live connection to a broker's
+  *native* wire protocol (raw Kafka, JMS, AMQP with no HTTP front) is a
+  genuinely different, stateful runtime shape and is explicitly deferred —
+  it is the one case in this entire document that doesn't reduce to §2's
+  mechanism, precisely because there's no way to make holding a broker
+  connection open stateless.
+- **Not a general enterprise-integration story.** This design targets
+  HTTP-reachable completion (signed webhook, or a queue provider with an
+  HTTP pull/push surface). It is not a design for whatever completion shape
+  Anvil's actual largest real estates (FLEXCUBE, OBDX) use — that's
+  unverified either way (§9's closing note) and out of scope regardless.
 
-## 3. Benefits, concretely — who this is for
+## 5. Benefits, concretely — who this is for
 
-Three different audiences get different payoffs from the same mechanism.
-Naming them up front so the phases in §15 can be prioritized against a real
-audience rather than "webhooks are good practice."
+**The agent calling the tools.** One mental model regardless of which row
+of §3 is in play: call a tool, get a handle, poll or get told "waiting on
+X." Never learns whether completion came from an upstream poll, a webhook,
+a human, or a repaired queue message. Fewer wasted turns when an answer is
+already sitting in the ledger. A resumable handle instead of a dead end when
+blocked on something outside its control.
 
-**The agent calling the tools.**
-- One mental model regardless of backend: it calls a tool, gets a handle,
-  polls or gets blocked — never learns whether completion arrived via
-  upstream poll or a webhook that beat it there. Same tool, same
-  `stateField`, same `terminalStates` every time; `asyncContractSentence()`
-  doesn't change one word (§4).
-- Fewer wasted turns: a webhook-backed op that resolves before the first
-  poll returns instantly instead of costing several poll round-trips.
-- A resumable stopping point instead of a dead end when a job is gated on
-  something the agent can't affect — it gets a handle to resume against,
-  not a conversation it has to restart.
+**The human operating Anvil.** `confirmation.humanApproval`
+(`packages/air/src/schema.ts:432,994`) stops being purely advisory — today
+it only ever renders into generated docs as a warning string
+(`packages/generators/src/skill.ts:428`, `packages/generators/src/plugins.ts:220-228`).
+§8 gives it a real, and cheap, channel. A job survives a closed laptop or a
+dropped SSH session because its state lives in the ledger, not in a blocked
+local process. An audit trail — who/what completed a job, when — falls out
+of the mechanism instead of needing to be built separately.
 
-**The human operating Anvil.**
-- `confirmation.humanApproval` (`packages/air/src/schema.ts:432,994`) stops
-  being purely advisory. Today it only ever renders into generated docs as a
-  warning string (`packages/generators/src/skill.ts:428`,
-  `packages/generators/src/plugins.ts:220-228`); the actual enforcement is
-  external, e.g. a harness's `PreToolUse` hook escalating to `ask`
-  (`docs/design/hooks-and-plugins.md`). This design's ledger — durably
-  recording who/what completed a job and when — is the same substrate a
-  future daemon (§2, §16) would use to give `humanApproval` a real channel,
-  without inventing a second durability story.
-- Detach/reattach on long-running work: a job survives a closed laptop or a
-  dropped SSH session because completion state lives in the ledger, not in
-  a blocked local process.
-- An audit trail as a byproduct, not a separate feature: webhook completions
-  land in the same idempotency ledger Anvil already ships
-  (`packages/runtime/src/idempotency.ts`), so "what completed this job, and
-  when" falls out of the mechanism itself.
+**The developer building on Anvil's output.** CLI and MCP behave
+identically for completion, because both read the same ledger-backed status
+handler. One integration point instead of N bespoke receivers/pollers/
+consumers. A build-time guarantee (certification, §14) instead of a runtime
+surprise.
 
-**The developer building on Anvil's output.**
-- CLI and MCP behave identically for completion — no per-surface special
-  casing in their own harness, because both read the same ledger-backed
-  status handler (§4, §9).
-- One integration point instead of N bespoke webhook receivers: wrapping
-  five vendor APIs through Anvil means one receiver pattern and one ledger,
-  not five hand-rolled dedup strategies, because Anvil classified each
-  spec's completion shape at compile time (§9).
-- A build-time guarantee instead of a runtime surprise: certification (§13)
-  can fail a bundle whose webhook signature scheme doesn't resolve against
-  the deploy target's credentials before it ever ships.
-
-## 4. The unified agent model
+## 6. The unified agent model
 
 ```
                         AGENT'S MENTAL MODEL (unchanged)
@@ -146,8 +172,7 @@ audience rather than "webhooks are good practice."
                      exact sentence asyncContractSentence() renders today
 ```
 
-The agent never sees what changes below. Two backends can answer the same
-`status tool` call:
+Three different things can now answer the same `status tool` call:
 
 ```
                     WHAT THE STATUS TOOL DOES NOW (new)
@@ -156,11 +181,13 @@ The agent never sees what changes below. Two backends can answer the same
   agent calls status_op(job_id)
             │
             ▼
-  ┌─────────────────────────┐   found, completed   ┌────────────────────┐
-  │ 1. check ledger for      │──────────────────────▶│ return cached      │
-  │    job_id                │                        │ result immediately │
+  ┌─────────────────────────┐   found, resolved     ┌────────────────────┐
+  │ 1. check ledger for      │───────────────────────▶│ return cached      │
+  │    job_id                │  (webhook wrote it,    │ result / state     │
+  │                           │   OR a human answered, │ immediately         │
+  │                           │   OR still pending)     │                    │
   └───────────┬──────────────┘                        └────────────────────┘
-              │ not found / still in_progress
+              │ not found / no answer yet
               ▼
   ┌─────────────────────────┐
   │ 2. call upstream status  │   (today's only path — unchanged)
@@ -168,87 +195,107 @@ The agent never sees what changes below. Two backends can answer the same
   └─────────────────────────┘
 ```
 
-A webhook, when the spec has one, is just a second writer into the same
-ledger row the poll path already reads on retry.
+A webhook, a human's `anvil job answer`, or a queue-publish confirmation are
+three different *writers* into the same ledger row the poll path already
+reads on retry.
 
-## 5. Component architecture
+## 7. Component architecture
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                      Third-party API (Stripe, GitHub, …)                │
-└───────────────┬───────────────────────────────────┬─────────────────────┘
-                 │ webhook POST                      │ (agent polls this
-                 │ (signed)                          │  directly, unchanged)
-                 ▼                                    │
-   ┌───────────────────────────────┐                 │
-   │  Deployed Cloud Run service     │                 │
-   │  (@anvil/generators output)     │                 │
-   │                                  │                 │
-   │  /webhooks/<service>/<opId>     │                 │
-   │  ┌────────────────────────┐    │                 │
-   │  │ 1. verify signature     │    │                 │
-   │  │    (per-provider, §10)  │    │                 │
-   │  ├────────────────────────┤    │                 │
-   │  │ 2. extract job id        │    │                 │
-   │  │    (WebhookContract)     │    │                 │
-   │  ├────────────────────────┤    │                 │
-   │  │ 3. ledger.reserve+       │    │                 │
-   │  │    complete(job_id,      │    │                 │
-   │  │    payload)  ───────────┼────┼─────┐           │
-   │  └────────────────────────┘    │      │           │
-   │                                  │      ▼           │
-   │  ┌────────────────────────┐    │  ┌─────────────────────────┐
-   │  │ MCP tool: status_op      │◀───┼──│ IdempotencyLedger        │
-   │  │ (generated handler,      │    │  │ (Firestore — same one    │
-   │  │  §4 hybrid check)         │    │  │  idempotency.ts already  │
-   │  └────────────┬─────────────┘    │  │  ships)                  │
-   └───────────────┼──────────────────┘  └─────────────────────────┘
-                    │
-                    ▼
-              MCP client (agent)
+│   Third-party API (Stripe, GitHub, …)     A human (CLI / Slack / …)     │
+└───────────────┬────────────────────────────────────┬────────────────────┘
+                 │ webhook POST (signed)               │ anvil job answer <id>
+                 ▼                                      ▼
+   ┌────────────────────────────────────────────────────────────────┐
+   │  Deployed Cloud Run service (@anvil/generators output)          │
+   │                                                                    │
+   │  /webhooks/<service>/<opId>          job-answer MCP tool / CLI cmd │
+   │  ┌────────────────────────┐         ┌─────────────────────────┐  │
+   │  │ 1. verify signature     │         │ 1. authz the answerer    │  │
+   │  │ 2. extract job id        │         │ 2. validate answer shape  │  │
+   │  │ 3. ledger.complete(...)  │         │ 3. ledger.complete(...)   │  │
+   │  └────────────┬─────────────┘         └────────────┬─────────────┘  │
+   │                │                                     │               │
+   │                └───────────────┬─────────────────────┘               │
+   │                                 ▼                                    │
+   │                    ┌─────────────────────────┐                      │
+   │                    │  IdempotencyLedger        │                      │
+   │                    │  (Firestore — the SAME     │                      │
+   │                    │   one idempotency.ts        │                      │
+   │                    │   already ships)             │                      │
+   │                    └────────────┬─────────────┘                      │
+   │                                 │                                    │
+   │                                 ▼                                    │
+   │                    ┌─────────────────────────┐                      │
+   │                    │  MCP tool: status_op      │                      │
+   │                    │  (§6 hybrid check)         │                      │
+   │                    └────────────┬─────────────┘                      │
+   └─────────────────────────────────┼──────────────────────────────────┘
+                                      ▼
+                                MCP client (agent)
 ```
 
-Nothing here is a new hosting model. `/webhooks/<service>/<opId>` is one more
-route on the same Cloud Run request/response service `packages/generators/src/deploy.ts`
-already targets — it is not a long-lived listener, and it inherits the same
-bounded-timeout discipline already enforced there (`GENERATED_CLOUD_RUN_TIMEOUT_SECONDS`,
-`deploy.ts:34`). The ledger is `packages/runtime/src/idempotency.ts`'s
-`IdempotencyLedger`, already durable, already keyed, already TTL'd
-(`DEFAULT_LEDGER_RESULT_TTL_SECONDS`, `config.ts:35`) — reused, not
-reinvented.
+Every box in this diagram is a stateless HTTP handler over the same durable
+ledger. Nothing here is a new hosting model, and nothing here is a
+persistent process — that's §2's point made concrete.
 
-## 6. Sequence: webhook wins the race
+## 8. Human approval, without a daemon
 
-```
-agent          submit_op        third-party API      webhook receiver     ledger      status_op
-  │────submit─────▶│                    │                     │              │            │
-  │                │───trigger action──▶│                     │              │            │
-  │◀──job_id───────│                    │                     │              │            │
-  │                                     │──── webhook(job_id, result) ──────▶│              │
-  │                                     │                     │───complete──▶│              │
-  │                                                                                          │
-  │──────────────────────── poll status_op(job_id) ───────────────────────────────────────▶│
-  │                                                                     ledger hit ──────────│
-  │◀─────────────────────────────── terminal state, instantly ───────────────────────────────│
-```
+An earlier draft of this document proposed a persistent daemon (a
+long-lived process behind a local socket, holding job state in memory) so a
+CLI invocation could answer a mid-call question, reasoning that MCP
+elicitation can't project onto a one-shot CLI process. That reasoning about
+the CLI was right; the proposed fix was heavier than it needed to be. §2's
+principle applies directly: durability was never about keeping a process
+alive — it's about writing to the ledger. Once that's the model, a daemon
+buys almost nothing this design doesn't already have.
 
-## 7. Sequence: webhook never arrives (or spec has no webhook) — unchanged today
+**The mechanism — three moves, no new process:**
 
-```
-agent          submit_op                                                              status_op    upstream
-  │────submit─────▶│                                                                       │            │
-  │◀──job_id───────│                                                                       │            │
-  │──────────────────────── poll status_op(job_id) ────────────────────────────────────────▶│            │
-  │                                                                        ledger miss ──────│──poll────▶│
-  │◀───────────────────────────────── pending, poll again later ───────────────────────────│◀───pending─│
-  │  (repeat until upstream reports a terminal state — exactly today's behavior)             │            │
-```
+1. `AsyncContract.pendingStates` (`packages/air/src/async-contract.ts`)
+   gains a recognized value, `awaiting_human_input`, reachable from a
+   mutation whose `confirmation.humanApproval` is `true`. When the executor
+   (`packages/runtime/src/executor.ts`) hits that gate mid-mutation — not
+   before it starts, which `confirm: true` already handles, but partway
+   through a multi-step or long-running one — it writes
+   `{ status: "in_progress", pendingReason: "awaiting_human_input", question: ... }`
+   into the ledger under the job's key and returns, exactly like any other
+   `longRunning` operation returning before completion.
+2. A new, ordinary, safety-classified mutation —
+   `anvil job answer <job_id> --decision approve|reject [--note ...]`,
+   generated the same way every other CLI command/MCP tool is generated —
+   authenticates the caller, validates the decision shape, and writes the
+   answer into the same ledger row. This is not special infrastructure; it's
+   one more operation with its own `Confirmation`/`AuthRequirement` like any
+   AIR operation, so *who's allowed to answer* is policy, not a daemon
+   feature.
+3. The status tool (§6's hybrid handler) already checks the ledger first.
+   `awaiting_human_input` is just one more state it can report — the agent
+   sees "pending: awaiting_human_input, question: '...'" the same way it
+   sees any other pending state, and re-polls until an answer lands.
 
-## 8. AIR shape
+**What this gets you, versus the daemon draft, at a fraction of the
+build:** detach/reattach (the job outlives any process, because nothing was
+holding it open), multi-surface answering (whoever runs `anvil job answer`
+— original terminal, a different machine, a bot — answers it, because
+authorization is checked per-call, not per-session), and durability across
+crashes/disconnects (it was never in memory).
+
+**What it doesn't get you, honestly:** true low-latency push notification
+to a human ("ping me the instant a question arrives") and connection/session
+amortization across many jobs. Both are real daemon benefits this design
+gives up. If either becomes a real requirement, a daemon is still a
+legitimate follow-on — but it would be an optimization on top of this
+ledger-based mechanism (a thin process that watches the ledger and pushes
+notifications), not a replacement for it, and it's still explicitly out of
+scope here.
+
+## 9. AIR shape (webhooks)
 
 Extend `packages/air/src/async-contract.ts` rather than inventing a sibling
-file — completion is one concept with two possible sources, not two
-concepts.
+file — completion is one concept with multiple possible sources, not
+several concepts.
 
 ```ts
 // packages/air/src/async-contract.ts (extend)
@@ -265,43 +312,44 @@ export interface WebhookContract {
 }
 
 /**
- * Three real shapes, not one — grounded in §10's vendor deep dive, not
- * invented generically. A single "hmac over the raw body" scheme would
- * silently misclassify two of the three vendors Anvil has already
- * backtested against real specs.
+ * Four real shapes, grounded in §11's vendor deep dive — a single "hmac
+ * over the raw body" scheme would silently misclassify most of them.
  */
 export type WebhookSignatureVerification =
   | {
       /** Raw-body HMAC, digest carried in one header. Fits GitHub, Shopify. */
       scheme: "hmac_sha256_header";
       headerName: string;
-      /** How the header value is encoded, since providers disagree. */
       encoding: "hex" | "base64";
       /** Optional literal prefix to strip before comparing, e.g. GitHub's "sha256=". */
       valuePrefix?: string;
       secretRef: string;
     }
   | {
-      /**
-       * Non-standard, vendor-specific verification logic that a generic HMAC
-       * scheme can't express — composite/timestamped headers (Stripe),
-       * signed-material-other-than-the-body (Twilio). See §10.
-       */
+      /** Non-standard vendor logic a generic HMAC scheme can't express —
+       *  composite/timestamped headers (Stripe), signed-material-other-
+       *  than-the-body (Twilio). See §11. */
       scheme: "provider_sdk";
       provider: "stripe" | "twilio" | "github" | "shopify";
       secretRef: string;
     }
   | {
-      /**
-       * Verification requires an outbound call to the provider's own verify
-       * endpoint (PayPal-shaped) rather than a local computation. This is the
-       * one scheme with its own egress implication — see §12's note on
-       * `RuntimeConfig.allowedHosts`.
-       */
+      /** Verification requires an outbound call to the provider's own
+       *  verify endpoint (PayPal-shaped). Has its own egress implication —
+       *  see §13's note on `RuntimeConfig.allowedHosts`. */
       scheme: "remote_verify";
       provider: "paypal";
       verifyEndpointRef: string;
       credentialRef: string;
+    }
+  | {
+      /** Signed JWT bearer in a header, verified against the issuer's
+       *  public keys — GCP Pub/Sub push subscriptions use this shape
+       *  (§10), not HMAC at all. */
+      scheme: "oidc_jwt";
+      headerName: string;
+      expectedIssuer: string;
+      expectedAudienceRef: string;
     };
 
 export interface AsyncContract {
@@ -310,20 +358,18 @@ export interface AsyncContract {
   statusJobIdParam: string;
   stateField?: string;
   terminalStates: string[];
+  /** Now includes "awaiting_human_input" as a recognized value (§8). */
   pendingStates: string[];
   pollIntervalSeconds?: number;
-  /** New, optional. Absent = pure poll, byte-identical to today. */
+  /** Optional. Absent = pure poll, byte-identical to today. */
   webhook?: WebhookContract;
 }
 ```
 
-Design rule carried over from the existing file's own doctrine (see its
-header comment): **half a contract is worse than none.** A `webhook` block
-with no verifiable signature scheme must be rejected by
-`resolveAsyncContract`, not silently downgraded to poll-only — a contract
-that *looks* wired but silently never fires is the exact failure mode
-`resolveAsyncContract` already exists to prevent for the poll case
-(`job_id_field_absent`, `overlapping_states`, etc.). Add matching issues:
+Design rule carried over from the existing file's own doctrine: **half a
+contract is worse than none.** A `webhook` block with no verifiable
+signature scheme must be rejected by `resolveAsyncContract`, not silently
+downgraded to poll-only. Matching issues:
 
 ```ts
 export type AsyncContractIssue =
@@ -333,203 +379,197 @@ export type AsyncContractIssue =
   | "webhook_signature_unverifiable"; // secretRef/verifyEndpointRef doesn't resolve
 ```
 
-`resolveAsyncContract` gets one new branch: if `contract.webhook` is present,
-resolve `webhookOperationId` against the operation map the same way
-`statusOperationId` is resolved today (lines 133–162 of the current file),
-and run `pathProvablyAbsent` against the webhook operation's *input* schema
-for `webhookJobIdField` (mirroring the existing `job_id_field_absent` check
-at line 179, just against the inbound payload schema instead of the
-poll-status response schema).
+`resolveAsyncContract` gets one new branch: if `contract.webhook` is
+present, resolve `webhookOperationId` against the operation map the same way
+`statusOperationId` is resolved today, and run `pathProvablyAbsent` against
+the webhook operation's *input* schema for `webhookJobIdField`.
 
-**Correction from the first draft of this doc:** a webhook-receiving
-operation is *not* tagged via `SourceRef.kind` (`packages/air/src/enums.ts:225-236`)
-— that enum is the source *spec format* (`openapi`, `wsdl`, `graphql`, …),
-not an operation-shape tag, and `"webhook"` isn't a valid spec format. The
-correct extension point is `InteractionArchetype`
-(`packages/air/src/enums.ts:249-256`), which already exists for exactly this
-purpose — "the shape of how an agent interacts with an operation, orthogonal
-to its effect/risk classification" — and already has a `long_running` value
-sitting right next to where a new `webhook_receiver` value belongs:
+**Archetype correction, carried from the prior revision:** a webhook-
+receiving operation is tagged via `InteractionArchetype`
+(`packages/air/src/enums.ts:249-256`) — not `SourceRef.kind`, which is the
+source *spec format*, not an operation-shape tag. Add `"webhook_receiver"`
+next to the existing `"long_running"` value:
 
 ```ts
 export const InteractionArchetype = z.enum([
-  "transaction",
-  "search",
-  "query_passthrough",
-  "long_running",
-  "bulk",
+  "transaction", "search", "query_passthrough", "long_running", "bulk",
   "file_transfer",
-  "webhook_receiver", // new: receiver-only, never a directly-callable MCP tool
+  "webhook_receiver", // receiver-only, never a directly-callable MCP tool
 ]);
 ```
 
 `packages/compiler/src/classify.ts` and `packages/generators/src/catalog.ts`
-both need the one-line rule this value exists to express: an operation
-archetyped `webhook_receiver` is compiled, classified, and validated like any
-other operation, but never emitted into `compiledOperations`'s callable
-surface — it's wired through `AsyncContract.webhook` and the receiver route
-(§11) only.
+both need the rule this value exists to express: compiled and validated
+like any operation, but excluded from the callable tool surface — wired
+through `AsyncContract.webhook` and the receiver route (§14) only.
 
-## 9. Compiler: parsing `callbacks:` / `webhooks:`
+## 10. Compiler: parsing `callbacks:` / `webhooks:`
 
-New file: `packages/compiler/src/protocols/webhooks.ts`, following the same
-per-protocol module shape as `packages/compiler/src/protocols/wsdl.ts` /
-`graphql.ts`. Scope for v1: OpenAPI 3.1 top-level `webhooks:` map only
-(simpler and more common than per-operation `callbacks:` objects); leave
-`callbacks:` as a documented follow-up rather than blocking v1 on the more
-irregular shape.
+New file: `packages/compiler/src/protocols/webhooks.ts`, same per-protocol
+module shape as `wsdl.ts` / `graphql.ts`. Scope for v1: OpenAPI 3.1
+top-level `webhooks:` map only; per-operation `callbacks:` is a documented
+follow-up, not a v1 blocker.
 
-- Each `webhooks:` entry compiles to a normal `Operation` (not a special
-  type) — same `Effect`, `input`/`output` schema inference, same
-  classification pipeline every other operation goes through
-  (`packages/compiler/src/classify.ts`), archetyped `webhook_receiver`
-  (§8's correction) so downstream stages know not to expose it as a
-  directly-callable MCP tool. Its `effect.kind` is `"read"` in the sense
-  that receiving a webhook performs no outbound action of its own — the
-  mutation already happened upstream; this operation only *observes* it.
+- Each `webhooks:` entry compiles to a normal `Operation`, archetyped
+  `webhook_receiver`, through the same classification pipeline as any other
+  operation (`classify.ts`).
 - `normalize.ts` links a compiled `webhooks:` operation back to whichever
-  `longRunning` operation names it, populating `AsyncContract.webhook`
-  automatically when the spec's own `callbacks:` reference makes the link
-  explicit (OpenAPI's `callbacks` keyword literally exists to say "this
-  operation's result arrives at this other URL shape" — when present, this
-  is a compile-time-derivable link, not a guess). When the spec only has
-  bare `webhooks:` with no explicit link to an operation, do **not** guess
-  the association — leave `AsyncContract.webhook` unset and let a manifest
-  patch (`packages/compiler/src/manifest.ts`) supply it explicitly, same
+  `longRunning` operation names it when the spec's own `callbacks:`
+  reference makes the link explicit — that's compile-time-derivable, not a
+  guess. When the spec only has bare `webhooks:` with no explicit link, do
+  **not** guess the association — leave `AsyncContract.webhook` unset and
+  require a manifest patch (`packages/compiler/src/manifest.ts`), same
   asymmetric-trust posture as everywhere else in this doc, and **the same
-  posture Stripe's own idempotency modeling already required** — see §10:
-  Stripe's real `Idempotency-Key` header convention isn't expressible in its
-  OpenAPI spec at all, and `docs/backtesting/reproduce/manifests/stripe.anvil.yaml`
-  already supplies it by hand for exactly that reason. Webhook linking for a
-  Stripe-shaped spec will need the identical manual-manifest treatment, not
-  a compiler gap to fix later — it's spec-shape reality, evidenced twice now.
+  posture Stripe's own idempotency modeling already required** (§11):
+  Stripe's real `Idempotency-Key` header convention isn't expressible in
+  its OpenAPI spec either, and the existing manifest already supplies it by
+  hand for exactly that reason.
 
-## 10. Upstream systems, concretely
+## 11. Upstream systems, concretely: webhooks
 
-This section grounds §8's three-variant `WebhookSignatureVerification` union
-against real vendors, using this repo's own backtest evidence
-(`docs/backtesting/*.md`) wherever Anvil has already compiled the vendor's
-real spec — not general knowledge asserted from memory. Where a claim rests
-on the vendor's *webhook* behavior specifically (which the existing curated
-backtests didn't need to touch, since they cover CRUD subsets, not the
-webhooks portion of these specs), that's flagged as **to verify** rather than
-stated as fact — the same "half a contract is worse than none" discipline
-§8 applies to the schema applies here to the design doc itself.
+Grounded against this repo's own backtest evidence (`docs/backtesting/*.md`)
+wherever Anvil has already compiled the vendor's real spec; flagged **to
+verify** where the claim is about webhook behavior specifically, which the
+existing curated backtests didn't need to touch.
 
-### Stripe — `provider_sdk`, provider `"stripe"`
+**Stripe — `provider_sdk`.** `docs/backtesting/stripe.md`: real spec is
+`stripe/openapi`'s `spec3.json` (414 paths; 22 curated). Checked directly:
+neither the curated ops list nor the manifest mentions `webhooks`/
+`callbacks` — Stripe's spec doesn't declare its webhook events via the
+OpenAPI keywords §10 targets, so the manifest-supplied link is the only
+path, consistent with Stripe's `Idempotency-Key` needing the same treatment.
+**To verify:** Stripe signs with a composite `Stripe-Signature` header
+(`t=<timestamp>,v1=<hex hmac>` over `"{timestamp}.{raw_body}"`) plus a
+timestamp-tolerance replay check — a bare raw-body HMAC scheme can't
+express this, which is why `provider_sdk` exists as its own variant.
 
-- **Already in Anvil's corpus.** `docs/backtesting/stripe.md`: the real spec
-  is `stripe/openapi`'s `spec3.json` (414 real paths; Anvil curated 22 —
-  customers, charges, payment intents, refunds, invoices, subscriptions).
-  Checked directly against `docs/backtesting/reproduce/curated/stripe-ops.txt`
-  and `.../manifests/stripe.anvil.yaml`: neither mentions `webhooks` or
-  `callbacks` — Stripe's `spec3.json` does not declare its webhook events
-  via the OpenAPI `webhooks:`/`callbacks:` keywords Anvil's compiler (§9)
-  targets. Stripe instead documents webhook event *types* and payload
-  shapes separately from the request/response spec. This means §9's
-  auto-link path won't fire for Stripe — the manifest-supplied fallback is
-  the only path, and that's not a gap, it's consistent with the one other
-  thing Anvil already learned about Stripe's spec: its real
-  `Idempotency-Key` header convention is *also* not expressible in
-  `spec3.json` and is *also* manifest-supplied
-  (`stripe.md`: "not expressible in the OpenAPI spec itself"). Same vendor,
-  same lesson, twice.
-- **Webhook signature shape (to verify against Stripe's live docs before
-  Phase 2, not yet checked against a fetched artifact in this repo):**
-  Stripe signs with a composite `Stripe-Signature` header —
-  `t=<timestamp>,v1=<hex hmac>` — computed as `HMAC-SHA256(secret,
-  "{timestamp}.{raw_body}")`, and correct verification also enforces a
-  timestamp tolerance window (Stripe's own libraries default to 5 minutes)
-  to reject replayed deliveries. A bare `hmac_sha256_header` scheme (header
-  → secret → compare) cannot express this: the signed material isn't the
-  raw body alone, and there's a timestamp check with no field in §8's
-  first variant to carry it. This is exactly why `provider_sdk` exists as
-  its own variant rather than trying to generalize `hmac_sha256_header`
-  with more optional fields — Stripe's scheme is qualitatively different,
-  not just differently-named.
-- **Job id correlation:** the object id returned by the original mutation
-  (e.g. a Payment Intent's `id`, `pi_...`) is the same id present at
-  `data.object.id` in the corresponding webhook event — clean 1:1 handle
-  correlation once the manifest links the two operations.
+**GitHub — `hmac_sha256_header`.** `docs/backtesting/github.md`: real spec
+from `github/rest-api-description` (790 paths; 25 curated). Whether the full
+spec declares a top-level `webhooks:` map needs confirming against the
+fetched file before Phase 1 (§16) — if true, GitHub is the cleanest
+available auto-link test case. **To verify:** GitHub signs with
+`X-Hub-Signature-256: sha256=<hex hmac>` — a plain raw-body HMAC-SHA256, no
+timestamp, no composite encoding: `headerName: "X-Hub-Signature-256"`,
+`encoding: "hex"`, `valuePrefix: "sha256="`.
 
-### GitHub — `hmac_sha256_header`
+**Twilio — `provider_sdk`.** `docs/backtesting/twilio.md`: full spec (197
+operations) compiled in 1.7s, no crash — good scale evidence. **To
+verify:** `X-Twilio-Signature` signs `HMAC-SHA1(auth_token, full_url +
+sorted_POST_params)`, base64-encoded — different hash *and* different
+signed material than GitHub. Confirms the union in §9 needs to stay
+discriminated, not a single configurable HMAC shape.
 
-- **Already in Anvil's corpus.** `docs/backtesting/github.md`: real spec
-  from `github/rest-api-description` (790 real paths; 25 curated —
-  issues, pull requests, reviews, repo contents, search). Same caveat as
-  Stripe: the curated 25-operation subset doesn't touch the webhooks
-  portion of the spec, so whether `github/rest-api-description`'s full
-  `api.github.com.json` declares a top-level `webhooks:` map needs
-  confirming against the actual fetched file before Phase 1 claims
-  GitHub as a clean auto-link example — **do this check first**, since if
-  true, GitHub is the best available real-world test case for §9's
-  auto-link path (the other two vendors in this section are confirmed
-  manifest-only).
-- **Webhook signature shape:** GitHub signs webhook deliveries with
-  `X-Hub-Signature-256: sha256=<hex hmac>` — a straightforward
-  `HMAC-SHA256` over the *raw* request body, no timestamp, no composite
-  encoding. This is the clean case §8's `hmac_sha256_header` variant was
-  designed around: `headerName: "X-Hub-Signature-256"`,
-  `encoding: "hex"`, `valuePrefix: "sha256="`.
-- **Job id correlation:** e.g. a `deployment_status` event's
-  `deployment.id`, or a `workflow_run` event's `workflow_run.id`, matching
-  the id returned by the triggering `POST` call.
+**PayPal, Shopify — not yet in Anvil's corpus, named because they justify
+§9's remaining variants.** Shopify (`X-Shopify-Hmac-Sha256`, base64
+HMAC-SHA256 of raw body) is a second confirming `hmac_sha256_header` case.
+PayPal verifies via a certificate chain or, more commonly, by calling its
+own `/v1/notifications/verify-webhook-signature` — the `remote_verify`
+scheme, the one with an outbound-call/`allowedHosts` implication (§13).
 
-### Twilio — `provider_sdk`, provider `"twilio"`
+**What this section does not cover.** `findings-log.md`'s largest real
+estate (FLEXCUBE: 29 services, 144 operations; OBDX) is banking, not
+consumer/platform SaaS. Nothing in `docs/backtesting/banking.md`,
+`ENTERPRISE_SYSTEMS.md`, or `findings-log.md` mentions MQ, JMS, Kafka, ESB,
+webhooks, or async completion behavior for either estate — a prior revision
+of this document asserted FLEXCUBE/OBDX complete asynchronously via a
+message queue "behind an ESB," and that claim was general banking-domain
+inference, not evidence from this repo. It's corrected here: whether either
+estate needs anything in this document is **unverified and worth checking
+directly** (do any of their operations classify `longRunning`? what does
+their spec say about it?) before treating either as a driver for this work.
 
-- **Already in Anvil's corpus, at real scale.** `docs/backtesting/twilio.md`:
-  the full spec (`twilio/twilio-oai`'s `twilio_api_v2010.json`, 121 paths,
-  197 operations) compiled end-to-end in 1.7s with no hang or crash — good
-  existing evidence the compiler already handles specs at the size a
-  webhooks-parsing pass would need to scale to.
-- **Webhook signature shape (to verify against Twilio's live docs before
-  Phase 2):** Twilio signs with `X-Twilio-Signature`, but — unlike GitHub —
-  the signed material is **not the raw body**. It's `HMAC-SHA1(auth_token,
-  full_request_url + sorted_POST_params_concatenated)`, base64-encoded.
-  Different hash (SHA1, not SHA256), different signed material (URL +
-  params, not body bytes). This is the sharpest evidence in this section
-  for why `WebhookSignatureVerification` must stay a real discriminated
-  union rather than one configurable HMAC shape: three vendors already in
-  Anvil's corpus use three incompatible schemes (composite+timestamp,
-  raw-body HMAC-SHA256, URL+params HMAC-SHA1).
+## 12. Queue systems, concretely: the stateless-compatible slice
 
-### PayPal, Shopify — the two variants not yet in Anvil's corpus
+This is the section that changes once §2's principle is taken seriously.
+"Connect to a message queue" sounds like it requires a new, stateful
+runtime shape — a persistent consumer holding a broker connection open. For
+most real queue providers, it doesn't, because most of them already expose
+a plain HTTP surface Anvil's *existing* OpenAPI compiler already knows how
+to handle — no new parser, no new runtime target, no new architecture.
 
-Named here because they justify §8's third scheme, not because Anvil has
-backtested them:
+- **AWS SQS** is natively pull-based over plain REST/JSON
+  (`ReceiveMessage`, `SendMessage`, `DeleteMessage`) — no persistent
+  connection at all. A `peek_next_dlq_message` tool is just a `ReceiveMessage`
+  read operation; `publish_to_reprocess_queue` is a `SendMessage` mutation.
+  SQS FIFO queues carry a native `MessageDeduplicationId` parameter, which
+  maps directly onto AIR's existing `key_supported` idempotency mode — the
+  provider's own dedup mechanism becomes Anvil's idempotency carrier, no new
+  concept required.
+- **GCP Pub/Sub** supports both directions cleanly:
+  - *Pull* (`projects.subscriptions.pull`) is the same stateless-HTTP shape
+    as SQS.
+  - *Push* delivers a message as an HTTP POST to a configured endpoint —
+    which is architecturally identical to §7's webhook receiver. The only
+    new piece is the verification scheme: Pub/Sub push requests carry a
+    signed JWT bearer token (not HMAC), which is exactly §9's new
+    `oidc_jwt` variant. A queue-push subscription is a webhook with a
+    different signature scheme, not a new component.
+- **Kafka** has no native HTTP pull API, but production deployments that
+  need one almost always front it with something that provides one —
+  Confluent's REST Proxy or an equivalent Kafka HTTP bridge — which is
+  itself an OpenAPI-shaped service Anvil's compiler already handles like
+  any other REST API. Compiling *that* is in scope at zero new
+  architecture cost; compiling raw Kafka's native wire protocol is not
+  (§4's non-goal).
+- **RabbitMQ**'s HTTP Management API exposes a `get` (pull) endpoint for
+  small-scale polling — real, if not what RabbitMQ recommends for
+  high-throughput production use — and is the same stateless-HTTP shape as
+  the above.
 
-- **Shopify** (`X-Shopify-Hmac-Sha256`, base64 HMAC-SHA256 of the raw body)
-  is a second confirming example of the plain `hmac_sha256_header` shape —
-  worth adding to the corpus gauntlet the next time a Phase 1 implementer
-  wants a second clean case beyond GitHub.
-- **PayPal** verifies webhooks either by validating a certificate chain
-  (`PAYPAL-CERT-URL`, `PAYPAL-TRANSMISSION-SIG/ID/TIME` headers) or, more
-  commonly in practice, by calling PayPal's own
-  `/v1/notifications/verify-webhook-signature` API with the received
-  headers and body. That's the `remote_verify` scheme in §8 — the receiver
-  makes an *outbound* call to verify an *inbound* one, which is why §12
-  flags it as the one scheme with its own egress/`allowedHosts` implication
-  the other two don't have.
+**The practical consequence:** for every provider in this list, "queue
+integration" is not a new Anvil capability — it's *compiling that
+provider's REST API the same way Anvil already compiles Stripe or GitHub*,
+plus (for push-style delivery) reusing §7's receiver with one more
+signature scheme. The genuinely new, harder, deferred case is exactly the
+one named in §4: a broker with no HTTP front at all, where the only way in
+is a persistent native-protocol consumer. That's real, it's the
+`PRODUCT_BOUNDARY.md` §2 "Tomorrow" line for Kafka schemas / AsyncAPI, and
+it deserves its own design — this document deliberately doesn't force it
+into the ledger mechanism, because a live broker connection can't be made
+stateless by definition.
 
-### What this section does *not* cover — enterprise/ESB-fronted completion
+## 13. DLQ triage, done right
 
-`findings-log.md`'s largest real-scale validation is the FLEXCUBE estate (29
-Oracle Universal Banking REST services, 144 operations) and the OBDX estate
-— both banking systems, both real, both bigger than any of the four vendors
-above. Nothing in that record suggests either estate exposes public,
-HMAC-signed HTTPS webhooks in the Stripe/GitHub/Twilio shape; enterprise
-banking integrations of that kind typically complete asynchronously via a
-message queue (JMS/Kafka) or file-based batch behind an ESB the caller
-doesn't have direct HTTPS access to. This design's webhook receiver (§11)
-assumes a public HTTPS endpoint the provider can POST to — which is true for
-consumer/platform SaaS and not a safe assumption for FLEXCUBE-shaped
-estates. If MQ/ESB-fronted completion becomes a priority, it's a genuinely
-different ingestion shape (a consumer process, not an HTTP route) and
-deserves its own design rather than being forced through §11's receiver.
+A pattern reviewed during this design's development proposed a
+bidirectional "read-repair-write" agent loop over a dead-letter queue: pull
+a failed message, have an agent investigate and fix it, push the correction
+to a reprocess queue. The instinct to split into a narrow reader tool and a
+schema-validated writer tool was sound. What it was missing is everything
+§2–§9 already built for a different reason:
 
-## 11. Runtime: the receiver and the hybrid status handler
+- **No idempotency story.** If the write to the reprocess queue is retried,
+  does the correction get applied twice? §12's point directly answers
+  this: SQS/Pub/Sub-shaped providers carry a real dedup id, which is just
+  another idempotency carrier once the publish operation is compiled and
+  classified like any other AIR mutation — not a gap to hand-solve per
+  integration.
+- **No confirmation tier for consequential corrections.** A schema-valid
+  loan-application correction or a billing-discrepancy fix is exactly the
+  shape `confirmation.humanApproval` exists for. Compiled through Anvil,
+  that mutation gets a real risk classification and — via §8's mechanism —
+  a real, cheap channel to require a human's sign-off before it's
+  resubmitted, instead of relying on the agent's own judgment as the only
+  safety layer.
+- **The "investigate and repair" step stays out of Anvil's scope, on
+  purpose.** `docs/PRODUCT_BOUNDARY.md`: *"Anvil compiles AIR; it is not a
+  platform."* Anvil's job stops at compiling `peek_next_dlq_message` and
+  `publish_to_reprocess_queue` into safety-classified operations — deciding
+  *what correction to apply* is agent/application logic built on top, the
+  same boundary that already holds for "when should this Stripe refund
+  fire." Anvil earning trust here means the generated write tool refuses an
+  unproven-idempotent or ungated-risk correction by construction, the same
+  way it already refuses a required-idempotency mutation with no key today
+  — not that Anvil writes the repair logic itself.
 
-**Receiver** — `packages/runtime/src/webhook-receiver.ts` (new):
+No new file-level work beyond §10/§12's compiler and §9's AIR shape — this
+section is a worked example of applying both to a named use case, not a
+fourth mechanism.
+
+## 14. Runtime: the receiver and the hybrid status handler
+
+**Receiver** — `packages/runtime/src/webhook-receiver.ts` (new), serves
+both third-party webhooks (§11) and queue-push deliveries (§12 — same
+route shape, `oidc_jwt` verification instead of HMAC):
 
 ```ts
 export async function handleWebhook(params: {
@@ -541,154 +581,145 @@ export async function handleWebhook(params: {
 }): Promise<{ status: 200 | 401 | 400 }>
 ```
 
-1. Verify signature per `contract.signatureVerification` — reject
-   (`401`) before touching the ledger or parsing the body further. This is
-   the mandatory gate from §2; there is no scheme that skips it. Dispatch on
-   `scheme` per §8/§10: `hmac_sha256_header` computes and compares locally;
-   `provider_sdk` calls a small per-provider verifier (Stripe/Twilio/GitHub/
-   Shopify each need their own, per §10's shape differences); `remote_verify`
-   makes the provider's own verify call, subject to the egress note in §12.
-2. Parse `rawBody` against the webhook operation's input schema (already
-   validated to exist by `resolveAsyncContract`, §8); extract
+1. Verify signature per `contract.signatureVerification` — reject (`401`)
+   before touching the ledger or parsing further. No scheme skips this.
+2. Parse `rawBody` against the webhook operation's input schema; extract
    `webhookJobIdField` and (if present) `webhookStateField`.
 3. Write into `ledger` via the existing `reserve`/complete shape
-   (`packages/runtime/src/idempotency.ts:137+` — `IdempotencyLedger`
-   already models `reserved` / `replay` / `in_progress` / `conflict`; a
-   webhook completion is the same "write once, replay on duplicate delivery"
-   operation the ledger was built for, so provider retried-webhook dedup
-   falls out for free instead of needing bespoke dedup logic).
+   (`packages/runtime/src/idempotency.ts:137+`) — a webhook or queue-push
+   delivery is the same "write once, replay on duplicate" operation the
+   ledger already models, so provider-retried delivery dedup falls out for
+   free.
 4. Always return `200` once durably written (or on duplicate delivery) —
    never let a downstream failure cause the provider to keep retrying a
-   webhook that was already recorded.
+   delivery that's already recorded.
+
+**Job-answer handler** — `packages/runtime/src/job-answer.ts` (new, §8):
+authenticates the caller against the operation's `AuthRequirement`,
+validates the decision shape, writes into the same ledger row via the same
+`reserve`/complete shape. Structurally identical to the webhook receiver,
+just triggered by a CLI/MCP call instead of an inbound POST.
 
 **Hybrid status handler** — the generated MCP tool for `statusOperationId`
-(built in `packages/generators/src/mcp.ts`, served by
-`packages/mcp-runtime/src/server.ts`) changes from "call upstream" to
-"check ledger, else call upstream," per the diagram in §4. This is a
-handler-generation change, not a protocol change — the tool's declared
-input/output schema is untouched.
+(`packages/generators/src/mcp.ts`, served by `packages/mcp-runtime/src/server.ts`)
+changes from "call upstream" to "check ledger, else call upstream," per §6.
+Handler-generation change only — the tool's declared input/output schema is
+untouched.
 
-## 12. Safety gating (asymmetric trust — do not skip this)
+## 15. Safety gating (asymmetric trust — do not skip this)
 
-Per `reference/safety-invariants.md`'s rule: *loosening* is the direction
-that demands the strongest evidence bar, regardless of mechanism. A webhook
-completion is new trust surface — an unauthenticated party on the internet
-can cause a `status_op` call to return "terminal: succeeded" the instant
-Anvil accepts their POST. Concretely:
+Per `reference/safety-invariants.md`: *loosening* is the direction that
+demands the strongest evidence bar, regardless of mechanism. Every new
+writer into the ledger in this document is new trust surface:
 
-- `resolveAsyncContract` must refuse a `webhook` block whose
-  `signatureVerification.secretRef` (or, for `remote_verify`,
-  `verifyEndpointRef`/`credentialRef`) doesn't resolve to a real, configured
-  credential — same posture as `status_operation_not_approved` today
-  (§8's new issues).
-- In `packages/refinement/src/approval.ts`, add `asyncContract.webhook` to
-  the same patch-key list `idempotency carrier` fields already sit on
-  (`safety-invariants.md`'s citation of `approval.ts` gating on *patch keys
-  themselves*, not which skill produced them) — any proposal that adds or
-  changes a `webhook` block returns `review`, unconditionally, never `auto`.
-- The generated receiver must be **fail-closed by construction**: no
+- `resolveAsyncContract` refuses a `webhook` block whose verification
+  reference doesn't resolve to a real, configured credential/endpoint —
+  same posture as `status_operation_not_approved` today.
+- In `packages/refinement/src/approval.ts`, `asyncContract.webhook` and any
+  `job answer` authorization patch join the same patch-key list the
+  idempotency carrier fields already sit on — `review`-gated,
+  unconditionally, never `auto`.
+- The generated receiver is **fail-closed by construction**: no
   `signatureVerification` present ⇒ the compiler cannot produce a route for
-  that operation at all (not "runs unauthenticated," genuinely absent).
-  Mirrors `RuntimeConfig.allowedHosts` empty-means-deny-all discipline
-  (`config.ts:16`) — the webhook analog of "unconfigured is refused, not
-  permissive."
-- `remote_verify` (PayPal-shaped, §10) is the one scheme that makes an
-  *outbound* call during inbound verification — that call's destination
-  must itself be on `RuntimeConfig.allowedHosts`, or verification fails
-  closed exactly like any other egress the executor already refuses to an
-  unlisted host. This is a real, scheme-specific consequence worth stating
-  explicitly rather than leaving implicit: the two local-computation schemes
-  have no such requirement, `remote_verify` does.
+  that operation at all. Mirrors `RuntimeConfig.allowedHosts`
+  empty-means-deny-all (`config.ts:16`).
+- `remote_verify` (PayPal-shaped) makes an *outbound* call during inbound
+  verification — that destination must itself be on
+  `RuntimeConfig.allowedHosts`, or verification fails closed like any other
+  egress to an unlisted host.
+- §12's queue-publish operations get no special exemption from idempotency/
+  confirmation classification just because the "provider" is a queue
+  instead of a REST API — §13's whole point is that they don't need one.
+- §8's `anvil job answer` needs its own `AuthRequirement`, checked per call
+  — "who may answer this specific job's question" is policy the operation
+  declares, not an assumption that whoever can reach the CLI is authorized.
 
-## 13. Certification
+## 16. Certification
 
-New check in `packages/certification/src/checks.ts`, same shape as the
-existing async-contract checks (`packages/certification/src/async-certification.test.ts`
-already establishes the pattern to extend): a bundle fails certification if
-any operation's `AsyncContract.webhook` is present but its verification
-credential/endpoint reference isn't satisfiable from the deploy target's
-configuration — catching a spec/deploy mismatch statically, before the
-receiver ever gets an unverifiable request in production.
+New check in `packages/certification/src/checks.ts`, extending the pattern
+`packages/certification/src/async-certification.test.ts` already
+establishes: a bundle fails certification if any operation's
+`AsyncContract.webhook` is present but its verification credential/endpoint
+isn't satisfiable from the deploy target's configuration, or if a
+`webhook_receiver`-archetyped operation has no corresponding route wiring —
+catching a spec/deploy mismatch statically, before the receiver ever gets an
+unverifiable request in production.
 
-## 14. File-level task breakdown
+## 17. File-level task breakdown
 
 | Package | File | Change |
 |---|---|---|
-| `@anvil/air` | `src/enums.ts` | Add `"webhook_receiver"` to `InteractionArchetype` (§8 correction) |
-| `@anvil/air` | `src/async-contract.ts` | Add `WebhookContract`, three-variant `WebhookSignatureVerification`, new `AsyncContractIssue` values, webhook branch in `resolveAsyncContract` |
-| `@anvil/air` | `src/async-contract.test.ts` | New cases: webhook resolves per scheme, each new issue triggers correctly |
+| `@anvil/air` | `src/enums.ts` | Add `"webhook_receiver"` to `InteractionArchetype` |
+| `@anvil/air` | `src/async-contract.ts` | `WebhookContract`, four-variant `WebhookSignatureVerification`, `awaiting_human_input` as a recognized `pendingState`, new `AsyncContractIssue` values, webhook branch in `resolveAsyncContract` |
+| `@anvil/air` | `src/async-contract.test.ts` | New cases per scheme + the human-approval pending state |
 | `@anvil/compiler` | `src/protocols/webhooks.ts` (new) | Parse OpenAPI `webhooks:`, compile to `Operation` archetyped `webhook_receiver` |
-| `@anvil/compiler` | `src/classify.ts` | `webhook_receiver` operations classify but never enter the callable surface |
+| `@anvil/compiler` | `src/classify.ts` | `webhook_receiver` ops classify but never enter the callable surface |
 | `@anvil/compiler` | `src/normalize.ts` | Link `callbacks:`-referenced webhook ops into the owning operation's `AsyncContract.webhook` |
-| `@anvil/compiler` | `src/manifest.ts` | Manifest patch shape for manually supplying a `webhook` block (required path for Stripe/Twilio-shaped specs per §10) |
-| `@anvil/runtime` | `src/webhook-receiver.ts` (new) | Signature verify (per-scheme dispatch) → parse → ledger write |
-| `@anvil/runtime` | `src/idempotency.ts` | No interface change; confirm `reserve`/complete shape covers webhook-sourced completion (likely already does) |
-| `@anvil/generators` | `src/catalog.ts` | Exclude `webhook_receiver`-archetyped operations from `compiledOperations`'s callable surface |
-| `@anvil/generators` | `src/mcp.ts` | Hybrid status handler: ledger-check-then-upstream |
-| `@anvil/generators` | `src/deploy.ts` | New `/webhooks/<service>/<opId>` route wired into the generated Cloud Run entrypoint |
-| `@anvil/mcp-runtime` | `src/server.ts` | Serve the hybrid handler; webhook ops never appear in `tools/list` |
-| `@anvil/refinement` | `src/approval.ts` | `webhook`-touching patches always `review` |
-| `@anvil/certification` | `src/checks.ts` | Static check: webhook signature scheme resolvable at deploy target, incl. `remote_verify`'s `allowedHosts` requirement |
-| `@anvil/cli` | `src/commands/inspect.ts` | Surface `asyncContract.webhook` (or its absence/issue) in `anvil inspect` output |
+| `@anvil/compiler` | `src/manifest.ts` | Manifest patch shape for manual webhook linking (Stripe/Twilio-shaped specs) |
+| `@anvil/runtime` | `src/webhook-receiver.ts` (new) | Signature verify (per-scheme dispatch, incl. `oidc_jwt` for queue push) → parse → ledger write |
+| `@anvil/runtime` | `src/job-answer.ts` (new) | §8's authenticated answer-write path |
+| `@anvil/generators` | `src/catalog.ts` | Exclude `webhook_receiver`-archetyped operations from the callable surface |
+| `@anvil/generators` | `src/mcp.ts` | Hybrid status handler: ledger-check-then-upstream; generate `job answer` tool |
+| `@anvil/generators` | `src/deploy.ts` | New `/webhooks/<service>/<opId>` route on the generated Cloud Run entrypoint |
+| `@anvil/mcp-runtime` | `src/server.ts` | Serve the hybrid handler and job-answer tool; webhook ops never appear in `tools/list` |
+| `@anvil/refinement` | `src/approval.ts` | `webhook`- and job-answer-authorization-touching patches always `review` |
+| `@anvil/certification` | `src/checks.ts` | Static check: signature scheme resolvable at deploy target, incl. `remote_verify`'s `allowedHosts` requirement |
+| `@anvil/cli` | `src/commands/inspect.ts` | Surface `asyncContract.webhook`/pending-state issues in `anvil inspect` |
+| `@anvil/cli` | `src/commands/job.ts` (new) | `anvil job answer <id>` |
 
-## 15. Phased plan
+## 18. Phased plan
 
-1. **Phase 0 — AIR shape.** §8 only. Land `InteractionArchetype`'s new
-   value, `WebhookContract` + resolver branch + tests. No compiler, no
-   runtime. Reviewable in isolation because nothing downstream depends on
-   it yet.
-2. **Phase 1 — Compiler parsing.** §9. `webhooks:` → `Operation`, manifest
-   patch path for manual linking. **First step: confirm against a real
-   fetched spec (§10) whether GitHub's `rest-api-description` declares a
-   top-level `webhooks:` map** — if so, it's the auto-link path's proving
-   ground; Stripe and Twilio are confirmed manifest-only regardless.
-   Certify that a webhook-carrying spec compiles without needing the
-   runtime pieces yet (contract resolves, `webhook_operation_missing`/
-   `webhook_job_id_field_absent` fire on bad input).
-3. **Phase 2 — Runtime receiver.** §11's `handleWebhook`, ledger wiring,
-   per-scheme signature verification (start with `hmac_sha256_header` —
-   GitHub/Shopify-shaped, the simplest and best-evidenced — before tackling
-   `provider_sdk`'s Stripe/Twilio-specific logic). Unit-testable without a
-   deployed server (pure function of body/headers/contract → ledger call).
-4. **Phase 3 — Generated route + hybrid handler.** §11's generator/server
-   changes, wired end-to-end. This is where `deploy.ts`'s Cloud Run
-   entrypoint actually gains the new route.
-5. **Phase 4 — Safety gating + certification.** §12, §13. Do not ship
-   Phase 3 to any real deployment before this lands — a receiver with no
-   approval-gating and no certification check is exactly the "loosening
-   with no equivalent gate" defect `safety-invariants.md` calls out as
-   disqualifying.
-6. **Phase 5 — Docs/skill generation + `anvil inspect`.** Agent-facing
-   sentence stays `asyncContractSentence()`'s existing wording — confirm no
-   change is needed there (the point of §4 is that it shouldn't be), and add
-   `anvil inspect` visibility for operators.
+1. **Phase 0 — AIR shape.** §9, plus `awaiting_human_input` as a recognized
+   `pendingState` and `InteractionArchetype`'s new value. No compiler, no
+   runtime. Reviewable in isolation.
+2. **Phase 1 — Webhook compiler parsing.** §10. First step: confirm against
+   a real fetched spec whether GitHub's `rest-api-description` declares a
+   top-level `webhooks:` map (§11) — the best candidate for the auto-link
+   path; Stripe/Twilio are confirmed manifest-only regardless.
+3. **Phase 2 — Runtime receiver + job-answer handler.** §14, both new
+   files. Both are pure functions of (payload/decision, contract, ledger) →
+   ledger call — unit-testable without a deployed server.
+4. **Phase 3 — Generated routes + hybrid status handler + `anvil job
+   answer`.** §14's generator/server/CLI changes, wired end-to-end.
+5. **Phase 4 — Safety gating + certification.** §15, §16. Do not ship
+   Phase 3 to any real deployment before this lands.
+6. **Phase 5 — Queue systems.** §12. Compile one pull-based provider (SQS
+   or Pub/Sub pull) as a proof that "queue integration" really is "compile
+   its REST API" with zero new architecture; then wire Pub/Sub push through
+   the existing receiver with the new `oidc_jwt` scheme.
+7. **Phase 6 — Docs/skill generation + `anvil inspect`.** Agent-facing
+   sentence stays `asyncContractSentence()`'s existing wording throughout
+   Phases 0–5 — confirm no change is needed (§6's whole point is that it
+   shouldn't be), and add operator visibility.
 
-Each phase should land as its own PR with its own drift-guard tests where it
-touches generated output (`mcp.ts`, `deploy.ts`) — this codebase's existing
-convention for catching exactly the "skill/CLI/MCP drifted apart" failure
-mode described at the top of `CLAUDE.md`.
+Each phase lands as its own PR with its own drift-guard tests where it
+touches generated output — this codebase's existing convention for catching
+the "skill/CLI/MCP drifted apart" failure mode described at the top of
+`CLAUDE.md`.
 
-## 16. Open questions to resolve before Phase 1
+## 19. Open questions
 
-- **Verify GitHub's full spec structure directly** (§10, §15 Phase 1) —
-  this doc treats it as the best candidate for §9's auto-link path but that
-  rests on general knowledge of `github/rest-api-description`, not a check
-  against a fetched artifact in this repo. Confirm before relying on it.
+- **Verify GitHub's full spec structure directly** (§11, §18 Phase 1) —
+  currently general knowledge of `github/rest-api-description`, not checked
+  against a fetched artifact in this repo.
+- **Verify whether FLEXCUBE/OBDX need any of this at all** (§11's closing
+  note) — no evidence either way currently exists in this repo; don't
+  prioritize enterprise-estate motivation for this work until checked.
 - Per-operation `callbacks:` (vs. top-level `webhooks:`) — same underlying
-  shape, more irregular OpenAPI structure. Worth a second pass once
-  top-level `webhooks:` is proven, not blocking v1.
-- Multiple webhook deliveries with *different* terminal states for the same
-  job (e.g. a "processing" webhook followed by a "succeeded" one) — the
-  ledger write in §11 step 3 needs a last-write-wins-if-more-terminal rule,
-  not naive overwrite; needs a concrete decision before Phase 2 lands, not
-  during.
+  shape, more irregular structure. Second pass once top-level `webhooks:`
+  is proven.
+- Multiple webhook/queue deliveries with *different* terminal states for
+  the same job — the ledger write needs a last-write-wins-if-more-terminal
+  rule, not naive overwrite; decide before Phase 2 lands, not during.
 - Local dev / `anvil run` story for a webhook-carrying operation with no
-  public HTTPS endpoint (tunnel requirement) — out of scope for this doc,
-  worth a short follow-up note in the CLI's `run.ts` docs once Phase 3 exists.
-- **A daemon-backed CLI session (§2, §3)** would let `humanApproval` get a
-  real solicitation channel (not just today's advisory doc string) using
-  the same ledger substrate this design builds — `awaiting_human_input` as
-  one more `pendingState`, answered by whichever surface is attached to the
-  job. Genuinely related, deliberately not designed here: it needs its own
-  design doc covering process lifecycle, session/job model, and socket
-  protocol, none of which this document scopes.
+  public HTTPS endpoint (tunnel requirement) — worth a short follow-up note
+  in the CLI's `run.ts` docs once Phase 3 exists.
+- **Raw broker consumption** (native Kafka/JMS/AMQP, no HTTP front) — real,
+  named in `PRODUCT_BOUNDARY.md` as a "Tomorrow" parser/target, and
+  deliberately not designed here (§4, §12's closing paragraph) because it's
+  the one case that can't be made stateless. Its own document, if pursued.
+- **A daemon as an optimization, not a foundation** (§8's closing
+  paragraph) — if low-latency human-notification or connection/session
+  amortization become real requirements, a thin process that watches the
+  ledger and pushes notifications is a legitimate follow-on. It would sit
+  on top of this design, not replace it, and isn't scoped here.
