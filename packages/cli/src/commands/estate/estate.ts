@@ -49,6 +49,7 @@ import {
 import { generateBundle, readBundleDir } from "@anvil/generators";
 import type { Command } from "commander";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
 import {
   loadWso2ApictlDirectory,
@@ -422,23 +423,12 @@ function adapterFor(
 ): GatewayAdapter<EstateConnection> | undefined {
   const make = VENDORS[vendor];
   if (!make) {
-    const message = `Unknown --vendor '${vendor}'. Use: ${VENDOR_LIST}.`;
-    if (json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-error",
-            code: "estate/unknown_vendor",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
-    }
+    emitRefusal(io, json, {
+      reportType: "anvil.gateway-estate-error",
+      code: "estate/unknown_vendor",
+      message: `Unknown --vendor '${vendor}'. Use: ${VENDOR_LIST}.`,
+      human: "message-only",
+    });
   }
   return make?.();
 }
@@ -756,19 +746,16 @@ function loadEstateForCommand(
     const unsupported = errors.some((message) =>
       message.includes(`[${UNSUPPORTED_NATIVE_ARTIFACT_CODE}]`),
     );
-    io.out(
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          reportType: "anvil.gateway-estate-error",
-          code: unsupported ? UNSUPPORTED_NATIVE_ARTIFACT_CODE : "estate/export_unreadable",
-          message: errors.at(-1) ?? `Cannot read '${exportPath}'.`,
-          diagnostics: errors,
-        },
-        null,
-        2,
-      ),
-    );
+    // `json` is already true here, and the human path is not this function's to
+    // emit — `loadEstateConfig` printed to stderr on the way in. Passing `true`
+    // rather than `json` keeps that split explicit instead of relying on the
+    // outer guard to make the stderr branch unreachable.
+    emitRefusal(io, true, {
+      reportType: "anvil.gateway-estate-error",
+      code: unsupported ? UNSUPPORTED_NATIVE_ARTIFACT_CODE : "estate/export_unreadable",
+      message: errors.at(-1) ?? `Cannot read '${exportPath}'.`,
+      details: { diagnostics: errors },
+    });
   }
   return loaded;
 }
@@ -951,23 +938,12 @@ async function runInventory(
 ): Promise<number> {
   const gatewayIdError = invalidGatewayId(opts.gatewayId);
   if (gatewayIdError) {
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-inventory-error",
-            code: "estate/invalid_gateway_id",
-            message: gatewayIdError,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(gatewayIdError);
-    }
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-inventory-error",
+      code: "estate/invalid_gateway_id",
+      message: gatewayIdError,
+      human: "message-only",
+    });
   }
   const adapter = adapterFor(opts.vendor, io, opts.json);
   if (!adapter) return 1;
@@ -980,24 +956,12 @@ async function runInventory(
   );
   const parsedLimit = Number(opts.limit ?? "50");
   if (!Number.isSafeInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 10_000) {
-    const message = `Invalid --limit '${opts.limit}': expected an integer from 1 to 10000.`;
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-inventory-error",
-            code: "estate/invalid_limit",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
-    }
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-inventory-error",
+      code: "estate/invalid_limit",
+      message: `Invalid --limit '${opts.limit}': expected an integer from 1 to 10000.`,
+      human: "message-only",
+    });
   }
   const query = opts.query?.toLocaleLowerCase();
   const matched = snapshot.apis.filter(
@@ -1121,23 +1085,12 @@ async function runInventory(
 async function runConnect(exportPath: string, opts: ConnectOptions, io: CliIO): Promise<number> {
   const gatewayIdError = invalidGatewayId(opts.gatewayId);
   if (gatewayIdError) {
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-connect-error",
-            code: "estate/invalid_gateway_id",
-            message: gatewayIdError,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(gatewayIdError);
-    }
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-connect-error",
+      code: "estate/invalid_gateway_id",
+      message: gatewayIdError,
+      human: "message-only",
+    });
   }
   const adapter = adapterFor(opts.vendor, io, opts.json);
   if (!adapter) return 1;
@@ -1204,44 +1157,21 @@ async function runConnect(exportPath: string, opts: ConnectOptions, io: CliIO): 
 
 async function runAudit(exportPath: string, opts: AuditOptions, io: CliIO): Promise<number> {
   if (!["blocked", "review-required"].includes(opts.failOn ?? "blocked")) {
-    const message = `Invalid --fail-on '${opts.failOn}'. Use: blocked | review-required.`;
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-audit-error",
-            code: "estate/invalid_fail_on",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
-    }
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-audit-error",
+      code: "estate/invalid_fail_on",
+      message: `Invalid --fail-on '${opts.failOn}'. Use: blocked | review-required.`,
+      human: "message-only",
+    });
   }
   const gatewayIdError = invalidGatewayId(opts.gatewayId);
   if (gatewayIdError) {
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-audit-error",
-            code: "estate/invalid_gateway_id",
-            message: gatewayIdError,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(gatewayIdError);
-    }
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-audit-error",
+      code: "estate/invalid_gateway_id",
+      message: gatewayIdError,
+      human: "message-only",
+    });
   }
   const adapter = adapterFor(opts.vendor, io, opts.json);
   if (!adapter) return 1;
@@ -1303,23 +1233,12 @@ function emitPlanError(
   code: string,
   message: string,
 ): number {
-  if (json) {
-    io.out(
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          reportType: "anvil.gateway-estate-adoption-plan-error",
-          code,
-          message,
-        },
-        null,
-        2,
-      ),
-    );
-  } else {
-    io.err(message);
-  }
-  return 1;
+  return emitRefusal(io, json, {
+    reportType: "anvil.gateway-estate-adoption-plan-error",
+    code,
+    message,
+    human: "message-only",
+  });
 }
 
 function writeNewEstateSelection(destination: string, selection: EstateSelectionDocument): void {
@@ -1475,26 +1394,15 @@ function emitEstateImportError(
   message: string,
   details: Record<string, unknown> = {},
 ): number {
-  if (json) {
-    io.out(
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          reportType: "anvil.gateway-estate-import-error",
-          code,
-          message,
-          ...details,
-          output: { created: false },
-          receipt: { created: false },
-        },
-        null,
-        2,
-      ),
-    );
-  } else {
-    io.err(`[${code}] ${message}`);
-  }
-  return 1;
+  return emitRefusal(io, json, {
+    reportType: "anvil.gateway-estate-import-error",
+    code,
+    message,
+    // Import's refusals always close with the two "nothing was written"
+    // assertions, after whatever the caller added. Key order is part of the
+    // envelope, so they are spread here rather than merged by the emitter.
+    details: { ...details, output: { created: false }, receipt: { created: false } },
+  });
 }
 
 async function runImport(
@@ -1571,25 +1479,19 @@ async function runImport(
     environment: opts.environment,
   });
   if (!resolvedSelection.ok) {
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-import-error",
-            ...resolvedSelection.failure,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(`[${resolvedSelection.failure.code}] ${resolvedSelection.failure.message}`);
-      if (resolvedSelection.failure.candidates.length > 0) {
-        io.err(`Candidates:\n  ${resolvedSelection.failure.candidates.join("\n  ")}`);
-      }
+    // GatewayApiSelectionFailure is declared `{ code, message, candidates }`,
+    // so routing it through the emitter serializes the same keys in the same
+    // order the spread produced.
+    const exit = emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-import-error",
+      code: resolvedSelection.failure.code,
+      message: resolvedSelection.failure.message,
+      details: { candidates: resolvedSelection.failure.candidates },
+    });
+    if (!opts.json && resolvedSelection.failure.candidates.length > 0) {
+      io.err(`Candidates:\n  ${resolvedSelection.failure.candidates.join("\n  ")}`);
     }
-    return 1;
+    return exit;
   }
   const { api: apiRef, apiVersion, revision, environment } = resolvedSelection.selection;
   const selectedCoordinate = {
@@ -1896,26 +1798,18 @@ async function runImport(
     candidate.service.environment !== undefined &&
     candidate.service.environment !== environment
   ) {
-    const message =
-      `The manifest declares service.environment '${candidate.service.environment}', ` +
-      `but the selected gateway coordinate is '${environment}'. Refusing to generate deployment and credential defaults for the wrong environment.`;
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-import-error",
-            code: "gateway_selection/environment_conflict",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
-    }
-    return 1;
+    // `human: "message-only"` preserves what this site did before the emitter
+    // existed, and it disagrees with emitEstateImportError — same reportType,
+    // one prints `[code] message` and this one does not. Recorded rather than
+    // silently unified: changing operator-visible stderr is its own decision.
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-import-error",
+      code: "gateway_selection/environment_conflict",
+      message:
+        `The manifest declares service.environment '${candidate.service.environment}', ` +
+        `but the selected gateway coordinate is '${environment}'. Refusing to generate deployment and credential defaults for the wrong environment.`,
+      human: "message-only",
+    });
   }
   candidate.service.environment = environment;
   if (candidate.operations.length === 0) {

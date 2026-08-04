@@ -23,8 +23,8 @@
   "slack": 100,
   "modules": {
     "packages/cli/src/commands/estate/estate.ts": {
-      "lines": 2479,
-      "plan": "Decomposing — see docs/architecture/estate-decomposition.md. Steps 0-1 done: -552 to estate-bundle-install.ts, -63 to estate-import-policy.ts, -214 to estate-contract-attestation.ts, and the hand-built gateway-identity envelope folded into the shared emitter. Remaining: the renderer, acquisition, the service, and runVerify. Its siblings estate-audit.ts and estate-adoption.ts are already pure domain with rendering split out; this is the un-migrated residue."
+      "lines": 2373,
+      "plan": "Decomposing — see docs/architecture/estate-decomposition.md. Steps 0-1 done: -552 to estate-bundle-install.ts, -63 to estate-import-policy.ts, -214 to estate-contract-attestation.ts. Then -106 from routing every refusal through envelope.ts instead of building a JSON literal at each call site; that one is ownership, not just size — the envelope shape now has one owner. Remaining: the renderer, acquisition, the service, and runVerify. Its siblings estate-audit.ts and estate-adoption.ts are already pure domain with rendering split out; this is the un-migrated residue."
     },
     "packages/cli/src/capability-composition.ts": {
       "lines": 2163,
