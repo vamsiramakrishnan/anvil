@@ -230,7 +230,11 @@ for (const m of mutants) {
   let res;
   try {
     writeFileSync(path, original.replace(m.find, m.replace));
-    res = await runTests(m.tests, args.timeoutMs);
+    // A mutant known to hang declares its own shorter budget. The default has
+    // to be generous enough for the slowest honest run on a contended runner;
+    // a mutant we already expect to wedge only needs long enough to prove it,
+    // and charging the full default for it dominated the gate's wall clock.
+    res = await runTests(m.tests, m.timeoutSeconds ? m.timeoutSeconds * 1000 : args.timeoutMs);
   } finally {
     restore();
   }

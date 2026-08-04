@@ -15,6 +15,9 @@
     "failure mode that made one of these look like it survived when it had never",
     "been applied at all.",
     "",
+    "A mutant that is expected to hang rather than fail may set `timeoutSeconds`",
+    "to override the runner's default budget for its run.",
+    "",
     "Run: pnpm mutation [--filter <substring>] [--list] [--timeout <seconds>]",
     "See README.md for the runner's own guards and why hangs count as kills."
   ],
@@ -168,6 +171,8 @@
       "id": "wso2/special-file-refusal",
       "file": "packages/cli/src/wso2-apictl.ts",
       "control": "A non-regular filesystem node is refused before it is read. readFileSync on a FIFO blocks forever, so this is a liveness boundary as much as a correctness one.",
+      "$timeout": "This mutant does not fail, it hangs, so the runner's timeout is what kills it. 45s rather than the 180s default: the honest run of this set takes ~11s on a CI runner, so 45s is 4x headroom against contention while keeping the one deliberate hang from dominating the gate's wall clock (it was 3m01s of a 4m09s run).",
+      "timeoutSeconds": 45,
       "find": "      if (!stat.isFile()) {",
       "replace": "      if (false) {",
       "tests": ["packages/cli/src/wso2-apictl.bugbash.test.ts"]
