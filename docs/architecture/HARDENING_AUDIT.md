@@ -202,6 +202,42 @@ safety surface — `runtime/executor.ts`, idempotency, and the approval gates ar
 covered by tests but not yet by mutants. The roster is meant to grow with each
 wave rather than to claim completeness now.
 
+## Assertions that cannot distinguish what they assert (wave 7)
+
+The error-code registry counts a code as `asserted` when a test names the exact
+string. Two estate cases showed why the *exact* part carries the weight. Both
+looped all five vendors and asserted:
+
+```ts
+code: expect.stringMatching(/invalid_export/)      // any vendor
+code: expect.stringMatching(/empty|invalid/)       // any vendor, either code
+```
+
+Neither pins the namespace, which is the part identifying *which adapter
+refused* — and these adapter files are near-copies of one another, so emitting a
+neighbour's code is an easy mistake that nothing would have caught. Neither
+pins the `api_connect` → `apiconnect` mapping between the CLI's vendor name and
+the code namespace, which is not the identity function.
+
+The second regex was hiding a real divergence. **For a file with no content,
+Kong emits `kong/invalid_export`; the other four emit `<vendor>/empty_export`.**
+Kong parses its own export instead of going through `parseGatewayDocument`, and
+reserves `kong/empty_export` for a well-formed export with `services: []`. Both
+readings are defensible — an empty file arguably *is* "not a Kong export" — so
+the behaviour is pinned as it stands rather than unified; changing a published
+error code is its own decision. What was not defensible is the difference being
+invisible. An agent branching on `<vendor>/empty_export` to mean "the export is
+empty" is right four times out of five.
+
+Now a table of exact codes per vendor, plus a case asserting the table covers
+every vendor `--vendor` accepts — with that list read from the CLI's own
+unknown-vendor refusal rather than written out again, so a sixth adapter cannot
+arrive with neither code asserted. Registry: **76 → 68 unasserted** (compiler
+45 → 37).
+
+*Invariant:* the same invariant holds identically across vendor adapters, and a
+test that cannot tell two vendors apart is not evidence that it does.
+
 ## Ranked findings
 
 Ranked by (invariant at risk) × (evidence that it is real), not by module size.

@@ -2,7 +2,7 @@
   "$comment": [
     "Anvil's machine-readable error codes. Operators branch on these strings, so they",
     "are a public contract: renaming or dropping one silently breaks an integration",
-    "that was matching on it, and its `else` branch — usually 'proceed' — takes over.",
+    "that was matching on it, and its `else` branch \u2014 usually 'proceed' \u2014 takes over.",
     "",
     "Generated from source by the AST extractor in error-code-registry.test.ts, which",
     "counts a string literal only where it is USED as a code: a `code:` property, a",
@@ -25,20 +25,20 @@
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
   "total": 305,
-  "asserted": 229,
-  "unasserted": 76,
+  "asserted": 237,
+  "unasserted": 68,
   "codes": {
     "apiconnect/empty_export": {
       "packages": [
         "compiler"
       ],
-      "asserted": false
+      "asserted": true
     },
     "apiconnect/invalid_export": {
       "packages": [
         "compiler"
       ],
-      "asserted": false
+      "asserted": true
     },
     "apiconnect/plan_rate_limit": {
       "packages": [
@@ -56,13 +56,13 @@
       "packages": [
         "compiler"
       ],
-      "asserted": false
+      "asserted": true
     },
     "apigee/invalid_export": {
       "packages": [
         "compiler"
       ],
-      "asserted": false
+      "asserted": true
     },
     "apigee/traffic_policy": {
       "packages": [
@@ -1061,7 +1061,7 @@
       "packages": [
         "compiler"
       ],
-      "asserted": false
+      "asserted": true
     },
     "kong/policy_noted": {
       "packages": [
@@ -1127,13 +1127,13 @@
       "packages": [
         "compiler"
       ],
-      "asserted": false
+      "asserted": true
     },
     "mulesoft/invalid_export": {
       "packages": [
         "compiler"
       ],
-      "asserted": false
+      "asserted": true
     },
     "mulesoft/sla_present": {
       "packages": [
@@ -1764,7 +1764,7 @@
       "packages": [
         "compiler"
       ],
-      "asserted": false
+      "asserted": true
     },
     "wso2/formal_contract_available": {
       "packages": [
