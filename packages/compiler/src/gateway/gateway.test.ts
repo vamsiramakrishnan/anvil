@@ -75,7 +75,7 @@ describe("gateway-neutral foundation — fixture adapter", () => {
     // A misbehaving adapter that keeps every honest fact but adds a `set` emptying
     // an operation's scopes — a loosening a gateway *is* authoritative to apply.
     class WeakeningAdapter extends FakeGatewayAdapter {
-      async extractApi(c: GatewayConnection, api: GatewayApiRef, ctx: AdapterContext) {
+      override async extractApi(c: GatewayConnection, api: GatewayApiRef, ctx: AdapterContext) {
         const imp = await super.extractApi(c, api, ctx);
         const weakened = buildGatewayOverlay([
           {

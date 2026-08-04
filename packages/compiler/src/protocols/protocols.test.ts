@@ -316,7 +316,7 @@ describe("GraphQL adapter", () => {
   it("turns field arguments into a request body schema", () => {
     const op = doc.paths?.["/graphql/Query/product"]?.post as Record<string, unknown>;
     const body = op.requestBody as { content: Record<string, { schema: { properties: object } }> };
-    expect(Object.keys(body.content["application/json"].schema.properties)).toContain("id");
+    expect(Object.keys(body.content["application/json"]!.schema.properties)).toContain("id");
   });
 
   it("registers object/input/enum types as component schemas with refs", () => {
@@ -406,7 +406,7 @@ message Order { string id = 1; }`;
     );
     const op = multi.paths?.["/demo.v1.OrderService/CreateOrder"]?.post as Record<string, unknown>;
     const body = op.requestBody as { content: Record<string, { schema: { $ref: string } }> };
-    expect(body.content["application/json"].schema.$ref).toContain("CreateOrderRequest");
+    expect(body.content["application/json"]!.schema.$ref).toContain("CreateOrderRequest");
   });
 
   it("degrades gracefully when an import cannot be resolved (unchanged single-file contract)", () => {
@@ -423,7 +423,7 @@ message Res { string ok = 1; }`;
     const doc = adaptProto(service, "demo", () => undefined);
     const op = doc.paths?.["/demo.v1.S/Do"]?.post as Record<string, unknown>;
     const body = op.requestBody as { content: Record<string, { schema: { type?: string } }> };
-    expect(body.content["application/json"].schema).toEqual({ type: "object" });
+    expect(body.content["application/json"]!.schema).toEqual({ type: "object" });
   });
 });
 
@@ -448,7 +448,7 @@ describe("SOAP/WSDL adapter", () => {
   it("resolves document/literal wrapped messages to the element's schema", () => {
     const op = doc.paths?.["/BankingPort/TransferFunds"]?.post as Record<string, unknown>;
     const body = op.requestBody as { content: Record<string, { schema: { properties: object } }> };
-    const props = body.content["application/json"].schema.properties;
+    const props = body.content["application/json"]!.schema.properties;
     expect(Object.keys(props)).toEqual(
       expect.arrayContaining(["fromAccountId", "toAccountId", "amount", "idempotencyKey"]),
     );
@@ -490,19 +490,19 @@ describe("OData/EDMX adapter", () => {
   it("maps EDM types and key nullability into the entity schema", () => {
     const schemas = doc.components?.schemas as Record<string, Record<string, unknown>>;
     const bp = schemas.A_BusinessPartner;
-    expect(bp.type).toBe("object");
-    expect((bp.properties as Record<string, unknown>).CreationDate).toMatchObject({
+    expect(bp!.type).toBe("object");
+    expect((bp!.properties as Record<string, unknown>).CreationDate).toMatchObject({
       type: "string",
       format: "date-time",
     });
     // Nullable="false" (the key) is required; a nullable-by-default field is not.
-    expect(bp.required).toEqual(["BusinessPartner"]);
+    expect(bp!.required).toEqual(["BusinessPartner"]);
   });
 
   it("compiles end-to-end into aligned operations with path-key params", async () => {
     const air = await compile({ spec: odataSpec, serviceId: "bp" });
     const get = air.operations.find(
-      (o) => o.sourceRef.method === "get" && o.sourceRef.path.includes("("),
+      (o) => o.sourceRef.method === "get" && o.sourceRef.path!.includes("("),
     );
     expect(get?.effect.kind).toBe("read");
     expect(get?.input.params.some((p) => p.in === "path" && p.name === "BusinessPartner")).toBe(
