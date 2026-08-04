@@ -142,6 +142,51 @@ occasional one.
 **Deliberately out of scope**, as different contracts: certification check ids
 (`static/*`, `exec/*`), AIR predicate names (`anvil/*`), MIME types.
 
+## The mutation gate (wave 6)
+
+Finding 2 is closed: test source is typechecked in all 13 packages. That removes
+the condition, but not the defect class — a test can be well-typed, fully
+covered, and still assert nothing. So the wave that follows it is the control
+that makes *a check which reports success without having run* structurally hard.
+
+`tools/mutation/run.mjs` deletes one safety control at a time and requires the
+declared tests to notice. **18 mutants across four modules, all killed**, run in
+CI after `pnpm test`. The roster is `mutants.json`; each entry names the
+invariant its deletion removes, so a survivor is legible as either a gap or a
+non-issue rather than a line number.
+
+Coverage cannot see this defect class. Every example this programme has found —
+the assertion after a swallowed `TypeError`, the test body behind
+`if (res.ok && res.binding)` that skipped instead of failing,
+`expect(x).toBe(true, "message")` where the message was discarded, the mutant
+whose search string the shell expanded to nothing — reports full coverage of the
+lines involved. A surviving mutant asks the different question: *if I break
+this, does anything object?*
+
+The runner refuses to call three things a pass, each being a way a mutation run
+can flatter itself:
+
+| Refusal | The failure it prevents |
+| --- | --- |
+| `find` must match exactly once | the patch silently not applying — the fake survivor found by hand |
+| every test set must be green unmutated | a red baseline, against which every mutant dies for free |
+| a run collecting zero tests is failure | a renamed or deleted test file reading as a kill |
+
+**One control hangs rather than fails**, and the gate treats that as a kill.
+Without `isFile()`, `readFileSync` on a FIFO blocks until a writer opens it;
+vitest's `testTimeout` cannot interrupt it, because a blocking sync call never
+yields to the event loop. The runner imposes its own timeout and kills the
+process group, since a fork-pool worker blocked in a syscall does not notice its
+IPC channel closing. That is worth stating precisely: the difference between
+"import refuses this file" and "import never returns" is the difference between
+an error message and a stuck pipeline.
+
+**Scope, stated plainly.** 18 mutants over the estate install/import/attestation
+path and the apictl reader. That is the code this programme moved, not the whole
+safety surface — `runtime/executor.ts`, idempotency, and the approval gates are
+covered by tests but not yet by mutants. The roster is meant to grow with each
+wave rather than to claim completeness now.
+
 ## Ranked findings
 
 Ranked by (invariant at risk) × (evidence that it is real), not by module size.
@@ -170,7 +215,14 @@ surfaces; the CLI is a delivery adapter, not a policy owner.
 *Evidence:* `packages/cli/src/certification-authority.test.ts`, 6 tests pinning
 current behaviour. Full write-up: `certification-authority.md`.
 
-### 2. Test source is excluded from typecheck in all 13 packages
+### 2. Test source is excluded from typecheck in all 13 packages — **fixed**
+
+*Fixed in wave 6.* All 13 packages now typecheck their tests; the exclusion is
+gone and the 366 errors are resolved rather than cast away. Eleven were invalid
+enum values in test fixtures — `mode: "not_idempotent"`, `proof: "jwt"`,
+`status: "skip"` and others — meaning those tests were asserting against inputs
+the schema would reject. Five `mcp-runtime` files built `AirDocument`s Zod would
+refuse outright. The original finding follows.
 
 Every `packages/*/tsconfig.json` carries `"exclude": ["src/**/*.test.ts"]`, so
 roughly 72k lines of test code have no type coverage. This is the condition that
@@ -381,7 +433,7 @@ differential agree) and a one-line optional chain in `skills/executor.ts`.
 
 | Item | Why not now |
 | --- | --- |
-| Typechecking test source | 366 errors; many are deliberate invalid inputs that must not be cast away. Own change, budget recorded above. |
+| ~~Typechecking test source~~ | **Done in wave 6.** All 13 packages, 366 errors resolved without casts; 11 were invalid enum values in fixtures. |
 | Certification consolidation | Requires a product decision about what *certified* promises. Options and a recommendation are written; the decision is not mine to take. |
 | `estate.ts` decomposition | Planned in detail; deliberately not started in the same change as the baseline and the ratchets. |
 | `capability-composition.ts`, `deploy.ts`, `self-skill.ts`, `status.ts`, `tool-cli.ts` | Queued behind estate. One subsystem at a time. |

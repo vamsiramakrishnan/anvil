@@ -45,6 +45,17 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # Mutation gate: delete one safety control at a time and require the
+      # declared tests to notice. Coverage says a line executed; this says the
+      # line matters. It exists because this repo's recurring defect is a check
+      # that reports success without having run, which coverage cannot see and
+      # a surviving mutant can.
+      #
+      # Runs after `test` on purpose — it edits source files in place, so it
+      # must not race the suite it is measuring.
+      - name: Mutation gate
+        run: node tools/mutation/run.mjs
+
       # Gateway-estate differential: import every estate in estates.tsv end-to-end
       # through `anvil estate import` (built above) and gate on policy accounting
       # against estates-baseline.json — a dropped opaque policy or a shifted

@@ -1,0 +1,176 @@
+{
+  "$comment": [
+    "Mutation gate. Each entry deletes one safety control and names the tests that",
+    "must go red as a result. A control nothing notices the removal of is either",
+    "decorative or untested, and both are worth knowing.",
+    "",
+    "Why this exists as a gate rather than an exercise: this repository's recurring",
+    "defect is a check that reports success without having run — an assertion behind",
+    "a swallowed TypeError, a test whose guard skipped it, a mutation whose search",
+    "string the shell expanded to nothing. Coverage cannot see any of them. Killing",
+    "a mutant can.",
+    "",
+    "Adding a control here is cheap and the right instinct. `find` must appear",
+    "exactly once in the file, so a mutant cannot silently stop applying — the",
+    "failure mode that made one of these look like it survived when it had never",
+    "been applied at all.",
+    "",
+    "Run: pnpm mutation [--filter <substring>] [--list] [--timeout <seconds>]",
+    "See README.md for the runner's own guards and why hangs count as kills."
+  ],
+  "mutants": [
+    {
+      "id": "bundle-install/unmanaged-output-refusal",
+      "file": "packages/cli/src/commands/estate/estate-bundle-install.ts",
+      "control": "An existing directory with no valid receipt view is refused, so files Anvil did not write are never deleted.",
+      "find": "            code: \"gateway_receipt/unmanaged_output\",",
+      "replace": "            code: \"gateway_receipt/MUTANT\",",
+      "tests": ["packages/cli/src/commands/estate/estate-bundle-install.test.ts"]
+    },
+    {
+      "id": "bundle-install/identity-collision",
+      "file": "packages/cli/src/commands/estate/estate-bundle-install.ts",
+      "control": "A different vendor/gateway/API/environment lineage may never replace an existing bundle directory.",
+      "find": "        priorIdentity.digest !== candidateIdentity.digest",
+      "replace": "        false",
+      "tests": ["packages/cli/src/commands/estate/estate-bundle-install.test.ts"]
+    },
+    {
+      "id": "bundle-install/rollback",
+      "file": "packages/cli/src/commands/estate/estate-bundle-install.ts",
+      "control": "Rollback restores the previous bundle whole, so an interrupted install leaves one complete bundle or the other.",
+      "find": "      rollback: () => {\n        if (closed) return;",
+      "replace": "      rollback: () => {\n        if (true) return;",
+      "tests": ["packages/cli/src/commands/estate/estate-bundle-install.test.ts"]
+    },
+    {
+      "id": "bundle-install/stale-output-replace-gate",
+      "file": "packages/cli/src/commands/estate/estate-bundle-install.ts",
+      "control": "Output deliberately changed after import is not discarded without --replace-derived.",
+      "find": "      if (priorView.lineage.status === \"stale\") {\n        if (!replaceDerived) {",
+      "replace": "      if (priorView.lineage.status === \"stale\") {\n        if (false) {",
+      "tests": ["packages/cli/src/commands/estate/estate-bundle-install.test.ts"]
+    },
+    {
+      "id": "bundle-install/stale-state-integrity",
+      "file": "packages/cli/src/commands/estate/estate-bundle-install.ts",
+      "control": "Derived state is verified against the exact digest recorded at approval before it is discarded.",
+      "find": "        if (!currentIntegrity.ok) {",
+      "replace": "        if (false) {",
+      "tests": ["packages/cli/src/commands/estate/estate-bundle-install.test.ts"]
+    },
+    {
+      "id": "bundle-install/untrusted-path-guard",
+      "file": "packages/cli/src/commands/estate/estate-bundle-install.ts",
+      "control": "A stale manifest naming files that are neither compiler output nor recognized lifecycle state cannot authorise deleting them.",
+      "find": "        if (untrustedPaths.length > 0) {",
+      "replace": "        if (false) {",
+      "tests": ["packages/cli/src/commands/estate/estate-bundle-install.test.ts"]
+    },
+    {
+      "id": "bundle-install/lifecycle-collision",
+      "file": "packages/cli/src/commands/estate/estate-bundle-install.ts",
+      "control": "A preserved lifecycle artifact may not silently overwrite a compiler-owned candidate file.",
+      "find": "          if (expectedSet.has(relativePath)) {",
+      "replace": "          if (false) {",
+      "tests": ["packages/cli/src/commands/estate/estate-bundle-install.test.ts"]
+    },
+    {
+      "id": "import-policy/spec-override-vendor",
+      "file": "packages/cli/src/commands/estate/estate-import-policy.ts",
+      "control": "Attesting a supplied contract over a gateway definition is defined only for WSO2 native lineage.",
+      "find": "  if (opts.vendor !== \"wso2\") {",
+      "replace": "  if (false) {",
+      "tests": ["packages/cli/src/commands/estate/estate-import-policy.test.ts"]
+    },
+    {
+      "id": "import-policy/gateway-url-https",
+      "file": "packages/cli/src/commands/estate/estate-import-policy.ts",
+      "control": "The recorded public gateway coordinate must be HTTPS.",
+      "find": "  if (url.protocol !== \"https:\") {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/commands/estate/estate-import-policy.test.ts",
+        "packages/cli/src/operator-json-contract.test.ts"
+      ]
+    },
+    {
+      "id": "import-policy/gateway-url-credentials",
+      "file": "packages/cli/src/commands/estate/estate-import-policy.ts",
+      "control": "A gateway URL carrying embedded credentials is refused before it reaches a receipt.",
+      "find": "  if (url.username || url.password) {",
+      "replace": "  if (false) {",
+      "tests": ["packages/cli/src/commands/estate/estate-import-policy.test.ts"]
+    },
+    {
+      "id": "import-policy/unscoped-reserved",
+      "file": "packages/cli/src/commands/estate/estate-import-policy.ts",
+      "control": "'unscoped' is reserved for lineage whose gateway identity was never proven and cannot be supplied as a real one.",
+      "find": "  if (normalized.toLowerCase() === \"unscoped\") {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/commands/estate/estate-import-policy.test.ts",
+        "packages/cli/src/operator-json-contract.test.ts"
+      ]
+    },
+    {
+      "id": "import-policy/strict-identity",
+      "file": "packages/cli/src/commands/estate/estate-import-policy.ts",
+      "control": "--strict-identity requires an explicit gateway id, because an offline export cannot prove its own control-plane identity.",
+      "find": "  if (opts.strictIdentity && !opts.gatewayId?.trim()) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/commands/estate/estate-import-policy.test.ts",
+        "packages/cli/src/operator-json-contract.test.ts"
+      ]
+    },
+    {
+      "id": "attestation/unnecessary-override",
+      "file": "packages/cli/src/commands/estate/estate-contract-attestation.ts",
+      "control": "An override recorded when the digests already match would be a false claim in the receipt, so it is refused.",
+      "find": "  if (exactMatch && attestationReason) {",
+      "replace": "  if (false) {",
+      "tests": ["packages/cli/src/commands/estate/estate-contract-attestation.test.ts"]
+    },
+    {
+      "id": "attestation/absent-entrypoint",
+      "file": "packages/cli/src/commands/estate/estate-contract-attestation.ts",
+      "control": "A locked entrypoint absent from its own source manifest establishes no lineage.",
+      "find": "  if (!supplied) {",
+      "replace": "  if (false && !supplied) {",
+      "tests": ["packages/cli/src/commands/estate/estate-contract-attestation.test.ts"]
+    },
+    {
+      "id": "attestation/single-authoritative-definition",
+      "file": "packages/cli/src/commands/estate/estate-contract-attestation.ts",
+      "control": "Anvil will not infer which of several embedded definitions is authoritative; route compatibility is not byte lineage.",
+      "find": "  const exactMatch = candidates.length === 1 && candidates[0]?.digest === supplied.digest;",
+      "replace": "  const exactMatch = candidates.some((c) => c.digest === supplied.digest);",
+      "tests": ["packages/cli/src/commands/estate/estate-contract-attestation.test.ts"]
+    },
+    {
+      "id": "attestation/coordinate-supersession",
+      "file": "packages/cli/src/commands/estate/estate-contract-attestation.ts",
+      "control": "An operator's runtime-coordinate attestation supersedes the missing-coordinate warning rather than sitting beside it.",
+      "find": "    ...diagnostics.filter((d) => d.code !== \"gateway/missing_runtime_coordinate\"),",
+      "replace": "    ...diagnostics,",
+      "tests": ["packages/cli/src/commands/estate/estate-contract-attestation.test.ts"]
+    },
+    {
+      "id": "attestation/route-param-normalization",
+      "file": "packages/cli/src/commands/estate/estate-contract-attestation.ts",
+      "control": "Path parameters are positional, so /t/{id} and /t/{thingId} are the same route; without this the route-set attestation reports false differences.",
+      "find": "  return leadingSlash.replace(/\\{\\+?[^/{]+\\}/g, \"{}\").replace(/(^|\\/):[^/]+/g, \"$1{}\");",
+      "replace": "  return leadingSlash;",
+      "tests": ["packages/cli/src/commands/estate/estate-contract-attestation.test.ts"]
+    },
+    {
+      "id": "wso2/special-file-refusal",
+      "file": "packages/cli/src/wso2-apictl.ts",
+      "control": "A non-regular filesystem node is refused before it is read. readFileSync on a FIFO blocks forever, so this is a liveness boundary as much as a correctness one.",
+      "find": "      if (!stat.isFile()) {",
+      "replace": "      if (false) {",
+      "tests": ["packages/cli/src/wso2-apictl.bugbash.test.ts"]
+    }
+  ]
+}
