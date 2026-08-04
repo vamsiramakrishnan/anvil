@@ -95,8 +95,8 @@
       "plan": "Watch."
     },
     "packages/runtime/src/idempotency.ts": {
-      "lines": 977,
-      "plan": "Safety-critical. Prefer tests over splitting, as with executor.ts."
+      "lines": 979,
+      "plan": "Safety-critical. Prefer tests over splitting, as with executor.ts. Raised from 977 for a comment explaining why InMemoryLedger.durable is annotated `boolean` rather than inferred as the literal `false` — the class implements an interface that permits either, and the literal type prevented a durable test double from subclassing it."
     },
     "packages/harness/src/conformance.ts": {
       "lines": 974,
