@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -218,21 +220,51 @@ describe("assembleReviewContext", () => {
     expect(() => assembleReviewContext(bundle, fixtureAir())).toThrow(/symbolic link/i);
   });
 
-  it("refuses a non-regular node under an admitted context root", async () => {
-    if (process.platform === "win32") return;
-    const bundle = writeFlawedBundle();
-    const socketPath = join(bundle, "docs", "review.sock");
+  /**
+   * Make a non-regular filesystem node, or explain why this host cannot.
+   *
+   * A Unix-domain socket is the most direct special file to create from Node, but
+   * `listen()` on a bound path needs privileges some sandboxes and container
+   * filesystems withhold (EPERM/EACCES/ENOTSUP), and Windows has no equivalent.
+   * A FIFO via `mkfifo(1)` is the POSIX fallback. If neither works the test skips
+   * with a named reason rather than passing vacuously — the refusal below is a
+   * security boundary, and a silent pass would be indistinguishable from coverage.
+   */
+  async function makeSpecialNode(
+    path: string,
+  ): Promise<{ cleanup: () => Promise<void> } | { unavailable: string }> {
+    if (process.platform === "win32") return { unavailable: "win32 has no POSIX special files" };
     const server = createServer();
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(socketPath, resolve);
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(path, resolve);
+      });
+      return { cleanup: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+    } catch (socketError) {
+      server.close();
+      try {
+        execFileSync("mkfifo", [path], { stdio: "ignore" });
+        return { cleanup: async () => rmSync(path, { force: true }) };
+      } catch {
+        return {
+          unavailable: `no unix socket (${(socketError as NodeJS.ErrnoException).code ?? socketError}) and no mkfifo(1)`,
+        };
+      }
+    }
+  }
+
+  it("refuses a non-regular node under an admitted context root", async ({ skip }) => {
+    const bundle = writeFlawedBundle();
+    const node = await makeSpecialNode(join(bundle, "docs", "review.sock"));
+    if ("unavailable" in node)
+      return skip(`cannot create a special file here: ${node.unavailable}`);
     try {
       expect(() => assembleReviewContext(bundle, fixtureAir())).toThrow(
         /non-regular filesystem node/i,
       );
     } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await node.cleanup();
     }
   });
 });

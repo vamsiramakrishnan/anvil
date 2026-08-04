@@ -9,5 +9,6 @@
       "entry": ["src/shims/*.js", "scripts/*.mjs"]
     }
   },
-  "ignoreDependencies": ["@fontsource/hanken-grotesk", "@fontsource/jetbrains-mono"]
+  "ignoreDependencies": ["@fontsource/hanken-grotesk", "@fontsource/jetbrains-mono"],
+  "ignoreBinaries": ["mkfifo"]
 }

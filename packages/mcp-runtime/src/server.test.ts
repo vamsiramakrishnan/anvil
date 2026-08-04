@@ -1,4 +1,10 @@
-import { type AirDocument, Operation, type Workflow, type WorkflowStep } from "@anvil/air";
+import {
+  type AirDocument,
+  loadAirDocument,
+  Operation,
+  type Workflow,
+  type WorkflowStep,
+} from "@anvil/air";
 import type { Transport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -6,7 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildMcpServer } from "./server.js";
 
 const mockTransport: Transport = {
-  call: async () => ({}),
+  send: async () => ({ status: 200, headers: {}, body: "{}" }),
 };
 
 function createBaseOperation(overrides?: Partial<Operation>): Operation {
@@ -119,11 +125,11 @@ describe("buildMcpServer - workflows", () => {
         steps: [createStep("test.op1"), createStep("test.op2", { id: "$.output.id" })],
       });
 
-      const air: AirDocument = {
-        service: { id: "test", version: "1.0.0", canonicalName: "test" },
+      const air: AirDocument = loadAirDocument({
+        service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
         operations: [op1, op2],
         workflows: [workflow],
-      };
+      });
 
       const onSkipWorkflow = vi.fn();
       const buildResult = buildMcpServer(air, {
@@ -154,11 +160,11 @@ describe("buildMcpServer - workflows", () => {
       });
 
       const onSkipWorkflow = vi.fn();
-      const air: AirDocument = {
-        service: { id: "test", version: "1.0.0", canonicalName: "test" },
+      const air: AirDocument = loadAirDocument({
+        service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
         operations: [op1],
         workflows: [workflow],
-      };
+      });
 
       buildMcpServer(air, {
         contextFor: () => ({
@@ -195,11 +201,11 @@ describe("buildMcpServer - workflows", () => {
       });
 
       const onSkipWorkflow = vi.fn();
-      const air: AirDocument = {
-        service: { id: "test", version: "1.0.0", canonicalName: "test" },
+      const air: AirDocument = loadAirDocument({
+        service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
         operations: [op1, op2],
         workflows: [workflow],
-      };
+      });
 
       buildMcpServer(air, {
         contextFor: () => ({
@@ -230,11 +236,11 @@ describe("buildMcpServer - workflows", () => {
       });
 
       const onSkipWorkflow = vi.fn();
-      const air: AirDocument = {
-        service: { id: "test", version: "1.0.0", canonicalName: "test" },
+      const air: AirDocument = loadAirDocument({
+        service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
         operations: [op1],
         workflows: [workflow],
-      };
+      });
 
       buildMcpServer(air, {
         contextFor: () => ({
@@ -281,11 +287,11 @@ describe("buildMcpServer - workflows", () => {
       });
 
       const onSkipWorkflow = vi.fn();
-      const air: AirDocument = {
-        service: { id: "test", version: "1.0.0", canonicalName: "test" },
+      const air: AirDocument = loadAirDocument({
+        service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
         operations: [op1, op2],
         workflows: [workflow],
-      };
+      });
 
       buildMcpServer(air, {
         contextFor: () => ({
@@ -309,11 +315,11 @@ describe("buildMcpServer - workflows", () => {
       });
 
       const onSkipWorkflow = vi.fn();
-      const air: AirDocument = {
-        service: { id: "test", version: "1.0.0", canonicalName: "test" },
+      const air: AirDocument = loadAirDocument({
+        service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
         operations: [],
         workflows: [workflow],
-      };
+      });
 
       buildMcpServer(air, {
         contextFor: () => ({
@@ -366,11 +372,11 @@ describe("buildMcpServer - workflows", () => {
         steps: [createStep("test.op1"), createStep("test.op2", { id: "$.output.id" })],
       });
 
-      const air: AirDocument = {
-        service: { id: "test", version: "1.0.0", canonicalName: "test" },
+      const air: AirDocument = loadAirDocument({
+        service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
         operations: [op1, op2],
         workflows: [workflow],
-      };
+      });
 
       const onSkipWorkflow = vi.fn();
       const server = buildMcpServer(air, {
@@ -408,7 +414,13 @@ describe("buildMcpServer - workflows", () => {
         id: "test.op2",
         canonicalName: "op2",
         mcp: { toolName: "op2" },
-        effect: { kind: "mutation", action: "update", resource: "test", risk: "low" },
+        effect: {
+          kind: "mutation",
+          action: "update",
+          resource: "test",
+          risk: "low",
+          reversible: false,
+        },
         confirmation: { required: true, risk: "low" },
         input: {
           params: [
@@ -426,11 +438,11 @@ describe("buildMcpServer - workflows", () => {
         id: "test.workflow.fwd",
         steps: [createStep("test.op1"), createStep("test.op2", { id: "$.output.id" })],
       });
-      const air: AirDocument = {
-        service: { id: "test", version: "1.0.0", canonicalName: "test" },
+      const air: AirDocument = loadAirDocument({
+        service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
         operations: [op1, op2],
         workflows: [workflow],
-      } as unknown as AirDocument;
+      });
 
       const server = buildMcpServer(air, {
         contextFor: () => ({
@@ -467,7 +479,13 @@ describe("buildMcpServer - workflows", () => {
         id: "test.op2",
         canonicalName: "op2",
         mcp: { toolName: "op2" },
-        effect: { kind: "mutation", action: "create", resource: "test", risk: "low" },
+        effect: {
+          kind: "mutation",
+          action: "create",
+          resource: "test",
+          risk: "low",
+          reversible: false,
+        },
         idempotency: {
           mode: "required",
           mechanism: "header",
@@ -479,11 +497,11 @@ describe("buildMcpServer - workflows", () => {
         id: "test.workflow.keyed",
         steps: [createStep("test.op1"), createStep("test.op2")],
       });
-      const air: AirDocument = {
-        service: { id: "test", version: "1.0.0", canonicalName: "test" },
+      const air: AirDocument = loadAirDocument({
+        service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
         operations: [op1, op2],
         workflows: [workflow],
-      } as unknown as AirDocument;
+      });
 
       const onSkipWorkflow = vi.fn();
       buildMcpServer(air, {
@@ -562,11 +580,11 @@ describe("buildMcpServer - workflows", () => {
       });
 
       const onSkipWorkflow = vi.fn();
-      const air: AirDocument = {
-        service: { id: "test", version: "1.0.0", canonicalName: "test" },
+      const air: AirDocument = loadAirDocument({
+        service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
         operations: [op1, op2],
         workflows: [workflow],
-      };
+      });
 
       buildMcpServer(air, {
         contextFor: () => ({
@@ -621,11 +639,11 @@ describe("buildMcpServer - workflows", () => {
         });
 
         const onSkipWorkflow = vi.fn();
-        const air: AirDocument = {
-          service: { id: "test", version: "1.0.0", canonicalName: "test" },
+        const air: AirDocument = loadAirDocument({
+          service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
           operations: [op1, op2],
           workflows: [workflow],
-        };
+        });
 
         buildMcpServer(air, {
           contextFor: () => ({

@@ -186,7 +186,7 @@ describe("WSO2 supplied-contract lineage", () => {
       ],
       supplied: { digest: gatewaySha256(specBytes) },
     });
-    expect(receipt.contract.formalDefinitionLineage.override).toBeUndefined();
+    expect(receipt.contract.formalDefinitionLineage!.override).toBeUndefined();
 
     const view = JSON.parse(readFileSync(join(output, "import.receipt.json"), "utf8"));
     expect(view.contract.formalDefinitionLineage).toMatchObject({
@@ -415,9 +415,9 @@ describe("WSO2 supplied-contract lineage", () => {
         ...(artifact.parent ? { parent: artifact.parent } : {}),
       })),
     });
-    expect(withoutPackaging(secondReport.apis[0])).toEqual(withoutPackaging(firstReport.apis[0]));
-    expect(firstReport.apis[0].artifacts[0].packaging.digest).not.toBe(
-      secondReport.apis[0].artifacts[0].packaging.digest,
+    expect(withoutPackaging(secondReport.apis[0]!)).toEqual(withoutPackaging(firstReport.apis[0]!));
+    expect(firstReport.apis[0]!.artifacts![0]!.packaging!.digest).not.toBe(
+      secondReport.apis[0]!.artifacts![0]!.packaging!.digest,
     );
 
     const firstPlanPath = join(work, "first-plan.json");
@@ -458,11 +458,11 @@ describe("WSO2 supplied-contract lineage", () => {
     const secondReceipt = privateReceipt(secondImportReport);
     expect(secondReceipt.inventory.digest).toBe(firstReceipt.inventory.digest);
     expect(secondReceipt.selection.export.sha256).not.toBe(firstReceipt.selection.export.sha256);
-    expect(secondReceipt.selection.artifacts[0].digest).toBe(
-      firstReceipt.selection.artifacts[0].digest,
+    expect(secondReceipt.selection.artifacts![0]!.digest).toBe(
+      firstReceipt.selection.artifacts![0]!.digest,
     );
-    expect(secondReceipt.selection.artifacts[0].packaging.digest).not.toBe(
-      firstReceipt.selection.artifacts[0].packaging.digest,
+    expect(secondReceipt.selection.artifacts![0]!.packaging!.digest).not.toBe(
+      firstReceipt.selection.artifacts![0]!.packaging!.digest,
     );
     expect(readFileSync(join(firstImportReport.receipt.directory, "raw", "export.bin"))).toEqual(
       Buffer.from(firstBytes),

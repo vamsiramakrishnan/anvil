@@ -179,7 +179,8 @@ describe("synthesis ↔ zod shape agreement", () => {
     };
     op.input.schema = operationInputSchema(op);
 
-    const bodySchema = op.input.schema.properties?.body as {
+    const bodySchema = (op.input.schema.properties as Record<string, unknown> | undefined)
+      ?.body as {
       properties?: { input?: { properties?: Record<string, unknown>; required?: string[] } };
     };
     expect(bodySchema.properties?.input?.properties).not.toHaveProperty("idempotencyKey");

@@ -48,7 +48,7 @@ describe("capability contracts", () => {
   });
 
   it("aggregates a safety profile that flags the non-idempotent financial mutation", () => {
-    const refundsCap = air.capabilities.find((c) => c.operationIds.includes(idByOp.refundPayment));
+    const refundsCap = air.capabilities.find((c) => c.operationIds.includes(idByOp.refundPayment!));
     const contract = capabilityContractFor(air, refundsCap?.id as string);
     expect(contract.safetyProfile.confirmationRequiredOps).toContain(idByOp.refundPayment);
     expect(contract.safetyProfile.nonIdempotentMutationOps).toContain(idByOp.refundPayment);

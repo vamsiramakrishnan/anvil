@@ -12,6 +12,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { type AuthRequirement, AuthRequirement as AuthSchema } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import type { AuthMaterial, CredentialResolver } from "./auth.js";
+import type { RuntimeConfig } from "./config.js";
 import {
   CompositeCredentialResolver,
   resolveCredentials,
@@ -81,6 +82,12 @@ function stubResolver(material: AuthMaterial | null, withExpected = true) {
     resolver.expectedCredentials = () => ["STUB_VAR"];
   }
   return { calls, resolver };
+}
+
+/** A complete RuntimeConfig. Partial literals silently drift from the real
+ * shape, which is how these fixtures diverged from what the runtime loads. */
+function runtimeConfig(env: string): RuntimeConfig {
+  return { env, allowedHosts: [], upstreamTimeoutMs: 5_000, ledgerResultTtlSeconds: 604_800 };
 }
 
 describe("SecretManagerCredentialResolver — auth-type branch coverage", () => {
@@ -325,7 +332,7 @@ describe("TokenExchangeResolver — private_key_jwt client authentication", () =
     expect(form.get("client_id")).toBe("svc-account");
     const assertion = form.get("client_assertion") ?? "";
     expect(assertion.split(".")).toHaveLength(3);
-    const payload = JSON.parse(Buffer.from(assertion.split(".")[1], "base64url").toString());
+    const payload = JSON.parse(Buffer.from(assertion.split(".")[1]!, "base64url").toString());
     expect(payload.iss).toBe("svc-account");
     expect(payload.aud).toBe("https://sts.example.com/token");
     // The private key must never appear on the wire.
@@ -552,10 +559,11 @@ describe("resolveCredentials — additional precedence & redaction", () => {
     const { fn, calls } = fakeFetch(() => ({
       json: { access_token: "MUST_NOT_MINT", expires_in: 3600 },
     }));
-    const r = resolveCredentials(
-      { env: "dev", allowedHosts: [] },
-      { env, fetchImpl: fn, allowLoopbackHttp: false },
-    );
+    const r = resolveCredentials(runtimeConfig("dev"), {
+      env,
+      fetchImpl: fn,
+      allowLoopbackHttp: false,
+    });
     expect(await r.resolve("def", auth({ type: "oauth2_client_credentials" }))).toBeNull();
     expect(calls).toEqual([]);
   });
@@ -564,7 +572,7 @@ describe("resolveCredentials — additional precedence & redaction", () => {
     const { fn, calls } = fakeFetch((url) =>
       url.includes("/identity") ? { text: "GCP.ID.TOKEN" } : { status: 404 },
     );
-    const r = resolveCredentials({ env: "dev", allowedHosts: [] }, { env: {}, fetchImpl: fn });
+    const r = resolveCredentials(runtimeConfig("dev"), { env: {}, fetchImpl: fn });
     const mat = await r.resolve(
       "def",
       auth({
@@ -579,17 +587,14 @@ describe("resolveCredentials — additional precedence & redaction", () => {
 
   it("never leaks the configured client secret when the token endpoint rejects the request", async () => {
     const { fn } = fakeFetch(() => ({ status: 401, json: { error: "invalid_client" } }));
-    const r = resolveCredentials(
-      { env: "dev", allowedHosts: [] },
-      {
-        env: {
-          ANVIL_DEF_TOKEN_ENDPOINT: "https://sts.example.com/token",
-          ANVIL_DEF_CLIENT_ID: "cid",
-          ANVIL_DEF_CLIENT_SECRET: "super-secret-value",
-        },
-        fetchImpl: fn,
+    const r = resolveCredentials(runtimeConfig("dev"), {
+      env: {
+        ANVIL_DEF_TOKEN_ENDPOINT: "https://sts.example.com/token",
+        ANVIL_DEF_CLIENT_ID: "cid",
+        ANVIL_DEF_CLIENT_SECRET: "super-secret-value",
       },
-    );
+      fetchImpl: fn,
+    });
     const mat = await r.resolve("def", auth({ type: "oauth2_client_credentials" }));
     expect(mat).toBeNull();
     expect(JSON.stringify(mat)).not.toContain("super-secret-value");

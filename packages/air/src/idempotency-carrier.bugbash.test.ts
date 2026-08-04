@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { z } from "zod";
 import type { IdempotencyMode } from "./enums.js";
 import type {
   IdempotencyCarrierBinding,
@@ -10,7 +11,7 @@ import {
   isModeledIdempotencyCarrierInput,
   resolveIdempotencyCarrier,
 } from "./idempotency-carrier.js";
-import type { Operation } from "./schema.js";
+import { type Operation, Operation as OperationSchema } from "./schema.js";
 
 /** Narrows a resolution to its rejected branch, asserting `ok: false` with a normal vitest diff. */
 function assertRejected(
@@ -26,9 +27,24 @@ function assertAccepted(
   expect(res.ok).toBe(true);
 }
 
-// Test fixture: minimal operation
-function makeOp(overrides: Partial<Operation> = {}): Operation {
-  return {
+/**
+ * A minimal operation, built through the schema.
+ *
+ * This previously returned an object literal *declared* as `Operation` while
+ * omitting `reversible`, `mechanism`, `keyDerivation`, `scopes` and more — the
+ * declared type was a lie, and 115 of this package's typecheck errors came from
+ * it alone. Parsing means the fixture carries the same defaults production does,
+ * so a test cannot assert behaviour on a shape AIR never produces.
+ *
+ * Overrides are typed as the schema's *input*, not its output: `{ mode:
+ * "natural" }` is a complete idempotency input because `mechanism` and
+ * `keyDerivation` have defaults. `Partial<Operation>` would demand the
+ * post-default shape and reject every call site here.
+ */
+type OperationInput = z.input<typeof OperationSchema>;
+
+function makeOp(overrides: Partial<OperationInput> = {}): Operation {
+  return OperationSchema.parse({
     id: "test.op",
     canonicalName: "test_op",
     displayName: "Test Operation",
@@ -43,7 +59,7 @@ function makeOp(overrides: Partial<Operation> = {}): Operation {
     mcp: { toolName: "test_op" },
     skill: { intentExamples: [] },
     ...overrides,
-  };
+  });
 }
 
 describe("idempotencyModeUsesCarrier", () => {
@@ -137,9 +153,10 @@ describe("resolveIdempotencyCarrier", () => {
       });
       const res = resolveIdempotencyCarrier(op);
       expect(res.ok).toBe(true);
-      if (res.ok && res.binding) {
-        expect(res.binding.key).toBe("X-Idempotency-Key");
-      }
+      assertAccepted(res);
+      const binding = res.binding;
+      if (!binding) throw new Error("expected a carrier binding");
+      expect(binding.key).toBe("X-Idempotency-Key");
     });
 
     it("requires key for query mechanism", () => {
@@ -204,7 +221,7 @@ describe("resolveIdempotencyCarrier", () => {
           },
         });
         const res = resolveIdempotencyCarrier(op);
-        expect(res.ok).toBe(true, `Header name '${name}' should be valid`);
+        expect(res.ok, `Header name '${name}' should be valid`).toBe(true);
       }
     });
 
@@ -325,9 +342,10 @@ describe("resolveIdempotencyCarrier", () => {
       });
       const res = resolveIdempotencyCarrier(op);
       expect(res.ok).toBe(true);
-      if (res.ok && res.binding) {
-        expect(res.binding.schema).toEqual(schema);
-      }
+      assertAccepted(res);
+      const binding = res.binding;
+      if (!binding) throw new Error("expected a carrier binding");
+      expect(binding.schema).toEqual(schema);
     });
 
     it("matches header parameter case-insensitively", () => {
@@ -360,10 +378,11 @@ describe("resolveIdempotencyCarrier", () => {
       });
       const res = resolveIdempotencyCarrier(op);
       expect(res.ok).toBe(true);
-      if (res.ok && res.binding) {
-        expect(res.binding.mechanism).toBe("query");
-        expect(res.binding.key).toBe("idempotency_key");
-      }
+      assertAccepted(res);
+      const binding = res.binding;
+      if (!binding) throw new Error("expected a carrier binding");
+      expect(binding.mechanism).toBe("query");
+      expect(binding.key).toBe("idempotency_key");
     });
 
     it("rejects query parameter not in contract", () => {
@@ -447,10 +466,11 @@ describe("resolveIdempotencyCarrier", () => {
       });
       const res = resolveIdempotencyCarrier(op);
       expect(res.ok).toBe(true);
-      if (res.ok && res.binding) {
-        expect(res.binding.mechanism).toBe("path");
-        expect(res.binding.key).toBe("item_id");
-      }
+      assertAccepted(res);
+      const binding = res.binding;
+      if (!binding) throw new Error("expected a carrier binding");
+      expect(binding.mechanism).toBe("path");
+      expect(binding.key).toBe("item_id");
     });
 
     it("rejects path parameter not in contract", () => {
@@ -533,10 +553,12 @@ describe("resolveIdempotencyCarrier", () => {
       });
       const res = resolveIdempotencyCarrier(op);
       expect(res.ok).toBe(true);
-      if (res.ok && res.binding) {
-        expect(res.binding.mechanism).toBe("body");
-        expect(res.binding.path).toEqual(["idempotency_key"]);
+      assertAccepted(res);
+      const binding = res.binding;
+      if (binding?.mechanism !== "body") {
+        throw new Error(`expected a body carrier, got ${binding?.mechanism ?? "none"}`);
       }
+      expect(binding.path).toEqual(["idempotency_key"]);
     });
 
     it("rejects legacy body param not as string", () => {
@@ -576,9 +598,10 @@ describe("resolveIdempotencyCarrier", () => {
       });
       const res = resolveIdempotencyCarrier(op);
       expect(res.ok).toBe(true);
-      if (res.ok && res.binding) {
-        expect(res.binding.path).toEqual(["idempotency_key"]);
-      }
+      assertAccepted(res);
+      const binding = res.binding;
+      if (!binding) throw new Error("expected a carrier binding");
+      expect((binding as { path?: string[] }).path).toEqual(["idempotency_key"]);
     });
 
     it("accepts JSON pointer path", () => {
@@ -608,9 +631,10 @@ describe("resolveIdempotencyCarrier", () => {
       });
       const res = resolveIdempotencyCarrier(op);
       expect(res.ok).toBe(true);
-      if (res.ok && res.binding) {
-        expect(res.binding.path).toEqual(["metadata", "idempotency_key"]);
-      }
+      assertAccepted(res);
+      const binding = res.binding;
+      if (!binding) throw new Error("expected a carrier binding");
+      expect((binding as { path?: string[] }).path).toEqual(["metadata", "idempotency_key"]);
     });
 
     it("decodes JSON pointer escape sequences", () => {
@@ -635,9 +659,10 @@ describe("resolveIdempotencyCarrier", () => {
       });
       const res = resolveIdempotencyCarrier(op);
       expect(res.ok).toBe(true);
-      if (res.ok && res.binding) {
-        expect(res.binding.path).toEqual(["a/b~c"]);
-      }
+      assertAccepted(res);
+      const binding = res.binding;
+      if (!binding) throw new Error("expected a carrier binding");
+      expect((binding as { path?: string[] }).path).toEqual(["a/b~c"]);
     });
 
     it("rejects invalid JSON pointer", () => {
@@ -932,7 +957,7 @@ describe("resolveIdempotencyCarrier", () => {
           },
         });
         const res = resolveIdempotencyCarrier(op);
-        expect(res.ok).toBe(true, `Pattern '${pattern}' should be accepted`);
+        expect(res.ok, `Pattern '${pattern}' should be accepted`).toBe(true);
       }
     });
 

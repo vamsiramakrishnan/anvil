@@ -80,7 +80,7 @@ describe("bundleDocument", () => {
     const out = document as typeof doc;
     expect(
       Object.keys(
-        out.paths["/entries"].post.requestBody.content["application/json"].schema.properties,
+        out.paths["/entries"].post.requestBody.content["application/json"]!.schema.properties,
       ),
     ).toEqual(["amount", "memo"]);
   });
@@ -122,7 +122,7 @@ describe("bundleDocument", () => {
         },
       };
       const { document } = bundleDocument(doc);
-      const out = document as {
+      const out = document as unknown as {
         components: { schemas: { customer: Record<string, unknown> } };
         paths: Record<
           string,
@@ -134,13 +134,13 @@ describe("bundleDocument", () => {
       // The one real definition still has its properties.
       expect(out.components.schemas.customer.properties).toEqual(customer.properties);
       // Every other use is a lightweight pointer, not a duplicated inline copy.
-      expect(out.paths["/charges"].get.responses["200"].content["application/json"].schema).toEqual(
-        {
-          $ref: "#/components/schemas/customer",
-        },
-      );
       expect(
-        out.paths["/invoices"].get.responses["200"].content["application/json"].schema,
+        out.paths["/charges"]!.get.responses["200"]!.content["application/json"]!.schema,
+      ).toEqual({
+        $ref: "#/components/schemas/customer",
+      });
+      expect(
+        out.paths["/invoices"]!.get.responses["200"]!.content["application/json"]!.schema,
       ).toEqual({
         $ref: "#/components/schemas/customer",
       });
@@ -153,7 +153,7 @@ describe("bundleDocument", () => {
       const { document, truncatedAt, depthLimitedAt } = bundleDocument(doc);
       expect(truncatedAt).toEqual([]);
       expect(depthLimitedAt).toEqual([]);
-      const out = document as {
+      const out = document as unknown as {
         components: { schemas: { Group: { properties: { subgroups: { items: unknown } } } } };
       };
       expect(out.components.schemas.Group.properties.subgroups.items).toEqual({
@@ -168,7 +168,7 @@ describe("bundleDocument", () => {
       const doc = { components: { schemas: { A: a, B: b } } };
       const { document, truncatedAt } = bundleDocument(doc);
       expect(truncatedAt).toEqual([]);
-      const out = document as {
+      const out = document as unknown as {
         components: {
           schemas: { A: { properties: { b: unknown } }; B: { properties: { a: unknown } } };
         };
@@ -189,7 +189,7 @@ describe("bundleDocument", () => {
         for (const other of names) props[other] = schemas[other];
       }
       const { document } = bundleDocument({ components: { schemas } });
-      const out = document as {
+      const out = document as unknown as {
         components: { schemas: Record<string, { properties: Record<string, unknown> }> };
       };
       // The correctness signal (not a brittle wall-clock threshold, which is
@@ -242,7 +242,7 @@ describe("bundleDocument", () => {
       const { document, truncatedAt } = bundleDocument(build());
       expect(truncatedAt).toEqual([]);
       expect(() => JSON.stringify(document)).not.toThrow();
-      const out = document as {
+      const out = document as unknown as {
         components: {
           schemas: { A: { properties: { b: unknown } }; B: { properties: { a: unknown } } };
         };
@@ -259,12 +259,12 @@ describe("bundleDocument", () => {
       };
       const aRef = { $ref: "#/components/schemas/A" };
       expect(
-        out.paths["/one"]?.get?.responses?.["200"]?.content["application/json"]?.schema,
+        out.paths["/one"]!.get?.responses?.["200"]?.content["application/json"]?.schema,
       ).toEqual(aRef);
       expect(
-        out.paths["/two"]?.get?.responses?.["200"]?.content["application/json"]?.schema,
+        out.paths["/two"]!.get?.responses?.["200"]?.content["application/json"]?.schema,
       ).toEqual(aRef);
-      expect(out.paths["/three"]?.post?.requestBody?.content["application/json"]?.schema).toEqual(
+      expect(out.paths["/three"]!.post?.requestBody?.content["application/json"]?.schema).toEqual(
         aRef,
       );
       // The recursion itself is ordinary $refs, so the whole document is tiny.
@@ -313,7 +313,7 @@ describe("bundleDocument", () => {
         },
       };
       const { document } = bundleDocument(doc);
-      const out = document as {
+      const out = document as unknown as {
         paths: Record<
           string,
           Record<
@@ -328,14 +328,14 @@ describe("bundleDocument", () => {
         >;
       };
       const ref = { $ref: "#/components/schemas/Node" };
-      expect(out.paths["/a"]?.get?.responses?.["200"]?.content["application/json"]?.schema).toEqual(
+      expect(out.paths["/a"]!.get?.responses?.["200"]?.content["application/json"]?.schema).toEqual(
         ref,
       );
-      expect(out.paths["/b"]?.get?.responses?.["200"]?.content["application/json"]?.schema).toEqual(
+      expect(out.paths["/b"]!.get?.responses?.["200"]?.content["application/json"]?.schema).toEqual(
         ref,
       );
       expect(
-        out.paths["/c"]?.post?.requestBody?.content["application/json"]?.schema.properties.child,
+        out.paths["/c"]!.post?.requestBody?.content["application/json"]?.schema.properties.child,
       ).toEqual(ref);
     });
 
@@ -364,7 +364,7 @@ describe("bundleDocument", () => {
       };
       // Documented alias policy: no title matches a candidate name, so the
       // lexicographically smallest name wins.
-      expect(out.paths["/x"].get.responses["200"].content["application/json"].schema).toEqual({
+      expect(out.paths["/x"].get.responses["200"]!.content["application/json"]!.schema).toEqual({
         $ref: "#/components/schemas/Alpha",
       });
       // Neither alias definition is hollowed out into a bare self/alias $ref.
@@ -383,7 +383,7 @@ describe("bundleDocument", () => {
         },
       };
       const { document } = bundleDocument(doc);
-      const out = document as {
+      const out = document as unknown as {
         paths: {
           "/x": {
             get: { responses: { "200": { content: { "application/json": { schema: unknown } } } } };
@@ -392,7 +392,7 @@ describe("bundleDocument", () => {
       };
       // "Alpha" sorts first, but the body says it IS "Zed" — the title-named
       // alias is the deterministic pick when it matches a candidate name.
-      expect(out.paths["/x"].get.responses["200"].content["application/json"].schema).toEqual({
+      expect(out.paths["/x"].get.responses["200"]!.content["application/json"]!.schema).toEqual({
         $ref: "#/components/schemas/Zed",
       });
     });
@@ -453,7 +453,7 @@ describe("bundleDocument", () => {
       // Proportional to unique structure: N bodies × FAN tiny $ref pointers,
       // never an inlined (let alone re-inlined) subtree.
       expect(json.length).toBeLessThan(1_000_000);
-      const out = document as {
+      const out = document as unknown as {
         components: { schemas: Record<string, { properties: Record<string, unknown> }> };
         paths: {
           "/root": {
@@ -467,7 +467,7 @@ describe("bundleDocument", () => {
       expect(out.components.schemas.C399?.properties.f15).toEqual({
         $ref: `#/components/schemas/${nameAt((399 + 15 * 7) % N)}`,
       });
-      expect(out.paths["/root"].get.responses["200"].content["application/json"].schema).toEqual({
+      expect(out.paths["/root"].get.responses["200"]!.content["application/json"]!.schema).toEqual({
         $ref: "#/components/schemas/C000",
       });
     });
@@ -511,7 +511,7 @@ describe("bundleDocument", () => {
         },
       };
       const { document } = bundleDocument(doc);
-      const out = document as {
+      const out = document as unknown as {
         paths: Record<
           string,
           {
@@ -520,8 +520,12 @@ describe("bundleDocument", () => {
         >;
       };
       const ref = { $ref: "#/components/schemas/Connection" };
-      expect(out.paths["/a"]?.get.responses["200"].content["application/json"].schema).toEqual(ref);
-      expect(out.paths["/b"]?.get.responses["200"].content["application/json"].schema).toEqual(ref);
+      expect(out.paths["/a"]!.get.responses["200"]!.content["application/json"]!.schema).toEqual(
+        ref,
+      );
+      expect(out.paths["/b"]!.get.responses["200"]!.content["application/json"]!.schema).toEqual(
+        ref,
+      );
     });
 
     it("hoists a LARGE repeated anonymous structure so output TREE size stays proportional to unique structure", () => {
@@ -589,7 +593,7 @@ describe("bundleDocument", () => {
       };
       expect(out.components.schemas[synthName]?.properties).toBeDefined();
       // Later sites reference it; the first site keeps its inline emission.
-      expect(out.paths["/op29"]?.post.requestBody.content["application/json"].schema).toEqual({
+      expect(out.paths["/op29"]!.post.requestBody.content["application/json"]!.schema).toEqual({
         $ref: `#/components/schemas/${synthName}`,
       });
       // Determinism: same input shape → identical output, including synth names.
@@ -630,7 +634,7 @@ describe("bundleDocument", () => {
       expect(() => JSON.stringify(document)).not.toThrow();
       expect(synthesized.length).toBeGreaterThan(0);
       const synthName = synthesized[0]?.name as string;
-      const out = document as {
+      const out = document as unknown as {
         components: { schemas: Record<string, { properties?: Record<string, unknown> }> };
       };
       // The synthesized definition is walked fresh from depth 0 — full
@@ -677,7 +681,7 @@ describe("bundleDocument", () => {
         "x-expansionResources": { oneOf: [customerObject] },
       };
       const { document } = bundleDocument({ charge: { properties: { customer: field } } });
-      const out = document as {
+      const out = document as unknown as {
         charge: { properties: { customer: Record<string, unknown> } };
       };
       const collapsed = out.charge.properties.customer;
@@ -702,7 +706,7 @@ describe("bundleDocument", () => {
         "x-expansionResources": { oneOf: [unrelated] },
       };
       const { document } = bundleDocument({ f: field });
-      const out = document as { f: Record<string, unknown> };
+      const out = document as unknown as { f: Record<string, unknown> };
       expect(out.f.anyOf).toBeDefined();
     });
   });
@@ -806,7 +810,7 @@ describe("materializeSchema", () => {
     // is a shallow stub — the deep 20-field body is gone, not re-expanded.
     const out = small.schema as { properties: Record<string, { properties?: unknown }> };
     expect(out.properties.prop499).toBeDefined(); // name preserved
-    expect(out.properties.prop499.properties).toBeUndefined(); // body truncated
+    expect(out.properties.prop499!.properties).toBeUndefined(); // body truncated
     // Still valid JSON (no cycles, no dangling structure).
     expect(() => JSON.stringify(small.schema)).not.toThrow();
   });

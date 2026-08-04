@@ -120,7 +120,7 @@ describe("truncateResultText", () => {
   it("handles edge case: budget lands just before surrogate pair", () => {
     const op = createBaseOperation();
     const emoji = "😀"; // 2 UTF-16 code units
-    const text = emoji + emoji + "x"; // emoji, emoji, "x"
+    const text = `${emoji}${emoji}x`; // emoji, emoji, "x"
     const result = truncateResultText(text, op, 4);
     // Budget is 4, which is the high surrogate of the second emoji
     // Should back up to 2 (just the first emoji)

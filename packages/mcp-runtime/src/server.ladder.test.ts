@@ -1,4 +1,4 @@
-import { type AirDocument, Capability, Operation } from "@anvil/air";
+import { type AirDocument, Capability, loadAirDocument, Operation } from "@anvil/air";
 import type { HttpRequest, HttpResponse, Transport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -77,8 +77,8 @@ function voidInvoice(): Operation {
 }
 
 function estate(over?: Partial<AirDocument>): AirDocument {
-  const air: AirDocument = {
-    service: { id: "test", version: "1.0.0", canonicalName: "test" },
+  const air: AirDocument = loadAirDocument({
+    service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
     operations: [
       operation({ id: "billing.invoice.list" }),
       operation({ id: "billing.invoice.get" }),
@@ -99,7 +99,7 @@ function estate(over?: Partial<AirDocument>): AirDocument {
     ],
     workflows: [],
     ...over,
-  };
+  });
   return air;
 }
 

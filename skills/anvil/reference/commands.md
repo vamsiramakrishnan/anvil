@@ -95,6 +95,7 @@ Read-only. Resolves the canonical AIR and locked-source coordinate, verifies gen
 Options:
 - `--root <dir>` — workspace root containing .anvil/sources
 - `--json` — emit one StatusReport JSON document
+- `--require <action>` — exit non-zero unless the next safe action is <action> (repair-core | resolve-contract | resolve-gateway-policy | resolve-blocked | inspect-approve | certify | selftest | conformance | simulate | retarget | release | operator-action-required); use --require release to gate a pipeline
 
 ### `anvil inspect`
 `anvil inspect [options] <path>`

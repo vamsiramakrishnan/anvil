@@ -5,10 +5,27 @@ import { bufferIO } from "./io.js";
 import { createAnvilProgram } from "./program.js";
 import { commandPath, commandUsage, generateAnvilSkill, visibleSubcommands } from "./self-skill.js";
 
-const STALE = "run `anvil skill skills/anvil` and commit the result";
+/**
+ * Every checked-in copy of the generated self-skill.
+ *
+ * `skills/anvil/` is the Claude Code convention; `.agent/skills/anvil/` is the
+ * runtime-native one Codex and Antigravity read. Both are generated from the
+ * command registry by `anvil skill <dir>`, so both must be regenerated together.
+ *
+ * This list exists because the guard below was exhaustive on one axis and blind
+ * on another. It walked every file `generateAnvilSkill` emits — so a new
+ * reference file was covered automatically — but only ever compared them against
+ * `skills/anvil/`. The `.agent/` copy drifted unnoticed until it was missing five
+ * of nine files and three commands, including `anvil status`, which is step 2 of
+ * the loop its own SKILL.md documents. An agent reading that copy could not know
+ * the gateway-estate flow existed at all.
+ */
+const SKILL_ROOTS = ["skills/anvil", ".agent/skills/anvil"] as const;
+
+const STALE = (root: string) => `run \`anvil skill ${root}\` and commit the result`;
 
 describe("anvil self-skill", () => {
-  it("every generated file matches its checked-in copy under skills/anvil/ (no drift)", () => {
+  it.each(SKILL_ROOTS)("every generated file matches its checked-in copy under %s", (root) => {
     // Exhaustive by construction: this walks generateAnvilSkill's own output
     // keys rather than a manually maintained file list, so a newly added
     // reference file is covered automatically instead of silently lacking a
@@ -20,11 +37,8 @@ describe("anvil self-skill", () => {
     const program = createAnvilProgram({ io: bufferIO() });
     const files = generateAnvilSkill(program);
     for (const [rel, content] of Object.entries(files)) {
-      const checkedIn = readFileSync(
-        new URL(`../../../skills/anvil/${rel}`, import.meta.url),
-        "utf8",
-      );
-      expect(content, `skills/anvil/${rel} is stale — ${STALE}`).toBe(checkedIn);
+      const checkedIn = readFileSync(new URL(`../../../${root}/${rel}`, import.meta.url), "utf8");
+      expect(content, `${root}/${rel} is stale — ${STALE(root)}`).toBe(checkedIn);
     }
   });
 

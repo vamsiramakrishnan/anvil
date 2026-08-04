@@ -2,18 +2,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Operation } from "@anvil/air";
 import { compile } from "@anvil/compiler";
-import {
-  deploymentArtifactHash,
-  generateBundle,
-  readBundleDir,
-  writeBundle,
-} from "@anvil/generators";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   delegatedIdentityContractGroups,
-  LiveConfig,
   liveIdentityGate,
   liveIdentityReadiness,
   loadLiveConfig,
@@ -206,11 +198,15 @@ describe("identity contract grouping", () => {
     });
     const seed = air.operations.find((op) => op.state === "approved");
     if (!seed) throw new Error("fixture");
-    const read1 = { ...structuredClone(seed), id: "read.one", effect: { kind: "read" as const } };
+    const read1 = {
+      ...structuredClone(seed),
+      id: "read.one",
+      effect: { ...seed.effect, kind: "read" as const },
+    };
     const write1 = {
       ...structuredClone(seed),
       id: "write.one",
-      effect: { kind: "mutation" as const },
+      effect: { ...seed.effect, kind: "mutation" as const },
     };
     const groups = delegatedIdentityContractGroups([read1, write1]);
     expect(groups).toHaveLength(1);
@@ -367,7 +363,10 @@ describe("identity readiness analysis", () => {
     });
     const seed = air.operations.find((op) => op.state === "approved");
     if (!seed) throw new Error("fixture");
-    const writeOp = { ...structuredClone(seed), effect: { kind: "mutation" as const } };
+    const writeOp = {
+      ...structuredClone(seed),
+      effect: { ...seed.effect, kind: "mutation" as const },
+    };
     const artifactCheck = {
       id: "artifact-live",
       status: "pass" as const,
@@ -399,7 +398,7 @@ describe("identity readiness analysis", () => {
     const groupBWrite = {
       ...structuredClone(seed),
       id: "group_b_write",
-      effect: { kind: "mutation" as const },
+      effect: { ...seed.effect, kind: "mutation" as const },
       auth: { ...seed.auth, issuer: "https://sts-b.example.com/" },
     };
     const artifactCheck = {

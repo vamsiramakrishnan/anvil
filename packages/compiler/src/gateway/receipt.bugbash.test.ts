@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   FileSystemGatewayImportReceiptStore,
   finalizeGatewayImportReceipt,
-  type GatewayImportReceipt,
   type GatewayImportReceiptDraft,
   gatewayBundleManifest,
   gatewayCapabilityReviewInput,
@@ -241,7 +240,7 @@ describe("verifyGatewayImportReceipt", () => {
       digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     };
     const result = verifyGatewayImportReceipt(tampered);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/digest_mismatch");
   });
@@ -250,7 +249,7 @@ describe("verifyGatewayImportReceipt", () => {
     const receipt = finalizeGatewayImportReceipt(baseDraft());
     const tampered = { ...receipt, importId: "gwi-0000000000000000" };
     const result = verifyGatewayImportReceipt(tampered);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/id_mismatch");
   });
@@ -265,7 +264,7 @@ describe("verifyGatewayImportReceipt", () => {
       },
     };
     const result = verifyGatewayImportReceipt(tampered);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/output_manifest_mismatch");
   });
@@ -274,7 +273,7 @@ describe("verifyGatewayImportReceipt", () => {
     const receipt = finalizeGatewayImportReceipt(baseDraft());
     const badBytes = Uint8Array.from([1, 2, 3]);
     const result = verifyGatewayImportReceipt(receipt, badBytes);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/export_changed");
   });
@@ -283,7 +282,7 @@ describe("verifyGatewayImportReceipt", () => {
     const receipt = finalizeGatewayImportReceipt(baseDraft());
     const truncated = ARCHIVE_BYTES.slice(0, 1);
     const result = verifyGatewayImportReceipt(receipt, truncated);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/export_size_changed");
   });
@@ -300,7 +299,7 @@ describe("verifyGatewayImportReceipt", () => {
     };
     const receipt = finalizeGatewayImportReceipt(draft);
     const result = verifyGatewayImportReceipt(receipt);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/contract_source_mismatch");
   });
@@ -318,7 +317,7 @@ describe("verifyGatewayImportReceipt", () => {
     };
     const receipt = finalizeGatewayImportReceipt(draft);
     const result = verifyGatewayImportReceipt(receipt);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/locked_source_mismatch");
   });
@@ -336,7 +335,7 @@ describe("verifyGatewayImportReceipt", () => {
     };
     const receipt = finalizeGatewayImportReceipt(draft);
     const result = verifyGatewayImportReceipt(receipt);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/locked_source_manifest_mismatch");
   });
@@ -354,7 +353,7 @@ describe("verifyGatewayImportReceipt", () => {
     };
     const receipt = finalizeGatewayImportReceipt(draft);
     const result = verifyGatewayImportReceipt(receipt);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/locked_source_entrypoint_mismatch");
   });
@@ -375,7 +374,7 @@ describe("verifyGatewayImportReceipt", () => {
     }
     const receipt = finalizeGatewayImportReceipt(draft);
     const result = verifyGatewayImportReceipt(receipt);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/capability_review_not_canonical");
   });
@@ -395,7 +394,7 @@ describe("verifyGatewayImportReceipt", () => {
     }
     const receipt = finalizeGatewayImportReceipt(draft);
     const result = verifyGatewayImportReceipt(receipt);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/capability_review_digest_mismatch");
   });
@@ -422,7 +421,7 @@ describe("verifyGatewayImportReceipt", () => {
     };
     const receipt = finalizeGatewayImportReceipt(draft);
     const result = verifyGatewayImportReceipt(receipt);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/formal_definition_vendor_mismatch");
   });
@@ -454,7 +453,7 @@ describe("verifyGatewayImportReceipt", () => {
     };
     const receipt = finalizeGatewayImportReceipt(draft);
     const result = verifyGatewayImportReceipt(receipt);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/formal_definition_candidates_mismatch");
   });
@@ -490,7 +489,7 @@ describe("verifyGatewayImportReceipt", () => {
     };
     const receipt = finalizeGatewayImportReceipt(draft);
     const result = verifyGatewayImportReceipt(receipt);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/formal_definition_source_missing");
   });
@@ -501,7 +500,7 @@ describe("verifyGatewayImportOutput / verifyGatewayImportOutputManifest", () => 
     const receipt = finalizeGatewayImportReceipt(baseDraft());
     const files = new Map<string, Uint8Array>();
     const result = verifyGatewayImportOutput(receipt, files);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/output_missing");
   });
@@ -513,7 +512,7 @@ describe("verifyGatewayImportOutput / verifyGatewayImportOutputManifest", () => 
       files.set(file.path, Uint8Array.from([1, 2, 3]));
     }
     const result = verifyGatewayImportOutput(receipt, files);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/output_changed");
   });
@@ -544,7 +543,7 @@ describe("verifyGatewayImportOutput / verifyGatewayImportOutputManifest", () => 
       files.set(file.path, new TextEncoder().encode(content));
     }
     const result = verifyGatewayImportOutputManifest(tampered.output, files);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/output_digest_mismatch");
   });
@@ -640,7 +639,7 @@ describe("FileSystemGatewayImportReceiptStore", () => {
   it("rejects invalid import id on load", async () => {
     const store = new FileSystemGatewayImportReceiptStore(work);
     const result = await store.load("not-a-valid-id");
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/invalid_id");
   });
@@ -648,7 +647,7 @@ describe("FileSystemGatewayImportReceiptStore", () => {
   it("returns not found for missing receipt", async () => {
     const store = new FileSystemGatewayImportReceiptStore(work);
     const result = await store.load("gwi-0000000000000000");
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/not_found");
   });
@@ -672,7 +671,7 @@ describe("FileSystemGatewayImportReceiptStore", () => {
 
     writeFileSync(join(created.dir, "import.receipt.json"), "not json");
     const loaded = await store.load(receipt.importId);
-    expect(loaded.ok).toBe(false);
+    if (loaded.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = loaded.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/unparseable");
   });
@@ -685,7 +684,7 @@ describe("FileSystemGatewayImportReceiptStore", () => {
 
     rmSync(join(created.dir, "raw", "export.bin"));
     const verified = await store.verify(receipt.importId);
-    expect(verified.ok).toBe(false);
+    if (verified.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = verified.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/export_missing");
   });
@@ -698,7 +697,7 @@ describe("FileSystemGatewayImportReceiptStore", () => {
 
     writeFileSync(join(created.dir, "unexpected.json"), "{}");
     const verified = await store.verify(receipt.importId);
-    expect(verified.ok).toBe(false);
+    if (verified.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = verified.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/unexpected_file");
   });
@@ -711,7 +710,7 @@ describe("FileSystemGatewayImportReceiptStore", () => {
 
     writeFileSync(join(created.dir, "raw", "extra.bin"), "");
     const verified = await store.verify(receipt.importId);
-    expect(verified.ok).toBe(false);
+    if (verified.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = verified.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/unexpected_file");
   });
@@ -729,7 +728,7 @@ describe("FileSystemGatewayImportReceiptStore", () => {
     writeFileSync(join(created.dir, "import.receipt.json"), JSON.stringify(changed));
 
     const verified = await store.verify(receipt.importId);
-    expect(verified.ok).toBe(false);
+    if (verified.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = verified.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/directory_mismatch");
   });
@@ -742,7 +741,7 @@ describe("FileSystemGatewayImportReceiptStore", () => {
 
     writeFileSync(join(created.dir, "import.receipt.json"), "corrupted");
     const second = await store.create(receipt, ARCHIVE_BYTES);
-    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = second.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/id_collision");
   });
@@ -763,7 +762,7 @@ describe("FileSystemGatewayImportReceiptStore", () => {
     };
     const store = new FileSystemGatewayImportReceiptStore(work);
     const result = await store.create(tampered, ARCHIVE_BYTES);
-    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the receipt store to refuse this create");
     const codes = result.diagnostics.map((d) => d.code);
     expect(codes).toContain("gateway_receipt/digest_mismatch");
   });

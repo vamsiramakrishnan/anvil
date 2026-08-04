@@ -92,13 +92,13 @@ describe("operationInputSignature", () => {
 
   it("caps at 8 entries with ellipsis", () => {
     // Create a synthetic operation with >8 params to test the cap
-    const testOp = {
+    const testOp = OperationSchema.parse({
       id: "test.op",
       canonicalName: "test_op",
       displayName: "Test Op",
       description: "",
       tags: [],
-      sourceRef: { method: "POST", path: "/test" },
+      sourceRef: { kind: "openapi", method: "post", path: "/test" },
       effect: {
         kind: "mutation" as const,
         action: "create" as const,
@@ -121,13 +121,13 @@ describe("operationInputSignature", () => {
       output: {},
       errors: [],
       idempotency: {
-        mode: "not_idempotent" as const,
+        mode: "none" as const,
         mechanism: "none" as const,
         keyDerivation: "none" as const,
       },
-      retries: { mode: "not_safe" as const },
+      retries: { mode: "none" as const },
       confirmation: { required: false },
-      auth: { type: "bearer", principal: "user", scopes: [] },
+      auth: { type: "api_key", principal: "service", scopes: [] },
       pagination: undefined,
       streaming: false,
       longRunning: false,
@@ -138,7 +138,7 @@ describe("operationInputSignature", () => {
       state: "approved" as const,
       reviewNotes: [],
       evidence: { claims: [] },
-    } as OperationSchema;
+    });
 
     const sig = operationInputSignature(testOp);
     expect(sig).toContain("…");
@@ -236,7 +236,7 @@ describe("deploy: upstream credential wiring", () => {
     // The names-only contract an operator provisions against.
     expect(files["deploy/credentials.required.yaml"]).toBeDefined();
     // The env schema documents the coarse override + per-profile credential keys.
-    const schema = JSON.parse(files["deploy/env.schema.json"]);
+    const schema = JSON.parse(files["deploy/env.schema.json"] as string);
     expect(schema.properties.ANVIL_CREDENTIALS).toBeDefined();
     expect(schema.properties.ANVIL_SECRET_PROJECT).toBeDefined();
     expect(Object.keys(schema.patternProperties ?? {})).toHaveLength(1);
@@ -252,7 +252,7 @@ describe("deploy: upstream credential wiring", () => {
     expect(vars).toContain('variable "credential_secret_ids"');
     expect(vars).toContain('contains(["", "env", "secret_manager"]');
     expect(schema.properties.ANVIL_CREDENTIALS.enum).toEqual(["env", "secret_manager"]);
-    const legacy = parseYaml(files["deploy/secrets.required.yaml"]) as {
+    const legacy = parseYaml(files["deploy/secrets.required.yaml"] as string) as {
       secrets: unknown[];
     };
     expect(legacy.secrets).toEqual([]);
@@ -422,9 +422,9 @@ describe("MCP server", () => {
     expect(cli).toBeDefined();
 
     const skillRead = await client.readResource({ uri: "anvil://skill/payments/SKILL.md" });
-    expect(skillRead.contents[0]?.text).toContain("Safety rules");
+    expect((skillRead.contents[0] as { text: string }).text).toContain("Safety rules");
     const cliRead = await client.readResource({ uri: "anvil://cli/payments/install.json" });
-    expect(cliRead.contents[0]?.text).toContain("payments-tools.run.app/mcp");
+    expect((cliRead.contents[0] as { text: string }).text).toContain("payments-tools.run.app/mcp");
     await client.close();
   });
 });
@@ -477,7 +477,7 @@ describe("capabilities in generated artifacts", () => {
     // Unapproved operations in pending section should also show signature
     const unapproved = structuredClone(air);
     if (unapproved.operations.length > 0) {
-      unapproved.operations[0].state = "review_required";
+      unapproved.operations[0]!.state = "review_required";
     }
     const { files: files2 } = generateBundle(unapproved);
     const opsRef = files2["skill/reference/operations.md"] as string;
@@ -490,7 +490,7 @@ describe("capabilities in generated artifacts", () => {
     // Clone air and add HTML to a description
     const withHtml = structuredClone(air);
     if (withHtml.operations.length > 0) {
-      withHtml.operations[0].description = "<p>Create a <strong>refund</strong> for a charge</p>";
+      withHtml.operations[0]!.description = "<p>Create a <strong>refund</strong> for a charge</p>";
     }
     const { files } = generateBundle(withHtml);
     const catalog = JSON.parse(files["catalog.json"] as string);
@@ -565,8 +565,8 @@ describe("capabilities in generated artifacts", () => {
     const mixed = structuredClone(air);
     // Approve only the first operation
     if (mixed.operations.length > 1) {
-      mixed.operations[0].state = "approved";
-      mixed.operations[1].state = "review_required";
+      mixed.operations[0]!.state = "approved";
+      mixed.operations[1]!.state = "review_required";
     }
     const { files } = generateBundle(mixed);
     const opsRef = files["skill/reference/operations.md"] as string;

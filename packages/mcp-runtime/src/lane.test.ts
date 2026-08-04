@@ -1,4 +1,10 @@
-import { type AirDocument, Capability, type LadderLane, Operation } from "@anvil/air";
+import {
+  type AirDocument,
+  Capability,
+  type LadderLane,
+  loadAirDocument,
+  Operation,
+} from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import {
   createLaneSurface,
@@ -63,8 +69,8 @@ function capability(id: string, operationIds: string[]): Capability {
 
 /** Two lanes, five approved operations, all measured — the laddering case. */
 function estate(): AirDocument {
-  const air: AirDocument = {
-    service: { id: "test", version: "1.0.0" },
+  const air: AirDocument = loadAirDocument({
+    service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
     operations: [
       operation({ id: "billing.invoice.list" }),
       operation({ id: "billing.invoice.get" }),
@@ -81,7 +87,7 @@ function estate(): AirDocument {
       capability("users.users", ["users.user.list", "users.user.get"]),
     ],
     workflows: [],
-  };
+  });
   return air;
 }
 
@@ -177,7 +183,10 @@ describe("decideLadder", () => {
   });
 
   it("survives a document whose optional collections were never defaulted in", () => {
-    const air = { service: { id: "test", version: "1.0.0" }, operations: [operation({ id: "a" })] };
+    const air = {
+      service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
+      operations: [operation({ id: "a" })],
+    };
     expect(() => decideLadder(air as AirDocument, { surfaceBudgetTokens: 1 })).not.toThrow();
   });
 
@@ -342,7 +351,15 @@ describe("entry card content", () => {
         key: "Idempotency-Key",
         keyDerivation: "client_supplied",
       },
-      retries: { mode: "none", maxAttempts: 1, backoff: "exponential", retryOn: [] },
+      retries: {
+        mode: "none",
+        basis: "unproven",
+        maxAttempts: 1,
+        backoff: "exponential",
+        baseDelayMs: 0,
+        maxDelayMs: 0,
+        retryOn: [],
+      },
       confirmation: { required: true },
     });
     const line = laneMemberLine(laneMember(refund));

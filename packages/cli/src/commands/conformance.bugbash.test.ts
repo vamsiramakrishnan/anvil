@@ -20,6 +20,62 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
+/**
+ * A complete ConformanceReport, with per-test overrides.
+ *
+ * The nine fixtures here were hand-built literals declared as `ConformanceReport`
+ * while omitting `schemaVersion`, `bundle` and `startedAt`, and while using an
+ * identity vocabulary the schema does not have — `proof: "none"`,
+ * `virtualWiring: "N/A"`, `status: "skip"`. Every renderer test was therefore
+ * exercising a report the conformance harness can never emit. One helper keeps
+ * the required scaffolding in a single place so the next fixture cannot drift.
+ */
+function report(over: Partial<ConformanceReport> = {}): ConformanceReport {
+  return {
+    schemaVersion: 1,
+    bundle: "/tmp/bundle",
+    startedAt: "2026-07-12T00:00:00.000Z",
+    surfaces: ["cli", "mcp"],
+    checks: [],
+    identity: {
+      delegatedOperations: 0,
+      virtualWiring: "not_applicable",
+      proof: "not_applicable",
+      liveIdpReadiness: "not_applicable",
+      detail: "",
+    },
+    summary: { pass: 0, fail: 0, skipped: 0 },
+    ...over,
+  };
+}
+
+/** A complete LiveReport, with per-test overrides. Same reason as `report()`. */
+function liveReport(over: Partial<LiveReport> = {}): LiveReport {
+  const hash = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+  return {
+    schemaVersion: 2,
+    bundle: "/tmp/bundle",
+    target: "https://mcp.example.test/mcp",
+    startedAt: "2026-07-12T00:00:00.000Z",
+    artifact: { algorithm: "sha256", expectedHash: hash, observedHash: hash, matched: true },
+    checks: [],
+    identity: {
+      delegatedOperations: 0,
+      delegatedContractGroups: 0,
+      verifiedContractGroupIds: [],
+      unverifiedContractGroupIds: [],
+      contractGroups: [],
+      liveIdpReadiness: "not_applicable",
+      proof: "not_applicable",
+      verifiedOperationIds: [],
+      unverifiedOperationIds: [],
+      detail: "",
+    },
+    summary: { pass: 0, fail: 0, skipped: 0 },
+    ...over,
+  };
+}
+
 describe("anvil conformance — command and rendering", () => {
   describe("runConformanceCommand — error handling and exit codes", () => {
     it("throws a plain error (not a caught 1) when the bundle path does not exist", async () => {
@@ -71,10 +127,16 @@ describe("anvil conformance — command and rendering", () => {
 
   describe("renderConformanceSummary — text output formatting", () => {
     it("formats a passing report with all checks green", () => {
-      const report: ConformanceReport = {
+      const r = report({
         summary: { pass: 3, fail: 0, skipped: 1 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: [
           {
             id: "surface-agreement",
@@ -96,13 +158,13 @@ describe("anvil conformance — command and rendering", () => {
           },
           {
             id: "gate-agreement",
-            status: "skip",
+            status: "skipped",
             surfaces: ["cli", "mcp"],
           },
         ],
-      };
+      });
       const dir = join(root, "bundle");
-      const output = renderConformanceSummary(report, dir);
+      const output = renderConformanceSummary(r, dir);
 
       expect(output).toContain("Tri-surface conformance");
       expect(output).toContain(dir);
@@ -116,10 +178,16 @@ describe("anvil conformance — command and rendering", () => {
     });
 
     it("formats a failing report with red checks and divergence details", () => {
-      const report: ConformanceReport = {
+      const r = report({
         summary: { pass: 2, fail: 2, skipped: 0 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: [
           {
             id: "surface-agreement",
@@ -155,9 +223,9 @@ describe("anvil conformance — command and rendering", () => {
             operationId: "refund_payment",
           },
         ],
-      };
+      });
       const dir = join(root, "bundle");
-      const output = renderConformanceSummary(report, dir);
+      const output = renderConformanceSummary(r, dir);
 
       expect(output).toContain("Tri-surface conformance");
       expect(output).toContain("✗");
@@ -172,13 +240,15 @@ describe("anvil conformance — command and rendering", () => {
     });
 
     it("includes identity section only when there are delegated operations", () => {
-      const withIdentity: ConformanceReport = {
+      const withIdentity = report({
         summary: { pass: 1, fail: 0, skipped: 0 },
         surfaces: ["cli", "mcp"],
         identity: {
-          proof: "jwt",
-          virtualWiring: "gcp:sts",
+          proof: "virtual_wiring_only",
+          virtualWiring: "passed",
           delegatedOperations: 5,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
         },
         checks: [
           {
@@ -187,15 +257,24 @@ describe("anvil conformance — command and rendering", () => {
             surfaces: ["cli", "mcp"],
           },
         ],
-      };
+      });
       const output = renderConformanceSummary(withIdentity, root);
-      expect(output).toContain("identity: jwt=gcp:sts");
+      // The rendered text follows the schema's vocabulary. The previous expectation,
+      // `identity: jwt=gcp:sts`, was the rendering of values the ConformanceReport
+      // schema does not have and the harness can never emit.
+      expect(output).toContain("identity: virtual_wiring_only=passed");
       expect(output).toContain("live IdP readiness=UNVERIFIED");
 
-      const noIdentity: ConformanceReport = {
+      const noIdentity = report({
         summary: { pass: 1, fail: 0, skipped: 0 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: [
           {
             id: "surface-agreement",
@@ -203,16 +282,22 @@ describe("anvil conformance — command and rendering", () => {
             surfaces: ["cli", "mcp"],
           },
         ],
-      };
+      });
       const output2 = renderConformanceSummary(noIdentity, root);
       expect(output2).not.toContain("identity:");
     });
 
     it("omits detail lines for passing checks but includes them for failures", () => {
-      const report: ConformanceReport = {
+      const r = report({
         summary: { pass: 1, fail: 1, skipped: 0 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: [
           {
             id: "passing-check",
@@ -227,8 +312,8 @@ describe("anvil conformance — command and rendering", () => {
             detail: "This detail should appear",
           },
         ],
-      };
-      const output = renderConformanceSummary(report, root);
+      });
+      const output = renderConformanceSummary(r, root);
       expect(output).not.toContain("This detail should not appear");
       expect(output).toContain("This detail should appear");
     });
@@ -236,20 +321,26 @@ describe("anvil conformance — command and rendering", () => {
 
   describe("renderLiveSummary — live lane text output", () => {
     it("formats a passing live report with artifact attestation", () => {
-      const report: LiveReport = {
+      const report = liveReport({
         target: "https://mcp.example.test/mcp",
         summary: { pass: 5, fail: 0, skipped: 1 },
         artifact: {
+          algorithm: "sha256",
           matched: true,
           expectedHash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
           observedHash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         },
         identity: {
           delegatedOperations: 0,
-          liveIdpReadiness: "N/A",
-          proof: "N/A",
+          liveIdpReadiness: "not_applicable",
+          proof: "not_applicable",
           verifiedContractGroupIds: [],
           delegatedContractGroups: 0,
+          detail: "",
+          unverifiedContractGroupIds: [],
+          contractGroups: [],
+          verifiedOperationIds: [],
+          unverifiedOperationIds: [],
         },
         checks: [
           {
@@ -273,7 +364,7 @@ describe("anvil conformance — command and rendering", () => {
           },
           {
             id: "identity-proof",
-            status: "skip",
+            status: "skipped",
           },
           {
             id: "write-gate-refund",
@@ -281,7 +372,7 @@ describe("anvil conformance — command and rendering", () => {
             operationId: "refund_payment",
           },
         ],
-      };
+      });
       const output = renderLiveSummary(report, root);
 
       expect(output).toContain("Live conformance");
@@ -296,20 +387,26 @@ describe("anvil conformance — command and rendering", () => {
     });
 
     it("formats a live report with artifact mismatch", () => {
-      const report: LiveReport = {
+      const report = liveReport({
         target: "https://mcp.example.test/mcp",
         summary: { pass: 0, fail: 1, skipped: 4 },
         artifact: {
+          algorithm: "sha256",
           matched: false,
           expectedHash: "expected0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
           observedHash: "observed0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         },
         identity: {
           delegatedOperations: 0,
-          liveIdpReadiness: "N/A",
-          proof: "N/A",
+          liveIdpReadiness: "not_applicable",
+          proof: "not_applicable",
           verifiedContractGroupIds: [],
           delegatedContractGroups: 0,
+          detail: "",
+          unverifiedContractGroupIds: [],
+          contractGroups: [],
+          verifiedOperationIds: [],
+          unverifiedOperationIds: [],
         },
         checks: [
           {
@@ -318,7 +415,7 @@ describe("anvil conformance — command and rendering", () => {
             detail: "Deployed artifact SHA-256 does not match local build",
           },
         ],
-      };
+      });
       const output = renderLiveSummary(report, root);
 
       expect(output).toContain("MISMATCH");
@@ -331,20 +428,26 @@ describe("anvil conformance — command and rendering", () => {
     });
 
     it("formats a live report with unavailable artifact hash (connection error)", () => {
-      const report: LiveReport = {
+      const report = liveReport({
         target: "https://mcp.example.test/mcp",
         summary: { pass: 0, fail: 1, skipped: 0 },
         artifact: {
+          algorithm: "sha256",
           matched: false,
           expectedHash: "expected0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-          observedHash: undefined,
+          observedHash: null,
         },
         identity: {
           delegatedOperations: 0,
-          liveIdpReadiness: "N/A",
-          proof: "N/A",
+          liveIdpReadiness: "not_applicable",
+          proof: "not_applicable",
           verifiedContractGroupIds: [],
           delegatedContractGroups: 0,
+          detail: "",
+          unverifiedContractGroupIds: [],
+          contractGroups: [],
+          verifiedOperationIds: [],
+          unverifiedOperationIds: [],
         },
         checks: [
           {
@@ -353,7 +456,7 @@ describe("anvil conformance — command and rendering", () => {
             detail: "Could not reach deployment endpoint",
           },
         ],
-      };
+      });
       const output = renderLiveSummary(report, root);
 
       expect(output).toContain("expected01");
@@ -365,20 +468,26 @@ describe("anvil conformance — command and rendering", () => {
     });
 
     it("includes identity verification section when delegated operations present", () => {
-      const report: LiveReport = {
+      const report = liveReport({
         target: "https://mcp.example.test/mcp",
         summary: { pass: 3, fail: 0, skipped: 1 },
         artifact: {
+          algorithm: "sha256",
           matched: true,
           expectedHash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
           observedHash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         },
         identity: {
           delegatedOperations: 5,
-          liveIdpReadiness: "verified",
-          proof: "jwt",
+          liveIdpReadiness: "verified_for_opted_in_reads",
+          proof: "real_inbound_jwt_sts_upstream",
           verifiedContractGroupIds: ["group-1", "group-2"],
           delegatedContractGroups: 2,
+          detail: "",
+          unverifiedContractGroupIds: [],
+          contractGroups: [],
+          verifiedOperationIds: [],
+          unverifiedOperationIds: [],
         },
         checks: [
           {
@@ -397,11 +506,11 @@ describe("anvil conformance — command and rendering", () => {
           },
           {
             id: "identity-obo-write",
-            status: "skip",
+            status: "skipped",
             detail: "Write-only group (unverified)",
           },
         ],
-      };
+      });
       const output = renderLiveSummary(report, root);
 
       expect(output).toContain("identity:");
@@ -411,27 +520,33 @@ describe("anvil conformance — command and rendering", () => {
     });
 
     it("marks check statuses with ✓, ✗, and – symbols", () => {
-      const report: LiveReport = {
+      const report = liveReport({
         target: "https://mcp.example.test/mcp",
         summary: { pass: 1, fail: 1, skipped: 1 },
         artifact: {
+          algorithm: "sha256",
           matched: true,
           expectedHash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
           observedHash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         },
         identity: {
           delegatedOperations: 0,
-          liveIdpReadiness: "N/A",
-          proof: "N/A",
+          liveIdpReadiness: "not_applicable",
+          proof: "not_applicable",
           verifiedContractGroupIds: [],
           delegatedContractGroups: 0,
+          detail: "",
+          unverifiedContractGroupIds: [],
+          contractGroups: [],
+          verifiedOperationIds: [],
+          unverifiedOperationIds: [],
         },
         checks: [
           { id: "pass-check", status: "pass" },
           { id: "fail-check", status: "fail" },
-          { id: "skip-check", status: "skip" },
+          { id: "skip-check", status: "skipped" },
         ],
-      };
+      });
       const output = renderLiveSummary(report, root);
 
       const lines = output.split("\n");
@@ -450,10 +565,16 @@ describe("anvil conformance — command and rendering", () => {
       // We can't easily mock the harness import, so we create a minimal test
       // that checks that JSON output is properly formatted
       const _io = bufferIO();
-      const report: ConformanceReport = {
+      const r = report({
         summary: { pass: 1, fail: 0, skipped: 0 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: [
           {
             id: "test",
@@ -461,45 +582,57 @@ describe("anvil conformance — command and rendering", () => {
             surfaces: ["cli", "mcp"],
           },
         ],
-      };
-      const output = renderConformanceSummary(report, root);
+      });
+      const output = renderConformanceSummary(r, root);
       expect(output).toContain("PASSED");
       // Verify text output doesn't contain JSON formatting
-      expect(output).not.toContain(JSON.stringify(report));
+      expect(output).not.toContain(JSON.stringify(r));
     });
   });
 
   describe("Empty results and missing bundles", () => {
     it("handles conformance report with no checks gracefully", () => {
-      const report: ConformanceReport = {
+      const r = report({
         summary: { pass: 0, fail: 0, skipped: 0 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: [],
-      };
-      const output = renderConformanceSummary(report, root);
+      });
+      const output = renderConformanceSummary(r, root);
       expect(output).toContain("PASSED");
       expect(output).toContain("0 check(s) passed");
     });
 
     it("handles live report with no checks gracefully", () => {
-      const report: LiveReport = {
+      const report = liveReport({
         target: "https://mcp.example.test/mcp",
         summary: { pass: 0, fail: 0, skipped: 0 },
         artifact: {
+          algorithm: "sha256",
           matched: true,
           expectedHash: "abc",
           observedHash: "abc",
         },
         identity: {
           delegatedOperations: 0,
-          liveIdpReadiness: "N/A",
-          proof: "N/A",
+          liveIdpReadiness: "not_applicable",
+          proof: "not_applicable",
           verifiedContractGroupIds: [],
           delegatedContractGroups: 0,
+          detail: "",
+          unverifiedContractGroupIds: [],
+          contractGroups: [],
+          verifiedOperationIds: [],
+          unverifiedOperationIds: [],
         },
         checks: [],
-      };
+      });
       const output = renderLiveSummary(report, root);
       expect(output).toContain("PASSED");
       expect(output).toContain("0 check(s) passed");
@@ -508,10 +641,16 @@ describe("anvil conformance — command and rendering", () => {
 
   describe("Edge cases and special characters", () => {
     it("escapes special characters in divergence display", () => {
-      const report: ConformanceReport = {
+      const r = report({
         summary: { pass: 0, fail: 1, skipped: 0 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: [
           {
             id: "wire-agreement",
@@ -527,8 +666,8 @@ describe("anvil conformance — command and rendering", () => {
             ],
           },
         ],
-      };
-      const output = renderConformanceSummary(report, root);
+      });
+      const output = renderConformanceSummary(r, root);
       expect(output).toContain("body.nested.field");
       // Divergence values are rendered via JSON.stringify, so embedded
       // double quotes come out backslash-escaped in the output, not raw.
@@ -537,10 +676,16 @@ describe("anvil conformance — command and rendering", () => {
 
     it("handles very long operation IDs in check lines", () => {
       const longOpId = `${"very_long_operation_id_".repeat(5)}end`;
-      const report: ConformanceReport = {
+      const r = report({
         summary: { pass: 1, fail: 0, skipped: 0 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: [
           {
             id: "surface-agreement",
@@ -549,26 +694,34 @@ describe("anvil conformance — command and rendering", () => {
             operationId: longOpId,
           },
         ],
-      };
-      const output = renderConformanceSummary(report, root);
+      });
+      const output = renderConformanceSummary(r, root);
       expect(output).toContain(longOpId);
     });
 
     it("renders multiple surfaces in check lines separated by ↔", () => {
-      const report: ConformanceReport = {
+      const r = report({
         summary: { pass: 1, fail: 0, skipped: 0 },
-        surfaces: ["cli", "mcp", "mock"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        surfaces: ["cli", "mcp", "skill"],
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: [
           {
             id: "tri-surface-check",
             status: "pass",
-            surfaces: ["cli", "mcp", "mock"],
+            surfaces: ["cli", "mcp", "skill"],
           },
         ],
-      };
-      const output = renderConformanceSummary(report, root);
-      expect(output).toContain("cli↔mcp↔mock");
+      });
+      const output = renderConformanceSummary(r, root);
+      // "mock" is not a surface; SURFACES is cli | mcp | skill. The fixture and its
+      // expectation were both written against a surface that does not exist.
+      expect(output).toContain("cli↔mcp↔skill");
     });
   });
 
@@ -611,10 +764,16 @@ describe("anvil conformance — command and rendering", () => {
 
   describe("Summary statistics accuracy", () => {
     it("correctly counts pass/fail/skip checks", () => {
-      const report: ConformanceReport = {
+      const r = report({
         summary: { pass: 7, fail: 3, skipped: 2 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: [
           { id: "pass1", status: "pass", surfaces: ["cli", "mcp"] },
           { id: "pass2", status: "pass", surfaces: ["cli", "mcp"] },
@@ -626,11 +785,11 @@ describe("anvil conformance — command and rendering", () => {
           { id: "fail1", status: "fail", surfaces: ["cli", "mcp"] },
           { id: "fail2", status: "fail", surfaces: ["cli", "mcp"] },
           { id: "fail3", status: "fail", surfaces: ["cli", "mcp"] },
-          { id: "skip1", status: "skip", surfaces: ["cli", "mcp"] },
-          { id: "skip2", status: "skip", surfaces: ["cli", "mcp"] },
+          { id: "skip1", status: "skipped", surfaces: ["cli", "mcp"] },
+          { id: "skip2", status: "skipped", surfaces: ["cli", "mcp"] },
         ],
-      };
-      const output = renderConformanceSummary(report, root);
+      });
+      const output = renderConformanceSummary(r, root);
       // The "N check(s) passed" phrasing only appears on the PASSED branch
       // (fail === 0). With failures present, the summary line instead reads
       // "FAILED — 3 check(s) failed (7 passed, 2 skipped)."
@@ -641,34 +800,46 @@ describe("anvil conformance — command and rendering", () => {
     });
 
     it("outputs PASSED only when fail count is 0", () => {
-      const passing: ConformanceReport = {
+      const passing = report({
         summary: { pass: 5, fail: 0, skipped: 2 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: Array(7)
           .fill(null)
           .map((_, i) => ({
             id: `check-${i}`,
-            status: i < 5 ? ("pass" as const) : ("skip" as const),
+            status: i < 5 ? ("pass" as const) : ("skipped" as const),
             surfaces: ["cli", "mcp"],
           })),
-      };
+      });
       const passingOutput = renderConformanceSummary(passing, root);
       expect(passingOutput).toContain("PASSED");
       expect(passingOutput).not.toContain("FAILED");
 
-      const failing: ConformanceReport = {
+      const failing = report({
         summary: { pass: 4, fail: 1, skipped: 2 },
         surfaces: ["cli", "mcp"],
-        identity: { proof: "none", virtualWiring: "N/A", delegatedOperations: 0 },
+        identity: {
+          proof: "not_applicable",
+          virtualWiring: "not_applicable",
+          delegatedOperations: 0,
+          liveIdpReadiness: "not_applicable",
+          detail: "",
+        },
         checks: Array(7)
           .fill(null)
           .map((_, i) => ({
             id: `check-${i}`,
-            status: i < 4 ? ("pass" as const) : i < 5 ? ("fail" as const) : ("skip" as const),
+            status: i < 4 ? ("pass" as const) : i < 5 ? ("fail" as const) : ("skipped" as const),
             surfaces: ["cli", "mcp"],
           })),
-      };
+      });
       const failingOutput = renderConformanceSummary(failing, root);
       expect(failingOutput).toContain("FAILED");
       expect(failingOutput).not.toContain("PASSED —");

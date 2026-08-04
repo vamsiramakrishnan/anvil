@@ -175,7 +175,7 @@ describe("AirDocument", () => {
 
   it("rejects unknown enum values", () => {
     const bad = structuredClone(doc) as { operations: { effect: { kind: string } }[] };
-    bad.operations[0].effect.kind = "teleport";
+    bad.operations[0]!.effect.kind = "teleport";
     expect(() => loadAirDocument(bad)).toThrow();
   });
 });
@@ -317,7 +317,7 @@ describe("operationInputSchema", () => {
 });
 
 describe("mcpToolDescription interaction-shape lines", () => {
-  const base = () => loadAirDocument(doc).operations[0];
+  const base = () => loadAirDocument(doc).operations[0]!;
 
   it("teaches cursor pagination, long-running polling, and the search hint when present", () => {
     const op = base();

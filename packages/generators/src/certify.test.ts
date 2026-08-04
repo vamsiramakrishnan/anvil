@@ -613,7 +613,7 @@ describe("publication gating: verifyCertification", () => {
 
   it("rejects a stale certification after any tamper", () => {
     const bundle = certified();
-    bundle["docs/README.md"] = "tampered after certification";
+    (bundle as Record<string, string>)["docs/README.md"] = "tampered after certification";
     const verdict = verifyCertification(bundle);
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) expect(verdict.reason).toContain("stale");

@@ -58,7 +58,7 @@ function artifacts(overrides: Partial<Record<string, ArtifactInput>> = {}): Arti
       },
     },
   };
-  return Object.values({ ...base, ...overrides });
+  return Object.values<ArtifactInput>({ ...base, ...overrides } as Record<string, ArtifactInput>);
 }
 
 function pack(over: Partial<Record<string, ArtifactInput>> = {}, version = "1.0.0") {
@@ -125,7 +125,7 @@ describe("verifyPack — tamper detection", () => {
     // claimed contentDigest — readArchive must catch the mismatch.
     const text = new TextDecoder().decode(archive.bytes);
     const envelope = JSON.parse(text) as { pack: unknown; entries: { base64: string }[] };
-    envelope.entries[0].base64 = Buffer.from("tampered").toString("base64");
+    envelope.entries[0]!.base64 = Buffer.from("tampered").toString("base64");
     const corrupt = new TextEncoder().encode(JSON.stringify(envelope));
     expect(() => readArchive(corrupt)).toThrow(/corrupt/);
   });
