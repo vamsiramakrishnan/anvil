@@ -17,13 +17,15 @@
 /**
  * A refusal, as data.
  *
- * `code` is optional because two of these rules have never carried one — they
- * are emitted as a bare message on stderr with no machine-readable envelope.
- * That is preserved rather than tidied: the codes are a contract, and inventing
- * one here would be a silent addition to it. Recorded as a finding instead.
+ * `code` is required. Two of these rules previously carried none and were
+ * emitted as bare prose on stderr, which meant `anvil estate import --json`
+ * could exit 1 having written nothing at all to stdout — a script piping it to
+ * `jq` saw a parse error rather than a refusal. Adding the codes is an additive
+ * contract change: automation that matched nothing before now has something to
+ * match. See `operator-json-contract.test.ts`.
  */
 export interface EstateImportRejection {
-  code?: string;
+  code: string;
   message: string;
 }
 
@@ -85,6 +87,7 @@ export function suppliedContractRejection(
 ): EstateImportRejection | undefined {
   if (opts.spec && !opts.gatewayUrl) {
     return {
+      code: "gateway/gateway_url_required",
       message:
         "`--gateway-url <https://gateway.example/base>` is required with `--spec`; Anvil will not trust a contract's server as proof that calls still traverse the imported gateway.",
     };
@@ -126,7 +129,12 @@ export function resolveGatewayUrl(
   try {
     return { url: normalizeGatewayUrl(opts.gatewayUrl) };
   } catch (err) {
-    return { rejection: { message: err instanceof Error ? err.message : String(err) } };
+    return {
+      rejection: {
+        code: "gateway/invalid_gateway_url",
+        message: err instanceof Error ? err.message : String(err),
+      },
+    };
   }
 }
 

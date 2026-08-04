@@ -1043,6 +1043,7 @@ async function runInventory(
             }
           : filtered
             ? {
+                reportType: "anvil.gateway-estate-inventory",
                 ...snapshot,
                 apis: selected,
                 view: {
@@ -1056,7 +1057,7 @@ async function runInventory(
                   },
                 },
               }
-            : snapshot,
+            : { reportType: "anvil.gateway-estate-inventory", ...snapshot },
         null,
         2,
       ),
@@ -1506,20 +1507,19 @@ async function runImport(
   // order the inline checks used to run, because which refusal a caller sees when
   // two things are wrong at once is observable behaviour.
   const overrideRejected = specOverrideRejection(opts);
-  if (overrideRejected?.code) {
+  if (overrideRejected) {
     return emitEstateImportError(io, opts.json, overrideRejected.code, overrideRejected.message);
   }
   const attestationReason = specOverrideReason(opts);
 
   const contractRejected = suppliedContractRejection(opts);
   if (contractRejected) {
-    io.err(contractRejected.message);
-    return 1;
+    return emitEstateImportError(io, opts.json, contractRejected.code, contractRejected.message);
   }
   const resolvedGatewayUrl = resolveGatewayUrl(opts);
   if ("rejection" in resolvedGatewayUrl) {
-    io.err(resolvedGatewayUrl.rejection.message);
-    return 1;
+    const { code, message } = resolvedGatewayUrl.rejection;
+    return emitEstateImportError(io, opts.json, code, message);
   }
   const gatewayUrl = resolvedGatewayUrl.url;
   let manifest: string | undefined;
@@ -1534,10 +1534,12 @@ async function runImport(
         ...(capabilityReviews ? { capabilityReviews } : {}),
       };
     } catch (error) {
-      io.err(
+      return emitEstateImportError(
+        io,
+        opts.json,
+        "estate/manifest_unreadable",
         `Cannot read or parse --manifest '${opts.manifest}': ${error instanceof Error ? error.message : String(error)}`,
       );
-      return 1;
     }
   }
 
@@ -1548,29 +1550,8 @@ async function runImport(
 
   const explicitGatewayId = opts.gatewayId?.trim();
   const identityRejected = gatewayIdentityRejection(opts);
-  if (identityRejected?.code) {
-    // NOTE: this envelope deliberately omits the `output`/`receipt` created:false
-    // pair that emitEstateImportError adds, because it always has. Two shapes
-    // share one reportType; see the bug-bash manifest finding
-    // `estate-import-error-envelope-inconsistent`. Unifying them would change a
-    // machine-readable contract and is not a mechanical extraction.
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-import-error",
-            code: identityRejected.code,
-            message: identityRejected.message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(identityRejected.message);
-    }
-    return 1;
+  if (identityRejected) {
+    return emitEstateImportError(io, opts.json, identityRejected.code, identityRejected.message);
   }
   const gatewayId = explicitGatewayId ?? "unscoped";
   const connection = estateConnection(gatewayId, loaded);

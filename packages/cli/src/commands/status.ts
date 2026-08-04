@@ -232,7 +232,32 @@ interface CanonicalLoad {
 interface StatusOptions {
   json?: boolean;
   root?: string;
+  require?: string;
 }
+
+/**
+ * The next-safe-action codes `--require` accepts.
+ *
+ * `status` already computes a deterministic verdict; until `--require` it was
+ * reachable only by parsing the JSON, and the command exited 0 whether a bundle
+ * was release-ready or three steps away. A release pipeline could therefore only
+ * gate by reimplementing the ladder, or by gating on `certify` — which answers a
+ * narrower question and also exits 0 with no executable evidence present.
+ */
+const NEXT_SAFE_ACTIONS = [
+  "repair-core",
+  "resolve-contract",
+  "resolve-gateway-policy",
+  "resolve-blocked",
+  "inspect-approve",
+  "certify",
+  "selftest",
+  "conformance",
+  "simulate",
+  "retarget",
+  "release",
+  "operator-action-required",
+] as const;
 
 /** `anvil status` — one read-only answer for where a bundle is in its journey. */
 export function registerStatus(parent: Command, ctx: CommandContext): void {
@@ -246,6 +271,10 @@ export function registerStatus(parent: Command, ctx: CommandContext): void {
       .argument("<path>", "generated bundle directory or AIR file")
       .option("--root <dir>", "workspace root containing .anvil/sources")
       .option("--json", "emit one StatusReport JSON document")
+      .option(
+        "--require <action>",
+        `exit non-zero unless the next safe action is <action> (${NEXT_SAFE_ACTIONS.join(" | ")}); use --require release to gate a pipeline`,
+      )
       .action(async (path: string, opts: StatusOptions) => {
         ctx.code = await runStatus(path, opts, ctx.io);
       }),
@@ -254,9 +283,27 @@ export function registerStatus(parent: Command, ctx: CommandContext): void {
 }
 
 export async function runStatus(path: string, opts: StatusOptions, io: CliIO): Promise<number> {
+  // An unrecognized --require fails before the bundle is read. A gate that
+  // silently passes because its expected action was misspelled is worse than no
+  // gate at all, so this refuses rather than defaulting to "no constraint".
+  if (opts.require !== undefined && !NEXT_SAFE_ACTIONS.includes(opts.require as never)) {
+    io.err(
+      `Unknown --require '${opts.require}'. Expected one of: ${NEXT_SAFE_ACTIONS.join(", ")}.`,
+    );
+    return 1;
+  }
+
   const report = await buildStatusReport(path, opts);
   io.out(opts.json === true ? JSON.stringify(report, null, 2) : renderStatusReport(report));
-  return report.core.state === "aligned" ? 0 : 1;
+  if (report.core.state !== "aligned") return 1;
+  if (opts.require === undefined) return 0;
+  if (report.nextAction.code === opts.require) return 0;
+
+  io.err(
+    `anvil status: required next safe action '${opts.require}', but this bundle's is ` +
+      `'${report.nextAction.code}' — ${report.nextAction.reason}`,
+  );
+  return 1;
 }
 
 export async function buildStatusReport(

@@ -23,8 +23,8 @@
   "slack": 100,
   "modules": {
     "packages/cli/src/commands/estate/estate.ts": {
-      "lines": 2498,
-      "plan": "Decomposing — see docs/architecture/estate-decomposition.md. Steps 0-1 done: -552 to estate-bundle-install.ts, -63 to estate-import-policy.ts, -214 to estate-contract-attestation.ts. Remaining: the renderer, acquisition, the service, and runVerify. Its siblings estate-audit.ts and estate-adoption.ts are already pure domain with rendering split out; this is the un-migrated residue."
+      "lines": 2479,
+      "plan": "Decomposing — see docs/architecture/estate-decomposition.md. Steps 0-1 done: -552 to estate-bundle-install.ts, -63 to estate-import-policy.ts, -214 to estate-contract-attestation.ts, and the hand-built gateway-identity envelope folded into the shared emitter. Remaining: the renderer, acquisition, the service, and runVerify. Its siblings estate-audit.ts and estate-adoption.ts are already pure domain with rendering split out; this is the un-migrated residue."
     },
     "packages/cli/src/capability-composition.ts": {
       "lines": 2163,
@@ -39,8 +39,8 @@
       "plan": "Must stay derived from the command registry. Separate registry metadata from document projection; no manually maintained parallel command description."
     },
     "packages/cli/src/commands/status.ts": {
-      "lines": 1554,
-      "plan": "Separate lane-freshness computation (domain) from the status rendering. Shares the certification-reading logic that certify.ts duplicates."
+      "lines": 1601,
+      "plan": "Raised deliberately from 1554 for `--require`, which turns the verdict this module already computes into an exit code. status owns nextSafeAction, so the gate belongs here rather than in a new module; putting it elsewhere would have split the verdict from its consumer. Still queued: separate lane-freshness computation (domain) from the rendering, and share the certification-reading logic certify.ts duplicates."
     },
     "packages/generators/src/certify.ts": {
       "lines": 1427,

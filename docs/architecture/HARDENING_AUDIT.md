@@ -57,6 +57,49 @@ graph as it is.
 
 **Source volume:** ~90k lines of production TypeScript, ~72k lines of test.
 
+## The operator contract (wave 4)
+
+The findings above are about Anvil's internals. This one is about what a customer
+touches, and it is the same defect one level up.
+
+**Anvil compiles the agent's contract and hand-writes the operator's contract.**
+AIR → CLI/MCP/skill is real and tested; the agent stopped guessing. But the
+operator-facing surface Anvil itself owns — exit codes, JSON envelopes,
+`reportType` values, which verb is the release gate — was authored by hand, per
+command. Nothing was a projection of anything.
+
+Three consequences, all verified through the built CLI rather than by reading:
+
+| Symptom | What an operator sees |
+| --- | --- |
+| `--json` emitted nothing on three refusal paths | `anvil estate import ... --json` exits 1 with **zero bytes on stdout**. A script piping to `jq` gets a parse error, indistinguishable from Anvil crashing. |
+| One `reportType`, two envelope shapes | A consumer reading `output.created` got `false` from one refusal and `undefined` from another. No single parser worked. |
+| `estate inventory --json` success carried no `reportType` | The document could not be dispatched on. Only the `--summary` branch was typed. |
+
+**Why it went unnoticed:** every test in the package calls Anvil's *functions*.
+None consumed Anvil's *interface*. Twenty test files call `JSON.parse` on success
+paths; not one pinned a refusal.
+
+`operator-json-contract.test.ts` closes that: it runs commands through
+`runAnvilCli` and asserts stdout always parses, always names its shape, and that
+one `reportType` yields one set of envelope keys. Each fix was verified by
+reverting it and watching the harness go red.
+
+**The release gate.** `anvil status` computes a deterministic `nextAction` and
+always exited 0 — so a pipeline could gate on the verdict only by reimplementing
+the ladder, or by gating on `anvil certify`, which answers a narrower question and
+*also* exits 0 with no executable evidence present. `--require <action>` turns the
+existing verdict into an exit code, defaults unchanged, and fails closed on an
+unrecognized action. It does not resolve the naming hazard that the command called
+*certify* is not the release gate; that remains a product decision.
+
+**The self-skill drift.** `.agent/skills/anvil/` — the copy a Codex or Antigravity
+harness reads — was missing five of nine files and three commands, including
+`anvil status`, which is step 2 of the loop its own SKILL.md documents. That
+harness could not know the gateway-estate flow existed at all. The drift guard was
+exhaustive over *files* and blind to a second *destination*; it now covers both
+roots, verified by dirtying the new one.
+
 ## Ranked findings
 
 Ranked by (invariant at risk) × (evidence that it is real), not by module size.
@@ -189,7 +232,7 @@ stable identity and keyed order-independently).
 | `pnpm knip` | clean | clean |
 | `pnpm typecheck` | 14/14 | 14/14 |
 | `pnpm build` | 14/14 | 14/14 |
-| `pnpm test` | 3,341 passed | **3,404 passed, 1 skipped, 0 failed** |
+| `pnpm test` | 3,341 passed | **3,427 passed, 1 skipped, 0 failed** |
 | `node tools/corpus/run.mjs estates` | 6/6 green | 6/6 green |
 
 `estate.ts` **3,327 → 2,498** (−829), across three modules:

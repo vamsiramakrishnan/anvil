@@ -76,8 +76,11 @@ describe("a supplied contract does not vouch for its own gateway", () => {
   it("requires an explicit gateway URL alongside --spec", () => {
     const rejection = suppliedContractRejection(opts({ spec: "./api.yaml" }));
     expect(rejection?.message).toContain("--gateway-url");
-    // This refusal has never carried a machine-readable code. Preserved, not tidied.
-    expect(rejection?.code).toBeUndefined();
+    // This refusal carried no machine-readable code until the operator-contract
+    // work, which meant `--json` exited 1 with an empty stdout. An earlier
+    // revision of this test pinned `code` as undefined; that characterisation
+    // did its job by making the change deliberate rather than incidental.
+    expect(rejection?.code).toBe("gateway/gateway_url_required");
   });
 
   it("is satisfied once the gateway is named", () => {

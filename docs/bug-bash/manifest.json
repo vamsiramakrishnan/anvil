@@ -244,8 +244,47 @@
       "disposition": "product",
       "whyMissed": "Each envelope is asserted by the test that produced it. Nothing compares two envelopes bearing the same reportType, so a caller reading `output.created` gets `false` from one refusal and `undefined` from another.",
       "regressionTest": "packages/cli/src/commands/estate/estate-import-policy.test.ts",
-      "status": "open",
-      "notes": "Found while extracting the import policy. Preserved exactly, with a comment at the emission site: unifying the shapes changes a machine-readable contract and belongs with the renderer extraction, not a policy move. Two other refusals (--spec without --gateway-url, and an unusable --gateway-url) carry no code at all and are emitted as bare stderr messages; same disposition."
+      "status": "fixed",
+      "notes": "Fixed with json-refusals-emit-nothing: the hand-built gateway-identity envelope now goes through the shared emitter, and operator-json-contract.test.ts asserts every import refusal produces the same envelope keys under one reportType."
+    },
+    {
+      "id": "json-refusals-emit-nothing",
+      "package": "cli",
+      "subsystem": "operator contract",
+      "categories": ["surface-conformance"],
+      "invariant": "`--json` emits exactly one JSON document on stdout, on success and on refusal alike, and that document names its own shape.",
+      "reproducer": "anvil estate import ./export.zip --vendor kong --spec ./api.yaml --json  ->  exit 1, zero bytes on stdout, refusal only as prose on stderr.",
+      "disposition": "product",
+      "whyMissed": "Every test in the package calls Anvil's functions; none consumed Anvil's interface the way a customer's CI does. 20 test files call JSON.parse on success paths and not one pinned a refusal, so three refusal paths could emit nothing at all and stay green. The same blindness hid an inventory success envelope with no reportType.",
+      "regressionTest": "packages/cli/src/operator-json-contract.test.ts",
+      "status": "fixed",
+      "notes": "A script piping to jq saw a parse error rather than a refusal — indistinguishable from Anvil crashing. Fixed additively: two refusals gained codes they never had (gateway/gateway_url_required, gateway/invalid_gateway_url), the unreadable-manifest path gained estate/manifest_unreadable, and inventory success now names its shape. Supersedes estate-import-error-envelope-inconsistent, which is now also fixed: the hand-built gateway-identity envelope was folded into the shared emitter, so one reportType is one shape."
+    },
+    {
+      "id": "agent-skill-copy-drifted",
+      "package": "cli",
+      "subsystem": "self-skill",
+      "categories": ["surface-conformance"],
+      "invariant": "Every checked-in copy of the generated self-skill is regenerated from the command registry, so no harness reads a stale command list.",
+      "reproducer": "diff -r skills/anvil .agent/skills/anvil  ->  5 of 9 files absent, 3 commands missing.",
+      "disposition": "documentation",
+      "whyMissed": "The drift guard was exhaustive on one axis and blind on another. It walked every file generateAnvilSkill emits — so a new reference file was covered automatically — but only ever compared against skills/anvil/. Nothing compared the second destination.",
+      "regressionTest": "packages/cli/src/self-skill.test.ts",
+      "status": "fixed",
+      "notes": "The .agent/ copy an Antigravity or Codex harness reads was missing anvil status — step 2 of the loop its own SKILL.md documents — plus benchmark and disclosure, and had no gateway-estates, composing-capabilities, durable-idempotency, gemini-enterprise or upstream-credentials reference at all. Roughly half the product was invisible to that harness. This is precisely the drift Anvil exists to eliminate, occurring on Anvil's own agent-facing surface."
+    },
+    {
+      "id": "release-verdict-not-gateable",
+      "package": "cli",
+      "subsystem": "operator contract",
+      "categories": ["certification-freshness", "deployment-config"],
+      "invariant": "A pipeline can gate on Anvil's own release verdict without reimplementing the evidence ladder.",
+      "reproducer": "anvil status <bundle> exits 0 whether the bundle is release-ready or three steps away; anvil certify also exits 0 with no executable evidence present.",
+      "disposition": "product",
+      "whyMissed": "status computes a deterministic nextAction and always exited 0; the verdict was machine-readable only by parsing JSON. Nothing tested that the verdict was reachable as an exit code, because nothing tested Anvil as a pipeline component.",
+      "regressionTest": "packages/cli/src/operator-json-contract.test.ts",
+      "status": "fixed",
+      "notes": "`anvil status --require <action>` gates on the verdict status already computes; default behaviour unchanged. An unrecognized action fails closed — a gate that passes because its expected action was misspelled is worse than no gate. Does not resolve the wider naming hazard that `certify` is not the release gate; that is tracked in docs/architecture/certification-authority.md."
     },
     {
       "id": "runverify-duplicates-bundle-verification",
