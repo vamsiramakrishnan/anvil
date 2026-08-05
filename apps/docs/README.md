@@ -1,46 +1,87 @@
-# Anvil documentation website
+# Anvil documentation site
 
-Astro + [Starlight](https://starlight.astro.build/) site for Anvil, published to
-GitHub Pages at <https://vamsiramakrishnan.github.io/anvil/>.
+The public documentation is an Astro + Starlight application published at
+<https://vamsiramakrishnan.github.io/anvil/>.
 
-## The idea: docs/ is the source of truth
+## Where content lives
 
-This app is **presentation only**. The curated pages (the landing page and
-`Start Here`) live in `src/content/docs`; everything else is rendered from the
-repo's canonical `docs/` and `skills/` markdown by `scripts/sync-content.mjs`,
-which runs before every `dev`/`build`. The synced sections
-(`concepts/`, `guides/`, `design/`, `reference/`) are gitignored — **edit the
-source markdown in `docs/` and `skills/`, not the generated pages.**
+The site combines two content sources:
 
-To add a page to the site, add an entry to the `PAGES` map in
-`scripts/sync-content.mjs` (or drop a new ADR in `docs/adr/`, which is picked up
-automatically).
+- curated onboarding and cookbook pages in `apps/docs/src/content/docs`; and
+- canonical repository documents in `docs/` and `skills/`, copied into the site
+  by `scripts/sync-content.mjs` before development and builds.
 
-## Theme
+Generated sections under `src/content/docs/concepts`, `guides`, `design`, and
+`reference` are gitignored. Edit their source file in `docs/` or `skills/`, not
+the generated copy.
 
-The look is the "Modernist Functionalism" (Braun / Dieter Rams) design system
-from [`vamsiramakrishnan/ge-agent-factory`](https://github.com/vamsiramakrishnan/ge-agent-factory):
-`src/styles/custom.css` is that project's brand layer reused verbatim — accent
-`#00408b`, Hanken Grotesk + JetBrains Mono, hairline borders, `github-dark` code.
-Only the wordmark (`src/components/SiteTitle.astro`), favicon, and content are
-Anvil's.
+The sync step also rewrites repository-relative links. Links to another
+published document become site routes; links to non-published source files
+become GitHub links. This lets canonical Markdown remain useful on GitHub
+without breaking after it is moved into the Starlight content tree.
 
-## Develop
+To publish another canonical page, add it to `PAGES` in
+`scripts/sync-content.mjs`. ADRs under `docs/adr/` are discovered automatically.
 
-This app is intentionally **outside** the pnpm workspace, so installing the core
-Anvil toolchain never pulls in Astro. Install and run it on its own:
+## Develop locally
+
+From the repository root:
 
 ```bash
-cd apps/docs
+corepack enable
 pnpm install
-pnpm dev      # syncs content, then astro dev
-pnpm build    # syncs content, then astro build → dist/
-pnpm preview
+pnpm --filter @anvil/air --filter @anvil/compiler build
+pnpm --filter @anvil/docs dev
 ```
+
+The compiler packages are built first because the browser playground imports
+their real output.
+
+## Validate
+
+```bash
+pnpm docs:check
+pnpm --filter @anvil/docs build
+```
+
+`docs:check` syncs canonical content, requires title and description
+frontmatter, and fails on unresolved local or site links. The build repeats the
+check before Astro renders the site.
+
+Cookbook shell blocks marked with `# [docs-tested]` are executed by
+`packages/cli/src/cookbook-snippets.test.ts` in the main test suite. Mark only
+deterministic, offline blocks and make cleanup part of the snippet.
+
+## Information architecture
+
+The sidebar is organized by developer intent:
+
+1. Start
+2. Build
+3. Operate
+4. Connect agents
+5. Reference
+6. Architecture
+
+Keep a page in the earliest section that matches what the reader is trying to
+do. Do not put release policy in the quickstart or introductory product prose in
+the command reference.
+
+## Writing standard
+
+- Lead with the task outcome and prerequisites.
+- Use exact command names and distinguish local planning from external action.
+- Explain a refusal before telling the reader how to override or satisfy it.
+- Prefer one canonical explanation and link to it from shorter pages.
+- Avoid mutable test counts, benchmark totals, dates, and implementation-status
+  claims unless they are generated from code.
+- Keep secrets and real customer data out of examples.
+- Use `status` as the recovery entrypoint when a workflow can be resumed.
+- State format and provider boundaries explicitly; do not imply support from a
+  parser seam or generated placeholder.
 
 ## Deploy
 
-`.github/workflows/deploy-docs.yml` builds this app and publishes `dist/` to
-GitHub Pages on any push to `main` that touches `docs/`, `skills/`, or
-`apps/docs/`. The repo's **Pages source must be set to "GitHub Actions"** for the
-workflow to take effect.
+`.github/workflows/deploy-docs.yml` builds the compiler packages, validates the
+site, and publishes `apps/docs/dist` to GitHub Pages after relevant changes land
+on `main`. The repository's Pages source must be set to GitHub Actions.

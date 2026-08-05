@@ -9,11 +9,12 @@ and `design/hooks-and-plugins.md` — not in aspiration.
 
 ## AIR
 
-**One shared model that every part of Anvil reads from and writes to.** Whatever
-format your API arrives in — OpenAPI, and later gRPC or GraphQL — it compiles
+**The canonical model every generated Anvil surface reads.** OpenAPI, Swagger,
+GraphQL, proto3, WSDL, Google Discovery, OData, and Postman inputs all compile
 *into* AIR (the Anvil Intermediate Representation), and every generated artifact
-compiles *from* it. Because the CLI, MCP server, and skill all come from this
-one model, they can't disagree about what an operation does.
+compiles *from* it. Because the CLI, MCP server, skill, hooks, and runtime
+documents come from this one model, they cannot carry independent operation
+semantics.
 
 AIR is defined in Zod in `@anvil/air`, so a single definition doubles as runtime
 validation and JSON Schema emission. One AIR document carries the service, its
@@ -227,8 +228,9 @@ like `payments.refund.create`.
 
 Each operation carries everything the tools need to treat it correctly: its
 effect, idempotency, retry policy, confirmation, auth, errors, evidence, and
-approval state, plus a binding for each of the three surfaces. One operation,
-one meaning, generated into three places.
+approval state, plus bindings for each generated surface. One operation has one
+meaning even when it appears as a CLI command, MCP tool, skill entry, and hook
+decision.
 
 ## Overlay
 
@@ -275,6 +277,17 @@ the agent reads only what it needs.
 
 Anvil uses its own medicine: the `anvil` CLI is itself operated through a
 generated skill, and every bundle's MCP server serves its skill as resources.
+
+## Source snapshot
+
+**The immutable, content-addressed copy of the source bytes Anvil compiled.** A
+snapshot records entrypoints, local references, file roles, diagnostics, source
+format, and a hash derived from the captured content.
+
+Local references must stay inside the import root. Remote references are
+recorded but not fetched. Invalid input can be retained for diagnosis, while
+only a valid snapshot may enter the compiler. Assurance can therefore bind back
+to exact source bytes rather than to a mutable path or URL.
 
 ## Surface
 

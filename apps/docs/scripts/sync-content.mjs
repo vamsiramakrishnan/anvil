@@ -13,8 +13,8 @@
 //   4. emit `.md` (NOT `.mdx`) so raw prose tokens (`<`, `{`) never need escaping
 //
 //   node apps/docs/scripts/sync-content.mjs [--dry-run]
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { REPO_URL, SITE_BASE } from "../src/lib/site-meta.mjs";
 import { linkGlossaryTerms, parseGlossary } from "./lib/glossary.mjs";
@@ -49,8 +49,12 @@ const PAGES = [
     order: 1,
     title: "Operating Anvil",
   },
-  { src: "skills/anvil/reference/commands.md", dest: "guides/commands.md", order: 2 },
+  { src: "docs/MANIFEST.md", dest: "guides/manifest.md", order: 2 },
   { src: "skills/anvil/reference/workflow.md", dest: "guides/enrich-approve-workflow.md", order: 3 },
+  { src: "docs/SOURCE_FORMATS.md", dest: "guides/source-formats.md", order: 4 },
+  { src: "docs/CI.md", dest: "guides/ci.md", order: 5 },
+  { src: "docs/TROUBLESHOOTING.md", dest: "guides/troubleshooting.md", order: 6 },
+  { src: "skills/anvil/reference/commands.md", dest: "guides/commands.md", order: 7 },
   { src: "docs/design/hooks-and-plugins.md", dest: "design/hooks-and-plugins.md", order: 1 },
   {
     src: "docs/INVESTIGATION_ARCHITECTURE.md",
@@ -105,7 +109,44 @@ function yamlString(s) {
   return `"${clean.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-function transform({ src, dest, order, title }) {
+/** Public route for one generated Starlight page. */
+function routeForDest(dest) {
+  return `${SITE_BASE}/${dest.replace(/\.(?:md|mdx)$/, "")}/`;
+}
+
+/**
+ * Canonical docs use repository-relative links so they work on GitHub. Once a
+ * page is copied into the Starlight tree, those same relative URLs point at the
+ * wrong directory. Rewrite links to another published page to its site route,
+ * and links to other repository files to GitHub. External, absolute, and
+ * fragment-only links remain untouched.
+ */
+function rewriteRepositoryLinks(markdown, { src, routeMap }) {
+  return markdown.replace(/(!?\[[^\]]*\])\(([^)]+)\)/g, (whole, label, rawTarget) => {
+    const parsed = /^(\S+?)(\s+["'][\s\S]*["'])?$/.exec(rawTarget.trim());
+    if (!parsed) return whole;
+    const target = parsed[1];
+    const title = parsed[2] ?? "";
+    if (/^(?:[a-z][a-z0-9+.-]*:|#|\/)/i.test(target)) return whole;
+
+    const hashAt = target.indexOf("#");
+    const queryAt = target.indexOf("?");
+    const cutAt = [hashAt, queryAt].filter((i) => i >= 0).sort((a, b) => a - b)[0];
+    const pathPart = cutAt === undefined ? target : target.slice(0, cutAt);
+    const suffix = cutAt === undefined ? "" : target.slice(cutAt);
+    const resolved = posix.normalize(posix.join(posix.dirname(src), pathPart));
+
+    const siteRoute = routeMap.get(resolved);
+    if (siteRoute) return `${label}(${siteRoute}${suffix}${title})`;
+
+    if (!resolved.startsWith("../") && existsSync(join(REPO_ROOT, resolved))) {
+      return `${label}(${REPO_URL}/blob/main/${resolved}${suffix}${title})`;
+    }
+    return whole;
+  });
+}
+
+function transform({ src, dest, order, title }, routeMap) {
   const abs = join(REPO_ROOT, src);
   const raw = readFileSync(abs, "utf8");
   const { fm, body: afterFm } = splitFrontmatter(raw);
@@ -115,7 +156,11 @@ function transform({ src, dest, order, title }) {
 
   // Auto-link the first prose mention of each glossary term — on every synced
   // page except the glossary itself (self-links would be noise).
-  const linked = src === GLOSSARY_SRC ? body : linkGlossaryTerms(body, GLOSSARY, { route: GLOSSARY_ROUTE });
+  const rewritten = rewriteRepositoryLinks(body, { src, routeMap });
+  const linked =
+    src === GLOSSARY_SRC
+      ? rewritten
+      : linkGlossaryTerms(rewritten, GLOSSARY, { route: GLOSSARY_ROUTE });
 
   const frontmatter = [
     "---",
@@ -170,6 +215,7 @@ function removeStalePages(directory, prefix, desired) {
 
 function run() {
   const pages = [...PAGES, ...adrPages()];
+  const routeMap = new Map(pages.map((page) => [page.src, routeForDest(page.dest)]));
   if (!DRY_RUN) {
     // These pages are generated immediately before Astro starts. Its persistent
     // content store can otherwise retain the previous digest while the files are
@@ -181,7 +227,7 @@ function run() {
     }
   }
   for (const page of pages) {
-    const out = transform(page);
+    const out = transform(page, routeMap);
     const outPath = join(CONTENT, page.dest);
     if (DRY_RUN) {
       console.log(`would write ${page.dest} (${out.length} bytes) from ${page.src}`);
