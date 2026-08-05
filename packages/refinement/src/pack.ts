@@ -3,7 +3,9 @@ import { applyPatches, type SemanticChange } from "./apply.js";
 import type { Severity } from "./deficiency.js";
 import { severityRank } from "./deficiency.js";
 import type { Refinement } from "./model.js";
+import { parseRefinementPack, parseRefinementReviewReceipt } from "./pack-schema.js";
 import { buildRefinementPlan, type RefinementPlan } from "./plan.js";
+import type { HarnessImportRecord } from "./protocol/schema.js";
 import { reconcile } from "./reconcile.js";
 import { assembleContext, evidenceForTarget } from "./skills/context.js";
 import { HeuristicSkillExecutor, type SkillExecutor } from "./skills/executor.js";
@@ -51,6 +53,8 @@ export interface RefinementPack {
   plan: RefinementPlan;
   refinements: Refinement[];
   summary: RefinementSummary;
+  /** Process-neutral harness transactions imported into this measured pack. */
+  harnessImports?: HarnessImportRecord[];
 }
 
 /**
@@ -138,6 +142,7 @@ export function applyApproved(
   air: AirDocument,
   pack: RefinementPack,
 ): { air: AirDocument; applied: Refinement[]; changes: SemanticChange[] } {
+  parseRefinementPack(pack);
   assertPackMatchesAir(air, pack);
   const applied = pack.refinements.filter((r) => r.status === "approved");
   const { air: next, changes } = applyPatches(
@@ -165,7 +170,7 @@ export interface RefinementReviewReceipt {
 
 /** Stable identity of every measured and reviewable facet in a pack. */
 export function refinementPackHash(pack: RefinementPack): string {
-  return hashCanonical(pack);
+  return hashCanonical(parseRefinementPack(pack));
 }
 
 /** Create a decision only for a clean proposal that the policy routed to review. */
@@ -177,6 +182,7 @@ export function createReviewReceipt(
   reason: string,
   reviewedAt: string = new Date().toISOString(),
 ): RefinementReviewReceipt {
+  parseRefinementPack(pack);
   const refinement = pack.refinements.find((candidate) => candidate.id === refinementId);
   if (!refinement) throw new Error(`Refinement '${refinementId}' is not present in this pack.`);
   if (
@@ -213,6 +219,7 @@ export function applyReviewed(
   pack: RefinementPack,
   receipts: readonly RefinementReviewReceipt[],
 ): { air: AirDocument; applied: Refinement[]; changes: SemanticChange[] } {
+  parseRefinementPack(pack);
   assertPackMatchesAir(air, pack);
   const decisions = new Map<string, RefinementReviewReceipt>();
   for (const receipt of receipts) {
@@ -240,6 +247,8 @@ export function applyReviewed(
 }
 
 export function verifyReviewReceipt(pack: RefinementPack, receipt: RefinementReviewReceipt): void {
+  parseRefinementPack(pack);
+  parseRefinementReviewReceipt(receipt);
   if (receipt.schemaVersion !== 1) throw new Error("Unsupported review receipt schema version.");
   if (receipt.decision !== "approved" && receipt.decision !== "rejected") {
     throw new Error(`Receipt '${receipt.refinementId}' has an invalid decision.`);
@@ -297,8 +306,9 @@ function assertPackMatchesAir(air: AirDocument, pack: RefinementPack): void {
  * their own file so a reviewer can diff exactly one facet.
  */
 export function packFiles(pack: RefinementPack): Record<string, string> {
+  parseRefinementPack(pack);
   const j = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
-  return {
+  const files: Record<string, string> = {
     "pack.json": j(pack),
     "plan.json": j(pack.plan),
     "claims.json": j(pack.refinements.map((r) => ({ id: r.id, claims: r.evidence }))),
@@ -310,6 +320,17 @@ export function packFiles(pack: RefinementPack): Record<string, string> {
     ),
     "review.md": renderReviewMarkdown(pack),
   };
+  if (pack.harnessImports && pack.harnessImports.length > 0) {
+    files["harness-tasks.json"] = j(pack.harnessImports.map((record) => record.task));
+    files["harness-submissions.json"] = j(pack.harnessImports.map((record) => record.submission));
+    files["harness-evidence.json"] = j(
+      pack.harnessImports.map((record) => ({
+        taskId: record.task.taskId,
+        artifacts: record.artifacts,
+      })),
+    );
+  }
+  return files;
 }
 
 const STATUS_ORDER: Record<Refinement["status"], number> = {
@@ -336,6 +357,25 @@ export function renderReviewMarkdown(pack: RefinementPack): string {
   lines.push("_Detection and measurement are deterministic; AIR was not changed._");
   lines.push(`_Source contract: \`${pack.sourceContractHash}\`._`);
   lines.push("");
+
+  if (pack.harnessImports && pack.harnessImports.length > 0) {
+    lines.push("## Harness provenance");
+    for (const record of pack.harnessImports) {
+      const verified = record.artifacts.filter(
+        (artifact) => artifact.verification.status === "verified",
+      ).length;
+      lines.push(`- **task**: \`${record.task.taskId}\` (\`${record.task.taskHash}\`)`);
+      lines.push(
+        `- **executor**: ${record.submission.executor.name} · outcome: ${record.submission.status}`,
+      );
+      lines.push(`- **repository revision**: \`${record.task.repository.revision}\``);
+      lines.push(`- **submission**: \`${record.submissionHash}\``);
+      lines.push(
+        `- **evidence**: ${record.artifacts.length} artifact(s), ${verified} Git-verified`,
+      );
+      lines.push("");
+    }
+  }
 
   const ordered = [...pack.refinements].sort(
     (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.id.localeCompare(b.id),

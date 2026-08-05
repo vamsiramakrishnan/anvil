@@ -1,29 +1,194 @@
 # Drive refinement from a coding harness
 
-The refinement SDK lets Codex, Claude Code, or another coding harness improve an
-API contract using facts it can verify in the repository. The harness investigates;
-Anvil decides whether the result is grounded, safe, measurably useful, and eligible
-to reach the canonical model.
+Anvil can ask Codex, Claude Code, Antigravity, or another coding harness to
+investigate an API contract without giving that harness permission to rewrite the
+contract.
 
-Use it when the API is technically callable but still makes an agent guess—for
-example, `val` means `refund_amount_minor_units`, an error code has no recovery
-action, a cursor is nested at `response_metadata.next_cursor`, or a dashboard
-response mixes durable records with button and layout state.
+The split is deliberate:
 
-## What the SDK changes
+- the harness searches the repository, connects implementation details, and
+  proposes a narrow semantic change;
+- Anvil owns the task boundary, evidence verification, deterministic validation,
+  measurement, approval policy, and the only write path into AIR.
 
-- Agent-facing input names can differ from exact wire names. Requests still send
-  the original upstream key.
-- Pagination records exact request parameters, dotted item/continuation paths,
-  and documented default or maximum page sizes.
-- Errors can expose reviewed domain codes, field paths, and recovery actions
-  without copying raw upstream messages into the agent surface.
-- Default response projections can include, exclude, or rename existing fields.
-  They cannot execute expressions or synthesize values.
-- Review-tier changes use receipts bound to the source contract, complete pack,
-  and exact proposal. Applying a reviewed pack never reruns investigation.
+Use this workflow when an API is callable but still makes an agent guess. Typical
+examples include an input named `val`, an amount with no unit, an error with no
+recovery action, a hidden pagination cursor, or a response that mixes durable data
+with dashboard button state.
 
-## Embed the loop
+## Choose the integration that fits your harness
+
+| Integration | Use it when | What the harness depends on |
+| --- | --- | --- |
+| Portable task protocol | The harness runs as a separate process, CLI, CI job, or product | JSON and a Git checkout |
+| TypeScript SDK | The harness is embedded in the same Node.js process | `@anvil/refinement` |
+| Case workflow | A developer wants an interactive, staged investigation directory | The `anvil case` CLI |
+
+For Codex or Claude Code, start with the portable task protocol. It keeps process
+and language choices out of the trust model.
+
+## Run the portable task protocol
+
+### 1. Find a refinement target
+
+```bash
+anvil case list generated/payments
+```
+
+Copy the target key you want to investigate. If the same target has more than one
+deficiency, select the intended skill explicitly when you export it.
+
+### 2. Export one deterministic task
+
+```bash
+anvil refine export-task \
+  generated/payments \
+  'field:payments.refunds.create#input.body.val' \
+  --skill rename-field \
+  --repo-root . \
+  --inspect src,test,docs \
+  --out .anvil/refinement/refund-amount.task.json
+```
+
+The task is portable JSON. It contains the exact AIR contract hash, Git revision,
+skill version and contract hash, semantic target, read-only context, admissible
+evidence policy, writable fields, investigation procedure, and a JSON Schema for
+the expected submission.
+
+The task ID and task hash are content-derived. Exporting the same target from the
+same AIR and Git revision produces the same task, so a harness can resume or cache
+work without inventing its own identity scheme.
+
+### 3. Let the harness investigate
+
+Give the task file to the harness. It returns a submission shaped like this:
+
+```json
+{
+  "schemaVersion": 1,
+  "taskId": "rt_…",
+  "taskHash": "…",
+  "executor": { "name": "codex", "model": "gpt-5" },
+  "status": "proposal_generated",
+  "summary": "The handler and contract tests define val as a refund amount in minor units.",
+  "evidence": [
+    {
+      "id": "handler",
+      "kind": "repository",
+      "source": "source_impl",
+      "path": "src/refunds/create.ts",
+      "startLine": 41,
+      "endLine": 58
+    },
+    {
+      "id": "contract-test",
+      "kind": "repository",
+      "source": "test_fixture",
+      "path": "test/refunds/create.test.ts",
+      "startLine": 77,
+      "endLine": 94
+    }
+  ],
+  "claims": [
+    {
+      "predicate": "field.agent_name",
+      "value": "refund_amount_minor_units",
+      "evidenceId": "handler",
+      "confidence": 0.95
+    },
+    {
+      "predicate": "field.agent_name",
+      "value": "refund_amount_minor_units",
+      "evidenceId": "contract-test",
+      "confidence": 0.9
+    }
+  ],
+  "patch": {
+    "set": {
+      "agent_name": "refund_amount_minor_units",
+      "aliases": ["refund_amount"]
+    }
+  }
+}
+```
+
+The harness supplies coordinates, not trusted excerpts. For repository evidence,
+Anvil reads the file from the task's pinned Git commit during import. It records the
+Git blob ID, SHA-256 of the complete blob, SHA-256 of the selected excerpt, and line
+range. A dirty working tree cannot silently redefine evidence for an older task.
+
+If the repository does not support a change, the correct response is an honest
+decline: `supported`, `conflicted`, `insufficient_evidence`, or
+`blocked_by_missing_source`. Declines carry no patch and remain auditable.
+
+### 4. Import, validate, and measure
+
+```bash
+anvil refine import-proposal \
+  generated/payments \
+  .anvil/refinement/refund-amount.task.json \
+  .anvil/refinement/refund-amount.submission.json \
+  --repo-root . \
+  --out .anvil/refinement/refund-amount.pack
+```
+
+Import fails closed when any binding moved: AIR, task bytes, task ID, skill
+contract, Git revision, evidence coordinate, source policy, claim predicate, or
+writable field. It then rebuilds authoritative context from AIR, validates the
+proposal, measures only the affected behavior families plus the safety guard, and
+writes the normal refinement-pack layout.
+
+Use `--json` in automation. Rejections have a stable envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "reportType": "anvil.refinement-harness-import-error",
+  "ok": false,
+  "code": "refinement/proposal_rejected",
+  "stage": "validation",
+  "message": "The harness proposal failed Anvil's deterministic validation.",
+  "issues": ["evidence_supports_value: …"]
+}
+```
+
+Imported packs add three audit facets:
+
+- `harness-tasks.json` — the exact exported task;
+- `harness-submissions.json` — the exact parsed harness response;
+- `harness-evidence.json` — evidence bytes and their Git/SHA-256 identities.
+
+These facets are also embedded in `pack.json`, so the pack hash and every review
+receipt cover them.
+
+### 5. Review and apply the exact measured bytes
+
+```bash
+anvil refine review .anvil/refinement/refund-amount.pack
+
+anvil refine approve \
+  .anvil/refinement/refund-amount.pack \
+  'rename-field:field:payments.refunds.create#input.body.val' \
+  --reviewer api-owner@example.com \
+  --reason 'Confirmed against the handler and refund contract tests.'
+
+anvil refine apply-pack \
+  generated/payments \
+  .anvil/refinement/refund-amount.pack \
+  --dry-run
+
+anvil refine apply-pack \
+  generated/payments \
+  .anvil/refinement/refund-amount.pack
+```
+
+`apply-pack` never asks the harness to investigate again. It applies the proposal
+that was measured and reviewed, or refuses if AIR, the pack, the proposal, or its
+receipt changed.
+
+## Embed the same rails with the TypeScript SDK
+
+Use the SDK when your harness already runs inside the same Node.js process:
 
 ```ts
 import {
@@ -36,7 +201,6 @@ import {
 const executor: SkillExecutor = codingHarnessExecutor;
 const pack = await runRefinements(air, { executor });
 
-// Present pack.refinements and pack.plan to the API owner first.
 const candidate = pack.refinements.find(
   (refinement) => refinement.approval.tier === "review",
 );
@@ -54,38 +218,20 @@ const result = applyReviewed(air, pack, [receipt]);
 // Persist result.air, inspect result.changes, then regenerate the bundle.
 ```
 
-The executor never receives a mutable AIR document. It receives a typed skill
-contract and read-only context, then returns claims plus a target-relative patch.
-Unknown fields, unsupported mutations, no-op patches, name collisions, stale
-contracts, altered packs, and altered proposals fail closed.
+Custom executors receive a detached context. Validation uses a separate pristine
+context, so an adapter cannot rewrite the facts used to judge its proposal.
 
-## Use the same transaction from the CLI
+## Understand the trust boundary
 
-```bash
-anvil refine run generated/payments --out .anvil/refinement/payments
-anvil refine review .anvil/refinement/payments
+The protocol does not make a coding harness authoritative. Repository access makes
+the harness better at finding evidence; it does not let the harness approve its own
+conclusions.
 
-anvil refine approve .anvil/refinement/payments \
-  'rename-field:field:payments.refunds.create:input.body.val' \
-  --reviewer api-owner@example.com \
-  --reason 'Confirmed in the handler and refund contract tests.'
-
-anvil refine apply-pack generated/payments .anvil/refinement/payments --dry-run
-anvil refine apply-pack generated/payments .anvil/refinement/payments
-```
-
-`apply-pack` loads receipts from `<pack-dir>/receipts/*.json` by default. Pass
-`--receipt <file>` repeatedly when receipts are stored elsewhere.
-
-## Keep the trust boundary clear
-
-The SDK does not make a coding harness authoritative. Repository access makes the
-harness better at gathering evidence, not better at approving its own conclusions.
 Changes to idempotency, auth authority, query exposure, UI projections, and
-agent-facing names remain human decisions unless a specific auto-approval rule
-explicitly clears them.
+agent-facing names remain human decisions unless a narrow policy explicitly clears
+them. Unknown fields, unsupported mutations, no-op patches, name collisions, stale
+contracts, altered packs, altered proposals, and measured regressions fail closed.
 
-A receipt provides integrity and stale-pack protection; it is not a digital
-signature and does not authenticate the text in `reviewer`. Keep receipt files in
-an access-controlled review workflow (for example, signed commits plus protected
-pull-request approval) when reviewer identity is security-sensitive.
+A review receipt provides integrity and staleness protection. It is not a digital
+signature and does not authenticate the free-form `reviewer` value. When reviewer
+identity matters, keep receipts in a protected, signed review workflow.

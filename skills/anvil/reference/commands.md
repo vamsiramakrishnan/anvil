@@ -201,7 +201,7 @@ Options:
 
 Detect, propose, measure, and apply refinements to AIR (the quality flywheel).
 
-`anvil refine plan` runs Anvil's deterministic detectors and reports a refinement plan — documentation gaps, weak naming/routing, unproven safety semantics, and mock/eval coverage holes — grouped by severity, category, and the narrow skill that owns each fix. `anvil refine skills` lists those skills as typed contracts (trigger, evidence policy, output boundary, validation), whose executor is kept separate from their semantics. `anvil refine run` routes each in-scope deficiency to its skill, proposes an evidence-backed semantic patch, validates it, then MEASURES only the eval families it affects — with a safety guard that must never regress — and reconciles the result through an auto-approval policy into a reviewable refinement pack (--severity/--skill/--safe-only/--out). `anvil refine review <pack-dir>` prints the human review. `approve`/`reject` write hash-bound decisions, and `apply-pack` applies those exact reviewed bytes without rerunning investigation. `anvil refine apply` remains the shortcut for auto-approved refinements.
+`anvil refine plan` runs Anvil's deterministic detectors and reports a refinement plan — documentation gaps, weak naming/routing, unproven safety semantics, and mock/eval coverage holes — grouped by severity, category, and the narrow skill that owns each fix. `anvil refine skills` lists those skills as typed contracts (trigger, evidence policy, output boundary, validation), whose executor is kept separate from their semantics. `anvil refine run` routes each in-scope deficiency to its skill, proposes an evidence-backed semantic patch, validates it, then MEASURES only the eval families it affects — with a safety guard that must never regress — and reconciles the result through an auto-approval policy into a reviewable refinement pack (--severity/--skill/--safe-only/--out). `export-task` and `import-proposal` expose those same rails as portable JSON, so any coding harness can investigate without importing Anvil's TypeScript package. `anvil refine review <pack-dir>` prints the human review. `approve`/`reject` write hash-bound decisions, and `apply-pack` applies those exact reviewed bytes without rerunning investigation. `anvil refine apply` remains the shortcut for auto-approved refinements.
 
 #### `anvil refine plan`
 `anvil refine plan [options] <path>`
@@ -235,6 +235,27 @@ Options:
 - `--safe-only` — skip refinements that touch safety semantics
 - `--out <dir>` — write the refinement pack here
 - `--json` — emit the refinement pack as JSON
+
+#### `anvil refine export-task`
+`anvil refine export-task [options] <path> <target-key>`
+
+Export one hash-bound, process-neutral coding-harness task.
+
+Options:
+- `--out <file>` — write the portable task JSON here
+- `--skill <name>` — select a skill when one target has multiple deficiencies
+- `--repo-root <dir>` — Git repository the harness may inspect
+- `--inspect <paths>` — comma-separated repository-relative inspect scopes
+
+#### `anvil refine import-proposal`
+`anvil refine import-proposal [options] <path> <task-file> <submission-file>`
+
+Validate and measure a portable harness submission into a refinement pack.
+
+Options:
+- `--out <dir>` — write the measured refinement pack here
+- `--repo-root <dir>` — Git repository named by the task
+- `--json` — emit a structured success or rejection envelope
 
 #### `anvil refine review`
 `anvil refine review [options] <pack-dir>`

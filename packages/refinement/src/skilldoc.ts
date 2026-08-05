@@ -101,13 +101,16 @@ validates, measures, reconciles, and applies.
 core decides. A proposal outside its skill's boundary, ungrounded by evidence, or
 that regresses any measured family is rejected — however confident you are.
 
-## Two ways to execute a skill
+## Three ways to execute a skill
 - **Inline** — gather evidence and emit a proposal directly (cheap, deterministic-friendly).
 - **As a case** — for anything needing real repository investigation, open a *case*: an
   isolated directory Anvil materializes for one deficiency, with a brief, the target's
   facts, an evidence policy, an allowed-tools contract, and an \`output/\` to deposit
   machine-readable results into. You own investigation and synthesis; Anvil owns
   admissibility, safety, validation, and application. See \`reference/investigation.md\`.
+- **As a portable task** — export one hash-bound JSON task, let any external harness
+  investigate, then import its JSON submission. The harness needs no Anvil package and
+  Anvil re-resolves repository evidence from the pinned Git commit.
 
 ## Where to look (progressive disclosure)
 - **L1** \`reference/loop.md\` — the \`anvil refine\` commands, the deficiency catalog, the pack layout.
@@ -141,6 +144,20 @@ anvil case open <dir> <target-key>    # materialize .refinement/cases/<id>/
 anvil case investigate <case>         # drive the live agent (or work it by hand)
 anvil case close <case> <dir>         # re-enter Anvil's rails: validate + reconcile
 \`\`\`
+
+## Hand the case to an external harness
+When the harness runs in another process or language, use the portable protocol
+instead of importing the TypeScript SDK:
+
+\`\`\`bash
+anvil refine export-task <dir> <target-key> --skill <skill> --repo-root . --out task.json
+# Codex, Claude Code, or another harness reads task.json and writes submission.json.
+anvil refine import-proposal <dir> task.json submission.json --repo-root . --out pack
+\`\`\`
+
+The task pins AIR, the skill contract, and a Git revision. The harness returns
+repository coordinates; Anvil rereads those bytes from the pinned commit and records
+the Git blob plus full-blob and excerpt SHA-256 identities before validation.
 
 ## The case directory
 \`\`\`
@@ -231,6 +248,10 @@ function loopRef(): string {
 - \`anvil refine run <dir> [--severity S] [--skill N] [--safe-only] [--out DIR] [--json]\`
   — propose → validate → measure → reconcile into a refinement pack. \`--out\` writes
   the pack. Read-only (never mutates AIR).
+- \`anvil refine export-task <dir> <target-key> --out FILE [--skill N] [--repo-root DIR]\`
+  — export one deterministic, hash-bound JSON task for any external coding harness.
+- \`anvil refine import-proposal <dir> <task.json> <submission.json> --out DIR [--json]\`
+  — verify Git-bound evidence, validate, measure, and write a normal refinement pack.
 - \`anvil refine review <pack-dir>\` — print the human review (review.md) of a pack.
 - \`anvil refine approve|reject <pack-dir> <refinement-id...> --reviewer ID --reason TEXT\`
   — write a decision receipt bound to the source contract, pack, and exact proposal.
@@ -258,6 +279,8 @@ ${catalog}
 - \`eval-delta.json\` — the before/after of each affected eval family.
 - \`artifacts-affected.json\` — the projections each patch re-derives.
 - \`review.md\` — the human review, worst/most-actionable first.
+- \`harness-tasks.json\`, \`harness-submissions.json\`, \`harness-evidence.json\` —
+  present on portable imports; the task, response, and Git/SHA-256 evidence record.
 
 Human decisions are written under \`receipts/\`. Application fails closed if AIR changed,
 the pack changed, the proposal changed, a receipt is duplicated, or a rejected/regressed

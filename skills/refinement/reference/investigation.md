@@ -18,6 +18,20 @@ anvil case investigate <case>         # drive the live agent (or work it by hand
 anvil case close <case> <dir>         # re-enter Anvil's rails: validate + reconcile
 ```
 
+## Hand the case to an external harness
+When the harness runs in another process or language, use the portable protocol
+instead of importing the TypeScript SDK:
+
+```bash
+anvil refine export-task <dir> <target-key> --skill <skill> --repo-root . --out task.json
+# Codex, Claude Code, or another harness reads task.json and writes submission.json.
+anvil refine import-proposal <dir> task.json submission.json --repo-root . --out pack
+```
+
+The task pins AIR, the skill contract, and a Git revision. The harness returns
+repository coordinates; Anvil rereads those bytes from the pinned commit and records
+the Git blob plus full-blob and excerpt SHA-256 identities before validation.
+
 ## The case directory
 ```
 case.json                  # THE canonical, IMMUTABLE case specification: identity, task,

@@ -14,6 +14,10 @@ description: The anvil refine commands, the deficiency catalog, and the refineme
 - `anvil refine run <dir> [--severity S] [--skill N] [--safe-only] [--out DIR] [--json]`
   — propose → validate → measure → reconcile into a refinement pack. `--out` writes
   the pack. Read-only (never mutates AIR).
+- `anvil refine export-task <dir> <target-key> --out FILE [--skill N] [--repo-root DIR]`
+  — export one deterministic, hash-bound JSON task for any external coding harness.
+- `anvil refine import-proposal <dir> <task.json> <submission.json> --out DIR [--json]`
+  — verify Git-bound evidence, validate, measure, and write a normal refinement pack.
 - `anvil refine review <pack-dir>` — print the human review (review.md) of a pack.
 - `anvil refine approve|reject <pack-dir> <refinement-id...> --reviewer ID --reason TEXT`
   — write a decision receipt bound to the source contract, pack, and exact proposal.
@@ -66,6 +70,8 @@ it, and whether that skill is implemented today.
 - `eval-delta.json` — the before/after of each affected eval family.
 - `artifacts-affected.json` — the projections each patch re-derives.
 - `review.md` — the human review, worst/most-actionable first.
+- `harness-tasks.json`, `harness-submissions.json`, `harness-evidence.json` —
+  present on portable imports; the task, response, and Git/SHA-256 evidence record.
 
 Human decisions are written under `receipts/`. Application fails closed if AIR changed,
 the pack changed, the proposal changed, a receipt is duplicated, or a rejected/regressed

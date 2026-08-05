@@ -32,13 +32,16 @@ validates, measures, reconciles, and applies.
 core decides. A proposal outside its skill's boundary, ungrounded by evidence, or
 that regresses any measured family is rejected — however confident you are.
 
-## Two ways to execute a skill
+## Three ways to execute a skill
 - **Inline** — gather evidence and emit a proposal directly (cheap, deterministic-friendly).
 - **As a case** — for anything needing real repository investigation, open a *case*: an
   isolated directory Anvil materializes for one deficiency, with a brief, the target's
   facts, an evidence policy, an allowed-tools contract, and an `output/` to deposit
   machine-readable results into. You own investigation and synthesis; Anvil owns
   admissibility, safety, validation, and application. See `reference/investigation.md`.
+- **As a portable task** — export one hash-bound JSON task, let any external harness
+  investigate, then import its JSON submission. The harness needs no Anvil package and
+  Anvil re-resolves repository evidence from the pinned Git commit.
 
 ## Where to look (progressive disclosure)
 - **L1** `reference/loop.md` — the `anvil refine` commands, the deficiency catalog, the pack layout.
