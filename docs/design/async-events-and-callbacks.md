@@ -671,11 +671,16 @@ export async function handleWebhook(params: {
    operation id + input), which is a different value space than the
    *upstream's* job id in the general case. Calling `complete(job_id, ...)`
    against a ledger keyed by idempotency key either misses or, worse,
-   collides with an unrelated reservation. The submit-side fix: when the
-   submit operation's handler reserves its ledger row, it now also writes a
-   small **job-handle index** entry — `jobId -> idempotencyKey` — at the
-   same time, since `jobIdField` is read from that same response. The
-   receiver's first step is `idempotencyKey = jobIndex.lookup(jobId)`; only
+   collides with an unrelated reservation. The submit-side fix: the submit
+   operation's handler still *reserves* its ledger row before calling
+   upstream, as today, but the job id isn't known yet at that point — it
+   only appears in the upstream's response. So the index write happens at
+   the same moment the submit call's own ledger entry is marked
+   *completed* (the response has arrived, `jobIdField` can be read from
+   it): write a small **job-handle index** entry — `jobId ->
+   idempotencyKey` — right alongside that `complete` call, not at
+   `reserve` time. The receiver's first step is
+   `idempotencyKey = jobIndex.lookup(jobId)`; only
    then does it call `ledger.complete(idempotencyKey, ...)`. This index is
    new surface on `IdempotencyLedger` (or a small sibling store next to
    it) — not something the existing `reserve`/`complete` pair provides for
