@@ -251,29 +251,58 @@ principle applies directly: durability was never about keeping a process
 alive — it's about writing to the ledger. Once that's the model, a daemon
 buys almost nothing this design doesn't already have.
 
-**The mechanism — three moves, no new process:**
+**Scope correction, made explicit up front:** an earlier draft of this
+section implied the executor itself could pause a mutation *mid-flight* —
+partway through a single upstream call — and resume it later once a human
+answers. That's not real: `packages/runtime/src/executor.ts` makes one
+upstream request and returns; there is no checkpoint inside that request to
+pause at, and nothing in this document designs one. Writing a ledger row
+and later overwriting it with a decision does not resume an unfinished HTTP
+call — it can only be read back by something that polls it. So this
+mechanism is scoped down to the case where that's exactly what's needed:
+**the upstream itself is already async and already tracks its own
+pending-approval state** — a loan application sitting in "pending
+underwriter review" on the vendor's own system, not a paused Anvil
+executor. `awaiting_human_input` names that upstream state; it doesn't
+invent execution-pausing machinery Anvil doesn't have.
+
+**The mechanism — three moves, no new process, and no new execution
+primitive:**
 
 1. `AsyncContract.pendingStates` (`packages/air/src/async-contract.ts`)
-   gains a recognized value, `awaiting_human_input`, reachable from a
-   mutation whose `confirmation.humanApproval` is `true`. When the executor
-   (`packages/runtime/src/executor.ts`) hits that gate mid-mutation — not
-   before it starts, which `confirm: true` already handles, but partway
-   through a multi-step or long-running one — it writes
-   `{ status: "in_progress", pendingReason: "awaiting_human_input", question: ... }`
-   into the ledger under the job's key and returns, exactly like any other
-   `longRunning` operation returning before completion.
+   gains a recognized value, `awaiting_human_input`, for operations that
+   already carry an `AsyncContract` (§9) — i.e., operations already
+   `longRunning`, whose upstream already returns before completion. The
+   submit call returns as it always does; the *status* side reports
+   `awaiting_human_input` when the upstream's own state says so (via poll
+   response or webhook payload, same as any other pending/terminal state).
+   Nothing pauses — the upstream was already async before a human entered
+   the picture.
 2. A new, ordinary, safety-classified mutation —
-   `anvil job answer <job_id> --decision approve|reject [--note ...]`,
-   generated the same way every other CLI command/MCP tool is generated —
-   authenticates the caller, validates the decision shape, and writes the
-   answer into the same ledger row. This is not special infrastructure; it's
-   one more operation with its own `Confirmation`/`AuthRequirement` like any
-   AIR operation, so *who's allowed to answer* is policy, not a daemon
-   feature.
+   `anvil job answer <job_id> --decision approve|reject [--note ...]` —
+   is generated only when the spec exposes a real decision-taking
+   operation on the vendor's API (an "approve this application"-shaped
+   endpoint). `anvil job answer` is a thin, authenticated wrapper that
+   calls *that* operation with the job's handle, through the exact same
+   AIR operation-call path every other mutation uses. It authenticates the
+   caller and validates the decision shape, but it is not resuming
+   anything Anvil paused — it's placing a normal call the upstream already
+   knows how to receive. The ledger records that the answer was submitted,
+   for audit and duplicate-submission dedup, not to reconstruct in-flight
+   state that was never Anvil's to hold.
 3. The status tool (§6's hybrid handler) already checks the ledger first.
    `awaiting_human_input` is just one more state it can report — the agent
-   sees "pending: awaiting_human_input, question: '...'" the same way it
-   sees any other pending state, and re-polls until an answer lands.
+   sees "pending: awaiting_human_input" the same way it sees any other
+   pending state, and re-polls (now against the upstream's real
+   post-decision state) until a terminal state lands.
+
+**What this means got cut, honestly:** this mechanism no longer covers "a
+single synchronous mutation pauses partway through for approval, then
+finishes." That case would need real checkpoint/continuation machinery —
+saving partial execution state and a way to resume it — which this
+document doesn't design and which is a materially bigger feature than
+anything else here. If that case matters, it's a separate design, not an
+extension of this one.
 
 **What this gets you, versus the daemon draft, at a fraction of the
 build:** detach/reattach (the job outlives any process, because nothing was
@@ -353,9 +382,17 @@ export type WebhookSignatureVerification =
     };
 
 export interface AsyncContract {
-  statusOperationId: string;
+  /**
+   * Absent for webhook-only APIs — some providers (§1's motivating case)
+   * expose no poll endpoint at all, only a push. §9's resolver requires at
+   * least one of `statusOperationId` or `webhook` to be present; requiring
+   * a status operation unconditionally would make a genuinely webhook-only
+   * API unrepresentable, which a prior draft of this section did.
+   */
+  statusOperationId?: string;
   jobIdField: string;
-  statusJobIdParam: string;
+  /** Required only alongside `statusOperationId` — there's no param to fill when there's no poll call. */
+  statusJobIdParam?: string;
   stateField?: string;
   terminalStates: string[];
   /** Now includes "awaiting_human_input" as a recognized value (§8). */
@@ -365,6 +402,27 @@ export interface AsyncContract {
   webhook?: WebhookContract;
 }
 ```
+
+`resolveAsyncContract` gains a matching issue for the case neither is present:
+
+```ts
+export type AsyncContractIssue =
+  | /* existing values */
+  | "no_completion_source"; // neither statusOperationId nor webhook is present
+```
+
+**What the generated status tool is when there's no `statusOperationId`:** not a
+thinner version of the hybrid handler — a genuinely different tool. §6's
+diagram assumes step 2 ("call upstream status operation") always has
+somewhere to go; a webhook-only contract has no such endpoint to compile a
+tool from at all. In that case the generated tool is **synthetic** —
+`sourceRef`-less, never calling out, backed only by the ledger. Its only
+two outcomes are "pending" (no ledger entry yet, or a non-terminal one) and
+the cached webhook result. This is still a normal generated MCP tool from
+the agent's side — same `asyncContractSentence()` wording, same polling
+loop — but §14's hybrid handler collapses to its step 1 only when
+`statusOperationId` is absent; there is no step 2 to fall back to, by
+construction, not by omission.
 
 Design rule carried over from the existing file's own doctrine: **half a
 contract is worse than none.** A `webhook` block with no verifiable
@@ -491,10 +549,21 @@ to handle — no new parser, no new runtime target, no new architecture.
   (`ReceiveMessage`, `SendMessage`, `DeleteMessage`) — no persistent
   connection at all. A `peek_next_dlq_message` tool is just a `ReceiveMessage`
   read operation; `publish_to_reprocess_queue` is a `SendMessage` mutation.
-  SQS FIFO queues carry a native `MessageDeduplicationId` parameter, which
-  maps directly onto AIR's existing `key_supported` idempotency mode — the
-  provider's own dedup mechanism becomes Anvil's idempotency carrier, no new
-  concept required.
+  SQS **FIFO** queues carry a native `MessageDeduplicationId` parameter,
+  which maps directly onto AIR's existing `key_supported` idempotency mode
+  — the provider's own dedup mechanism becomes Anvil's idempotency carrier
+  for that queue type specifically (§13 corrects an earlier overgeneralization
+  of this to standard SQS and to other providers).
+  **Auth caveat, not yet closed:** direct SQS calls require AWS Signature
+  Version 4 request signing, and AIR's `AuthType` union
+  (`packages/air/src/enums.ts:171-182`) and `packages/runtime/src/auth.ts`
+  have no SigV4 scheme today — compiling SQS's REST shape alone doesn't
+  produce an invokable tool, the generated runtime would send an unsigned
+  request and AWS would reject it. Either SigV4 needs to become real
+  `AuthType`/runtime work (its own scoped addition, not assumed free here),
+  or this integration path is restricted to SQS reachable through an
+  already-authenticated HTTP gateway (e.g., API Gateway in front of the
+  queue) rather than calling AWS's own endpoint directly.
 - **GCP Pub/Sub** supports both directions cleanly:
   - *Pull* (`projects.subscriptions.pull`) is the same stateless-HTTP shape
     as SQS.
@@ -537,12 +606,21 @@ to a reprocess queue. The instinct to split into a narrow reader tool and a
 schema-validated writer tool was sound. What it was missing is everything
 §2–§9 already built for a different reason:
 
-- **No idempotency story.** If the write to the reprocess queue is retried,
-  does the correction get applied twice? §12's point directly answers
-  this: SQS/Pub/Sub-shaped providers carry a real dedup id, which is just
-  another idempotency carrier once the publish operation is compiled and
-  classified like any other AIR mutation — not a gap to hand-solve per
-  integration.
+- **No idempotency story — and this doesn't hold for every provider
+  equally.** If the write to the reprocess queue is retried, does the
+  correction get applied twice? §12's dedup-id point answers this fully
+  only for **SQS FIFO** queues, whose `MessageDeduplicationId` is a real,
+  caller-supplied carrier. It does not generalize to the rest of the
+  class: standard (non-FIFO) SQS has no equivalent, and GCP Pub/Sub's
+  publish API exposes no caller-supplied deduplication key at all — a
+  retried publish to either can duplicate the correction. So the honest
+  classification is per-provider, not per-category: an SQS-FIFO
+  `publish_to_reprocess_queue` can be classified `key_supported` on real
+  evidence; a standard-SQS or Pub/Sub equivalent must stay
+  `unproven`/`review_required` until the integration supplies its own
+  durable dedup policy (e.g., an idempotency key embedded in the message
+  body and checked downstream) — the same conservative default AIR already
+  applies to any mutation with no proven carrier.
 - **No confirmation tier for consequential corrections.** A schema-valid
   loan-application correction or a billing-discrepancy fix is exactly the
   shape `confirmation.humanApproval` exists for. Compiled through Anvil,
@@ -585,12 +663,31 @@ export async function handleWebhook(params: {
    before touching the ledger or parsing further. No scheme skips this.
 2. Parse `rawBody` against the webhook operation's input schema; extract
    `webhookJobIdField` and (if present) `webhookStateField`.
-3. Write into `ledger` via the existing `reserve`/complete shape
-   (`packages/runtime/src/idempotency.ts:137+`) — a webhook or queue-push
-   delivery is the same "write once, replay on duplicate" operation the
-   ledger already models, so provider-retried delivery dedup falls out for
-   free.
-4. Always return `200` once durably written (or on duplicate delivery) —
+3. **Resolve the upstream job id to a ledger row before completing
+   anything.** An earlier draft of this section assumed the ledger could be
+   completed directly by the extracted job id — it can't. The ledger
+   (`packages/runtime/src/idempotency.ts:137+`) is addressed by the
+   *caller's* idempotency key (supplied, or fingerprint-derived from
+   operation id + input), which is a different value space than the
+   *upstream's* job id in the general case. Calling `complete(job_id, ...)`
+   against a ledger keyed by idempotency key either misses or, worse,
+   collides with an unrelated reservation. The submit-side fix: when the
+   submit operation's handler reserves its ledger row, it now also writes a
+   small **job-handle index** entry — `jobId -> idempotencyKey` — at the
+   same time, since `jobIdField` is read from that same response. The
+   receiver's first step is `idempotencyKey = jobIndex.lookup(jobId)`; only
+   then does it call `ledger.complete(idempotencyKey, ...)`. This index is
+   new surface on `IdempotencyLedger` (or a small sibling store next to
+   it) — not something the existing `reserve`/`complete` pair provides for
+   free, however natural that sounded.
+4. Write the resolved completion into `ledger` via the existing
+   `reserve`/complete shape — a webhook or queue-push delivery is the same
+   "write once, replay on duplicate" operation the ledger already models
+   for retries, so provider-retried *delivery* dedup (the same webhook POST
+   arriving twice) still falls out for free once step 3 has found the right
+   row. What doesn't come free is finding that row in the first place — that's
+   exactly what step 3 adds.
+5. Always return `200` once durably written (or on duplicate delivery) —
    never let a downstream failure cause the provider to keep retrying a
    delivery that's already recorded.
 
@@ -650,20 +747,23 @@ unverifiable request in production.
 | Package | File | Change |
 |---|---|---|
 | `@anvil/air` | `src/enums.ts` | Add `"webhook_receiver"` to `InteractionArchetype` |
-| `@anvil/air` | `src/async-contract.ts` | `WebhookContract`, four-variant `WebhookSignatureVerification`, `awaiting_human_input` as a recognized `pendingState`, new `AsyncContractIssue` values, webhook branch in `resolveAsyncContract` |
-| `@anvil/air` | `src/async-contract.test.ts` | New cases per scheme + the human-approval pending state |
+| `@anvil/air` | `src/async-contract.ts` | `WebhookContract`, four-variant `WebhookSignatureVerification`, optional `statusOperationId`/`statusJobIdParam` with a `no_completion_source` issue when neither a status op nor a webhook is present, `awaiting_human_input` as a recognized `pendingState`, webhook branch in `resolveAsyncContract` |
+| `@anvil/air` | `src/async-contract.test.ts` | New cases per scheme, the human-approval pending state, and the webhook-only (`statusOperationId` absent) path |
 | `@anvil/compiler` | `src/protocols/webhooks.ts` (new) | Parse OpenAPI `webhooks:`, compile to `Operation` archetyped `webhook_receiver` |
 | `@anvil/compiler` | `src/classify.ts` | `webhook_receiver` ops classify but never enter the callable surface |
 | `@anvil/compiler` | `src/normalize.ts` | Link `callbacks:`-referenced webhook ops into the owning operation's `AsyncContract.webhook` |
 | `@anvil/compiler` | `src/manifest.ts` | Manifest patch shape for manual webhook linking (Stripe/Twilio-shaped specs) |
-| `@anvil/runtime` | `src/webhook-receiver.ts` (new) | Signature verify (per-scheme dispatch, incl. `oidc_jwt` for queue push) → parse → ledger write |
-| `@anvil/runtime` | `src/job-answer.ts` (new) | §8's authenticated answer-write path |
+| `@anvil/runtime` | `src/idempotency.ts` | New job-handle index (`jobId -> idempotencyKey`), written at reservation time by any submit operation with a `jobIdField`, read by the webhook receiver before calling `complete` (§14 fix) |
+| `@anvil/runtime` | `src/webhook-receiver.ts` (new) | Signature verify (per-scheme dispatch, incl. `oidc_jwt` for queue push) → parse → job-index lookup → ledger write |
+| `@anvil/runtime` | `src/job-answer.ts` (new) | §8's authenticated answer-write path — calls the upstream decision operation, does not resume any paused execution |
+| `@anvil/runtime` | `src/auth.ts` | SigV4 request-signing scheme, if direct-SQS access (§12) is pursued rather than scoping SQS to an authenticated gateway |
+| `@anvil/air` | `src/enums.ts` | New `AuthType` value for SigV4, same conditional as above |
 | `@anvil/generators` | `src/catalog.ts` | Exclude `webhook_receiver`-archetyped operations from the callable surface |
-| `@anvil/generators` | `src/mcp.ts` | Hybrid status handler: ledger-check-then-upstream; generate `job answer` tool |
+| `@anvil/generators` | `src/mcp.ts` | Hybrid status handler: ledger-check-then-upstream when `statusOperationId` is present; synthetic ledger-only handler when it's absent (§9). Generate `job answer` tool for operations with a real upstream decision endpoint. |
 | `@anvil/generators` | `src/deploy.ts` | New `/webhooks/<service>/<opId>` route on the generated Cloud Run entrypoint |
-| `@anvil/mcp-runtime` | `src/server.ts` | Serve the hybrid handler and job-answer tool; webhook ops never appear in `tools/list` |
+| `@anvil/mcp-runtime` | `src/server.ts` | Serve the hybrid/synthetic handler and job-answer tool; webhook ops never appear in `tools/list` |
 | `@anvil/refinement` | `src/approval.ts` | `webhook`- and job-answer-authorization-touching patches always `review` |
-| `@anvil/certification` | `src/checks.ts` | Static check: signature scheme resolvable at deploy target, incl. `remote_verify`'s `allowedHosts` requirement |
+| `@anvil/certification` | `src/checks.ts` | Static checks: signature scheme resolvable at deploy target (incl. `remote_verify`'s `allowedHosts` requirement), and no `AsyncContract` with neither a status operation nor a webhook |
 | `@anvil/cli` | `src/commands/inspect.ts` | Surface `asyncContract.webhook`/pending-state issues in `anvil inspect` |
 | `@anvil/cli` | `src/commands/job.ts` (new) | `anvil job answer <id>` |
 
@@ -677,8 +777,11 @@ unverifiable request in production.
    top-level `webhooks:` map (§11) — the best candidate for the auto-link
    path; Stripe/Twilio are confirmed manifest-only regardless.
 3. **Phase 2 — Runtime receiver + job-answer handler.** §14, both new
-   files. Both are pure functions of (payload/decision, contract, ledger) →
-   ledger call — unit-testable without a deployed server.
+   files, plus the job-handle index in `idempotency.ts` the receiver
+   depends on to resolve a job id to a ledger row — land the index first,
+   it has no dependency on the receiver and is unit-testable alone. Both
+   handlers are otherwise pure functions of (payload/decision, contract,
+   ledger) → ledger call.
 4. **Phase 3 — Generated routes + hybrid status handler + `anvil job
    answer`.** §14's generator/server/CLI changes, wired end-to-end.
 5. **Phase 4 — Safety gating + certification.** §15, §16. Do not ship
@@ -718,6 +821,17 @@ the "skill/CLI/MCP drifted apart" failure mode described at the top of
   named in `PRODUCT_BOUNDARY.md` as a "Tomorrow" parser/target, and
   deliberately not designed here (§4, §12's closing paragraph) because it's
   the one case that can't be made stateless. Its own document, if pursued.
+- **Decide SigV4 vs. gateway-scoping for SQS before Phase 5** (§12) — either
+  becomes real `AuthType`/runtime work (new file-level tasks, §17) or the
+  SQS integration path gets explicitly restricted to an already-authenticated
+  HTTP gateway in front of the queue. Picking neither leaves §12's SQS claim
+  unimplementable as written; this needs a decision, not a default.
+- **Design the job-handle index's exact shape** (§14) — this document
+  specifies the requirement (`jobId -> idempotencyKey`, written at
+  reservation time, read before `complete`) but not the storage shape
+  (a field on the existing ledger entry vs. a separate keyed store, TTL
+  alignment with the ledger's own `DEFAULT_LEDGER_RESULT_TTL_SECONDS`).
+  Resolve before Phase 2's `idempotency.ts` work starts.
 - **A daemon as an optimization, not a foundation** (§8's closing
   paragraph) — if low-latency human-notification or connection/session
   amortization become real requirements, a thin process that watches the
