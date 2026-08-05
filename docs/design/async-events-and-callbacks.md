@@ -3,10 +3,14 @@
 Status: design (researched 2026-08-03, substantially revised 2026-08-04 after
 folding in a human-approval mechanism, a queue-systems deep dive, and a
 corrected DLQ-triage pattern — all resolved through one underlying principle,
-§2). Nothing here is implemented; the staged plan is at the end. Written to
-be handed to an implementing agent directly — every section names the real
-files it touches, and every vendor/protocol claim is checked against this
-repo's own backtest evidence or flagged as unverified.
+§2; further revised 2026-08-05 after an external review round on PR #29
+found five real gaps, all fixed, and again to scope the legacy-application
+case explicitly, §20). Nothing here is implemented; the staged plan is at
+the end, with a companion phase-by-phase execution checklist in
+`docs/design/async-events-implementation-plan.md`. Written to be handed to
+an implementing agent directly — every section names the real files it
+touches, and every vendor/protocol claim is checked against this repo's own
+backtest evidence or flagged as unverified.
 
 ## 1. Why
 
@@ -130,6 +134,12 @@ table — it's why the table has three rows and one mechanism.
   HTTP pull/push surface). It is not a design for whatever completion shape
   Anvil's actual largest real estates (FLEXCUBE, OBDX) use — that's
   unverified either way (§9's closing note) and out of scope regardless.
+- **Not a legacy-application façade.** Every mechanism here assumes a
+  completion signal already exists over HTTP. A large real class of
+  systems — classic 3-tier apps with no API at all, only screens — has
+  none. §20 scopes this explicitly: getting such a system to produce a
+  signal is out-of-scope façade work, but the façade's output plugs into
+  this design unchanged once it exists.
 
 ## 5. Benefits, concretely — who this is for
 
@@ -842,3 +852,73 @@ the "skill/CLI/MCP drifted apart" failure mode described at the top of
   amortization become real requirements, a thin process that watches the
   ledger and pushes notifications is a legitimate follow-on. It would sit
   on top of this design, not replace it, and isn't scoped here.
+
+## 20. What this doesn't cover: legacy applications with no completion signal at all
+
+Every mechanism in this document — the webhook receiver (§9–§11), queue
+push (§12), human approval (§8) — assumes a completion signal already
+exists somewhere reachable over HTTP: a poll endpoint, a webhook, a queue
+message. A large, real class of systems has none of these: classic 3-tier
+enterprise applications (WebLogic/WebSphere/JBoss-class Java EE app
+servers, .NET WCF/ASP.NET stacks) where business logic was never exposed
+as a callable API — only as server-rendered screens, or as an undocumented
+SOAP/EJB surface nobody turned on. This is a real, named gap, not a
+someday footnote: it's exactly the shape of estate `findings-log.md`'s
+largest real validation (FLEXCUBE, OBDX) belongs to, per §11's own
+unresolved note, and it's the estate class discussed at length elsewhere
+in this design's development.
+
+**The boundary, precisely — and why it composes rather than forks.**
+Getting a legacy system to produce *any* completion signal at all is
+entirely façade work in front of it:
+
+- Discovering a hidden WSDL surface, or JMX/EJB-reflecting a running
+  WebLogic/WebSphere/JBoss deployment for method signatures nobody
+  documented.
+- Standing up a screen-automation shim (simulated form posts, or full
+  browser automation for JS-heavy UIs) that exposes a real REST surface in
+  front of a screen-only app.
+- Watching the underlying database via change-data-capture (CDC — e.g.
+  Debezium) for the row-level state change that means "the batch job
+  finished" or "the workflow moved to approved," when neither the app tier
+  nor a screen offers anything better.
+
+None of that is this design's job, and none of it should be forced into
+Anvil itself. `docs/PRODUCT_BOUNDARY.md`: *"Anvil compiles AIR; it is not
+a platform."* Same reasoning §13 already applied to the DLQ-triage
+pattern's "investigate and repair" step, applied here to "produce a
+signal in the first place."
+
+**Why this composes instead of needing a fourth mechanism.** Once a
+façade exists, its output is indistinguishable from any other API's — it
+reduces to exactly one of the two shapes this design already represents:
+
+- If the façade can be polled → it's a normal
+  `AsyncContract.statusOperationId`, no different from Stripe's
+  payment-intent `GET`.
+- If the façade pushes → a CDC-to-webhook bridge (translate a Debezium
+  change event into a signed HTTP POST) is architecturally identical to
+  §9's `WebhookContract` — same receiver (§14, Phase 2 of the
+  implementation plan), same ledger, same signature-verification
+  discipline, just one more `WebhookSignatureVerification` scheme for
+  however the façade signs its own outbound calls (a plain HMAC over a
+  secret the façade and Anvil's deployed service both hold is the natural
+  choice — not a new category alongside `hmac_sha256_header`).
+
+**What's genuinely missing, named plainly.** Nothing in this document, the
+implementation plan, or the current codebase builds that façade. That's
+real, scoped, separate work — closer in shape to the raw-broker-consumption
+deferral (§4's non-goal) than to anything phased in the implementation
+plan. If it's ever prioritized, it deserves its own design doc covering:
+which façade pattern fits which legacy stack (WSDL/JMX discovery vs.
+screen automation vs. CDC), and the safety story for a shim whose evidence
+is inherently weaker than a real documented API — a screen-scraped or
+DB-observed completion source should start at Anvil's most conservative
+classification (`idempotency.mode: none`, confirmation required, nothing
+auto-retried) and stay there longer than a vendor API with a real spec
+would, precisely because there's no vendor documentation backing the
+inference. The one concrete implementation dependency this creates now,
+worth deciding early if that future doc gets written: build any
+CDC-to-webhook bridge to emit exactly the `WebhookContract` shape from
+Phase 0, not a bespoke format, so it becomes a signature-scheme addition
+to Phase 2's receiver rather than a new receiver.

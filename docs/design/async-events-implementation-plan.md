@@ -487,3 +487,13 @@ these as permission to improvise an answer inside one of the phases above:
 - Raw broker consumption (native Kafka/JMS/AMQP) and real SigV4 support —
   explicitly out of scope for this plan (see Decision B); their own future
   plans if pursued.
+- **Legacy applications with no completion signal at all** (design doc
+  §20) — WebLogic/WebSphere/JBoss/.NET-class 3-tier apps with no API,
+  only screens. Entirely out of scope for every phase above: getting such
+  a system to produce *any* signal is façade work (WSDL/JMX discovery,
+  screen automation, or CDC), not something this plan builds. The one
+  thing worth keeping in mind while building Phase 2's receiver: if that
+  façade work ever happens, a CDC-to-webhook bridge should be able to
+  reuse the receiver as just one more `WebhookSignatureVerification`
+  scheme — don't design the receiver in a way that quietly forecloses
+  that reuse.
