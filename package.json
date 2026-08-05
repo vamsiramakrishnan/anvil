@@ -17,6 +17,7 @@
     "lint:fix": "biome check --write .",
     "typecheck": "turbo run typecheck",
     "deadcode": "knip",
+    "docs:check": "pnpm --filter @anvil/docs check",
     "anvil": "node packages/cli/dist/bin-anvil.js",
     "clean": "turbo run clean && rm -rf node_modules",
     "coverage": "vitest run --coverage --coverage.provider=v8 --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.include=\"packages/*/src/**\" --coverage.exclude=\"**/*.test.ts\" --coverage.reportsDirectory=./coverage-report --exclude=\"**/cookbook*.test.ts\""

@@ -43,7 +43,10 @@ export function registerAgentify(parent: Command, ctx: CommandContext): void {
           "It then STOPS for human review. It deliberately does NOT approve any capability or operation (every grouping stays `proposed`, every unproven mutation stays `review_required`), does NOT certify, and does NOT publish — no certification.json or publication.json is ever written. " +
           "A broken spec stops at the snapshot layer with structured diagnostics and exit 1; nothing downstream runs.",
       )
-      .argument("<spec>", "OpenAPI/Swagger spec file")
+      .argument(
+        "<spec>",
+        "API contract file (OpenAPI, Swagger, GraphQL, proto3, WSDL, Discovery, OData, or Postman)",
+      )
       .option("--manifest <file>", "Anvil manifest with semantic overrides")
       .option("--service <id>", "override the derived service id")
       .option("--out <dir>", "bundle output directory (default generated/<service-id>)")

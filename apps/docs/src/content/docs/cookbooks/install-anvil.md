@@ -1,100 +1,109 @@
 ---
-title: "Install Anvil"
-description: "From a fresh clone to a working anvil command: three commands, a version check, and a first compile that proves the toolchain runs end to end."
+title: Install Anvil
+description: Build Anvil from source, verify the CLI, and compile a disposable example before using your own API contract.
 sidebar:
   order: 1
 ---
 
-**What you'll have at the end:** a working `anvil` command built from source, and
-a real compiled bundle to prove it — no global install, no registry, no
-network beyond the clone.
-
-Anvil is a pnpm + Turbo monorepo that runs from source. There is no
-`npm i -g anvil`; you build the workspace once and call the CLI from its build
-output (or behind a shell alias). This page is the copy-paste path.
+Anvil currently runs from source; there is no published global package. This
+page gets you to a verified local CLI without changing your global npm setup.
 
 ## Prerequisites
 
-- **Node.js ≥ 22.17** — `node --version`
-- **pnpm 10.x** — `corepack enable && corepack prepare pnpm@latest --activate`, or
-  see [pnpm.io/installation](https://pnpm.io/installation)
-- **git**
+You need:
 
-That's the whole list. No database, no Docker, no cloud account — the compiler
-and its tests run entirely on your machine.
+- Node.js 22.17 or later;
+- Corepack, which is included with supported Node.js releases;
+- Git; and
+- a shell that can run the commands below.
 
-## 1. Clone, install, build
+Check the versions first:
+
+```bash
+node --version
+corepack --version
+git --version
+```
+
+You do not need Docker, a database, or cloud credentials to compile and test a
+bundle locally.
+
+## Clone and build
 
 ```bash
 git clone https://github.com/vamsiramakrishnan/anvil.git
 cd anvil
+corepack enable
 pnpm install
 pnpm build
 ```
 
-`pnpm build` compiles every workspace package, including the CLI entrypoint at
-`packages/cli/dist/bin-anvil.js`. That file **is** the `anvil` command.
+The repository pins pnpm in `package.json`. Let Corepack select that version;
+do not substitute the latest pnpm release when reproducing a build failure.
 
-## 2. Make `anvil` a command
+Verify the CLI:
 
-Call the built entrypoint directly, or alias it for the rest of your session:
+```bash
+pnpm anvil --version
+pnpm anvil --help
+```
+
+`pnpm anvil` runs the built entrypoint at
+`packages/cli/dist/bin-anvil.js`. The documentation uses `anvil` for installed
+or aliased environments and `pnpm anvil` when commands are intended to run from
+this checkout.
+
+## Verify the complete path
+
+Compile the repository's payments fixture into a temporary directory, inspect
+it, and remove it when finished:
+
+```bash
+# [docs-tested]
+WORK=$(mktemp -d)
+node packages/cli/dist/bin-anvil.js compile examples/payments/openapi.yaml \
+  --manifest examples/payments/anvil.yaml \
+  --service payments \
+  --out "$WORK/payments" \
+  --root "$WORK"
+node packages/cli/dist/bin-anvil.js status "$WORK/payments" --root "$WORK"
+node packages/cli/dist/bin-anvil.js inspect "$WORK/payments" >/dev/null
+test -f "$WORK/payments/air.yaml"
+test -f "$WORK/payments/mcp/server.js"
+test -f "$WORK/payments/skill/SKILL.md"
+rm -rf "$WORK"
+```
+
+If that block exits successfully, the compiler, generators, and CLI can work
+together on your machine.
+
+## Optional shell shortcut
+
+If you prefer the shorter commands used in the reference docs, create an alias
+for the current shell:
 
 ```bash
 alias anvil='node packages/cli/dist/bin-anvil.js'
 anvil --help
 ```
 
-Every command on this site is written as `anvil <command>`; with the alias in
-place, they run verbatim.
+The alias is not persistent. Add it to your shell profile only if this checkout
+has a stable location.
 
-## 3. Prove it runs
+## Common installation failures
 
-Don't take the build's word for it — compile the bundled `payments` example and
-read it back. This is the whole toolchain end to end: parse a spec, classify
-every operation, write an aligned bundle, and inspect it.
+| Symptom | What to do |
+| --- | --- |
+| `pnpm: command not found` | Run `corepack enable`, then reopen the shell if necessary. |
+| pnpm reports a version mismatch | Run `corepack pnpm --version`; the result should match `packageManager` in `package.json`. |
+| A module under `dist/` is missing | Run `pnpm build` again and fix the first package that fails. |
+| Native `sharp` or `esbuild` install fails | Confirm you are using a supported Node.js version and the repository's pinned pnpm version. Remove only `node_modules`, then rerun `pnpm install`. |
+| The docs site fails while the CLI packages build | Run the docs build separately with `pnpm --filter @anvil/docs build` so the Astro error is isolated. |
 
-```bash
-# [docs-tested]
-WORK=$(mktemp -d)
-# The built CLI answers:
-node packages/cli/dist/bin-anvil.js --help >/dev/null
-# Compile the bundled payments example into a full bundle:
-node packages/cli/dist/bin-anvil.js compile examples/payments/openapi.yaml \
-  --manifest examples/payments/anvil.yaml --service payments \
-  --out "$WORK/payments" --root "$WORK"
-# The bundle is real, and inspect reads every operation's effect and risk:
-test -f "$WORK/payments/catalog.json"
-node packages/cli/dist/bin-anvil.js inspect "$WORK/payments" >/dev/null
-rm -rf "$WORK"
-```
+For command and bundle problems after installation, use the
+[troubleshooting guide](/anvil/guides/troubleshooting/).
 
-If those commands complete without error, Anvil is installed and working. You
-just compiled a spec into an aligned CLI + MCP server + skill + hooks bundle and
-inspected its safety contract.
+## Next step
 
-## Sanity-check the whole workspace (optional)
-
-```bash
-pnpm test        # the full suite, including the tested snippets on this site
-pnpm typecheck   # every package typechecks
-```
-
-## What next
-
-- **[Quickstart](/anvil/start/quickstart/)** — the compile → inspect → approve →
-  deploy loop on your own spec.
-- **[Operating Anvil](/anvil/guides/operating-anvil/)** — the progressive-disclosure
-  manual, and the safety rules that keep unapproved operations out of every
-  tool an agent sees.
-- **Behind a gateway instead of a spec file?**
-  [Import the estate](/anvil/concepts/gateway-estates/) — the catalog of APIs
-  behind Apigee, Kong, WSO2, MuleSoft, or IBM API Connect — with `anvil estate`.
-
-## If something breaks
-
-- **`anvil: command not found`** — the alias is per-shell; re-run the `alias`
-  line, or call `node packages/cli/dist/bin-anvil.js` directly.
-- **A command errors with "cannot find module" under `dist/`** — the build
-  didn't finish. Re-run `pnpm build` and watch for the failing package.
-- **pnpm version mismatch** — this repo pins pnpm via `packageManager`;
-  `corepack enable` lets pnpm match it automatically.
+Continue to the [quickstart](/anvil/start/quickstart/) to compile, inspect, and
+exercise a bundle without contacting a real API.

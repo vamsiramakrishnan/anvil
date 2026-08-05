@@ -75,14 +75,91 @@ export default defineConfig({
         themes: ["github-dark"],
         styleOverrides: { borderRadius: "0.5rem" },
       },
+      // Organize by the developer's task, not by the repository directory that
+      // happens to own a page. Canonical docs keep stable routes while the
+      // sidebar gives a progressive Start → Build → Operate path.
       sidebar: [
-        { label: "Start Here", autogenerate: { directory: "start" } },
-        { label: "Concepts", autogenerate: { directory: "concepts" } },
-        { label: "Cookbooks", autogenerate: { directory: "cookbooks" } },
-        { label: "Guides", autogenerate: { directory: "guides" } },
-        { label: "Explore the output", autogenerate: { directory: "explore" } },
-        { label: "Design", autogenerate: { directory: "design" } },
-        { label: "Architecture Decisions", autogenerate: { directory: "reference/adr" } },
+        {
+          label: "Start",
+          items: [
+            { label: "Understand Anvil", slug: "start/what-is-anvil" },
+            { label: "Install Anvil", slug: "cookbooks/install-anvil" },
+            { label: "Quickstart", slug: "start/quickstart" },
+            { label: "Adopt across a platform", slug: "start/for-enterprises" },
+          ],
+        },
+        {
+          label: "Build",
+          items: [
+            { label: "Source format support", slug: "guides/source-formats" },
+            { label: "Write a manifest", slug: "guides/manifest" },
+            { label: "Enrich and approve", slug: "guides/enrich-approve-workflow" },
+            { label: "Import a gateway estate", slug: "cookbooks/import-a-gateway-estate" },
+            { label: "Enrich a SOAP service", slug: "cookbooks/enrich-a-soap-service" },
+            { label: "Cut context cost", slug: "cookbooks/cut-agent-context-cost" },
+          ],
+        },
+        {
+          label: "Operate",
+          items: [
+            { label: "Operating Anvil", slug: "guides/operating-anvil" },
+            { label: "Run Anvil in CI", slug: "guides/ci" },
+            { label: "Troubleshooting", slug: "guides/troubleshooting" },
+            { label: "Respond to spec drift", slug: "cookbooks/respond-to-drift" },
+            {
+              label: "Handle confirmation refusal",
+              slug: "cookbooks/handle-confirmation-required",
+            },
+            { label: "Require human approval", slug: "cookbooks/require-human-approval" },
+            {
+              label: "Prove durable idempotency",
+              slug: "cookbooks/prove-durable-idempotency",
+            },
+          ],
+        },
+        {
+          label: "Connect agents",
+          items: [
+            { label: "Gemini Enterprise", slug: "cookbooks/connect-gemini-enterprise" },
+            { label: "Claude Code plugin", slug: "cookbooks/install-claude-code-plugin" },
+            { label: "Codex hook", slug: "cookbooks/wire-codex-hook" },
+            { label: "Antigravity hook", slug: "cookbooks/wire-antigravity-hooks" },
+            { label: "Hook decision flow", slug: "explore/decision-flow" },
+          ],
+        },
+        {
+          label: "Reference",
+          items: [
+            { label: "Command reference", slug: "guides/commands" },
+            { label: "Example bundle", slug: "explore/example-bundle" },
+            { label: "Errors and recovery", slug: "explore/errors" },
+            { label: "Glossary", slug: "concepts/glossary" },
+          ],
+        },
+        {
+          label: "Architecture",
+          collapsed: true,
+          items: [
+            { label: "Architecture", slug: "concepts/architecture" },
+            { label: "Product boundary", slug: "concepts/product-boundary" },
+            { label: "Mechanisms", slug: "concepts/mechanisms" },
+            { label: "Gateway estates", slug: "concepts/gateway-estates" },
+            {
+              label: "Simulation and backtesting",
+              slug: "concepts/simulation-and-backtesting",
+            },
+            { label: "Hooks and plugins", slug: "design/hooks-and-plugins" },
+            {
+              label: "Investigation architecture",
+              slug: "design/investigation-architecture",
+            },
+            {
+              label: "Architecture decisions",
+              collapsed: true,
+              autogenerate: { directory: "reference/adr" },
+            },
+          ],
+        },
       ],
     }),
   ],
