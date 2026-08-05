@@ -1,5 +1,6 @@
 import type { AirDocument, AsyncContract, Operation } from "@anvil/air";
 import {
+  agentFieldName,
   asyncContractSentence,
   evidenceConfidence,
   kebabCase,
@@ -404,12 +405,11 @@ ${intro}${sections}\n`;
 function demoteHeadings(text: string): string {
   return text.replace(/^#{1,6}\s+(.+)$/gm, "**$1**");
 }
-
 function inputList(op: Operation): string {
-  const parts = op.input.params.map((p) => `\`${p.name}\`${p.required ? "*" : ""}`);
+  const parts = op.input.params.map((p) => `\`${agentFieldName(p)}\`${p.required ? "*" : ""}`);
   const body = op.input.body;
   if (body?.projection === "fields") {
-    parts.push(...body.fields.map((f) => `\`${f.name}\`${f.required ? "*" : ""}`));
+    parts.push(...body.fields.map((f) => `\`${agentFieldName(f)}\`${f.required ? "*" : ""}`));
   } else if (body) {
     parts.push(`\`body\`${body.required ? "*" : ""} (JSON)`);
   }

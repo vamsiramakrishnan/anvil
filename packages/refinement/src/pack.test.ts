@@ -1,7 +1,14 @@
 import { type AirDocument, loadAirDocument } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { scoreFamily } from "./evals/index.js";
-import { applyApproved, packFiles, renderReviewMarkdown, runRefinements } from "./pack.js";
+import {
+  applyApproved,
+  applyReviewed,
+  createReviewReceipt,
+  packFiles,
+  renderReviewMarkdown,
+  runRefinements,
+} from "./pack.js";
 
 /**
  * A document whose gaps are each backed by AIR-resident evidence, so the
@@ -180,10 +187,31 @@ describe("refinement pack", () => {
     expect(safeOnly.refinements.map((r) => r.skill)).toEqual(["enrich-errors"]);
   });
 
+  it("isolates canonical AIR and validation context from an untrusted executor", async () => {
+    const air = doc();
+    const before = structuredClone(air);
+    const pack = await runRefinements(air, {
+      skill: "generate-examples",
+      executor: {
+        name: "mutating-test-adapter",
+        async execute(_skill, context) {
+          if (context.operation) context.operation.canonicalName = "tampered";
+          if (context.field) context.field.schema.minimum = -1;
+          context.evidence.length = 0;
+          return null;
+        },
+      },
+    });
+
+    expect(pack.summary.skipped).toBe(1);
+    expect(air).toEqual(before);
+  });
+
   it("emits the reviewable pack files", async () => {
     const pack = await runRefinements(doc());
     const files = packFiles(pack);
     for (const name of [
+      "pack.json",
       "plan.json",
       "claims.json",
       "proposed.patch.json",
@@ -195,5 +223,42 @@ describe("refinement pack", () => {
       expect(files[name], name).toBeTruthy();
     }
     expect(renderReviewMarkdown(pack)).toContain("Refinement review — payments");
+  });
+
+  it("applies the exact review-tier proposal only with a bound approval receipt", async () => {
+    const air = doc();
+    const operation = air.operations[0];
+    if (!operation) throw new Error("fixture operation missing");
+    operation.canonicalName = "do_refund";
+    operation.cli.command = "payments refunds do";
+    operation.mcp.toolName = "payments_do_refund";
+
+    const pack = await runRefinements(air, { skill: "rename-operation" });
+    const refinement = pack.refinements.find((candidate) => candidate.skill === "rename-operation");
+    expect(refinement?.approval.tier).toBe("review");
+    if (!refinement) throw new Error("rename refinement missing");
+
+    const receipt = createReviewReceipt(
+      pack,
+      refinement.id,
+      "approved",
+      "api-owner@example.com",
+      "The operation axes match the source route and implementation.",
+      "2026-08-06T00:00:00.000Z",
+    );
+    const applied = applyReviewed(air, pack, [receipt]);
+    expect(applied.air.operations[0]).toMatchObject({
+      canonicalName: "create_refund",
+      cli: { command: "payments refunds create" },
+      mcp: { toolName: "payments_create_refund" },
+    });
+
+    const stale = structuredClone(air);
+    stale.operations[0]!.description = "Changed after review.";
+    expect(() => applyReviewed(stale, pack, [receipt])).toThrow(/pack is stale/i);
+
+    expect(() => applyReviewed(air, pack, [{ ...receipt, proposalHash: "tampered" }])).toThrow(
+      /different proposal/i,
+    );
   });
 });

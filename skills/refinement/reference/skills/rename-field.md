@@ -1,16 +1,16 @@
 ---
-name: refinement-skill-document-pagination
-description: Contract and investigation method for the document-pagination skill — writes pagination_style, pagination_cursor_param, pagination_next_field, pagination_items_field, pagination_page_size_param, pagination_max_page_size, pagination_default_page_size on a operation target from corroborated evidence. Read this before working a undocumented_pagination deficiency.
+name: refinement-skill-rename-field
+description: Contract and investigation method for the rename-field skill — writes agent_name, aliases on a field target from single evidence. Read this before working a weak_field_name or unit_ambiguous_field deficiency.
 ---
 
-# Skill: document-pagination (v1)
+# Skill: rename-field (v1)
 
-**Triggers:** `undocumented_pagination`
-**Target:** `operation`
+**Triggers:** `weak_field_name`, `unit_ambiguous_field`
+**Target:** `field`
 
 ## Evidence policy
 - Admissible sources: `source_impl`, `test_fixture`, `spec`, `doc_example`, `postman`
-- Minimum aggregate strength: **corroborated**
+- Minimum aggregate strength: **single**
   (`single` = one source · `corroborated` = two independent sources · `authoritative`
   = one implementation/recorded-traffic source).
 - Minimum verification: **allow_unverified**
@@ -19,12 +19,15 @@ description: Contract and investigation method for the document-pagination skill
 - Per-field verification overrides: none.
 
 ## Output boundary
-- May assert claim predicates: `operation.pagination`
-- May write ONLY these target-relative fields: `pagination_style`, `pagination_cursor_param`, `pagination_next_field`, `pagination_items_field`, `pagination_page_size_param`, `pagination_max_page_size`, `pagination_default_page_size`
+- May assert claim predicates: `field.agent_name`, `field.aliases`
+- May write ONLY these target-relative fields: `agent_name`, `aliases`
 - Structural keys (`type`, `required`, `schema`, `enum`, …) are never writable.
 
 ## Constraints
 - do_not_invent_business_rules
+- do_not_change_field_type
+- do_not_change_requiredness
+- preserve_domain_terms
 
 ## Validation (all must pass)
 - `patch_within_boundary`
@@ -33,15 +36,16 @@ description: Contract and investigation method for the document-pagination skill
 - `evidence_meets_minimum_strength`
 - `evidence_supports_value`
 - `evidence_meets_verification`
-- `pagination_binding_resolves`
+- `agent_field_name_valid`
 
 ## Context assembled for you
 - parent_operation
+- field_schema
+- sibling_fields
 - source_evidence
-- capability
 
 ## Executor's job
-Ground the continuation style and exact wire parameter, plus dotted response paths for items/next and any page-size parameter/default/maximum. Every request parameter must exist and every response path must resolve in the schema; never guess a size knob from a vague name.
+Find the domain term and unit the implementation, tests, or docs use. Set `agent_name` to that clear term while preserving the exact wire `name`; add only evidence-backed `aliases`. Check sibling inputs for normalized collisions. This is a reviewed binding, not a wire-schema rename.
 
 ## Investigation method
 A repeatable procedure — the *how*, not just the constraints. Open a case
@@ -49,7 +53,7 @@ A repeatable procedure — the *how*, not just the constraints. Open a case
 
 1. _(Researcher)_ Gather evidence from admissible sources: source_impl, test_fixture, spec, doc_example, postman.
 2. _(Claim extractor)_ Turn the evidence into atomic, sourced claims.
-3. _(Synthesizer)_ Draft a patch that writes only: pagination_style, pagination_cursor_param, pagination_next_field, pagination_items_field, pagination_page_size_param, pagination_max_page_size, pagination_default_page_size.
+3. _(Synthesizer)_ Draft a patch that writes only: agent_name, aliases.
 4. _(Critic)_ Falsify each asserted value; keep only what the evidence supports.
 5. _(Test writer)_ Record the checks that would prove the refinement.
 

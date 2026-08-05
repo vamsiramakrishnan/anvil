@@ -1,4 +1,4 @@
-import type { AirDocument } from "@anvil/air";
+import { type AirDocument, contractHash, hashCanonical } from "@anvil/air";
 import { applyPatches, type SemanticChange } from "./apply.js";
 import type { Severity } from "./deficiency.js";
 import { severityRank } from "./deficiency.js";
@@ -44,7 +44,10 @@ export interface RefinementSummary {
 }
 
 export interface RefinementPack {
+  schemaVersion: 1;
   service: { id: string; version: string };
+  /** Exact canonical contract this investigation and measurement ran against. */
+  sourceContractHash: string;
   plan: RefinementPlan;
   refinements: Refinement[];
   summary: RefinementSummary;
@@ -86,7 +89,10 @@ export async function runRefinements(
     if (seen.has(id)) continue;
     seen.add(id);
     const context = assembleContext(air, deficiency, evidenceForTarget(air, deficiency));
-    const proposal = await executor.execute(skill, context);
+    // The executor gets its own disposable copy. Validation uses the pristine
+    // context assembled above, so an untrusted adapter cannot rewrite the facts
+    // it will later be judged against.
+    const proposal = await executor.execute(skill, structuredClone(context));
     if (!proposal) {
       skipped++;
       continue;
@@ -114,7 +120,9 @@ export async function runRefinements(
   };
 
   return {
+    schemaVersion: 1,
     service: { id: air.service.id, version: air.service.version },
+    sourceContractHash: contractHash(air),
     plan,
     refinements,
     summary,
@@ -130,12 +138,152 @@ export function applyApproved(
   air: AirDocument,
   pack: RefinementPack,
 ): { air: AirDocument; applied: Refinement[]; changes: SemanticChange[] } {
+  assertPackMatchesAir(air, pack);
   const applied = pack.refinements.filter((r) => r.status === "approved");
   const { air: next, changes } = applyPatches(
     air,
     applied.map((r) => r.proposal),
   );
   return { air: next, applied, changes };
+}
+
+export type ReviewDecision = "approved" | "rejected";
+
+/** A human decision bound to one exact source contract, pack, and proposal. */
+export interface RefinementReviewReceipt {
+  schemaVersion: 1;
+  service: { id: string; version: string };
+  sourceContractHash: string;
+  packHash: string;
+  refinementId: string;
+  proposalHash: string;
+  decision: ReviewDecision;
+  reviewer: string;
+  reason: string;
+  reviewedAt: string;
+}
+
+/** Stable identity of every measured and reviewable facet in a pack. */
+export function refinementPackHash(pack: RefinementPack): string {
+  return hashCanonical(pack);
+}
+
+/** Create a decision only for a clean proposal that the policy routed to review. */
+export function createReviewReceipt(
+  pack: RefinementPack,
+  refinementId: string,
+  decision: ReviewDecision,
+  reviewer: string,
+  reason: string,
+  reviewedAt: string = new Date().toISOString(),
+): RefinementReviewReceipt {
+  const refinement = pack.refinements.find((candidate) => candidate.id === refinementId);
+  if (!refinement) throw new Error(`Refinement '${refinementId}' is not present in this pack.`);
+  if (
+    refinement.approval.tier !== "review" ||
+    (refinement.status !== "improved" && refinement.status !== "neutral")
+  ) {
+    throw new Error(
+      `Refinement '${refinementId}' is not awaiting human review (status: ${refinement.status}, tier: ${refinement.approval.tier}).`,
+    );
+  }
+  if (!reviewer.trim()) throw new Error("A non-empty reviewer identity is required.");
+  if (!reason.trim()) throw new Error("A non-empty review reason is required.");
+  return {
+    schemaVersion: 1,
+    service: pack.service,
+    sourceContractHash: pack.sourceContractHash,
+    packHash: refinementPackHash(pack),
+    refinementId,
+    proposalHash: hashCanonical(refinement.proposal),
+    decision,
+    reviewer: reviewer.trim(),
+    reason: reason.trim(),
+    reviewedAt,
+  };
+}
+
+/**
+ * Apply the original measured pack, plus explicit review decisions. No detector,
+ * executor, or measurement is rerun here, so the reviewed bytes are the bytes
+ * that reach AIR.
+ */
+export function applyReviewed(
+  air: AirDocument,
+  pack: RefinementPack,
+  receipts: readonly RefinementReviewReceipt[],
+): { air: AirDocument; applied: Refinement[]; changes: SemanticChange[] } {
+  assertPackMatchesAir(air, pack);
+  const decisions = new Map<string, RefinementReviewReceipt>();
+  for (const receipt of receipts) {
+    verifyReviewReceipt(pack, receipt);
+    if (decisions.has(receipt.refinementId)) {
+      throw new Error(`Multiple review receipts supplied for '${receipt.refinementId}'.`);
+    }
+    decisions.set(receipt.refinementId, receipt);
+  }
+
+  const applied = pack.refinements.filter((refinement) => {
+    if (refinement.status === "approved") return true;
+    return decisions.get(refinement.id)?.decision === "approved";
+  });
+  const result = applyPatches(
+    air,
+    applied.map((refinement) => refinement.proposal),
+  );
+  if (applied.length > 0 && result.changes.length === 0) {
+    throw new Error(
+      "The reviewed pack made no changes; the source contract is stale or incompatible.",
+    );
+  }
+  return { air: result.air, applied, changes: result.changes };
+}
+
+export function verifyReviewReceipt(pack: RefinementPack, receipt: RefinementReviewReceipt): void {
+  if (receipt.schemaVersion !== 1) throw new Error("Unsupported review receipt schema version.");
+  if (receipt.decision !== "approved" && receipt.decision !== "rejected") {
+    throw new Error(`Receipt '${receipt.refinementId}' has an invalid decision.`);
+  }
+  if (receipt.service.id !== pack.service.id || receipt.service.version !== pack.service.version) {
+    throw new Error(`Receipt '${receipt.refinementId}' targets a different service.`);
+  }
+  if (receipt.sourceContractHash !== pack.sourceContractHash) {
+    throw new Error(`Receipt '${receipt.refinementId}' targets a different source contract.`);
+  }
+  if (receipt.packHash !== refinementPackHash(pack)) {
+    throw new Error(`Receipt '${receipt.refinementId}' targets a different refinement pack.`);
+  }
+  const refinement = pack.refinements.find((candidate) => candidate.id === receipt.refinementId);
+  if (!refinement) throw new Error(`Receipt targets unknown refinement '${receipt.refinementId}'.`);
+  if (receipt.proposalHash !== hashCanonical(refinement.proposal)) {
+    throw new Error(`Receipt '${receipt.refinementId}' targets a different proposal.`);
+  }
+  if (
+    refinement.approval.tier !== "review" ||
+    (refinement.status !== "improved" && refinement.status !== "neutral")
+  ) {
+    throw new Error(
+      `Receipt '${receipt.refinementId}' cannot promote status '${refinement.status}'.`,
+    );
+  }
+  if (!receipt.reviewer.trim() || !receipt.reason.trim()) {
+    throw new Error(`Receipt '${receipt.refinementId}' is missing reviewer identity or reason.`);
+  }
+  if (Number.isNaN(Date.parse(receipt.reviewedAt))) {
+    throw new Error(`Receipt '${receipt.refinementId}' has an invalid reviewedAt timestamp.`);
+  }
+}
+
+function assertPackMatchesAir(air: AirDocument, pack: RefinementPack): void {
+  const current = contractHash(air);
+  if (current !== pack.sourceContractHash) {
+    throw new Error(
+      `Refinement pack is stale: source contract hash ${pack.sourceContractHash}, current ${current}.`,
+    );
+  }
+  if (air.service.id !== pack.service.id || air.service.version !== pack.service.version) {
+    throw new Error("Refinement pack service identity does not match AIR.");
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -151,6 +299,7 @@ export function applyApproved(
 export function packFiles(pack: RefinementPack): Record<string, string> {
   const j = (v: unknown) => `${JSON.stringify(v, null, 2)}\n`;
   return {
+    "pack.json": j(pack),
     "plan.json": j(pack.plan),
     "claims.json": j(pack.refinements.map((r) => ({ id: r.id, claims: r.evidence }))),
     "proposed.patch.json": j(pack.refinements.map((r) => ({ id: r.id, patch: r.proposal }))),
@@ -185,6 +334,7 @@ export function renderReviewMarkdown(pack: RefinementPack): string {
   );
   lines.push("");
   lines.push("_Detection and measurement are deterministic; AIR was not changed._");
+  lines.push(`_Source contract: \`${pack.sourceContractHash}\`._`);
   lines.push("");
 
   const ordered = [...pack.refinements].sort(
@@ -192,6 +342,7 @@ export function renderReviewMarkdown(pack: RefinementPack): string {
   );
   for (const r of ordered) {
     lines.push(`## ${r.skill} → ${describeTarget(r.target)}`);
+    lines.push(`- **refinement id**: \`${r.id}\``);
     lines.push(`- **status**: ${r.status} (${r.approval.tier}: ${r.approval.reason})`);
     lines.push(`- **deficiency**: ${r.deficiency}`);
     const set = Object.entries(r.proposal.set)

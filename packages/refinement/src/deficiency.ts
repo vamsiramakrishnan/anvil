@@ -42,6 +42,8 @@ export type DeficiencyCode =
   | "undocumented_pagination"
   // agent usability
   | "weak_operation_name"
+  | "weak_field_name"
+  | "unit_ambiguous_field"
   | "indistinct_operation_descriptions"
   | "capability_missing_routing_phrases"
   | "operation_lacks_intent_examples"
@@ -222,6 +224,24 @@ export const DEFICIENCY_CATALOG: Record<DeficiencyCode, DeficiencyDef> = {
     "weak operation name",
     "refinementRequired",
     "the agent cannot infer intent from the name and may route wrongly",
+  ),
+  weak_field_name: def(
+    "weak_field_name",
+    "usability",
+    "medium",
+    "rename-field",
+    "weak agent-facing field name",
+    "refinementRequired",
+    "the agent cannot infer which value this input represents from its name",
+  ),
+  unit_ambiguous_field: def(
+    "unit_ambiguous_field",
+    "usability",
+    "high",
+    "rename-field",
+    "numeric input has no unit",
+    "refinementRequired",
+    "the agent can supply a valid number with the wrong unit and change behavior by orders of magnitude",
   ),
   indistinct_operation_descriptions: def(
     "indistinct_operation_descriptions",

@@ -6,7 +6,10 @@ import { runDetectors } from "./detect.js";
 import { distill } from "./distill.js";
 import { distillToEnrichmentPlan, parseEnrichmentPlan } from "./enrich-plan.js";
 import { buildRefinementPlan, summarizeRefinementPlan } from "./plan.js";
+import { assembleContext } from "./skills/context.js";
+import type { SkillProposal } from "./skills/contract.js";
 import { skillByName, skillFor } from "./skills/registry.js";
+import { validateProposal } from "./skills/validate.js";
 
 const viewBffSpec = `openapi: 3.0.3
 info: { title: Application workspace BFF, version: 1.0.0 }
@@ -142,7 +145,7 @@ describe("ui_projection_contract", () => {
         minimumStrength: "authoritative",
         minimumVerification: "verified",
       },
-      output: { fields: ["description"] },
+      output: { fields: ["description", "response_projection"] },
     });
     const procedure = procedureFor(investigationSkill);
     expect(procedure.steps.map((step) => step.instruction).join(" ")).toMatch(
@@ -211,5 +214,51 @@ describe("ui_projection_contract", () => {
     const project = (air: typeof first) =>
       runDetectors(air).filter((candidate) => candidate.code === "ui_projection_contract");
     expect(project(second)).toEqual(project(first));
+  });
+
+  it("accepts only response projection paths that exist in the wire schema", async () => {
+    const air = await compile({ spec: viewBffSpec, serviceId: "workspace" });
+    const finding = runDetectors(air).find(
+      (candidate) => candidate.code === "ui_projection_contract",
+    );
+    const skill = skillByName("investigate-ui-projection");
+    if (!finding || !skill) throw new Error("projection fixture is incomplete");
+    const projection = {
+      include: ["rows.actions"],
+      rename: { "rows.actions": "rows.available_actions" },
+    };
+    const evidence = [
+      {
+        subject: finding.target.kind === "operation" ? finding.target.operationId : "operation",
+        predicate: "operation.response_projection",
+        value: projection,
+        source: "source_impl" as const,
+        sourceRef: "src/dashboard-handler.ts",
+        confidence: 0.95,
+      },
+    ];
+    const context = assembleContext(air, finding, evidence);
+    const proposal: SkillProposal = {
+      skill: skill.name,
+      skillVersion: skill.version,
+      deficiency: finding.code,
+      target: finding.target,
+      claims: evidence,
+      patch: { target: finding.target, set: { response_projection: projection } },
+    };
+    expect(
+      validateProposal(skill, proposal, context).outcomes.find(
+        (outcome) => outcome.check === "response_projection_valid",
+      )?.ok,
+    ).toBe(true);
+
+    const missing = structuredClone(proposal);
+    missing.patch.set.response_projection = { include: ["rows.nonexistent"] };
+    missing.claims[0]!.value = missing.patch.set.response_projection;
+    expect(
+      validateProposal(skill, missing, context).outcomes.find(
+        (outcome) => outcome.check === "response_projection_valid",
+      )?.reason,
+    ).toContain("do not resolve");
   });
 });

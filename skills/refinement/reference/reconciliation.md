@@ -20,6 +20,8 @@ A proposal is rejected unless every check its skill declares passes.
 - `description_not_tautological` — the description adds meaning beyond the name
 - `examples_validate_against_schema` — every example validates against the field's schema
 - `error_message_nonempty` — the error message is non-empty
+- `agent_field_name_valid` — the proposed agent name is non-empty and does not collide with a sibling input
+- `response_projection_valid` — the response view only selects, excludes, or renames existing fields within an object
 - `idempotency_carrier_resolves` — a proposed idempotency mode/mechanism/key resolves cleanly against the operation (the same check the compiler runs)
 - `pagination_binding_resolves` — when pagination style is cursor/page/offset, the cursor param names an existing input parameter, and pagination_items_field is a non-empty string
 

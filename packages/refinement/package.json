@@ -1,7 +1,7 @@
 {
   "name": "@anvil/refinement",
   "version": "0.1.0",
-  "description": "Anvil refinement — deterministic deficiency detection over AIR; the front half of the quality flywheel (no agents).",
+  "description": "Anvil's evidence-bound refinement SDK for coding harnesses and deterministic automation.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

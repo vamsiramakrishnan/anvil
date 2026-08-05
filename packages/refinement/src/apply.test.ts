@@ -87,6 +87,52 @@ describe("applyPatch", () => {
     expect(op?.skill.intentExamples).toEqual(["create a new refund", "refund a payment"]);
   });
 
+  it("moves canonical, CLI, and MCP routing names together", () => {
+    const air = fixtureDoc();
+    const result = applyPatch(air, {
+      target: { kind: "operation", operationId: OPERATION_ID },
+      set: {
+        canonical_name: "issue_refund",
+        cli_command: "payments refunds issue",
+        tool_name: "payments_issue_refund",
+      },
+    });
+    const op = result.air.operations[0];
+    expect(op).toMatchObject({
+      canonicalName: "issue_refund",
+      cli: { command: "payments refunds issue" },
+      mcp: { toolName: "payments_issue_refund" },
+    });
+    expect(result.changes.map((change) => change.key).sort()).toEqual([
+      "canonical_name",
+      "cli_command",
+      "tool_name",
+    ]);
+  });
+
+  it("binds a clear agent field name without changing its wire name", () => {
+    const air = fixtureDoc();
+    const result = applyPatch(air, {
+      target: { kind: "field", operationId: OPERATION_ID, path: "input.body.reason" },
+      set: { agent_name: "refund_reason", aliases: ["reason"] },
+    });
+    const field = result.air.operations[0]?.input.body?.fields[0];
+    expect(field).toMatchObject({
+      name: "reason",
+      agentName: "refund_reason",
+      aliases: ["reason"],
+    });
+  });
+
+  it("records no change when a patch repeats the current value", () => {
+    const air = fixtureDoc();
+    const result = applyPatch(air, {
+      target: { kind: "operation", operationId: OPERATION_ID },
+      set: { description: "Creates a refund." },
+    });
+    expect(result.changes).toEqual([]);
+  });
+
   it("sets capability routing phrases (the author-routing-phrases write path)", () => {
     const air = fixtureDoc();
     const patch: SemanticPatch = {

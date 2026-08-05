@@ -1,6 +1,6 @@
 ---
 name: refinement-skill-investigate-ui-projection
-description: Contract and investigation method for the investigate-ui-projection skill — writes description on a operation target from authoritative evidence. Read this before working a ui_projection_contract deficiency.
+description: Contract and investigation method for the investigate-ui-projection skill — writes description, response_projection on a operation target from authoritative evidence. Read this before working a ui_projection_contract deficiency.
 ---
 
 # Skill: investigate-ui-projection (v1)
@@ -19,8 +19,8 @@ description: Contract and investigation method for the investigate-ui-projection
 - Per-field verification overrides: none.
 
 ## Output boundary
-- May assert claim predicates: `operation.description`
-- May write ONLY these target-relative fields: `description`
+- May assert claim predicates: `operation.description`, `operation.response_projection`
+- May write ONLY these target-relative fields: `description`, `response_projection`
 - Structural keys (`type`, `required`, `schema`, `enum`, …) are never writable.
 
 ## Constraints
@@ -34,8 +34,7 @@ description: Contract and investigation method for the investigate-ui-projection
 - `evidence_meets_minimum_strength`
 - `evidence_supports_value`
 - `evidence_meets_verification`
-- `description_nonempty`
-- `description_not_tautological`
+- `response_projection_valid`
 
 ## Context assembled for you
 - parent_operation
@@ -43,7 +42,7 @@ description: Contract and investigation method for the investigate-ui-projection
 - source_evidence
 
 ## Executor's job
-Ground every asserted value in admissible evidence.
+Determine whether the endpoint is a stable capability. If it is, define a `response_projection` that only includes, excludes, or renames existing fields; do not derive values or invent a facade. Ground every path in the response schema and verified implementation/test evidence. Human review is mandatory.
 
 ## Investigation method
 A repeatable procedure — the *how*, not just the constraints. Open a case

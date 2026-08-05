@@ -250,13 +250,24 @@ export function compiledOperations(air: AirDocument): unknown {
       cli: op.cli.command,
       sourceRef: op.sourceRef,
       effect: op.effect,
-      params: op.input.params.map((p) => ({ name: p.name, in: p.in, required: p.required })),
+      params: op.input.params.map((p) => ({
+        name: p.name,
+        agentName: p.agentName,
+        aliases: p.aliases,
+        in: p.in,
+        required: p.required,
+      })),
       body: op.input.body
         ? {
             required: op.input.body.required,
             projection: op.input.body.projection,
             contentType: op.input.body.contentType,
-            fields: op.input.body.fields.map((f) => ({ name: f.name, required: f.required })),
+            fields: op.input.body.fields.map((f) => ({
+              name: f.name,
+              agentName: f.agentName,
+              aliases: f.aliases,
+              required: f.required,
+            })),
           }
         : undefined,
       idempotency: op.idempotency,

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  agentPropKey,
   type Operation,
   operationBusinessInputCliFlag,
   operationSafetyInputKeys,
@@ -382,7 +383,7 @@ export function expectedWire(op: Operation, args: Record<string, unknown>): Expe
   const fields: Record<string, unknown> = {};
   let hasBody = false;
   for (const p of op.input.params) {
-    const value = args[propKey(p.name)];
+    const value = args[agentPropKey(p)];
     if (value === undefined || value === null) continue;
     if (p.in === "path") path = path.replace(`{${p.name}}`, encodeURIComponent(String(value)));
     else if (p.in === "query") query[p.name] = String(value);
@@ -397,7 +398,7 @@ export function expectedWire(op: Operation, args: Record<string, unknown>): Expe
   const b = op.input.body;
   if (b?.projection === "fields") {
     for (const f of b.fields) {
-      const value = args[propKey(f.name)];
+      const value = args[agentPropKey(f)];
       if (value === undefined || value === null) continue;
       fields[f.name] = value;
       hasBody = true;

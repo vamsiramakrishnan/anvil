@@ -11,6 +11,8 @@ function fieldsOf(op: Operation): FieldContext[] {
     out.push({
       path: `input.params.${p.name}`,
       name: p.name,
+      agentName: p.agentName,
+      aliases: p.aliases ?? [],
       required: p.required,
       schema: p.schema,
       description: p.description,
@@ -25,6 +27,8 @@ function fieldsOf(op: Operation): FieldContext[] {
       out.push({
         path: `input.body.${f.name}`,
         name: f.name,
+        agentName: f.agentName,
+        aliases: f.aliases ?? [],
         required: f.required,
         schema: f.schema,
         description: f.description,
@@ -76,17 +80,17 @@ export function assembleContext(
 
   if (t.kind === "capability") {
     ctx.capability = air.capabilities.find((c) => c.id === t.capabilityId);
-    return ctx;
+    return structuredClone(ctx);
   }
 
   const opId =
     t.kind === "operation" || t.kind === "field" || t.kind === "enum" || t.kind === "error"
       ? t.operationId
       : undefined;
-  if (!opId) return ctx;
+  if (!opId) return structuredClone(ctx);
 
   const op = air.operations.find((o) => o.id === opId);
-  if (!op) return ctx;
+  if (!op) return structuredClone(ctx);
   ctx.operation = op;
   if (op.capabilityId) ctx.capability = air.capabilities.find((c) => c.id === op.capabilityId);
 
@@ -97,5 +101,7 @@ export function assembleContext(
   } else if (t.kind === "error") {
     ctx.errorSpec = op.errors.find((e) => e.code === t.code);
   }
-  return ctx;
+  // Detach every schema, claim, and AIR node from the canonical document. An
+  // executor can inspect or even mutate its context without changing AIR.
+  return structuredClone(ctx);
 }

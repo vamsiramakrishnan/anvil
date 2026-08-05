@@ -314,6 +314,39 @@ describe("operationInputSchema", () => {
     );
     expect(operationBusinessInputCliFlag(operation, "query", "confirm")).toBe("--input-confirm");
   });
+
+  it("publishes agent names while retaining wire names as schema metadata", () => {
+    const air = loadAirDocument({
+      ...doc,
+      operations: [
+        {
+          ...refundOp,
+          input: {
+            params: refundOp.input.params.map((parameter) =>
+              parameter.name === "paymentId"
+                ? {
+                    ...parameter,
+                    agentName: "payment_identifier",
+                    aliases: ["payment_id"],
+                  }
+                : parameter,
+            ),
+          },
+        },
+      ],
+    });
+    const operation = air.operations[0] as Operation;
+    const schema = operationInputSchema(operation);
+    expect(schema.properties).toHaveProperty("payment_identifier");
+    expect(schema.properties).not.toHaveProperty("payment_id");
+    expect((schema.properties as Record<string, unknown>).payment_identifier).toMatchObject({
+      "x-anvil-wire-name": "paymentId",
+      "x-anvil-aliases": ["payment_id"],
+    });
+    expect(operationBusinessInputCliFlag(operation, "path", "paymentId")).toBe(
+      "--payment-identifier",
+    );
+  });
 });
 
 describe("mcpToolDescription interaction-shape lines", () => {

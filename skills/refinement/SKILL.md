@@ -23,8 +23,9 @@ validates, measures, reconciles, and applies.
 4. **Validate + measure** — `anvil refine run <dir>` validates the proposal and scores
    only the eval families it affects; a safety guard must never regress.
 5. **Reconcile** — grounded, improved, safe proposals are auto-approved; the rest
-   wait for a human. `anvil refine apply <dir>` applies only the approved ones, and
-   `anvil compile` re-projects them across CLI + MCP + skill at once.
+   wait for a human. Record review-tier decisions with `anvil refine approve|reject`,
+   then use `anvil refine apply-pack` so the exact measured proposal — not a rerun —
+   reaches AIR. `anvil compile` re-projects it across CLI + MCP + skill at once.
 
 ## The one invariant
 **No executor edits canonical AIR.** You produce a proposal (claims + patch); the

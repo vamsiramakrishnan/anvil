@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  agentPropKey,
   type IdempotencyCarrierBinding,
   idempotencyKeyMatchesOperation,
   isModeledIdempotencyCarrierInput,
@@ -23,12 +24,8 @@ import {
   MIN_UPSTREAM_TIMEOUT_MS,
   normalizeEnv,
 } from "./config.js";
-import {
-  AnvilError,
-  type ErrorEnvelope,
-  httpStatusToErrorCode,
-  isRetryableCode,
-} from "./errors.js";
+import { AnvilError, type ErrorEnvelope } from "./errors.js";
+import { httpResponseError } from "./http-error.js";
 import {
   type IdempotencyLedger,
   idempotencyKeyIsTransportSafe,
@@ -39,6 +36,7 @@ import {
 import type { InboundIdentity } from "./inbound-identity.js";
 import { type ExecutionRecord, noopObserver, type Observer } from "./observability.js";
 import type { PolicyContext, PolicyHook, PolicyHooks } from "./policy.js";
+import { applyAgentProjection } from "./response-projection.js";
 import {
   computeBackoffMs,
   conditionIsRetryable,
@@ -172,13 +170,13 @@ function modeledCarrierSurfaceKey(
     op.input.params.some(
       (parameter) =>
         !isModeledIdempotencyCarrierInput(binding, parameter.in, parameter.name) &&
-        propKey(parameter.name) === key,
+        agentPropKey(parameter) === key,
     ) ||
     (op.input.body?.projection === "fields" &&
       op.input.body.fields.some(
         (field) =>
           !isModeledIdempotencyCarrierInput(binding, "body", field.name) &&
-          propKey(field.name) === key,
+          agentPropKey(field) === key,
       ));
   return businessCollision ? undefined : key;
 }
@@ -360,7 +358,7 @@ function buildRequest(
   if (op.queryTemplate) {
     const values: Record<string, unknown> = {};
     for (const p of op.input.params) {
-      const value = input[propKey(p.name)];
+      const value = input[agentPropKey(p)];
       if (value !== undefined && value !== null) values[p.name] = value;
     }
     const rendered = renderTemplate(
@@ -406,7 +404,7 @@ function buildRequest(
       const value =
         idempotencyKey && isModeledIdempotencyCarrierInput(binding, p.in, p.name)
           ? idempotencyKey
-          : input[propKey(p.name)];
+          : input[agentPropKey(p)];
       if (value === undefined || value === null) continue;
       switch (p.in) {
         case "path":
@@ -442,7 +440,7 @@ function buildRequest(
         const value =
           idempotencyKey && isModeledIdempotencyCarrierInput(binding, "body", f.name)
             ? idempotencyKey
-            : input[propKey(f.name)];
+            : input[agentPropKey(f)];
         if (value === undefined || value === null) continue;
         body[f.name] = value;
         hasBody = true;
@@ -711,12 +709,12 @@ export async function execute(
           parameter.required &&
           !isModeledIdempotencyCarrierInput(carrier, parameter.in, parameter.name),
       )
-      .map((parameter) => propKey(parameter.name));
+      .map((parameter) => agentPropKey(parameter));
     if (op.input.body) {
       if (op.input.body.projection === "fields") {
         for (const field of op.input.body.fields) {
           if (field.required && !isModeledIdempotencyCarrierInput(carrier, "body", field.name)) {
-            requiredKeys.push(propKey(field.name));
+            requiredKeys.push(agentPropKey(field));
           }
         }
       } else if (op.input.body.required) {
@@ -1103,7 +1101,14 @@ export async function execute(
         }
         record.outcome = "success";
         record.ledger = "replay";
-        return finish({ outcome: "success", status, data: reservation.result, record });
+        return finish({
+          outcome: "success",
+          status,
+          // Ledger values are the exact agent-facing result completed below.
+          // Re-projecting a replay would apply wire-path includes a second time.
+          data: reservation.result,
+          record,
+        });
       }
       if (reservation.outcome === "in_progress") {
         record.ledger = "in_progress";
@@ -1147,7 +1152,10 @@ export async function execute(
         lastResponse = res;
         record.responseBytes = byteLen(res.body);
         if (res.status >= 200 && res.status < 300) {
-          const data = res.body ? safeJson(res.body) : null;
+          const data = applyAgentProjection(
+            res.body ? safeJson(res.body) : null,
+            op.output.agentProjection,
+          );
           if (reservationOwned && ledgerKey && ctx.ledger) {
             try {
               await ctx.ledger.complete(ledgerKey, data, res.status);
@@ -1200,31 +1208,13 @@ export async function execute(
           // with the wait attached as the caller's next action.
           stoppedByRetryAfter = true;
         }
-        const code = httpStatusToErrorCode(res.status);
-        finalError = new AnvilError({
-          code,
-          message: stoppedByRetryAfter
-            ? `Upstream returned ${res.status} for ${op.id} and asked to be left alone for ` +
-              `${retryAfterMs} ms, beyond the ${MAX_RETRY_DELAY_MS} ms runtime retry ceiling. ` +
-              `Anvil stopped retrying rather than return early; retry after the stated wait.`
-            : `Upstream returned ${res.status} for ${op.id}.`,
-          operation: op.id,
+        finalError = httpResponseError({
+          operation: op,
+          response: res,
           traceId,
-          upstream: { status: res.status, requestId: res.headers["x-request-id"] },
-          retryable: isRetryableCode(code),
-          safeToRetry: retrySafe && isRetryableCode(code),
-          details:
-            retryAfterMs === null
-              ? undefined
-              : {
-                  retry_after_ms: retryAfterMs,
-                  ...(stoppedByRetryAfter
-                    ? {
-                        retry_stopped: "retry_after_exceeds_ceiling",
-                        max_delay_ms: MAX_RETRY_DELAY_MS,
-                      }
-                    : {}),
-                },
+          retrySafe,
+          retryAfterMs,
+          stoppedByRetryAfter,
         });
         break;
       } catch (err) {
@@ -1242,8 +1232,8 @@ export async function execute(
         finalError = new AnvilError({
           code,
           message: retrySafe
-            ? `Upstream transport failed for ${op.id}: ${err.message}`
-            : `Upstream transport failed for ${op.id} and this operation is not safe to auto-retry: ${err.message}`,
+            ? `Upstream transport failed for ${op.id}.`
+            : `Upstream transport failed for ${op.id} and this operation is not safe to auto-retry.`,
           operation: op.id,
           traceId,
           retryable: true,

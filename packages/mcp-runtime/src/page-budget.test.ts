@@ -189,9 +189,44 @@ describe("detectSilentCap", () => {
     expect(signal).toMatchObject({ returned: 3, maxPageSize: 3, cursorParam: "page_token" });
   });
 
+  it("names the agent-facing continuation input in recovery guidance", () => {
+    const op = createOperation({ pagination: capped });
+    op.input.params.push({
+      name: "page_token",
+      agentName: "continuation_token",
+      in: "query",
+      required: false,
+      schema: { type: "string" },
+      inferred: false,
+    });
+    const signal = detectSilentCap(op, { items: [1, 2, 3] });
+    expect(signal?.cursorParam).toBe("continuation_token");
+    expect(silentCapNotice(signal!)).toContain("'continuation_token'");
+  });
+
   it("stays quiet when the response says it is capped", () => {
     const op = createOperation({ pagination: capped });
     expect(detectSilentCap(op, { items: [1, 2, 3], next_page_token: "tok" })).toBeUndefined();
+  });
+
+  it("resolves dotted item and continuation paths", () => {
+    const op = createOperation({
+      pagination: {
+        style: "cursor",
+        cursorParam: "page_token",
+        itemsField: "result.items",
+        nextField: "result.page.next_token",
+        maxPageSize: 3,
+      },
+    });
+    expect(
+      detectSilentCap(op, {
+        result: { items: [1, 2, 3], page: { next_token: "tok" } },
+      }),
+    ).toBeUndefined();
+    expect(
+      detectSilentCap(op, { result: { items: [1, 2, 3], page: { next_token: "" } } }),
+    ).toMatchObject({ returned: 3, continuationUnobservable: false });
   });
 
   it("treats an empty-string continuation as no continuation", () => {

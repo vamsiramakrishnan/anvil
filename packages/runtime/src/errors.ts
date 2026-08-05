@@ -15,6 +15,8 @@ export interface ErrorEnvelope {
     upstream?: {
       status?: number;
       request_id?: string;
+      /** Declared, stable domain error code (never an unreviewed raw body value). */
+      code?: string;
     };
     /** For confirmation_required / idempotency_required: what the caller must supply. */
     required_flags?: string[];
@@ -30,7 +32,7 @@ export interface AnvilErrorInit {
   traceId: string;
   retryable?: boolean;
   safeToRetry?: boolean;
-  upstream?: { status?: number; requestId?: string };
+  upstream?: { status?: number; requestId?: string; code?: string };
   requiredFlags?: string[];
   details?: unknown;
 }
@@ -42,7 +44,7 @@ export class AnvilError extends Error {
   readonly traceId: string;
   readonly retryable: boolean;
   readonly safeToRetry: boolean;
-  readonly upstream?: { status?: number; requestId?: string };
+  readonly upstream?: { status?: number; requestId?: string; code?: string };
   readonly requiredFlags?: string[];
   readonly details?: unknown;
 
@@ -72,6 +74,7 @@ export class AnvilError extends Error {
       e.upstream = {};
       if (this.upstream.status !== undefined) e.upstream.status = this.upstream.status;
       if (this.upstream.requestId !== undefined) e.upstream.request_id = this.upstream.requestId;
+      if (this.upstream.code !== undefined) e.upstream.code = this.upstream.code;
     }
     if (this.requiredFlags) e.required_flags = this.requiredFlags;
     if (this.details !== undefined) e.details = this.details;

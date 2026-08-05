@@ -120,6 +120,7 @@ export default defineConfig({
         {
           label: "Connect agents",
           items: [
+            { label: "Refine with a coding harness", slug: "guides/refinement-sdk" },
             { label: "Gemini Enterprise", slug: "cookbooks/connect-gemini-enterprise" },
             { label: "Claude Code plugin", slug: "cookbooks/install-claude-code-plugin" },
             { label: "Codex hook", slug: "cookbooks/wire-codex-hook" },
