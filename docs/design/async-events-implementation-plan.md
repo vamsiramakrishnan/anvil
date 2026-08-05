@@ -497,3 +497,17 @@ these as permission to improvise an answer inside one of the phases above:
   reuse the receiver as just one more `WebhookSignatureVerification`
   scheme — don't design the receiver in a way that quietly forecloses
   that reuse.
+- **Discovering what completion signal a legacy system already has**
+  (design doc §20's closing subsection) — also out of scope for Phases
+  0–6, but unlike façade-building itself, this one doesn't need a new
+  design doc: it's a new `discoverCompletionSignal` refinement skill
+  reusing `packages/harness/src/enrich.ts`'s existing GitHub/Confluence
+  MCP wiring (`profiles.ts` — both already configured, no new
+  infrastructure). Confirmed via direct grep: no existing skill in
+  `packages/refinement` or `packages/harness` touches webhook/async/queue
+  signals today, so this is a real, small, independently schedulable
+  follow-up — not blocked by, and not blocking, Phases 0–6 above. A
+  reasonable **Phase 7** if picked up: detector on `no_completion_source`
+  + Confluence/GitHub evidence passes + a proposal that always lands
+  `review_required` (never `auto`, regardless of evidence strength, same
+  as `workflow-probe.ts`'s existing posture).

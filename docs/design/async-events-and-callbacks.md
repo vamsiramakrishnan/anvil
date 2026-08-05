@@ -922,3 +922,66 @@ worth deciding early if that future doc gets written: build any
 CDC-to-webhook bridge to emit exactly the `WebhookContract` shape from
 Phase 0, not a bespoke format, so it becomes a signature-scheme addition
 to Phase 2's receiver rather than a new receiver.
+
+**Closing part of the gap with existing enrichment — GitHub and
+Confluence.** Building the façade itself is out of scope (above), but
+*finding out what completion mechanism a legacy system already has* — before
+anyone writes a line of façade code — is squarely inside machinery Anvil
+already ships, not a new subsystem. `packages/harness/src/enrich.ts`'s
+`runEnrichment` is propose-only by construction (its own docstring:
+"this never mutates AIR" — enrich.ts:90-93) and already connects to
+configured MCP sources to accumulate typed `Claim`s into an
+`EvidenceGraph`. GitHub and Confluence are already wired as real source
+profiles, not aspirational: `PROFILES.github` (`profiles.ts:34-47`, stdio
+`@modelcontextprotocol/server-github`, `evidenceKind: "source_impl"`,
+reliability floor 0.55 / strong 0.88) and `PROFILES.confluence`
+(`profiles.ts:62-79`, stdio `mcp-atlassian`, `evidenceKind: "doc_example"`,
+floor 0.45 / strong 0.6 — the code comment says outright: *"stays below the
+loosen threshold — docs can tighten, not loosen"*). That one existing cap
+does most of the safety work this idea needs, for free: `reconcile.ts`'s
+`LOOSEN_THRESHOLD = 0.85` means Confluence evidence alone can never justify
+inventing a completion mechanism — only GitHub-sourced evidence (real
+code, reliability 0.9) clears that bar. Checked directly: no existing
+skill or detector in `packages/refinement` or `packages/harness` touches
+webhook/async/queue/completion signals at all today — this is a confirmed
+gap in the shipped product, not just in this design doc.
+
+The concrete shape, following the same detector → typed contract →
+evidence-gated proposal pattern every other refinement skill in
+`REFINEMENT_SKILLS` already uses:
+
+- A new skill — `discoverCompletionSignal` — triggers on an operation
+  carrying §9's `no_completion_source` issue, or any `longRunning`
+  operation with no resolved `AsyncContract`.
+- **Confluence pass:** search the service/operation name plus a fixed
+  vocabulary (`webhook`, `callback`, `JMS`, `queue`, `SOAP`, `WSDL`, `EJB`,
+  `batch`, `nightly`, `status`) → `doc_example` claims. This is where "an
+  integration engineer already wrote a wiki page describing how the
+  nightly batch job signals completion" surfaces — hypothesis generation,
+  capped below loosen by the existing profile, exactly as it should be.
+- **GitHub pass:** search the org for the same service name plus
+  signal-bearing patterns — existing client code already calling an
+  undocumented endpoint, checked-in WSDL/XSD, JMX/EJB config, or (the best
+  case) someone's already-built screen-scraper or CDC bridge from a prior
+  integration attempt → `source_impl` claims, strong enough to cross the
+  loosen threshold.
+- **The proposal always lands `review_required`, never `auto`, regardless
+  of evidence strength.** Not a new rule — the same posture
+  `workflow-probe.ts`'s `reconcileWorkflow` already takes for a
+  structurally similar reason (workflow candidates "always propose
+  `state: review_required`... regardless of how many sources corroborate
+  them," per `safety-invariants.md`). Proposing that a completion signal
+  *exists at all* is a step riskier than classifying an already-observed
+  operation's retry-safety, so it sits at `classifyIdempotency`'s rung on
+  the readiness ladder (`humanDecisionRequired`) at minimum — evidence
+  strength changes confidence, never the disposition.
+- What strong GitHub evidence *does* buy: enough to propose the manifest
+  patch that supplies `AsyncContract.webhook` or `.statusOperationId` by
+  hand — the same mechanism §10 already uses for Stripe's undocumented
+  `Idempotency-Key` convention. A human still runs
+  `anvil compile --manifest` and `anvil approve`.
+
+Nothing above is new infrastructure: same `SourceConfig`, same
+`Claim`/`EvidenceGraph`, same `reconcile.ts` thresholds, same
+manifest-patch path §10 already established. The only new artifact is one
+skill definition and its detector.
