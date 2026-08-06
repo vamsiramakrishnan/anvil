@@ -17,7 +17,7 @@ import { DEFICIENCY_CATALOG, type DeficiencyCode } from "../deficiency.js";
 /* -------------------------------- primitives ------------------------------ */
 
 /** A JSON value — the only thing a patch may carry (rejects functions, undefined, …). */
-const zJsonValue: z.ZodType<JsonValue> = z.lazy(() =>
+export const zJsonValue: z.ZodType<JsonValue> = z.lazy(() =>
   z.union([
     z.string(),
     z.number(),
@@ -30,7 +30,7 @@ const zJsonValue: z.ZodType<JsonValue> = z.lazy(() =>
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue };
 
 const zEvidenceStrength = z.enum(["single", "corroborated", "authoritative"]);
-const zSeverity = z.enum(["info", "low", "medium", "high", "blocking"]);
+export const zSeverity = z.enum(["info", "low", "medium", "high", "blocking"]);
 const zCasePhase = z.enum(["research", "extract", "synthesize", "critique", "test"]);
 const zSkillConstraint = z.enum([
   "do_not_invent_business_rules",
@@ -39,7 +39,7 @@ const zSkillConstraint = z.enum([
   "preserve_domain_terms",
   "do_not_loosen_safety",
 ]);
-const zValidationCheckId = z.enum([
+export const zValidationCheckId = z.enum([
   "patch_within_boundary",
   "no_semantic_schema_change",
   "claims_from_allowed_sources",
@@ -50,10 +50,12 @@ const zValidationCheckId = z.enum([
   "description_not_tautological",
   "examples_validate_against_schema",
   "error_message_nonempty",
+  "agent_field_name_valid",
+  "response_projection_valid",
   "idempotency_carrier_resolves",
   "pagination_binding_resolves",
 ]);
-const zEvalFamily = z.enum([
+export const zEvalFamily = z.enum([
   "operation_routing",
   "argument_mapping",
   "field_interpretation",
@@ -62,7 +64,7 @@ const zEvalFamily = z.enum([
 ]);
 
 /** Deficiency codes, validated against the catalog so an unknown code is rejected. */
-const zDeficiencyCode = z.enum(
+export const zDeficiencyCode = z.enum(
   Object.keys(DEFICIENCY_CATALOG) as [DeficiencyCode, ...DeficiencyCode[]],
 );
 
@@ -102,7 +104,7 @@ export const zEvidenceVerification = z.discriminatedUnion("status", [
 ]);
 
 /** The semantic target — a discriminated union, so a malformed target fails to parse. */
-const zSemanticTarget = z.discriminatedUnion("kind", [
+export const zSemanticTarget = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("service") }),
   z.object({ kind: z.literal("capability"), capabilityId: z.string() }),
   z.object({ kind: z.literal("operation"), operationId: z.string() }),
@@ -113,7 +115,7 @@ const zSemanticTarget = z.discriminatedUnion("kind", [
 ]);
 
 /** A target-relative semantic patch. `set` values must be JSON. */
-const zSemanticPatch = z.object({
+export const zSemanticPatch = z.object({
   target: zSemanticTarget,
   set: z.record(z.string(), zJsonValue),
 });

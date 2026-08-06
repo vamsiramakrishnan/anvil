@@ -2,7 +2,6 @@ import {
   type Claim,
   charsForTokenBudget,
   DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS,
-  effectiveWeight,
   estimateTokens,
   GENERIC_NOUNS,
   IdempotencyMechanism,
@@ -17,15 +16,16 @@ import {
   WEAK_VERBS,
 } from "@anvil/air";
 import type { SqlDialect } from "@anvil/grammar";
+import { proposeFieldBinding, proposeUiProjection } from "./agent-semantics.js";
 import type {
   FieldContext,
   JsonValue,
   RefinementSkill,
-  SemanticPatch,
   SkillContext,
   SkillProposal,
   VerifiableArtifact,
 } from "./contract.js";
+import { claimsAsserting, claimsFor, proposal, strongestValue } from "./proposal-helpers.js";
 
 /**
  * A **skill executor** turns a skill's context into a proposal. It is deliberately
@@ -47,28 +47,6 @@ export interface SkillExecutor {
    * the verification check inert (correct for the heuristic path).
    */
   evidenceArtifactsFor?(proposal: SkillProposal): VerifiableArtifact[] | undefined;
-}
-
-function claimsFor(
-  context: SkillContext,
-  skill: RefinementSkill,
-  predicateSuffix: string,
-): Claim[] {
-  const allowed = new Set(skill.evidence.allowed);
-  return context.evidence.filter(
-    (c) => allowed.has(c.source) && c.predicate.endsWith(predicateSuffix),
-  );
-}
-
-/** The value asserted by the strongest claim in a set, if any. */
-function strongestValue(claims: Claim[]): unknown {
-  if (claims.length === 0) return undefined;
-  return [...claims].sort((a, b) => effectiveWeight(b) - effectiveWeight(a))[0]?.value;
-}
-
-/** Claims (from the given set) that assert exactly `value` — the grounding set. */
-function claimsAsserting(claims: Claim[], value: unknown): Claim[] {
-  return claims.filter((c) => JSON.stringify(c.value) === JSON.stringify(value));
 }
 
 /** English plural good enough for spec nouns: category→categories, box→boxes, doc→docs. */
@@ -113,23 +91,6 @@ function terminate(text: string): string {
   return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
-function proposal(
-  skill: RefinementSkill,
-  context: SkillContext,
-  claims: Claim[],
-  set: Record<string, JsonValue>,
-): SkillProposal {
-  const patch: SemanticPatch = { target: context.target, set };
-  return {
-    skill: skill.name,
-    skillVersion: skill.version,
-    deficiency: context.deficiency.code,
-    target: context.target,
-    claims,
-    patch,
-  };
-}
-
 /** A synthesized example lifted from the field's own (spec) schema, if present. */
 function exampleFromSchema(field: FieldContext): { value: JsonValue; ref: string } | undefined {
   if (field.enumValues && field.enumValues.length > 0) {
@@ -159,8 +120,9 @@ export class HeuristicSkillExecutor implements SkillExecutor {
     switch (skill.name) {
       case "describe-field":
       case "describe-operation":
-      case "investigate-ui-projection":
         return this.describe(skill, context);
+      case "investigate-ui-projection":
+        return proposeUiProjection(skill, context);
       case "generate-examples":
         return this.examples(skill, context);
       case "enrich-errors":
@@ -169,6 +131,8 @@ export class HeuristicSkillExecutor implements SkillExecutor {
         return this.classifyIdempotency(skill, context);
       case "document-pagination":
         return this.classifyPagination(skill, context);
+      case "rename-field":
+        return proposeFieldBinding(skill, context);
       case "author-intent-examples":
         return this.authorIntentExamples(skill, context);
       case "author-routing-phrases":
@@ -609,6 +573,15 @@ export class HeuristicSkillExecutor implements SkillExecutor {
       used.push(...claimsAsserting(retryableClaims, retryable));
     }
 
+    for (const field of ["upstream_code", "recovery_action", "field_path"] as const) {
+      const claims = claimsFor(context, skill, `.${field}`);
+      const value = strongestValue(claims);
+      if (typeof value === "string" && value.trim().length > 0) {
+        set[field] = value;
+        used.push(...claimsAsserting(claims, value));
+      }
+    }
+
     if (Object.keys(set).length === 0) return null;
     return proposal(skill, context, used, set);
   }
@@ -693,6 +666,22 @@ export class HeuristicSkillExecutor implements SkillExecutor {
     if (typeof itemsField === "string" && itemsField.trim().length > 0) {
       set.pagination_items_field = itemsField;
       used.push(...claimsAsserting(itemsFieldClaims, itemsField));
+    }
+
+    const pageSizeParamClaims = claimsFor(context, skill, ".pagination_page_size_param");
+    const pageSizeParam = strongestValue(pageSizeParamClaims);
+    if (typeof pageSizeParam === "string" && pageSizeParam.trim().length > 0) {
+      set.pagination_page_size_param = pageSizeParam;
+      used.push(...claimsAsserting(pageSizeParamClaims, pageSizeParam));
+    }
+
+    for (const field of ["pagination_max_page_size", "pagination_default_page_size"] as const) {
+      const claims = claimsFor(context, skill, `.${field}`);
+      const value = strongestValue(claims);
+      if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+        set[field] = value;
+        used.push(...claimsAsserting(claims, value));
+      }
     }
 
     if (Object.keys(set).length === 0) return null;

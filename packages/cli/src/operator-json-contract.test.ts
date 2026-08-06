@@ -466,6 +466,24 @@ describe("success emits one document, not prose plus a document", () => {
   });
 });
 
+describe("refinement harness import keeps the operator JSON contract", () => {
+  it("returns a document even when its input files are unreadable", async () => {
+    const result = await run([
+      "refine",
+      "import-proposal",
+      join(work, "missing-air.yaml"),
+      join(work, "missing-task.json"),
+      join(work, "missing-submission.json"),
+      "--out",
+      join(work, "pack"),
+      "--json",
+    ]);
+    const envelope = expectRefusalContract(result, "refinement import unreadable inputs");
+    expect(envelope.reportType).toBe("anvil.refinement-harness-import-error");
+    expect(envelope.code).toBe("refinement/import_failed");
+  });
+});
+
 /* -------------------------------------------------------------------------- */
 /* The release verdict, made gateable                                          */
 /* -------------------------------------------------------------------------- */

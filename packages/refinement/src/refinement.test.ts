@@ -193,6 +193,7 @@ describe("deficiency catalog", () => {
       "investigate-ui-projection",
       "classify-idempotency",
       "document-pagination",
+      "rename-field",
       "author-intent-examples",
       "author-routing-phrases",
       "review-query-passthrough",
@@ -290,6 +291,49 @@ describe("detectors", () => {
     );
     expect(byOp.get("svc.issue.do_transition")).toContain("vague_verb");
     expect(byOp.get("svc.record.list")).toContain("generic_resource");
+  });
+
+  it("flags opaque and unitless wire fields until an agent binding resolves them", () => {
+    const doc = deficientDoc();
+    const operation = doc.operations[0];
+    if (!operation) throw new Error("fixture operation missing");
+    operation.input.params.push(
+      {
+        name: "val",
+        in: "query",
+        required: false,
+        schema: { type: "string" },
+        inferred: false,
+      },
+      {
+        name: "timeout",
+        in: "query",
+        required: false,
+        schema: { type: "integer" },
+        inferred: false,
+      },
+    );
+    let findings = runDetectors(doc);
+    expect(findings.some((finding) => finding.code === "weak_field_name")).toBe(true);
+    expect(findings.some((finding) => finding.code === "unit_ambiguous_field")).toBe(true);
+
+    operation.input.params.find((parameter) => parameter.name === "val")!.agentName =
+      "customer_value";
+    operation.input.params.find((parameter) => parameter.name === "timeout")!.agentName =
+      "request_timeout";
+    findings = runDetectors(doc);
+    expect(findings.some((finding) => finding.code === "unit_ambiguous_field")).toBe(true);
+
+    operation.input.params.find((parameter) => parameter.name === "timeout")!.agentName =
+      "timeout_seconds";
+    findings = runDetectors(doc);
+    expect(
+      findings.some(
+        (finding) =>
+          (finding.code === "weak_field_name" || finding.code === "unit_ambiguous_field") &&
+          targetOperationId(finding.target) === operation.id,
+      ),
+    ).toBe(false);
   });
 
   it("do not flag enum fields as plain missing descriptions", () => {

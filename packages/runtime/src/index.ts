@@ -13,6 +13,7 @@ export * from "./idempotency.js";
 export * from "./inbound-identity.js";
 export * from "./observability.js";
 export * from "./policy.js";
+export * from "./response-projection.js";
 export * from "./retry.js";
 export * from "./safe-http.js";
 export * from "./transport.js";

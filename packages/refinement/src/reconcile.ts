@@ -65,7 +65,28 @@ export function reconcile(input: ReconcileInput): Refinement {
   }
 
   const families = familiesFor(proposal.deficiency);
-  const after = applyPatch(air, proposal.patch).air;
+  const application = applyPatch(air, proposal.patch);
+  const after = application.air;
+  if (application.changes.length === 0) {
+    return {
+      ...base,
+      evalDelta: [],
+      approval: { tier: "reject", reason: "patch made no semantic change" },
+      status: "rejected",
+    };
+  }
+  const nameCollision = projectedNameCollision(after);
+  if (nameCollision) {
+    return {
+      ...base,
+      evalDelta: [],
+      approval: {
+        tier: "reject",
+        reason: `patch creates a routing-name collision: ${nameCollision}`,
+      },
+      status: "rejected",
+    };
+  }
   const deltas = evalDelta(air, after, families);
   const regressed = deltas.some((d) => d.verdict === "regressed");
   const improved = deltas.some((d) => d.verdict === "improved");
@@ -89,4 +110,23 @@ export function reconcile(input: ReconcileInput): Refinement {
   }
 
   return { ...base, evalDelta: deltas, approval, status };
+}
+
+function projectedNameCollision(air: AirDocument): string | undefined {
+  const axes: Array<[string, (operation: AirDocument["operations"][number]) => string]> = [
+    ["canonical name", (operation) => operation.canonicalName],
+    ["CLI command", (operation) => operation.cli.command],
+    ["MCP tool name", (operation) => operation.mcp.toolName],
+  ];
+  for (const [label, read] of axes) {
+    const seen = new Map<string, string>();
+    for (const operation of air.operations) {
+      const value = read(operation);
+      const existing = seen.get(value);
+      if (existing)
+        return `${label} '${value}' collides between '${existing}' and '${operation.id}'`;
+      seen.set(value, operation.id);
+    }
+  }
+  return undefined;
 }

@@ -411,6 +411,12 @@ function paginatedDoc(): AirDocument {
           ],
           body: { projection: "whole" },
         },
+        output: {
+          schema: {
+            type: "object",
+            properties: { items: { type: "array", items: { type: "object" } } },
+          },
+        },
         errors: [],
         idempotency: { mode: "none" },
         retries: { mode: "safe" },

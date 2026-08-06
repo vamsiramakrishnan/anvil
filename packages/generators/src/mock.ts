@@ -1,11 +1,11 @@
 import {
   type AirDocument,
+  agentPropKey,
   isModeledIdempotencyCarrierInput,
   type JsonSchema,
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
-  propKey,
   resolveIdempotencyCarrier,
 } from "@anvil/air";
 
@@ -106,7 +106,7 @@ export function exampleInput(op: Operation): Record<string, unknown> {
   for (const p of op.input.params) {
     if (isModeledIdempotencyCarrierInput(binding, p.in, p.name)) continue;
     set(
-      propKey(p.name),
+      agentPropKey(p),
       surfaceExample(p.example, p.schema) ?? exampleFromSchema(p.schema),
       p.required,
     );
@@ -115,7 +115,7 @@ export function exampleInput(op: Operation): Record<string, unknown> {
   if (body?.projection === "fields") {
     for (const f of body.fields) {
       if (isModeledIdempotencyCarrierInput(binding, "body", f.name)) continue;
-      set(propKey(f.name), exampleFromSchema(f.schema), f.required);
+      set(agentPropKey(f), exampleFromSchema(f.schema), f.required);
     }
   } else if (body) {
     // A required body must synthesize at least {} — a null example would fail

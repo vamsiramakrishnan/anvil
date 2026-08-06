@@ -34,6 +34,7 @@ export * from "./lifecycle.js";
 export * from "./materialize.js";
 export * from "./metrics.js";
 export * from "./model.js";
+export * from "./policy.js";
 export * from "./procedure.js";
 export * from "./process-runner.js";
 export * from "./proposal.js";

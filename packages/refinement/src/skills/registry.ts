@@ -121,9 +121,15 @@ const enrichErrors: RefinementSkill = {
     fieldVerification: { retryable: "verified" },
   },
   output: {
-    predicates: ["error.message", "error.retryable"],
+    predicates: [
+      "error.message",
+      "error.retryable",
+      "error.upstream_code",
+      "error.recovery_action",
+      "error.field_path",
+    ],
     supportingPredicates: ["error.cause", "error.httpStatus"],
-    fields: ["message", "retryable"],
+    fields: ["message", "retryable", "upstream_code", "recovery_action", "field_path"],
   },
   // Retryability can only tighten from evidence here; loosening it (retryable=true)
   // is a safety change reserved for the reconcile stage's asymmetric trust gate.
@@ -141,11 +147,10 @@ const enrichErrors: RefinementSkill = {
 /**
  * Investigate whether a screen-shaped endpoint is a durable agent capability.
  *
- * This skill is deliberately asymmetric: it may turn verified behavioral
- * evidence into a precise operation description, but it cannot approve,
- * exclude, regroup, or invent a replacement facade. A view-specific result is
- * still valuable as an evidence-bearing case with no proposal; the API owner
- * makes the exposure decision in the receipt-bound manifest.
+ * This skill is deliberately bounded: verified behavioral evidence may clarify
+ * the operation and select/remove/rename existing response fields, but may not
+ * derive values or invent a replacement facade. The result always routes to a
+ * human and is applied only through a receipt-bound decision.
  */
 const investigateUiProjection: RefinementSkill = {
   name: "investigate-ui-projection",
@@ -167,14 +172,14 @@ const investigateUiProjection: RefinementSkill = {
     minimumVerification: "verified",
   },
   output: {
-    predicates: ["operation.description"],
+    predicates: ["operation.description", "operation.response_projection"],
     supportingPredicates: [
       "operation.agent_capability",
       "operation.ui_projection",
       "operation.behavior",
       "operation.ownership",
     ],
-    fields: ["description"],
+    fields: ["description", "response_projection"],
   },
   constraints: ["do_not_invent_business_rules", "preserve_domain_terms"],
   validation: [
@@ -184,8 +189,7 @@ const investigateUiProjection: RefinementSkill = {
     "evidence_meets_minimum_strength",
     "evidence_supports_value",
     "evidence_meets_verification",
-    "description_nonempty",
-    "description_not_tautological",
+    "response_projection_valid",
   ],
 };
 
@@ -313,6 +317,9 @@ const classifyPagination: RefinementSkill = {
       "pagination_cursor_param",
       "pagination_next_field",
       "pagination_items_field",
+      "pagination_page_size_param",
+      "pagination_max_page_size",
+      "pagination_default_page_size",
     ],
   },
   constraints: ["do_not_invent_business_rules"],
@@ -324,6 +331,44 @@ const classifyPagination: RefinementSkill = {
     "evidence_supports_value",
     "evidence_meets_verification",
     "pagination_binding_resolves",
+  ],
+};
+
+/**
+ * Separate the name an agent reasons about from the exact upstream coordinate.
+ * The wire name remains immutable; a reviewed binding changes every generated
+ * surface together and retains explicit discovery aliases.
+ */
+const renameField: RefinementSkill = {
+  name: "rename-field",
+  version: 1,
+  triggers: ["weak_field_name", "unit_ambiguous_field"],
+  targetKind: "field",
+  context: ["parent_operation", "field_schema", "sibling_fields", "source_evidence"],
+  evidence: {
+    allowed: ["source_impl", "test_fixture", "spec", "doc_example", "postman"],
+    minimumStrength: "single",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["field.agent_name", "field.aliases"],
+    supportingPredicates: ["field.description", "field.unit", "field.usage"],
+    fields: ["agent_name", "aliases"],
+  },
+  constraints: [
+    "do_not_invent_business_rules",
+    "do_not_change_field_type",
+    "do_not_change_requiredness",
+    "preserve_domain_terms",
+  ],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+    "agent_field_name_valid",
   ],
 };
 
@@ -600,6 +645,7 @@ export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   investigateUiProjection,
   classifyIdempotency,
   classifyPagination,
+  renameField,
   authorIntentExamples,
   authorRoutingPhrases,
   reviewQueryPassthrough,

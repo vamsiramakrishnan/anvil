@@ -91,6 +91,11 @@ When the source contract cannot express an important fact—such as the
 idempotency key for a POST—record that fact in a small, reviewed `anvil.yaml`
 manifest and recompile. Do not edit generated files.
 
+When a coding harness such as Codex or Claude Code investigates those gaps, use
+the [refinement SDK](docs/refinement-sdk.md). The harness gathers evidence and
+proposes a bounded patch; Anvil owns validation, measurement, review receipts,
+and the only write path into AIR.
+
 ## The operating loop
 
 ```text
@@ -128,6 +133,7 @@ of compiling one exported file at a time.
 - [Install Anvil](apps/docs/src/content/docs/cookbooks/install-anvil.md)
 - [Quickstart](apps/docs/src/content/docs/start/quickstart.md)
 - [Write an Anvil manifest](docs/MANIFEST.md)
+- [Refine an API with a coding harness](docs/refinement-sdk.md)
 - [Run Anvil in CI](docs/CI.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Command reference](skills/anvil/reference/commands.md)

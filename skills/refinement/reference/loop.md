@@ -14,9 +14,17 @@ description: The anvil refine commands, the deficiency catalog, and the refineme
 - `anvil refine run <dir> [--severity S] [--skill N] [--safe-only] [--out DIR] [--json]`
   — propose → validate → measure → reconcile into a refinement pack. `--out` writes
   the pack. Read-only (never mutates AIR).
+- `anvil refine export-task <dir> <target-key> --out FILE [--skill N] [--repo-root DIR]`
+  — export one deterministic, hash-bound JSON task for any external coding harness.
+- `anvil refine import-proposal <dir> <task.json> <submission.json> --out DIR [--json]`
+  — verify Git-bound evidence, validate, measure, and write a normal refinement pack.
 - `anvil refine review <pack-dir>` — print the human review (review.md) of a pack.
+- `anvil refine approve|reject <pack-dir> <refinement-id...> --reviewer ID --reason TEXT`
+  — write a decision receipt bound to the source contract, pack, and exact proposal.
+- `anvil refine apply-pack <dir> <pack-dir> [--receipt FILE] [--dry-run]` — apply the
+  original measured pack plus valid receipts. It never reruns detection or proposal generation.
 - `anvil refine apply <dir> [--dry-run] [filters]` — apply ONLY the auto-approved
-  refinements to AIR. The single mutating step; `--dry-run` prints the semantic diff.
+  refinements from a fresh deterministic run. `--dry-run` prints the semantic diff.
 - `anvil refine skill [<out-dir>]` — emit this skill package.
 
 ## Deficiency catalog
@@ -47,11 +55,14 @@ it, and whether that skill is implemented today.
 | `operation_lacks_intent_examples` | usability | low | author-intent-examples | yes |
 | `schema_too_large_for_disclosure` | usability | medium | reduce-schema-disclosure | yes |
 | `ui_projection_contract` | usability | high | investigate-ui-projection | yes |
+| `unit_ambiguous_field` | usability | high | rename-field | yes |
 | `unpaginated_large_response` | usability | medium | constrain-response-size | — |
+| `weak_field_name` | usability | medium | rename-field | yes |
 | `weak_operation_name` | usability | low | rename-operation | yes |
 
 ## A refinement pack
 `anvil refine run --out <dir>` writes a reviewable, auditable record — one facet per file:
+- `pack.json` — the complete machine-readable pack, including the source contract hash.
 - `plan.json` — the detected deficiencies.
 - `claims.json` — the evidence behind each refinement.
 - `proposed.patch.json` — the semantic patches.
@@ -59,3 +70,9 @@ it, and whether that skill is implemented today.
 - `eval-delta.json` — the before/after of each affected eval family.
 - `artifacts-affected.json` — the projections each patch re-derives.
 - `review.md` — the human review, worst/most-actionable first.
+- `harness-tasks.json`, `harness-submissions.json`, `harness-evidence.json` —
+  present on portable imports; the task, response, and Git/SHA-256 evidence record.
+
+Human decisions are written under `receipts/`. Application fails closed if AIR changed,
+the pack changed, the proposal changed, a receipt is duplicated, or a rejected/regressed
+proposal is presented for promotion.

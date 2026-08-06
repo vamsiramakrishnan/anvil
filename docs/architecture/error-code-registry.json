@@ -24,8 +24,8 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 305,
-  "asserted": 237,
+  "total": 314,
+  "asserted": 246,
   "unasserted": 68,
   "codes": {
     "apiconnect/empty_export": {
@@ -1158,6 +1158,60 @@
         "compiler"
       ],
       "asserted": false
+    },
+    "refinement/import_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "refinement/invalid_submission": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/invalid_task": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/proposal_rejected": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/repository_evidence_invalid": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/repository_revision_mismatch": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/stale_contract": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/task_binding_failed": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/task_integrity_failed": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
     },
     "source/air_entrypoint_mismatch": {
       "packages": [
