@@ -128,12 +128,21 @@ multi-file behavior, and format-specific boundaries. If the source of truth is
 an API gateway estate, begin with [gateway estates](docs/gateways.md) instead
 of compiling one exported file at a time.
 
+If no API contract exists, begin with [legacy estate inventory](docs/legacy-estates.md).
+Anvil inventories offline application artifacts, middleware configuration, and
+messaging exports as evidence-backed capability candidates. It does not infer
+business authority from a queue, EJB, WCF endpoint, or public method. A coding
+harness can then propose a business-shaped operation through `anvil legacy refine`;
+Anvil requires evidence-backed conflict resolution and a separate human approval
+before it emits a non-executable transport-binding plan.
+
 ## Documentation
 
 - [Install Anvil](apps/docs/src/content/docs/cookbooks/install-anvil.md)
 - [Quickstart](apps/docs/src/content/docs/start/quickstart.md)
 - [Write an Anvil manifest](docs/MANIFEST.md)
 - [Refine an API with a coding harness](docs/refinement-sdk.md)
+- [Inventory a legacy application estate](docs/legacy-estates.md)
 - [Run Anvil in CI](docs/CI.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Command reference](skills/anvil/reference/commands.md)

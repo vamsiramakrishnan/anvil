@@ -17,6 +17,7 @@ import { registerDrift } from "./commands/drift.js";
 import { registerEnrich } from "./commands/enrich.js";
 import { registerEstate } from "./commands/estate/estate.js";
 import { registerInspect } from "./commands/inspect.js";
+import { registerLegacy } from "./commands/legacy/legacy.js";
 import { registerLint } from "./commands/lint.js";
 import { registerPackage } from "./commands/package.js";
 import { registerPublish } from "./commands/publish.js";
@@ -88,6 +89,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerCase(program, ctx);
   registerEnrich(program, ctx);
   registerEstate(program, ctx);
+  registerLegacy(program, ctx);
   registerSources(program, ctx);
   registerApprove(program, ctx);
   registerLint(program, ctx);

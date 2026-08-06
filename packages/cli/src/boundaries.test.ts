@@ -211,19 +211,27 @@ describe("package dependency direction", () => {
 /* -------------------------------------------------------------------------- */
 
 describe("package public API boundaries", () => {
-  it("no source file imports past another package's entry point", () => {
+  it("imports only package entry points or explicitly exported subpaths", () => {
     const offenders: string[] = [];
     for (const pkg of PACKAGES) {
       for (const file of packageSources(pkg, true)) {
         for (const { from } of importsOf(file)) {
           if (!from.startsWith("@anvil/")) continue;
-          if (from.split("/").length > 2) offenders.push(`${file.slice(root.length)}: ${from}`);
+          const [, packageName, ...subpath] = from.split("/");
+          if (subpath.length === 0) continue;
+          const manifestPath = join(root, "packages", packageName ?? "", "package.json");
+          const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+            exports?: Record<string, unknown>;
+          };
+          if (!manifest.exports?.[`./${subpath.join("/")}`]) {
+            offenders.push(`${file.slice(root.length)}: ${from}`);
+          }
         }
       }
     }
     expect(
       offenders,
-      "Deep imports bypass a package's public surface, so its index stops describing what it owns.",
+      "Unexported deep imports bypass a package's public surface. Declare an intentional subpath in package.json or import the package entry point.",
     ).toEqual([]);
   });
 

@@ -615,6 +615,12 @@ const UNEXERCISED: Record<string, string> = {
   "estate support":
     "covered by cmd-estate-support.test.ts, not through this file's contract helper",
   "estate verify": "needs a completed import receipt",
+  "legacy inventory":
+    "covered by cmd-legacy-inventory.test.ts, including success and refusal envelopes",
+  "legacy refine task": "covered by cmd-legacy-refine.test.ts, including refusal envelopes",
+  "legacy refine review": "covered by cmd-legacy-refine.test.ts, including invalid proposals",
+  "legacy refine approve": "covered by cmd-legacy-refine.test.ts, including approval refusal",
+  "legacy refine reject": "shares the decision envelope and refusal path exercised by approve",
 };
 
 /** Leading non-flag tokens, resolved to the longest matching command path. */
