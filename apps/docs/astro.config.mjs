@@ -145,6 +145,7 @@ export default defineConfig({
             { label: "Product boundary", slug: "concepts/product-boundary" },
             { label: "Mechanisms", slug: "concepts/mechanisms" },
             { label: "Gateway estates", slug: "concepts/gateway-estates" },
+            { label: "Legacy estates", slug: "concepts/legacy-estates" },
             {
               label: "Simulation and backtesting",
               slug: "concepts/simulation-and-backtesting",

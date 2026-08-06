@@ -1,6 +1,6 @@
 ---
 name: anvil
-description: Use this skill to operate Anvil — compile API specifications (OpenAPI 3.x, Swagger 2.0, Google Discovery, GraphQL SDL, gRPC/proto3 (multi-file), SOAP/WSDL (multi-file), OData v2/v4 ($metadata/EDMX), Postman Collections) into agent-ready CLI + MCP + skill bundles, enrich unsafe-operation semantics, approve operations, and deploy. Use when turning an API specification into safe agent tools.
+description: Use this skill to operate Anvil — compile supported API specifications into aligned CLI, MCP, and skill bundles; inventory offline legacy estates; refine, approve, and deploy. Use when turning API contracts or legacy exports into safe agent tools.
 ---
 
 # Operating Anvil
@@ -31,6 +31,11 @@ For overlap across verified bundles, read
 `reference/composing-capabilities.md` and use audit-only
 `anvil capability compose`. It produces no AIR, MCP, approval, or build input.
 
+## If no API description exists
+Read `reference/legacy-estates.md`; run `anvil legacy inventory` on an offline
+export. It finds technical candidates only: no live access, code execution,
+business inference, or MCP generation.
+
 ## The loop
 1. `anvil compile <spec> --manifest <manifest> --out <dir>` — build the bundle.
 2. `anvil status <dir>` — orient on projections, gates, evidence, target, and release state; follow its next safe action.
@@ -54,6 +59,7 @@ For overlap across verified bundles, read
 - `reference/commands.md` — every command and what it does.
 - `reference/workflow.md` — the enrich → approve workflow and manifest shape.
 - `reference/gateway-estates.md` — whole-estate audit, native-format boundaries, view/BFF semantics, and receipt-safe adoption.
+- `reference/legacy-estates.md` — offline Java/.NET/messaging evidence, conflicts, and the boundary before bridge generation.
 - `reference/composing-capabilities.md` — audit and review cross-bundle read overlap without inferring authority or generating MCP.
 - `reference/gemini-enterprise.md` — choose and safely configure one Gemini Enterprise BYO-MCP journey.
 - `reference/upstream-credentials.md` — configure outbound authentication from the runtime to the upstream API.

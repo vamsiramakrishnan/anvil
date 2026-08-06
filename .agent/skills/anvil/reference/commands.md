@@ -539,6 +539,33 @@ Options:
 - `--bundle <dir>` — also verify the generated output files against the receipt
 - `--json` — emit a machine-readable integrity report
 
+### `anvil legacy`
+`anvil legacy [options] [command]`
+
+Inventory offline legacy application and messaging evidence.
+
+Discover evidence-backed EJB, WCF, resource-adapter, and messaging invocation candidates from caller-supplied offline exports. Collection never connects to a server or broker, loads an assembly, executes bytecode, opens an archive, reads a queue, or invents business semantics.
+
+#### `anvil legacy inventory`  *(mutates)*
+`anvil legacy inventory [options] <source>`
+
+Build a content-addressed legacy estate inventory without invoking the estate.
+
+Reads one regular file or hardened-expanded directory without following symbolic links. The default auto collector recognizes Java EE/WebLogic/WebSphere/JBoss descriptors, .NET Framework/WCF configuration, and supported broker or AsyncAPI exports. Physical bindings remain evidenced claims, and disagreements remain conflicts for review.
+
+Options:
+- `--environment <id>` — deployment environment coordinate
+- `--application <id>` — application coordinate
+- `--estate <id>` — estate id (default: source directory or file name)
+- `--estate-name <name>` — human-readable estate name
+- `--source-id <id>` — stable evidence-system id (default: <estate>:<environment>)
+- `--source-kind <kind>` — evidence authority (deployed_artifact | deployed_configuration | broker_configuration | artifact_repository | source_repository | runtime_observation | operator_attestation | service_catalog | documentation | naming_inference)
+- `--revision <revision>` — immutable source revision or export digest label
+- `--collector <collector>` — collector lane (auto | java-ee | dotnet | messaging)
+- `--out <file>` — write the complete report without overwriting different content
+- `--check` — exit non-zero when any candidate contains a conflict
+- `--json` — emit the complete machine-readable report
+
 ### `anvil sources`
 `anvil sources [options] [command]`
 

@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
  * matching — silently, on an upgrade, with the `else` path (usually "proceed")
  * taking over. That is worse than a crash, because nothing reports it.
  *
- * 305 codes reach operators today. Before this file, 76 of them had no assertion
+ * 341 codes reach operators today. Before this file, 76 of them had no assertion
  * anywhere in the workspace, so a refactor could have changed any of those
  * without a single test going red.
  *

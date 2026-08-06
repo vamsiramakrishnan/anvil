@@ -234,6 +234,23 @@ describe("anvil self-skill", () => {
     expect(evals).toContain("investigates_view_shaped_writes");
   });
 
+  it("teaches a harness to inventory legacy evidence before proposing a bridge", () => {
+    const files = generateAnvilSkill(createAnvilProgram({ io: bufferIO() }));
+    const skill = files["SKILL.md"] ?? "";
+    const legacy = files["reference/legacy-estates.md"] ?? "";
+    const commands = files["reference/commands.md"] ?? "";
+    expect(skill).toContain("If no API description exists");
+    expect(skill).toContain("reference/legacy-estates.md");
+    expect(commands).toContain("`anvil legacy inventory");
+    expect(legacy).toContain("--collector java-ee");
+    expect(legacy).toContain("@anvil/compiler/legacy");
+    expect(legacy).toContain("binding_target");
+    expect(legacy).toContain("never opens an EAR, WAR, RAR, ZIP");
+    expect(legacy).toContain("Cross-protocol records are not merged");
+    expect(legacy).toContain("generic `consume_queue`");
+    expect(legacy).toContain("does not mean the business work completed");
+  });
+
   it("keeps cross-bundle composition audit-only and evidence-bound", () => {
     const program = createAnvilProgram({ io: bufferIO() });
     const files = generateAnvilSkill(program);
