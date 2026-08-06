@@ -12,6 +12,7 @@ import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
+import { registerLegacyRefinement } from "./refine.js";
 import { readLegacySourceSet } from "./source-files.js";
 
 const REPORT_TYPE = "anvil.legacy-estate-inventory";
@@ -96,6 +97,8 @@ export function registerLegacy(parent: Command, ctx: CommandContext): void {
       }),
     { mutates: true },
   );
+
+  registerLegacyRefinement(legacy, ctx);
 }
 
 function runLegacyInventory(source: string, options: LegacyInventoryOptions, io: CliIO): number {

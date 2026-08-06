@@ -74,6 +74,34 @@ offline evidence → inventory → conflict review → accepted business semanti
 → AIR transport binding → business-shaped MCP → deployment-local bridge
 \`\`\`
 
+## Refine one exact candidate
+
+Export a content-addressed harness task, assess the untrusted submission, then
+record a separate human decision:
+
+\`\`\`bash
+anvil legacy refine task legacy.inventory.json <lc_candidate_id> --out task.json
+anvil legacy refine review legacy.inventory.json task.json submission.json --out review.json
+anvil legacy refine approve legacy.inventory.json review.json \\
+  --reviewer <identity> --reason <reviewed-reason> --out binding.json
+\`\`\`
+
+Use \`reject\` instead of \`approve\` to retain a content-addressed rejection.
+The TypeScript SDK exposes \`createLegacyRefinementTask\`,
+\`createLegacyRefinementProposal\`, \`assessLegacyRefinementProposal\`,
+\`createLegacyReviewReceipt\`, and \`createReviewedLegacyCapabilityBinding\`
+from \`@anvil/compiler/legacy\`.
+
+A proposal must resolve every conflict using captured evidence and separately
+define the business operation, clear input/output schemas, stable error codes,
+pagination when needed, exact transport target, completion meaning,
+authorization, idempotency, and retry policy. Anvil refuses generic middleware
+tools, vague fields such as \`val\`, UI state such as \`showButton\`, invented
+targets, unknown completion/auth decisions, and unsafe automatic retries.
+
+Approval emits a reviewed binding with runtime status \`not_implemented\`. It
+does not claim that a WebLogic, WebSphere, JBoss, IBM MQ, or .NET bridge exists.
+
 Never replace that last surface with generic \`consume_queue\`, \`put_message\`,
 \`invoke_any_ejb\`, or \`call_any_mbean\` tools. Broker acknowledgement means
 accepted by the transport; it does not mean the business work completed.

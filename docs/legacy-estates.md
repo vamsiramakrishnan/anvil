@@ -6,11 +6,12 @@ description exists. Discovery is deliberately weaker than compilation: a queue,
 EJB, WCF endpoint, or stored binding proves that an invocation boundary exists;
 it does not prove what the business operation means or that an agent may use it.
 
-Use the legacy workflow to answer three questions before building an MCP bridge:
+Use the legacy workflow to answer four questions before building an MCP bridge:
 
 1. What is deployed and how is it bound?
 2. Which sources agree or conflict about that deployment?
 3. Which candidates have enough reviewed semantics to become AIR operations?
+4. Which exact transport plan was reviewed, and what does its completion signal mean?
 
 No inventory command connects to a live server, executes bytecode, loads a .NET
 assembly, expands an untrusted archive, reads secrets, consumes a queue, or creates
@@ -113,6 +114,129 @@ summary. It accepts caller-supplied bytes and performs no filesystem or network
 access. The caller remains responsible for acquiring those bytes safely; use the
 CLI when you want Anvil's bounded, no-symlink directory reader.
 
+## Refine one candidate without making the harness authoritative
+
+Inventory deliberately stops before business semantics. The refinement protocol
+lets a coding harness investigate source, tests, runbooks, and deployment records
+while Anvil keeps control of identity, validation, and approval.
+
+Start with the exact candidate ID from the inventory report:
+
+```bash
+anvil legacy refine task \
+  refunds-prod.inventory.json \
+  lc_0123456789abcdef... \
+  --out refunds-submit.task.json
+```
+
+The task is deterministic and content addressed. It embeds the reconciled
+candidate, inventory identity, unresolved conflicts, required decisions, and four
+non-negotiable policies:
+
+- a human must approve the result;
+- task processing cannot execute the legacy runtime;
+- broker acknowledgement is not business completion; and
+- generic middleware tools are forbidden.
+
+Give that JSON to Codex, Claude Code, Antigravity, or another harness. The harness
+returns a proposal—not an approval—with evidence coordinates and these reviewed
+surfaces:
+
+- a business-shaped operation name, description, effect, exposure, and schemas;
+- stable error codes with meaning, retryability, and recovery guidance;
+- pagination paths and limits when a read can return a large result set;
+- the exact queue, topic, JNDI name, remote endpoint, procedure, or job;
+- interaction and reply/correlation behavior;
+- transport, application-acceptance, business-completion, or job-acceptance meaning;
+- authorization, idempotency, timeout, and retry decisions; and
+- one explicit, evidence-backed choice for every conflicting inventory claim.
+
+The proposal can cite inventory evidence or content-addressed repository,
+document, and operator-attestation coordinates. Repository coordinates carry an
+immutable revision plus declared blob and excerpt digests. This phase validates
+their shape and binds those coordinates and digests into the proposal; it does not
+fetch or independently attest external bytes. Protected review infrastructure
+remains responsible for verifying the cited content and authenticating the
+reviewer and evidence system.
+
+Import and assess the proposal:
+
+```bash
+anvil legacy refine review \
+  refunds-prod.inventory.json \
+  refunds-submit.task.json \
+  refunds-submit.submission.json \
+  --out refunds-submit.review.json
+```
+
+Assessment fails closed for stale task or inventory identities, invented targets,
+unresolved conflicts, unsupported protocol changes, missing reply strategies,
+unknown completion/auth/idempotency decisions, unsafe automatic retry, duplicate
+error codes, vague fields such as `val`, and UI-shaped output such as
+`showButton`.
+
+After inspecting the exact evidence and proposal, record the human decision:
+
+```bash
+anvil legacy refine approve \
+  refunds-prod.inventory.json \
+  refunds-submit.review.json \
+  --reviewer refund-owner@example.com \
+  --reason "Checked against the production deployment and service contract." \
+  --out refunds-submit.binding.json
+
+# Or retain a content-addressed rejection:
+anvil legacy refine reject \
+  refunds-prod.inventory.json \
+  refunds-submit.review.json \
+  --reviewer refund-owner@example.com \
+  --reason "The production queue owner has not confirmed this mapping." \
+  --out refunds-submit.rejection.json
+```
+
+Approval emits a content-addressed capability binding whose runtime status is
+explicitly `not_implemented`. It is a reviewed plan, not evidence that WebLogic,
+WebSphere, JBoss, IBM MQ, or .NET connectivity exists.
+
+### Drive the refinement protocol from the SDK
+
+The same transaction is available from `@anvil/compiler/legacy`:
+
+```ts
+import {
+  assessLegacyRefinementProposal,
+  createLegacyRefinementProposal,
+  createLegacyRefinementTask,
+  createLegacyReviewReceipt,
+  createReviewedLegacyCapabilityBinding,
+} from "@anvil/compiler/legacy";
+
+const task = createLegacyRefinementTask(inventory, candidateId);
+const proposal = createLegacyRefinementProposal(task, harnessSubmission);
+const assessment = assessLegacyRefinementProposal(inventory, task, proposal);
+
+if (!assessment.ok) {
+  throw new Error(assessment.issues.map((issue) => issue.message).join("; "));
+}
+
+const receipt = createLegacyReviewReceipt(inventory, task, proposal, {
+  decision: "approved",
+  reviewer: "refund-owner@example.com",
+  reason: "Checked against the production deployment and service contract.",
+});
+
+const binding = createReviewedLegacyCapabilityBinding(
+  inventory,
+  task,
+  proposal,
+  receipt,
+);
+```
+
+Custom harness code never receives an API that marks its own submission approved.
+Approval is a separate input, bound to the inventory, candidate, task, and exact
+proposal hashes.
+
 ## What the collectors understand
 
 The initial collectors intentionally cover declarative configuration rather than
@@ -185,8 +309,8 @@ Every candidate begins in `triage` or `review_required`. Inventory alone cannot 
 - agent-facing field names; or
 - permission to publish or consume messages.
 
-Those facts enter through reviewed evidence and Anvil's existing refinement and
-approval rails.
+Those facts enter through `anvil legacy refine`, evidence-bound proposals, and
+separate approval receipts.
 
 ## From inventory to an MCP bridge
 
@@ -196,8 +320,9 @@ The intended progression is:
 offline evidence
   → legacy inventory
   → conflict-preserving reconciliation
-  → reviewed capability selection
-  → AIR interaction + transport binding
+  → harness proposal
+  → deterministic assessment + human approval
+  → reviewed interaction + transport binding
   → generated domain MCP
   → deployment-local Java or Windows bridge
 ```
@@ -224,3 +349,5 @@ legacy application idempotent.
   acknowledge application messages.
 - Require a new content-addressed inventory when any artifact, binding, destination,
   environment, or candidate evidence changes.
+- Treat the current reviewed binding as a design input only: its runtime status is
+  `not_implemented` until a separately tested deployment-local adapter exists.

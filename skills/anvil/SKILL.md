@@ -33,8 +33,9 @@ For overlap across verified bundles, read
 
 ## If no API description exists
 Read `reference/legacy-estates.md`; run `anvil legacy inventory` on an offline
-export. It finds technical candidates only: no live access, code execution,
-business inference, or MCP generation.
+export, then refine one exact candidate. Inventory finds technical facts;
+refinement separates harness proposals from human approval. Neither connects to
+the runtime.
 
 ## The loop
 1. `anvil compile <spec> --manifest <manifest> --out <dir>` — build the bundle.

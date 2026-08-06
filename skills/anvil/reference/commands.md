@@ -566,6 +566,53 @@ Options:
 - `--check` — exit non-zero when any candidate contains a conflict
 - `--json` — emit the complete machine-readable report
 
+#### `anvil legacy refine`
+`anvil legacy refine [options] [command]`
+
+Turn one inventory candidate into a reviewed business and transport binding.
+
+Export a hash-bound task for a coding harness, validate its evidence-backed proposal, then record a separate human approval or rejection. A reviewed binding remains a non-executable plan until a deployment-local bridge adapter is implemented.
+
+##### `anvil legacy refine task`  *(mutates)*
+`anvil legacy refine task [options] <inventory> <candidate-id>`
+
+Export one deterministic candidate-refinement task.
+
+Options:
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete task report
+
+##### `anvil legacy refine review`  *(mutates)*
+`anvil legacy refine review [options] <inventory> <task> <submission>`
+
+Import and deterministically assess one harness proposal.
+
+Options:
+- `--out <file>` — write the review pack without overwriting different content
+- `--json` — emit the complete review pack
+
+##### `anvil legacy refine approve`  *(mutates)*
+`anvil legacy refine approve [options] <inventory> <review>`
+
+Approve the exact assessed proposal and emit a non-executable binding plan.
+
+Options:
+- `--reviewer <identity>` — reviewer identity recorded in the receipt
+- `--reason <text>` — why this exact proposal is approved
+- `--out <file>` — write the decision without overwriting different content
+- `--json` — emit the complete decision report
+
+##### `anvil legacy refine reject`  *(mutates)*
+`anvil legacy refine reject [options] <inventory> <review>`
+
+Reject the exact assessed proposal and retain an auditable receipt.
+
+Options:
+- `--reviewer <identity>` — reviewer identity recorded in the receipt
+- `--reason <text>` — why this exact proposal is rejected
+- `--out <file>` — write the decision without overwriting different content
+- `--json` — emit the complete decision report
+
 ### `anvil sources`
 `anvil sources [options] [command]`
 
