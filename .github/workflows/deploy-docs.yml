@@ -1,15 +1,30 @@
-# Builds the docs website (apps/docs — Astro/Starlight, content synced from the
-# repo's docs/ + skills/) and deploys it to GitHub Pages. For this to publish,
-# the repo's Pages settings must have Source = "GitHub Actions".
+# Builds apps/docs and deploys it to GitHub Pages. Pull requests execute the
+# exact production build but never upload or deploy Pages artifacts.
 name: Deploy docs website
 
 on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "skills/**"
+      - "apps/docs/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".github/workflows/deploy-docs.yml"
   push:
     branches: [main]
     paths:
       - "docs/**"
       - "skills/**"
       - "apps/docs/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
       - ".github/workflows/deploy-docs.yml"
   workflow_dispatch:
 
@@ -19,41 +34,65 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+  ASTRO_TELEMETRY_DISABLED: "1"
+  TURBO_TELEMETRY_DISABLED: "1"
 
 jobs:
   build:
+    name: Build documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      - uses: actions/checkout@v4
-      # No `version:` — pnpm/action-setup reads it from the repo's
-      # package.json `packageManager` field (pnpm@10.x); pinning a second
-      # version here errors with ERR_PNPM_BAD_PM_VERSION.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      # The playground bundles the real compiler for the browser, so its
-      # package output must exist before Vite resolves the local shims.
-      - name: Build the compiler for the playground
-        run: pnpm --filter @anvil/air --filter @anvil/compiler build
-      # The docs build syncs canonical content, validates frontmatter and local
-      # links, then renders the Starlight site.
+
+      # The playground imports the real compiler. The trailing ellipsis tells
+      # pnpm to build the compiler and its complete transitive workspace
+      # dependency closure, including @anvil/air and @anvil/grammar.
+      - name: Build playground compiler dependency closure
+        run: pnpm --filter @anvil/compiler... build
+
+      # This command synchronizes canonical content, validates frontmatter and
+      # local links, and performs the Astro/Starlight production build.
       - name: Build site
         run: pnpm --filter @anvil/docs build
-      - uses: actions/upload-pages-artifact@v3
+
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: apps/docs/dist
 
   deploy:
+    name: Deploy GitHub Pages
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
-      - id: deployment
+      - name: Deploy Pages artifact
+        id: deployment
         uses: actions/deploy-pages@v4

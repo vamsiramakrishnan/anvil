@@ -5,61 +5,66 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  CI: "true"
+  ASTRO_TELEMETRY_DISABLED: "1"
+  TURBO_TELEMETRY_DISABLED: "1"
 
 jobs:
   verify:
+    name: Verify workspace
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 60
 
-      - name: Enable Corepack (pnpm from packageManager field)
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
         run: corepack enable
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Lint
         run: pnpm lint
 
-      - name: Dead code (knip)
+      - name: Check dead code
         run: pnpm deadcode
 
       - name: Typecheck
         run: pnpm typecheck
 
-      # Build BEFORE test: the cookbook-snippet tests execute the docs' literal
-      # `node packages/cli/dist/bin-anvil.js ...` commands (that's the point —
-      # the snippets users copy must actually run), so the built CLI must exist.
-      # Everything else resolves workspace packages from source via vitest.
+      # Build before tests. Cookbook tests execute the literal, documented
+      # packages/cli/dist/bin-anvil.js commands, so the distributable CLI must
+      # exist before the suite starts.
       - name: Build
         run: pnpm build
 
       - name: Test
         run: pnpm test
 
-      # Mutation gate: delete one safety control at a time and require the
-      # declared tests to notice. Coverage says a line executed; this says the
-      # line matters. It exists because this repo's recurring defect is a check
-      # that reports success without having run, which coverage cannot see and
-      # a surviving mutant can.
-      #
-      # Runs after `test` on purpose — it edits source files in place, so it
-      # must not race the suite it is measuring.
+      # The mutation runner edits source files while proving that the declared
+      # tests detect each removed control. Keep it after the normal suite and
+      # never run it concurrently with tests.
       - name: Mutation gate
         run: node tools/mutation/run.mjs
 
-      # Gateway-estate differential: import every estate in estates.tsv end-to-end
-      # through `anvil estate import` (built above) and gate on policy accounting
-      # against estates-baseline.json — a dropped opaque policy or a shifted
-      # approval posture fails here. Offline and deterministic, so it's a per-PR
-      # gate, not a nightly one.
-      - name: Estates (gateway differential, gates)
+      # This corpus is offline and deterministic, so it remains a per-change
+      # gate. Network-backed corpora stay in corpus.yml.
+      - name: Gateway-estate differential gate
         run: node tools/corpus/run.mjs estates

@@ -2,93 +2,146 @@ name: Corpus
 
 on:
   schedule:
-    # Nightly, 03:17 UTC (off the top of the hour to be a polite cron citizen).
+    # Nightly at 03:17 UTC, away from the top-of-hour scheduler peak.
     - cron: "17 3 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: corpus-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CI: "true"
+  ASTRO_TELEMETRY_DISABLED: "1"
+  TURBO_TELEMETRY_DISABLED: "1"
+  NODE_OPTIONS: "--max-old-space-size=6144"
+
 jobs:
   corpus:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: quick
+            name: Quick differential
+          - lane: estates
+            name: Gateway estates
+          - lane: conformance
+            name: Tri-surface conformance
+          - lane: legacy-estate
+            name: Legacy estate
+          - lane: sweep
+            name: API universe sweep
 
-      - name: Enable Corepack (pnpm from packageManager field)
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
         run: corepack enable
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
+      - name: Build workspace
         run: pnpm build
 
-      # Gate: the 18 known systems must stay green against baseline.json.
-      - name: Quick (differential, gates)
-        run: node tools/corpus/run.mjs quick
-
-      # Gate: every gateway estate must stay green against estates-baseline.json
-      # (also a per-PR gate in ci.yml; here it rides along with the nightly report).
-      - name: Estates (gateway differential, gates)
-        if: always()
-        run: node tools/corpus/run.mjs estates
-
-      - name: Save quick report
-        if: always()
+      # Each matrix lane has an isolated checkout and report directory. A red
+      # corpus command remains a red job, while the always() steps below still
+      # preserve its diagnostic report.
+      - name: Run ${{ matrix.name }}
+        env:
+          CORPUS_LANE: ${{ matrix.lane }}
         run: |
-          mkdir -p corpus-reports/quick
-          cp tools/corpus/report/report.jsonl tools/corpus/report/summary.md corpus-reports/quick/ 2>/dev/null || true
+          set -euo pipefail
+          case "$CORPUS_LANE" in
+            quick)
+              node tools/corpus/run.mjs quick
+              ;;
+            estates)
+              node tools/corpus/run.mjs estates
+              ;;
+            conformance)
+              node tools/corpus/run.mjs conformance
+              ;;
+            legacy-estate)
+              pnpm corpus:legacy
+              ;;
+            sweep)
+              node tools/corpus/run.mjs sweep --limit 150 --seed 42
+              ;;
+            *)
+              echo "::error::Unknown corpus lane: $CORPUS_LANE"
+              exit 2
+              ;;
+          esac
 
-      # Gate: the tri-surface end-to-end check. Builds one capability bundle per
-      # adapter format (REST/OData/SOAP/gRPC/Discovery/GraphQL) and asserts the
-      # generated CLI, MCP server, and skill agree on the wire. Needs network
-      # (fetches real specs) so it rides the nightly job, not the per-PR gate.
-      - name: Conformance (tri-surface CLI == MCP == skill, gates)
+      - name: Collect ${{ matrix.name }} report
         if: always()
-        run: node tools/corpus/run.mjs conformance
-
-      - name: Save conformance report
-        if: always()
+        env:
+          CORPUS_LANE: ${{ matrix.lane }}
         run: |
-          mkdir -p corpus-reports/conformance
-          cp tools/corpus/report/report.jsonl tools/corpus/report/summary.md corpus-reports/conformance/ 2>/dev/null || true
+          set -euo pipefail
+          destination="corpus-reports/$CORPUS_LANE"
+          mkdir -p "$destination"
 
-      # Gate: real application-server and broker artifacts at immutable GitHub
-      # commits must remain deterministic and match their reviewed outcomes.
-      - name: Legacy estate (pinned GitHub artifacts, gates)
-        if: always()
-        run: pnpm corpus:legacy
+          if [[ "$CORPUS_LANE" == "legacy-estate" ]]; then
+            source_dir="tools/legacy-corpus/report"
+            report_files=(report.json summary.md)
+          else
+            source_dir="tools/corpus/report"
+            report_files=(report.jsonl summary.md)
+          fi
 
-      - name: Save legacy estate report
-        if: always()
-        run: |
-          mkdir -p corpus-reports/legacy-estate
-          cp tools/legacy-corpus/report/report.json tools/legacy-corpus/report/summary.md corpus-reports/legacy-estate/ 2>/dev/null || true
+          missing=0
+          for report_file in "${report_files[@]}"; do
+            if [[ -f "$source_dir/$report_file" ]]; then
+              cp "$source_dir/$report_file" "$destination/$report_file"
+            else
+              echo "::error::Missing $source_dir/$report_file for $CORPUS_LANE"
+              missing=1
+            fi
+          done
 
-      # Informational: seeded random sample of the apis.guru universe, raw
-      # compiles, invariant oracles only. Fails the job only on `crash`.
-      - name: Sweep (informational, crash-fatal)
-        if: always()
-        run: node tools/corpus/run.mjs sweep --limit 150 --seed 42
+          if [[ -f "$destination/summary.md" ]]; then
+            cat "$destination/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-      - name: Save sweep report
-        if: always()
-        run: |
-          mkdir -p corpus-reports/sweep
-          cp tools/corpus/report/report.jsonl tools/corpus/report/summary.md corpus-reports/sweep/ 2>/dev/null || true
+          exit "$missing"
 
-      - name: Upload reports
+      - name: Upload ${{ matrix.name }} report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: corpus-reports
-          path: corpus-reports/
+          name: corpus-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: corpus-reports/${{ matrix.lane }}/
+          if-no-files-found: error
           retention-days: 30
+
+  gate:
+    name: Corpus gate
+    if: always()
+    needs: corpus
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every corpus lane to complete successfully
+        env:
+          CORPUS_RESULT: ${{ needs.corpus.result }}
+        run: |
+          if [[ "$CORPUS_RESULT" != "success" ]]; then
+            echo "::error::One or more corpus lanes failed. Download the lane-specific artifacts from this run."
+            exit 1
+          fi
