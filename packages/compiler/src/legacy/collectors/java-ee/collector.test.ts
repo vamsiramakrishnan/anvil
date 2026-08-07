@@ -243,4 +243,218 @@ describe("offline Java EE legacy collector", () => {
       bytecodeExecution: false,
     });
   });
+
+  it("discovers explicit Jakarta EJB source annotations without compiling or loading code", () => {
+    const result = collectJavaEeLegacy(
+      {
+        "src/main/java/com/acme/RefundRemote.java": `package com.acme;
+          import jakarta.ejb.Remote;
+          @Remote public interface RefundRemote { void refund(String id); }`,
+        "src/main/java/com/acme/RefundBean.java": `package com.acme;
+          import jakarta.ejb.Stateless;
+          @Stateless(name = "Refunds", mappedName = "ejb/refunds")
+          public final class RefundBean implements RefundRemote { }`,
+        "src/main/java/com/acme/RefundCommands.java": `package com.acme;
+          @jakarta.ejb.MessageDriven(
+            name = "RefundCommands",
+            messageListenerInterface = jakarta.jms.MessageListener.class,
+            activationConfig = {
+              @jakarta.ejb.ActivationConfigProperty(
+                propertyName = "destinationLookup",
+                propertyValue = "jms/refundCommands"),
+              @jakarta.ejb.ActivationConfigProperty(
+                propertyName = "destinationType",
+                propertyValue = "jakarta.jms.Queue")
+            })
+          public class RefundCommands implements jakarta.jms.MessageListener { }`,
+      },
+      { application: "refunds", platform: "weblogic" },
+    );
+
+    expect(result.observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          platform: "weblogic",
+          component: expect.objectContaining({
+            kind: "session_bean",
+            name: "Refunds",
+            className: "com.acme.RefundBean",
+            interfaces: expect.objectContaining({ remote: ["com.acme.RefundRemote"] }),
+          }),
+          binding: expect.objectContaining({ physicalName: "ejb/refunds" }),
+        }),
+        expect.objectContaining({
+          component: expect.objectContaining({
+            kind: "message_driven_bean",
+            name: "RefundCommands",
+          }),
+          binding: expect.objectContaining({
+            physicalName: "jms/refundCommands",
+            destinationType: "jakarta.jms.Queue",
+          }),
+          attributes: expect.objectContaining({ messagingType: "jakarta.jms.MessageListener" }),
+        }),
+      ]),
+    );
+    expect(result.evidence.filter((item) => item.role === "source_annotation")).toHaveLength(3);
+    expect(result.observations.every((item) => item.evidence[0]?.pointer.includes("@line:"))).toBe(
+      true,
+    );
+  });
+
+  it("does not treat annotation-shaped comments, strings, or text blocks as declarations", () => {
+    const result = collectJavaEeLegacy({
+      "src/Noise.java": `class Noise {
+        // @MessageDriven(name = "Comment") class Comment {}
+        String value = "@Stateless class StringBean {}";
+        String block = """@Remote interface TextRemote {}""";
+      }`,
+    });
+
+    expect(result.evidence[0]?.role).toBe("uninterpreted");
+    expect(result.observations).toEqual([]);
+  });
+
+  it("keeps source-only session beans explicit when a remote interface cannot be proved", () => {
+    const result = collectJavaEeLegacy({
+      "src/Worker.java": `@javax.ejb.Stateless public class Worker implements Runnable { }`,
+    });
+
+    expect(result.observations[0]?.component).toMatchObject({
+      kind: "session_bean",
+      name: "Worker",
+      interfaces: { remote: [], local: [], home: [], localHome: [] },
+    });
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "java-ee/source_annotation_incomplete" }),
+    );
+  });
+
+  it("does not select conflicting or comment-only activation destinations", () => {
+    const result = collectJavaEeLegacy({
+      "src/Commands.java": `import jakarta.ejb.*;
+      @MessageDriven(activationConfig = {
+        // @ActivationConfigProperty(propertyName="destinationLookup", propertyValue="jms/comment")
+        @ActivationConfigProperty(propertyName="destinationLookup", propertyValue="jms/one"),
+        @ActivationConfigProperty(propertyName="destinationLookup", propertyValue="jms/two")
+      }) public class Commands { }`,
+    });
+
+    expect(result.observations[0]?.binding?.physicalName).toBeUndefined();
+    expect(result.observations[0]?.binding?.properties).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("jms/comment");
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "java-ee/ambiguous_binding" }),
+        expect.objectContaining({ code: "java-ee/unresolved_binding" }),
+      ]),
+    );
+  });
+
+  it("does not confuse same-named application annotations with EJB annotations", () => {
+    const result = collectJavaEeLegacy({
+      "src/Fake.java": `package application;
+        @MessageDriven(name = "NotAnEjb") public class Fake { }`,
+    });
+
+    expect(result.evidence[0]?.role).toBe("source_annotation");
+    expect(result.observations).toEqual([]);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "java-ee/no_discoverable_declaration" }),
+    );
+  });
+
+  it("records classfiles by digest with a precise non-execution diagnostic", () => {
+    const result = collectJavaEeLegacy({ "classes/com/acme/Worker.class": "CAFEBABE" });
+
+    expect(result.observations).toEqual([]);
+    expect(result.evidence[0]?.role).toBe("class_metadata");
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "java-ee/classfile_metadata_unavailable" }),
+    );
+  });
+
+  it("emits an actionable diagnostic for every recognized descriptor with zero facts", () => {
+    const result = collectJavaEeLegacy({
+      "empty/WEB-INF/web.xml": "<web-app/>",
+      "empty/META-INF/ejb-jar.xml": "<ejb-jar/>",
+    });
+
+    expect(result.observations).toEqual([]);
+    expect(
+      result.diagnostics.filter((item) => item.code === "java-ee/no_discoverable_declaration"),
+    ).toHaveLength(2);
+  });
+
+  it("extracts WebLogic JMS modules and deployment-plan module evidence", () => {
+    const result = collectJavaEeLegacy(
+      {
+        "config/payments-jms.xml": `<weblogic-jms xmlns="http://xmlns.oracle.com/weblogic/weblogic-jms">
+          <queue name="PaymentCommands"><jndi-name>jms/paymentCommands</jndi-name><sub-deployment-name>JMSServer</sub-deployment-name></queue>
+          <uniform-distributed-topic name="PaymentEvents"><jndi-name>jms/paymentEvents</jndi-name></uniform-distributed-topic>
+          <connection-factory name="PaymentsFactory"><jndi-name>jms/paymentsFactory</jndi-name></connection-factory>
+        </weblogic-jms>`,
+        "config/deployment-plan.xml": `<deployment-plan xmlns="http://xmlns.oracle.com/weblogic/deployment-plan">
+          <module-override><module-name>payments-jms.xml</module-name><module-type>JMS</module-type>
+            <module-descriptor><root-element>weblogic-jms</root-element></module-descriptor>
+          </module-override>
+        </deployment-plan>`,
+      },
+      { application: "payments" },
+    );
+
+    expect(result.observations.map((item) => [item.component.kind, item.component.name])).toEqual(
+      expect.arrayContaining([
+        ["messaging_destination", "PaymentCommands"],
+        ["messaging_destination", "PaymentEvents"],
+        ["connection_factory", "PaymentsFactory"],
+        ["module", "payments-jms.xml"],
+      ]),
+    );
+  });
+
+  it("extracts WebSphere Liberty resources and activation specifications", () => {
+    const result = collectJavaEeLegacy(
+      {
+        "liberty/server.xml": `<server xmlns="http://www.ibm.com/xmlns/prod/websphere/liberty">
+          <jmsQueue id="OrderQueue" jndiName="jms/orders"/>
+          <jmsConnectionFactory id="OrderFactory" jndiName="jms/ordersFactory"/>
+          <jmsActivationSpec id="OrderActivation" jndiName="eis/orderActivation"/>
+        </server>`,
+      },
+      { application: "orders", platform: "websphere" },
+    );
+
+    expect(
+      result.observations.map((item) => [item.component.kind, item.binding?.physicalName]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["messaging_destination", "jms/orders"],
+        ["connection_factory", "jms/ordersFactory"],
+        ["resource_environment_reference", "eis/orderActivation"],
+      ]),
+    );
+  });
+
+  it("preserves multiple WildFly JNDI aliases without choosing one", () => {
+    const result = collectJavaEeLegacy(
+      {
+        "wildfly/standalone.xml": `<server xmlns="urn:jboss:domain:messaging-activemq:13.0">
+          <jms-queue name="Orders"><entry name="java:/jms/queue/Orders"/><entry name="java:jboss/exported/jms/Orders"/></jms-queue>
+        </server>`,
+      },
+      { platform: "jboss" },
+    );
+
+    expect(result.observations[0]?.binding).toMatchObject({
+      resolution: "opaque",
+      properties: {
+        jndiEntries: '["java:/jms/queue/Orders","java:jboss/exported/jms/Orders"]',
+      },
+    });
+    expect(result.observations[0]?.binding?.physicalName).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "java-ee/ambiguous_binding" }),
+    );
+  });
 });

@@ -86,6 +86,10 @@ async function evaluateSystem(system, workRoot, cliPath) {
   const actual = summarizeRun(first);
   const mismatches = compareExpectation(system.expected, actual);
   if (!deterministic) mismatches.push("same pinned input produced different CLI output");
+  const sensitiveOutputFree = !containsSensitiveOutput(
+    `${first.stdout}\n${first.stderr}\n${second.stdout}\n${second.stderr}`,
+  );
+  if (!sensitiveOutputFree) mismatches.push("CLI output retained a sensitive export field");
 
   return {
     id: system.id,
@@ -97,6 +101,7 @@ async function evaluateSystem(system, workRoot, cliPath) {
     license: system.license,
     sourceUrl: githubBlobUrl(system),
     deterministic,
+    sensitiveOutputFree,
     expected: system.expected,
     actual,
     mismatches,
@@ -269,6 +274,7 @@ function score(results) {
     total: results.length,
     passingExpectations: results.filter((result) => result.ok).length,
     deterministic: results.filter((result) => result.deterministic).length,
+    sensitiveOutputFree: results.filter((result) => result.sensitiveOutputFree).length,
     actionable,
     actionablePercent: percent(actionable, results.length),
     classifications,
@@ -287,6 +293,7 @@ function renderSummary(report) {
     "",
     `Expectations: ${report.score.passingExpectations}/${report.score.total} passed`,
     `Determinism: ${report.score.deterministic}/${report.score.total} passed`,
+    `Sensitive-output exclusion: ${report.score.sensitiveOutputFree}/${report.score.total} passed`,
     `Actionable inventory: ${report.score.actionable}/${report.score.total} (${report.score.actionablePercent}%)`,
     "",
     "| result | system | platform | classification | candidates | conflicts | diagnostics |",
@@ -395,6 +402,12 @@ function canonical(value) {
       .join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function containsSensitiveOutput(value) {
+  return /["'](?:credential(?:_hash)?|password(?:_hash)?|permissions|sasl\.jaas\.config|secret|token|users)["']\s*:/iu.test(
+    value,
+  );
 }
 
 function parseArgs(argv) {

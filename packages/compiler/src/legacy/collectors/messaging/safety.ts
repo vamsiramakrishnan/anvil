@@ -107,7 +107,7 @@ export function containsSecretLikeValue(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return Object.entries(value).some(([key, child]) => {
     if (
-      /(?:password|passwd|pwd|secret|token|api[-_]?key|credential|sasl\.jaas\.config)$/i.test(
+      /(?:password|password[-_]?hash|passwd|pwd|secret|token|api[-_]?key|credential|credential[-_]?hash|sasl\.jaas\.config)$/i.test(
         key,
       ) &&
       typeof child === "string" &&

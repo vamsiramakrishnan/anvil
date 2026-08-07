@@ -21,7 +21,7 @@ import {
   createLegacyArtifact,
   createLegacyEvidence,
   createLegacyObservation,
-  type EvidenceSourceKind,
+  EvidenceSourceKind,
   finalizeLegacyInventory,
   type LegacyArtifactRecord,
   type LegacyArtifactRole,
@@ -45,6 +45,12 @@ export type LegacyCollectorKind = z.infer<typeof LegacyCollectorKind>;
 export interface LegacySourceMember {
   path: string;
   bytes: Uint8Array;
+  /** Overrides the invocation default when this member has a distinct authority. */
+  source?: {
+    kind: EvidenceSourceKind;
+    systemId: string;
+    revision?: string;
+  };
 }
 
 export interface CollectLegacyInventoryInput {
@@ -60,6 +66,17 @@ export interface CollectLegacyInventoryInput {
   members: readonly LegacySourceMember[];
 }
 
+export interface LegacyInventoryStreamLimits {
+  maxMembers?: number;
+  maxMemberBytes?: number;
+  maxTotalBytes?: number;
+}
+
+export type CollectLegacyInventoryStreamInput = Omit<CollectLegacyInventoryInput, "members"> & {
+  members: AsyncIterable<LegacySourceMember>;
+  limits?: LegacyInventoryStreamLimits;
+};
+
 export interface LegacyCollectorRun {
   collector: Exclude<LegacyCollectorKind, "auto">;
   inputMembers: number;
@@ -73,13 +90,18 @@ export interface LegacyInventoryResult {
   collectors: LegacyCollectorRun[];
 }
 
+const DEFAULT_STREAM_LIMITS = {
+  maxMembers: 20_000,
+  maxMemberBytes: 16 * 1024 * 1024,
+  maxTotalBytes: 512 * 1024 * 1024,
+} as const;
+
 interface NormalizationState {
   artifactsByPath: Map<string, LegacyArtifactRecord>;
   evidenceById: Map<string, LegacyEvidenceRecord>;
   observations: ReturnType<typeof createLegacyObservation>[];
   diagnostics: LegacyCollectorDiagnostic[];
   coordinate: Omit<LegacyDeploymentCoordinate, "platform" | "module" | "component">;
-  sourceKind: EvidenceSourceKind;
 }
 
 interface EvidenceCoordinate {
@@ -105,35 +127,43 @@ export function collectLegacyInventory(input: CollectLegacyInventoryInput): Lega
       members.map((member) => ({ path: member.path, digest: sha256Bytes(member.bytes) })),
     ),
   );
-  const artifacts = members.map((member) =>
-    createLegacyArtifact({
+  const artifacts = members.map((member) => {
+    const memberSource = member.source
+      ? {
+          kind: EvidenceSourceKind.parse(member.source.kind),
+          systemId: LegacyIdentifier.parse(member.source.systemId),
+          ...(member.source.revision ? { revision: member.source.revision } : {}),
+        }
+      : {
+          kind: input.source.kind,
+          systemId,
+          ...(input.source.revision ? { revision: input.source.revision } : {}),
+        };
+    return createLegacyArtifact({
       schemaVersion: 1,
       digest: sha256Bytes(member.bytes),
       bytes: member.bytes.byteLength,
       mediaType: mediaType(member.path),
       role: artifactRole(member.path),
       path: member.path,
-      source: {
-        kind: input.source.kind,
-        systemId,
-        ...(input.source.revision ? { revision: input.source.revision } : {}),
-      },
-    }),
-  );
+      source: memberSource,
+    });
+  });
   const state: NormalizationState = {
     artifactsByPath: new Map(artifacts.map((artifact) => [artifact.path, artifact])),
     evidenceById: new Map(),
     observations: [],
     diagnostics: [],
     coordinate: { environment, application, deploymentDigest },
-    sourceKind: input.source.kind,
   };
   const collectors: LegacyCollectorRun[] = [];
 
   if (collector === "auto" || collector === "java-ee") {
     const selected = selectJavaMembers(members, collector === "java-ee", state);
     if (selected.length > 0) {
+      const diagnosticsBefore = state.diagnostics.length;
       const result = collectJavaEeLegacy(selected, { application });
+      const normalizedBefore = state.observations.length;
       const vendorPlatforms = result.collector.platforms.filter(
         (platform) => platform !== "java-ee",
       );
@@ -144,11 +174,18 @@ export function collectLegacyInventory(input: CollectLegacyInventoryInput): Lega
       for (const diagnostic of result.diagnostics) {
         state.diagnostics.push(normalizeDiagnostic(state, "java-ee", diagnostic));
       }
+      addNoInvocationDiagnostic(
+        state,
+        "java-ee",
+        result.observations.length,
+        state.observations.length - normalizedBefore,
+        result.diagnostics,
+      );
       collectors.push({
         collector: "java-ee",
         inputMembers: selected.length,
-        observations: result.observations.length,
-        diagnostics: result.diagnostics.length,
+        observations: state.observations.length - normalizedBefore,
+        diagnostics: state.diagnostics.length - diagnosticsBefore,
       });
     }
   }
@@ -156,16 +193,25 @@ export function collectLegacyInventory(input: CollectLegacyInventoryInput): Lega
   if (collector === "auto" || collector === "dotnet") {
     const selected = selectDotnetMembers(members, collector === "dotnet");
     if (selected.length > 0) {
+      const diagnosticsBefore = state.diagnostics.length;
       const result = collectDotnetLegacy(selected);
+      const normalizedBefore = state.observations.length;
       for (const observation of result.observations) normalizeDotnetObservation(state, observation);
       for (const diagnostic of result.diagnostics) {
         state.diagnostics.push(normalizeDiagnostic(state, "dotnet", diagnostic));
       }
+      addNoInvocationDiagnostic(
+        state,
+        "dotnet",
+        result.observations.length,
+        state.observations.length - normalizedBefore,
+        result.diagnostics,
+      );
       collectors.push({
         collector: "dotnet",
         inputMembers: selected.length,
-        observations: result.observations.length,
-        diagnostics: result.diagnostics.length,
+        observations: state.observations.length - normalizedBefore,
+        diagnostics: state.diagnostics.length - diagnosticsBefore,
       });
     }
   }
@@ -173,17 +219,26 @@ export function collectLegacyInventory(input: CollectLegacyInventoryInput): Lega
   if (collector === "auto" || collector === "messaging") {
     const selected = selectMessagingMembers(members, collector === "messaging");
     if (selected.length > 0) {
+      const diagnosticsBefore = state.diagnostics.length;
       const result = collectMessagingLegacy(selected);
+      const normalizedBefore = state.observations.length;
       for (const observation of result.observations)
         normalizeMessagingObservation(state, observation);
       for (const diagnostic of result.diagnostics) {
         state.diagnostics.push(normalizeDiagnostic(state, "messaging", diagnostic));
       }
+      addNoInvocationDiagnostic(
+        state,
+        "messaging",
+        result.observations.length,
+        state.observations.length - normalizedBefore,
+        result.diagnostics,
+      );
       collectors.push({
         collector: "messaging",
         inputMembers: selected.length,
-        observations: result.observations.length,
-        diagnostics: result.diagnostics.length,
+        observations: state.observations.length - normalizedBefore,
+        diagnostics: state.diagnostics.length - diagnosticsBefore,
       });
     }
   }
@@ -209,6 +264,52 @@ export function collectLegacyInventory(input: CollectLegacyInventoryInput): Lega
   return { snapshot, candidates: reconcileLegacyInventory(snapshot), collectors };
 }
 
+/**
+ * Consume an asynchronous acquisition stream with explicit backpressure and
+ * byte limits, then run the same deterministic pure compiler. Members are
+ * copied as they arrive so a caller cannot mutate previously yielded bytes.
+ */
+export async function collectLegacyInventoryStream(
+  input: CollectLegacyInventoryStreamInput,
+): Promise<LegacyInventoryResult> {
+  const limits = {
+    maxMembers: input.limits?.maxMembers ?? DEFAULT_STREAM_LIMITS.maxMembers,
+    maxMemberBytes: input.limits?.maxMemberBytes ?? DEFAULT_STREAM_LIMITS.maxMemberBytes,
+    maxTotalBytes: input.limits?.maxTotalBytes ?? DEFAULT_STREAM_LIMITS.maxTotalBytes,
+  };
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new Error(`legacy inventory stream ${name} must be a positive safe integer`);
+    }
+  }
+  const members: LegacySourceMember[] = [];
+  let totalBytes = 0;
+  for await (const member of input.members) {
+    if (members.length >= limits.maxMembers) {
+      throw new Error(`legacy inventory stream exceeds ${limits.maxMembers} members`);
+    }
+    if (!(member.bytes instanceof Uint8Array)) {
+      throw new Error(`legacy source member '${member.path}' bytes must be a Uint8Array`);
+    }
+    if (member.bytes.byteLength > limits.maxMemberBytes) {
+      throw new Error(
+        `legacy source member '${member.path}' exceeds ${limits.maxMemberBytes} bytes`,
+      );
+    }
+    totalBytes += member.bytes.byteLength;
+    if (totalBytes > limits.maxTotalBytes) {
+      throw new Error(`legacy inventory stream exceeds ${limits.maxTotalBytes} total bytes`);
+    }
+    members.push({
+      path: member.path,
+      bytes: member.bytes.slice(),
+      ...(member.source ? { source: { ...member.source } } : {}),
+    });
+  }
+  const { limits: _limits, members: _stream, ...compileInput } = input;
+  return collectLegacyInventory({ ...compileInput, members });
+}
+
 function normalizeMembers(input: readonly LegacySourceMember[]): LegacySourceMember[] {
   if (input.length === 0) throw new Error("legacy inventory requires at least one source member");
   const paths = new Set<string>();
@@ -220,7 +321,7 @@ function normalizeMembers(input: readonly LegacySourceMember[]): LegacySourceMem
       }
       if (paths.has(path)) throw new Error(`duplicate legacy source member path '${path}'`);
       paths.add(path);
-      return { path, bytes: member.bytes };
+      return { path, bytes: member.bytes, ...(member.source ? { source: member.source } : {}) };
     })
     .sort((left, right) => left.path.localeCompare(right.path));
 }
@@ -231,11 +332,7 @@ function selectJavaMembers(
   state: NormalizationState,
 ): { path: string; content: string }[] {
   const relevant = members.filter((member) =>
-    explicit
-      ? /\.xml$|\.xmi$/i.test(member.path)
-      : /(?:application|web|ejb-jar|ra|weblogic[^/]*|jboss[^/]*|ibm-[^/]+|standalone|domain|server|resources|config)\.(?:xml|xmi)$/i.test(
-          member.path,
-        ),
+    explicit ? /\.(?:java|xml|xmi)$/i.test(member.path) : javaMemberLooksRelevant(member),
   );
   return relevant.flatMap((member) => {
     try {
@@ -265,10 +362,11 @@ function selectDotnetMembers(
   return members
     .filter(
       (member) =>
-        /\.(?:config|dll|exe)$/i.test(member.path) ||
+        /\.(?:config|dll|exe|svc)$/i.test(member.path) ||
         (explicit
           ? /\.json$/i.test(member.path)
-          : /(?:dotnet|iis|windows[-_. ]?service|deployment).+\.json$/i.test(member.path)),
+          : /(?:dotnet|iis|windows[-_. ]?service|deployment).+\.json$/i.test(member.path) ||
+            dotnetMemberLooksRelevant(member)),
     )
     .map(({ path, bytes }) => ({ path, bytes }));
 }
@@ -283,7 +381,11 @@ function selectMessagingMembers(
       const structured = /\.(?:json|ya?ml|xml)$/i.test(member.path);
       return (
         structured &&
-        (explicit || /asyncapi|artemis|broker|rabbit|kafka|ccdt|ibm[-_. ]?mq/i.test(member.path))
+        (explicit ||
+          /asyncapi|artemis|broker|rabbit|kafka|strimzi|schema[-_. ]?registry|ccdt|ibm[-_. ]?mq/i.test(
+            member.path,
+          ) ||
+          messagingMemberLooksRelevant(member))
       );
     })
     .map(({ path, bytes }) => ({ path, bytes }));
@@ -423,7 +525,18 @@ function normalizeDotnetObservation(
   state: NormalizationState,
   observation: DotnetObservation,
 ): void {
-  if (observation.kind !== "service_endpoint") return;
+  if (observation.kind !== "service_endpoint") {
+    evidenceFor(
+      state,
+      "dotnet",
+      observation.evidence.map((coordinate) => ({
+        path: coordinate.origin,
+        ...(coordinate.pointer ? { pointer: coordinate.pointer } : {}),
+      })),
+      "configured",
+    );
+    return;
+  }
   const evidenceIds = evidenceFor(
     state,
     "dotnet",
@@ -474,7 +587,6 @@ function normalizeMessagingObservation(
   state: NormalizationState,
   observation: MessagingObservation,
 ): void {
-  if (observation.kind === "schema_subject") return;
   const evidenceIds = evidenceFor(
     state,
     "messaging",
@@ -486,36 +598,51 @@ function normalizeMessagingObservation(
     "configured",
   );
   if (evidenceIds.length === 0) return;
+  if (observation.kind === "schema_subject") return;
   const config = observation.binding.config;
-  const direction = messagingDirection(config.action);
-  const logicalDestination =
-    stringValue(config.channel) ??
-    stringValue(config.address) ??
-    stringValue(config.topic) ??
-    observation.name;
-  const claims = technicalClaims(observation.name, evidenceIds, "configured");
-  addBindingClaim(
-    claims,
-    stringValue(config.address) ?? stringValue(config.topic),
-    evidenceIds,
-    "configured",
-  );
-  addSchemaClaims(claims, config, evidenceIds);
-  addDeliveryClaims(claims, config, evidenceIds);
-  addErrorClaim(claims, config, evidenceIds);
-  emitObservation(state, {
-    collectorId: "messaging",
-    platform: observation.binding.kind,
-    component: observation.coordinate,
-    invocation: {
-      kind: "message",
-      protocol: messagingProtocol(observation.binding.kind),
-      destination: logicalDestination,
-      direction,
-    },
-    claims,
-    evidenceIds,
-  });
+  const reply = stringValue(config.replyChannel) ?? stringValue(config.replyAddress);
+  const direction = reply ? "request_reply" : messagingDirection(config.action);
+  const declaredTopics = stringArray(config.topics);
+  const logicalDestinations =
+    declaredTopics.length > 0
+      ? declaredTopics
+      : [
+          stringValue(config.channelKey) ??
+            stringValue(config.channel) ??
+            stringValue(config.topic) ??
+            observation.name,
+        ];
+  for (const logicalDestination of logicalDestinations) {
+    const claims = technicalClaims(observation.name, evidenceIds, "configured");
+    addBindingClaim(
+      claims,
+      stringValue(config.address) ??
+        (declaredTopics.length === 0 ? stringValue(config.topic) : logicalDestination) ??
+        stringValue(config.topicPattern),
+      evidenceIds,
+      "configured",
+    );
+    addSchemaClaims(claims, config, evidenceIds);
+    addDeliveryClaims(claims, config, evidenceIds);
+    addErrorClaim(claims, config, evidenceIds);
+    if (reply) {
+      claims.push(claim("interaction_pattern", "request_reply", evidenceIds, "declared"));
+    }
+    emitObservation(state, {
+      collectorId: "messaging",
+      platform: observation.binding.kind,
+      component: observation.coordinate,
+      invocation: {
+        kind: "message",
+        protocol: messagingProtocol(observation.binding.kind),
+        destination: bounded(logicalDestination, 512),
+        direction,
+        ...messageType(config),
+      },
+      claims,
+      evidenceIds,
+    });
+  }
 }
 
 function emitObservation(
@@ -560,7 +687,7 @@ function evidenceFor(
     const evidence = createLegacyEvidence({
       schemaVersion: 1,
       artifactId: artifact.artifactId,
-      sourceKind: state.sourceKind,
+      sourceKind: artifact.source.kind,
       collectorId,
       basis,
       coordinate: {
@@ -597,8 +724,14 @@ function addSchemaClaims(
   config: Readonly<Record<string, MessagingJsonValue>>,
   evidenceIds: string[],
 ): void {
-  const refs = stringArray(config.messageRefs ?? config.messageNames).slice(0, 64);
+  const refs = stringArray(
+    config.messageRefs ?? config.messageNames ?? config.schemaSubjects ?? config.subject,
+  ).slice(0, 64);
   if (refs.length > 0) claims.push(claim("input_schema", refs, evidenceIds, "declared"));
+  const replyRefs = stringArray(config.replyMessageRefs).slice(0, 64);
+  if (replyRefs.length > 0) {
+    claims.push(claim("output_schema", replyRefs, evidenceIds, "declared"));
+  }
 }
 
 function addDeliveryClaims(
@@ -650,6 +783,105 @@ function messagingProtocol(
   return kind;
 }
 
+function messageType(config: Readonly<Record<string, MessagingJsonValue>>): {
+  messageType?: string;
+} {
+  const candidates = stringArray(config.messageIds ?? config.messageRefs ?? config.messageNames);
+  return candidates.length === 1 ? { messageType: candidates[0] } : {};
+}
+
+function textPrefix(member: LegacySourceMember, maxBytes = 128 * 1024): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(member.bytes.subarray(0, maxBytes));
+  } catch {
+    return "";
+  }
+}
+
+function javaMemberLooksRelevant(member: LegacySourceMember): boolean {
+  if (
+    /(?:application|web|ejb-jar|ra|weblogic[^/]*|jboss[^/]*|ibm-[^/]+|standalone|domain|server|resources|config)\.(?:xml|xmi)$/i.test(
+      member.path,
+    )
+  ) {
+    return true;
+  }
+  const content = textPrefix(member);
+  return (
+    (/\.java$/i.test(member.path) &&
+      /@(?:[\w$.]+\.)?(?:Stateless|Stateful|Singleton|MessageDriven|Remote|Local)\b/u.test(
+        content,
+      )) ||
+    /<(?:ejb-jar|application|web-app|connector|weblogic-|jboss|server|domain)\b/i.test(content)
+  );
+}
+
+function dotnetMemberLooksRelevant(member: LegacySourceMember): boolean {
+  if (!/\.(?:config|xml|json|svc)$/i.test(member.path)) return false;
+  const content = textPrefix(member);
+  return (
+    /<system\.serviceModel\b|<serviceHostingEnvironment\b|<%@\s*ServiceHost\b/i.test(content) ||
+    /"(?:windowsServices|iisSites|appPools|serviceActivations)"\s*:/i.test(content)
+  );
+}
+
+function messagingMemberLooksRelevant(member: LegacySourceMember): boolean {
+  const content = textPrefix(member);
+  return (
+    /(?:^|[\s{])(?:"?asyncapi"?|apiVersion)\s*[:=]/im.test(content) ||
+    /kafka\.strimzi\.io\//i.test(content) ||
+    /"(?:queues|exchanges|bindings|subjects|topics)"\s*:/i.test(content) ||
+    /<(?:broker|address|queue)\b/i.test(content)
+  );
+}
+
+function addNoInvocationDiagnostic(
+  state: NormalizationState,
+  collectorId: Exclude<LegacyCollectorKind, "auto">,
+  rawObservations: number,
+  normalizedObservations: number,
+  collectorDiagnostics: readonly { level: "info" | "warning" | "error" }[],
+): void {
+  if (
+    rawObservations === 0 ||
+    normalizedObservations > 0 ||
+    collectorDiagnostics.some((diagnostic) => diagnostic.level !== "info")
+  ) {
+    return;
+  }
+  const diagnostic: LegacyCollectorDiagnostic =
+    collectorId === "java-ee"
+      ? {
+          level: "warning",
+          code: "legacy/java-ee/no_invocation_candidate",
+          message:
+            "Java EE declarations were retained as evidence, but none proved a remote, messaging, or resource-adapter invocation.",
+          remediation:
+            "Supply an explicit remote interface, message destination, resource-adapter binding, or deployed vendor mapping.",
+          collectorId,
+        }
+      : collectorId === "dotnet"
+        ? {
+            level: "warning",
+            code: "legacy/dotnet/no_invocation_candidate",
+            message:
+              ".NET deployment declarations were retained as evidence, but none proved a callable WCF or MSMQ contract.",
+            remediation:
+              "Supply an explicit endpoint contract or bounded static contract metadata; hosting identity alone is insufficient.",
+            collectorId,
+          }
+        : {
+            level: "warning",
+            code: "legacy/messaging/no_invocation_candidate",
+            message:
+              "Messaging metadata was retained as evidence, but none proved a destination or message operation.",
+            remediation:
+              "Supply a topic, queue, routing, producer/consumer operation, or a separate binding that links schema metadata to one.",
+            collectorId,
+          };
+  state.diagnostics.push(diagnostic);
+}
+
 function normalizeDiagnostic(
   state: NormalizationState,
   collectorId: string,
@@ -686,15 +918,14 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function stringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? [
-        ...new Set(
-          value
-            .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-            .map((item) => bounded(item.trim(), 512)),
-        ),
-      ].sort()
-    : [];
+  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return [
+    ...new Set(
+      values
+        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        .map((item) => bounded(item.trim(), 512)),
+    ),
+  ].sort();
 }
 
 function bounded(value: string, max: number): string {

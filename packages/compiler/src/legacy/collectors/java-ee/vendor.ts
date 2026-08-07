@@ -119,6 +119,126 @@ export function parseWebLogicBindings(state: CollectionState, member: ParsedMemb
     "resource-env-ref-name",
     "resource_environment_reference",
   );
+  parseWebLogicJmsModule(state, member);
+  parseWebLogicDeploymentPlan(state, member);
+  parseWebLogicDomainResources(state, member);
+}
+
+function parseWebLogicJmsModule(state: CollectionState, member: ParsedMember): void {
+  for (const kind of [
+    "queue",
+    "topic",
+    "uniform-distributed-queue",
+    "uniform-distributed-topic",
+    "distributed-queue",
+    "distributed-topic",
+  ] as const) {
+    descendants(member.root, kind).forEach((destination, index) => {
+      const name = attr(destination, "name") ?? childText(destination, "name");
+      if (!name) return;
+      const jndiName = childText(destination, "jndi-name");
+      const pointer = `/weblogic-jms/${kind}[${index + 1}]`;
+      emitObservation(state, {
+        platform: "weblogic",
+        application: app(state),
+        module: moduleForPath(member.evidence.path),
+        component: { kind: "messaging_destination", name },
+        binding: {
+          kind: "jms_destination",
+          logicalName: name,
+          ...(jndiName ? { physicalName: jndiName } : {}),
+          destinationType: kind.includes("topic") ? "jakarta.jms.Topic" : "jakarta.jms.Queue",
+          resolution: jndiName ? "mapped" : "unresolved",
+        },
+        attributes: sortedRecord(
+          [
+            ["subDeployment", childText(destination, "sub-deployment-name")],
+            ["jmsModuleType", kind],
+          ].filter((entry): entry is [string, string] => Boolean(entry[1])),
+        ),
+        evidence: [coordinate(member, pointer)],
+        declaration: true,
+      });
+      if (!jndiName)
+        unresolved(state, member, pointer, `WebLogic JMS destination ${name} has no JNDI name.`);
+    });
+  }
+
+  descendants(member.root, "connection-factory").forEach((factory, index) => {
+    const name = attr(factory, "name") ?? childText(factory, "name");
+    if (!name) return;
+    const jndiName = childText(factory, "jndi-name");
+    const pointer = `/weblogic-jms/connection-factory[${index + 1}]`;
+    emitObservation(state, {
+      platform: "weblogic",
+      application: app(state),
+      module: moduleForPath(member.evidence.path),
+      component: { kind: "connection_factory", name },
+      binding: {
+        kind: "connection_factory",
+        logicalName: name,
+        ...(jndiName ? { physicalName: jndiName } : {}),
+        resolution: jndiName ? "mapped" : "unresolved",
+      },
+      attributes: childText(factory, "sub-deployment-name")
+        ? { subDeployment: childText(factory, "sub-deployment-name") as string }
+        : undefined,
+      evidence: [coordinate(member, pointer)],
+      declaration: true,
+    });
+    if (!jndiName)
+      unresolved(
+        state,
+        member,
+        pointer,
+        `WebLogic JMS connection factory ${name} has no JNDI name.`,
+      );
+  });
+}
+
+function parseWebLogicDeploymentPlan(state: CollectionState, member: ParsedMember): void {
+  descendants(member.root, "module-override").forEach((module, index) => {
+    const name = childText(module, "module-name");
+    if (!name) return;
+    const descriptors = descendants(module, "module-descriptor");
+    emitObservation(state, {
+      platform: "weblogic",
+      application: app(state),
+      module: name,
+      component: { kind: "module", name },
+      attributes: sortedRecord(
+        [
+          ["declarationLane", "weblogic_deployment_plan"],
+          ["moduleType", childText(module, "module-type")],
+          ["descriptorCount", String(descriptors.length)],
+        ].filter((entry): entry is [string, string] => Boolean(entry[1])),
+      ),
+      evidence: [coordinate(member, `/deployment-plan/module-override[${index + 1}]`)],
+      declaration: true,
+    });
+  });
+}
+
+function parseWebLogicDomainResources(state: CollectionState, member: ParsedMember): void {
+  descendants(member.root, "jms-system-resource").forEach((resource, index) => {
+    const name = childText(resource, "name") ?? attr(resource, "name");
+    if (!name) return;
+    emitObservation(state, {
+      platform: "weblogic",
+      application: app(state),
+      module: name,
+      component: { kind: "module", name },
+      attributes: sortedRecord(
+        [
+          ["declarationLane", "weblogic_domain_configuration"],
+          ["descriptorFile", childText(resource, "descriptor-file-name")],
+          ["target", childText(resource, "target")],
+        ].filter((entry): entry is [string, string] => Boolean(entry[1])),
+      ),
+      evidence: [coordinate(member, `/domain/jms-system-resource[${index + 1}]`)],
+      declaration: true,
+    });
+  });
 }
 
 function parseNamedResourceMappings(
@@ -213,6 +333,111 @@ export function parseWebSphereBindings(state: CollectionState, member: ParsedMem
       });
     });
   }
+  parseWebSphereMessagingResources(state, member);
+}
+
+function parseWebSphereMessagingResources(state: CollectionState, member: ParsedMember): void {
+  for (const element of ["jmsQueue", "jmsTopic", "destinations"] as const) {
+    descendants(member.root, element).forEach((destination, index) => {
+      const name = attr(destination, "id") ?? attr(destination, "name");
+      if (!name) return;
+      const jndiName = attr(destination, "jndiName") ?? attr(destination, "jndi-name");
+      const destinationType =
+        element === "jmsTopic" || /topic/iu.test(attr(destination, "type") ?? "")
+          ? "jakarta.jms.Topic"
+          : "jakarta.jms.Queue";
+      const pointer = `/${element}[${index + 1}]`;
+      emitObservation(state, {
+        platform: "websphere",
+        application: app(state),
+        module: moduleForPath(member.evidence.path),
+        component: { kind: "messaging_destination", name },
+        binding: {
+          kind: "jms_destination",
+          logicalName: name,
+          ...(jndiName ? { physicalName: jndiName } : {}),
+          destinationType,
+          properties: sortedRecord(
+            [
+              ["baseQueueName", attr(destination, "baseQueueName")],
+              ["busName", attr(destination, "busName")],
+              ["identifier", attr(destination, "identifier")],
+            ].filter((entry): entry is [string, string] => Boolean(entry[1])),
+          ),
+          resolution: jndiName ? "mapped" : "unresolved",
+        },
+        evidence: [coordinate(member, pointer)],
+        declaration: true,
+      });
+      if (!jndiName)
+        unresolved(
+          state,
+          member,
+          pointer,
+          `WebSphere messaging destination ${name} has no explicit JNDI binding.`,
+        );
+    });
+  }
+
+  for (const element of ["jmsConnectionFactory", "factories"] as const) {
+    descendants(member.root, element).forEach((factory, index) => {
+      const name = attr(factory, "id") ?? attr(factory, "name");
+      if (!name) return;
+      const jndiName = attr(factory, "jndiName") ?? attr(factory, "jndi-name");
+      const pointer = `/${element}[${index + 1}]`;
+      emitObservation(state, {
+        platform: "websphere",
+        application: app(state),
+        module: moduleForPath(member.evidence.path),
+        component: { kind: "connection_factory", name },
+        binding: {
+          kind: "connection_factory",
+          logicalName: name,
+          ...(jndiName ? { physicalName: jndiName } : {}),
+          resolution: jndiName ? "mapped" : "unresolved",
+        },
+        evidence: [coordinate(member, pointer)],
+        declaration: true,
+      });
+      if (!jndiName)
+        unresolved(
+          state,
+          member,
+          pointer,
+          `WebSphere JMS connection factory ${name} has no explicit JNDI binding.`,
+        );
+    });
+  }
+
+  for (const element of ["jmsActivationSpec", "J2CActivationSpec"] as const) {
+    descendants(member.root, element).forEach((activation, index) => {
+      const name = attr(activation, "id") ?? attr(activation, "name");
+      if (!name) return;
+      const jndiName = attr(activation, "jndiName") ?? attr(activation, "jndi-name");
+      const pointer = `/${element}[${index + 1}]`;
+      emitObservation(state, {
+        platform: "websphere",
+        application: app(state),
+        module: moduleForPath(member.evidence.path),
+        component: { kind: "resource_environment_reference", name },
+        binding: {
+          kind: "activation_spec",
+          logicalName: name,
+          ...(jndiName ? { physicalName: jndiName } : {}),
+          resolution: jndiName ? "mapped" : "unresolved",
+        },
+        evidence: [coordinate(member, pointer)],
+        declaration: true,
+      });
+      if (!jndiName)
+        unresolved(
+          state,
+          member,
+          pointer,
+          `WebSphere activation specification ${name} has no explicit JNDI binding.`,
+        );
+    });
+  }
 }
 
 export function parseJbossBindings(state: CollectionState, member: ParsedMember): void {
@@ -250,7 +475,8 @@ function parseJbossMessagingConfiguration(state: CollectionState, member: Parsed
     descendants(member.root, kind).forEach((destination, index) => {
       const name = attr(destination, "name");
       if (!name) return;
-      const entries = attr(destination, "entries");
+      const entries = declaredJndiEntries(destination);
+      const physicalName = unambiguousEntry(state, member, kind, name, index, entries);
       emitObservation(state, {
         platform: "jboss",
         application: app(state),
@@ -259,14 +485,15 @@ function parseJbossMessagingConfiguration(state: CollectionState, member: Parsed
         binding: {
           kind: "jms_destination",
           logicalName: name,
-          ...(entries ? { physicalName: entries } : {}),
+          ...(physicalName ? { physicalName } : {}),
           destinationType: kind === "jms-queue" ? "jakarta.jms.Queue" : "jakarta.jms.Topic",
-          resolution: entries ? "mapped" : "unresolved",
+          ...(entries.length > 0 ? { properties: { jndiEntries: JSON.stringify(entries) } } : {}),
+          resolution: physicalName ? "mapped" : entries.length > 1 ? "opaque" : "unresolved",
         },
         evidence: [coordinate(member, `/${kind}[${index + 1}]`)],
         declaration: true,
       });
-      if (!entries)
+      if (entries.length === 0)
         unresolved(state, member, `/${kind}[${index + 1}]`, `${kind} ${name} has no JNDI entries.`);
     });
   }
@@ -274,7 +501,15 @@ function parseJbossMessagingConfiguration(state: CollectionState, member: Parsed
   descendants(member.root, "pooled-connection-factory").forEach((factory, index) => {
     const name = attr(factory, "name");
     if (!name) return;
-    const entries = attr(factory, "entries");
+    const entries = declaredJndiEntries(factory);
+    const physicalName = unambiguousEntry(
+      state,
+      member,
+      "pooled-connection-factory",
+      name,
+      index,
+      entries,
+    );
     emitObservation(state, {
       platform: "jboss",
       application: app(state),
@@ -283,13 +518,52 @@ function parseJbossMessagingConfiguration(state: CollectionState, member: Parsed
       binding: {
         kind: "connection_factory",
         logicalName: name,
-        ...(entries ? { physicalName: entries } : {}),
-        resolution: entries ? "mapped" : "unresolved",
+        ...(physicalName ? { physicalName } : {}),
+        ...(entries.length > 0 ? { properties: { jndiEntries: JSON.stringify(entries) } } : {}),
+        resolution: physicalName ? "mapped" : entries.length > 1 ? "opaque" : "unresolved",
       },
       evidence: [coordinate(member, `/pooled-connection-factory[${index + 1}]`)],
       declaration: true,
     });
+    if (entries.length === 0)
+      unresolved(
+        state,
+        member,
+        `/pooled-connection-factory[${index + 1}]`,
+        `Pooled connection factory ${name} has no JNDI entries.`,
+      );
   });
+}
+
+function declaredJndiEntries(element: XmlElement): string[] {
+  const fromAttribute = (attr(element, "entries") ?? "")
+    .split(/[\s,]+/u)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const fromChildren = descendants(element, "entry")
+    .map((entry) => attr(entry, "name") ?? entry.text.trim())
+    .filter((entry): entry is string => Boolean(entry));
+  return [...new Set([...fromAttribute, ...fromChildren])].sort();
+}
+
+function unambiguousEntry(
+  state: CollectionState,
+  member: ParsedMember,
+  kind: string,
+  name: string,
+  index: number,
+  entries: readonly string[],
+): string | undefined {
+  if (entries.length <= 1) return entries[0];
+  state.diagnostics.push({
+    level: "warning",
+    code: "java-ee/ambiguous_binding",
+    message:
+      `${kind} ${name} declares ${entries.length} JNDI aliases. All aliases were preserved in ` +
+      "binding properties, but no single physical binding was selected.",
+    coordinate: { path: member.evidence.path, pointer: `/${kind}[${index + 1}]` },
+  });
+  return undefined;
 }
 
 /** Detect vendor from grounded descriptor path, root, or namespace facts. */

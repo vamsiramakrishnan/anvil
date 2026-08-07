@@ -25,9 +25,9 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 347,
-  "asserted": 261,
-  "unasserted": 86,
+  "total": 384,
+  "asserted": 273,
+  "unasserted": 111,
   "codes": {
     "apiconnect/empty_export": {
       "packages": [
@@ -383,7 +383,25 @@
       ],
       "asserted": true
     },
+    "dotnet/ambiguous_base_address": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/ambiguous_binding_configuration": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
     "dotnet/ambiguous_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/ambiguous_protocol_mapping": {
       "packages": [
         "compiler"
       ],
@@ -399,13 +417,19 @@
       "packages": [
         "compiler"
       ],
-      "asserted": false
+      "asserted": true
     },
     "dotnet/invalid_metadata_root": {
       "packages": [
         "compiler"
       ],
       "asserted": false
+    },
+    "dotnet/invalid_service_activation": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
     },
     "dotnet/malformed_metadata": {
       "packages": [
@@ -414,6 +438,12 @@
       "asserted": false
     },
     "dotnet/malformed_xml": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/no_discoverable_endpoint": {
       "packages": [
         "compiler"
       ],
@@ -449,6 +479,24 @@
       ],
       "asserted": true
     },
+    "dotnet/oversized_service_activation": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/runtime_default_binding": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/service_activation_missing_service": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
     "dotnet/service_missing_name": {
       "packages": [
         "compiler"
@@ -456,6 +504,12 @@
       "asserted": false
     },
     "dotnet/too_many_artifacts": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/unresolved_relative_address": {
       "packages": [
         "compiler"
       ],
@@ -1190,6 +1244,54 @@
       ],
       "asserted": false
     },
+    "legacy/bridge_binding_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_plan_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/candidate_not_found": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
     "legacy/invalid_coordinate": {
       "packages": [
         "cli"
@@ -1201,6 +1303,66 @@
         "cli"
       ],
       "asserted": true
+    },
+    "legacy/inventory_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/product_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
     },
     "legacy/refinement_input_invalid": {
       "packages": [
@@ -1220,7 +1382,49 @@
       ],
       "asserted": false
     },
+    "legacy/refinement_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_not_approvable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
     "legacy/refinement_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/refinement_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/source_limit_exceeded": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/source_member_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/source_symlink_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/source_unreadable": {
       "packages": [
         "cli"
       ],
@@ -1280,6 +1484,12 @@
       ],
       "asserted": false
     },
+    "messaging/asyncapi_unresolved_channel_reference": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
     "messaging/ccdt_missing_queue_manager_coordinate": {
       "packages": [
         "compiler"
@@ -1287,6 +1497,18 @@
       "asserted": false
     },
     "messaging/invalid_asyncapi": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/kafka_no_supported_objects": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/kafka_projection_truncated": {
       "packages": [
         "compiler"
       ],

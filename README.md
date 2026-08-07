@@ -71,11 +71,12 @@ complete first-run walkthrough.
 | --- | --- | --- |
 | An OpenAPI, WSDL, proto, GraphQL, OData, Discovery, or Postman contract | `anvil compile` or `anvil agentify` | An AIR bundle with aligned CLI, MCP, skill, hooks, tests, and deployment inputs |
 | An API gateway export | `anvil estate inventory` | An estate audit and review-safe adoption plan |
-| Application-server, .NET, or broker configuration but no useful API contract | `anvil legacy inventory` | An evidence-backed inventory of technical invocation candidates |
+| Application-server, .NET, or broker configuration but no useful API contract | `anvil legacy inventory` then `anvil legacy gaps` | Evidence-backed candidates with explicit coverage gaps and provenance |
 
 Legacy mode has a different lifecycle from compilation. It can inventory and
-refine a candidate into a human-approved capability binding, but this release
-does not generate or run the deployment-local Java, Windows, or broker bridge.
+interrogate evidence, refine a candidate into a human-approved capability
+binding, and plan the contract for a deployment-local bridge. It does not
+generate, load, deploy, or run a Java, Windows, or broker bridge.
 
 ## Bring your own API
 
@@ -146,7 +147,18 @@ API contract.
 
 ## Inventory a legacy system without invoking it
 
-Start from a hardened offline export:
+When evidence must come from several systems, address the acquisition contract
+before collecting anything:
+
+```bash
+pnpm anvil legacy plan collection-plan.json \
+  --out collection-plan.addressed.json
+```
+
+The plan requires revision-pinned repository evidence and cannot express
+unsafe acquisition modes. It validates and identifies the plan; it does not
+fetch evidence or combine inventories. Then collect each hardened offline
+export under its real provenance:
 
 ```bash
 pnpm anvil legacy inventory ./refunds-prod-export \
@@ -157,10 +169,43 @@ pnpm anvil legacy inventory ./refunds-prod-export \
   --out refunds-prod.inventory.json
 ```
 
-The collectors understand declarative Java EE, WebLogic, WebSphere, JBoss,
-.NET Framework, WCF, MSMQ, AsyncAPI, IBM MQ, Artemis, RabbitMQ, and Kafka
-evidence. They do not connect to a server or broker, open an archive, load an
-assembly, execute bytecode, consume a message, or read a secret.
+The collectors understand Java EE descriptors and inert Jakarta/Javax EJB
+source annotations; WebLogic, WebSphere, and JBoss bindings; explicit WCF,
+MSMQ, `.svc`, and `serviceActivations` configuration; AsyncAPI, IBM MQ,
+Artemis, and RabbitMQ topology; and Kafka Admin, Schema Registry, Strimzi
+`KafkaTopic`, and Strimzi `KafkaConnector` exports. RabbitMQ collection projects
+only allowlisted topology fields and excludes users, permissions, passwords,
+and credential hashes. Compiled Java and .NET binaries are digest-only inputs.
+The collectors do not connect to a server or broker, expand an archive, load a
+class or assembly, execute code, or consume a message.
+
+AsyncAPI keeps logical channel keys and operation identity separate from the
+physical address, and retains declared reply, correlation, and discriminator
+evidence. Schema Registry observations retain the subject, version, type,
+compatibility, references, and a digest of the schema rather than its body.
+
+Interrogate the result before asking a harness to invent semantics:
+
+```bash
+pnpm anvil legacy graph refunds-prod.inventory.json \
+  --out refunds-prod.graph.json
+pnpm anvil legacy gaps refunds-prod.inventory.json \
+  --plan collection-plan.addressed.json \
+  --check \
+  --out refunds-prod.gaps.json
+pnpm anvil legacy explain refunds-prod.inventory.json lc_<candidate-hash> \
+  --out refunds-submit.explanation.json
+pnpm anvil legacy diff refunds-prod.previous.json refunds-prod.inventory.json \
+  --out refunds-prod.diff.json
+```
+
+`graph` preserves evidence links, `gaps` separates collector yield from
+semantic completeness, `explain` traces one candidate to its claims and source
+artifacts, and `diff` separates logical-lineage changes from deployment
+occurrence changes. The checked-in corpus pins 16 licensed public specimens
+across application servers, .NET, and messaging; its oracles check expected
+behavior, deterministic output, and sensitive-output exclusion without
+vendoring third-party bytes.
 
 Inventory produces technical candidates, not business APIs. It preserves every
 conflicting queue, JNDI, endpoint, direction, and transport claim. A coding
@@ -201,6 +246,25 @@ An approved binding remains explicit about the current boundary:
   }
 }
 ```
+
+From that approved decision, produce a reviewable runtime contract:
+
+```bash
+pnpm anvil legacy bridge plan refunds-submit.decision.json \
+  --out refunds-submit.bridge-plan.json
+```
+
+An optional `--driver driver.json` performs a static descriptor compatibility
+assessment. The command does not load the driver, generate bridge code, connect
+to the estate, or prove conformance or live readiness.
+
+Harnesses can use the same pure product surfaces from
+`@anvil/compiler/legacy`: `collectLegacyInventory`,
+`createLegacyCollectionPlan`, `projectLegacyEvidenceGraph`,
+`assessAndPlanLegacyCoverage`, `explainLegacyCandidate`,
+`diffLegacyInventories`, `planLegacyBridge`, and
+`assessLegacyBridgeDriver`. Callers that acquire artifacts own that acquisition
+boundary; Anvil's SDK only evaluates the supplied bytes and records.
 
 Start with [the legacy-estate model](docs/legacy-estates.md), then follow
 [inventory](docs/legacy-inventory.md) and

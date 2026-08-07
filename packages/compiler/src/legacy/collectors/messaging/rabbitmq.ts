@@ -10,6 +10,20 @@ export function parseRabbitMqDefinitions(value: unknown, origin: string): Messag
   ];
 }
 
+export function hasRabbitMqNonTopologySections(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const ignored = new Set([
+    "global_parameters",
+    "parameters",
+    "permissions",
+    "policies",
+    "topic_permissions",
+    "users",
+    "vhosts",
+  ]);
+  return Object.keys(value).some((key) => ignored.has(key));
+}
+
 function destinations(
   value: unknown,
   kind: "queue" | "exchange",

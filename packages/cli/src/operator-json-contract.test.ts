@@ -484,6 +484,24 @@ describe("refinement harness import keeps the operator JSON contract", () => {
   });
 });
 
+describe("legacy product commands keep the operator JSON contract", () => {
+  it.each([
+    ["legacy bridge plan", ["legacy", "bridge", "plan", "missing-decision.json", "--json"]],
+    ["legacy plan", ["legacy", "plan", "missing-plan.json", "--json"]],
+    ["legacy graph", ["legacy", "graph", "missing-inventory.json", "--json"]],
+    ["legacy gaps", ["legacy", "gaps", "missing-inventory.json", "--json"]],
+    [
+      "legacy explain",
+      ["legacy", "explain", "missing-inventory.json", `lc_${"0".repeat(64)}`, "--json"],
+    ],
+    ["legacy diff", ["legacy", "diff", "missing-before.json", "missing-after.json", "--json"]],
+  ] as const)("%s emits one structured refusal document", async (label, argv) => {
+    const result = await run([...argv]);
+    const envelope = expectRefusalContract(result, label);
+    expect(envelope.reportType).toMatch(/^anvil\.legacy-/);
+  });
+});
+
 /* -------------------------------------------------------------------------- */
 /* The release verdict, made gateable                                          */
 /* -------------------------------------------------------------------------- */

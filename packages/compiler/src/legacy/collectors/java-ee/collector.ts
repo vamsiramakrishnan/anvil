@@ -10,6 +10,7 @@ import type {
   JavaEeEvidenceRole,
   JavaEePlatform,
 } from "./model.js";
+import { parseJavaSourceAnnotations, sourceContentLooksRelevant } from "./source.js";
 import {
   parseApplicationDescriptor,
   parseEjbDescriptor,
@@ -76,9 +77,27 @@ export function collectJavaEeLegacy(
   };
 
   for (const member of parsed) parseMember(state, member);
+  parseJavaSourceAnnotations(
+    state,
+    accepted
+      .filter((member) => member.evidence.role === "source_annotation")
+      .map((member) => ({
+        content: member.content,
+        evidence: member.evidence,
+        platform: options.platform ?? "java-ee",
+      })),
+  );
+  diagnoseOpaqueClassfiles(accepted, diagnostics);
+  diagnoseRecognizedEmptyMembers(accepted, state);
 
   const platforms = [
-    ...new Set([...configuredPlatforms, ...parsed.map((member) => member.platform)]),
+    ...new Set([
+      ...configuredPlatforms,
+      ...parsed.map((member) => member.platform),
+      ...(accepted.some((member) => member.evidence.role === "source_annotation")
+        ? [options.platform ?? "java-ee"]
+        : []),
+    ]),
   ].sort();
   state.observations.sort((left, right) => left.id.localeCompare(right.id));
   state.diagnostics.sort(compareDiagnostics);
@@ -162,7 +181,7 @@ function acceptMembers(
         path: member.path,
         digest: sha256(member.content),
         bytes,
-        role: roleForPath(member.path),
+        role: roleForMember(member.path, member.content),
       },
     });
   }
@@ -187,7 +206,12 @@ function parseMembers(
 ): ParsedMember[] {
   const parsed: ParsedMember[] = [];
   for (const member of members) {
-    if (member.evidence.role === "uninterpreted") continue;
+    if (
+      member.evidence.role === "uninterpreted" ||
+      member.evidence.role === "source_annotation" ||
+      member.evidence.role === "class_metadata"
+    )
+      continue;
     const document = parseSafeDescriptorXml(member.content);
     if (!document.ok) {
       diagnostics.push({
@@ -224,6 +248,8 @@ function parseMember(state: CollectionState, member: ParsedMember): void {
       parseVendorMember(state, member);
       break;
     case "uninterpreted":
+    case "source_annotation":
+    case "class_metadata":
       break;
   }
 }
@@ -250,12 +276,14 @@ function parseVendorMember(state: CollectionState, member: ParsedMember): void {
   }
 }
 
-function roleForPath(path: string): JavaEeEvidenceRole {
+function roleForMember(path: string, content: string): JavaEeEvidenceRole {
   const lower = path.toLowerCase();
   if (lower.endsWith("meta-inf/application.xml")) return "application_descriptor";
   if (lower.endsWith("web-inf/web.xml")) return "web_descriptor";
   if (lower.endsWith("meta-inf/ejb-jar.xml")) return "ejb_descriptor";
   if (lower.endsWith("meta-inf/ra.xml")) return "resource_adapter_descriptor";
+  if (lower.endsWith(".class")) return "class_metadata";
+  if (lower.endsWith(".java") && sourceContentLooksRelevant(content)) return "source_annotation";
   const base = lower.split("/").at(-1) ?? lower;
   if (
     /^(?:weblogic|jboss)(?:-.+)?\.xml$/u.test(base) ||
@@ -265,11 +293,63 @@ function roleForPath(path: string): JavaEeEvidenceRole {
     return "vendor_binding";
   }
   if (
-    ["standalone.xml", "domain.xml", "server.xml", "resources.xml", "config.xml"].includes(base)
+    [
+      "standalone.xml",
+      "domain.xml",
+      "server.xml",
+      "resources.xml",
+      "config.xml",
+      "deployment-plan.xml",
+    ].includes(base) ||
+    /<(?:[\w.-]+:)?(?:weblogic-jms|deployment-plan)\b/iu.test(content)
   ) {
     return "vendor_configuration";
   }
   return "uninterpreted";
+}
+
+function diagnoseOpaqueClassfiles(
+  accepted: readonly AcceptedMember[],
+  diagnostics: JavaEeDiagnostic[],
+): void {
+  for (const member of accepted) {
+    if (member.evidence.role !== "class_metadata") continue;
+    diagnostics.push({
+      level: "warning",
+      code: "java-ee/classfile_metadata_unavailable",
+      message:
+        `Recorded ${JSON.stringify(member.path)} by digest only. This text-only collector never ` +
+        "loads or executes bytecode and cannot prove class annotations from a decoded .class member. " +
+        "Supply the corresponding Java source, deployment descriptors, or a bounded static metadata export.",
+      coordinate: { path: member.path },
+    });
+  }
+}
+
+function diagnoseRecognizedEmptyMembers(
+  accepted: readonly AcceptedMember[],
+  state: CollectionState,
+): void {
+  for (const member of accepted) {
+    if (member.evidence.role === "uninterpreted" || member.evidence.role === "class_metadata")
+      continue;
+    const observed = state.observations.some((observation) =>
+      observation.evidence.some((coordinate) => coordinate.path === member.path),
+    );
+    const alreadyExplained = state.diagnostics.some(
+      (diagnostic) => diagnostic.coordinate?.path === member.path,
+    );
+    if (observed || alreadyExplained) continue;
+    state.diagnostics.push({
+      level: "warning",
+      code: "java-ee/no_discoverable_declaration",
+      message:
+        `Recognized ${member.evidence.role.replaceAll("_", " ")} ${JSON.stringify(member.path)}, ` +
+        "but found no supported explicit declaration. Supply the matching standard descriptor, " +
+        "vendor binding/configuration, or annotated Java source; no capability was inferred.",
+      coordinate: { path: member.path },
+    });
+  }
 }
 
 function safeRelativePath(path: string): boolean {

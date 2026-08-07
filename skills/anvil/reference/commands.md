@@ -613,6 +613,74 @@ Options:
 - `--out <file>` — write the decision without overwriting different content
 - `--json` — emit the complete decision report
 
+#### `anvil legacy bridge`
+`anvil legacy bridge [options] [command]`
+
+Plan and assess a deployment-local bridge for an approved binding.
+
+Produces a deterministic, non-executable runtime contract from an approved legacy binding. It never loads a driver, connects to the estate, accepts credentials, or treats a plan as live readiness.
+
+##### `anvil legacy bridge plan`  *(mutates)*
+`anvil legacy bridge plan [options] <decision>`
+
+Create a content-addressed bridge contract and conformance requirements.
+
+Options:
+- `--driver <file>` — statically assess a driver descriptor without loading it
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete bridge plan
+
+#### `anvil legacy plan`  *(mutates)*
+`anvil legacy plan [options] <manifest>`
+
+Validate and address a fail-closed legacy evidence collection plan.
+
+Turns a strict collection-plan manifest into a deterministic plan ID. Repository evidence must be revision-pinned, and unsafe acquisition modes are not expressible.
+
+Options:
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete collection-plan report
+
+#### `anvil legacy graph`  *(mutates)*
+`anvil legacy graph [options] <inventory>`
+
+Project an inventory into a typed, evidence-linked graph.
+
+Options:
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete evidence graph
+
+#### `anvil legacy gaps`  *(mutates)*
+`anvil legacy gaps [options] <inventory>`
+
+Measure semantic coverage and request the evidence still needed.
+
+Separates collector yield from semantic completeness. Missing, conflicting, unsupported, and safety-refused evidence remain explicit acquisition work.
+
+Options:
+- `--plan <file>` — assess against an addressed collection plan
+- `--check` — exit non-zero unless semantic coverage is complete
+- `--out <file>` — write without overwriting different content
+- `--json` — emit coverage and gap-plan JSON
+
+#### `anvil legacy explain`  *(mutates)*
+`anvil legacy explain [options] <inventory> <candidate-id>`
+
+Trace one candidate to every observation, claim, and source artifact.
+
+Options:
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete candidate explanation
+
+#### `anvil legacy diff`  *(mutates)*
+`anvil legacy diff [options] <before> <after>`
+
+Compare legacy inventories by deployment occurrence and logical lineage.
+
+Options:
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete deterministic inventory diff
+
 ### `anvil sources`
 `anvil sources [options] [command]`
 

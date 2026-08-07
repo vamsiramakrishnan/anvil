@@ -171,4 +171,168 @@ describe(".NET Framework legacy collector", () => {
       "dotnet/oversized_artifact",
     ]);
   });
+
+  it("correlates .svc and serviceActivations as one declared deployment without inventing a contract", () => {
+    const result = collectDotnetLegacy([
+      {
+        path: "apps/Calculator.svc",
+        bytes: `<%@ ServiceHost Language="C#" Service="Legacy.CalculatorService" %>`,
+      },
+      {
+        path: "apps/web.config",
+        bytes: `<configuration><system.serviceModel><serviceHostingEnvironment>
+          <serviceActivations><add relativeAddress="Calculator.svc" service="Legacy.CalculatorService"/></serviceActivations>
+        </serviceHostingEnvironment></system.serviceModel></configuration>`,
+      },
+    ]);
+
+    expect(result.observations).toHaveLength(1);
+    expect(result.observations[0]).toMatchObject({
+      kind: "deployment",
+      coordinate: "dotnet:service-activation:apps/Calculator.svc",
+      name: "Legacy.CalculatorService",
+      binding: {
+        kind: "iis",
+        config: { service: "Legacy.CalculatorService", relativeAddress: "Calculator.svc" },
+      },
+    });
+    expect(result.observations[0]?.evidence).toHaveLength(2);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "dotnet/no_discoverable_endpoint" }),
+    );
+    expect(result.observations.some((item) => item.kind === "service_endpoint")).toBe(false);
+  });
+
+  it("resolves a relative endpoint only from one compatible declared base address", () => {
+    const result = collectDotnetLegacy([
+      {
+        path: "apps/web.config",
+        bytes: `<configuration><system.serviceModel>
+          <protocolMapping><add scheme="https" binding="basicHttpBinding"/></protocolMapping>
+          <services><service name="Legacy.CalculatorService">
+            <host><baseAddresses><add baseAddress="https://legacy.example.test/services"/></baseAddresses></host>
+            <endpoint name="Calculator" contract="Legacy.ICalculator" address="calculator"/>
+          </service></services>
+        </system.serviceModel></configuration>`,
+      },
+    ]);
+
+    expect(result.observations[0]?.binding).toMatchObject({
+      kind: "wcf",
+      config: {
+        address: "https://legacy.example.test/services/calculator",
+        binding: "basicHttpBinding",
+        bindingResolution: "protocol_mapping",
+        baseAddresses: ["https://legacy.example.test/services"],
+      },
+    });
+  });
+
+  it("preserves ambiguous base addresses and refuses to choose an effective endpoint address", () => {
+    const result = collectDotnetLegacy([
+      {
+        path: "apps/web.config",
+        bytes: `<configuration><system.serviceModel><services>
+          <service name="Legacy.CalculatorService"><host><baseAddresses>
+            <add baseAddress="https://one.example.test/services"/>
+            <add baseAddress="https://two.example.test/services"/>
+          </baseAddresses></host>
+          <endpoint name="Calculator" contract="Legacy.ICalculator" address="calculator" binding="basicHttpBinding"/>
+          </service>
+        </services></system.serviceModel></configuration>`,
+      },
+    ]);
+
+    expect(result.observations[0]?.binding.config.address).toBeUndefined();
+    expect(result.observations[0]?.binding.config.relativeAddress).toBe("calculator");
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "dotnet/ambiguous_base_address" }),
+    );
+  });
+
+  it("does not select conflicting binding settings or protocol mappings", () => {
+    const result = collectDotnetLegacy([
+      {
+        path: "apps/web.config",
+        bytes: `<configuration><system.serviceModel>
+          <protocolMapping><add scheme="https" binding="basicHttpBinding"/><add scheme="https" binding="wsHttpBinding"/></protocolMapping>
+          <bindings><basicHttpBinding>
+            <binding name="shared" receiveTimeout="00:01:00"/>
+            <binding name="shared" receiveTimeout="00:02:00"/>
+          </basicHttpBinding></bindings>
+          <services><service name="Legacy.Service"><endpoint name="Legacy" contract="Legacy.IService"
+            address="https://legacy.example.test/service" binding="basicHttpBinding" bindingConfiguration="shared"/>
+          </service></services>
+        </system.serviceModel></configuration>`,
+      },
+    ]);
+
+    expect(result.observations[0]?.binding.config.bindingSettings).toBeUndefined();
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "dotnet/ambiguous_binding_configuration" }),
+        expect.objectContaining({ code: "dotnet/ambiguous_protocol_mapping" }),
+      ]),
+    );
+  });
+
+  it("reports convention-only WCF services instead of silently returning no endpoint", () => {
+    const result = collectDotnetLegacy([
+      {
+        path: "apps/web.config",
+        bytes: `<configuration><system.serviceModel><services>
+          <service name="Legacy.ConventionService"><host><baseAddresses>
+            <add baseAddress="http://localhost/convention"/>
+          </baseAddresses></host></service>
+        </services></system.serviceModel></configuration>`,
+      },
+    ]);
+
+    expect(result.observations).toEqual([]);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "dotnet/default_endpoint_requires_contract_metadata",
+        level: "warning",
+      }),
+    );
+  });
+
+  it.each([
+    {
+      name: "traversing service activation",
+      config: `<serviceHostingEnvironment><serviceActivations><add relativeAddress="../Admin.svc" service="Legacy.Admin"/></serviceActivations></serviceHostingEnvironment>`,
+      code: "dotnet/unsafe_service_activation_address",
+    },
+    {
+      name: "credential-bearing base address",
+      config: `<services><service name="Legacy.Admin"><host><baseAddresses><add baseAddress="https://user:password@example.test/Admin.svc"/></baseAddresses></host></service></services>`,
+      code: "dotnet/endpoint_contains_credentials",
+    },
+  ])("does not normalize $name", ({ config, code }) => {
+    const result = collectDotnetLegacy([
+      {
+        path: "apps/web.config",
+        bytes: `<configuration><system.serviceModel>${config}</system.serviceModel></configuration>`,
+      },
+    ]);
+    expect(result.observations).toEqual([]);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ code }));
+    expect(JSON.stringify(result)).not.toContain("user:password");
+  });
+
+  it("rejects malformed .svc directives and remains deterministic", () => {
+    const artifacts = [
+      { path: "apps/Bad.svc", bytes: `<%@ ServiceHost Language="C#" %>` },
+      { path: "apps/Noise.svc", bytes: `not a ServiceHost directive` },
+    ];
+    const forward = collectDotnetLegacy(artifacts);
+    const reverse = collectDotnetLegacy([...artifacts].reverse());
+
+    expect(forward).toEqual(reverse);
+    expect(forward.observations).toEqual([]);
+    expect(forward.diagnostics.map((item) => item.code)).toEqual([
+      "dotnet/service_activation_missing_service",
+      "dotnet/invalid_service_activation",
+    ]);
+  });
 });

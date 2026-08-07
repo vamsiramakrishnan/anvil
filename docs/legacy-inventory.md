@@ -22,7 +22,81 @@ heap dumps, database contents, or secret values. Configuration may refer to a
 credential profile or secret alias, but the value belongs in the deployment's
 secret system.
 
-## 1. Prepare one provenance-consistent collection
+## 1. Declare what complete evidence means
+
+For a non-trivial estate, begin with a collection plan. The plan records source
+roots, deployment context, required evidence dimensions, and the only supported
+acquisition policy: offline, bounded, secret-refusing, and non-executing.
+
+```json
+{
+  "schemaVersion": 1,
+  "estate": { "id": "payments-au" },
+  "sources": [
+    {
+      "id": "refunds-source",
+      "kind": "source_repository",
+      "systemId": "github-refunds",
+      "root": "source",
+      "revision": "8ce12d4",
+      "expectedRoles": ["source_manifest", "deployment_descriptor"],
+      "context": {
+        "environment": "prod",
+        "application": "refund-service",
+        "platform": "weblogic-14",
+        "domain": "payments-domain",
+        "cluster": "payments-cluster"
+      }
+    },
+    {
+      "id": "refunds-broker",
+      "kind": "broker_configuration",
+      "systemId": "mq-prod",
+      "root": "exports/mq",
+      "revision": "export-17",
+      "expectedRoles": ["broker_export"],
+      "context": {
+        "environment": "prod",
+        "application": "refund-service",
+        "queueManager": "PAYMENTS.QM1"
+      }
+    }
+  ],
+  "requirements": [
+    "deployment_identity",
+    "invocation_binding",
+    "message_direction",
+    "input_schema",
+    "error_semantics"
+  ],
+  "policy": {
+    "networkAccess": "deny",
+    "processExecution": "deny",
+    "classloading": "deny",
+    "bytecodeExecution": "deny",
+    "xmlExternalEntities": "deny",
+    "secrets": "refuse",
+    "archiveExpansion": "hardened",
+    "unknownArtifacts": "report",
+    "unsupportedEvidence": "fail",
+    "ambiguousEvidence": "fail"
+  }
+}
+```
+
+Address and validate it:
+
+```bash
+pnpm anvil legacy plan collection-plan.json \
+  --out collection-plan.report.json
+```
+
+Repository and artifact-repository sources require an immutable `revision`.
+The command does not clone repositories, connect to servers, expand archives,
+or run export commands. It gives the collection intent a deterministic
+`planId`; acquisition remains an explicit external step.
+
+## 2. Prepare provenance-consistent inputs
 
 Keep the collection scoped to one application, one environment, and one
 evidence authority. For example:
@@ -38,19 +112,19 @@ refunds-prod-websphere/
     └── activation-specs.xml
 ```
 
-All members of one CLI invocation receive the same `--source-kind` and
-`--source-id`. If the repository checkout and the production server export have
-different provenance, inventory them separately rather than presenting both as
-production configuration.
+All members of one filesystem CLI invocation receive the same `--source-kind`,
+`--source-id`, and `--revision`. If the repository checkout and production
+server export have different provenance, inventory them separately rather than
+presenting both as production configuration.
 
-The current CLI does not merge several inventories into one cross-source
-snapshot. A later refinement task is bound to one inventory. Evidence from a
-different report must be cited through an appropriate immutable repository,
-document, or attestation coordinate; its evidence IDs are not in scope as
-`inventory` references for the selected task. Do not fabricate a shared
-provenance label to force a merge.
+The TypeScript SDK supports a `source` override on each `LegacySourceMember`.
+Use that when one inventory genuinely needs several authorities and the caller
+can map every member to its source. Anvil preserves those authorities per
+artifact; it does not upgrade source-repository evidence into deployed truth.
+The CLI does not merge several inventories into one cross-source snapshot.
+Do not fabricate a shared provenance label to force a merge.
 
-## 2. Choose the evidence coordinates
+## 3. Choose the evidence coordinates
 
 Use stable coordinates that another developer can recognize later:
 
@@ -88,7 +162,7 @@ Common source kinds are:
 Use `naming_inference` only when the evidence is genuinely a naming clue. A
 plausible queue name is not deployed configuration.
 
-## 3. Run the appropriate collector
+## 4. Run the appropriate collector
 
 The default `auto` mode runs each applicable offline collector:
 
@@ -112,6 +186,19 @@ pnpm anvil legacy inventory ./mq-export \
 ```
 
 Valid collector values are `auto`, `java-ee`, `dotnet`, and `messaging`.
+
+`auto` does not depend only on familiar filenames. It examines a bounded prefix
+for supported signatures, including Java EJB annotations, WebLogic/JBoss XML
+roots, WCF `system.serviceModel` and `ServiceHost`, Strimzi resources, and known
+broker export shapes. Content detection only selects a collector. It does not
+make an unsupported declaration authoritative.
+
+For Java source, simple annotation names require an explicit `javax.ejb` or
+`jakarta.ejb` import. The collector reads EJB type declarations and activation
+properties without compiling source. It never runs annotation processors or
+loads `.class` files. For WCF, `.svc` and `serviceActivations` establish hosting
+identity; they do not prove a service contract. Relative endpoints are resolved
+only when one compatible declared base address exists.
 
 ### Try the repository fixture
 
@@ -150,7 +237,57 @@ The command refuses symbolic links, path escape, non-regular members, empty
 collections, and different content at an existing output path. These are
 refusals, not files to skip silently.
 
-## 4. Read the report
+## 5. Project the evidence graph
+
+Project the inventory into typed, evidence-linked nodes and edges:
+
+```bash
+pnpm anvil legacy graph refunds-prod.inventory.json \
+  --out refunds-prod.graph.json
+```
+
+The graph preserves artifact, evidence, observation, deployment occurrence,
+logical lineage, and candidate relationships. It is a deterministic view of
+the inventory, not a second inference engine. If the inventory lacks a schema,
+owner, destination, or contract, the graph lacks it too.
+
+## 6. Measure coverage and generate acquisition work
+
+Candidate count measures collector yield. It does not measure whether a harness
+can safely expose the operation. Assess the inventory against the plan:
+
+```bash
+pnpm anvil legacy gaps refunds-prod.inventory.json \
+  --plan collection-plan.report.json \
+  --out refunds-prod.gaps.json
+```
+
+The report classifies collector outcomes as `supported`, `partial`,
+`unsupported`, or `safety-refusal`, then evaluates every required evidence
+dimension. Its gap plan names the missing evidence and acceptable source kinds.
+Use `--check` only when CI should fail unless semantic coverage is complete.
+
+`authorization_context` and `completion_semantics` currently remain missing:
+the inventory model does not treat transport acknowledgement or configuration
+as proof of either. A plan requiring those dimensions will therefore fail
+`legacy gaps --check` until appropriately modeled evidence is available.
+
+## 7. Explain one candidate before refinement
+
+Trace one exact candidate back to every claim, observation, diagnostic, and
+source artifact:
+
+```bash
+candidate_id=$(jq -r '.candidates[0].candidateId' refunds-prod.inventory.json)
+pnpm anvil legacy explain refunds-prod.inventory.json "$candidate_id" \
+  --out refunds-prod.candidate.json
+```
+
+Use the exact `lc_` identifier from the inventory. Unknown dimensions remain in
+the explanation. The command does not rank competing values or choose a binding
+for the reviewer.
+
+## 8. Read the inventory report
 
 The output contains four kinds of captured fact and a separate reconciliation
 result:
@@ -184,7 +321,7 @@ jq '.candidates[] | {
 Do not select the first candidate because it appears first. Candidate ordering
 is deterministic; it is not a recommendation ranking.
 
-## 5. Interpret conflicts and diagnostics
+## 9. Interpret conflicts and diagnostics
 
 A candidate claim has state `single` or `conflicting`. A conflict retains each
 asserted value and the evidence that supports it. Evidence rank affects review
@@ -203,6 +340,25 @@ Examples that require investigation:
 Diagnostics have `error`, `warning`, or `info` severity. An error makes the
 command exit non-zero. Warnings and information remain in the content-addressed
 snapshot so a later review cannot pretend they were absent.
+
+Pay particular attention to zero-yield diagnostics. Examples include:
+
+- `legacy/java-ee/no_discoverable_declaration`: the artifact was recognized,
+  but no supported explicit declaration was found;
+- `legacy/java-ee/source_annotation_incomplete`: an EJB type was explicit, but
+  a remote interface or binding was not provable;
+- `legacy/dotnet/no_discoverable_endpoint`: WCF configuration was present, but
+  no explicit callable endpoint was found; and
+- `legacy/dotnet/default_endpoint_requires_contract_metadata`: WCF may create a
+  runtime default endpoint, but the contract is absent from safe offline
+  evidence; or
+- `legacy/<collector>/no_invocation_candidate`: the collector retained useful
+  declarations such as hosting or schema metadata, but none proved a callable
+  invocation boundary.
+
+Ambiguous WCF base addresses, binding configurations, protocol mappings, and
+multiple JNDI aliases are also retained without first-wins or last-wins
+selection.
 
 ## Use inventory in CI
 

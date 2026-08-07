@@ -43,6 +43,11 @@ function codesIn(file) {
     ) {
       for (const argument of node.arguments ?? []) take(argument);
     }
+    if (ts.isReturnStatement(node) && node.expression) {
+      let owner = node.parent;
+      while (owner && !ts.isFunctionDeclaration(owner)) owner = owner.parent;
+      if (owner?.name?.text === "errorCode") take(node.expression);
+    }
     ts.forEachChild(node, walk);
   };
   walk(source);

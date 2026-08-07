@@ -12,6 +12,8 @@ import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
+import { registerLegacyBridge } from "./bridge.js";
+import { registerLegacyProduct } from "./product.js";
 import { registerLegacyRefinement } from "./refine.js";
 import { readLegacySourceSet } from "./source-files.js";
 
@@ -99,6 +101,8 @@ export function registerLegacy(parent: Command, ctx: CommandContext): void {
   );
 
   registerLegacyRefinement(legacy, ctx);
+  registerLegacyBridge(legacy, ctx);
+  registerLegacyProduct(legacy, ctx);
 }
 
 function runLegacyInventory(source: string, options: LegacyInventoryOptions, io: CliIO): number {

@@ -2,7 +2,7 @@
 
 This harness answers a narrow but important question: when Anvil sees artifacts
 from real WebLogic, WebSphere, WildFly, WCF, IBM MQ, Artemis, RabbitMQ, Kafka,
-and AsyncAPI projects, what does it actually recover?
+Kafka Connect, Strimzi, and AsyncAPI projects, what does it actually recover?
 
 The corpus is intentionally honest about both successes and gaps. A known
 unsupported format is a passing benchmark case when Anvil reports that state
@@ -45,7 +45,8 @@ Every row in `systems.json` pins:
 
 The runner fetches at most 4 MiB per case, verifies the digest before writing a
 temporary file, invokes the public `anvil legacy inventory` CLI twice, and
-requires byte-identical reports.
+requires byte-identical reports. It also rejects a run when the CLI output
+contains credential, user, permission, or authentication-secret field names.
 
 | Classification | Meaning |
 | --- | --- |
@@ -60,9 +61,10 @@ requires byte-identical reports.
 No third-party source file is committed to Anvil. The repository contains only
 the reproducible recipe, cryptographic digest, behavioral oracle, and license
 link. This keeps the codebase small and avoids silently redistributing legacy
-application artifacts. The one secret-bearing RabbitMQ example is fetched into
-a temporary directory solely to prove that Anvil refuses it; its content is
-never copied into a report.
+application artifacts. Secret-bearing RabbitMQ examples are fetched into a
+temporary directory solely to prove both safe topology projection and
+fail-closed behavior when no topology can be projected. Their content is never
+copied into a report.
 
 ## Updating an expectation
 

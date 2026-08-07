@@ -24,6 +24,8 @@ export type JavaEeEvidenceRole =
   | "web_descriptor"
   | "ejb_descriptor"
   | "resource_adapter_descriptor"
+  | "source_annotation"
+  | "class_metadata"
   | "vendor_binding"
   | "vendor_configuration"
   | "uninterpreted";
@@ -108,7 +110,11 @@ export interface JavaEeDiagnostic {
     | "java-ee/duplicate_identity"
     | "java-ee/local_only_ejb"
     | "java-ee/unresolved_binding"
-    | "java-ee/opaque_vendor_binding";
+    | "java-ee/opaque_vendor_binding"
+    | "java-ee/no_discoverable_declaration"
+    | "java-ee/source_annotation_incomplete"
+    | "java-ee/classfile_metadata_unavailable"
+    | "java-ee/ambiguous_binding";
   message: string;
   coordinate?: { path: string; pointer?: string };
   /** Stable identity involved in reconciliation diagnostics, when applicable. */

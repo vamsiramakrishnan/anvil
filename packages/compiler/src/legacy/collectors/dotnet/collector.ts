@@ -13,6 +13,7 @@ import {
   containsSecretLikeJson,
   containsSecretLikeXml,
 } from "./safety.js";
+import { parseSvcActivation } from "./svc.js";
 import { parseDotnetConfig } from "./wcf.js";
 
 export function collectDotnetLegacy(inputs: readonly DotnetArtifactInput[]): DotnetCollectorResult {
@@ -43,6 +44,12 @@ export function collectDotnetLegacy(inputs: readonly DotnetArtifactInput[]): Dot
         continue;
       }
       const parsed = parseDotnetConfig(text, artifact.path);
+      observations.push(...parsed.observations);
+      diagnostics.push(...parsed.diagnostics);
+      continue;
+    }
+    if (artifact.evidence.role === "service_activation") {
+      const parsed = parseSvcActivation(text, artifact.path);
       observations.push(...parsed.observations);
       diagnostics.push(...parsed.diagnostics);
       continue;

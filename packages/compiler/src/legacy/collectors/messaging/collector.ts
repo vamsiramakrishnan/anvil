@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { parseArtemisXml } from "./artemis.js";
 import { parseAsyncApi } from "./asyncapi.js";
 import { parseCcdt, parseMqsc } from "./ibm-mq.js";
-import { parseKafkaManifest } from "./kafka.js";
+import { detectKafkaDocument, parseKafkaManifest } from "./kafka.js";
 import type {
   MessagingArtifactInput,
   MessagingCollectorResult,
@@ -10,7 +10,7 @@ import type {
   MessagingJsonValue,
   MessagingObservation,
 } from "./model.js";
-import { parseRabbitMqDefinitions } from "./rabbitmq.js";
+import { hasRabbitMqNonTopologySections, parseRabbitMqDefinitions } from "./rabbitmq.js";
 import {
   acceptMessagingArtifacts,
   containsForbiddenXml,
@@ -59,11 +59,16 @@ export function collectMessagingLegacy(
       });
       continue;
     }
-    if (containsSecretLikeValue(parsedDocument.value)) {
+    const formats = detectedFormats(parsedDocument.value);
+    const containsSensitiveValue = containsSecretLikeValue(parsedDocument.value);
+    const safelyProjectable =
+      formats.length === 1 &&
+      formats[0] !== undefined &&
+      ["asyncapi", "rabbitmq", "kafka"].includes(formats[0]);
+    if (containsSensitiveValue && !safelyProjectable) {
       diagnostics.push(refusal("messaging/secret_like_value", artifact.path));
       continue;
     }
-    const formats = detectedFormats(parsedDocument.value);
     if (formats.length !== 1) {
       diagnostics.push({
         level: formats.length === 0 ? "warning" : "error",
@@ -85,10 +90,26 @@ export function collectMessagingLegacy(
       const parsed = parseAsyncApi(parsedDocument.value, artifact.path);
       observations.push(...parsed.observations);
       diagnostics.push(...parsed.diagnostics);
+      if (containsSensitiveValue) diagnostics.push(safeProjection("asyncapi", artifact.path));
     } else if (format === "rabbitmq") {
-      observations.push(...parseRabbitMqDefinitions(parsedDocument.value, artifact.path));
+      const projected = parseRabbitMqDefinitions(parsedDocument.value, artifact.path);
+      if (containsSensitiveValue && projected.length === 0) {
+        diagnostics.push(refusal("messaging/secret_like_value", artifact.path));
+        continue;
+      }
+      observations.push(...projected);
+      if (containsSensitiveValue || hasRabbitMqNonTopologySections(parsedDocument.value)) {
+        diagnostics.push(safeProjection("rabbitmq", artifact.path));
+      }
     } else if (format === "kafka") {
-      observations.push(...parseKafkaManifest(parsedDocument.value, artifact.path));
+      const parsed = parseKafkaManifest(parsedDocument.value, artifact.path);
+      if (containsSensitiveValue && parsed.observations.length === 0) {
+        diagnostics.push(refusal("messaging/secret_like_value", artifact.path));
+        continue;
+      }
+      observations.push(...parsed.observations);
+      diagnostics.push(...parsed.diagnostics);
+      if (containsSensitiveValue) diagnostics.push(safeProjection("kafka", artifact.path));
     } else if (format === "ccdt") {
       const parsed = parseCcdt(parsedDocument.value, artifact.path);
       observations.push(...parsed.observations);
@@ -110,23 +131,25 @@ export function collectMessagingLegacy(
 type MessagingFormat = "asyncapi" | "rabbitmq" | "kafka" | "ccdt";
 
 function detectedFormats(value: unknown): MessagingFormat[] {
-  if (!isRecord(value)) return [];
   const formats: MessagingFormat[] = [];
-  if (typeof value.asyncapi === "string") formats.push("asyncapi");
-  if (
-    Array.isArray(value.queues) ||
-    Array.isArray(value.exchanges) ||
-    Array.isArray(value.bindings)
-  ) {
-    formats.push("rabbitmq");
+  if (isRecord(value)) {
+    if (typeof value.asyncapi === "string") formats.push("asyncapi");
+    if (
+      Array.isArray(value.queues) ||
+      Array.isArray(value.exchanges) ||
+      Array.isArray(value.bindings)
+    ) {
+      formats.push("rabbitmq");
+    }
+    const channels = Array.isArray(value.channels)
+      ? value.channels
+      : Array.isArray(value.channel)
+        ? value.channel
+        : [];
+    if (channels.some((channel) => isRecord(channel) && isCcdtChannel(channel)))
+      formats.push("ccdt");
   }
-  if (Array.isArray(value.topics) || isRecord(value.schemaRegistry)) formats.push("kafka");
-  const channels = Array.isArray(value.channels)
-    ? value.channels
-    : Array.isArray(value.channel)
-      ? value.channel
-      : [];
-  if (channels.some((channel) => isRecord(channel) && isCcdtChannel(channel))) formats.push("ccdt");
+  if (detectKafkaDocument(value)) formats.push("kafka");
   return formats;
 }
 
@@ -207,6 +230,18 @@ function refusal(code: string, origin: string): MessagingDiagnostic {
     level: "error",
     code,
     message: `Refused '${origin}'; collectors never retain active secrets or unsafe XML entities.`,
+    coordinate: { origin },
+  };
+}
+
+function safeProjection(
+  format: "asyncapi" | "kafka" | "rabbitmq",
+  origin: string,
+): MessagingDiagnostic {
+  return {
+    level: "info",
+    code: `messaging/${format}_safe_projection_applied`,
+    message: `Collected only allowlisted ${format} topology from '${origin}'; non-topology fields were ignored.`,
     coordinate: { origin },
   };
 }

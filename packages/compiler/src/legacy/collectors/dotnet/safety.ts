@@ -85,7 +85,9 @@ export function acceptDotnetArtifacts(inputs: readonly DotnetArtifactInput[]): {
       ? "opaque_assembly"
       : /\.config$/i.test(input.path)
         ? "configuration"
-        : "deployment_metadata";
+        : /\.svc$/i.test(input.path)
+          ? "service_activation"
+          : "deployment_metadata";
     artifacts.push({
       path: input.path,
       raw,
@@ -96,7 +98,9 @@ export function acceptDotnetArtifacts(inputs: readonly DotnetArtifactInput[]): {
         bytes: raw.byteLength,
         mediaType: assembly
           ? "application/vnd.microsoft.portable-executable"
-          : mediaType(input.path),
+          : role === "service_activation"
+            ? "application/x-aspnet-service"
+            : mediaType(input.path),
         role,
       },
     });

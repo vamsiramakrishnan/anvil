@@ -39,16 +39,91 @@ describe("messaging legacy collector", () => {
     expect(result.observations).toContainEqual(
       expect.objectContaining({
         kind: "message_operation",
-        coordinate: "asyncapi:Refund Events:operation:submitRefund",
+        coordinate: "asyncapi:Refund Events:operation:PAY.REFUND.REQUEST:publish",
         binding: {
           kind: "jms",
           config: expect.objectContaining({
             action: "publish",
+            channelKey: "PAY.REFUND.REQUEST",
+            operationId: "submitRefund",
             messageRefs: ["#/components/messages/RefundCommand"],
           }),
         },
       }),
     );
+  });
+
+  it("keeps AsyncAPI 3 logical channel and operation keys distinct from a shared address", () => {
+    const result = collectMessagingLegacy([
+      {
+        path: "contracts/request-reply.yaml",
+        bytes: `asyncapi: 3.0.0
+info:
+  title: Payments socket
+  version: 1.0.0
+channels:
+  refundCommands:
+    address: /
+    messages:
+      RefundCommand:
+        $ref: '#/components/messages/RefundCommand'
+  refundReplies:
+    address: /
+    messages:
+      RefundReply:
+        $ref: '#/components/messages/RefundReply'
+operations:
+  submitRefund:
+    action: send
+    channel:
+      $ref: '#/channels/refundCommands'
+    messages:
+      - $ref: '#/components/messages/RefundCommand'
+    reply:
+      channel:
+        $ref: '#/channels/refundReplies'
+      messages:
+        - $ref: '#/components/messages/RefundReply'
+components:
+  messages:
+    RefundCommand:
+      messageId: refund-command
+      contentType: application/json
+      correlationId:
+        location: '$message.header#/correlationId'
+      payload:
+        type: object
+        discriminator:
+          propertyName: commandType
+    RefundReply:
+      payload:
+        type: object
+`,
+      },
+    ]);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.observations.map((item) => item.coordinate)).toEqual([
+      "asyncapi:Payments socket:channel:refundCommands",
+      "asyncapi:Payments socket:channel:refundReplies",
+      "asyncapi:Payments socket:operation:submitRefund",
+    ]);
+    expect(result.observations[0]?.binding.config).toMatchObject({
+      channelKey: "refundCommands",
+      address: "/",
+    });
+    expect(result.observations[2]?.binding.config).toMatchObject({
+      operationKey: "submitRefund",
+      channelKey: "refundCommands",
+      address: "/",
+      correlationLocations: ["$message.header#/correlationId"],
+      discriminatorProperties: ["commandType"],
+      messageIds: ["refund-command"],
+      contentTypes: ["application/json"],
+      replyChannel: "refundReplies",
+      replyAddress: "/",
+      replyMessageRefs: ["#/components/messages/RefundReply"],
+    });
   });
 
   it("collects Artemis and RabbitMQ declared topology", () => {
@@ -127,6 +202,139 @@ describe("messaging legacy collector", () => {
     expect(JSON.stringify(result)).not.toContain("unclean.leader.election.enable");
   });
 
+  it("collects Strimzi KafkaTopic and KafkaConnector resources through an allowlisted projection", () => {
+    const result = collectMessagingLegacy([
+      {
+        path: "strimzi/topic.yaml",
+        bytes: `apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: refunds
+  labels:
+    strimzi.io/cluster: payments
+spec:
+  topicName: refund.commands
+  partitions: 12
+  replicas: 3
+  config:
+    retention.ms: 604800000
+    unclean.leader.election.enable: true
+`,
+      },
+      {
+        path: "strimzi/connector.yaml",
+        bytes: `apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  name: refund-source
+  labels:
+    strimzi.io/cluster: payments-connect
+spec:
+  class: io.example.RefundSourceConnector
+  tasksMax: 4
+  config:
+    topics: refund.commands, refund.audit
+    errors.deadletterqueue.topic.name: refund.dlq
+    password: do-not-retain-this
+`,
+      },
+    ]);
+
+    expect(result.observations.map((item) => item.coordinate)).toEqual([
+      "kafka-connect:cluster:payments-connect:connector:refund-source",
+      "kafka:cluster:payments:topic:refund.commands",
+    ]);
+    expect(result.observations[0]?.binding.config).toMatchObject({
+      action: "publish",
+      topics: ["refund.audit", "refund.commands"],
+      deadLetterQueue: "refund.dlq",
+    });
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "messaging/kafka_safe_projection_applied", level: "info" }),
+    );
+    expect(JSON.stringify(result)).not.toContain("do-not-retain-this");
+    expect(JSON.stringify(result)).not.toContain('"password"');
+    expect(JSON.stringify(result)).not.toContain("unclean.leader.election.enable");
+  });
+
+  it("collects common Kafka Admin and Schema Registry response shapes", () => {
+    const result = collectMessagingLegacy([
+      {
+        path: "kafka/admin.json",
+        bytes: JSON.stringify({
+          kind: "KafkaTopicList",
+          data: [
+            {
+              cluster_id: "payments-prod",
+              topic_name: "refund.events",
+              partitions_count: 9,
+              replication_factor: 3,
+            },
+          ],
+        }),
+      },
+      {
+        path: "schema-registry/refund-value.json",
+        bytes: JSON.stringify({
+          subject: "refund.events-value",
+          version: 7,
+          id: 42,
+          schemaType: "AVRO",
+          references: [{ name: "money.avsc", subject: "money-value", version: 2 }],
+          schema: '{"type":"record","name":"RefundEvent"}',
+        }),
+      },
+    ]);
+
+    expect(result.observations.map((item) => item.coordinate)).toEqual([
+      "kafka:cluster:payments-prod:topic:refund.events",
+      "kafka:cluster:unspecified:schema-subject:refund.events-value",
+    ]);
+    expect(result.observations[1]?.binding.config).toMatchObject({
+      format: "avro",
+      schemaId: 42,
+      version: 7,
+      references: [{ name: "money.avsc", subject: "money-value", version: 2 }],
+    });
+    expect(result.observations[1]?.binding.config.schemaDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(JSON.stringify(result)).not.toContain("RefundEvent");
+  });
+
+  it("projects RabbitMQ topology while excluding users, credentials, and permissions", () => {
+    const result = collectMessagingLegacy([
+      {
+        path: "rabbit/definitions.json",
+        bytes: JSON.stringify({
+          users: [{ name: "ops", password_hash: "credential-hash", tags: "administrator" }],
+          permissions: [{ user: "ops", vhost: "/", configure: ".*", write: ".*", read: ".*" }],
+          queues: [{ name: "refund.in", durable: true }],
+          exchanges: [{ name: "refunds", type: "topic", durable: true }],
+          bindings: [
+            {
+              source: "refunds",
+              destination: "refund.in",
+              destination_type: "queue",
+              routing_key: "refund.requested",
+            },
+          ],
+        }),
+      },
+    ]);
+
+    expect(result.observations).toHaveLength(3);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "messaging/rabbitmq_safe_projection_applied",
+        level: "info",
+      }),
+    );
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("credential-hash");
+    expect(serialized).not.toContain('"users"');
+    expect(serialized).not.toContain('"permissions"');
+    expect(serialized).not.toContain('"password_hash"');
+  });
+
   it("collects IBM MQ MQSC and CCDT declarations without executing commands", () => {
     const mqsc = `* captured export
 DEFINE QLOCAL('PAY.REFUND.IN') +
@@ -203,7 +411,7 @@ DEFINE CHANNEL('PAY.CLIENT') CHLTYPE(SVRCONN) TRPTYPE(TCP) SSLCIPH('TLS_AES_256_
       name: "active secrets",
       artifact: {
         path: "rabbit/definitions.json",
-        bytes: JSON.stringify({ password: "live-secret", queues: [{ name: "q" }] }),
+        bytes: JSON.stringify({ users: [{ name: "ops", password: "live-secret" }] }),
       },
       code: "messaging/secret_like_value",
     },

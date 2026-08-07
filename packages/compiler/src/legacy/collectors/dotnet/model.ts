@@ -21,7 +21,7 @@ export interface DotnetArtifactEvidence {
   digest: string;
   bytes: number;
   mediaType: string;
-  role: "configuration" | "deployment_metadata" | "opaque_assembly";
+  role: "configuration" | "service_activation" | "deployment_metadata" | "opaque_assembly";
 }
 
 export interface DotnetObservation {
