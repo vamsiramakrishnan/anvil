@@ -9,6 +9,10 @@ This walkthrough gives you one complete success path before you use your own
 API. It uses a local fixture and dry runs, so it does not need credentials and
 does not contact an upstream service.
 
+This path starts from an API contract. If the system has only application-server,
+.NET, or broker configuration, use [Build a legacy inventory](/anvil/guides/legacy-inventory/)
+instead; legacy refinement currently stops before runtime bridge generation.
+
 You will:
 
 1. compile one API contract into a bundle;

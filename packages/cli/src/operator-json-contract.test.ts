@@ -484,6 +484,24 @@ describe("refinement harness import keeps the operator JSON contract", () => {
   });
 });
 
+describe("legacy product commands keep the operator JSON contract", () => {
+  it.each([
+    ["legacy bridge plan", ["legacy", "bridge", "plan", "missing-decision.json", "--json"]],
+    ["legacy plan", ["legacy", "plan", "missing-plan.json", "--json"]],
+    ["legacy graph", ["legacy", "graph", "missing-inventory.json", "--json"]],
+    ["legacy gaps", ["legacy", "gaps", "missing-inventory.json", "--json"]],
+    [
+      "legacy explain",
+      ["legacy", "explain", "missing-inventory.json", `lc_${"0".repeat(64)}`, "--json"],
+    ],
+    ["legacy diff", ["legacy", "diff", "missing-before.json", "missing-after.json", "--json"]],
+  ] as const)("%s emits one structured refusal document", async (label, argv) => {
+    const result = await run([...argv]);
+    const envelope = expectRefusalContract(result, label);
+    expect(envelope.reportType).toMatch(/^anvil\.legacy-/);
+  });
+});
+
 /* -------------------------------------------------------------------------- */
 /* The release verdict, made gateable                                          */
 /* -------------------------------------------------------------------------- */
@@ -615,6 +633,12 @@ const UNEXERCISED: Record<string, string> = {
   "estate support":
     "covered by cmd-estate-support.test.ts, not through this file's contract helper",
   "estate verify": "needs a completed import receipt",
+  "legacy inventory":
+    "covered by cmd-legacy-inventory.test.ts, including success and refusal envelopes",
+  "legacy refine task": "covered by cmd-legacy-refine.test.ts, including refusal envelopes",
+  "legacy refine review": "covered by cmd-legacy-refine.test.ts, including invalid proposals",
+  "legacy refine approve": "covered by cmd-legacy-refine.test.ts, including approval refusal",
+  "legacy refine reject": "shares the decision envelope and refusal path exercised by approve",
 };
 
 /** Leading non-flag tokens, resolved to the longest matching command path. */

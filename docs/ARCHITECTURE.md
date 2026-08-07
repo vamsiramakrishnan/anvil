@@ -1,15 +1,17 @@
 # Architecture
 
-Anvil is a compiler with a thin generated runtime. It captures an API source,
-builds one canonical contract, and projects that contract into a CLI, an MCP
-server, a skill, hooks, tests, and deployment inputs.
+Anvil is a compiler with a thin generated runtime. Its primary path captures an
+API source, builds one canonical contract, and projects that contract into a
+CLI, an MCP server, a skill, hooks, tests, and deployment inputs. A separate
+legacy path inventories offline technical evidence and produces reviewed,
+non-executable capability bindings when no useful API contract exists.
 
 This page describes the implementation architecture. For ownership and
 non-goals, read [Product boundary](PRODUCT_BOUNDARY.md).
 
 ## Design invariants
 
-The architecture protects six invariants:
+The architecture protects seven invariants:
 
 1. **One semantic model.** CLI, MCP, skill, hooks, mocks, and deployment inputs
    are projections of AIR, not separate sources of truth.
@@ -23,6 +25,8 @@ The architecture protects six invariants:
    remove a safety requirement.
 6. **Evidence binds to bytes.** Assurance records identify the bundle hash they
    tested and become stale after change.
+7. **Legacy discovery is not execution authority.** A technical candidate or
+   approved binding cannot imply that a runtime bridge exists.
 
 ## System flow
 
@@ -38,6 +42,29 @@ The architecture protects six invariants:
 
 `anvil agentify` orchestrates the first four discovery activities—capture,
 compile, assess, and capability proposal—then stops for review.
+
+## Legacy inventory and refinement flow
+
+Legacy mode does not pass deployment descriptors or broker configuration
+through the API protocol adapters. It uses a separate evidence model:
+
+| Stage | Input | Responsibility | Output |
+| --- | --- | --- | --- |
+| Offline acquisition | Caller-supplied file or hardened-expanded directory | Bound filesystem reads and preserve provenance | Relative member paths and bytes |
+| Collection | Java EE, .NET, or messaging members | Parse only declared configuration; hash opaque binaries | Artifacts, evidence, observations, diagnostics |
+| Reconciliation | Verified inventory snapshot | Group exact coordinate and invocation matches; retain every assertion | Technical candidates and explicit conflicts |
+| Task creation | One exact candidate | Freeze required decisions and non-negotiable policy | Content-addressed harness task |
+| Harness proposal | Task plus external evidence access | Propose business schema, errors, transport, and operational semantics | Untrusted submission bound to the task |
+| Assessment and review | Inventory, task, proposal, human decision | Verify lineage and completeness; keep approval separate | Assessment, receipt, and reviewed binding |
+
+Candidates are reconciliation products, not AIR operations. The approved
+binding records `runtime.placement = deployment_local_bridge` and
+`runtime.status = not_implemented`. No generator or runtime currently consumes
+it as executable input.
+
+This deliberate gap prevents the compiler architecture from implying that
+configuration parsing also solved vendor client compatibility, field mapping,
+transactions, identity, network placement, or completion semantics.
 
 ## Layer 0: source capture
 
@@ -248,11 +275,20 @@ compiled documents; it does not reinterpret the source contract.
 The CLI is an adapter over library APIs. Core behavior belongs in packages that
 can be called and tested without parsing terminal output.
 
+The legacy collectors, inventory model, reconciliation, and refinement
+workflow currently live behind the Node-only `@anvil/compiler/legacy` package
+export. This entrypoint accepts caller-supplied bytes and does not acquire files
+or network resources itself.
+
 ## Extension seams
 
 New behavior should enter through a narrow seam:
 
 - new source syntax through a protocol adapter;
+- new offline legacy evidence through a non-executing collector that emits the shared
+  legacy artifact, evidence, observation, and diagnostic model;
+- new executable legacy transport through a deployment-local adapter that
+  consumes only reviewed bindings and cannot widen their target or semantics;
 - new generated surface through a generator;
 - new agent platform through a target profile;
 - new durable store through the ledger interface;

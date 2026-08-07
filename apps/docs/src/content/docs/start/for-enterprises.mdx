@@ -24,7 +24,10 @@ Choose an API that is representative, not convenient:
 - the API can be exercised through a mock or non-production endpoint.
 
 A read-only demo proves parsing. A payment, provisioning, or case-management
-API proves whether the ownership and review model works.
+API proves whether the ownership and review model works. If the pilot begins
+from a legacy queue, EJB, or WCF endpoint, include the deployment and middleware
+owners and treat the approved binding as a design artifact until a tested local
+bridge exists.
 
 The pilot is successful when the team can explain and reproduce:
 
@@ -50,6 +53,12 @@ Use `agentify` for discovery. It compiles the source, reports readiness, and
 proposes capability boundaries without certifying or publishing the result.
 Store the generated bundle as a candidate artifact, not as hand-maintained
 source code.
+
+When no useful API contract exists, replace this step with legacy inventory and
+candidate refinement. The result is not a normal compiled bundle: it is a
+reviewed, non-executable capability binding. Do not count it as onboarded until
+the required deployment-local adapter, assurance, and operational ownership are
+in place.
 
 ### 3. Enrich with the owner
 
@@ -88,6 +97,8 @@ description edit. Review the semantic contract, not only the generated diff.
 | Build and assure bundles | Supports | Owns | Sets required evidence | Consumes results |
 | Deploy MCP runtime | Provides upstream coordinates | Owns | Reviews IAM and egress | Registers endpoint |
 | Respond to contract drift | Owns source change | Runs detection | Reviews safety loosening | Revalidates dependent workflows |
+| Confirm legacy deployment bindings | Consulted | Coordinates middleware owner | Reviews resulting exposure | Does not infer from names |
+| Operate a legacy bridge | Supports business behavior | Owns deployment and adapter lifecycle | Reviews identity and network boundary | Consumes the domain MCP surface |
 
 Avoid a model where the platform team guesses business semantics for hundreds
 of services. The compiler can detect uncertainty; only the service owner can
@@ -148,5 +159,6 @@ assurance evidence, and an operational runtime.
 - [Run Anvil in CI](/anvil/guides/ci/)
 - [Write an Anvil manifest](/anvil/guides/manifest/)
 - [Import a gateway estate](/anvil/cookbooks/import-a-gateway-estate/)
+- [Inventory a legacy estate](/anvil/guides/legacy-inventory/)
 - [Connect Gemini Enterprise](/anvil/cookbooks/connect-gemini-enterprise/)
 - [Read the architecture](/anvil/concepts/architecture/)

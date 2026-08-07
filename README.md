@@ -65,6 +65,19 @@ before any network call.
 [Follow the quickstart](apps/docs/src/content/docs/start/quickstart.md) for the
 complete first-run walkthrough.
 
+## Choose your starting point
+
+| What you have | Use | Result |
+| --- | --- | --- |
+| An OpenAPI, WSDL, proto, GraphQL, OData, Discovery, or Postman contract | `anvil compile` or `anvil agentify` | An AIR bundle with aligned CLI, MCP, skill, hooks, tests, and deployment inputs |
+| An API gateway export | `anvil estate inventory` | An estate audit and review-safe adoption plan |
+| Application-server, .NET, or broker configuration but no useful API contract | `anvil legacy inventory` then `anvil legacy gaps` | Evidence-backed candidates with explicit coverage gaps and provenance |
+
+Legacy mode has a different lifecycle from compilation. It can inventory and
+interrogate evidence, refine a candidate into a human-approved capability
+binding, and plan the contract for a deployment-local bridge. It does not
+generate, load, deploy, or run a Java, Windows, or broker bridge.
+
 ## Bring your own API
 
 Use `agentify` for a first pass over an unfamiliar contract:
@@ -128,12 +141,149 @@ multi-file behavior, and format-specific boundaries. If the source of truth is
 an API gateway estate, begin with [gateway estates](docs/gateways.md) instead
 of compiling one exported file at a time.
 
+If no API contract exists, use the separate legacy workflow below. Do not
+compile reconstructed middleware configuration as though it were an authored
+API contract.
+
+## Inventory a legacy system without invoking it
+
+When evidence must come from several systems, address the acquisition contract
+before collecting anything:
+
+```bash
+pnpm anvil legacy plan collection-plan.json \
+  --out collection-plan.addressed.json
+```
+
+The plan requires revision-pinned repository evidence and cannot express
+unsafe acquisition modes. It validates and identifies the plan; it does not
+fetch evidence or combine inventories. Then collect each hardened offline
+export under its real provenance:
+
+```bash
+pnpm anvil legacy inventory ./refunds-prod-export \
+  --environment prod \
+  --application refund-service \
+  --source-kind deployed_configuration \
+  --source-id websphere-prod-cell-1 \
+  --out refunds-prod.inventory.json
+```
+
+The collectors understand Java EE descriptors and inert Jakarta/Javax EJB
+source annotations; WebLogic, WebSphere, and JBoss bindings; explicit WCF,
+MSMQ, `.svc`, and `serviceActivations` configuration; AsyncAPI, IBM MQ,
+Artemis, and RabbitMQ topology; and Kafka Admin, Schema Registry, Strimzi
+`KafkaTopic`, and Strimzi `KafkaConnector` exports. RabbitMQ collection projects
+only allowlisted topology fields and excludes users, permissions, passwords,
+and credential hashes. Compiled Java and .NET binaries are digest-only inputs.
+The collectors do not connect to a server or broker, expand an archive, load a
+class or assembly, execute code, or consume a message.
+
+AsyncAPI keeps logical channel keys and operation identity separate from the
+physical address, and retains declared reply, correlation, and discriminator
+evidence. Schema Registry observations retain the subject, version, type,
+compatibility, references, and a digest of the schema rather than its body.
+
+Interrogate the result before asking a harness to invent semantics:
+
+```bash
+pnpm anvil legacy graph refunds-prod.inventory.json \
+  --out refunds-prod.graph.json
+pnpm anvil legacy gaps refunds-prod.inventory.json \
+  --plan collection-plan.addressed.json \
+  --check \
+  --out refunds-prod.gaps.json
+pnpm anvil legacy explain refunds-prod.inventory.json lc_<candidate-hash> \
+  --out refunds-submit.explanation.json
+pnpm anvil legacy diff refunds-prod.previous.json refunds-prod.inventory.json \
+  --out refunds-prod.diff.json
+```
+
+`graph` preserves evidence links, `gaps` separates collector yield from
+semantic completeness, `explain` traces one candidate to its claims and source
+artifacts, and `diff` separates logical-lineage changes from deployment
+occurrence changes. The checked-in corpus pins 16 licensed public specimens
+across application servers, .NET, and messaging; its oracles check expected
+behavior, deterministic output, and sensitive-output exclusion without
+vendoring third-party bytes.
+
+Inventory produces technical candidates, not business APIs. It preserves every
+conflicting queue, JNDI, endpoint, direction, and transport claim. A coding
+harness can investigate one exact candidate and propose the missing contract:
+
+```bash
+pnpm anvil legacy refine task \
+  refunds-prod.inventory.json lc_<candidate-hash> \
+  --out refunds-submit.task.json
+
+pnpm anvil legacy refine review \
+  refunds-prod.inventory.json \
+  refunds-submit.task.json \
+  refunds-submit.submission.json \
+  --out refunds-submit.review.json
+
+pnpm anvil legacy refine approve \
+  refunds-prod.inventory.json \
+  refunds-submit.review.json \
+  --reviewer refund-owner@example.com \
+  --reason "Verified against the deployed binding and service contract." \
+  --out refunds-submit.decision.json
+```
+
+The proposal must define a business-shaped operation, clear input and output
+schemas, stable errors, pagination where the real interface supports it, the
+exact transport target, completion semantics, authorization, idempotency, and
+retry policy. Anvil assesses that proposal; a human separately approves or
+rejects it.
+
+An approved binding remains explicit about the current boundary:
+
+```json
+{
+  "runtime": {
+    "placement": "deployment_local_bridge",
+    "status": "not_implemented"
+  }
+}
+```
+
+From that approved decision, produce a reviewable runtime contract:
+
+```bash
+pnpm anvil legacy bridge plan refunds-submit.decision.json \
+  --out refunds-submit.bridge-plan.json
+```
+
+An optional `--driver driver.json` performs a static descriptor compatibility
+assessment. The command does not load the driver, generate bridge code, connect
+to the estate, or prove conformance or live readiness.
+
+Harnesses can use the same pure product surfaces from
+`@anvil/compiler/legacy`: `collectLegacyInventory`,
+`createLegacyCollectionPlan`, `projectLegacyEvidenceGraph`,
+`assessAndPlanLegacyCoverage`, `explainLegacyCandidate`,
+`diffLegacyInventories`, `planLegacyBridge`, and
+`assessLegacyBridgeDriver`. Callers that acquire artifacts own that acquisition
+boundary; Anvil's SDK only evaluates the supplied bytes and records.
+
+Start with [the legacy-estate model](docs/legacy-estates.md), then follow
+[inventory](docs/legacy-inventory.md) and
+[candidate refinement](docs/legacy-refinement.md). Harness authors can use the
+[TypeScript SDK](docs/legacy-sdk.md). The runtime work still required is
+specified in [deployment-local bridges](docs/legacy-runtime-bridges.md).
+
 ## Documentation
 
 - [Install Anvil](apps/docs/src/content/docs/cookbooks/install-anvil.md)
 - [Quickstart](apps/docs/src/content/docs/start/quickstart.md)
 - [Write an Anvil manifest](docs/MANIFEST.md)
 - [Refine an API with a coding harness](docs/refinement-sdk.md)
+- [Understand legacy application estates](docs/legacy-estates.md)
+- [Build a legacy inventory](docs/legacy-inventory.md)
+- [Refine and review a legacy candidate](docs/legacy-refinement.md)
+- [Use the legacy TypeScript SDK](docs/legacy-sdk.md)
+- [Design a deployment-local legacy bridge](docs/legacy-runtime-bridges.md)
+- [See how legacy inventory performs on real GitHub projects](docs/backtesting/legacy-corpus.md)
 - [Run Anvil in CI](docs/CI.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Command reference](skills/anvil/reference/commands.md)

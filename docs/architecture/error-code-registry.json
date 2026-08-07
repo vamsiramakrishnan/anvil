@@ -2,9 +2,10 @@
   "$comment": [
     "Anvil's machine-readable error codes. Operators branch on these strings, so they",
     "are a public contract: renaming or dropping one silently breaks an integration",
-    "that was matching on it, and its `else` branch \u2014 usually 'proceed' \u2014 takes over.",
+    "that was matching on it, and its `else` branch — usually 'proceed' — takes over.",
     "",
-    "Generated from source by the AST extractor in error-code-registry.test.ts, which",
+    "Regenerate with: node tools/regenerate-error-code-registry.mjs. The AST extractor",
+    "is mirrored by error-code-registry.test.ts and",
     "counts a string literal only where it is USED as a code: a `code:` property, a",
     "`code =` assignment, the first argument to a *Error constructor, or an argument",
     "to a shared emit*/refuse*/reject* helper. A plain shape match would sweep in",
@@ -24,9 +25,9 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 314,
-  "asserted": 246,
-  "unasserted": 68,
+  "total": 384,
+  "asserted": 273,
+  "unasserted": 111,
   "codes": {
     "apiconnect/empty_export": {
       "packages": [
@@ -382,6 +383,156 @@
       ],
       "asserted": true
     },
+    "dotnet/ambiguous_base_address": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/ambiguous_binding_configuration": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/ambiguous_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/ambiguous_protocol_mapping": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/duplicate_artifact_path": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/endpoint_contains_credentials": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/invalid_metadata_root": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/invalid_service_activation": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/malformed_metadata": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/malformed_xml": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/no_discoverable_endpoint": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/no_service_model": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/non_utf8_artifact": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/opaque_assembly": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/opaque_endpoint": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/oversized_artifact": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/oversized_service_activation": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/runtime_default_binding": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/service_activation_missing_service": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/service_missing_name": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/too_many_artifacts": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/unresolved_relative_address": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/unsafe_artifact_path": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/unsupported_artifact": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/unsupported_metadata": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
     "estate/adoption_plan_failed": {
       "packages": [
         "cli"
@@ -513,158 +664,6 @@
         "cli"
       ],
       "asserted": false
-    },
-    "gateway/auth_contract_incomplete": {
-      "packages": [
-        "cli",
-        "compiler"
-      ],
-      "asserted": true
-    },
-    "gateway/authentication_unproven": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/duplicate_api_coordinate": {
-      "packages": [
-        "compiler"
-      ],
-      "asserted": true
-    },
-    "gateway/formal_definition_source_missing": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/gateway_url_required": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/invalid_gateway_url": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/invalid_identity_evidence": {
-      "packages": [
-        "compiler"
-      ],
-      "asserted": true
-    },
-    "gateway/invalid_spec_override_attestation": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/missing_runtime_coordinate": {
-      "packages": [
-        "cli",
-        "compiler"
-      ],
-      "asserted": true
-    },
-    "gateway/no_operations": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/opaque_policy": {
-      "packages": [
-        "compiler"
-      ],
-      "asserted": true
-    },
-    "gateway/policy_target_unmatched": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/reserved_api_environment": {
-      "packages": [
-        "compiler"
-      ],
-      "asserted": true
-    },
-    "gateway/reserved_api_revision": {
-      "packages": [
-        "compiler"
-      ],
-      "asserted": true
-    },
-    "gateway/reserved_api_version": {
-      "packages": [
-        "compiler"
-      ],
-      "asserted": false
-    },
-    "gateway/route_only_contract": {
-      "packages": [
-        "compiler"
-      ],
-      "asserted": true
-    },
-    "gateway/route_set_ambiguous": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/route_set_extra": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/route_set_missing": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/runtime_coordinate_attested": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/spec_override_without_spec": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/spec_override_wrong_vendor": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/unknown_api": {
-      "packages": [
-        "compiler"
-      ],
-      "asserted": false
-    },
-    "gateway/unnecessary_spec_override": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
-    },
-    "gateway/unscoped_gateway_identity": {
-      "packages": [
-        "cli"
-      ],
-      "asserted": true
     },
     "gateway_receipt/bundle_receipt_mismatch": {
       "packages": [
@@ -1045,6 +1044,158 @@
       ],
       "asserted": true
     },
+    "gateway/auth_contract_incomplete": {
+      "packages": [
+        "cli",
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/authentication_unproven": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/duplicate_api_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/formal_definition_source_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/gateway_url_required": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/invalid_gateway_url": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/invalid_identity_evidence": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/invalid_spec_override_attestation": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/missing_runtime_coordinate": {
+      "packages": [
+        "cli",
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/no_operations": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/opaque_policy": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/policy_target_unmatched": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/reserved_api_environment": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/reserved_api_revision": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/reserved_api_version": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway/route_only_contract": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/route_set_ambiguous": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/route_set_extra": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/route_set_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/runtime_coordinate_attested": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/spec_override_without_spec": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/spec_override_wrong_vendor": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/unknown_api": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway/unnecessary_spec_override": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/unscoped_gateway_identity": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
     "identity/anonymous_contract": {
       "packages": [
         "compiler"
@@ -1093,6 +1244,192 @@
       ],
       "asserted": false
     },
+    "legacy/bridge_binding_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_plan_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/candidate_not_found": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/invalid_coordinate": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/invalid_option": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/inventory_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/product_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_input_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_input_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/refinement_input_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_not_approvable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/refinement_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/refinement_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/source_limit_exceeded": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/source_member_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/source_symlink_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/source_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
     "mcp/duplicate_tool": {
       "packages": [
         "compiler"
@@ -1122,6 +1459,90 @@
         "compiler"
       ],
       "asserted": true
+    },
+    "messaging/ambiguous_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "messaging/artemis_no_destinations": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/asyncapi_missing_title": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/asyncapi_no_operations": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/asyncapi_unresolved_channel_reference": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/ccdt_missing_queue_manager_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/invalid_asyncapi": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/kafka_no_supported_objects": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/kafka_projection_truncated": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/malformed_artemis_xml": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "messaging/malformed_document": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "messaging/mqsc_missing_queue_manager_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "messaging/mqsc_no_supported_objects": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/too_many_artifacts": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
     },
     "mulesoft/empty_export": {
       "packages": [

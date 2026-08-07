@@ -1,6 +1,6 @@
 ---
 title: Anvil
-description: Compile API contracts into aligned CLI, MCP, skill, and hook surfaces with explicit approval, runtime enforcement, and hash-bound assurance.
+description: Compile API contracts into aligned agent tools, or inventory and refine legacy invocation boundaries when no useful API contract exists.
 template: splash
 hero:
   tagline: >-
@@ -145,6 +145,33 @@ If the source of truth is an API gateway, begin with estate inventory and
 triage rather than compiling arbitrary exports one at a time. See
 [Import a gateway estate](/anvil/cookbooks/import-a-gateway-estate/).
 
+## When the API contract does not exist
+
+Legacy systems often expose their real integration boundary through deployment
+descriptors, WCF configuration, queue-manager definitions, or application-server
+bindings. Those files establish technical facts, but they do not establish a
+safe business operation.
+
+Anvil provides a separate offline workflow:
+
+```bash
+pnpm anvil legacy inventory ./refunds-prod-export \
+  --environment prod \
+  --application refund-service \
+  --out refunds-prod.inventory.json
+```
+
+Inventory retains conflicting bindings instead of choosing one. A coding
+harness can then propose a business-shaped operation with clear schemas,
+errors, pagination, transport, completion, authorization, idempotency, and
+retry decisions. Anvil assesses the proposal and requires a separate human
+approval.
+
+This release stops at a reviewed binding. It does not yet generate or run the
+deployment-local Java, Windows, or broker bridge. Start with
+[Understand legacy estates](/anvil/concepts/legacy-estates/), then
+[build an inventory](/anvil/guides/legacy-inventory/).
+
 ## Prove the bundle you are about to ship
 
 Anvil separates four assurance questions:
@@ -170,6 +197,10 @@ evidence is missing or stale.
   <Card title="Your own API" icon="document">
     Check [source format support](/anvil/guides/source-formats/), then learn how
     to [write a manifest](/anvil/guides/manifest/).
+  </Card>
+  <Card title="A legacy system without an API" icon="seti:config">
+    [Inventory offline deployment evidence](/anvil/guides/legacy-inventory/),
+    refine one candidate, and keep runtime availability explicit.
   </Card>
   <Card title="Production pipeline" icon="seti:pipeline">
     [Run Anvil in CI](/anvil/guides/ci/) with review boundaries and
