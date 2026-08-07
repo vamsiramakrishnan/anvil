@@ -58,10 +58,11 @@ The sidebar is organized by developer intent:
 
 1. Start
 2. Build
-3. Operate
-4. Connect agents
-5. Reference
-6. Architecture
+3. Legacy systems
+4. Operate
+5. Connect agents
+6. Reference
+7. Architecture
 
 Keep a page in the earliest section that matches what the reader is trying to
 do. Do not put release policy in the quickstart or introductory product prose in

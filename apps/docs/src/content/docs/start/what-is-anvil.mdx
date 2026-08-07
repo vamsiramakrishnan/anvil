@@ -8,7 +8,9 @@ sidebar:
 import WhichSurfaceDiagram from '../../../components/diagrams/WhichSurfaceDiagram.astro';
 import LifecycleDiagram from '../../../components/diagrams/LifecycleDiagram.astro';
 
-Anvil is a compiler for agent-facing API tools.
+Anvil is a compiler for agent-facing API tools. When no useful API contract
+exists, it also provides an offline inventory and review protocol for legacy
+invocation boundaries.
 
 It reads an API contract, adds the operational facts the contract cannot
 express, and generates a CLI, an MCP server, a skill, and enforcement hooks
@@ -158,6 +160,14 @@ reported but not executed, and the WSDL adapter supports a documented XSD
 subset. Read [Source format support](/anvil/guides/source-formats/) before
 planning around a non-OpenAPI input.
 
+If the available source is application-server, .NET, or broker configuration
+rather than an API description, use `anvil legacy inventory`. That workflow
+captures technical observations, preserves conflicts, and lets a coding harness
+propose one evidence-backed business operation for human review. It does not
+lower the candidate into AIR or create an executable bridge in this release.
+Read [Legacy application estates](/anvil/concepts/legacy-estates/) for the
+separate lifecycle and current boundary.
+
 Anvil also does not:
 
 - infer business workflows without authored evidence;
@@ -175,3 +185,4 @@ These are product boundaries, not missing prompts. See
 - [Install Anvil](/anvil/cookbooks/install-anvil/)
 - [Complete the quickstart](/anvil/start/quickstart/)
 - [Adopt Anvil across a platform](/anvil/start/for-enterprises/)
+- [Inventory a legacy system](/anvil/guides/legacy-inventory/)

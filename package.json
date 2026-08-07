@@ -12,6 +12,7 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "test:estate-scale": "vitest run --root . packages/cli/src/estate-scale.test.ts packages/cli/src/wso2-apictl.test.ts",
+    "corpus:legacy": "node tools/legacy-corpus/run.mjs",
     "mutation": "node tools/mutation/run.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

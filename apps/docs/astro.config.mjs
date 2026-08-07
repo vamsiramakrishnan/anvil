@@ -100,6 +100,19 @@ export default defineConfig({
           ],
         },
         {
+          label: "Legacy systems",
+          items: [
+            { label: "Understand legacy estates", slug: "concepts/legacy-estates" },
+            { label: "Build an inventory", slug: "guides/legacy-inventory" },
+            { label: "Refine one candidate", slug: "guides/legacy-refinement" },
+            { label: "Use the TypeScript SDK", slug: "guides/legacy-sdk" },
+            {
+              label: "Design a runtime bridge",
+              slug: "concepts/legacy-runtime-bridges",
+            },
+          ],
+        },
+        {
           label: "Operate",
           items: [
             { label: "Operating Anvil", slug: "guides/operating-anvil" },
@@ -149,6 +162,7 @@ export default defineConfig({
               label: "Simulation and backtesting",
               slug: "concepts/simulation-and-backtesting",
             },
+            { label: "Legacy GitHub corpus", slug: "concepts/legacy-corpus" },
             { label: "Hooks and plugins", slug: "design/hooks-and-plugins" },
             {
               label: "Investigation architecture",

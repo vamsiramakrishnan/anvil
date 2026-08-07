@@ -1,0 +1,318 @@
+{
+  "schemaVersion": 1,
+  "systems": [
+    {
+      "id": "weblogic-kie",
+      "platform": "WebLogic",
+      "repository": "kiegroup/droolsjbpm-integration",
+      "revision": "c9c00f8b3aec4208ae94193b2af4c023e64bc414",
+      "license": {
+        "spdx": "Apache-2.0",
+        "evidenceUrl": "https://github.com/kiegroup/droolsjbpm-integration/blob/c9c00f8b3aec4208ae94193b2af4c023e64bc414/kie-server-parent/kie-server-api/src/main/java/org/kie/server/api/Version.java",
+        "note": "Apache-2.0 source header; no root license file was present at the pinned revision."
+      },
+      "source": {
+        "path": "kie-server-parent/kie-server-wars/kie-server/src/main/ee-resources/WEB-INF/weblogic-ejb-jar.xml",
+        "localPath": "WEB-INF/weblogic-ejb-jar.xml",
+        "sha256": "d4166e885a592d1f885c94994020a31327783cc5136d774471b6b39b5cee8d91"
+      },
+      "expected": {
+        "classification": "supported",
+        "exitCode": 0,
+        "collectors": ["java-ee"],
+        "observations": 2,
+        "candidates": 2,
+        "conflicts": 0,
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "weblogic-doctype",
+      "platform": "WebLogic",
+      "repository": "apache/tomee",
+      "revision": "90d36d2ed7cd610c657f5fd5a214db124d198777",
+      "license": {
+        "spdx": "Apache-2.0",
+        "evidenceUrl": "https://github.com/apache/tomee/blob/90d36d2ed7cd610c657f5fd5a214db124d198777/LICENSE"
+      },
+      "source": {
+        "path": "examples/helloworld-weblogic/src/main/resources/META-INF/weblogic-ejb-jar.xml",
+        "localPath": "META-INF/weblogic-ejb-jar.xml",
+        "sha256": "e0580f04395329a212c9e04046a6be07fa74002a3df7f2afb5525c7e2df65863"
+      },
+      "expected": {
+        "classification": "safety-refusal",
+        "exitCode": 1,
+        "collectors": ["java-ee"],
+        "observations": 0,
+        "candidates": 0,
+        "conflicts": 0,
+        "diagnostics": ["legacy/java-ee/unsafe_xml_construct"]
+      }
+    },
+    {
+      "id": "websphere-openliberty",
+      "platform": "WebSphere",
+      "repository": "OpenLiberty/open-liberty",
+      "revision": "f7d79c3841a0ef30a3de51075e37667c2cc31431",
+      "license": {
+        "spdx": "EPL-2.0",
+        "evidenceUrl": "https://github.com/OpenLiberty/open-liberty/blob/f7d79c3841a0ef30a3de51075e37667c2cc31431/LICENSE"
+      },
+      "source": {
+        "path": "dev/com.ibm.ws.ejbcontainer.mdb.jms_fat/test-applications/MDBXMLEJB.jar/resources/META-INF/ibm-ejb-jar-bnd.xml",
+        "localPath": "META-INF/ibm-ejb-jar-bnd.xml",
+        "sha256": "1a78fd2ab4634d700db548f6bed167981a2589ca1b2701dea24929fa8441611c"
+      },
+      "expected": {
+        "classification": "partial",
+        "exitCode": 0,
+        "collectors": ["java-ee"],
+        "observations": 9,
+        "candidates": 9,
+        "conflicts": 0,
+        "diagnostics": ["legacy/java-ee/opaque_vendor_binding"]
+      }
+    },
+    {
+      "id": "wildfly-annotations",
+      "platform": "JBoss / WildFly",
+      "repository": "wildfly/quickstart",
+      "revision": "4597dbbec829182382890188f8e2c800aee1da9d",
+      "license": {
+        "spdx": "Apache-2.0",
+        "evidenceUrl": "https://github.com/wildfly/quickstart/blob/4597dbbec829182382890188f8e2c800aee1da9d/LICENSE.txt"
+      },
+      "source": {
+        "path": "helloworld-mdb/src/main/java/org/jboss/as/quickstarts/mdb/HelloWorldQueueMDB.java",
+        "localPath": "HelloWorldQueueMDB.java",
+        "sha256": "9c6bf080caac9fe946f7e32b330424dc3794731b9c4f66cb7683bbca8256a9f5"
+      },
+      "expected": {
+        "classification": "unsupported",
+        "exitCode": 0,
+        "collectors": [],
+        "observations": 0,
+        "candidates": 0,
+        "conflicts": 0,
+        "diagnostics": ["legacy/inventory/no_applicable_collector"]
+      }
+    },
+    {
+      "id": "wcf-convention-http",
+      "platform": ".NET Framework / WCF",
+      "repository": "dotnet/samples",
+      "revision": "5fee0c35e0e8efc02a5234ed55bb2592f6d1b0b6",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "evidenceUrl": "https://github.com/dotnet/samples/blob/5fee0c35e0e8efc02a5234ed55bb2592f6d1b0b6/LICENSE"
+      },
+      "source": {
+        "path": "framework/wcf/Basic/Binding/Basic/Http/CS/service/Web.config",
+        "localPath": "Web.config",
+        "sha256": "3fb47dd8705781979e8b183a04b7c9b5dc40980ec2e725293400b2c3839e3de5"
+      },
+      "expected": {
+        "classification": "unsupported",
+        "exitCode": 0,
+        "collectors": ["dotnet"],
+        "observations": 0,
+        "candidates": 0,
+        "conflicts": 0,
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "wcf-msmq",
+      "platform": ".NET Framework / WCF",
+      "repository": "dotnet/samples",
+      "revision": "5fee0c35e0e8efc02a5234ed55bb2592f6d1b0b6",
+      "license": {
+        "spdx": "CC-BY-4.0",
+        "evidenceUrl": "https://github.com/dotnet/samples/blob/5fee0c35e0e8efc02a5234ed55bb2592f6d1b0b6/LICENSE"
+      },
+      "source": {
+        "path": "framework/wcf/Basic/Binding/Net/MSMQ/Transacted/CS/service/App.config",
+        "localPath": "App.config",
+        "sha256": "36abcf7bcb0a5bc281306db51c54bcc59245c9f7e29a5a9d68603f183a414a60"
+      },
+      "expected": {
+        "classification": "supported",
+        "exitCode": 0,
+        "collectors": ["dotnet"],
+        "observations": 2,
+        "candidates": 2,
+        "conflicts": 0,
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "ibm-mq-mqsc",
+      "platform": "IBM MQ",
+      "repository": "ibm-messaging/mq-uniform-clusters",
+      "revision": "4f4879f2e22dc954401b28054cb75e7b2c285706",
+      "license": {
+        "spdx": "Apache-2.0",
+        "evidenceUrl": "https://github.com/ibm-messaging/mq-uniform-clusters/blob/4f4879f2e22dc954401b28054cb75e7b2c285706/LICENSE"
+      },
+      "source": {
+        "path": "request-reply/QMConfig/UniCluster.mqsc",
+        "localPath": "UniCluster.mqsc",
+        "sha256": "1a1dc660bcd696a47320f0b861244a359debb7bfddc18100cd94b2b9558b7a97"
+      },
+      "expected": {
+        "classification": "partial",
+        "exitCode": 0,
+        "collectors": ["messaging"],
+        "observations": 3,
+        "candidates": 3,
+        "conflicts": 0,
+        "diagnostics": ["legacy/messaging/mqsc_missing_queue_manager_coordinate"]
+      }
+    },
+    {
+      "id": "ibm-mq-ccdt",
+      "platform": "IBM MQ",
+      "repository": "ibm-messaging/mq-dev-patterns",
+      "revision": "625ada4be4b918262639199c2af436d2ddf249c5",
+      "license": {
+        "spdx": "Apache-2.0",
+        "evidenceUrl": "https://github.com/ibm-messaging/mq-dev-patterns/blob/625ada4be4b918262639199c2af436d2ddf249c5/LICENSE"
+      },
+      "source": {
+        "path": "ccdt.json",
+        "localPath": "ccdt.json",
+        "sha256": "2ada3593c04a67bf12aeb61c9348235c92293caaad807e7237cbe4d295c49d78"
+      },
+      "expected": {
+        "classification": "supported",
+        "exitCode": 0,
+        "collectors": ["messaging"],
+        "observations": 3,
+        "candidates": 3,
+        "conflicts": 0,
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "artemis-broker",
+      "platform": "ActiveMQ Artemis",
+      "repository": "apache/artemis",
+      "revision": "41a666942a6a870e1ca6af80b5cb12328152270b",
+      "license": {
+        "spdx": "Apache-2.0",
+        "evidenceUrl": "https://github.com/apache/artemis/blob/41a666942a6a870e1ca6af80b5cb12328152270b/LICENSE"
+      },
+      "source": {
+        "path": "artemis-image/examples/byoc__etc/broker.xml",
+        "localPath": "broker.xml",
+        "sha256": "45dd910cbe5a280815555aea01dbb8046b0a5246355ebcef0b467fca11f87f18"
+      },
+      "expected": {
+        "classification": "supported",
+        "exitCode": 0,
+        "collectors": ["messaging"],
+        "observations": 2,
+        "candidates": 2,
+        "conflicts": 0,
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "asyncapi-v3-request-reply",
+      "platform": "AsyncAPI 3",
+      "repository": "asyncapi/spec",
+      "revision": "fff97984fdf06577cabf30feeaa9e1d4b6339249",
+      "license": {
+        "spdx": "Apache-2.0",
+        "evidenceUrl": "https://github.com/asyncapi/spec/blob/fff97984fdf06577cabf30feeaa9e1d4b6339249/LICENSE"
+      },
+      "source": {
+        "path": "examples/kraken-websocket-request-reply-multiple-channels-asyncapi.yml",
+        "localPath": "asyncapi.yml",
+        "sha256": "f64369546376e3c19a1ea3f2bdbc137ef2ab2348be4eb6a4fe9b2dda820bd534"
+      },
+      "expected": {
+        "classification": "partial",
+        "exitCode": 1,
+        "collectors": ["messaging"],
+        "observations": 12,
+        "candidates": 6,
+        "conflicts": 1,
+        "diagnostics": ["legacy/messaging/ambiguous_coordinate"]
+      }
+    },
+    {
+      "id": "rabbitmq-topology",
+      "platform": "RabbitMQ",
+      "repository": "sustainability-zhaw/docker-deploy",
+      "revision": "b0704792b021b61ad58432fc47ccfc174bc0e263",
+      "license": {
+        "spdx": "MIT",
+        "evidenceUrl": "https://github.com/sustainability-zhaw/docker-deploy/blob/b0704792b021b61ad58432fc47ccfc174bc0e263/LICENSE"
+      },
+      "source": {
+        "path": "contrib/mq-config/02-queues-exchanges.json",
+        "localPath": "rabbitmq-definitions.json",
+        "sha256": "83faf320cdf53143f8cd0b12aff2ce70eb61f2cfd55971e6ef1ae8da9b44fcdb"
+      },
+      "expected": {
+        "classification": "supported",
+        "exitCode": 0,
+        "collectors": ["messaging"],
+        "observations": 10,
+        "candidates": 10,
+        "conflicts": 0,
+        "diagnostics": []
+      }
+    },
+    {
+      "id": "rabbitmq-secret-export",
+      "platform": "RabbitMQ",
+      "repository": "vlingo/xoom-examples",
+      "revision": "19a7eb8a736f1bc442211ba8bd903f2afc14451e",
+      "license": {
+        "spdx": "MPL-2.0",
+        "evidenceUrl": "https://github.com/vlingo/xoom-examples/blob/19a7eb8a736f1bc442211ba8bd903f2afc14451e/LICENSE"
+      },
+      "source": {
+        "path": "xoom-e2e-sys-airline-ops/assets/rabbitmq/definitions.json",
+        "localPath": "rabbitmq-definitions.json",
+        "sha256": "8637c5adc8cabe6932667ae352565abb11c0661d7f198097f151238f5a404eff"
+      },
+      "expected": {
+        "classification": "safety-refusal",
+        "exitCode": 1,
+        "collectors": ["messaging"],
+        "observations": 0,
+        "candidates": 0,
+        "conflicts": 0,
+        "diagnostics": ["legacy/messaging/secret_like_value"]
+      }
+    },
+    {
+      "id": "strimzi-kafka-topic",
+      "platform": "Kafka / Strimzi",
+      "repository": "strimzi/strimzi-kafka-operator",
+      "revision": "2dc770410d518ce163ca1410bbabe6c50986d37b",
+      "license": {
+        "spdx": "Apache-2.0",
+        "evidenceUrl": "https://github.com/strimzi/strimzi-kafka-operator/blob/2dc770410d518ce163ca1410bbabe6c50986d37b/LICENSE"
+      },
+      "source": {
+        "path": "examples/topic/kafka-topic.yaml",
+        "localPath": "kafka-topic.yaml",
+        "sha256": "58b929f6d1d07e208d99ce44c3884b36e2e8ddd1e8400ae6ca5cf302ae0d352c"
+      },
+      "expected": {
+        "classification": "unsupported",
+        "exitCode": 0,
+        "collectors": ["messaging"],
+        "observations": 0,
+        "candidates": 0,
+        "conflicts": 0,
+        "diagnostics": ["legacy/messaging/unsupported_artifact"]
+      }
+    }
+  ]
+}

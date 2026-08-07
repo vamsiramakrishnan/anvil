@@ -9,6 +9,9 @@ const pkg = (name: string) =>
 export default defineConfig({
   resolve: {
     alias: {
+      "@anvil/compiler/legacy": fileURLToPath(
+        new URL("./packages/compiler/src/legacy/index.ts", import.meta.url),
+      ),
       "@anvil/air": pkg("air"),
       "@anvil/runtime": pkg("runtime"),
       "@anvil/compiler": pkg("compiler"),

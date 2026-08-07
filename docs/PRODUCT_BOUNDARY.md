@@ -1,8 +1,10 @@
 # Product boundary
 
 Anvil owns the transformation from an API contract to a reviewed, aligned, and
-assured agent-tool bundle. It does not own the upstream API, the organization's
-approval system, or live cloud deployment.
+assured agent-tool bundle. When no useful API contract exists, it also owns an
+offline path from captured legacy configuration to a reviewed, non-executable
+capability binding. It does not own the upstream system, the organization's
+approval system, or live deployment.
 
 This boundary matters because agent integrations fail when one tool quietly
 becomes the source of truth for semantics it cannot authoritatively know.
@@ -12,6 +14,7 @@ becomes the source of truth for semantics it cannot authoritatively know.
 Anvil accepts:
 
 - immutable API source bytes;
+- offline legacy artifact, application-server, .NET, and broker evidence;
 - reviewed semantic overlays;
 - explicit operation and capability decisions;
 - target and deployment coordinates; and
@@ -25,6 +28,11 @@ Anvil produces:
 - structured diagnostics and readiness reports;
 - hash-bound assurance records; and
 - a gated release plan for an operator to apply.
+
+The legacy path instead produces a content-addressed inventory, reconciled
+technical candidates, hash-bound harness tasks and proposals, human review
+receipts, and an approved binding whose runtime status remains
+`not_implemented`.
 
 Anvil does not convert unknown business meaning into authority.
 
@@ -111,6 +119,22 @@ plan. `publish` is intentionally a planning verb with no provider mutation.
 This separation prevents a local compiler command from becoming an ambiently
 credentialed deployment control plane.
 
+### 10. Legacy inventory and reviewed binding
+
+Anvil owns deterministic offline collectors for the explicitly supported Java
+EE, .NET Framework, and messaging configuration formats. It content-addresses
+artifacts and observations, preserves conflicting claims, and reconciles only
+exact technical coordinates.
+
+For one candidate, Anvil owns the immutable refinement task, proposal schema,
+deterministic assessment, and hash lineage through a separate human receipt.
+The coding harness may investigate and propose; it may not approve itself,
+invent a transport target, or execute the estate during refinement.
+
+The approved result is a reviewed business and transport plan. Lowering that
+binding into AIR, generating a domain MCP surface, and executing a
+deployment-local legacy adapter are outside the implemented boundary today.
+
 ## What stays outside Anvil
 
 | Concern | Owner | Anvil's role |
@@ -122,6 +146,8 @@ credentialed deployment control plane.
 | Organizational approval workflow | Existing change/risk system | Emit reviewable state and evidence that workflow can consume |
 | Cloud deployment | Platform delivery system | Generate artifacts and a plan; never imply that planning equals deployment |
 | Live gateway capture | Gateway operator | Consume explicit offline exports at documented support tiers |
+| Live legacy capture | Middleware operator | Consume bounded offline exports; never use management access as business authority |
+| Legacy protocol execution | Platform and middleware teams | Preserve the reviewed binding and report `not_implemented` until a tested local adapter exists |
 | Observability backend | Platform team | Emit structured execution records compatible with telemetry pipelines |
 | Business workflow invention | Domain owner | Represent authored workflows and block unresolved steps |
 | Exactly-once execution | Upstream design and transactional architecture | Provide bounded idempotency/deduplication guarantees with explicit failure boundaries |
@@ -139,6 +165,11 @@ Protocol adapters compile description formats. They do not automatically
 implement every native transport, vendor policy, script, or extension. When
 execution requires a protocol-specific bridge, that bridge remains an explicit
 deployment component.
+
+Legacy inventory makes this boundary especially important. Recognizing an MQ
+destination, WCF endpoint, or EJB binding does not install a compatible client,
+prove network reachability, define wire mapping, or make the invocation safe to
+retry.
 
 ### An autonomous approver
 
@@ -196,6 +227,8 @@ The boundary produces several implementation rules:
 - generators read AIR and never become semantic authorities;
 - approval and capability review are explicit lifecycle transitions;
 - generated output is replaced as a unit, not patched in place;
+- legacy inventories and reviewed bindings remain distinct from AIR until an
+  explicit, verified lowering path exists;
 - runtime code depends on compiled documents, not parsers or enrichment;
 - assurance records are content-addressed and fail stale; and
 - external actions remain distinguishable from local plans.

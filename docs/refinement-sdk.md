@@ -16,6 +16,11 @@ examples include an input named `val`, an amount with no unit, an error with no
 recovery action, a hidden pagination cursor, or a response that mixes durable data
 with dashboard button state.
 
+This workflow refines an operation that already exists in AIR. If no API
+contract exists and the starting point is an EJB, WCF endpoint, queue, procedure,
+or batch binding, use [legacy candidate refinement](legacy-refinement.md) and the
+separate [`@anvil/compiler/legacy` SDK](legacy-sdk.md).
+
 ## Choose the integration that fits your harness
 
 | Integration | Use it when | What the harness depends on |

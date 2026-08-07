@@ -41,6 +41,17 @@ A bundle holds the generated MCP server, CLI, and skill, plus the catalog,
 compiled manifests, mocks, evals, conformance tests, and deploy artifacts — all
 generated from one AIR document.
 
+## Candidate (legacy)
+
+**A reconciled technical invocation boundary discovered from offline legacy
+evidence.** A candidate groups observations only when their deployment
+coordinate and invocation match exactly. It retains every supported and
+conflicting claim.
+
+A candidate is not an AIR operation and has no invocation authority. It begins
+in `triage` or `review_required` and still lacks reviewed business semantics,
+authorization, idempotency, retry, and completion meaning.
+
 ## Capability
 
 **A group of related operations, like *Refunds* or *Payments*.** It's what an
@@ -50,6 +61,17 @@ operations and workflows.
 The compiler discovers capabilities by grouping operations by their OpenAPI tag,
 falling back to the resource noun. It records where each grouping came from and
 how confident it is, so the result is auditable rather than magical.
+
+## Capability binding (legacy)
+
+**The content-addressed business and transport plan emitted after a valid
+legacy proposal receives a separate human approval.** It binds the inventory,
+candidate, task, proposal, and review receipt identities to the accepted
+operation, transport, and operational semantics.
+
+A capability binding is not executable in the current release. It explicitly
+records `runtime.placement = deployment_local_bridge` and
+`runtime.status = not_implemented`.
 
 ## Confirmation
 
@@ -198,6 +220,16 @@ service/environment/upstream credential-profile boundary. When inbound identity
 is verified, the request fingerprint separately binds that principal so
 cross-caller raw-key reuse conflicts instead of leaking a replay; without it,
 the raw key is a shared operation coordinate.
+
+## Legacy inventory
+
+**A content-addressed snapshot of offline application, middleware, .NET, or
+broker evidence.** It contains artifacts, evidence records, collector
+observations, and diagnostics. Reconciled candidates are derived from the
+verified snapshot.
+
+Inventory proves which technical facts Anvil observed. It does not prove
+business meaning, permission to invoke a target, or runtime availability.
 
 ## Manifest (enrichment)
 

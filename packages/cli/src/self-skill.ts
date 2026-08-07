@@ -1,7 +1,7 @@
-import { GATEWAY_SUPPORT_CONTRACTS } from "@anvil/compiler";
 import { ANVIL_SOURCE_FORMATS } from "@anvil/generators";
 import type { Command, Help } from "commander";
 import { metaOf } from "./commands/meta.js";
+import { gatewaySupportMarkdownTable, legacyEstatesRef } from "./self-skill-estates.js";
 
 /**
  * Generate the skill that lets a coding-agent harness (Claude Code, Codex,
@@ -28,6 +28,11 @@ export function generateAnvilSkill(program: Command): Record<string, string> {
         "anvil-gateway-estates",
         "Audit and adopt APIs from Kong, WSO2, Apigee, MuleSoft, or IBM API Connect exports without mistaking gateway routes or view-shaped APIs for proven agent semantics.",
       ) + gatewayEstatesRef(),
+    "reference/legacy-estates.md":
+      frontmatter(
+        "anvil-legacy-estates",
+        "Inventory evidence from Java EE, WebLogic, WebSphere, JBoss, .NET Framework, WCF, and messaging estates before proposing any runtime bridge or business-shaped MCP tool.",
+      ) + legacyEstatesRef(),
     "reference/composing-capabilities.md":
       frontmatter(
         "anvil-composing-capabilities",
@@ -65,7 +70,7 @@ function frontmatter(name: string, description: string): string {
 function skillMd(): string {
   return `---
 name: anvil
-description: Use this skill to operate Anvil — compile API specifications (${ANVIL_SOURCE_FORMATS.join(", ")}) into agent-ready CLI + MCP + skill bundles, enrich unsafe-operation semantics, approve operations, and deploy. Use when turning an API specification into safe agent tools.
+description: Use this skill to operate Anvil — compile supported API specifications into aligned CLI, MCP, and skill bundles; inventory offline legacy estates; refine, approve, and deploy. Use when turning API contracts or legacy exports into safe agent tools.
 ---
 
 # Operating Anvil
@@ -88,6 +93,12 @@ contract, gateway identity, semantic lane, and strict per-API import.
 For overlap across verified bundles, read
 \`reference/composing-capabilities.md\` and use audit-only
 \`anvil capability compose\`. It produces no AIR, MCP, approval, or build input.
+
+## If no API description exists
+Read \`reference/legacy-estates.md\`; run \`anvil legacy inventory\` on an offline
+export, then refine one exact candidate. Inventory finds technical facts;
+refinement separates harness proposals from human approval. Neither connects to
+the runtime.
 
 ## The loop
 1. \`anvil compile <spec> --manifest <manifest> --out <dir>\` — build the bundle.
@@ -112,6 +123,7 @@ For overlap across verified bundles, read
 - \`reference/commands.md\` — every command and what it does.
 - \`reference/workflow.md\` — the enrich → approve workflow and manifest shape.
 - \`reference/gateway-estates.md\` — whole-estate audit, native-format boundaries, view/BFF semantics, and receipt-safe adoption.
+- \`reference/legacy-estates.md\` — offline Java/.NET/messaging evidence, conflicts, and the boundary before bridge generation.
 - \`reference/composing-capabilities.md\` — audit and review cross-bundle read overlap without inferring authority or generating MCP.
 - \`reference/gemini-enterprise.md\` — choose and safely configure one Gemini Enterprise BYO-MCP journey.
 - \`reference/upstream-credentials.md\` — configure outbound authentication from the runtime to the upstream API.
@@ -259,22 +271,6 @@ is a separate axis. Set either \`resource\` or \`verb\`; the other is read from 
 current name. A re-home that collides with another operation is re-disambiguated
 deterministically, never silently.
 `;
-}
-
-function gatewaySupportMarkdownTable(): string {
-  const tier = (value: (typeof GATEWAY_SUPPORT_CONTRACTS)[number]["releaseTier"]) =>
-    value.replaceAll("_", " ");
-  return [
-    "| Vendor | Release tier | Directly understood input today |",
-    "| --- | --- | --- |",
-    ...GATEWAY_SUPPORT_CONTRACTS.map((contract) => {
-      const input =
-        contract.acceptedInputs.length > 0
-          ? contract.acceptedInputs.map((candidate) => candidate.description).join(" ")
-          : "No accepted input; research contract only.";
-      return `| ${contract.displayName} | \`${tier(contract.releaseTier)}\` | ${input} |`;
-    }),
-  ].join("\n");
 }
 
 function gatewayEstatesRef(): string {

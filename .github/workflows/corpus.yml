@@ -61,6 +61,18 @@ jobs:
           mkdir -p corpus-reports/conformance
           cp tools/corpus/report/report.jsonl tools/corpus/report/summary.md corpus-reports/conformance/ 2>/dev/null || true
 
+      # Gate: real application-server and broker artifacts at immutable GitHub
+      # commits must remain deterministic and match their reviewed outcomes.
+      - name: Legacy estate (pinned GitHub artifacts, gates)
+        if: always()
+        run: pnpm corpus:legacy
+
+      - name: Save legacy estate report
+        if: always()
+        run: |
+          mkdir -p corpus-reports/legacy-estate
+          cp tools/legacy-corpus/report/report.json tools/legacy-corpus/report/summary.md corpus-reports/legacy-estate/ 2>/dev/null || true
+
       # Informational: seeded random sample of the apis.guru universe, raw
       # compiles, invariant oracles only. Fails the job only on `crash`.
       - name: Sweep (informational, crash-fatal)

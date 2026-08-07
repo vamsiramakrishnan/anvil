@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ejb-jar xmlns="http://xmlns.jcp.org/xml/ns/javaee" version="3.2">
+  <enterprise-beans>
+    <session>
+      <ejb-name>RefundBean</ejb-name>
+      <remote>com.acme.refunds.RefundService</remote>
+      <ejb-class>com.acme.refunds.RefundBean</ejb-class>
+      <session-type>Stateless</session-type>
+    </session>
+  </enterprise-beans>
+</ejb-jar>

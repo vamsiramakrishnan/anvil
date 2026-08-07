@@ -65,6 +65,18 @@ before any network call.
 [Follow the quickstart](apps/docs/src/content/docs/start/quickstart.md) for the
 complete first-run walkthrough.
 
+## Choose your starting point
+
+| What you have | Use | Result |
+| --- | --- | --- |
+| An OpenAPI, WSDL, proto, GraphQL, OData, Discovery, or Postman contract | `anvil compile` or `anvil agentify` | An AIR bundle with aligned CLI, MCP, skill, hooks, tests, and deployment inputs |
+| An API gateway export | `anvil estate inventory` | An estate audit and review-safe adoption plan |
+| Application-server, .NET, or broker configuration but no useful API contract | `anvil legacy inventory` | An evidence-backed inventory of technical invocation candidates |
+
+Legacy mode has a different lifecycle from compilation. It can inventory and
+refine a candidate into a human-approved capability binding, but this release
+does not generate or run the deployment-local Java, Windows, or broker bridge.
+
 ## Bring your own API
 
 Use `agentify` for a first pass over an unfamiliar contract:
@@ -128,12 +140,86 @@ multi-file behavior, and format-specific boundaries. If the source of truth is
 an API gateway estate, begin with [gateway estates](docs/gateways.md) instead
 of compiling one exported file at a time.
 
+If no API contract exists, use the separate legacy workflow below. Do not
+compile reconstructed middleware configuration as though it were an authored
+API contract.
+
+## Inventory a legacy system without invoking it
+
+Start from a hardened offline export:
+
+```bash
+pnpm anvil legacy inventory ./refunds-prod-export \
+  --environment prod \
+  --application refund-service \
+  --source-kind deployed_configuration \
+  --source-id websphere-prod-cell-1 \
+  --out refunds-prod.inventory.json
+```
+
+The collectors understand declarative Java EE, WebLogic, WebSphere, JBoss,
+.NET Framework, WCF, MSMQ, AsyncAPI, IBM MQ, Artemis, RabbitMQ, and Kafka
+evidence. They do not connect to a server or broker, open an archive, load an
+assembly, execute bytecode, consume a message, or read a secret.
+
+Inventory produces technical candidates, not business APIs. It preserves every
+conflicting queue, JNDI, endpoint, direction, and transport claim. A coding
+harness can investigate one exact candidate and propose the missing contract:
+
+```bash
+pnpm anvil legacy refine task \
+  refunds-prod.inventory.json lc_<candidate-hash> \
+  --out refunds-submit.task.json
+
+pnpm anvil legacy refine review \
+  refunds-prod.inventory.json \
+  refunds-submit.task.json \
+  refunds-submit.submission.json \
+  --out refunds-submit.review.json
+
+pnpm anvil legacy refine approve \
+  refunds-prod.inventory.json \
+  refunds-submit.review.json \
+  --reviewer refund-owner@example.com \
+  --reason "Verified against the deployed binding and service contract." \
+  --out refunds-submit.decision.json
+```
+
+The proposal must define a business-shaped operation, clear input and output
+schemas, stable errors, pagination where the real interface supports it, the
+exact transport target, completion semantics, authorization, idempotency, and
+retry policy. Anvil assesses that proposal; a human separately approves or
+rejects it.
+
+An approved binding remains explicit about the current boundary:
+
+```json
+{
+  "runtime": {
+    "placement": "deployment_local_bridge",
+    "status": "not_implemented"
+  }
+}
+```
+
+Start with [the legacy-estate model](docs/legacy-estates.md), then follow
+[inventory](docs/legacy-inventory.md) and
+[candidate refinement](docs/legacy-refinement.md). Harness authors can use the
+[TypeScript SDK](docs/legacy-sdk.md). The runtime work still required is
+specified in [deployment-local bridges](docs/legacy-runtime-bridges.md).
+
 ## Documentation
 
 - [Install Anvil](apps/docs/src/content/docs/cookbooks/install-anvil.md)
 - [Quickstart](apps/docs/src/content/docs/start/quickstart.md)
 - [Write an Anvil manifest](docs/MANIFEST.md)
 - [Refine an API with a coding harness](docs/refinement-sdk.md)
+- [Understand legacy application estates](docs/legacy-estates.md)
+- [Build a legacy inventory](docs/legacy-inventory.md)
+- [Refine and review a legacy candidate](docs/legacy-refinement.md)
+- [Use the legacy TypeScript SDK](docs/legacy-sdk.md)
+- [Design a deployment-local legacy bridge](docs/legacy-runtime-bridges.md)
+- [See how legacy inventory performs on real GitHub projects](docs/backtesting/legacy-corpus.md)
 - [Run Anvil in CI](docs/CI.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Command reference](skills/anvil/reference/commands.md)

@@ -539,6 +539,80 @@ Options:
 - `--bundle <dir>` — also verify the generated output files against the receipt
 - `--json` — emit a machine-readable integrity report
 
+### `anvil legacy`
+`anvil legacy [options] [command]`
+
+Inventory offline legacy application and messaging evidence.
+
+Discover evidence-backed EJB, WCF, resource-adapter, and messaging invocation candidates from caller-supplied offline exports. Collection never connects to a server or broker, loads an assembly, executes bytecode, opens an archive, reads a queue, or invents business semantics.
+
+#### `anvil legacy inventory`  *(mutates)*
+`anvil legacy inventory [options] <source>`
+
+Build a content-addressed legacy estate inventory without invoking the estate.
+
+Reads one regular file or hardened-expanded directory without following symbolic links. The default auto collector recognizes Java EE/WebLogic/WebSphere/JBoss descriptors, .NET Framework/WCF configuration, and supported broker or AsyncAPI exports. Physical bindings remain evidenced claims, and disagreements remain conflicts for review.
+
+Options:
+- `--environment <id>` — deployment environment coordinate
+- `--application <id>` — application coordinate
+- `--estate <id>` — estate id (default: source directory or file name)
+- `--estate-name <name>` — human-readable estate name
+- `--source-id <id>` — stable evidence-system id (default: <estate>:<environment>)
+- `--source-kind <kind>` — evidence authority (deployed_artifact | deployed_configuration | broker_configuration | artifact_repository | source_repository | runtime_observation | operator_attestation | service_catalog | documentation | naming_inference)
+- `--revision <revision>` — immutable source revision or export digest label
+- `--collector <collector>` — collector lane (auto | java-ee | dotnet | messaging)
+- `--out <file>` — write the complete report without overwriting different content
+- `--check` — exit non-zero when any candidate contains a conflict
+- `--json` — emit the complete machine-readable report
+
+#### `anvil legacy refine`
+`anvil legacy refine [options] [command]`
+
+Turn one inventory candidate into a reviewed business and transport binding.
+
+Export a hash-bound task for a coding harness, validate its evidence-backed proposal, then record a separate human approval or rejection. A reviewed binding remains a non-executable plan until a deployment-local bridge adapter is implemented.
+
+##### `anvil legacy refine task`  *(mutates)*
+`anvil legacy refine task [options] <inventory> <candidate-id>`
+
+Export one deterministic candidate-refinement task.
+
+Options:
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete task report
+
+##### `anvil legacy refine review`  *(mutates)*
+`anvil legacy refine review [options] <inventory> <task> <submission>`
+
+Import and deterministically assess one harness proposal.
+
+Options:
+- `--out <file>` — write the review pack without overwriting different content
+- `--json` — emit the complete review pack
+
+##### `anvil legacy refine approve`  *(mutates)*
+`anvil legacy refine approve [options] <inventory> <review>`
+
+Approve the exact assessed proposal and emit a non-executable binding plan.
+
+Options:
+- `--reviewer <identity>` — reviewer identity recorded in the receipt
+- `--reason <text>` — why this exact proposal is approved
+- `--out <file>` — write the decision without overwriting different content
+- `--json` — emit the complete decision report
+
+##### `anvil legacy refine reject`  *(mutates)*
+`anvil legacy refine reject [options] <inventory> <review>`
+
+Reject the exact assessed proposal and retain an auditable receipt.
+
+Options:
+- `--reviewer <identity>` — reviewer identity recorded in the receipt
+- `--reason <text>` — why this exact proposal is rejected
+- `--out <file>` — write the decision without overwriting different content
+- `--json` — emit the complete decision report
+
 ### `anvil sources`
 `anvil sources [options] [command]`
 

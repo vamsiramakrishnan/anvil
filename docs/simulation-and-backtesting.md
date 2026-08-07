@@ -70,6 +70,11 @@ affect a whole class of specs are fixed in the compiler or generators — with t
 Google Workspace, and a SOAP core-banking system have all been through it;
 `reproduce/reproduce.sh <system>` regenerates any bundle from scratch.
 
+The [legacy GitHub corpus](/anvil/concepts/legacy-corpus/) applies the same idea
+to application-server descriptors and broker exports. It pins real WebLogic,
+WebSphere, WildFly, WCF, IBM MQ, Artemis, RabbitMQ, Kafka, and AsyncAPI inputs by
+Git commit and digest, then runs each twice through `anvil legacy inventory`.
+
 ## Backtesting a gateway estate
 
 The [gateway adapters](/anvil/concepts/gateway-estates/) emit into the same
