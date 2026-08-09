@@ -75,6 +75,9 @@ importers:
       '@anvil/compiler':
         specifier: workspace:*
         version: link:../compiler
+      '@anvil/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@anvil/simulator':
         specifier: workspace:*
         version: link:../simulator
@@ -5168,7 +5171,7 @@ snapshots:
       obug: 2.1.3
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.10(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.27.7)(jiti@2.7.0)(yaml@2.9.0))
+      vitest: 4.1.10(@types/node@22.20.1)(@vitest/coverage-v8@4.1.10)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.27.7)(jiti@2.7.0)(yaml@2.9.0))
 
   '@vitest/expect@4.1.10':
     dependencies:
