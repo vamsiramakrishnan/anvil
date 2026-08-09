@@ -340,7 +340,11 @@ export function resolveAsyncContract(
       detail: `'${contract.jobIdField}' is not a field of ${operation.id}'s response`,
     };
   }
-  if (status && contract.stateField && pathProvablyAbsent(status.output.schema, contract.stateField)) {
+  if (
+    status &&
+    contract.stateField &&
+    pathProvablyAbsent(status.output.schema, contract.stateField)
+  ) {
     return {
       ok: false,
       issue: "state_field_absent",

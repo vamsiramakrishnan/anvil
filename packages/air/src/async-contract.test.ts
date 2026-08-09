@@ -324,7 +324,9 @@ describe("a webhook-only contract completes with no poll operation at all", () =
   it("refuses a signature scheme missing its reference", () => {
     const submit = op({
       asyncContract: webhookOnlyContract({
-        webhook: webhookContract({ signatureVerification: webhookVerification({ secretRef: "  " }) }),
+        webhook: webhookContract({
+          signatureVerification: webhookVerification({ secretRef: "  " }),
+        }),
       }),
     });
     const r = resolveAsyncContract(submit, index(submit, webhookOp()));
@@ -334,7 +336,9 @@ describe("a webhook-only contract completes with no poll operation at all", () =
 
   it("describes waiting for the webhook, not a poll operation", () => {
     const submit = op({ asyncContract: webhookOnlyContract() });
-    const sentence = asyncContractSentence(resolveAsyncContract(submit, index(submit, webhookOp())));
+    const sentence = asyncContractSentence(
+      resolveAsyncContract(submit, index(submit, webhookOp())),
+    );
     expect(sentence).toContain("job.id");
     expect(sentence).toContain("calling back");
     expect(sentence).not.toContain("poll '");
@@ -367,7 +371,10 @@ describe("WebhookSignatureVerification variants round-trip through schema valida
         secretRef: "secrets/github-webhook",
       },
     ],
-    ["provider_sdk", { scheme: "provider_sdk", provider: "stripe", secretRef: "secrets/stripe-webhook" }],
+    [
+      "provider_sdk",
+      { scheme: "provider_sdk", provider: "stripe", secretRef: "secrets/stripe-webhook" },
+    ],
     [
       "remote_verify",
       {
@@ -388,7 +395,9 @@ describe("WebhookSignatureVerification variants round-trip through schema valida
     ],
   ];
 
-  it.each(variants)("%s survives Operation.parse and resolves", (_scheme, signatureVerification) => {
+  it.each(
+    variants,
+  )("%s survives Operation.parse and resolves", (_scheme, signatureVerification) => {
     const submit = op({
       asyncContract: webhookOnlyContract({
         webhook: webhookContract({ signatureVerification }),
