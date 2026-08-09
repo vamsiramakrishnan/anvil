@@ -31,8 +31,8 @@
       "plan": "Split graph construction / coordinate resolution / overlap analysis / policy / report projection. Composition stays audit-only. Queued behind estate."
     },
     "packages/generators/src/deploy.ts": {
-      "lines": 1630,
-      "plan": "Split provider-neutral deploy-plan validation from Cloud Run projection so a second target does not fork the file. Queued."
+      "lines": 1699,
+      "plan": "Raised deliberately from 1630 for async-events Phase 3: deploy/README.md now documents the generated /webhooks/<service>/<opId> receiver routes (webhookReadmeSection) and the plain-env convention their signature-verification refs resolve through, mirroring how credential_secret_refs is already documented here. The route generation itself lives in entrypoints.ts (resolvedWebhookRoutes/generateRuntimeServer) — this file only reads that same function to describe it to an operator, one more fact about the artifact this file already owns describing, not new deploy-plan logic. Split provider-neutral deploy-plan validation from Cloud Run projection so a second target does not fork the file. Queued."
     },
     "packages/cli/src/self-skill.ts": {
       "lines": 1575,
@@ -59,8 +59,8 @@
       "plan": "Already pure domain with rendering separated — the shape estate.ts is being moved toward. Long, but not misowned; revisit only if it grows."
     },
     "packages/compiler/src/classify.ts": {
-      "lines": 1116,
-      "plan": "Cohesive: one inference pass over AIR. Watch for growth rather than split speculatively."
+      "lines": 1120,
+      "plan": "Raised deliberately from 1116 for async-events Phase 1: classifyArchetype takes an isWebhookReceiver param (checked first, unconditionally — structurally certain from provenance), and findJobHandleField/findStateField are exported for reuse against webhook payloads. Cohesive: one inference pass over AIR. Watch for growth rather than split speculatively."
     },
     "packages/compiler/src/gateway/support-contract.ts": {
       "lines": 1098,
@@ -71,12 +71,12 @@
       "plan": "One parser, one format. Splitting parsers by size would not improve ownership."
     },
     "packages/air/src/schema.ts": {
-      "lines": 1081,
-      "plan": "The canonical model definition. Length is inherent to being the single source of truth; splitting it would scatter the authority."
+      "lines": 1126,
+      "plan": "Raised deliberately from 1081 for async-events Phase 0: AsyncContractSchema gained an optional webhook field and WebhookContractSchema/WebhookSignatureVerificationSchema (the Zod mirror of async-contract.ts's WebhookContract/WebhookSignatureVerification) were added alongside it, same file, same reason the two must stay structurally identical. The canonical model definition. Length is inherent to being the single source of truth; splitting it would scatter the authority."
     },
     "packages/compiler/src/manifest.ts": {
-      "lines": 1077,
-      "plan": "Cohesive: manifest parsing plus enrichment application. Watch."
+      "lines": 1261,
+      "plan": "Raised deliberately from 1077 for async-events Phase 1: a new async_contract manifest key (mirroring the existing idempotency key's pattern) lets a human hand-supply a complete AsyncContract.webhook — including its full signature_verification sub-block — for the common real-world case (Stripe, GitHub, Twilio, per the design doc's own vendor evidence) where no spec expresses this and the compiler must not guess it. Cohesive: manifest parsing plus enrichment application. Watch."
     },
     "packages/compiler/src/gateway/receipt.ts": {
       "lines": 1060,
@@ -95,8 +95,8 @@
       "plan": "Watch."
     },
     "packages/runtime/src/idempotency.ts": {
-      "lines": 979,
-      "plan": "Safety-critical. Prefer tests over splitting, as with executor.ts. Raised from 977 for a comment explaining why InMemoryLedger.durable is annotated `boolean` rather than inferred as the literal `false` — the class implements an interface that permits either, and the literal type prevented a durable test double from subclassing it."
+      "lines": 1212,
+      "plan": "Raised deliberately from 979 for async-events Phase 2, Decision A: the job-handle index (LedgerEntry.jobId, complete()'s new optional secondaryKey param, findBySecondaryKey) needed in both InMemoryLedger and FirestoreLedger, the latter backed by its own sibling Firestore collection with the same create/verify/reconcile rigor the rest of the class already applies. Safety-critical. Prefer tests over splitting, as with executor.ts. Previously raised from 977 for a comment explaining why InMemoryLedger.durable is annotated `boolean` rather than inferred as the literal `false` — the class implements an interface that permits either, and the literal type prevented a durable test double from subclassing it."
     },
     "packages/harness/src/conformance.ts": {
       "lines": 974,
@@ -115,16 +115,20 @@
       "plan": "Watch."
     },
     "packages/certification/src/checks.ts": {
-      "lines": 884,
-      "plan": "Expected to grow if certification truth consolidates here; raise deliberately with that change, not incidentally."
+      "lines": 1092,
+      "plan": "Raised deliberately from 892 for async-events Phase 4: three new static checks (async_completion_source_present, webhook_signature_refs_resolve, webhook_remote_verify_host_allowed) plus the new CertificationDeployTarget seam they resolve refs against. Previously raised from 884 for Phase 0's optional-statusOperationId guards. Expected to grow if certification truth consolidates here; raise deliberately with that change, not incidentally."
     },
     "packages/generators/src/skill.ts": {
-      "lines": 883,
-      "plan": "Watch."
+      "lines": 961,
+      "plan": "Raised deliberately from 886 for async-events Phase 6: the long-running skill section Phase 0 deferred lands here — webhookAsyncSurfaces() resolves webhook-only completions the way asyncSurfaces() resolves poll ones, and reference/long-running.md now renders a section for each instead of silently omitting them. This closes a real agent-facing bug the deferral left behind: without it, a webhook-only operation fell through operationsRef()'s generic longRunning flag and told the agent to \"poll for status\" for an operation with no poll operation to poll. Previously raised from 883 for Phase 0. Watch."
     },
     "packages/compiler/src/normalize.ts": {
-      "lines": 814,
-      "plan": "Watch."
+      "lines": 928,
+      "plan": "Raised deliberately from 814 for async-events Phase 1: merges webhookPathItems(doc) into the paths loop and adds attachWebhookLinks, which records a callbacks:-derived webhooks: link as an evidence claim rather than writing AsyncContract.webhook directly (see manifest.ts's async_contract key for why). Watch."
+    },
+    "packages/mcp-runtime/src/server.ts": {
+      "lines": 1059,
+      "plan": "New entry for async-events Phase 3: buildMcpServer's per-operation handler now wraps its ExecuteContext.ledger with ledgerWithJobIndexing (async-completion.ts) and, when `op` is a status operation some other operation's AsyncContract names, checks the ledger before falling back to its existing upstream call (the hybrid handler). Two new registration passes follow the main operation loop: synthetic (webhook-only, sourceRef-less) status tools, and job-answer tools for approved humanApproval mutations. All three are additive registration/handler logic for the one mechanism this phase adds, not unrelated concerns — cohesive with the rest of this file's existing per-operation tool-building loop. Watch; a fourth async-completion concern arriving here would be the signal to split registration passes into their own module."
     }
   }
 }

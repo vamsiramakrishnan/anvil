@@ -26,11 +26,54 @@ import {
   resolveAsyncContract,
   resolveIdempotencyCarrier,
   toolSurfaceFitsBudget,
+  type WebhookSignatureVerification,
 } from "@anvil/air";
 import { surfaceSignatureFor } from "@anvil/compiler";
+import { hostIsAllowed } from "@anvil/runtime";
 import { type SimResult, Simulator, simulatorDefinitionFor } from "@anvil/simulator";
 import { type AgentSystemPack, type PackContents, verifyPack } from "@anvil/system-pack";
 import type { CertificationCheck } from "./model.js";
+
+/**
+ * What certification needs to know about the deploy target to judge a
+ * webhook contract's egress and credential posture — the static/declarative
+ * counterpart of `packages/runtime/src/webhook-receiver.ts`'s
+ * `HandleWebhookParams`. Certification never fetches or dereferences a real
+ * secret; `resolveRef` answers "is this ref configured for this target, and
+ * if it names a URL, what host does it resolve to" from the target's own
+ * static configuration (its `RuntimeConfig`-shaped allowlist plus whatever
+ * credential/endpoint manifest the deploy tooling has for it), the same
+ * "an indirect reference, never a literal" seam `HandleWebhookParams.resolveRef`
+ * already uses, but synchronous because nothing here performs I/O.
+ *
+ * Deliberately new surface: no equivalent existed before this phase for
+ * *any* credential kind (grepping this package and `AuthRequirement`'s own
+ * checks for a credential-resolution seam at certification time turns up
+ * nothing) — this is that seam's first instance, scoped to exactly what
+ * `asyncContractChecks` needs, not a general secret-store abstraction.
+ *
+ * Absent entirely (`undefined` passed to `staticChecks`/`certify`), every ref
+ * is treated as unconfigured and every host as disallowed — fail-closed, the
+ * same posture `hostIsAllowed` already takes for an empty `allowedHosts`
+ * outside `dev`. A bundle assembled straight off a generator with no deploy
+ * target supplied at all can therefore never pass a webhook-carrying
+ * contract through this check by omission.
+ */
+export interface CertificationDeployTarget {
+  /** Mirrors `RuntimeConfig.allowedHosts` — empty denies every host outside `dev`. */
+  allowedHosts: string[];
+  /** Mirrors `RuntimeConfig.env`; only the literal `"dev"` relaxes `hostIsAllowed`. */
+  env: string;
+  /**
+   * Resolve a `WebhookSignatureVerification` `*Ref` field (`secretRef`,
+   * `verifyEndpointRef`, `credentialRef`) to its configured value for this
+   * target. Returns `undefined` for a ref this target has nothing configured
+   * for — treated as a certification failure, never a skip, matching
+   * `HandleWebhookParams.resolveRef`'s own "unconfigured is a failure"
+   * contract at request time.
+   */
+  resolveRef: (ref: string) => string | undefined;
+}
 
 const VALID_ERROR_CODES = new Set(ErrorCode.options);
 const check = (
@@ -44,6 +87,7 @@ const check = (
 export function staticChecks(
   air: AirDocument,
   pack?: { pack: AgentSystemPack; contents: PackContents },
+  deployTarget?: CertificationDeployTarget,
 ): CertificationCheck[] {
   const checks: CertificationCheck[] = [];
   const signature = surfaceSignatureFor(air);
@@ -136,7 +180,7 @@ export function staticChecks(
   );
 
   checks.push(...ladderChecks(air, approved));
-  checks.push(...asyncContractChecks(air, approved));
+  checks.push(...asyncContractChecks(air, approved, deployTarget));
 
   if (pack) {
     const verify = verifyPack(pack.pack, pack.contents);
@@ -470,6 +514,7 @@ function justifyLadderReason(
 function asyncContractChecks(
   air: AirDocument,
   approved: ReadonlySet<string>,
+  deployTarget?: CertificationDeployTarget,
 ): CertificationCheck[] {
   // Resolved against the WHOLE document, not the approved subset. The resolver
   // distinguishes "no such operation" (a typo, the compiler's bug) from "not
@@ -534,6 +579,10 @@ function asyncContractChecks(
   // certificate covers".
   const unexposed: string[] = [];
   for (const { operation, contract } of carrying) {
+    // Webhook-only contracts have no poll target for this arm to judge — §9's
+    // webhook-specific arms (signature scheme resolvable, webhook operation
+    // exposed) cover them separately.
+    if (!contract.statusOperationId) continue;
     const status = byId.get(contract.statusOperationId);
     if (!status) {
       unexposed.push(`${operation.id} polls '${contract.statusOperationId}', which does not exist`);
@@ -563,6 +612,7 @@ function asyncContractChecks(
   const mutatingTargets: string[] = [];
   let judgedTargets = 0;
   for (const { operation, contract } of carrying) {
+    if (!contract.statusOperationId) continue; // webhook-only: no poll target to judge
     const status = byId.get(contract.statusOperationId);
     if (!status) continue;
     judgedTargets += 1;
@@ -640,7 +690,10 @@ function asyncContractChecks(
   let judgedCoordinates = 0;
   let unverifiableCoordinates = 0;
   for (const { operation, contract } of carrying) {
-    const status = byId.get(contract.statusOperationId);
+    // `jobIdField` addresses this operation's own response regardless of
+    // completion source, so it is judged unconditionally; `stateField`
+    // addresses the status response and only applies when one exists.
+    const status = contract.statusOperationId ? byId.get(contract.statusOperationId) : undefined;
     const coordinates: Array<{ label: string; schema: JsonSchema | undefined; path: string }> = [
       {
         label: `handle field '${contract.jobIdField}'`,
@@ -729,7 +782,162 @@ function asyncContractChecks(
     ),
   );
 
+  // --- 7. every contract has a way to know when it finished -----------------
+  // `resolveAsyncContract` already refuses a contract with neither a status
+  // operation nor a webhook (`no_completion_source`), and arm 1 above already
+  // fails on that verdict. This arm re-derives the same fact directly from
+  // the contract instead of trusting arm 1's composite verdict — the same
+  // "re-derive rather than trust the resolver's cached verdict" discipline
+  // every other arm in this function follows, stated in this function's own
+  // doc comment, so a later change that relaxed the resolver on exactly this
+  // issue would still be caught here.
+  const noCompletionSource: string[] = [];
+  for (const { operation, contract } of carrying) {
+    if (!contract.statusOperationId && !contract.webhook) {
+      noCompletionSource.push(
+        `${operation.id} declares neither a status operation nor a webhook to complete on`,
+      );
+    }
+  }
+  checks.push(
+    check(
+      "static/async_completion_source_present",
+      "static",
+      noCompletionSource.length === 0,
+      noCompletionSource.length > 0
+        ? noCompletionSource.join("; ")
+        : carrying.length === 0
+          ? scope
+          : `${scope}, each naming a status operation, a webhook, or both`,
+    ),
+  );
+
+  // --- 8. a webhook's signature scheme resolves against the deploy target ---
+  // §15's hard gate: a `WebhookContract` whose verification ref does not
+  // resolve to a real, configured credential/endpoint on the target this
+  // bundle is headed to must never certify — an unresolvable ref reaching a
+  // real deployment is exactly the "receiver with no approval-gating and no
+  // certification check" defect the design doc's §15/§16 call disqualifying,
+  // not a stylistic nicety. `oidc_jwt` carries nothing to resolve here (see
+  // `refsToResolve`'s doc comment) beyond what `resolveAsyncContract`'s own
+  // `webhook_signature_unverifiable` issue already structurally validates
+  // (arm 1, above).
+  //
+  // No `deployTarget` at all is treated exactly like a `deployTarget` that
+  // resolves nothing: every ref reports unresolved. That is deliberate — a
+  // bundle carried straight from the generator with no deploy target
+  // supplied must fail this arm precisely because nobody has configured
+  // anything yet, not pass it vacuously for lack of an opinion.
+  const unresolvedRefs: string[] = [];
+  let judgedRefs = 0;
+  let webhookCarryingCount = 0;
+  for (const { operation, contract } of carrying) {
+    if (!contract.webhook) continue;
+    webhookCarryingCount += 1;
+    const verification = contract.webhook.signatureVerification;
+    for (const { field, ref } of refsToResolve(verification)) {
+      judgedRefs += 1;
+      const resolved = deployTarget?.resolveRef(ref);
+      if (resolved === undefined) {
+        unresolvedRefs.push(
+          `${operation.id}: webhook scheme '${verification.scheme}' ${field} '${ref}' does not resolve against the deploy target's credential configuration`,
+        );
+      }
+    }
+  }
+  checks.push(
+    check(
+      "static/webhook_signature_refs_resolve",
+      "static",
+      unresolvedRefs.length === 0,
+      unresolvedRefs.length > 0
+        ? unresolvedRefs.join("; ")
+        : webhookCarryingCount === 0
+          ? carrying.length === 0
+            ? scope
+            : "no approved operation's async contract carries a webhook"
+          : judgedRefs === 0
+            ? `${webhookCarryingCount} webhook contract(s) present, all 'oidc_jwt' — nothing to resolve against a credential store`
+            : `${judgedRefs} signature reference(s) across ${webhookCarryingCount} webhook contract(s) resolved against the deploy target`,
+    ),
+  );
+
+  // --- 9. remote_verify's outbound host is on the deploy target's allowlist -
+  // `remote_verify` (PayPal-shaped) makes an outbound call during inbound
+  // verification (`packages/runtime/src/webhook-receiver.ts`'s
+  // `verifyRemoteVerify`, gated live through `hostIsAllowed`). Certifying a
+  // contract whose verify endpoint is not on the SAME allowlist the runtime
+  // will enforce would certify a receiver that fails closed on every real
+  // delivery — a certificate describing a surface that cannot serve. Reuses
+  // `hostIsAllowed` rather than re-deriving host-suffix matching, so the two
+  // never drift.
+  //
+  // Judged only for an endpoint ref that resolved (arm 8, above, already
+  // reports an unresolved one) — an endpoint this target has no
+  // configuration for has no host to check, and reporting it a second time
+  // here would just restate arm 8's failure under a different id.
+  const disallowedHosts: string[] = [];
+  let judgedHosts = 0;
+  let unresolvedEndpoints = 0;
+  for (const { operation, contract } of carrying) {
+    if (!contract.webhook) continue;
+    const verification = contract.webhook.signatureVerification;
+    if (verification.scheme !== "remote_verify") continue;
+    const endpoint = deployTarget?.resolveRef(verification.verifyEndpointRef);
+    if (endpoint === undefined) {
+      unresolvedEndpoints += 1;
+      continue;
+    }
+    judgedHosts += 1;
+    if (!hostIsAllowed(endpoint, deployTarget?.allowedHosts ?? [], deployTarget?.env ?? "prod")) {
+      disallowedHosts.push(
+        `${operation.id}: remote_verify endpoint '${endpoint}' is not on the deploy target's allowedHosts`,
+      );
+    }
+  }
+  checks.push(
+    check(
+      "static/webhook_remote_verify_host_allowed",
+      "static",
+      disallowedHosts.length === 0,
+      disallowedHosts.length > 0
+        ? disallowedHosts.join("; ")
+        : judgedHosts === 0
+          ? unresolvedEndpoints > 0
+            ? `${unresolvedEndpoints} remote_verify endpoint(s) do not resolve to a host to check here — already reported by static/webhook_signature_refs_resolve`
+            : carrying.length === 0
+              ? scope
+              : "no approved operation's async contract uses the remote_verify webhook scheme"
+          : `${judgedHosts} remote_verify endpoint host(s) confirmed on the deploy target's allowedHosts`,
+    ),
+  );
+
   return checks;
+}
+
+/**
+ * The `WebhookSignatureVerification` `*Ref` fields a deploy target must have
+ * something configured for. `oidc_jwt` deliberately contributes none: it is
+ * verified against the issuer's own public JWKS, and its one ref
+ * (`expectedAudienceRef`) is already structurally required non-blank by
+ * `resolveAsyncContract`'s `webhook_signature_unverifiable` issue — there is
+ * no credential store entry for a public key set.
+ */
+function refsToResolve(
+  verification: WebhookSignatureVerification,
+): Array<{ field: string; ref: string }> {
+  switch (verification.scheme) {
+    case "hmac_sha256_header":
+    case "provider_sdk":
+      return [{ field: "secretRef", ref: verification.secretRef }];
+    case "remote_verify":
+      return [
+        { field: "verifyEndpointRef", ref: verification.verifyEndpointRef },
+        { field: "credentialRef", ref: verification.credentialRef },
+      ];
+    case "oidc_jwt":
+      return [];
+  }
 }
 
 /** Whether a dotted coordinate can be located in a modeled response schema. */

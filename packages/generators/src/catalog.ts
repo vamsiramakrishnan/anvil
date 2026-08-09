@@ -81,17 +81,37 @@ export interface CatalogEntry {
    * renders prose renders the *same* prose as the skill and the tool metadata.
    */
   asyncContract?: {
-    statusOperationId: string;
-    statusTool: string;
-    statusCli: string;
+    /** Absent for a webhook-only contract — there is no poll operation to name. */
+    statusOperationId?: string;
+    statusTool?: string;
+    statusCli?: string;
     jobIdField: string;
-    statusJobIdParam: string;
+    /** Present only alongside `statusOperationId`. */
+    statusJobIdParam?: string;
     stateField?: string;
     terminalStates: string[];
     pendingStates?: string[];
     pollIntervalSeconds?: number;
+    /** Present only when the contract resolved a webhook completion path. */
+    webhook?: {
+      webhookOperationId: string;
+      webhookJobIdField: string;
+      webhookStateField?: string;
+      signatureScheme: string;
+    };
     instruction: string;
   };
+  /**
+   * Present only when the operation declares an `asyncContract` that FAILS to
+   * resolve (see `AsyncContractIssue` in `@anvil/air`) — every reason except
+   * `no_contract`, which just means "no async contract at all" and is not
+   * worth flagging. The actionable `asyncContract` field above stays silent
+   * by design when a contract is broken (§`resolveAsyncContract`'s "half a
+   * contract is worse than none"), so this is the one place an operator can
+   * see *why* it's silent without that silence reading as an invitation for
+   * an agent to act on a coordinate that was never validated.
+   */
+  asyncContractIssue?: { code: string; detail: string };
   /** How an agent should interact with this operation. */
   archetype?: string;
   /** REST/GraphQL path and method when available (e.g., "post /v1/charges/{charge}/refunds"). */
@@ -203,16 +223,31 @@ export function operationCatalog(air: AirDocument): {
       // absence is the signal, and it is a truthful one.
       const completion = resolveAsyncContract(op, operationsById);
       const instruction = asyncContractSentence(completion);
-      if (completion.ok && instruction) {
+      // A webhook-only completion resolves `ok: true` with no `statusOperation`
+      // — still publishable, just with nothing to fill the poll-specific
+      // fields with. Only a genuinely empty resolution (neither a status
+      // operation nor a webhook) is impossible under `ok: true`.
+      if (
+        completion.ok &&
+        instruction &&
+        (completion.statusOperation || completion.contract.webhook)
+      ) {
         entry.asyncContract = {
-          statusOperationId: completion.statusOperation.id,
-          // Both bindings, because the catalog serves both surfaces: an MCP
-          // client needs the tool name, a CLI caller needs the command, and
-          // making either derive the other invites the two to disagree.
-          statusTool: completion.statusOperation.mcp.toolName,
-          statusCli: completion.statusOperation.cli.command,
+          ...(completion.statusOperation
+            ? {
+                statusOperationId: completion.statusOperation.id,
+                // Both bindings, because the catalog serves both surfaces: an MCP
+                // client needs the tool name, a CLI caller needs the command, and
+                // making either derive the other invites the two to disagree.
+                statusTool: completion.statusOperation.mcp.toolName,
+                statusCli: completion.statusOperation.cli.command,
+                // Present by construction: `resolveAsyncContract` only resolves a
+                // `statusOperation` when `statusJobIdParam` named a real parameter
+                // on it, so this can never actually be absent alongside one.
+                statusJobIdParam: completion.contract.statusJobIdParam as string,
+              }
+            : {}),
           jobIdField: completion.contract.jobIdField,
-          statusJobIdParam: completion.contract.statusJobIdParam,
           stateField: completion.contract.stateField,
           terminalStates: completion.contract.terminalStates,
           // Advisory and frequently empty; an empty list would read as "nothing
@@ -221,8 +256,23 @@ export function operationCatalog(air: AirDocument): {
             ? { pendingStates: completion.contract.pendingStates }
             : {}),
           pollIntervalSeconds: completion.contract.pollIntervalSeconds,
+          ...(completion.contract.webhook
+            ? {
+                webhook: {
+                  webhookOperationId: completion.contract.webhook.webhookOperationId,
+                  webhookJobIdField: completion.contract.webhook.webhookJobIdField,
+                  webhookStateField: completion.contract.webhook.webhookStateField,
+                  signatureScheme: completion.contract.webhook.signatureVerification.scheme,
+                },
+              }
+            : {}),
           instruction,
         };
+      } else if (!completion.ok && completion.issue !== "no_contract") {
+        // Every operation without an async contract at all would otherwise
+        // report `no_contract` here too — that's not an issue worth an
+        // operator's attention, just the absence of one, so it's excluded.
+        entry.asyncContractIssue = { code: completion.issue, detail: completion.detail };
       }
       if (op.archetype) {
         entry.archetype = op.archetype;
@@ -239,7 +289,15 @@ export function operationCatalog(air: AirDocument): {
  * package layout"). Only approved operations are compiled in.
  */
 export function compiledOperations(air: AirDocument): unknown {
-  const approved = air.operations.filter((op) => op.state === "approved");
+  // A webhook_receiver operation is compiled and validated like any other
+  // operation, but is never a directly-callable tool (packages/air/src/enums.ts's
+  // InteractionArchetype doc) — it is wired only through AsyncContract.webhook
+  // and the generated receiver route. Same predicate the runtime hot-path
+  // manifest already applies for approval; this is one more clause on it, not
+  // a parallel filter that could drift from this one.
+  const approved = air.operations.filter(
+    (op) => op.state === "approved" && op.archetype !== "webhook_receiver",
+  );
   return {
     service: air.service.id,
     version: air.service.version,
@@ -282,7 +340,7 @@ export function compiledOperations(air: AirDocument): unknown {
 export function compiledSchemas(air: AirDocument): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const op of air.operations) {
-    if (op.state !== "approved") continue;
+    if (op.state !== "approved" || op.archetype === "webhook_receiver") continue;
     out[op.id] = op.input.schema ?? operationInputSchema(op);
   }
   return out;
@@ -310,7 +368,7 @@ export function compiledErrors(air: AirDocument): unknown {
     ],
     operations: Object.fromEntries(
       air.operations
-        .filter((op: Operation) => op.state === "approved")
+        .filter((op: Operation) => op.state === "approved" && op.archetype !== "webhook_receiver")
         .map((op) => [op.id, op.errors]),
     ),
   };

@@ -28,6 +28,25 @@ const AUTO_APPROVAL_SKILLS = new Set([
 ]);
 
 /**
+ * Patch-set keys that touch `AsyncContract.webhook` — see Rule 0c's comment
+ * for the full grounding of why these particular spellings, and why there
+ * are several rather than one. Checked on the FIELD, exactly like the
+ * idempotency-carrier and query-policy keys above, so this list stays
+ * correct even before any skill produces a matching proposal.
+ */
+const ASYNC_WEBHOOK_PATCH_KEYS = [
+  // The whole `WebhookContract` object, proposed atomically — the
+  // `query_policy` shape.
+  "async_webhook",
+  // Per-leaf-field, mirroring `classify-idempotency`'s granularity, in case
+  // a future skill proposes the linkage field-by-field instead.
+  "webhook_operation_id",
+  "webhook_job_id_field",
+  "webhook_state_field",
+  "webhook_signature_verification",
+];
+
+/**
  * The auto-approval policy: decides `auto` vs `review`, never `reject` — a
  * proposal that fails validation or regresses an eval never reaches this
  * function to begin with, so there is nothing left here to reject.
@@ -86,6 +105,57 @@ export function classifyApproval(input: ApprovalInput): ApprovalDecision {
     return {
       tier: "review",
       reason: "exposing a query-passthrough surface is always a person's decision, never automatic",
+    };
+  }
+
+  // Rule 0c — async webhook / job-answer-authorization guard: turning on a
+  // push-completion path (or changing who may answer a paused job) is new
+  // trust surface into the ledger, on the same footing as idempotency and
+  // query-passthrough above — checked on the FIELD, unconditionally, so it
+  // holds even before any skill exists that actually proposes one.
+  //
+  // Key naming, grounded rather than guessed: this file governs
+  // `SkillProposal.patch.set`, a TARGET-RELATIVE flat key namespace — NOT
+  // the manifest overlay system's camelCase `"asyncContract"` field key
+  // (`packages/compiler/src/contract/overlay.ts` / `resolution.ts`'s
+  // `case "asyncContract":`), which a human hand-writes and `anvil compile`
+  // applies; that system is untouched by this guard. The refinement patch
+  // namespace has its own established convention instead, set by the two
+  // existing safety-sensitive rules above: `classify-idempotency` (Rule 0)
+  // granularizes a nested AIR shape into one snake_case key per leaf field
+  // (`idempotency_mode`, `idempotency_mechanism`, ...), while
+  // `review-query-passthrough` (Rule 0b) uses one snake_case key for a whole
+  // nested object set atomically (`query_policy` for `op.queryPolicy`). No
+  // refinement skill proposes anything under an async/webhook key today —
+  // this guard is deliberately ahead of any producer, closing the gate
+  // before Phase 3's generated receiver can reach a deployment un-gated
+  // (design doc §15) — so both naming shapes are covered rather than
+  // guessed at: `async_webhook` for a proposal that sets
+  // `AsyncContract.webhook` wholesale (the `query_policy` shape, since a
+  // signature-verification scheme is itself an atomic decision no more
+  // divisible than a query grammar policy), and one key per
+  // `WebhookContract` leaf (the `classify-idempotency` shape) in case a
+  // future skill instead proposes the linkage field-by-field.
+  //
+  // Job-answer authorization: the design doc also asks for "any job-answer
+  // authorization-touching patch" to route here. Investigated and found to
+  // be a genuine gap, not a naming choice: no refinement skill, patch key,
+  // or `apply.ts` write path exists anywhere in this package for an
+  // operation's `AuthRequirement` (general or job-answer-specific) — grep
+  // for "auth"/"scopes"/"authRequirement" across `skills/registry.ts` and
+  // `apply.ts` turns up nothing. There is therefore no way today to
+  // distinguish "an auth patch for job-answer" from "an auth patch in
+  // general", and inventing a key nothing produces would be guessing, which
+  // the task instructions explicitly warn against. This is reported as an
+  // open gap rather than closed here; when a job-answer-auth-authoring skill
+  // is added, its patch key(s) must be added to `ASYNC_WEBHOOK_PATCH_KEYS`
+  // (or a sibling set) at that time, unconditionally routed to review, same
+  // as everything else in this rule.
+  if (ASYNC_WEBHOOK_PATCH_KEYS.some((key) => key in set)) {
+    return {
+      tier: "review",
+      reason:
+        "a webhook completion path (or its signature verification) is always a person's decision, never automatic",
     };
   }
 

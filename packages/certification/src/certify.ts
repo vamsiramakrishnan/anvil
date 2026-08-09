@@ -12,7 +12,7 @@ import {
   surfaceSignatureFor,
 } from "@anvil/compiler";
 import type { AgentSystemPack, PackContents } from "@anvil/system-pack";
-import { executableChecks, staticChecks } from "./checks.js";
+import { type CertificationDeployTarget, executableChecks, staticChecks } from "./checks.js";
 import {
   CERTIFICATION_VERSION,
   type CertificationCheck,
@@ -29,6 +29,14 @@ export interface CertifyOptions {
   /** Deterministic simulator seed for the executable phase. */
   seed?: number;
   targetProfileVersion?: string;
+  /**
+   * The deploy target's egress allowlist and credential configuration —
+   * consulted only by the webhook-contract checks (`asyncContractChecks`'s
+   * arms 8-9 in `checks.ts`). Omitted means "nothing configured yet": a
+   * webhook-carrying contract fails those arms rather than certifying by
+   * default, matching this package's fail-closed posture elsewhere.
+   */
+  deployTarget?: CertificationDeployTarget;
 }
 
 function attestationFor(air: AirDocument, options: CertifyOptions) {
@@ -46,7 +54,7 @@ function attestationFor(air: AirDocument, options: CertifyOptions) {
 
 /** Certify a contract (and optionally its pack). */
 export function certify(air: AirDocument, options: CertifyOptions = {}): CertificationRecord {
-  const checks: CertificationCheck[] = [...staticChecks(air, options.pack)];
+  const checks: CertificationCheck[] = [...staticChecks(air, options.pack, options.deployTarget)];
   const staticOk = checks.every((c) => c.ok);
 
   let status: CertificationStatus;

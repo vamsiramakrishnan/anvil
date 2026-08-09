@@ -468,3 +468,61 @@ describe("classifyApproval idempotency classification guard", () => {
     });
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* classifyApproval — async webhook guard (Rule 0c)                           */
+/* -------------------------------------------------------------------------- */
+
+describe("classifyApproval async webhook guard", () => {
+  it("routes an async_webhook proposal to review even with authoritative, verified evidence", () => {
+    const decision = classifyApproval({
+      skill: "some-future-webhook-skill",
+      proposal: proposal("some-future-webhook-skill", opTarget, {
+        async_webhook: {
+          webhookOperationId: "payments.refunds.webhook",
+          webhookJobIdField: "data.object.id",
+          signatureVerification: {
+            scheme: "provider_sdk",
+            provider: "stripe",
+            secretRef: "sm://x",
+          },
+        },
+      }),
+      evidence: [
+        claim({
+          source: "source_impl",
+          sourceRef: "src/refunds.ts",
+          predicate: "operation.async_webhook",
+        }),
+      ],
+      groundingArtifacts: [artifact("src/refunds.ts", "verified")],
+    });
+    expect(decision).toEqual({
+      tier: "review",
+      reason:
+        "a webhook completion path (or its signature verification) is always a person's decision, never automatic",
+    });
+  });
+
+  it("routes a bare webhook_signature_verification patch to review by the field guard, not skill membership", () => {
+    // Same guard fires even under a different skill name, since it checks patch keys
+    // directly rather than trusting AUTO_APPROVAL_SKILLS membership.
+    const decision = classifyApproval({
+      skill: "some-future-skill",
+      proposal: proposal("some-future-skill", opTarget, {
+        webhook_signature_verification: {
+          scheme: "hmac_sha256_header",
+          headerName: "X-Signature",
+          encoding: "hex",
+          secretRef: "sm://y",
+        },
+      }),
+      evidence: [claim({ source: "source_impl", sourceRef: "src/refunds.ts" })],
+    });
+    expect(decision).toEqual({
+      tier: "review",
+      reason:
+        "a webhook completion path (or its signature verification) is always a person's decision, never automatic",
+    });
+  });
+});

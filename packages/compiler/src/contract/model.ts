@@ -94,6 +94,13 @@ export const SemanticPredicate = z.enum([
   "retries.retryOn",
   // query grammar policy (operator-declared; the runtime enforces it)
   "queryPolicy",
+  // completion contract (poll and/or webhook) — see `manifest.ts`'s
+  // `ManifestAsyncContract`. One combined predicate, not split per field like
+  // idempotency's three: the manifest always states the whole contract shape
+  // together (a `webhook` block is meaningless without the `jobIdField` it
+  // completes), so splitting it would let two overlays each supply half of a
+  // contract that was never coherent as a pair.
+  "asyncContract",
   // catalog-derived schema knowledge (harness-supplied; skill-card context)
   "querySchema",
 ]);

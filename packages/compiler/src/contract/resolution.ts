@@ -173,6 +173,12 @@ function baseValue(op: Operation, predicate: SemanticPredicate): unknown {
       return op.retries.maxAttempts;
     case "retries.retryOn":
       return op.retries.retryOn;
+    case "queryPolicy":
+      return op.queryPolicy;
+    case "querySchema":
+      return op.querySchema;
+    case "asyncContract":
+      return op.asyncContract;
   }
 }
 

@@ -92,6 +92,15 @@ export interface OpenApiDocument {
   info?: { title?: string; version?: string; [k: string]: unknown };
   servers?: Array<{ url: string; description?: string }>;
   paths?: Record<string, Record<string, unknown>>;
+  /**
+   * OpenAPI 3.1 top-level `webhooks:` — a map of name → Path Item Object,
+   * structurally identical to `paths:` (OpenAPI §4.8.20's Webhooks Object is
+   * typed exactly like the Paths Object). Optional because it is a 3.1-only
+   * keyword; a 3.0.x document (or one with no inbound-push surface at all)
+   * simply omits it. See `protocols/webhooks.ts` for how this is lowered
+   * into the same `Operation` compilation path as `paths:`.
+   */
+  webhooks?: Record<string, Record<string, unknown>>;
   components?: {
     securitySchemes?: Record<string, SecurityScheme>;
     schemas?: Record<string, unknown>;

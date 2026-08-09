@@ -953,6 +953,27 @@ Invoke an operation through the safety runtime.
 
 Supports --dry-run, --confirm, --idempotency-key, --schema, --examples, --errors, --policy, --explain, --json, --trace. Route through MCP with --mcp stdio, --mcp <https-url>, or explicit legacy --mcp sse:<url>; --mcp-token-env <NAME> reads a remote bearer token from that environment variable without putting the token in argv. Unsafe mutations refuse without --confirm; failures are structured envelopes with stable exit codes (2 input, 3 needs-flags, 4 auth, 5 policy, 6 upstream state, 7 upstream availability).
 
+### `anvil job`
+`anvil job [options] [command]`
+
+Answer a job awaiting a human decision mid-flight.
+
+#### `anvil job answer`  *(mutates)*
+`anvil job answer [options] <dir> <job_id>`
+
+Submit a human decision for a job awaiting approval.
+
+Calls the named APPROVED mutation as the real upstream decision operation — the exact same AIR operation-call path every other mutation uses, authenticated and idempotency-tracked identically. Not a resume of a paused execution: the upstream already tracks its own pending-approval state (AsyncContract.pendingStates including 'awaiting_human_input'); this places the call it is waiting on. --input supplies any of the decision operation's OWN parameters beyond job_id/decision/note (e.g. an application id in a different field name) as a JSON object merged in verbatim.
+
+Options:
+- `--operation <id>` — the approved mutation to call as the decision operation
+- `--decision <decision>` — approve or reject
+- `--note <text>` — optional free-text rationale
+- `--input <json>` — JSON object of the decision operation's own extra parameters
+- `--confirm` — confirm a non-idempotent decision call
+- `--idempotency-key <key>` — caller-supplied idempotency key for the decision call
+- `--json` — emit the full result as JSON
+
 ### `anvil serve`
 `anvil serve [options] [command]`
 

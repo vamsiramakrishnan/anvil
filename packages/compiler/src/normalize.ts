@@ -22,10 +22,17 @@ import {
   classifyLongRunning,
   classifyPagination,
   classifyRetry,
+  findJobHandleField,
+  findStateField,
 } from "./classify.js";
 import { materializeSchema } from "./decycle.js";
 import { deriveNames, singularize } from "./naming.js";
 import type { OpenApiDocument, ParsedSpec, SecurityScheme } from "./parse.js";
+import {
+  callbackWebhookLink,
+  WEBHOOK_ARCHETYPE_EXTENSION,
+  webhookPathItems,
+} from "./protocols/webhooks.js";
 
 const HTTP_METHODS: HttpMethod[] = ["get", "put", "post", "delete", "patch", "head"];
 
@@ -77,6 +84,20 @@ interface RawOperation {
   "x-anvil-effect"?: unknown;
   /** Vendor extension: which GraphQL root the operation came from (adapter). */
   "x-graphql-operation"?: unknown;
+  /**
+   * Vendor extension stamped by `protocols/webhooks.ts`: this operation was
+   * compiled from the spec's own `webhooks:` map, not `paths:`. Read here to
+   * force `archetype: "webhook_receiver"` unconditionally — structurally
+   * certain from provenance, never inferred from the operation's shape.
+   */
+  "x-anvil-webhook"?: unknown;
+  /**
+   * OpenAPI `callbacks:` — an operation's own declaration of an inbound
+   * request the upstream will make later. Read only to recover an explicit,
+   * compile-time-certain link to a `webhooks:` entry (`callbackWebhookLink`);
+   * never parsed for any other purpose, and never used to guess a link by name.
+   */
+  callbacks?: unknown;
 }
 
 /**
@@ -310,6 +331,73 @@ function attachAsyncContracts(
       // document (a named field, a named parameter, a declared enum) — higher
       // than a naming heuristic, below anything the service itself demonstrated.
       confidence: 0.6,
+    });
+  }
+}
+
+/**
+ * Third pass: recover an explicit `callbacks:` → `webhooks:` link for each
+ * `longRunning` operation (§10 of the async design doc).
+ *
+ * Deliberately NOT symmetrical with `attachAsyncContracts`: that pass writes a
+ * complete, self-checked `AsyncContract` because every coordinate it needs
+ * (a status operation, a parameter, a declared terminal-state enum) is
+ * derivable from the document alone. A webhook link can never reach that bar
+ * on spec evidence alone — `signatureVerification` has no OpenAPI keyword in
+ * any real vendor spec this project has evidence for (§11: Stripe, GitHub,
+ * Twilio, Shopify, PayPal all require it out-of-band), so a compiler pass can
+ * derive everything BUT the one field `WebhookContract` requires. Writing an
+ * `AsyncContract.webhook` with a fabricated or blank signature scheme would be
+ * exactly the "half a contract" this codebase's doctrine forbids — worse than
+ * no contract, because it would look complete.
+ *
+ * So this pass records what it CAN prove — which `webhooks:` operation the
+ * spec's own `callbacks:` names, and (best-effort, same heuristic as
+ * `jobIdField`/`stateField`) which of its payload fields look like the job
+ * handle and state — as evidence a human reads before writing the
+ * `async_contract.webhook` manifest patch (`manifest.ts`) that supplies the
+ * one thing only a human can: how to verify the sender. It never writes
+ * `op.asyncContract.webhook` itself.
+ */
+function attachWebhookLinks(
+  operations: Operation[],
+  callbacksByOperation: ReadonlyMap<Operation, unknown>,
+  webhooks: Record<string, Record<string, unknown>> | undefined,
+): void {
+  if (!webhooks || Object.keys(webhooks).length === 0) return;
+  for (const op of operations) {
+    if (!op.longRunning) continue;
+    const raw = callbacksByOperation.get(op);
+    if (raw === undefined) continue;
+    const webhookName = callbackWebhookLink(raw, webhooks);
+    if (!webhookName) continue;
+    const webhookOp = operations.find((o) => o.sourceRef.path === `/webhooks/${webhookName}`);
+    if (!webhookOp) continue; // structurally shouldn't happen: every webhooks: entry is compiled
+
+    const webhookJobIdField = findJobHandleField(webhookOp.input.body?.schema);
+    const webhookStateField = findStateField(webhookOp.input.body?.schema)?.path;
+
+    op.evidence.claims.push({
+      subject: op.id,
+      predicate: "asyncContract.webhook",
+      value: webhookOp.id,
+      source: "spec",
+      sourceRef:
+        `${op.sourceRef.method?.toUpperCase() ?? ""} ${op.sourceRef.path ?? ""} callbacks`.trim(),
+      method: "callback_webhook_linkage",
+      note:
+        `the operation's own callbacks: names webhooks: entry '${webhookName}' ` +
+        `(compiled as '${webhookOp.id}')` +
+        (webhookJobIdField ? `; candidate webhookJobIdField '${webhookJobIdField}'` : "") +
+        (webhookStateField ? `; candidate webhookStateField '${webhookStateField}'` : "") +
+        `. No AsyncContract.webhook was attached: signatureVerification cannot be derived from ` +
+        `OpenAPI structure for any real vendor, so it requires a human-authored ` +
+        `async_contract.webhook manifest patch to complete the contract.`,
+      // Structure-derived (an exact, content-matched callbacks: reference) but
+      // deliberately below the poll-linkage confidence: it names a real
+      // operation, not a usable contract, and half of what would make it
+      // usable is not something evidence can raise.
+      confidence: 0.5,
     });
   }
 }
@@ -582,7 +670,13 @@ export interface NormalizeResult {
 /** Normalize a parsed OpenAPI document into AIR operations (classifier applied). */
 export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResult {
   const doc = parsed.document;
-  const paths = doc.paths ?? {};
+  // OpenAPI 3.1's `webhooks:` map is structurally identical to `paths:` (see
+  // `protocols/webhooks.ts`), so it is merged straight into the loop below
+  // rather than walked a second time — only the two vendor extensions
+  // `webhookPathItems` stamps distinguish a webhook receiver from an ordinary
+  // path, and every rule from here down (Effect/input/output inference,
+  // naming, evidence) applies identically to both.
+  const paths = { ...(doc.paths ?? {}), ...webhookPathItems(doc) };
   // `bundleDocument` (decycle.ts) left named-schema references as `$ref`
   // pointers into `components.schemas` so the whole spec's schema graph is
   // only ever walked once; everything below that needs a schema's own fields
@@ -594,6 +688,11 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
   // Long-running detections carried to the second pass that links each one to
   // the operation an agent polls.
   const asyncDetections = new Map<Operation, LongRunningDetection>();
+  // Each longRunning operation's own raw `callbacks:` object, carried to the
+  // third pass (`attachWebhookLinks`) that recovers an explicit link to a
+  // `webhooks:` entry. Keyed by operation OBJECT for the same reason
+  // `asyncDetections` is: ids are not yet unique at this point.
+  const rawCallbacks = new Map<Operation, unknown>();
 
   for (const [path, pathItem] of Object.entries(paths)) {
     // Path-item-level parameters apply to every method below (this is how
@@ -607,11 +706,17 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
       // An adapter-asserted effect (see RawOperation) is authoritative over the
       // HTTP-method default. Only protocol adapters set it; REST paths never do.
       const effectHint = raw["x-anvil-effect"] === "read" ? ("read" as const) : undefined;
-      // A GraphQL query/subscription is definitionally a read; the SOAP/gRPC
-      // assertions come from an operation-name heuristic, so their evidence
+      // Structurally certain from provenance (compiled from `webhooks:`, not
+      // `paths:`) — see `classify.ts#classifyArchetype`.
+      const isWebhookReceiver = raw[WEBHOOK_ARCHETYPE_EXTENSION] === true;
+      // A GraphQL query/subscription is definitionally a read; so is a webhook
+      // receiver (it never calls upstream at all). The SOAP/gRPC assertions
+      // come from an operation-name heuristic instead, so their evidence
       // confidence stays at the method-heuristic grade.
       const definitionalRead =
-        raw["x-graphql-operation"] === "query" || raw["x-graphql-operation"] === "subscription";
+        raw["x-graphql-operation"] === "query" ||
+        raw["x-graphql-operation"] === "subscription" ||
+        isWebhookReceiver;
 
       // Naming is a first-class pass: derive names with a confidence, and let
       // the collision pass (compile) disambiguate any clashes with meaningful
@@ -679,7 +784,14 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         namedSchemas,
       );
 
-      const archetype = classifyArchetype(effect, effect.action, longRunning, params, body);
+      const archetype = classifyArchetype(
+        effect,
+        effect.action,
+        longRunning,
+        params,
+        body,
+        isWebhookReceiver,
+      );
 
       const successRes =
         raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;
@@ -805,10 +917,12 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
       // duplicated id would hand one operation's async detection to its twin —
       // attaching a poll contract to a synchronous call.
       if (longRunningDetection) asyncDetections.set(operation, longRunningDetection);
+      if (raw.callbacks !== undefined) rawCallbacks.set(operation, raw.callbacks);
     }
   }
 
   attachAsyncContracts(operations, asyncDetections);
+  attachWebhookLinks(operations, rawCallbacks, doc.webhooks);
 
   return { operations, diagnostics };
 }

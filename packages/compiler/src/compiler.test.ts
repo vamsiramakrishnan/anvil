@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { confidenceFor } from "@anvil/air";
+import { confidenceFor, type Operation } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import {
   classifyArchetype,
@@ -1180,5 +1180,217 @@ components:
     expect(air.diagnostics.some((d) => d.code === "schema_cycle_truncated")).toBe(false);
     // The result must actually be JSON-safe (this would throw if it weren't).
     expect(() => JSON.stringify(air)).not.toThrow();
+  });
+});
+
+describe("async_contract manifest patch (webhook completion)", () => {
+  // A poll-capable longRunning export alongside its own webhooks: receiver,
+  // linked by an explicit callbacks: reference — the same shape
+  // `protocols/webhooks.test.ts` exercises, reused here so the manifest patch
+  // is proven against a contract the compiler already partially derived.
+  // `job_id` (not a nested `job.id`) is used deliberately: it is the one shape
+  // `classifyAsyncContract`'s param-matching heuristic (`paramAcceptsHandle`
+  // in classify.ts) accepts by exact name, so the poll half of the contract
+  // is genuinely derived by the compiler, not merely present in the fixture.
+  const spec = `openapi: 3.1.0
+info: { title: Exports, version: 1.0.0 }
+paths:
+  /exports:
+    post:
+      operationId: startExport
+      responses:
+        "202":
+          description: accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { job_id: { type: string } }
+      callbacks:
+        exportCompleted:
+          "{$request.body#/callback_url}":
+            $ref: "#/webhooks/export-completed"
+  /exports/{job_id}:
+    get:
+      operationId: getExportStatus
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string, enum: [succeeded, failed, running] } }
+webhooks:
+  export-completed:
+    post:
+      operationId: exportCompleted
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { job_id: { type: string } }
+      responses:
+        "200": { description: ok }
+`;
+
+  const submitOf = (ops: readonly Operation[]) =>
+    ops.find((o) => o.sourceRef.path === "/exports" && o.sourceRef.method === "post");
+
+  it("compiles with no asyncContract.webhook until the manifest supplies signature_verification", async () => {
+    const air = await compile({ spec, serviceId: "exports" });
+    const submit = submitOf(air.operations);
+    expect(submit?.asyncContract?.statusOperationId).toBeDefined();
+    expect(submit?.asyncContract?.webhook).toBeUndefined();
+    // The callbacks: link was recovered too, as evidence a human reads —
+    // never written directly onto the contract (no signatureVerification
+    // exists in the spec to write).
+    const claim = submit?.evidence.claims.find((c) => c.predicate === "asyncContract.webhook");
+    expect(claim?.note).toContain("export-completed");
+  });
+
+  it("merges a hand-supplied webhook onto the compiler's own poll contract", async () => {
+    const webhookId = (await compile({ spec, serviceId: "exports" })).operations.find(
+      (o) => o.archetype === "webhook_receiver",
+    )?.id;
+    expect(webhookId).toBeDefined();
+
+    const air = await compile({
+      spec,
+      serviceId: "exports",
+      manifest: `operations:
+  startExport:
+    async_contract:
+      webhook:
+        operation: ${webhookId}
+        job_id_field: job_id
+        signature_verification:
+          scheme: hmac_sha256_header
+          header_name: X-Hub-Signature-256
+          encoding: hex
+          value_prefix: "sha256="
+          secret_ref: secrets/exports-webhook
+`,
+    });
+    const submit = submitOf(air.operations);
+    expect(submit?.asyncContract?.webhook).toEqual({
+      webhookOperationId: webhookId,
+      webhookJobIdField: "job_id",
+      signatureVerification: {
+        scheme: "hmac_sha256_header",
+        headerName: "X-Hub-Signature-256",
+        encoding: "hex",
+        valuePrefix: "sha256=",
+        secretRef: "secrets/exports-webhook",
+      },
+    });
+    // The poll half the compiler already derived survives the merge untouched.
+    expect(submit?.asyncContract?.statusOperationId).toBeDefined();
+    expect(submit?.asyncContract?.jobIdField).toBe("job_id");
+  });
+
+  it("constructs a whole webhook-only contract by hand on an operation with no poll route at all", async () => {
+    // The real-world (Stripe/GitHub/Twilio) shape: no 202, no callbacks:, no
+    // status route the compiler could ever find on its own.
+    const syncSpec = `openapi: 3.1.0
+info: { title: Checkout, version: 1.0.0 }
+paths:
+  /checkout/sessions:
+    post:
+      operationId: createCheckoutSession
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { session: { type: object, properties: { id: { type: string } } } }
+webhooks:
+  checkout-session-completed:
+    post:
+      operationId: checkoutSessionCompleted
+      responses: { "200": { description: ok } }
+`;
+    const webhookId = (await compile({ spec: syncSpec, serviceId: "checkout" })).operations.find(
+      (o) => o.archetype === "webhook_receiver",
+    )?.id;
+    expect(webhookId).toBeDefined();
+
+    const air = await compile({
+      spec: syncSpec,
+      serviceId: "checkout",
+      manifest: `operations:
+  createCheckoutSession:
+    async_contract:
+      job_id_field: session.id
+      terminal_states: [complete, expired]
+      pending_states: [open]
+      webhook:
+        operation: ${webhookId}
+        job_id_field: data.object.id
+        state_field: data.object.status
+        signature_verification:
+          scheme: provider_sdk
+          provider: stripe
+          secret_ref: secrets/stripe-webhook
+`,
+    });
+    const submit = air.operations.find(
+      (o) => o.sourceRef.path === "/checkout/sessions" && o.sourceRef.method === "post",
+    );
+    expect(submit?.longRunning).toBeFalsy();
+    expect(submit?.asyncContract).toEqual({
+      jobIdField: "session.id",
+      terminalStates: ["complete", "expired"],
+      pendingStates: ["open"],
+      webhook: {
+        webhookOperationId: webhookId,
+        webhookJobIdField: "data.object.id",
+        webhookStateField: "data.object.status",
+        signatureVerification: {
+          scheme: "provider_sdk",
+          provider: "stripe",
+          secretRef: "secrets/stripe-webhook",
+        },
+      },
+    });
+  });
+
+  it("refuses to construct a contract when neither the manifest nor a prior pass has a job_id_field", async () => {
+    const plainSpec = `openapi: 3.0.3
+info: { title: Plain, version: 1.0.0 }
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      responses: { "200": { description: ok } }
+`;
+    const air = await compile({
+      spec: plainSpec,
+      serviceId: "plain",
+      manifest: `operations:
+  createWidget:
+    async_contract:
+      webhook:
+        operation: plain.some_webhook
+        job_id_field: job.id
+        signature_verification:
+          scheme: provider_sdk
+          provider: github
+          secret_ref: secrets/plain-webhook
+`,
+    });
+    const op = air.operations.find(
+      (o) => o.sourceRef.path === "/widgets" && o.sourceRef.method === "post",
+    );
+    expect(op?.asyncContract).toBeUndefined();
+    expect(op?.reviewNotes.some((n) => n.includes("no job_id_field was supplied"))).toBe(true);
   });
 });

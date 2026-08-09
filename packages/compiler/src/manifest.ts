@@ -1,4 +1,5 @@
 import {
+  type AsyncContract,
   type AuthProvider,
   AuthType,
   authCoherenceIssues,
@@ -9,6 +10,8 @@ import {
   type RetryCondition,
   SQL_DIALECTS,
   snakeCase,
+  type WebhookContract,
+  type WebhookSignatureVerification,
   type Workflow,
 } from "@anvil/air";
 import { analyzeTemplate, lexicalFamily } from "@anvil/grammar";
@@ -79,6 +82,129 @@ export function airAuthProviderToManifest(provider: AuthProvider): ManifestAuthP
     ...(provider.apiKey ? { api_key: provider.apiKey } : {}),
   };
 }
+
+/**
+ * Manifest mirror of `WebhookSignatureVerification` (`@anvil/air`'s
+ * `async-contract.ts`) — same four real vendor shapes, snake_cased for the
+ * manifest's own spelling convention. This is the ONE field in
+ * `AsyncContract.webhook` no OpenAPI spec can express (§11 of the async
+ * design doc: Stripe, GitHub, Twilio, Shopify, PayPal all verify webhook
+ * senders through out-of-band, vendor-specific mechanics), so unlike every
+ * other manifest key it has no compiler-derived counterpart to override — it
+ * is the whole reason `async_contract.webhook` exists as a manifest patch at
+ * all, on the same asymmetric-trust footing as Stripe's `Idempotency-Key`
+ * (`docs/backtesting/reproduce/manifests/stripe.anvil.yaml`).
+ */
+const ManifestWebhookSignatureVerification = z.discriminatedUnion("scheme", [
+  z.object({
+    scheme: z.literal("hmac_sha256_header"),
+    header_name: z.string(),
+    encoding: z.enum(["hex", "base64"]),
+    value_prefix: z.string().optional(),
+    secret_ref: z.string(),
+  }),
+  z.object({
+    scheme: z.literal("provider_sdk"),
+    provider: z.enum(["stripe", "twilio", "github", "shopify"]),
+    secret_ref: z.string(),
+  }),
+  z.object({
+    scheme: z.literal("remote_verify"),
+    provider: z.literal("paypal"),
+    verify_endpoint_ref: z.string(),
+    credential_ref: z.string(),
+  }),
+  z.object({
+    scheme: z.literal("oidc_jwt"),
+    header_name: z.string(),
+    expected_issuer: z.string(),
+    expected_audience_ref: z.string(),
+  }),
+]);
+type ManifestWebhookSignatureVerification = z.infer<typeof ManifestWebhookSignatureVerification>;
+
+export function manifestWebhookVerificationToAir(
+  v: ManifestWebhookSignatureVerification,
+): WebhookSignatureVerification {
+  switch (v.scheme) {
+    case "hmac_sha256_header":
+      return {
+        scheme: "hmac_sha256_header",
+        headerName: v.header_name,
+        encoding: v.encoding,
+        ...(v.value_prefix !== undefined ? { valuePrefix: v.value_prefix } : {}),
+        secretRef: v.secret_ref,
+      };
+    case "provider_sdk":
+      return { scheme: "provider_sdk", provider: v.provider, secretRef: v.secret_ref };
+    case "remote_verify":
+      return {
+        scheme: "remote_verify",
+        provider: v.provider,
+        verifyEndpointRef: v.verify_endpoint_ref,
+        credentialRef: v.credential_ref,
+      };
+    case "oidc_jwt":
+      return {
+        scheme: "oidc_jwt",
+        headerName: v.header_name,
+        expectedIssuer: v.expected_issuer,
+        expectedAudienceRef: v.expected_audience_ref,
+      };
+  }
+}
+
+/**
+ * Manifest mirror of `WebhookContract`. `operation` must be the compiled
+ * webhook operation's exact AIR id (the same coordinate
+ * `resolveAsyncContract` looks up with — `operationsById.get(...)`, not the
+ * fuzzy `operationMatchesKey` resolution the rest of this file uses — because
+ * `resolveAsyncContract` runs downstream of manifest application with only
+ * the id to go on). `job_id_field` and `state_field` are still accepted here
+ * even where `normalize.ts`'s `callbacks:` auto-detection already derived a
+ * candidate (`asyncContract.webhook` evidence claim): that candidate is
+ * evidence for a human to read, never a value the compiler writes on its own,
+ * so the manifest always states the final field paths explicitly.
+ */
+const ManifestWebhookContract = z.object({
+  operation: z.string(),
+  job_id_field: z.string(),
+  state_field: z.string().optional(),
+  signature_verification: ManifestWebhookSignatureVerification,
+});
+type ManifestWebhookContract = z.infer<typeof ManifestWebhookContract>;
+
+export function manifestWebhookContractToAir(m: ManifestWebhookContract): WebhookContract {
+  return {
+    webhookOperationId: m.operation,
+    webhookJobIdField: m.job_id_field,
+    ...(m.state_field !== undefined ? { webhookStateField: m.state_field } : {}),
+    signatureVerification: manifestWebhookVerificationToAir(m.signature_verification),
+  };
+}
+
+/**
+ * Manifest mirror of `AsyncContract`, for the same reason `idempotency` is:
+ * a real vendor spec routinely cannot express how a call completes (no
+ * declared `202`/status route, and never a `callbacks:`/`webhooks:` link —
+ * §11's Stripe/GitHub/Twilio evidence), so a human states the whole contract
+ * by hand. Every field mirrors `AsyncContract`/`WebhookContract` exactly;
+ * `webhook` is the piece `normalize.ts` can partially derive from an explicit
+ * `callbacks:` link (recorded as evidence, never written to the operation —
+ * see `normalize.ts#attachWebhookLinks`) but can NEVER complete alone, because
+ * `signature_verification` has no spec-native source for any real vendor.
+ */
+const ManifestAsyncContract = z.object({
+  status_operation: z.string().optional(),
+  status_job_id_param: z.string().optional(),
+  job_id_field: z.string().optional(),
+  state_field: z.string().optional(),
+  terminal_states: z.array(z.string()).optional(),
+  pending_states: z.array(z.string()).optional(),
+  poll_interval_seconds: z.number().int().positive().optional(),
+  webhook: ManifestWebhookContract.optional(),
+});
+export type ManifestAsyncContract = z.infer<typeof ManifestAsyncContract>;
 
 /**
  * The supplemental Anvil manifest (spec §4). Specs are incomplete; this is how
@@ -232,6 +358,13 @@ export const OperationManifest = z.object({
       glossary: z.array(z.object({ term: z.string(), definition: z.string() })).optional(),
     })
     .optional(),
+  /**
+   * Hand-supplied completion contract (poll and/or webhook) — see
+   * `ManifestAsyncContract`'s own doc. Applied on top of whatever
+   * `normalize.ts` already derived from the spec, never replacing it silently
+   * (see `applyOperationManifest`).
+   */
+  async_contract: ManifestAsyncContract.optional(),
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
 });
 export type OperationManifest = z.infer<typeof OperationManifest>;
@@ -746,6 +879,57 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
       exampleQueries: m.query_schema.example_queries ?? [],
       glossary: m.query_schema.glossary ?? [],
     };
+  }
+
+  // Hand-supplied completion contract. Merges onto whatever `normalize.ts`
+  // already attached (a poll-only `AsyncContract` from `classifyAsyncContract`,
+  // or nothing at all for a webhook-only API with no declared status route) —
+  // an explicit manifest field always wins, an omitted one falls back to
+  // what is already there, and nothing is invented for a field neither side
+  // supplies. `jobIdField` is the one field every `AsyncContract` needs
+  // regardless of shape (`@anvil/air`'s doc): if neither the manifest nor a
+  // prior pass has it, there is nothing safe to construct, so the patch is
+  // refused with a review note rather than half-applied.
+  if (m.async_contract) {
+    const ac = m.async_contract;
+    const jobIdField = ac.job_id_field ?? op.asyncContract?.jobIdField;
+    if (jobIdField) {
+      const webhook: WebhookContract | undefined = ac.webhook
+        ? manifestWebhookContractToAir(ac.webhook)
+        : op.asyncContract?.webhook;
+      const contract: AsyncContract = {
+        ...((ac.status_operation ?? op.asyncContract?.statusOperationId)
+          ? { statusOperationId: ac.status_operation ?? op.asyncContract?.statusOperationId }
+          : {}),
+        jobIdField,
+        ...((ac.status_job_id_param ?? op.asyncContract?.statusJobIdParam)
+          ? { statusJobIdParam: ac.status_job_id_param ?? op.asyncContract?.statusJobIdParam }
+          : {}),
+        ...((ac.state_field ?? op.asyncContract?.stateField)
+          ? { stateField: ac.state_field ?? op.asyncContract?.stateField }
+          : {}),
+        terminalStates: ac.terminal_states ?? op.asyncContract?.terminalStates ?? [],
+        pendingStates: ac.pending_states ?? op.asyncContract?.pendingStates ?? [],
+        ...(ac.poll_interval_seconds !== undefined
+          ? { pollIntervalSeconds: ac.poll_interval_seconds }
+          : op.asyncContract?.pollIntervalSeconds !== undefined
+            ? { pollIntervalSeconds: op.asyncContract.pollIntervalSeconds }
+            : {}),
+        ...(webhook ? { webhook } : {}),
+      };
+      op.asyncContract = contract;
+      const note = ac.webhook
+        ? `Completion contract enriched by manifest: webhook '${ac.webhook.operation}' ` +
+          `verified via '${ac.webhook.signature_verification.scheme}'.`
+        : "Completion contract enriched by manifest.";
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    } else {
+      const note =
+        "async_contract manifest patch left unset: no job_id_field was supplied and the " +
+        "operation has no prior AsyncContract to merge onto, so no completion contract " +
+        "could be constructed without inventing a coordinate.";
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    }
   }
 
   if (m.state) op.state = m.state;

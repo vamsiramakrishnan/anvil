@@ -63,8 +63,16 @@ export function generateSkill(air: AirDocument): Record<string, string> {
   // per-operation line, and the card). Resolving per call site is how the same
   // contract ends up described three slightly different ways.
   const asyncOps = asyncSurfaces(air, exposed);
+  // Webhook-only completions (design doc §9) — resolved but with no status
+  // operation to poll. Kept as a separate list rather than folded into
+  // `asyncOps` because the poll card needs statusOperation-specific
+  // coordinates (a CLI command, a job-id param) that a webhook-only
+  // resolution never has; the two are merged back together wherever only
+  // `op` + `sentence` matter (the per-operation line, the SKILL.md pointer).
+  const webhookOps = webhookAsyncSurfaces(air, exposed);
+  const hasLongRunningCard = asyncOps.length > 0 || webhookOps.length > 0;
 
-  files["SKILL.md"] = skillMd(air, exposed, asyncOps);
+  files["SKILL.md"] = skillMd(air, exposed, hasLongRunningCard);
   files["manifest.yaml"] = toYaml({
     name,
     description: `Machine-readable index of the ${svc.displayName ?? svc.id} skill package: identity, auth, and surface counts. Read SKILL.md first; this file is for tooling.`,
@@ -89,7 +97,7 @@ export function generateSkill(air: AirDocument): Record<string, string> {
     frontmatter(
       `${name}-operations`,
       "The full operation catalog — per-operation contract, inputs, safety posture (effect, risk, confirmation, idempotency, retry), and CLI/MCP names. Read this before invoking any operation.",
-    ) + operationsRef(air.operations, asyncOps);
+    ) + operationsRef(air.operations, [...asyncOps, ...webhookOps]);
   files["reference/errors.md"] =
     frontmatter(
       `${name}-errors`,
@@ -103,12 +111,12 @@ export function generateSkill(air: AirDocument): Record<string, string> {
   // Conditional, like the query-grammar card: a surface with nothing to wait on
   // must not carry a page about waiting. The gate is a *resolved* contract, so
   // this file can only ever contain instructions an agent can actually follow.
-  if (asyncOps.length > 0) {
+  if (hasLongRunningCard) {
     files["reference/long-running.md"] =
       frontmatter(
         `${name}-long-running`,
-        "How to finish operations that return before their work does — which operation to poll, where the job handle lives, and the states that mean stop. Read this when a call returns a job handle instead of a result.",
-      ) + longRunningRef(asyncOps);
+        "How to finish operations that return before their work does — which operation to poll (or, for a webhook-only completion, that there is nothing to poll at all) and the states that mean stop. Read this when a call returns a job handle instead of a result.",
+      ) + longRunningRef(asyncOps, webhookOps);
   }
   files["reference/workflows.md"] =
     frontmatter(
@@ -176,13 +184,13 @@ function skillDescription(air: AirDocument, ops: Operation[]): string {
   return full.length <= 1024 ? full : describe("");
 }
 
-function skillMd(air: AirDocument, ops: Operation[], asyncOps: AsyncSurface[]): string {
+function skillMd(air: AirDocument, ops: Operation[], hasLongRunningCard: boolean): string {
   const id = air.service.id;
   // The router points at the card; it never inlines the polling contract. A
   // pointer is routing, a job handle and a terminal-state list are detail — but
   // a card nothing points at is the failure this whole surface exists to avoid,
   // so the line appears exactly when the card does.
-  const longRunningLink = asyncOps.length
+  const longRunningLink = hasLongRunningCard
     ? "\n- `reference/long-running.md` — how to finish an operation that returns before its work does."
     : "";
   return `---
@@ -461,13 +469,58 @@ function asyncSurfaces(air: AirDocument, exposed: Operation[]): AsyncSurface[] {
   for (const op of exposed) {
     const resolution = resolveAsyncContract(op, byId);
     const sentence = asyncContractSentence(resolution);
-    if (!resolution.ok || !sentence) continue;
+    // Webhook-only completions have no status operation for this card to name
+    // (no CLI command, no tool to poll) — `webhookAsyncSurfaces` below covers
+    // them, with their own section in the same card rather than a
+    // half-filled poll one.
+    if (!resolution.ok || !sentence || !resolution.statusOperation) continue;
     surfaces.push({
       op,
       statusOperation: resolution.statusOperation,
       contract: resolution.contract,
       sentence,
     });
+  }
+  return surfaces;
+}
+
+/**
+ * A resolved, webhook-only completion (design doc §9): the submitting
+ * operation returns before completion, and the *only* way to find out it
+ * finished is the upstream calling back — there is no status operation to
+ * name here, by construction, not by omission.
+ */
+interface WebhookAsyncSurface {
+  op: Operation;
+  contract: AsyncContract;
+  /** The shared sentence — same function, same wording, as every other surface. */
+  sentence: string;
+}
+
+/**
+ * The exposed operations whose *only* completion path is a webhook, resolved
+ * once. Mirrors `asyncSurfaces`' own gate (resolution, not mere presence,
+ * decides), just selecting the opposite branch: a contract that resolved
+ * `ok: true` with no `statusOperation` can only have resolved because
+ * `contract.webhook` did.
+ *
+ * Split from `asyncSurfaces` rather than merged into it because a previous
+ * revision of this file left webhook-only completions with no section at all
+ * — silently falling through to `operationsRef`'s generic `longRunning` flag,
+ * which says "poll for status" for an operation that has no poll operation to
+ * poll. That is not silence (the honest fallback for a genuinely unresolvable
+ * contract); it is a wrong instruction for a resolved one, which is worse.
+ */
+function webhookAsyncSurfaces(air: AirDocument, exposed: Operation[]): WebhookAsyncSurface[] {
+  const byId = new Map<string, Operation>(air.operations.map((op) => [op.id, op]));
+  const surfaces: WebhookAsyncSurface[] = [];
+  for (const op of exposed) {
+    const resolution = resolveAsyncContract(op, byId);
+    const sentence = asyncContractSentence(resolution);
+    if (!resolution.ok || !sentence || resolution.statusOperation || !resolution.contract.webhook) {
+      continue;
+    }
+    surfaces.push({ op, contract: resolution.contract, sentence });
   }
   return surfaces;
 }
@@ -481,7 +534,7 @@ function asyncSurfaces(air: AirDocument, exposed: Operation[]): AsyncSurface[] {
  * status operation's CLI command rather than restating the contract in different
  * words; one sentence, one set of facts, two bindings.
  */
-function longRunningRef(surfaces: AsyncSurface[]): string {
+function longRunningRef(surfaces: AsyncSurface[], webhookSurfaces: WebhookAsyncSurface[]): string {
   const sections = surfaces.map(({ op, statusOperation, contract, sentence }) => {
     const lines = [
       `### \`${op.cli.command}\`  (tool: \`${op.mcp.toolName}\`)`,
@@ -496,6 +549,22 @@ function longRunningRef(surfaces: AsyncSurface[]): string {
     }
     return lines.join("\n");
   });
+  // Webhook-only sections: no status operation exists, so there is nothing to
+  // name a CLI poll command for — the honest statement is that none exists,
+  // not a restatement of the sentence's own wording in different words.
+  const webhookSections = webhookSurfaces.map(({ op, contract, sentence }) => {
+    const lines = [
+      `### \`${op.cli.command}\`  (tool: \`${op.mcp.toolName}\`)`,
+      sentence,
+      "",
+      "- No status operation exists to poll — neither the CLI nor a named MCP tool checks this job's progress directly. The result becomes available once the upstream calls back; an MCP server generated from this bundle registers an automatic status tool for it (see the server's own tool list), but there is no CLI command for it today.",
+    ];
+    if (contract.pendingStates.length > 0) {
+      lines.push(`- Still working while the state is: ${contract.pendingStates.join(", ")}.`);
+    }
+    return lines.join("\n");
+  });
+  const allSections = [...sections, ...webhookSections];
 
   return `# Long-running operations
 
@@ -515,14 +584,19 @@ tells you it returned before completion but is absent from this file, Anvil coul
 not prove where its handle lives or what finished looks like: report that, and do
 not guess a status call.
 
-${sections.join("\n\n")}
+${allSections.join("\n\n")}
 `;
 }
 
 // `asyncOps` is required, not defaulted: a caller that forgets it would silently
 // drop every polling contract, which is precisely the class of quiet omission
-// this surface exists to close.
-function operationsRef(ops: Operation[], asyncOps: AsyncSurface[]): string {
+// this surface exists to close. Structurally typed to `{ op, sentence }` so a
+// caller can pass a merged poll + webhook-only list — this render only ever
+// needs the shared sentence, never the poll-specific coordinates.
+function operationsRef(
+  ops: Operation[],
+  asyncOps: ReadonlyArray<{ op: Operation; sentence: string }>,
+): string {
   const approved = ops.filter((op) => op.state === "approved");
   const asyncByOperationId = new Map(asyncOps.map((surface) => [surface.op.id, surface]));
   const pending = ops.filter((op) => op.state !== "approved");
@@ -566,8 +640,12 @@ function operationsRef(ops: Operation[], asyncOps: AsyncSurface[]): string {
       // it is deliberately not dressed up with invented coordinates.
       const asyncSurface = asyncByOperationId.get(op.id);
       if (asyncSurface) {
+        // "See long-running.md for how to track it" covers both bindings this
+        // map now carries: a poll command for a poll surface, and "there is no
+        // poll command" for a webhook-only one — the sentence itself already
+        // says which, this line just points at the detail.
         metadataLines.push(
-          `- ${asyncSurface.sentence} See \`long-running.md\` for the polling command.`,
+          `- ${asyncSurface.sentence} See \`long-running.md\` for how to track it.`,
         );
       } else if (op.longRunning) {
         metadataLines.push("- Long-running: returns before completion; poll for status");

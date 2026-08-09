@@ -7,6 +7,7 @@ import {
   airToJson,
   MAX_RETRY_ATTEMPTS,
   MAX_RETRY_DELAY_MS,
+  resolveAsyncContract,
 } from "@anvil/air";
 import {
   credentialProfileName,
@@ -25,7 +26,7 @@ import { buildSync } from "esbuild";
 import { stringify as toYaml } from "yaml";
 import { z } from "zod";
 import { compiledOperations } from "./catalog.js";
-import { generateRuntimeServer } from "./entrypoints.js";
+import { generateRuntimeServer, resolvedWebhookRoutes } from "./entrypoints.js";
 import { buildToolResources, type ResourceOptions } from "./resources.js";
 
 export const IDEMPOTENCY_STORE_CONTRACT_FILE = "deploy/idempotency-store.json";
@@ -1262,6 +1263,74 @@ function credentialRow(
   return credentialRequirement(profile, auth);
 }
 
+/**
+ * Operator-facing documentation for the `/webhooks/<service>/<opId>` routes
+ * (design doc §7/§14) the generated runtime serves (`entrypoints.ts`'s
+ * `resolvedWebhookRoutes`/`generateRuntimeServer`). Empty string when the
+ * surface has none, so a service with no resolved webhook contract emits no
+ * new section at all — silence is the honest answer for "this doesn't apply".
+ */
+function webhookReadmeSection(air: AirDocument): string {
+  const routes = resolvedWebhookRoutes(air);
+  if (routes.length === 0) return "";
+  const refs = new Set<string>();
+  const allOpsById = new Map(air.operations.map((op) => [op.id, op]));
+  for (const route of routes) {
+    const submitOp = air.operations.find((op) => op.id === route.submitOperationId);
+    const contract = submitOp
+      ? resolveAsyncContractForReadme(submitOp, allOpsById)?.webhook?.signatureVerification
+      : undefined;
+    if (!contract) continue;
+    for (const ref of signatureVerificationRefs(contract)) refs.add(ref);
+  }
+  const routeLines = routes
+    .map((route) => `- \`${route.path}\` (receiver: \`${route.webhookOperationId}\`)`)
+    .join("\n");
+  const refLines =
+    refs.size > 0
+      ? Array.from(refs)
+          .sort()
+          .map((ref) => `- \`${ref}\``)
+          .join("\n")
+      : "- (none — every route's signature scheme resolved with no configured reference)";
+  return `## Webhook receiver routes (inbound)
+This service accepts signed inbound completions on the routes below —
+receiver-only; none of these are directly-callable tools. Each route verifies
+its sender per the operation's own \`WebhookSignatureVerification\` scheme
+BEFORE touching the ledger or parsing further (design doc §14); an unverified
+payload is rejected \`401\`, never trusted. These routes are deliberately not
+gated by inbound OAuth (a third-party sender never has this deployment's
+token) — the signature check IS the gate.
+
+${routeLines}
+
+Every \`secretRef\`/\`credentialRef\`/\`verifyEndpointRef\`/\`expectedAudienceRef\`
+a signature scheme needs names a PLAIN runtime environment variable, resolved
+the same way any other non-secret-storage env setting is: supply it through
+\`var.env\` (never a literal in the bundle). This surface's references:
+${refLines}
+
+`;
+}
+
+/** Local re-resolution for the README only — never re-exported, never used to
+ *  decide anything the runtime or certification themselves decide. */
+function resolveAsyncContractForReadme(
+  op: AirDocument["operations"][number],
+  allOpsById: ReadonlyMap<string, AirDocument["operations"][number]>,
+): { webhook?: { signatureVerification: unknown } } | undefined {
+  const resolution = resolveAsyncContract(op, allOpsById);
+  return resolution.ok ? resolution.contract : undefined;
+}
+
+function signatureVerificationRefs(verification: unknown): string[] {
+  if (typeof verification !== "object" || verification === null) return [];
+  const v = verification as Record<string, unknown>;
+  return ["secretRef", "credentialRef", "verifyEndpointRef", "expectedAudienceRef"]
+    .map((key) => v[key])
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
 function deployReadme(air: AirDocument, resourceOptions: ResourceOptions): string {
   const id = air.service.id;
   const deploymentNamespace = resolveDeploymentNamespace(air, resourceOptions);
@@ -1389,7 +1458,7 @@ operator sets \`ANVIL_CREDENTIAL_HOSTS\` to their exact public host(s); alternat
 set \`ANVIL_<PROFILE>_TOKEN_ENDPOINT\` explicitly. Put this non-secret setting in
 \`var.env\` before planning.
 
-## Safety notes${
+${webhookReadmeSection(air)}## Safety notes${
     needsLedger(air)
       ? `
 - **Durable ledger is mandatory outside dev.** \`ANVIL_LEDGER\` points at Firestore

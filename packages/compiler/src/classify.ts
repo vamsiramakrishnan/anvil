@@ -369,6 +369,15 @@ export function classifyConfirmation(effect: Effect, idempotency: Idempotency): 
  * operations with unconstrained query-language parameters get classified as
  * query_passthrough, which blocks them by default. This dominates search/transaction
  * but not long_running.
+ *
+ * `isWebhookReceiver` dominates every other rule, including `longRunning`. It is
+ * never inferred from an operation's shape (a webhook payload can look exactly
+ * like an ordinary read response) — it is set only when the operation was
+ * compiled from the spec's own `webhooks:` map (`protocols/webhooks.ts`), which
+ * makes it structurally certain rather than guessed. See
+ * `packages/air/src/enums.ts`'s `InteractionArchetype` doc: a webhook receiver
+ * is never a directly-callable MCP tool, so nothing gains from also checking it
+ * against the other archetype rules below.
  */
 export function classifyArchetype(
   effect: Effect,
@@ -376,7 +385,9 @@ export function classifyArchetype(
   longRunning: boolean,
   params?: readonly Param[],
   body?: { projection: string; fields?: readonly BodyField[] },
+  isWebhookReceiver?: boolean,
 ): InteractionArchetype | undefined {
+  if (isWebhookReceiver) return "webhook_receiver";
   // Long-running operations dominate other classifications.
   if (longRunning) return "long_running";
 
@@ -895,8 +906,14 @@ const leafOf = (path: string): string => snakeCase(path.slice(path.lastIndexOf("
  * display name, and its state is a boolean `done` that declares no terminal
  * state *string* — so no contract could resolve even if the handle were found.
  * Refinement, which can read a real response, is the right layer for it.
+ *
+ * Exported so `normalize.ts` can reuse the exact same tiered heuristic against
+ * a `webhooks:` operation's *input* schema when deriving a candidate
+ * `webhookJobIdField` for a `callbacks:`-linked contract — "derived the same
+ * way `jobIdField` is derived elsewhere" is the literal design requirement,
+ * not a parallel, possibly-drifting reimplementation.
  */
-function findJobHandleField(schema: JsonSchema | undefined): string | undefined {
+export function findJobHandleField(schema: JsonSchema | undefined): string | undefined {
   const props = propertiesOf(schema);
   if (!props) return undefined;
   const names = Object.keys(props);
@@ -966,8 +983,12 @@ function isItemReadOf(submitPath: string, statusPath: string): boolean {
  * whereas calling it terminal would stop the poll early and hand back a partial
  * result dressed as a complete one. One recognized terminal state is still a
  * usable stopping condition, so an odd extra value does not sink the contract.
+ *
+ * Exported for the same reason `findJobHandleField` is: `normalize.ts` reuses
+ * it against a `webhooks:` operation's input schema for a candidate
+ * `webhookStateField`.
  */
-function findStateField(
+export function findStateField(
   schema: JsonSchema | undefined,
 ): { path: string; terminal: string[]; pending: string[] } | undefined {
   const props = propertiesOf(schema);

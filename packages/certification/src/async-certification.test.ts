@@ -1,8 +1,13 @@
-import type { AirDocument, AsyncContract, Operation } from "@anvil/air";
+import {
+  type AirDocument,
+  type AsyncContract,
+  Operation,
+  type WebhookSignatureVerification,
+} from "@anvil/air";
 import { approveOperations, compile } from "@anvil/compiler";
 import { beforeEach, describe, expect, it } from "vitest";
 import { certify } from "./certify.js";
-import { staticChecks } from "./checks.js";
+import { type CertificationDeployTarget, staticChecks } from "./checks.js";
 
 /**
  * Certifying the long-running contract.
@@ -341,5 +346,226 @@ describe("a document with nothing asynchronous", () => {
     for (const id of ASYNC_CHECK_IDS) {
       expect(checkNamed(air, id), id).toMatchObject({ ok: true });
     }
+  });
+});
+
+/**
+ * Phase 4 — the safety gate (design doc §15/§16): a `webhook` block whose
+ * verification cannot be resolved against a real deploy target must never
+ * certify, and neither must a contract with no way to know when it finished.
+ * `remote_verify`'s outbound host gets the same `allowedHosts` treatment the
+ * runtime itself enforces at request time.
+ */
+
+/** An approved `webhook_receiver`-archetyped operation — the shape a webhook target must have. */
+function webhookOp(): Operation {
+  return Operation.parse({
+    id: "exports.completedWebhook",
+    canonicalName: "exports_completed_webhook",
+    displayName: "Export completed webhook",
+    sourceRef: { kind: "openapi", path: "/webhooks/exports-completed", method: "post" },
+    effect: { kind: "read", action: "other", resource: "export", risk: "none" },
+    archetype: "webhook_receiver",
+    input: {
+      params: [],
+      schema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          job: { type: "object", additionalProperties: false, properties: { id: {} } },
+        },
+      },
+    },
+    idempotency: { mode: "none" },
+    retries: { mode: "none" },
+    confirmation: { required: false },
+    auth: { type: "none" },
+    cli: { command: "exports webhook-completed" },
+    mcp: { toolName: "exports_completed_webhook" },
+    skill: { intentExamples: [] },
+    state: "approved",
+  });
+}
+
+const webhookVerification = (
+  over: Partial<Extract<WebhookSignatureVerification, { scheme: "hmac_sha256_header" }>> = {},
+): WebhookSignatureVerification => ({
+  scheme: "hmac_sha256_header",
+  headerName: "X-Hub-Signature-256",
+  encoding: "hex",
+  valuePrefix: "sha256=",
+  secretRef: "secrets/export-webhook",
+  ...over,
+});
+
+/** Wire a webhook-only completion contract onto the creating operation, plus its receiver op. */
+function linkWebhook(doc: AirDocument, verification: WebhookSignatureVerification): AirDocument {
+  const receiver = webhookOp();
+  doc.operations.push(receiver);
+  const contract: AsyncContract = {
+    jobIdField: "job.id",
+    terminalStates: ["succeeded", "failed"],
+    pendingStates: ["running"],
+    webhook: {
+      webhookOperationId: receiver.id,
+      webhookJobIdField: "job.id",
+      signatureVerification: verification,
+    },
+  };
+  creator(doc).asyncContract = contract;
+  creator(doc).longRunning = true;
+  return doc;
+}
+
+function fakeDeployTarget(
+  over: Partial<CertificationDeployTarget> = {},
+): CertificationDeployTarget {
+  return { allowedHosts: [], env: "prod", resolveRef: () => undefined, ...over };
+}
+
+describe("Phase 4 — webhook signature refs resolve against the deploy target", () => {
+  it("fails certification with a specific diagnostic when a secretRef does not resolve", () => {
+    linkWebhook(air, webhookVerification({ secretRef: "secrets/unconfigured" }));
+    const target = fakeDeployTarget({ resolveRef: () => undefined });
+    const record = certify(air, { deployTarget: target });
+    expect(record.status).toBe("failed");
+    const arm = record.checks.find((c) => c.id === "static/webhook_signature_refs_resolve");
+    expect(arm?.ok).toBe(false);
+    // Specific and actionable: names the operation, the scheme, and the missing ref.
+    expect(arm?.detail).toContain(creator(air).id);
+    expect(arm?.detail).toContain("hmac_sha256_header");
+    expect(arm?.detail).toContain("secretRef");
+    expect(arm?.detail).toContain("secrets/unconfigured");
+  });
+
+  it("passes when the deploy target has the secret configured", () => {
+    linkWebhook(air, webhookVerification({ secretRef: "secrets/export-webhook" }));
+    const target = fakeDeployTarget({
+      resolveRef: (ref) => (ref === "secrets/export-webhook" ? "shh" : undefined),
+    });
+    const arm = staticChecks(air, undefined, target).find(
+      (c) => c.id === "static/webhook_signature_refs_resolve",
+    );
+    expect(arm?.ok).toBe(true);
+    expect(arm?.detail).toContain("resolved against the deploy target");
+  });
+
+  it("has nothing to resolve for oidc_jwt beyond structural validation", () => {
+    linkWebhook(air, {
+      scheme: "oidc_jwt",
+      headerName: "Authorization",
+      expectedIssuer: "https://accounts.google.com",
+      expectedAudienceRef: "config/pubsub-audience",
+    });
+    // No deploy target at all — still passes, because oidc_jwt has no *Ref* this
+    // check resolves against a credential store (see `refsToResolve`).
+    const arm = staticChecks(air).find((c) => c.id === "static/webhook_signature_refs_resolve");
+    expect(arm?.ok).toBe(true);
+    expect(arm?.detail).toContain("oidc_jwt");
+  });
+
+  it("fails when no deploy target is supplied at all, with no operator action taken", () => {
+    // The Phase 3 -> Phase 4 handoff this phase exists to gate: a bundle carried
+    // straight off the generator, with nobody having configured a credential or
+    // an allowlist yet, must not certify.
+    linkWebhook(air, webhookVerification());
+    const record = certify(air);
+    expect(record.status).toBe("failed");
+    expect(
+      record.checks.some((c) => c.id === "static/webhook_signature_refs_resolve" && !c.ok),
+    ).toBe(true);
+  });
+});
+
+describe("Phase 4 — remote_verify's outbound host must be on the deploy target's allowedHosts", () => {
+  const remoteVerify = (
+    over: Partial<Extract<WebhookSignatureVerification, { scheme: "remote_verify" }>> = {},
+  ): WebhookSignatureVerification => ({
+    scheme: "remote_verify",
+    provider: "paypal",
+    verifyEndpointRef: "config/paypal-verify-endpoint",
+    credentialRef: "secrets/paypal-cred",
+    ...over,
+  });
+  const resolvePaypalRefs = (ref: string): string | undefined => {
+    if (ref === "config/paypal-verify-endpoint") {
+      return "https://api.paypal.com/v1/notifications/verify-webhook-signature";
+    }
+    if (ref === "secrets/paypal-cred") return JSON.stringify({ accessToken: "t", webhookId: "w" });
+    return undefined;
+  };
+
+  it("fails certification when the verify endpoint's host is missing from allowedHosts", () => {
+    linkWebhook(air, remoteVerify());
+    const target = fakeDeployTarget({
+      allowedHosts: ["someotherhost.example.com"],
+      resolveRef: resolvePaypalRefs,
+    });
+    const record = certify(air, { deployTarget: target });
+    expect(record.status).toBe("failed");
+    const arm = record.checks.find((c) => c.id === "static/webhook_remote_verify_host_allowed");
+    expect(arm?.ok).toBe(false);
+    expect(arm?.detail).toContain(creator(air).id);
+    expect(arm?.detail).toContain("api.paypal.com");
+  });
+
+  it("passes when the verify endpoint's host is on allowedHosts", () => {
+    linkWebhook(air, remoteVerify());
+    const target = fakeDeployTarget({
+      allowedHosts: ["api.paypal.com"],
+      resolveRef: resolvePaypalRefs,
+    });
+    const arm = staticChecks(air, undefined, target).find(
+      (c) => c.id === "static/webhook_remote_verify_host_allowed",
+    );
+    expect(arm?.ok).toBe(true);
+    expect(arm?.detail).toContain("confirmed on the deploy target's allowedHosts");
+  });
+});
+
+describe("Phase 4 — every operation has a way to know when it finished", () => {
+  it("fails when a contract declares neither a status operation nor a webhook", () => {
+    // A hand-authored (or manifest-patched) contract that names neither — the
+    // exact half-a-contract the design doc's header calls worse than none.
+    creator(air).asyncContract = {
+      jobIdField: "job.id",
+      terminalStates: ["succeeded"],
+      pendingStates: [],
+    } as AsyncContract;
+    creator(air).longRunning = true;
+    const arm = checkNamed(air, "static/async_completion_source_present");
+    expect(arm.ok).toBe(false);
+    expect(arm.detail).toContain(creator(air).id);
+    expect(arm.detail).toContain("neither a status operation nor a webhook");
+    // The composite verdict fails too, in the resolver's own vocabulary.
+    expect(checkNamed(air, "static/async_contracts_resolve").detail).toContain(
+      "no_completion_source",
+    );
+    expect(certify(air).status).toBe("failed");
+  });
+});
+
+describe("Phase 4 — a fully configured webhook contract certifies", () => {
+  it("passes every Phase 4 arm, and the document as a whole", () => {
+    linkWebhook(air, {
+      scheme: "remote_verify",
+      provider: "paypal",
+      verifyEndpointRef: "config/paypal-verify-endpoint",
+      credentialRef: "secrets/paypal-cred",
+    });
+    const target = fakeDeployTarget({
+      allowedHosts: ["api.paypal.com"],
+      resolveRef: (ref) => {
+        if (ref === "config/paypal-verify-endpoint") {
+          return "https://api.paypal.com/v1/notifications/verify-webhook-signature";
+        }
+        if (ref === "secrets/paypal-cred")
+          return JSON.stringify({ accessToken: "t", webhookId: "w" });
+        return undefined;
+      },
+    });
+    const record = certify(air, { deployTarget: target });
+    expect(record.checks.filter((c) => !c.ok)).toEqual([]);
+    expect(record.status).toBe("static_passed");
   });
 });

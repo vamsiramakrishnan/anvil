@@ -94,6 +94,59 @@ describe("FirestoreLedger", () => {
     expect(JSON.stringify(calls)).not.toContain("same key");
   });
 
+  it("writes the job-handle index alongside completion and resolves it back (Decision A)", async () => {
+    type FirestoreFieldValue = {
+      integerValue?: string;
+      stringValue?: string;
+      timestampValue?: string;
+    };
+    type FirestoreFields = Record<string, FirestoreFieldValue>;
+    const documents = new Map<string, { fields: FirestoreFields; updateTime: string }>();
+    let seq = 0;
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      if (method === "POST") {
+        const documentId = url.searchParams.get("documentId");
+        if (!documentId) throw new Error("expected a documentId on create");
+        const key = `${url.pathname}/${documentId}`;
+        if (documents.has(key)) return conflictResponse();
+        seq += 1;
+        const body = JSON.parse(String(init?.body)) as { fields: FirestoreFields };
+        const updateTime = `2026-07-23T10:00:0${seq}.000000Z`;
+        documents.set(key, { fields: body.fields, updateTime });
+        return jsonResponse(document(body.fields, updateTime));
+      }
+      if (method === "PATCH") {
+        const key = url.pathname;
+        const existing = documents.get(key);
+        seq += 1;
+        const updateTime = `2026-07-23T10:00:0${seq}.000000Z`;
+        const body = JSON.parse(String(init?.body)) as { fields: FirestoreFields };
+        const merged: FirestoreFields = { ...(existing?.fields ?? {}), ...body.fields };
+        documents.set(key, { fields: merged, updateTime });
+        return jsonResponse(document(merged, updateTime));
+      }
+      if (method === "GET") {
+        const existing = documents.get(url.pathname);
+        if (!existing) return new Response(null, { status: 404 });
+        return jsonResponse(document(existing.fields, existing.updateTime));
+      }
+      throw new Error(`unexpected method ${method}`);
+    }) as typeof fetch;
+    const ledger = new FirestoreLedger("firestore://my-project/payments-ledger/payments", {
+      fetchImpl,
+      metadataToken: async () => "access-token",
+      now: () => Date.parse(NOW),
+    });
+
+    await ledger.reserve("caller-key", "fingerprint-a");
+    await ledger.complete("caller-key", { status: "pending" }, 202, "upstream-job-abc");
+
+    await expect(ledger.findBySecondaryKey("upstream-job-abc")).resolves.toBe("caller-key");
+    await expect(ledger.findBySecondaryKey("no-such-job")).resolves.toBeUndefined();
+  });
+
   it("replays a completed result only for the same request fingerprint", async () => {
     const fetchImpl = vi
       .fn()
