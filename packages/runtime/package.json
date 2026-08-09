@@ -23,7 +23,8 @@
   },
   "dependencies": {
     "@anvil/air": "workspace:*",
-    "@anvil/grammar": "workspace:*"
+    "@anvil/grammar": "workspace:*",
+    "jose": "^6.2.8"
   },
   "devDependencies": {
     "tsup": "^8.5.0",
