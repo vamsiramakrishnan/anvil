@@ -534,6 +534,10 @@ function asyncContractChecks(
   // certificate covers".
   const unexposed: string[] = [];
   for (const { operation, contract } of carrying) {
+    // Webhook-only contracts have no poll target for this arm to judge — §9's
+    // webhook-specific arms (signature scheme resolvable, webhook operation
+    // exposed) cover them separately.
+    if (!contract.statusOperationId) continue;
     const status = byId.get(contract.statusOperationId);
     if (!status) {
       unexposed.push(`${operation.id} polls '${contract.statusOperationId}', which does not exist`);
@@ -563,6 +567,7 @@ function asyncContractChecks(
   const mutatingTargets: string[] = [];
   let judgedTargets = 0;
   for (const { operation, contract } of carrying) {
+    if (!contract.statusOperationId) continue; // webhook-only: no poll target to judge
     const status = byId.get(contract.statusOperationId);
     if (!status) continue;
     judgedTargets += 1;
@@ -640,7 +645,10 @@ function asyncContractChecks(
   let judgedCoordinates = 0;
   let unverifiableCoordinates = 0;
   for (const { operation, contract } of carrying) {
-    const status = byId.get(contract.statusOperationId);
+    // `jobIdField` addresses this operation's own response regardless of
+    // completion source, so it is judged unconditionally; `stateField`
+    // addresses the status response and only applies when one exists.
+    const status = contract.statusOperationId ? byId.get(contract.statusOperationId) : undefined;
     const coordinates: Array<{ label: string; schema: JsonSchema | undefined; path: string }> = [
       {
         label: `handle field '${contract.jobIdField}'`,

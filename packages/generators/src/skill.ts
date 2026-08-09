@@ -461,7 +461,10 @@ function asyncSurfaces(air: AirDocument, exposed: Operation[]): AsyncSurface[] {
   for (const op of exposed) {
     const resolution = resolveAsyncContract(op, byId);
     const sentence = asyncContractSentence(resolution);
-    if (!resolution.ok || !sentence) continue;
+    // Webhook-only completions have no status operation for this card to name
+    // (no CLI command, no tool to poll) — they get their own skill section
+    // alongside the rest of the webhook wiring, not a half-filled poll card.
+    if (!resolution.ok || !sentence || !resolution.statusOperation) continue;
     surfaces.push({
       op,
       statusOperation: resolution.statusOperation,

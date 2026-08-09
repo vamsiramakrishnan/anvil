@@ -650,19 +650,64 @@ export const ErrorSpec = z.object({
 export type ErrorSpec = z.infer<typeof ErrorSpec>;
 
 /**
+ * Zod mirror of `WebhookSignatureVerification` in `async-contract.ts` — kept
+ * structurally identical on purpose, for the same cross-file reason as
+ * `AsyncContractSchema` below.
+ */
+export const WebhookSignatureVerificationSchema = z.discriminatedUnion("scheme", [
+  z.object({
+    scheme: z.literal("hmac_sha256_header"),
+    headerName: z.string(),
+    encoding: z.enum(["hex", "base64"]),
+    valuePrefix: z.string().optional(),
+    secretRef: z.string(),
+  }),
+  z.object({
+    scheme: z.literal("provider_sdk"),
+    provider: z.enum(["stripe", "twilio", "github", "shopify"]),
+    secretRef: z.string(),
+  }),
+  z.object({
+    scheme: z.literal("remote_verify"),
+    provider: z.literal("paypal"),
+    verifyEndpointRef: z.string(),
+    credentialRef: z.string(),
+  }),
+  z.object({
+    scheme: z.literal("oidc_jwt"),
+    headerName: z.string(),
+    expectedIssuer: z.string(),
+    expectedAudienceRef: z.string(),
+  }),
+]);
+
+/**
+ * Zod mirror of `WebhookContract` in `async-contract.ts`.
+ */
+export const WebhookContractSchema = z.object({
+  webhookOperationId: z.string(),
+  webhookJobIdField: z.string(),
+  webhookStateField: z.string().optional(),
+  signatureVerification: WebhookSignatureVerificationSchema,
+});
+
+/**
  * Zod mirror of the `AsyncContract` interface in `async-contract.ts`, which owns
  * the semantics and the resolution rules. Declared here because `Operation` is
  * defined in this file and a schema cannot reference a type across the cycle;
  * the two are kept structurally identical on purpose.
  */
 export const AsyncContractSchema = z.object({
-  statusOperationId: z.string(),
+  /** Absent for webhook-only contracts — see `AsyncContract` for the rule. */
+  statusOperationId: z.string().optional(),
   jobIdField: z.string(),
-  statusJobIdParam: z.string(),
+  /** Required only alongside `statusOperationId`. */
+  statusJobIdParam: z.string().optional(),
   stateField: z.string().optional(),
   terminalStates: z.array(z.string()).default([]),
   pendingStates: z.array(z.string()).default([]),
   pollIntervalSeconds: z.number().int().positive().optional(),
+  webhook: WebhookContractSchema.optional(),
 });
 
 export const Pagination = z.object({

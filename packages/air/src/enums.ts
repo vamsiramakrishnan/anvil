@@ -245,6 +245,8 @@ export type SourceKind = z.infer<typeof SourceKind>;
  *   long_running      — returns before completion; progress is polled
  *   bulk              — operates on many records per call
  *   file_transfer     — moves file content rather than structured data
+ *   webhook_receiver  — receiver-only; never a directly-callable MCP tool,
+ *                       wired through `AsyncContract.webhook` instead
  */
 export const InteractionArchetype = z.enum([
   "transaction",
@@ -253,6 +255,7 @@ export const InteractionArchetype = z.enum([
   "long_running",
   "bulk",
   "file_transfer",
+  "webhook_receiver",
 ]);
 export type InteractionArchetype = z.infer<typeof InteractionArchetype>;
 

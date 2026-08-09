@@ -203,7 +203,11 @@ export function operationCatalog(air: AirDocument): {
       // absence is the signal, and it is a truthful one.
       const completion = resolveAsyncContract(op, operationsById);
       const instruction = asyncContractSentence(completion);
-      if (completion.ok && instruction) {
+      // Webhook-only completions resolve `ok: true` with no `statusOperation` —
+      // this shape is poll-specific (a status tool and CLI command to name), so
+      // a webhook-only contract stays unpublished here rather than half-filled.
+      // Its own catalog shape lands with the rest of the webhook wiring.
+      if (completion.ok && instruction && completion.statusOperation) {
         entry.asyncContract = {
           statusOperationId: completion.statusOperation.id,
           // Both bindings, because the catalog serves both surfaces: an MCP
@@ -212,7 +216,10 @@ export function operationCatalog(air: AirDocument): {
           statusTool: completion.statusOperation.mcp.toolName,
           statusCli: completion.statusOperation.cli.command,
           jobIdField: completion.contract.jobIdField,
-          statusJobIdParam: completion.contract.statusJobIdParam,
+          // Present by construction: `resolveAsyncContract` only resolves a
+          // `statusOperation` when `statusJobIdParam` named a real parameter on
+          // it, so this can never actually be absent alongside a status operation.
+          statusJobIdParam: completion.contract.statusJobIdParam as string,
           stateField: completion.contract.stateField,
           terminalStates: completion.contract.terminalStates,
           // Advisory and frequently empty; an empty list would read as "nothing

@@ -164,8 +164,11 @@ function toolSurface(
   const asyncResolution = operationsById
     ? resolveAsyncContract(operation, operationsById)
     : undefined;
+  // Webhook-only contracts resolve with no `statusOperation` to describe here;
+  // their own `_meta` shape lands with the rest of the webhook wiring rather
+  // than half-populating the poll-shaped keys below.
   const asyncMeta =
-    asyncResolution?.ok === true
+    asyncResolution?.ok === true && asyncResolution.statusOperation
       ? asyncMetaFor(asyncResolution.contract, asyncResolution.statusOperation)
       : {};
   const asyncSentence =

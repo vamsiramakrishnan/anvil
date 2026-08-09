@@ -710,6 +710,11 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function asyncContractMeta(resolution: AsyncContractResolution): Record<string, unknown> {
   if (!resolution.ok) return {};
   const { contract, statusOperation } = resolution;
+  // Webhook-only completions resolve with no `statusOperation` at all — this
+  // block is the poll-shaped coordinates a client would drive itself; the
+  // webhook-only equivalent lands with the rest of the webhook wiring rather
+  // than half-publishing poll keys that name nothing.
+  if (!statusOperation) return {};
   return {
     // The tool NAME, not the operation id: this is the string a client passes to
     // `tools/call`. The id is already carried by the status tool's own
