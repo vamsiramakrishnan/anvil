@@ -541,4 +541,44 @@ describe("handleWebhook — oidc_jwt (GCP Pub/Sub push-shaped)", () => {
     expect(result.status).toBe(401);
     expect(ledger.touched).toBe(false);
   });
+
+  // Phase 5 (async-events-implementation-plan.md, "Queue systems"): the two
+  // cases below complete this block's coverage to match the
+  // `hmac_sha256_header` (GitHub/Shopify-shaped) describe block above
+  // exactly — a Pub/Sub push delivery resolves a ledger row the same way any
+  // other webhook provider does. No receiver code changes; this is a
+  // provider-flavored test case reusing the existing fixture helpers
+  // (`ledgerWithIndexedJob`, `trackedLedger`) verbatim.
+  it("duplicate delivery (same message id, byte-identical payload) replays 200 without double-applying", async () => {
+    const { token, jwks } = await issueToken();
+    const ledger = await ledgerWithIndexedJob("msg-1");
+    const params = {
+      ...baseParams,
+      contract,
+      rawBody,
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      ledger,
+      resolveRef,
+      fetchImpl: discoveryFetch(jwks),
+    };
+    const first = await handleWebhook(params);
+    const second = await handleWebhook(params);
+    expect(first).toEqual({ status: 200 });
+    expect(second).toEqual({ status: 200 });
+  });
+
+  it("a Pub/Sub message id the index has never seen returns 400, not 200", async () => {
+    const { token, jwks } = await issueToken();
+    const ledger = new InMemoryLedger(); // nothing indexed
+    const result = await handleWebhook({
+      ...baseParams,
+      contract,
+      rawBody,
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      ledger,
+      resolveRef,
+      fetchImpl: discoveryFetch(jwks),
+    });
+    expect(result.status).toBe(400);
+  });
 });
