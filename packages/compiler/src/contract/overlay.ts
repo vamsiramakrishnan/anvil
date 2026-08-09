@@ -103,6 +103,12 @@ export const CONTRACT_SAFETY_PREDICATES: ReadonlySet<SemanticPredicate> =
     "auth.audience",
     "auth.carrier",
     "state",
+    // Contested only in the "raise a conflict, never silently pick a winner"
+    // sense — `isLoosening` has no case for it (a `set` here is authoring, not
+    // a loosening move), but a webhook signature scheme (who is trusted to
+    // forge completion) is exactly the kind of contradiction two overlays
+    // must not resolve by array order.
+    "asyncContract",
   ]);
 
 type ManifestStrategy = NonNullable<NonNullable<OperationManifest["idempotency"]>["strategy"]>;
@@ -224,6 +230,9 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     if (m.query_policy) assertions.push(set(ref, "queryPolicy", m.query_policy));
     // Harness-supplied catalog schema knowledge, carried the same way.
     if (m.query_schema) assertions.push(set(ref, "querySchema", m.query_schema));
+    // Hand-supplied completion contract, carried verbatim — `applyOperationManifest`
+    // owns merging it onto whatever `normalize.ts` already derived.
+    if (m.async_contract) assertions.push(set(ref, "asyncContract", m.async_contract));
 
     if (m.state) assertions.push(set(ref, "state", m.state));
   }
@@ -331,6 +340,9 @@ export function projectOperationManifest(
 
   const querySchema = v<OperationManifest["query_schema"]>("querySchema");
   if (querySchema) m.query_schema = querySchema;
+
+  const asyncContract = v<OperationManifest["async_contract"]>("asyncContract");
+  if (asyncContract) m.async_contract = asyncContract;
 
   const state = v<OperationManifest["state"]>("state");
   if (state) m.state = state;

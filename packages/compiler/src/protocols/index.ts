@@ -16,6 +16,7 @@ import { adaptGraphql } from "./graphql.js";
 import { adaptProto, type ProtoImportResolver } from "./grpc.js";
 import { adaptOData } from "./odata.js";
 import { adaptPostman, isPostmanCollection, postmanSchemaVersion } from "./postman.js";
+import { callbackWebhookLink, webhookPathItems } from "./webhooks.js";
 import { adaptWsdl, type WsdlImportResolver } from "./wsdl.js";
 
 /** The non-REST source formats Anvil can lower. Aligns with AIR's SourceKind. */
@@ -160,4 +161,17 @@ export function adaptProtocol(
 
 export type { ProtoImportResolver } from "./grpc.js";
 export type { WsdlImportResolver } from "./wsdl.js";
-export { adaptDiscovery, adaptGraphql, adaptOData, adaptPostman, adaptProto, adaptWsdl };
+// `webhooks:` is OpenAPI-native (§10 of the async design doc), not a foreign
+// format lowered through `adaptProtocol` — it never appears in `ProtocolFormat`
+// or `detectProtocolFormat`. Re-exported here purely for discoverability
+// alongside the other protocol modules; `normalize.ts` is the actual caller.
+export {
+  adaptDiscovery,
+  adaptGraphql,
+  adaptOData,
+  adaptPostman,
+  adaptProto,
+  adaptWsdl,
+  callbackWebhookLink,
+  webhookPathItems,
+};
