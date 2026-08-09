@@ -246,7 +246,15 @@ export function operationCatalog(air: AirDocument): {
  * package layout"). Only approved operations are compiled in.
  */
 export function compiledOperations(air: AirDocument): unknown {
-  const approved = air.operations.filter((op) => op.state === "approved");
+  // A webhook_receiver operation is compiled and validated like any other
+  // operation, but is never a directly-callable tool (packages/air/src/enums.ts's
+  // InteractionArchetype doc) — it is wired only through AsyncContract.webhook
+  // and the generated receiver route. Same predicate the runtime hot-path
+  // manifest already applies for approval; this is one more clause on it, not
+  // a parallel filter that could drift from this one.
+  const approved = air.operations.filter(
+    (op) => op.state === "approved" && op.archetype !== "webhook_receiver",
+  );
   return {
     service: air.service.id,
     version: air.service.version,
@@ -289,7 +297,7 @@ export function compiledOperations(air: AirDocument): unknown {
 export function compiledSchemas(air: AirDocument): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const op of air.operations) {
-    if (op.state !== "approved") continue;
+    if (op.state !== "approved" || op.archetype === "webhook_receiver") continue;
     out[op.id] = op.input.schema ?? operationInputSchema(op);
   }
   return out;
@@ -317,7 +325,7 @@ export function compiledErrors(air: AirDocument): unknown {
     ],
     operations: Object.fromEntries(
       air.operations
-        .filter((op: Operation) => op.state === "approved")
+        .filter((op: Operation) => op.state === "approved" && op.archetype !== "webhook_receiver")
         .map((op) => [op.id, op.errors]),
     ),
   };

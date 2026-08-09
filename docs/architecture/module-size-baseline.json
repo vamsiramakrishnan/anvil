@@ -31,8 +31,8 @@
       "plan": "Split graph construction / coordinate resolution / overlap analysis / policy / report projection. Composition stays audit-only. Queued behind estate."
     },
     "packages/generators/src/deploy.ts": {
-      "lines": 1630,
-      "plan": "Split provider-neutral deploy-plan validation from Cloud Run projection so a second target does not fork the file. Queued."
+      "lines": 1699,
+      "plan": "Raised deliberately from 1630 for async-events Phase 3: deploy/README.md now documents the generated /webhooks/<service>/<opId> receiver routes (webhookReadmeSection) and the plain-env convention their signature-verification refs resolve through, mirroring how credential_secret_refs is already documented here. The route generation itself lives in entrypoints.ts (resolvedWebhookRoutes/generateRuntimeServer) — this file only reads that same function to describe it to an operator, one more fact about the artifact this file already owns describing, not new deploy-plan logic. Split provider-neutral deploy-plan validation from Cloud Run projection so a second target does not fork the file. Queued."
     },
     "packages/cli/src/self-skill.ts": {
       "lines": 1575,
@@ -125,6 +125,10 @@
     "packages/compiler/src/normalize.ts": {
       "lines": 928,
       "plan": "Raised deliberately from 814 for async-events Phase 1: merges webhookPathItems(doc) into the paths loop and adds attachWebhookLinks, which records a callbacks:-derived webhooks: link as an evidence claim rather than writing AsyncContract.webhook directly (see manifest.ts's async_contract key for why). Watch."
+    },
+    "packages/mcp-runtime/src/server.ts": {
+      "lines": 1059,
+      "plan": "New entry for async-events Phase 3: buildMcpServer's per-operation handler now wraps its ExecuteContext.ledger with ledgerWithJobIndexing (async-completion.ts) and, when `op` is a status operation some other operation's AsyncContract names, checks the ledger before falling back to its existing upstream call (the hybrid handler). Two new registration passes follow the main operation loop: synthetic (webhook-only, sourceRef-less) status tools, and job-answer tools for approved humanApproval mutations. All three are additive registration/handler logic for the one mechanism this phase adds, not unrelated concerns — cohesive with the rest of this file's existing per-operation tool-building loop. Watch; a fourth async-completion concern arriving here would be the signal to split registration passes into their own module."
     }
   }
 }

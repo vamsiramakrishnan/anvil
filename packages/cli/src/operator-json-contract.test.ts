@@ -608,6 +608,7 @@ const UNEXERCISED: Record<string, string> = {
   "capability compose": "needs two verified bundle fixtures",
   "deploy credentials": "needs a compiled bundle fixture",
   "deploy ledger": "needs a compiled bundle fixture",
+  "job answer": "needs a compiled bundle fixture with an approved human-decision operation",
   // Need a source/spec corpus.
   assess: "needs a source fixture",
   distill: "needs a source fixture",

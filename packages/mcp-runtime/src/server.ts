@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   type AirDocument,
+  type AsyncContract,
   type AsyncContractResolution,
   asyncContractSentence,
   DEFAULT_RESPONSE_BUDGET_TOKENS,
@@ -12,9 +13,15 @@ import {
   operationSafetyInputKeys,
   resolveAsyncContract,
 } from "@anvil/air";
-import { type ExecuteContext, execute } from "@anvil/runtime";
+import {
+  type ExecuteContext,
+  execute,
+  handleJobAnswer,
+  type JobAnswerDecision,
+} from "@anvil/runtime";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { ledgerWithJobIndexing, peekWebhookStatus } from "./async-completion.js";
 import {
   createLaneSurface,
   type DisclosableTool,
@@ -203,7 +210,15 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
     version: air.service.version,
   });
 
-  const ops = air.operations.filter((op) => options.includeUnapproved || op.state === "approved");
+  // webhook_receiver operations are compiled and validated like any other
+  // operation, but are never a directly-callable tool — receiver-only, per
+  // InteractionArchetype's own doc (packages/air/src/enums.ts). They are
+  // wired only through AsyncContract.webhook and the generated receiver
+  // route (packages/generators/src/entrypoints.ts), never through tools/list.
+  const ops = air.operations.filter(
+    (op) =>
+      (options.includeUnapproved || op.state === "approved") && op.archetype !== "webhook_receiver",
+  );
   const opsById = new Map(ops.map((op) => [op.id, op]));
   // The SDK hands back a live handle per tool. Held so the disclosure ladder can
   // close a laned tool *after* it is fully registered — see the ladder block
@@ -222,6 +237,44 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
   // is the contract's own, so this map makes the served sentence identical to the
   // one `@anvil/certification` certified from the same function.
   const allOpsById = new Map(air.operations.map((operation) => [operation.id, operation]));
+
+  // Precomputed in one pass over `ops`, before any tool registers, for three
+  // reasons registration itself needs:
+  //  - `hybridStatusOperationContracts`: statusOperation.id -> the submitting
+  //    operation's own resolved AsyncContract. When `op` (below) IS a status
+  //    operation some other operation names, its handler checks the ledger
+  //    first (design doc §6/§14) before falling back to the upstream call it
+  //    already makes today — the "hybrid" half of this phase's task.
+  //  - `syntheticStatusTargets`: submitting operations that resolved a
+  //    webhook contract with NO statusOperationId at all (webhook-only) — for
+  //    these there is no existing tool to wrap; a brand-new, sourceRef-less
+  //    "synthetic" tool is registered for each, after the main loop.
+  //  - `hasAwaitingHumanInput`: whether ANY resolved contract in this served
+  //    surface names `awaiting_human_input` as a pending state — the gate for
+  //    generating any job-answer tool at all (design doc §8).
+  const hybridStatusOperationContracts = new Map<string, AsyncContract>();
+  const syntheticStatusTargets: Array<{
+    op: Operation;
+    contract: AsyncContract;
+    sentence: string | undefined;
+  }> = [];
+  let hasAwaitingHumanInput = false;
+  for (const op of ops) {
+    const resolution = resolveAsyncContract(op, allOpsById);
+    if (!resolution.ok) continue;
+    if (resolution.contract.pendingStates.includes("awaiting_human_input")) {
+      hasAwaitingHumanInput = true;
+    }
+    if (resolution.statusOperation) {
+      hybridStatusOperationContracts.set(resolution.statusOperation.id, resolution.contract);
+    } else if (resolution.contract.webhook) {
+      syntheticStatusTargets.push({
+        op,
+        contract: resolution.contract,
+        sentence: asyncContractSentence(resolution),
+      });
+    }
+  }
 
   for (const op of ops) {
     // Resolved once, outside the handler: it is a pure function of the document,
@@ -301,7 +354,52 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         const page = derivePageSize(op, input, budgetTokens);
         if (page) input[page.key] = page.size;
 
-        const result = await execute(op, { input, dryRun }, options.contextFor(op));
+        const execContext = options.contextFor(op);
+        // Any operation with a resolved AsyncContract indexes its job handle
+        // on completion — the write side of the job-handle index
+        // (packages/runtime/src/idempotency.ts's `secondaryKey`) that nothing
+        // in `execute()` itself performs yet (see async-completion.ts's doc
+        // comment on `ledgerWithJobIndexing` for why this wraps the ledger
+        // here rather than in `@anvil/runtime`). Skipped when there is no
+        // ledger to index into at all.
+        const callContext =
+          asyncContract.ok && execContext.ledger
+            ? {
+                ...execContext,
+                ledger: ledgerWithJobIndexing(
+                  execContext.ledger,
+                  asyncContract.contract.jobIdField,
+                ),
+              }
+            : execContext;
+
+        // Hybrid status handler (design doc §6/§14): `op` here IS a status
+        // operation some OTHER operation's AsyncContract names. Before making
+        // the upstream call this tool has always made, check whether a
+        // webhook already answered the job the caller is asking about. Found
+        // -> return the cached completion immediately, no upstream call at
+        // all. Not found (or no ledger, or a dry run) -> fall through to the
+        // unchanged call below, exactly as before this phase.
+        const hybridContract = hybridStatusOperationContracts.get(op.id);
+        if (hybridContract && !dryRun && execContext.ledger?.findBySecondaryKey) {
+          const jobId = input[hybridContract.statusJobIdParam as string];
+          if (typeof jobId === "string" && jobId.length > 0) {
+            const idempotencyKey = await execContext.ledger.findBySecondaryKey(jobId);
+            if (idempotencyKey !== undefined) {
+              const peek = await peekWebhookStatus(execContext.ledger, idempotencyKey);
+              if (peek.found) {
+                let text = JSON.stringify(peek.result, null, 2);
+                text = truncateResultText(text, op, budget);
+                return {
+                  content: [{ type: "text" as const, text }],
+                  structuredContent: isRecord(peek.result) ? peek.result : { result: peek.result },
+                };
+              }
+            }
+          }
+        }
+
+        const result = await execute(op, { input, dryRun }, callContext);
         if (result.outcome === "success") {
           const raw = result.data ?? null;
 
@@ -349,6 +447,174 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
     );
     opTools.set(op.id, registered);
     registeredToolNames.add(op.mcp.toolName);
+  }
+
+  // A name derived from a real operation's own tool name, disambiguated
+  // against whatever is already registered — used by both the synthetic
+  // status tools and the job-answer tools below, neither of which has a
+  // `sourceRef` of its own to derive a canonical name from.
+  const uniqueToolName = (base: string): string => {
+    let candidate = base;
+    let suffix = 2;
+    while (registeredToolNames.has(candidate)) {
+      candidate = `${base}_${suffix}`;
+      suffix += 1;
+    }
+    return candidate;
+  };
+
+  // Synthetic status tools (design doc §9/§14): a webhook-only AsyncContract
+  // has no statusOperationId, so there is no existing tool from the main loop
+  // above to wrap — a genuinely new, sourceRef-less tool is registered
+  // instead. Its only two outcomes are "pending" and the cached webhook
+  // result; there is deliberately no branch here that calls an upstream
+  // status operation at all, because none exists to call — by construction,
+  // not by an `if` that happens to never fire.
+  for (const { op: submitOp, contract, sentence } of syntheticStatusTargets) {
+    const toolName = uniqueToolName(`${submitOp.mcp.toolName}_status`);
+    registeredToolNames.add(toolName);
+    server.registerTool(
+      toolName,
+      {
+        title: `${submitOp.displayName} — status`,
+        description:
+          `Check the cached completion for a job submitted by '${submitOp.mcp.toolName}'. ` +
+          (sentence ??
+            "No poll operation exists for this call; the upstream completes it by calling back."),
+        inputSchema: {
+          job_id: z.string().describe(`The job handle read from '${contract.jobIdField}'.`),
+        },
+        annotations: {
+          title: `${submitOp.displayName} — status`,
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+        _meta: {
+          "anvil/synthetic_status_tool": true,
+          "anvil/async_submit_operation": submitOp.id,
+          "anvil/async_terminal_states": contract.terminalStates,
+          ...(contract.pendingStates.length > 0
+            ? { "anvil/async_pending_states": contract.pendingStates }
+            : {}),
+        },
+      },
+      async (args: Record<string, unknown>) => {
+        const jobId = args.job_id;
+        const pending = () => ({
+          content: [
+            { type: "text" as const, text: JSON.stringify({ status: "pending", jobId }, null, 2) },
+          ],
+          structuredContent: { status: "pending" as const, jobId: jobId ?? null },
+        });
+        if (typeof jobId !== "string" || jobId.length === 0) return pending();
+        const execContext = options.contextFor(submitOp);
+        if (!execContext.ledger?.findBySecondaryKey) return pending();
+        const idempotencyKey = await execContext.ledger.findBySecondaryKey(jobId);
+        if (idempotencyKey === undefined) return pending();
+        const peek = await peekWebhookStatus(execContext.ledger, idempotencyKey);
+        if (!peek.found) return pending();
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(peek.result, null, 2) }],
+          structuredContent: isRecord(peek.result) ? peek.result : { result: peek.result },
+        };
+      },
+    );
+  }
+
+  // Job-answer tools (design doc §8): generated only when SOME resolved
+  // contract in this served surface names `awaiting_human_input` — otherwise
+  // the mechanism is not in play for this service at all, and there is
+  // nothing to gate a tool on. AIR does not model a dedicated
+  // "decision operation" link (only AsyncContract, for the poll/webhook
+  // side — see packages/runtime/src/job-answer.ts's own doc comment), so the
+  // candidate decision operations are every approved mutation the spec itself
+  // already marks `confirmation.humanApproval: true` — the one AIR-native
+  // signal for "a human must sign off on this before it is submitted",
+  // reused here for "a human's decision IS this call" (design doc §5: this is
+  // exactly what gives that field "a real, and cheap, channel"). Each such
+  // operation gets its own tool, bound unambiguously to it — never a single
+  // generic tool that would need the caller to name the operation itself.
+  if (hasAwaitingHumanInput) {
+    for (const decisionOp of ops) {
+      if (decisionOp.effect.kind !== "mutation" || decisionOp.confirmation.humanApproval !== true) {
+        continue;
+      }
+      const toolName = uniqueToolName(`job_answer_${decisionOp.mcp.toolName}`);
+      registeredToolNames.add(toolName);
+      server.registerTool(
+        toolName,
+        {
+          title: `Answer: ${decisionOp.displayName}`,
+          description:
+            `Submit a human decision for a job awaiting approval, by calling '${decisionOp.mcp.toolName}' ` +
+            `('${decisionOp.cli.command}') as the real upstream decision operation — this does not resume ` +
+            "anything paused; it places the same call that operation's own tool would. Supply 'job_id', " +
+            "'decision' (approve|reject), an optional 'note', and any of the operation's own parameters " +
+            "that decision needs.",
+          // The operation's own real params, so the caller can supply
+          // whatever field(s) the real decision call needs beyond the job
+          // id/decision/note this tool adds — same shape a direct call to
+          // `decisionOp`'s own tool would expose. Reserved names win on
+          // collision, exactly like anvil_dry_run/anvil_confirm elsewhere.
+          inputSchema: {
+            ...operationZodShape(decisionOp),
+            job_id: z.string().describe("The job handle this decision answers."),
+            decision: z.enum(["approve", "reject"]).describe("The human's decision."),
+            note: z.string().optional().describe("Optional free-text rationale."),
+          },
+          annotations: mcpToolAnnotations(decisionOp),
+          _meta: {
+            "anvil/job_answer_operation": decisionOp.id,
+            "anvil/effect": decisionOp.effect.kind,
+            "anvil/risk": decisionOp.effect.risk,
+          },
+        },
+        async (args: Record<string, unknown>) => {
+          const { job_id: jobId, decision, note, ...rest } = args;
+          const execContext = options.contextFor(decisionOp);
+          const { budget } = resolveResultBudget(options, decisionOp);
+          const outcome = await handleJobAnswer({
+            operation: decisionOp,
+            caller: execContext.inbound,
+            decision: decision as JobAnswerDecision,
+            note: typeof note === "string" ? note : undefined,
+            jobId: typeof jobId === "string" ? jobId : "",
+            buildOperationInput: () => rest,
+            executeContext: execContext,
+          });
+          if (outcome.outcome === "invalid_decision" || outcome.outcome === "unauthorized") {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: JSON.stringify({ error: outcome.outcome, reason: outcome.reason }, null, 2),
+                },
+              ],
+              isError: true,
+            };
+          }
+          const result = outcome.result;
+          if (result.outcome === "success") {
+            let text = JSON.stringify(result.data ?? null, null, 2);
+            text = truncateResultText(text, decisionOp, budget);
+            return {
+              content: [{ type: "text" as const, text }],
+              structuredContent: isRecord(result.data)
+                ? result.data
+                : { result: result.data ?? null },
+            };
+          }
+          if (result.outcome === "dry_run") {
+            let text = JSON.stringify(result.plan, null, 2);
+            text = truncateResultText(text, decisionOp, budget);
+            return { content: [{ type: "text" as const, text }] };
+          }
+          return errorResult(result.envelope, decisionOp, budget);
+        },
+      );
+    }
   }
 
   // Register workflows as composite tools.
