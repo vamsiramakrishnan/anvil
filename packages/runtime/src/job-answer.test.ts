@@ -135,7 +135,9 @@ describe("handleJobAnswer", () => {
   it("a service-principal operation requires no caller identity", async () => {
     const transport = new MockTransport(() => success());
     const result = await handleJobAnswer({
-      operation: decisionOperation({ auth: { type: "none", scopes: [], principal: "service" } }),
+      operation: decisionOperation({
+        auth: { type: "none", scopes: [], principal: "service", secretSource: "none" },
+      }),
       caller: undefined,
       decision: "reject",
       jobId: "app-2",

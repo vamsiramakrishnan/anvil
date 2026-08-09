@@ -28,7 +28,11 @@ import {
 import { materializeSchema } from "./decycle.js";
 import { deriveNames, singularize } from "./naming.js";
 import type { OpenApiDocument, ParsedSpec, SecurityScheme } from "./parse.js";
-import { callbackWebhookLink, webhookPathItems } from "./protocols/webhooks.js";
+import {
+  callbackWebhookLink,
+  WEBHOOK_ARCHETYPE_EXTENSION,
+  webhookPathItems,
+} from "./protocols/webhooks.js";
 
 const HTTP_METHODS: HttpMethod[] = ["get", "put", "post", "delete", "patch", "head"];
 
@@ -704,7 +708,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
       const effectHint = raw["x-anvil-effect"] === "read" ? ("read" as const) : undefined;
       // Structurally certain from provenance (compiled from `webhooks:`, not
       // `paths:`) — see `classify.ts#classifyArchetype`.
-      const isWebhookReceiver = raw["x-anvil-webhook"] === true;
+      const isWebhookReceiver = raw[WEBHOOK_ARCHETYPE_EXTENSION] === true;
       // A GraphQL query/subscription is definitionally a read; so is a webhook
       // receiver (it never calls upstream at all). The SOAP/gRPC assertions
       // come from an operation-name heuristic instead, so their evidence
