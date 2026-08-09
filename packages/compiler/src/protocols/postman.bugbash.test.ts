@@ -598,7 +598,7 @@ describe("request body shapes with template variables", () => {
       content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
     };
     expect(body).toBeDefined();
-    expect(body.content["application/json"].schema).toMatchObject({
+    expect(body.content["application/json"]!.schema).toMatchObject({
       type: "object",
       properties: expect.objectContaining({
         amount: { type: "string" },
@@ -607,7 +607,7 @@ describe("request body shapes with template variables", () => {
       }),
     });
     // Verify that a properly-typed example was inferred from the template placeholders
-    expect(body.content["application/json"].example).toEqual({
+    expect(body.content["application/json"]!.example).toEqual({
       amount: expect.any(String),
       code: expect.any(String),
       currency: "USD",
@@ -626,7 +626,7 @@ describe("request body shapes with template variables", () => {
       content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
     };
     // Verify schema has all fields properly typed from the template-substituted example
-    expect(body.content["application/json"].schema).toMatchObject({
+    expect(body.content["application/json"]!.schema).toMatchObject({
       type: "object",
       properties: {
         total: { type: "string" },
@@ -634,7 +634,7 @@ describe("request body shapes with template variables", () => {
       },
     });
     // Verify example was reconstructed after placeholder substitution
-    const example = body.content["application/json"].example as Record<string, unknown>;
+    const example = body.content["application/json"]!.example as Record<string, unknown>;
     expect(typeof example.total).toBe("string");
     expect(typeof example.tax).toBe("number");
   });
@@ -650,7 +650,7 @@ describe("request body shapes with template variables", () => {
     const body = opAt(doc, "/really-bad", "post")?.requestBody as {
       content: Record<string, { schema: Record<string, unknown> }>;
     };
-    expect(body.content["application/json"].schema).toMatchObject({
+    expect(body.content["application/json"]!.schema).toMatchObject({
       type: "object",
       description: expect.stringContaining("could not be typed"),
     });
@@ -681,7 +681,7 @@ describe("request body shapes", () => {
     const body = opAt(doc, "/formdata", "post")?.requestBody as {
       content: Record<string, { schema: { properties: Record<string, unknown> } }>;
     };
-    expect(body.content["multipart/form-data"].schema.properties).toEqual({
+    expect(body.content["multipart/form-data"]!.schema.properties).toEqual({
       file: { type: "string", format: "binary" },
       caption: { type: "string" },
     });
@@ -701,8 +701,8 @@ describe("request body shapes", () => {
       >;
     };
     const media = body.content["application/json"];
-    expect(media.schema).toMatchObject({ required: ["query"] });
-    expect(media.example).toEqual({ query: "query Ping { ping }" });
+    expect(media!.schema).toMatchObject({ required: ["query"] });
+    expect(media!.example).toEqual({ query: "query Ping { ping }" });
   });
 
   it("omits the example entirely for a graphql body with no query", () => {
@@ -710,7 +710,7 @@ describe("request body shapes", () => {
     const body = opAt(doc, "/graphql-e", "post")?.requestBody as {
       content: Record<string, Record<string, unknown>>;
     };
-    expect("example" in body.content["application/json"]).toBe(false);
+    expect("example" in body.content["application/json"]!).toBe(false);
   });
 
   it("degrades a declared-JSON raw body that fails to parse to a permissive, honestly-labeled object", () => {
@@ -724,7 +724,7 @@ describe("request body shapes", () => {
     const body = opAt(doc, "/bad-json", "post")?.requestBody as {
       content: Record<string, { schema: Record<string, unknown> }>;
     };
-    expect(body.content["application/json"].schema).toMatchObject({
+    expect(body.content["application/json"]!.schema).toMatchObject({
       type: "object",
       description: expect.stringContaining("could not be typed"),
     });
@@ -769,7 +769,7 @@ describe("request body shapes", () => {
     const body = opAt(doc, "/file-mode", "post")?.requestBody as {
       content: Record<string, { schema: Record<string, unknown> }>;
     };
-    expect(body.content["application/json"].schema).toMatchObject({
+    expect(body.content["application/json"]!.schema).toMatchObject({
       type: "object",
       description: "Postman body mode 'file' is not translatable; permissive object body.",
     });
@@ -919,7 +919,7 @@ describe("auth blocks", () => {
       string,
       { flows: { authorizationCode: Record<string, unknown> } }
     >;
-    expect(schemes.oauth2Auth.flows.authorizationCode).toEqual({
+    expect(schemes.oauth2Auth!.flows.authorizationCode).toEqual({
       authorizationUrl: "https://auth.example.com/authorize",
       tokenUrl: "https://auth.example.com/token",
       scopes: { read: "", write: "" },
@@ -932,7 +932,7 @@ describe("auth blocks", () => {
       string,
       { flows: { authorizationCode: Record<string, unknown> } }
     >;
-    expect(schemes.oauth2Auth.flows.authorizationCode).toEqual({
+    expect(schemes.oauth2Auth!.flows.authorizationCode).toEqual({
       authorizationUrl: "https://example.invalid/authorize",
       tokenUrl: "https://example.invalid/token",
       scopes: {},
@@ -1081,7 +1081,7 @@ describe("lenient JSON parsing for common Postman body quirks", () => {
       content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
     };
     expect(body).toBeDefined();
-    const schema = body.content["application/json"].schema as Record<string, unknown>;
+    const schema = body.content["application/json"]!.schema as Record<string, unknown>;
     // Verify the schema was properly inferred from the lenient-parsed JSON
     expect(schema.type).toBe("object");
     const props = schema.properties as Record<string, unknown>;
@@ -1105,7 +1105,7 @@ describe("lenient JSON parsing for common Postman body quirks", () => {
       content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
     };
     expect(body).toBeDefined();
-    expect(body.content["application/json"].schema).toMatchObject({
+    expect(body.content["application/json"]!.schema).toMatchObject({
       type: "object",
       properties: expect.objectContaining({
         id: { type: "string" },
@@ -1126,7 +1126,7 @@ describe("lenient JSON parsing for common Postman body quirks", () => {
       content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
     };
     expect(body).toBeDefined();
-    expect(body.content["application/json"].schema).toMatchObject({
+    expect(body.content["application/json"]!.schema).toMatchObject({
       type: "object",
       properties: expect.objectContaining({
         amount: { type: "number" },
@@ -1147,7 +1147,7 @@ describe("lenient JSON parsing for common Postman body quirks", () => {
       content: Record<string, { schema: Record<string, unknown>; example: unknown }>;
     };
     expect(body).toBeDefined();
-    expect(body.content["application/json"].schema).toMatchObject({
+    expect(body.content["application/json"]!.schema).toMatchObject({
       type: "object",
       properties: expect.objectContaining({
         amount: { type: "number" },
@@ -1168,7 +1168,7 @@ describe("lenient JSON parsing for common Postman body quirks", () => {
     const body = opAt(doc, "/malformed", "post")?.requestBody as {
       content: Record<string, { schema: Record<string, unknown> }>;
     };
-    expect(body.content["application/json"].schema).toMatchObject({
+    expect(body.content["application/json"]!.schema).toMatchObject({
       type: "object",
       description: expect.stringContaining("could not be typed"),
     });
@@ -1255,7 +1255,7 @@ describe("disabled query parameter UX and operation descriptions", () => {
     const collection = JSON.parse(spec) as Record<string, unknown>;
     // Manually add disabled query param (the string URL doesn't parse query params with disabled flag)
     const item = (collection.item as Array<Record<string, unknown>>)[0];
-    (item.request as Record<string, unknown>).url = {
+    (item!.request as Record<string, unknown>).url = {
       raw: "https://x.example.com/search?q=test&limit=10",
       protocol: "https",
       host: ["x.example.com"],

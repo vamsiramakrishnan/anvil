@@ -1,6 +1,9 @@
 import {
+  agentProjectionIssues,
+  agentPropKey,
   type Diagnostic,
   idempotencyAuthCarrierIssue,
+  isModeledIdempotencyCarrierInput,
   type Operation,
   operationIdempotencyKeySchemaIssue,
   resolveIdempotencyCarrier,
@@ -28,6 +31,7 @@ export function validate(operations: Operation[]): ValidationResult {
     const op = structuredClone(original);
     const notes: string[] = [...op.reviewNotes];
     let mustReview = false;
+    let mustBlock = false;
 
     const flag = (level: Diagnostic["level"], code: string, message: string) => {
       diagnostics.push({ level, code, message, operationId: op.id });
@@ -45,6 +49,55 @@ export function validate(operations: Operation[]): ValidationResult {
     seenCommands.add(op.cli.command);
 
     const carrier = resolveIdempotencyCarrier(op);
+
+    // Agent names are a projection over exact wire names. Two different wire
+    // coordinates may never collapse onto one public JSON/MCP property: the
+    // runtime could not know which upstream field the caller intended.
+    const publicInputs = new Map<string, string>();
+    const checkPublicInput = (key: string, wire: string): void => {
+      const existing = publicInputs.get(key);
+      if (!existing) {
+        publicInputs.set(key, wire);
+        return;
+      }
+      flag(
+        "error",
+        "duplicate_agent_input_name",
+        `Operation '${op.id}' maps wire inputs '${existing}' and '${wire}' to agent input '${key}'.`,
+      );
+      notes.push(
+        `Blocked: wire inputs '${existing}' and '${wire}' collide on agent-facing name '${key}'.`,
+      );
+      mustBlock = true;
+    };
+    for (const parameter of op.input.params) {
+      if (
+        carrier.ok &&
+        isModeledIdempotencyCarrierInput(carrier.binding, parameter.in, parameter.name)
+      ) {
+        continue;
+      }
+      checkPublicInput(agentPropKey(parameter), `${parameter.in}:${parameter.name}`);
+    }
+    if (op.input.body?.projection === "fields") {
+      for (const field of op.input.body.fields) {
+        if (carrier.ok && isModeledIdempotencyCarrierInput(carrier.binding, "body", field.name)) {
+          continue;
+        }
+        checkPublicInput(agentPropKey(field), `body:${field.name}`);
+      }
+    }
+    if (op.output.agentProjection) {
+      for (const issue of agentProjectionIssues(op.output.agentProjection, op.output.schema)) {
+        flag(
+          "error",
+          "invalid_agent_projection",
+          `Operation '${op.id}' has an invalid agent response projection: ${issue}.`,
+        );
+        notes.push(`Blocked: the agent response projection is invalid (${issue}).`);
+        mustBlock = true;
+      }
+    }
     if (!carrier.ok) {
       flag(
         "error",
@@ -215,6 +268,7 @@ export function validate(operations: Operation[]): ValidationResult {
     }
 
     op.reviewNotes = notes;
+    if (mustBlock) op.state = "blocked";
     if (mustReview && op.state === "generated") op.state = "review_required";
     out.push(op);
   }

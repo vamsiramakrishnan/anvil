@@ -81,6 +81,7 @@ export function applyPatch(air: AirDocument, patch: SemanticPatch): ApplyResult 
   const next: AirDocument = structuredClone(air);
   const changes: SemanticChange[] = [];
   const record = (key: string, before: unknown, after: unknown): void => {
+    if (JSON.stringify(before) === JSON.stringify(after)) return;
     changes.push({ target: patch.target, key, before, after });
   };
 
@@ -111,6 +112,24 @@ function applyOne(
       if (key === "description") {
         record(key, op.description, value);
         op.description = String(value);
+        return;
+      }
+      // Routing names are one semantic projection. `rename-operation` always
+      // proposes all three, and this is the only write path allowed to move
+      // them. The stable operation id deliberately remains unchanged.
+      if (key === "canonical_name") {
+        record(key, op.canonicalName, value);
+        op.canonicalName = String(value);
+        return;
+      }
+      if (key === "cli_command") {
+        record(key, op.cli.command, value);
+        op.cli.command = String(value);
+        return;
+      }
+      if (key === "tool_name") {
+        record(key, op.mcp.toolName, value);
+        op.mcp.toolName = String(value);
         return;
       }
       // The idempotency carrier and retry-basis keys below are the sole write
@@ -192,6 +211,29 @@ function applyOne(
         op.pagination.itemsField = String(value);
         return;
       }
+      if (key === "pagination_page_size_param") {
+        if (!op.pagination) return;
+        record(key, op.pagination.pageSizeParam, value);
+        op.pagination.pageSizeParam = String(value);
+        return;
+      }
+      if (key === "pagination_max_page_size") {
+        if (!op.pagination) return;
+        record(key, op.pagination.maxPageSize, value);
+        op.pagination.maxPageSize = Number(value);
+        return;
+      }
+      if (key === "pagination_default_page_size") {
+        if (!op.pagination) return;
+        record(key, op.pagination.defaultPageSize, value);
+        op.pagination.defaultPageSize = Number(value);
+        return;
+      }
+      if (key === "response_projection" && value && typeof value === "object") {
+        record(key, op.output.agentProjection, value);
+        op.output.agentProjection = value as Operation["output"]["agentProjection"];
+        return;
+      }
       return;
     }
     case "capability": {
@@ -224,6 +266,16 @@ function applyOne(
         node.schema.examples = value;
         return;
       }
+      if (key === "agent_name") {
+        record(key, node.agentName, value);
+        node.agentName = String(value);
+        return;
+      }
+      if (key === "aliases" && Array.isArray(value)) {
+        record(key, node.aliases, value);
+        node.aliases = value.map((alias) => String(alias));
+        return;
+      }
       return;
     }
     case "error": {
@@ -237,6 +289,24 @@ function applyOne(
       if (key === "retryable") {
         record(key, spec.retryable, Boolean(value));
         spec.retryable = Boolean(value);
+        return;
+      }
+      if (key === "upstream_code") {
+        const upstream = spec.upstream ?? {};
+        record(key, upstream.code, value);
+        spec.upstream = { ...upstream, code: String(value) };
+        return;
+      }
+      if (key === "recovery_action") {
+        const recovery = spec.recovery ?? { action: "" };
+        record(key, recovery.action, value);
+        spec.recovery = { ...recovery, action: String(value) };
+        return;
+      }
+      if (key === "field_path") {
+        const recovery = spec.recovery ?? { action: "Review the invalid field and retry." };
+        record(key, recovery.fieldPath, value);
+        spec.recovery = { ...recovery, fieldPath: String(value) };
         return;
       }
       return;

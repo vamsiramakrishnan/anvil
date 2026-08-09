@@ -52,6 +52,8 @@ export type ValidationCheckId =
   | "description_not_tautological"
   | "examples_validate_against_schema"
   | "error_message_nonempty"
+  | "agent_field_name_valid"
+  | "response_projection_valid"
   | "idempotency_carrier_resolves"
   | "pagination_binding_resolves";
 
@@ -131,7 +133,11 @@ export interface RefinementSkill {
 /** A flat, read-only view of one input field, assembled for a field skill. */
 export interface FieldContext {
   path: string;
+  /** Exact upstream coordinate. */
   name: string;
+  /** Existing public name, if it differs from the wire coordinate. */
+  agentName?: string;
+  aliases: string[];
   required: boolean;
   schema: JsonSchema;
   description?: string;

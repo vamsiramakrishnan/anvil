@@ -305,7 +305,7 @@ async function importDirectory(state: ImportState, root: string): Promise<void> 
       level: "warning",
       code: "source/unclassified",
       message:
-        'No OpenAPI/Swagger document detected: no file declares `openapi:` (3.x) or `swagger: "2.0"`.',
+        "No supported API contract detected. Provide OpenAPI, Swagger, GraphQL SDL, proto3, WSDL, Google Discovery, OData metadata, or a Postman collection.",
     });
     return;
   }

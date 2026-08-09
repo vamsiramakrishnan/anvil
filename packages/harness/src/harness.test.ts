@@ -238,7 +238,7 @@ describe("plan-driven enrichment routing", () => {
     };
     const report = await runEnrichment(air, [githubSource, confluenceSource], {
       transportFactory: factoryFor(servers),
-      plan: plan as Parameters<typeof runEnrichment>[2]["plan"],
+      plan,
     });
 
     // The CODE question reached the code host and loosened safety.
@@ -260,7 +260,7 @@ describe("plan-driven enrichment routing", () => {
     };
     const report = await runEnrichment(air, [githubSource, confluenceSource], {
       transportFactory: factoryFor(servers),
-      plan: plan as Parameters<typeof runEnrichment>[2]["plan"],
+      plan,
     });
     expect(report.targetedOperationIds).toEqual([
       "payments.refunds.create",
@@ -332,7 +332,7 @@ describe("reconcile conflict gate", () => {
           subject: op.id,
           predicate: "idempotency.mode",
           value: "required",
-          source: "source_docs",
+          source: "doc_example",
           confidence: 0.6,
           reliability: 0.5,
         },

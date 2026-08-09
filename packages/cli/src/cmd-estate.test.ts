@@ -239,13 +239,63 @@ describe("anvil estate inventory", () => {
     });
   });
 
-  it.each([
-    "kong",
-    "apigee",
-    "wso2",
-    "mulesoft",
-    "api_connect",
-  ])("rejects an OpenAPI document passed as a %s vendor export", async (vendor) => {
+  /**
+   * The refusal codes every adapter owes for a non-export, named exactly.
+   *
+   * These cases used to loop the same five vendors and assert
+   * `stringMatching(/invalid_export/)` and `stringMatching(/empty|invalid/)`.
+   * Both pass for any vendor's code, so neither pinned the thing that
+   * identifies which adapter refused: the namespace. An adapter emitting
+   * another vendor's code — easy to do, since these files are copies of each
+   * other — was invisible. So was the `api_connect` -> `apiconnect` mapping
+   * between the CLI's vendor name and the code namespace, which is not the
+   * identity function and is now asserted.
+   *
+   * The second regex was looser still: `/empty|invalid/` cannot tell you which
+   * of the two codes fired, and that turned out to be hiding a genuine
+   * divergence — see `emptyFile` for Kong below.
+   */
+  const NON_EXPORT_CODES: {
+    vendor: string;
+    openApiAsExport: string;
+    emptyFile: string;
+  }[] = [
+    // Kong parses its own export rather than going through the shared
+    // parseGatewayDocument, and reserves `kong/empty_export` for a well-formed
+    // export with `services: []`. A file with no content is not a Kong export
+    // at all, so it is `invalid_export`. Every other adapter routes an empty
+    // document through parse-safe.ts, which calls it `empty_export`.
+    //
+    // Pinned as-is rather than unified: both readings are defensible and
+    // changing a published error code is its own decision. What is not
+    // defensible is the difference being invisible, which is what the old
+    // regex made it. An agent branching on `<vendor>/empty_export` to mean
+    // "the export is empty" is right four times out of five.
+    { vendor: "kong", openApiAsExport: "kong/invalid_export", emptyFile: "kong/invalid_export" },
+    {
+      vendor: "apigee",
+      openApiAsExport: "apigee/invalid_export",
+      emptyFile: "apigee/empty_export",
+    },
+    { vendor: "wso2", openApiAsExport: "wso2/invalid_export", emptyFile: "wso2/empty_export" },
+    {
+      vendor: "mulesoft",
+      openApiAsExport: "mulesoft/invalid_export",
+      emptyFile: "mulesoft/empty_export",
+    },
+    {
+      vendor: "api_connect",
+      openApiAsExport: "apiconnect/invalid_export",
+      emptyFile: "apiconnect/empty_export",
+    },
+  ];
+
+  it.each(
+    NON_EXPORT_CODES,
+  )("rejects an OpenAPI document passed as a $vendor export with $openApiAsExport", async ({
+    vendor,
+    openApiAsExport,
+  }) => {
     const cfg = join(work, `${vendor}.yaml`);
     writeFileSync(cfg, REFUNDS_OPENAPI);
     const { code, out } = await estate("inventory", cfg, "--vendor", vendor, "--json");
@@ -253,19 +303,14 @@ describe("anvil estate inventory", () => {
     const inventory = JSON.parse(out);
     expect(inventory.apis).toEqual([]);
     expect(inventory.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ level: "error", code: expect.stringMatching(/invalid_export/) }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ level: "error", code: openApiAsExport })]),
     );
   });
 
-  it.each([
-    "kong",
-    "apigee",
-    "wso2",
-    "mulesoft",
-    "api_connect",
-  ])("rejects an empty %s vendor export with a structured diagnostic", async (vendor) => {
+  it.each(NON_EXPORT_CODES)("rejects an empty $vendor export with $emptyFile", async ({
+    vendor,
+    emptyFile,
+  }) => {
     const cfg = join(work, `${vendor}-empty.yaml`);
     writeFileSync(cfg, "");
     const { code, out } = await estate("inventory", cfg, "--vendor", vendor, "--json");
@@ -273,10 +318,29 @@ describe("anvil estate inventory", () => {
     const inventory = JSON.parse(out);
     expect(inventory.apis).toEqual([]);
     expect(inventory.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ level: "error", code: expect.stringMatching(/empty|invalid/) }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ level: "error", code: emptyFile })]),
     );
+  });
+
+  it("covers every vendor the CLI offers, so a new adapter cannot skip the table", async () => {
+    // Without this the table is a list someone has to remember to extend, and a
+    // sixth adapter would arrive with neither code asserted — the state all
+    // five were in until now.
+    //
+    // The comparison list is taken from the CLI rather than written here: the
+    // unknown-vendor refusal enumerates the adapters `--vendor` accepts, so it
+    // is the same registry the commands dispatch through.
+    const cfg = join(work, "probe.yaml");
+    writeFileSync(cfg, REFUNDS_OPENAPI);
+    const { out } = await estate("inventory", cfg, "--vendor", "not-a-vendor", "--json");
+    const offered = (JSON.parse(out).message as string)
+      .replace(/^.*Use:\s*/s, "")
+      .replace(/\.\s*$/, "")
+      .split("|")
+      .map((name) => name.trim())
+      .sort();
+    expect(offered.length, `could not parse the vendor list out of: ${out}`).toBeGreaterThan(1);
+    expect(NON_EXPORT_CODES.map((entry) => entry.vendor).sort()).toEqual(offered);
   });
 });
 

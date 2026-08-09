@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentProjection } from "./agent-projection.js";
 import {
   AuthPrincipal,
   AuthType,
@@ -6,7 +7,6 @@ import {
   CapabilityLifecycle,
   DiagnosticLevel,
   EffectKind,
-  ErrorCode,
   HttpMethod,
   IdempotencyMechanism,
   IdempotencyMode,
@@ -22,6 +22,7 @@ import {
   SecretSource,
   SourceKind,
 } from "./enums.js";
+import { ErrorSpec } from "./error-spec.js";
 
 /**
  * A JSON Schema fragment, carried through AIR verbatim. Anvil does not
@@ -328,7 +329,12 @@ export type SourceRef = z.infer<typeof SourceRef>;
 
 /** A single request parameter with its agent-facing bindings. */
 export const Param = z.object({
+  /** Exact upstream/wire name. Never rewritten for agent ergonomics. */
   name: z.string(),
+  /** Clear agent-facing name; defaults to the normalized wire name when absent. */
+  agentName: z.string().min(1).optional(),
+  /** Historical or domain synonyms retained as discovery metadata. */
+  aliases: z.array(z.string().min(1)).optional(),
   in: ParamLocation,
   required: z.boolean().default(false),
   schema: JsonSchema.default(() => ({ type: "string" })),
@@ -348,7 +354,12 @@ export type Param = z.infer<typeof Param>;
  * preserved verbatim on `RequestBody.schema`.
  */
 export const BodyField = z.object({
+  /** Exact upstream/wire name. Never rewritten for agent ergonomics. */
   name: z.string(),
+  /** Clear agent-facing name; defaults to the normalized wire name when absent. */
+  agentName: z.string().min(1).optional(),
+  /** Historical or domain synonyms retained as discovery metadata. */
+  aliases: z.array(z.string().min(1)).optional(),
   required: z.boolean().default(false),
   schema: JsonSchema.default(() => ({ type: "string" })),
   description: z.string().optional(),
@@ -636,19 +647,6 @@ export function authCoherenceIssues(auth: AuthRequirement): string[] {
 // operations and fails closed; the loader remains a structural parser.
 export const AuthRequirement = AuthRequirementBase;
 
-export const ErrorSpec = z.object({
-  code: ErrorCode,
-  upstream: z
-    .object({
-      httpStatus: z.number().int().optional(),
-    })
-    .optional(),
-  message: z.string().optional(),
-  retryable: z.boolean().optional(),
-  safeToRetry: z.boolean().optional(),
-});
-export type ErrorSpec = z.infer<typeof ErrorSpec>;
-
 /**
  * Zod mirror of `WebhookSignatureVerification` in `async-contract.ts` — kept
  * structurally identical on purpose, for the same cross-file reason as
@@ -821,6 +819,8 @@ export const Operation = z.object({
       schemaRef: z.string().optional(),
       schema: JsonSchema.optional(),
       description: z.string().optional(),
+      /** Safe default view returned to agents; raw wire names stay in `schema`. */
+      agentProjection: AgentProjection.optional(),
     })
     .default({}),
   errors: z.array(ErrorSpec).default([]),

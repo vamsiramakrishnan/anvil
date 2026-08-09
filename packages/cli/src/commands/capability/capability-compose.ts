@@ -26,6 +26,7 @@ import {
   compositionEvidenceKey,
   type VerifiedCompositionEvidenceArtifact,
 } from "../../capability-composition.js";
+import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
@@ -70,23 +71,11 @@ export function registerCapabilityCompose(parent: Command, ctx: CommandContext):
 }
 
 function compositionError(io: CliIO, json: boolean, code: string, message: string): number {
-  if (json) {
-    io.out(
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          reportType: "anvil.cross-source-composition-error",
-          code,
-          message,
-        },
-        null,
-        2,
-      ),
-    );
-  } else {
-    io.err(`[${code}] ${message}`);
-  }
-  return 1;
+  return emitRefusal(io, json, {
+    reportType: "anvil.cross-source-composition-error",
+    code,
+    message,
+  });
 }
 
 function loadReview(path: string): CompositionReviewManifestType {

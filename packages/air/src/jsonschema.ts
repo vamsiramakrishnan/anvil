@@ -6,7 +6,7 @@ import {
   isModeledIdempotencyCarrierInput,
   resolveIdempotencyCarrier,
 } from "./idempotency-carrier.js";
-import { cliFlag, propKey } from "./naming.js";
+import { agentFieldName, agentPropKey, cliFlag } from "./naming.js";
 import type { JsonSchema, Operation } from "./schema.js";
 
 const PORTABLE_IDEMPOTENCY_KEY_SCHEMA: JsonSchema = {
@@ -77,13 +77,13 @@ function businessInputKeys(
   const occupied = new Set<string>();
   for (const parameter of op.input.params) {
     if (!isModeledIdempotencyCarrierInput(binding, parameter.in, parameter.name)) {
-      occupied.add(propKey(parameter.name));
+      occupied.add(agentPropKey(parameter));
     }
   }
   if (op.input.body?.projection === "fields") {
     for (const field of op.input.body.fields) {
       if (!isModeledIdempotencyCarrierInput(binding, "body", field.name)) {
-        occupied.add(propKey(field.name));
+        occupied.add(agentPropKey(field));
       }
     }
   } else if (op.input.body) {
@@ -146,7 +146,13 @@ export function operationBusinessInputCliFlag(
   const binding = resolution.ok ? resolution.binding : undefined;
   if (isModeledIdempotencyCarrierInput(binding, location, name)) return undefined;
 
-  const base = cliFlag(name).slice(2);
+  const node =
+    location === "body"
+      ? op.input.body?.projection === "fields"
+        ? op.input.body.fields.find((field) => field.name === name)
+        : undefined
+      : op.input.params.find((parameter) => parameter.in === location && parameter.name === name);
+  const base = cliFlag(node ? agentFieldName(node) : name).slice(2);
   const reserved =
     base === "confirm" ||
     (base === "idempotency-key" && idempotencyModeUsesCarrier(op.idempotency.mode));
@@ -155,13 +161,13 @@ export function operationBusinessInputCliFlag(
   const occupied = new Set<string>();
   for (const parameter of op.input.params) {
     if (!isModeledIdempotencyCarrierInput(binding, parameter.in, parameter.name)) {
-      occupied.add(cliFlag(parameter.name).slice(2));
+      occupied.add(cliFlag(agentFieldName(parameter)).slice(2));
     }
   }
   if (op.input.body?.projection === "fields") {
     for (const field of op.input.body.fields) {
       if (!isModeledIdempotencyCarrierInput(binding, "body", field.name)) {
-        occupied.add(cliFlag(field.name).slice(2));
+        occupied.add(cliFlag(agentFieldName(field)).slice(2));
       }
     }
   }
@@ -238,9 +244,11 @@ export function operationInputSchema(op: Operation): JsonSchema {
 
   for (const p of op.input.params) {
     if (isModeledIdempotencyCarrierInput(binding, p.in, p.name)) continue;
-    const key = propKey(p.name);
+    const key = agentPropKey(p);
     const schema: JsonSchema = { ...p.schema };
     if (p.description && !("description" in schema)) schema.description = p.description;
+    if ((p.aliases ?? []).length > 0) schema["x-anvil-aliases"] = [...(p.aliases ?? [])];
+    schema["x-anvil-wire-name"] = p.name;
     if (p.example !== undefined && !("examples" in schema)) schema.examples = [p.example];
     properties[key] = schema;
     if (p.required) required.push(key);
@@ -254,9 +262,11 @@ export function operationInputSchema(op: Operation): JsonSchema {
     if (body.projection === "fields") {
       for (const f of body.fields) {
         if (isModeledIdempotencyCarrierInput(binding, "body", f.name)) continue;
-        const key = propKey(f.name);
+        const key = agentPropKey(f);
         const schema: JsonSchema = { ...f.schema };
         if (f.description && !("description" in schema)) schema.description = f.description;
+        if ((f.aliases ?? []).length > 0) schema["x-anvil-aliases"] = [...(f.aliases ?? [])];
+        schema["x-anvil-wire-name"] = f.name;
         properties[key] = schema;
         if (f.required) required.push(key);
       }

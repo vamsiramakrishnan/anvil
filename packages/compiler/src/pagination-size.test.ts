@@ -97,15 +97,16 @@ describe("classifyPagination — page size detection", () => {
     });
   });
 
-  it("reads Slack's cursor/limit pair, where next_cursor is nested out of reach", () => {
-    // conversations.list puts next_cursor under response_metadata, so nextField
-    // stays unset — that gap is unchanged by size detection.
+  it("reads Slack's cursor/limit pair and its nested next_cursor", () => {
     const out = {
       type: "object",
       properties: {
         ok: { type: "boolean" },
         channels: { type: "array" },
-        response_metadata: { type: "object" },
+        response_metadata: {
+          type: "object",
+          properties: { next_cursor: { type: "string" } },
+        },
       },
     };
     expect(
@@ -114,16 +115,13 @@ describe("classifyPagination — page size detection", () => {
       style: "cursor",
       cursorParam: "cursor",
       itemsField: "channels",
+      nextField: "response_metadata.next_cursor",
       pageSizeParam: "limit",
       defaultPageSize: 100,
     });
   });
 
   it("strips the OData/Socrata `$` sigil, which is syntax rather than meaning", () => {
-    // NB: a full OData surface also needs `$skip`/`$skiptoken` recognized as
-    // continuation params, which the continuation table does not yet do — so
-    // this pairs `$top` with a plainly-named offset. That is a separate gap,
-    // deliberately not widened here.
     expect(
       paginate([
         param("offset", { type: "integer" }),
@@ -139,6 +137,14 @@ describe("classifyPagination — page size detection", () => {
       paginate([param("offset", { type: "integer" }), param("$limit", { type: "integer" })]),
     ).toMatchObject({
       pageSizeParam: "$limit",
+    });
+    expect(
+      paginate([param("$skiptoken"), param("$top", { type: "integer", maximum: 100 })]),
+    ).toMatchObject({
+      style: "cursor",
+      cursorParam: "$skiptoken",
+      pageSizeParam: "$top",
+      maxPageSize: 100,
     });
   });
 

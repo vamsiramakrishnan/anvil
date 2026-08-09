@@ -257,8 +257,8 @@ describe("review-query-passthrough", () => {
     op.archetype = "query_passthrough";
     op.effect.kind = "read";
     op.input.params = [
-      { name: "sql", in: "query", required: true, schema: { type: "string" } },
-    ] as typeof op.input.params;
+      { name: "sql", in: "query", required: true, schema: { type: "string" }, inferred: false },
+    ];
     op.description = "Run a Postgres report query";
     const ctx = contextFor(air, (code) => code === "query_language_passthrough");
     const proposal = await executor.execute(skill, ctx);
@@ -289,7 +289,9 @@ describe("author-routing-phrases", () => {
       workflowIds: [],
       intentExamples: [],
       state: "generated",
-      review: "proposed",
+      // `review` is not a Capability field; the decision axis is `lifecycle`.
+      lifecycle: "proposed",
+      evidence: { claims: [] },
     });
     const ctx = contextFor(air, (code) => code === "capability_missing_routing_phrases");
     const proposal = await executor.execute(skill, ctx);
@@ -408,6 +410,12 @@ function paginatedDoc(): AirDocument {
             { name: "after", in: "query", required: false, schema: { type: "string" } },
           ],
           body: { projection: "whole" },
+        },
+        output: {
+          schema: {
+            type: "object",
+            properties: { items: { type: "array", items: { type: "object" } } },
+          },
         },
         errors: [],
         idempotency: { mode: "none" },

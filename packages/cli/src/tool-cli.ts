@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import {
   type AirDocument,
+  agentPropKey,
   type ErrorCode,
   evidenceConfidence,
   idempotencyModeUsesCarrier,
@@ -10,7 +11,6 @@ import {
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
-  propKey,
 } from "@anvil/air";
 import { exampleInput, MCP_RESERVED } from "@anvil/generators";
 import {
@@ -1069,7 +1069,7 @@ function buildInput(
     const flagName = flag.slice(2);
     if (flags[flagName] !== undefined) {
       assertFlagHasValue(flag, flags[flagName], p.schema);
-      base[propKey(p.name)] = coerce(flags[flagName] as string, p.schema);
+      base[agentPropKey(p)] = coerce(flags[flagName] as string, p.schema);
     }
   }
   // Body projection: flat scalar fields become individual flags; a `whole` body
@@ -1082,7 +1082,7 @@ function buildInput(
       const flagName = flag.slice(2);
       if (flags[flagName] !== undefined) {
         assertFlagHasValue(flag, flags[flagName], f.schema);
-        base[propKey(f.name)] = coerce(flags[flagName] as string, f.schema);
+        base[agentPropKey(f)] = coerce(flags[flagName] as string, f.schema);
       }
     }
   } else if (body && typeof flags.body === "string") {

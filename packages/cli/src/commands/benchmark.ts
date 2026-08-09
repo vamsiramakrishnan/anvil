@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AirDocument, Operation } from "@anvil/air";
-import { propKey } from "@anvil/air";
+import { agentPropKey } from "@anvil/air";
 import { BENCHMARK_REPORT_FILE, bundleHash, exampleInput, readBundleDir } from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
@@ -207,7 +207,7 @@ function validateExampleInput(op: Operation, exampleParams: Record<string, unkno
   // `input.params` is an ARRAY, and `exampleInput` keys by the *surface* name
   // (`propKey`, e.g. snake_case) — compare on those, not array indices.
   for (const p of op.input.params) {
-    if (p.required && !(propKey(p.name) in exampleParams)) {
+    if (p.required && !(agentPropKey(p) in exampleParams)) {
       throw new Error(
         `Required parameter '${p.name}' not satisfiable from example for operation ${op.id}`,
       );

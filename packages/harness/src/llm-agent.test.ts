@@ -104,6 +104,8 @@ describe("LLM harness agent", () => {
 
     const mcp: McpSource = {
       id: "github",
+      system: "github",
+      callRaw: async () => ({ isError: false, text: "" }),
       call: async () => "This operation uses an Idempotency-Key header to guarantee idempotency.",
       listTools: async () => [{ name: "search_code" }],
       close: async () => {},
@@ -117,7 +119,7 @@ describe("LLM harness agent", () => {
     });
 
     expect(findings.length).toBe(1);
-    const finding = findings[0];
+    const finding = findings[0]!;
     expect(finding.claim?.type).toBe("idempotency");
     expect(finding.evidence.confidence).toBe(0.88); // GitHub's strong profile value
   });
@@ -141,6 +143,8 @@ describe("LLM harness agent", () => {
 
     const mcp: McpSource = {
       id: "github",
+      system: "github",
+      callRaw: async () => ({ isError: false, text: "" }),
       call: async () => "Actual source text here.",
       listTools: async () => [{ name: "search_code" }],
       close: async () => {},
@@ -167,6 +171,8 @@ describe("LLM harness agent", () => {
 
     const mcp: McpSource = {
       id: "github",
+      system: "github",
+      callRaw: async () => ({ isError: false, text: "" }),
       call: async () => "source text",
       listTools: async () => [{ name: "search_code" }],
       close: async () => {},
@@ -192,6 +198,8 @@ describe("LLM harness agent", () => {
 
     const mcp: McpSource = {
       id: "github",
+      system: "github",
+      callRaw: async () => ({ isError: false, text: "" }),
       call: async () => "source text",
       listTools: async () => [{ name: "search_code" }],
       close: async () => {},
@@ -229,6 +237,8 @@ describe("LLM harness agent", () => {
 
     const mcp: McpSource = {
       id: "github",
+      system: "github",
+      callRaw: async () => ({ isError: false, text: "" }),
       call: async () => "The refund endpoint supports idempotency keys per the wiki.",
       listTools: async () => [{ name: "search_code" }],
       close: async () => {},
@@ -243,7 +253,7 @@ describe("LLM harness agent", () => {
 
     expect(findings.length).toBe(1);
     // mode "required" enables retries — that is a loosen, whatever the model said.
-    expect(findings[0].claim).toMatchObject({ type: "idempotency", direction: "loosen" });
+    expect(findings[0]!.claim).toMatchObject({ type: "idempotency", direction: "loosen" });
   });
 
   it("loosen claim from docs-class source stays below LOOSEN_THRESHOLD end to end through reconcile", () => {

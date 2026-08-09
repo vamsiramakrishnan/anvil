@@ -1,6 +1,6 @@
 ---
 name: anvil
-description: Use this skill to operate Anvil — compile API specifications (OpenAPI 3.x, Swagger 2.0, Google Discovery, GraphQL SDL, gRPC/proto3 (multi-file), SOAP/WSDL (multi-file), OData v2/v4 ($metadata/EDMX), Postman Collections) into agent-ready CLI + MCP + skill bundles, enrich unsafe-operation semantics, approve operations, and deploy. Use when turning an API specification into safe agent tools.
+description: Use this skill to operate Anvil — compile supported API specifications into aligned CLI, MCP, and skill bundles; inventory offline legacy estates; refine, approve, and deploy. Use when turning API contracts or legacy exports into safe agent tools.
 ---
 
 # Operating Anvil
@@ -22,13 +22,33 @@ to drive Anvil safely, not to invent semantics.
 Every source format lands in the same canonical model (AIR) and the same
 aligned MCP server + CLI + skill bundle.
 
+## If the source is a gateway estate
+Do not start with `compile`. Read `reference/gateway-estates.md`; run
+`anvil estate inventory`, `anvil estate audit`, and `anvil estate plan`;
+initialize triage with `--init-selection`; then review the exact coordinate,
+contract, gateway identity, semantic lane, and strict per-API import.
+For overlap across verified bundles, read
+`reference/composing-capabilities.md` and use audit-only
+`anvil capability compose`. It produces no AIR, MCP, approval, or build input.
+
+## If no API description exists
+Read `reference/legacy-estates.md`; run `anvil legacy inventory` on an offline
+export, then refine one exact candidate. Inventory finds technical facts;
+refinement separates harness proposals from human approval. Neither connects to
+the runtime.
+
 ## The loop
 1. `anvil compile <spec> --manifest <manifest> --out <dir>` — build the bundle.
-2. `anvil inspect <dir>` — read every operation's effect, risk, and idempotency.
-3. `anvil lint <dir>` — fix diagnostics. Non-idempotent mutations are `review_required`.
-4. Enrich: write an Anvil manifest to declare idempotency, confirmation, retry policy, and routing names for unsafe or weakly-named operations. `anvil distill <dir> --as-enrich-plan` targets the residue for `anvil enrich --plan` (see reference/workflow.md).
-5. `anvil approve <dir> <operation-id...>` — expose operations only after inspecting risk.
-6. `anvil package skill <dir>` and `anvil deploy cloud-run <dir> --env prod`.
+2. `anvil status <dir>` — orient on projections, gates, evidence, target, and release state; follow its next safe action.
+3. `anvil inspect <dir>` and `anvil lint <dir>` — inspect risk and fix diagnostics. Non-idempotent mutations remain `review_required`.
+4. Enrich unsafe or weakly named operations via a manifest; `anvil distill <dir> --as-enrich-plan` targets residue for `anvil enrich --plan` (see reference/workflow.md).
+5. `anvil approve <dir> <operation-id...>` — expose operations only after inspecting risk. Receipt-bound gateway bundles instead require reviewed state in the supplemental manifest and a re-import, preserving immutable import-to-approval lineage.
+6. For Gemini Enterprise, generate the target now: `anvil target gemini-enterprise <dir> --surface <custom-mcp|agent-gateway> --server-auth <oauth|no-auth> ...`. Keep its deployment inputs outside compiler-owned output.
+7. Run `anvil deploy ledger <dir> --project <project-id> --database <firestore-database>` to inspect writes and verify the store contract. Shared mode is the default; dedicated also needs immutable location. Its tfvars bind non-secret plan identity; live readiness remains unverified.
+8. Run `anvil status <dir>`, then certify the complete bundle. Target and idempotency-store artifacts are deployment inputs and part of the certified hash.
+9. Run `anvil selftest <dir>`, `anvil conformance <dir>`, and `anvil simulate <dir>`; each report must pass against that same bundle hash.
+10. Prepare a plan with `anvil publish <dir>` only after static assurance and all three executable lanes are fresh and passing. A non-prod-only `--allow-incomplete-evidence` waiver is explicit in the plan; prod fails closed.
+11. After the endpoint is live, require `/readyz` HTTP 200 for ledger-backed writes, then complete the external Gemini console or guarded Agent Gateway registration steps. See reference/gemini-enterprise.md.
 
 ## Safety rules
 - **Never approve an operation you have not inspected.** Only approved operations are exposed.
@@ -39,6 +59,12 @@ aligned MCP server + CLI + skill bundle.
 ## Where to look
 - `reference/commands.md` — every command and what it does.
 - `reference/workflow.md` — the enrich → approve workflow and manifest shape.
+- `reference/gateway-estates.md` — whole-estate audit, native-format boundaries, view/BFF semantics, and receipt-safe adoption.
+- `reference/legacy-estates.md` — offline Java/.NET/messaging evidence, conflicts, and the boundary before bridge generation.
+- `reference/composing-capabilities.md` — audit and review cross-bundle read overlap without inferring authority or generating MCP.
+- `reference/gemini-enterprise.md` — choose and safely configure one Gemini Enterprise BYO-MCP journey.
+- `reference/upstream-credentials.md` — configure outbound authentication from the runtime to the upstream API.
+- `reference/durable-idempotency.md` — configure the managed write ledger and distinguish static wiring, live readiness, and bounded guarantees.
 - `evals/operate_anvil.yaml` — behavior checks for operating Anvil.
 
 Run `anvil --help` before guessing.

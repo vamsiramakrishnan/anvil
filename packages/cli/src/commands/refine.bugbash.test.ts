@@ -2,7 +2,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type AirDocument, airFromJson, airToJson, airToYaml, loadAirDocument } from "@anvil/air";
+import {
+  type AirDocument,
+  airFromJson,
+  airFromYaml,
+  airToJson,
+  airToYaml,
+  loadAirDocument,
+} from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
 import {
@@ -220,6 +227,7 @@ describe("anvil refine skills", () => {
       "investigate-ui-projection",
       "classify-idempotency",
       "document-pagination",
+      "rename-field",
       "author-intent-examples",
       "author-routing-phrases",
       "review-query-passthrough",
@@ -350,6 +358,7 @@ describe("anvil refine run --out & anvil refine review", () => {
     const oraclePack = await runRefinements(air, {});
     const expectedFiles = packFiles(oraclePack);
     expect(Object.keys(expectedFiles)).toEqual([
+      "pack.json",
       "plan.json",
       "claims.json",
       "proposed.patch.json",
@@ -390,6 +399,57 @@ describe("anvil refine review — input validation", () => {
     const result = await refine("review", dir);
     expect(result.code).toBe(1);
     expect(result.err).toBe(`No review.md in ${dir}. Run \`anvil refine run --out ${dir}\` first.`);
+  });
+});
+
+describe("anvil refine receipt-bound review", () => {
+  it("approves and applies the exact measured review-tier proposal without rerunning it", async () => {
+    const air = autoApprovingAir();
+    const operation = air.operations[0];
+    if (!operation) throw new Error("fixture operation missing");
+    operation.canonicalName = "do_refund";
+    operation.cli.command = "payments refunds do";
+    operation.mcp.toolName = "payments_do_refund";
+
+    const dir = freshDir();
+    const airPath = join(dir, "air.yaml");
+    writeFileSync(airPath, airToYaml(air), "utf8");
+    const packDir = join(dir, "pack");
+    const run = await refine("run", airPath, "--skill", "rename-operation", "--out", packDir);
+    expect(run.code, run.err).toBe(0);
+    const pack = JSON.parse(readFileSync(join(packDir, "pack.json"), "utf8")) as Awaited<
+      ReturnType<typeof runRefinements>
+    >;
+    const candidate = pack.refinements[0];
+    expect(candidate?.approval.tier).toBe("review");
+    if (!candidate) throw new Error("review candidate missing");
+
+    const decision = await refine(
+      "approve",
+      packDir,
+      candidate.id,
+      "--reviewer",
+      "api-owner@example.com",
+      "--reason",
+      "Verified against the implementation and contract tests.",
+    );
+    expect(decision.code, decision.err).toBe(0);
+    expect(decision.out).toContain(`Approved ${candidate.id}`);
+
+    const before = readFileSync(airPath, "utf8");
+    const preview = await refine("apply-pack", airPath, packDir, "--dry-run");
+    expect(preview.code, preview.err).toBe(0);
+    expect(preview.out).toContain("canonical_name");
+    expect(readFileSync(airPath, "utf8")).toBe(before);
+
+    const applied = await refine("apply-pack", airPath, packDir);
+    expect(applied.code, applied.err).toBe(0);
+    const written = airFromYaml(readFileSync(airPath, "utf8"));
+    expect(written.operations[0]).toMatchObject({
+      canonicalName: "create_refund",
+      cli: { command: "payments refunds create" },
+      mcp: { toolName: "payments_create_refund" },
+    });
   });
 });
 

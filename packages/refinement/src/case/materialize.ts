@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { AirDocument, Claim } from "@anvil/air";
 import type { Deficiency } from "../deficiency.js";
 import { assembleContext, evidenceForTarget } from "../skills/context.js";
-import type { RefinementSkill, SkillConstraint, SkillContext } from "../skills/contract.js";
+import type { RefinementSkill, SkillContext } from "../skills/contract.js";
 import { skillFor } from "../skills/registry.js";
 import { describeTarget, targetKey } from "../target.js";
 import {
@@ -26,41 +26,19 @@ import {
   expectedOutputSchema,
   PHASE_ROLE,
 } from "./model.js";
+import { allowedToolsForWorkspace, evidencePolicyForSkill } from "./policy.js";
 import { type InvestigationProcedure, procedureFor } from "./procedure.js";
 import { writeJson } from "./store.js";
+
+// Compatibility export: generated skill documentation imports the helper registry
+// from this module; policy.ts now owns the data shared with portable tasks.
+export { CASE_HELPERS } from "./policy.js";
 
 /**
  * The `anvil case` helper commands available inside a case — only the rails that
  * enforce *Anvil* semantics. Repository search and language tooling are the coding
  * agent's own job; Anvil does not ship a weak re-implementation of them.
  */
-export const CASE_HELPERS = [
-  "anvil case inspect <case>",
-  "anvil case add-evidence <case> --predicate p --source k --path file --lines a-b",
-  "anvil case validate-claims <case>",
-  "anvil case synthesize <case> field=value",
-  "anvil case validate-proposal <case> <air>",
-  "anvil case finalize <case> [--status ...]",
-];
-
-/** Human wording for each machine constraint, for the brief's "you may not" list. */
-const CONSTRAINT_PROSE: Record<SkillConstraint, string> = {
-  do_not_invent_business_rules: "infer business rules the sources do not support",
-  do_not_change_field_type: "change the field's type",
-  do_not_change_requiredness: "change whether the field is required",
-  preserve_domain_terms: "replace the domain's own terms with invented vocabulary",
-  do_not_loosen_safety:
-    "loosen safety (e.g. mark an error retryable) without authoritative evidence",
-};
-
-/** The hard prohibitions every case carries, independent of the skill. */
-const BASE_DENY = [
-  "modify source files",
-  "edit canonical AIR",
-  "change schema structure (type, requiredness, enum)",
-  "use generated documentation or mocks as authoritative evidence",
-];
-
 export interface OpenCaseOptions {
   /** Root the `cases/` dir is created under (default `.refinement`). */
   root?: string;
@@ -136,24 +114,6 @@ function buildTargetDoc(context: SkillContext, priorEvidence: Claim[]): CaseTarg
   }
   if (t.kind === "error") doc.errorCode = t.code;
   return doc;
-}
-
-function buildPolicyDoc(skill: RefinementSkill): EvidencePolicyDoc {
-  return {
-    allowedSources: skill.evidence.allowed,
-    minimumStrength: skill.evidence.minimumStrength,
-    writablePredicates: skill.output.predicates,
-    supportingPredicates: skill.output.supportingPredicates,
-    writableFields: skill.output.fields,
-    constraints: skill.constraints,
-    mustNot: skill.constraints.map((c) => CONSTRAINT_PROSE[c]),
-    minimumVerification: skill.evidence.minimumVerification,
-    fieldVerification: skill.evidence.fieldVerification,
-  };
-}
-
-function buildToolsDoc(workspace: CaseWorkspace): AllowedToolsDoc {
-  return { workspace, helpers: CASE_HELPERS, deny: BASE_DENY };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -263,7 +223,7 @@ export function openCase(
     repositoryRevision: options.repositoryRevision,
     inspect: options.inspect,
   });
-  const policy = buildPolicyDoc(skill);
+  const policy = evidencePolicyForSkill(skill);
 
   // Immutable run: a fresh, content+time-addressed run directory per open. A new run
   // never silently consumes a previous run's output.
@@ -279,7 +239,7 @@ export function openCase(
   const dir = join(root, "cases", caseKey, identity.runId);
   const task = buildTask(caseKey, skill, deficiency, proc);
   const targetDoc = buildTargetDoc(context, prior);
-  const tools = buildToolsDoc(workspace);
+  const tools = allowedToolsForWorkspace(workspace);
   const materialized: MaterializedCase = {
     ref: runRef(identity),
     dir,

@@ -1,8 +1,8 @@
 import {
+  agentPropKey,
   DEFAULT_RESPONSE_BUDGET_TOKENS,
   type Operation,
   type PageSizeBasis,
-  propKey,
   safePageSize,
 } from "@anvil/air";
 
@@ -23,7 +23,7 @@ import {
 export interface PageSizeInjection {
   /** The upstream parameter name, as the contract states it. */
   param: string;
-  /** The input key that carries it — `propKey` normalization, as the executor reads it. */
+  /** The agent-facing input key that carries it, as the executor reads it. */
   key: string;
   size: number;
   basis: PageSizeBasis;
@@ -54,11 +54,10 @@ export function derivePageSize(
   const param = op.pagination?.pageSizeParam;
   if (!param) return undefined;
 
-  const key = propKey(param);
+  const parameter = op.input.params.find((candidate) => candidate.name === param);
+  if (!parameter) return undefined;
+  const key = agentPropKey(parameter);
   if (input[key] !== undefined) return undefined;
-
-  const declared = op.input.params.some((p) => propKey(p.name) === key);
-  if (!declared) return undefined;
 
   const solved = safePageSize(op, budgetTokens);
   if (solved.basis === "unmeasured" || solved.size === undefined) return undefined;
@@ -110,16 +109,21 @@ export function detectSilentCap(op: Operation, data: unknown): SilentCapSignal |
 
   const nextField = pagination.nextField;
   if (nextField !== undefined) {
-    const next = isRecord(data) ? data[nextField] : undefined;
+    const next = valueAtDottedPath(data, nextField);
     // A present continuation marker is the honest case: the response is capped
     // and says so, and the caller has everything it needs to continue.
     if (next !== undefined && next !== null && next !== "") return undefined;
   }
 
+  const cursorParameter = pagination.cursorParam
+    ? op.input.params.find((parameter) => parameter.name === pagination.cursorParam)
+    : undefined;
   return {
     returned: items.length,
     maxPageSize: max,
-    ...(pagination.cursorParam !== undefined ? { cursorParam: pagination.cursorParam } : {}),
+    ...(pagination.cursorParam !== undefined
+      ? { cursorParam: cursorParameter ? agentPropKey(cursorParameter) : pagination.cursorParam }
+      : {}),
     continuationUnobservable: nextField === undefined,
   };
 }
@@ -146,11 +150,20 @@ export function silentCapNotice(signal: SilentCapSignal): string {
 }
 
 function extractItems(data: unknown, itemsField?: string): unknown[] | undefined {
-  if (itemsField !== undefined && isRecord(data)) {
-    const field = data[itemsField];
+  if (itemsField !== undefined) {
+    const field = valueAtDottedPath(data, itemsField);
     return Array.isArray(field) ? field : undefined;
   }
   return Array.isArray(data) ? data : undefined;
+}
+
+function valueAtDottedPath(value: unknown, path: string): unknown {
+  let current = value;
+  for (const segment of path.split(".")) {
+    if (!isRecord(current)) return undefined;
+    current = current[segment];
+  }
+  return current;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

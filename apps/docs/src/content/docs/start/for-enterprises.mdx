@@ -1,104 +1,164 @@
 ---
-title: For enterprises
-description: How a large organization turns the APIs it already has into governed agent tools — and how Anvil's loop maps onto the controls you already run.
+title: Adopt Anvil across a platform
+description: Introduce Anvil one API at a time, preserve service ownership, and turn review, assurance, and drift into repeatable platform controls.
 sidebar:
   order: 3
 ---
 
 import JourneyDiagram from '../../../components/diagrams/JourneyDiagram.astro';
 
-A large enterprise doesn't have an API problem — it has an API **estate**:
-hundreds of services across OpenAPI, twenty-year-old WSDL, gRPC, and GraphQL,
-each owned by a different team, each governed by change management the
-organization already trusts.
+Anvil scales through repeatable contracts, not through a central team rewriting
+every API.
 
-The obvious path to "agents can use our APIs" is a wrapper factory: every team
-hand-writes an MCP server, a CLI, and a prompt snippet for each service. That's
-**N services × 3 tools × forever**, and every wrapper embeds a guess about
-safety that no one reviews and nothing keeps aligned. The wrappers aren't the
-cost — *keeping them honest* is.
+API owners keep responsibility for business semantics. A platform team provides
+the compiler, CI templates, runtime boundary, and release policy. Security
+reviews the small set of facts that change exposure or execution risk.
 
-Anvil replaces the wrapper factory with a compiler. Specs go in; aligned, gated
-tools come out; and your existing governance plugs into the middle.
+## Start with one consequential API
 
-## The conversion journey
+Choose an API that is representative, not convenient:
+
+- it has at least one mutation with a real consequence;
+- the owning team can answer idempotency and auth questions;
+- a usable source contract exists, even if it is WSDL or a gateway export; and
+- the API can be exercised through a mock or non-production endpoint.
+
+A read-only demo proves parsing. A payment, provisioning, or case-management
+API proves whether the ownership and review model works. If the pilot begins
+from a legacy queue, EJB, or WCF endpoint, include the deployment and middleware
+owners and treat the approved binding as a design artifact until a tested local
+bridge exists.
+
+The pilot is successful when the team can explain and reproduce:
+
+1. which source bytes were compiled;
+2. why each exposed operation is approved;
+3. what the runtime will refuse;
+4. which evidence is required before release; and
+5. what happens when the source contract changes.
+
+## The adoption path
 
 <JourneyDiagram />
 
-1. **Inventory.** The input is the spec you already publish — OpenAPI 3.x,
-   Swagger 2.0, GraphQL SDL, gRPC/proto3, SOAP/WSDL, Postman, Google Discovery.
-   Already behind a gateway? Check `anvil estate support --json` before capture.
-   [Gateway adapters](/anvil/concepts/gateway-estates/) directly ingest native
-   WSO2 estates and one Kong declarative state; Apigee, MuleSoft, and IBM API
-   Connect currently ingest documented normalized interchange, not their native
-   bundles. Only cited, modeled fields become facts; opaque policy and missing
-   authority evidence remain blockers.
-2. **Compile.** `anvil compile` emits the whole bundle: CLI, MCP server, skill,
-   harness hooks, deploy manifests, and a conformance test that verifies the
-   bundle's own safety contract.
-3. **Enrich.** Specs are honest about shapes and silent about consequences. The
-   API's owner declares what the spec can't say — idempotency keys,
-   confirmation, human approval — in a small, reviewed, diffable manifest.
-4. **Approve.** Every operation compiles in a `review_required` or `approved`
-   state, and **only approved operations exist in any generated tool**. Risky
-   mutations are held for review by default; a human decision exposes them.
-   This is your change-advisory gate, expressed as a pipeline step.
-5. **Deploy.** Serve the MCP bundle (the deploy manifests target Cloud Run),
-   wire Antigravity's `.agents/hooks.json`, install the Claude Code plugin, and
-   wire the Codex hooks. Agents discover the skill and stop guessing.
-6. **Govern.** When the upstream spec changes, recompile and diff the
-   *contract*, not the bytes: a description tweak is info-level, a dropped
-   confirmation is **blocking**. Safety can be tightened routinely and loosened
-   only deliberately.
+### 1. Capture the source
 
-## Governance, mapped
+Import local contracts into immutable source snapshots. If the source of truth
+is a gateway, use `anvil estate inventory`, `audit`, and `plan` before adopting
+individual APIs. Do not flatten a whole estate into one unauditable tool list.
 
-Anvil doesn't ask an enterprise to adopt a new control framework. It gives the
-controls you already run a place to execute.
+### 2. Compile and assess
 
-| Control you already run | Where it lands in Anvil |
+Use `agentify` for discovery. It compiles the source, reports readiness, and
+proposes capability boundaries without certifying or publishing the result.
+Store the generated bundle as a candidate artifact, not as hand-maintained
+source code.
+
+When no useful API contract exists, replace this step with legacy inventory and
+candidate refinement. The result is not a normal compiled bundle: it is a
+reviewed, non-executable capability binding. Do not count it as onboarded until
+the required deployment-local adapter, assurance, and operational ownership are
+in place.
+
+### 3. Enrich with the owner
+
+The API owner supplies missing facts in `anvil.yaml`: stable names,
+idempotency, confirmation, principal shape, retry constraints, and authored
+workflows. The manifest is reviewed like code and stays next to the source
+contract.
+
+### 4. Approve narrowly
+
+Approve operations and capability groupings only after inspection. An initial
+release should expose the smallest useful capability, not every endpoint in the
+service. A small approved surface is easier to evaluate, permission, and
+operate.
+
+### 5. Assure and release
+
+Run static certification plus executable self-test, conformance, and simulation
+against the same bundle hash. Generate target and deployment inputs, then let
+the organization's existing delivery system apply them. `anvil publish`
+prepares a plan; it does not bypass deployment controls.
+
+### 6. Reconcile drift
+
+Recompile or run `anvil sync` when the upstream contract changes. Treat a
+dropped confirmation, widened auth, or new retry permission differently from a
+description edit. Review the semantic contract, not only the generated diff.
+
+## Ownership model
+
+| Responsibility | API owner | Platform team | Security / risk | Agent team |
+| --- | ---: | ---: | ---: | ---: |
+| Maintain API contract | Owns | Supports | Reviews material changes | Consumes |
+| Author missing semantics | Owns | Provides schema and tooling | Reviews safety-sensitive claims | Provides use cases |
+| Approve operation exposure | Consulted | Executes workflow | Owns policy for sensitive operations | Does not self-approve |
+| Build and assure bundles | Supports | Owns | Sets required evidence | Consumes results |
+| Deploy MCP runtime | Provides upstream coordinates | Owns | Reviews IAM and egress | Registers endpoint |
+| Respond to contract drift | Owns source change | Runs detection | Reviews safety loosening | Revalidates dependent workflows |
+| Confirm legacy deployment bindings | Consulted | Coordinates middleware owner | Reviews resulting exposure | Does not infer from names |
+| Operate a legacy bridge | Supports business behavior | Owns deployment and adapter lifecycle | Reviews identity and network boundary | Consumes the domain MCP surface |
+
+Avoid a model where the platform team guesses business semantics for hundreds
+of services. The compiler can detect uncertainty; only the service owner can
+resolve many of those questions.
+
+## Map Anvil to existing controls
+
+| Existing control | Anvil control point |
 | --- | --- |
-| Change advisory / CAB | The approval workflow — an operation is exposed only by an explicit `anvil approve`, never by default |
-| Security review | Risk classification (effect · risk · reversibility) surfaced by `inspect` and `lint` before anything ships |
-| Four-eyes / SoD on sensitive actions | The human-approval tier — hooks answer `ask`/`force_ask`, so a model-supplied `confirm` can never clear the gate |
-| Audit trail | Structured error envelopes with trace ids; claim-scoped evidence and provenance recorded in AIR |
-| Least privilege | Only approved operations are compiled into *any* generated tool — there is no hidden superset to leak |
-| Config-drift monitoring | Contract drift detection — a spec change that loosens safety is a blocking finding, not a silent diff |
-| Secret handling | The runtime redacts auth material from records; generated docs carry variable *names*, never values |
+| Source provenance | Content-addressed source snapshot and source hash |
+| Change review | Manifest and capability review in the service repository |
+| Least privilege | Only approved operations enter callable surfaces |
+| Separation of duties | Human-approval policy and harness escalation |
+| Release evidence | Certification, self-test, conformance, and simulation records bound to one bundle hash |
+| Change detection | Semantic drift report with blocking safety changes distinguished from documentation changes |
+| Secret management | Generated credential contract names required values; the runtime resolves values from the operator's secret system |
+| Runtime egress | Allowed-host policy and deployment network controls |
 
-## Who owns what
+Anvil should fit inside the delivery controls already trusted by the
+organization. It is not a new control plane for approvals, secrets, or cloud
+deployment.
 
-- **API owners** enrich: they know which mutations are idempotent, which need
-  confirmation, and which need a person. The manifest is small enough to review
-  in a normal PR.
-- **Security** approves: they read risk from `inspect`, gate exposure, and own
-  the human-approval policy (`--human-approval unsafe` is a sensible default
-  for financial and destructive operations).
-- **Platform** runs the factory: compile on spec change in CI, `lint` and
-  `certify` as gates, `publish` bundles, serve the MCP endpoints, and watch
-  `drift`.
-- **Agent teams** consume: install one plugin, read one skill, and get tools
-  whose flags mean what they say. They never negotiate safety per-service.
+## A practical rollout
 
-## A rollout that doesn't bet the company
+### Pilot
 
-**Weeks 1–2 — pilot one API.** Pick a service with real stakes and a good spec
-(payments is the classic). Compile it, enrich the unsafe operations, approve a
-handful, and put the MCP server in front of an internal agent. The deliverable
-isn't the demo — it's the *manifest review* your security team does on the way.
+- One service, one owning team, one meaningful mutation.
+- Compile from the real source contract.
+- Author and review the manifest.
+- Approve one capability.
+- Run the generated MCP server against a mock or non-production endpoint.
+- Record the gaps that required manual interpretation.
 
-**Weeks 3–6 — template the pipeline.** Move compile/lint/certify into CI so a
-spec change automatically produces a new candidate bundle with a drift report.
-Approvals stay human; everything else is a build artifact.
+### Template
 
-**Then — scale as a catalog.** Each service publishes its bundle; agent teams
-install skills and plugins from the catalog instead of writing integrations.
-New API, same contract — the marginal cost of the next service is a manifest,
-not a project.
+- Put source capture, compile, lint, and assessment in CI.
+- Keep approval as an explicit reviewed change.
+- Require the same assurance lanes for every bundle hash.
+- Standardize runtime identity, secret naming, egress, and telemetry.
+- Publish a reusable service-repository example.
 
-## Next
+### Scale
 
-- [Quickstart](/anvil/start/quickstart/) — compile your first bundle in minutes.
-- [Operating Anvil](/anvil/guides/operating-anvil/) — the full operating manual.
-- [Hooks and plugins](/anvil/design/hooks-and-plugins/) — how enforcement ships
-  into Antigravity, Claude Code, and Codex.
+- Onboard services through a documented ownership contract.
+- Publish approved bundles and skills through the organization's existing
+  catalog.
+- Track time-to-first-approved-capability, review latency, drift response time,
+  and failed assurance lanes.
+- Keep gateway-estate inventory separate from capability adoption so ownership
+  and authority remain explicit.
+
+The useful scaling metric is not the number of generated MCP tools. It is the
+number of capabilities with a named owner, a reviewed safety contract, fresh
+assurance evidence, and an operational runtime.
+
+## Continue
+
+- [Run Anvil in CI](/anvil/guides/ci/)
+- [Write an Anvil manifest](/anvil/guides/manifest/)
+- [Import a gateway estate](/anvil/cookbooks/import-a-gateway-estate/)
+- [Inventory a legacy estate](/anvil/guides/legacy-inventory/)
+- [Connect Gemini Enterprise](/anvil/cookbooks/connect-gemini-enterprise/)
+- [Read the architecture](/anvil/concepts/architecture/)

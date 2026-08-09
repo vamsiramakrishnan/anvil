@@ -17,6 +17,7 @@ import {
   generateBundle,
   resourceOptionsFromGenerationMetadata,
 } from "./bundle.js";
+import { unresolvedReadiness } from "./semantic-readiness.js";
 
 /**
  * Static bundle assurance (Layer 5). This is a *judgement over generated
@@ -1046,14 +1047,7 @@ function semanticChecks(air: AirDocument): CertificationCheck[] {
     })
     .map((opId) => `${opId} has no intent examples and its capability has no routing phrases`);
 
-  // A blocking disposition on an exposed operation is a certification stop: the
-  // detectors have said this operation should not ship as-is.
-  const blocked = deficiencies
-    .filter((d) => {
-      const opId = targetOperationId(d.target);
-      return d.severity === "blocking" && opId !== undefined && approved.has(opId);
-    })
-    .map((d) => `${targetOperationId(d.target)}: ${d.code} — ${d.message}`);
+  const blocked = unresolvedReadiness(deficiencies, new Set(approved.keys()));
 
   return [
     check(
@@ -1078,7 +1072,7 @@ function semanticChecks(air: AirDocument): CertificationCheck[] {
       "semantic.no-blocked-disposition",
       "semantic",
       blocked,
-      "no approved operation carries a blocking disposition",
+      "no approved operation carries a blocked or unresolved human-decision disposition",
     ),
   ];
 }

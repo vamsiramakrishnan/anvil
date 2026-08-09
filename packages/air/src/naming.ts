@@ -34,6 +34,26 @@ export const cliFlag = (name: string): string => `--${kebabCase(name)}`;
 /** An MCP/JSON property key for a parameter name, e.g. paymentId -> payment_id. */
 export const propKey = (name: string): string => snakeCase(name);
 
+/** Minimal input node shape shared by Params and projected body fields. */
+export interface AgentNamedInput {
+  /** Exact upstream coordinate. */
+  name: string;
+  /** Optional ergonomic name exposed to agents. */
+  agentName?: string;
+  /** Optional discovery synonyms; not additional wire coordinates. */
+  aliases?: string[];
+}
+
+/** The human-facing name of an input, preserving its wire name separately. */
+export function agentFieldName(input: AgentNamedInput): string {
+  return input.agentName?.trim() || input.name;
+}
+
+/** The JSON/MCP property key an agent supplies for an input. */
+export function agentPropKey(input: AgentNamedInput): string {
+  return propKey(agentFieldName(input));
+}
+
 /**
  * The ONE definition of a weak operation name, shared by the compiler's naming
  * pass (where it lowers confidence and emits a signal) and the refinement

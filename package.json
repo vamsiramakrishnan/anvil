@@ -12,10 +12,13 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "test:estate-scale": "vitest run --root . packages/cli/src/estate-scale.test.ts packages/cli/src/wso2-apictl.test.ts",
+    "corpus:legacy": "node tools/legacy-corpus/run.mjs",
+    "mutation": "node tools/mutation/run.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "typecheck": "turbo run typecheck",
     "deadcode": "knip",
+    "docs:check": "pnpm --filter @anvil/docs check",
     "anvil": "node packages/cli/dist/bin-anvil.js",
     "clean": "turbo run clean && rm -rf node_modules",
     "coverage": "vitest run --coverage --coverage.provider=v8 --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.include=\"packages/*/src/**\" --coverage.exclude=\"**/*.test.ts\" --coverage.reportsDirectory=./coverage-report --exclude=\"**/cookbook*.test.ts\""
@@ -31,7 +34,8 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild"
+      "esbuild",
+      "sharp"
     ]
   }
 }

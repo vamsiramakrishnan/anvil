@@ -51,4 +51,38 @@ describe("UI-projection findings and certification", () => {
       certification.checks.find((check) => check.id === "semantic.no-blocked-disposition")?.status,
     ).toBe("passed");
   });
+
+  it("fails closed on unresolved screen plumbing and passes after a reviewed projection", async () => {
+    const air = await compile({
+      spec: example("openapi.yaml"),
+      manifest: example("anvil.yaml"),
+      serviceId: "payments",
+    });
+    const read = air.operations.find(
+      (operation) => operation.state === "approved" && operation.effect.kind === "read",
+    );
+    if (!read) throw new Error("fixture approved read missing");
+    read.sourceRef.path = "/application-dashboard/view";
+    read.effect.action = "list";
+    read.output.schema = {
+      type: "object",
+      properties: {
+        pageTitle: { type: "string" },
+        columns: { type: "array", items: { type: "string" } },
+        featureFlags: { type: "object" },
+        items: { type: "array", items: { type: "object" } },
+      },
+    };
+
+    const unresolved = certifyBundle(generateBundle(air).files, air);
+    expect(
+      unresolved.checks.find((check) => check.id === "semantic.no-blocked-disposition")?.status,
+    ).toBe("failed");
+
+    read.output.agentProjection = { include: ["items"] };
+    const resolved = certifyBundle(generateBundle(air).files, air);
+    expect(
+      resolved.checks.find((check) => check.id === "semantic.no-blocked-disposition")?.status,
+    ).toBe("passed");
+  });
 });

@@ -1,11 +1,11 @@
 import type { AirDocument, Operation, ParamLocation } from "@anvil/air";
 import {
+  agentPropKey,
   cliFlag,
   evidenceConfidence,
   idempotencyModeUsesCarrier,
   operationBusinessInputCliFlag,
   operationSafetyInputKeys,
-  propKey,
 } from "@anvil/air";
 
 /**
@@ -44,14 +44,14 @@ export function cliFlagForInputKey(op: Operation, key: string): string {
     return "--idempotency-key";
   }
   for (const parameter of op.input.params) {
-    if (propKey(parameter.name) === key) {
+    if (agentPropKey(parameter) === key) {
       const flag = businessInputCliFlag(op, parameter.in, parameter.name);
       if (flag) return flag;
     }
   }
   if (op.input.body?.projection === "fields") {
     for (const field of op.input.body.fields) {
-      if (propKey(field.name) === key) {
+      if (agentPropKey(field) === key) {
         const flag = businessInputCliFlag(op, "body", field.name);
         if (flag) return flag;
       }

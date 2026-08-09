@@ -1,5 +1,10 @@
 # Backtesting Anvil against real APIs and mature MCP servers
 
+Legacy application-server and broker discovery has its own reproducible
+[GitHub corpus](legacy-corpus.md): 13 pinned WebLogic, WebSphere, WildFly, WCF,
+IBM MQ, Artemis, RabbitMQ, Kafka, and AsyncAPI specimens run twice through the
+public `legacy inventory` CLI.
+
 ## Method
 
 For each SaaS product below:

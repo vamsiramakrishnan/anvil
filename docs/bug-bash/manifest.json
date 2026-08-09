@@ -1,0 +1,329 @@
+{
+  "$schema": "./manifest.schema.md",
+  "$comment": "Validated by packages/cli/src/bugbash-manifest.test.ts. See TAXONOMY.md for what the categories mean and what a finding must carry.",
+  "categories": [
+    "spec-parsing",
+    "canonicalization",
+    "operation-naming",
+    "risk-classification",
+    "idempotency-carriers",
+    "confirmation-gates",
+    "identity-and-auth",
+    "redaction-observability",
+    "filesystem-boundaries",
+    "gateway-estate-identity",
+    "capability-composition",
+    "disclosure-budgets",
+    "pagination-projection",
+    "long-running-operations",
+    "surface-conformance",
+    "certification-freshness",
+    "deployment-config",
+    "simulator-realism"
+  ],
+  "suites": [
+    {
+      "path": "packages/air/src/idempotency-carrier.bugbash.test.ts",
+      "subsystem": "idempotency carrier modelling",
+      "categories": ["idempotency-carriers"]
+    },
+    {
+      "path": "packages/cli/src/capability-composition.bugbash.test.ts",
+      "subsystem": "capability composition",
+      "categories": ["capability-composition"]
+    },
+    {
+      "path": "packages/cli/src/commands/approve.bugbash.test.ts",
+      "subsystem": "approve",
+      "categories": ["risk-classification", "gateway-estate-identity", "filesystem-boundaries"]
+    },
+    {
+      "path": "packages/cli/src/commands/benchmark.bugbash.test.ts",
+      "subsystem": "benchmark",
+      "categories": ["surface-conformance"]
+    },
+    {
+      "path": "packages/cli/src/commands/capability/capability-compose.bugbash.test.ts",
+      "subsystem": "capability compose",
+      "categories": ["capability-composition", "gateway-estate-identity"]
+    },
+    {
+      "path": "packages/cli/src/commands/case.bugbash.test.ts",
+      "subsystem": "case workflow",
+      "categories": ["canonicalization"]
+    },
+    {
+      "path": "packages/cli/src/commands/conformance.bugbash.test.ts",
+      "subsystem": "conformance",
+      "categories": ["surface-conformance"]
+    },
+    {
+      "path": "packages/cli/src/commands/estate/estate.bugbash.test.ts",
+      "subsystem": "gateway estate",
+      "categories": ["gateway-estate-identity", "spec-parsing"]
+    },
+    {
+      "path": "packages/cli/src/commands/idempotency-store.bugbash.test.ts",
+      "subsystem": "idempotency ledger wiring",
+      "categories": ["idempotency-carriers", "deployment-config"]
+    },
+    {
+      "path": "packages/cli/src/commands/refine.bugbash.test.ts",
+      "subsystem": "refine",
+      "categories": ["risk-classification"]
+    },
+    {
+      "path": "packages/cli/src/commands/sources.bugbash.test.ts",
+      "subsystem": "sources",
+      "categories": ["spec-parsing"]
+    },
+    {
+      "path": "packages/cli/src/commands/status.bugbash.test.ts",
+      "subsystem": "status",
+      "categories": ["certification-freshness", "surface-conformance"]
+    },
+    {
+      "path": "packages/cli/src/tool-cli.bugbash.test.ts",
+      "subsystem": "generated tool CLI engine",
+      "categories": ["surface-conformance", "confirmation-gates"]
+    },
+    {
+      "path": "packages/cli/src/wso2-apictl.bugbash.test.ts",
+      "subsystem": "WSO2 apictl collection loading",
+      "categories": ["filesystem-boundaries", "canonicalization", "gateway-estate-identity"]
+    },
+    {
+      "path": "packages/compiler/src/gateway/receipt.bugbash.test.ts",
+      "subsystem": "gateway import receipts",
+      "categories": ["gateway-estate-identity", "redaction-observability"]
+    },
+    {
+      "path": "packages/compiler/src/protocols/postman.bugbash.test.ts",
+      "subsystem": "Postman collection parser",
+      "categories": ["spec-parsing", "operation-naming"]
+    },
+    {
+      "path": "packages/harness/src/conformance.bugbash.test.ts",
+      "subsystem": "conformance harness",
+      "categories": ["surface-conformance", "redaction-observability", "identity-and-auth"]
+    },
+    {
+      "path": "packages/harness/src/live.bugbash.test.ts",
+      "subsystem": "live evidence harness",
+      "categories": ["identity-and-auth", "deployment-config"]
+    },
+    {
+      "path": "packages/harness/src/loopback.bugbash.test.ts",
+      "subsystem": "loopback self-test",
+      "categories": ["surface-conformance"]
+    },
+    {
+      "path": "packages/refinement/src/case/battery/effectiveness.bugbash.test.ts",
+      "subsystem": "investigator effectiveness metrics",
+      "categories": ["simulator-realism"]
+    },
+    {
+      "path": "packages/refinement/src/case/battery/run.bugbash.test.ts",
+      "subsystem": "investigator battery",
+      "categories": ["simulator-realism"]
+    },
+    {
+      "path": "packages/runtime/src/credentials.bugbash.test.ts",
+      "subsystem": "credential resolution",
+      "categories": ["identity-and-auth", "redaction-observability"]
+    },
+    {
+      "path": "packages/runtime/src/executor.bugbash.test.ts",
+      "subsystem": "safety executor",
+      "categories": [
+        "confirmation-gates",
+        "idempotency-carriers",
+        "redaction-observability",
+        "identity-and-auth"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "wso2-fifo-assertion-never-ran",
+      "package": "cli",
+      "subsystem": "WSO2 apictl collection loading",
+      "categories": ["filesystem-boundaries"],
+      "invariant": "A WSO2 apictl collection containing a non-regular filesystem node is refused with wso2/unsupported_collection_node before the node is read.",
+      "reproducer": "Place a FIFO inside a directory alongside a valid api.yaml and call loadWso2ApictlDirectory.",
+      "disposition": "test",
+      "whyMissed": "The test imported `mkfifoSync` from `node:fs`, which does not exist. The call threw TypeError into a bare `catch` commented 'FIFO creation may not be supported on all systems', so the assertion after it never executed. Test files are excluded from tsc in every package, so the phantom import was never reported. The suite was green and the coverage was zero.",
+      "regressionTest": "packages/cli/src/wso2-apictl.bugbash.test.ts",
+      "status": "fixed",
+      "notes": "Mutating `!stat.isFile()` to `false` does not merely mislabel the node — readFileSync on a FIFO blocks until a writer opens it, so the import hangs indefinitely. The refusal is a liveness boundary, not only a correctness one."
+    },
+    {
+      "id": "phantom-node-builtin-imports",
+      "package": "workspace",
+      "subsystem": "test infrastructure",
+      "categories": ["filesystem-boundaries"],
+      "invariant": "A named value import from a `node:` module names an export that exists, so the call cannot throw TypeError at runtime.",
+      "reproducer": "Import any non-existent name from a node builtin in a test file; tsc never sees it and the suite stays green.",
+      "disposition": "infrastructure",
+      "whyMissed": "Every packages/*/tsconfig.json excludes src/**/*.test.ts, so roughly 70k lines of test source have no type coverage at all. This is the defect class behind wso2-fifo-assertion-never-ran.",
+      "regressionTest": "packages/cli/src/boundaries.test.ts",
+      "status": "fixed",
+      "notes": "Narrow class-level guard. The general fix — typechecking test source — is tracked as typecheck-excludes-all-tests."
+    },
+    {
+      "id": "typecheck-excludes-all-tests",
+      "package": "workspace",
+      "subsystem": "build configuration",
+      "categories": ["surface-conformance"],
+      "invariant": "Test source is typechecked, so a test cannot reference an API that does not exist.",
+      "reproducer": "Add src/**/*.test.ts back to any package's tsconfig include and run tsc.",
+      "disposition": "infrastructure",
+      "whyMissed": "Not missed — never attempted. The exclusion is uniform across all 13 packages and predates the current test volume.",
+      "regressionTest": "packages/cli/src/boundaries.test.ts",
+      "status": "fixed",
+      "notes": "All 13 packages now typecheck their tests; the 366-error budget is closed. The expectation that most were deliberate invalid inputs was wrong — almost none were. They were fixtures that lied about their type, and the compiler found tests written against values that do not exist: investigationStatus \"declined\", ClaimSource \"source_docs\", Capability field \"review\", IdempotencyMode \"not_idempotent\", RetryMode \"not_safe\", auth type \"bearer\", conformance proof \"none\"/\"jwt\", virtualWiring \"N/A\"/\"gcp:sts\", status \"skip\", surface \"mock\". Five mcp-runtime files built AirDocuments Zod would reject because service.source is required with no default. Two vacuous patterns: expect().toBe(x, msg) silently drops the message, and `if (res.ok && res.binding) { ...assertions... }` skipped rather than failed. Nothing was forced through with `any`."
+    },
+    {
+      "id": "wso2-semantic-digest-test-overclaimed",
+      "package": "cli",
+      "subsystem": "WSO2 apictl collection loading",
+      "categories": ["canonicalization", "gateway-estate-identity"],
+      "invariant": "semanticDigest is a content identity: it survives repacking (compression level, member order) and moves when a member's content changes.",
+      "reproducer": "Load the same members as a stored ZIP, a deflated ZIP, and a member-reordered ZIP; compare digests.",
+      "disposition": "test",
+      "whyMissed": "A test named 'produces identical digest for same content regardless of load method' compared a directory load against different fixture content, then asserted only that a directory load equals itself. Directory and ZIP loads key members at different roots and are not comparable, so the named invariant was never the one under test, and the real repacking property had no coverage.",
+      "regressionTest": "packages/cli/src/wso2-apictl.bugbash.test.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "review-special-file-non-portable",
+      "package": "refinement",
+      "subsystem": "artifact review context assembly",
+      "categories": ["filesystem-boundaries", "redaction-observability"],
+      "invariant": "A non-regular filesystem node under an admitted review context root is refused before any of its bytes can enter model context.",
+      "reproducer": "Bind a Unix-domain socket inside the bundle's docs/ directory and call assembleReviewContext.",
+      "disposition": "infrastructure",
+      "whyMissed": "The test passes where sockets can be bound and fails with EPERM where they cannot; the failure mode was environmental, not a coverage gap. The risk was that the environmental failure would be 'fixed' by weakening it into a silent return.",
+      "regressionTest": "packages/refinement/src/review/review.test.ts",
+      "status": "fixed",
+      "notes": "Falls back to a FIFO, then skips with the reason printed. A skip that names why is honest; a silent return is not."
+    },
+    {
+      "id": "certification-executable-phase-unreachable",
+      "package": "certification",
+      "subsystem": "certification authority",
+      "categories": ["certification-freshness"],
+      "invariant": "ADR-0018 states a pack is `certified` only after its generated surfaces were booted and exercised and every safety mutant was killed. A status the product documents should be a status the product can reach.",
+      "reproducer": "grep the workspace for `executable: true`; the only caller of certify(air, {executable:true}) is packages/certification/src/certification.test.ts.",
+      "disposition": "documentation",
+      "whyMissed": "The symbols are exported from the package index, so knip sees them as public API rather than dead code. No test asserts that a documented status is reachable from a shipped command.",
+      "regressionTest": "packages/cli/src/certification-authority.test.ts",
+      "status": "open",
+      "notes": "Not a fail-open: anvil publish does require fresh, hash-bound selftest/conformance/simulation evidence with prod failing closed. The defect is duplicate authority plus a stale ADR. Resolution options are in docs/architecture/certification-authority.md; the choice is a product decision and is deliberately not taken in this change."
+    },
+    {
+      "id": "estate-error-codes-unasserted",
+      "package": "cli",
+      "subsystem": "gateway estate",
+      "categories": ["gateway-estate-identity", "filesystem-boundaries"],
+      "invariant": "Every machine-readable error code a command can emit is asserted somewhere, because the codes are a contract that callers parse.",
+      "reproducer": "Map the codes emitted by estate.ts against every assertion in packages/cli tests: 40 of 57 covered, 17 not.",
+      "disposition": "test",
+      "whyMissed": "The uncovered codes were unreachable from a test. They lived in module-private functions inside a 3,327-line file, so the only way to reach them was to drive the whole CLI with a fixture elaborate enough to hit that specific branch. Coverage was a function of module size, not of anyone's judgement about risk.",
+      "regressionTest": "packages/cli/src/commands/estate/estate-bundle-install.test.ts",
+      "status": "open",
+      "notes": "13 of the 17 covered so far. The scan was scoped to estate.ts; widening it to the whole estate directory shows 73 codes with 62 asserted. Four of the remaining eleven (bundle_receipt_missing, output_lineage_stale, output_unreadable, and a second bundle_receipt_unparseable site) are in runVerify and need that verb extracted; lifecycle_incompatible needs a target kit that validates under one AIR and not another, which is not constructible from a hand-written fixture; five (audit_inventory_mismatch, baseline_vendor_mismatch, duplicate_inventory_coordinate, duplicate_selection, vendor_mismatch) and gateway/missing_contract live in estate-audit.ts and estate-adoption.ts, which the original estate.ts-only scan never covered."
+    },
+    {
+      "id": "estate-import-error-envelope-inconsistent",
+      "package": "cli",
+      "subsystem": "gateway estate",
+      "categories": ["gateway-estate-identity", "surface-conformance"],
+      "invariant": "One reportType means one envelope shape, so a caller can parse any instance of it with the same code.",
+      "reproducer": "Compare the JSON emitted for `gateway/spec_override_without_spec` (via emitEstateImportError) with `gateway_selection/invalid_gateway_id` (an inline envelope). Both declare reportType `anvil.gateway-estate-import-error`; only the first carries `output: {created:false}` and `receipt: {created:false}`.",
+      "disposition": "product",
+      "whyMissed": "Each envelope is asserted by the test that produced it. Nothing compares two envelopes bearing the same reportType, so a caller reading `output.created` gets `false` from one refusal and `undefined` from another.",
+      "regressionTest": "packages/cli/src/commands/estate/estate-import-policy.test.ts",
+      "status": "fixed",
+      "notes": "Fixed with json-refusals-emit-nothing: the hand-built gateway-identity envelope now goes through the shared emitter, and operator-json-contract.test.ts asserts every import refusal produces the same envelope keys under one reportType."
+    },
+    {
+      "id": "json-refusals-emit-nothing",
+      "package": "cli",
+      "subsystem": "operator contract",
+      "categories": ["surface-conformance"],
+      "invariant": "`--json` emits exactly one JSON document on stdout, on success and on refusal alike, and that document names its own shape.",
+      "reproducer": "anvil estate import ./export.zip --vendor kong --spec ./api.yaml --json  ->  exit 1, zero bytes on stdout, refusal only as prose on stderr.",
+      "disposition": "product",
+      "whyMissed": "Every test in the package calls Anvil's functions; none consumed Anvil's interface the way a customer's CI does. 20 test files call JSON.parse on success paths and not one pinned a refusal, so three refusal paths could emit nothing at all and stay green. The same blindness hid an inventory success envelope with no reportType.",
+      "regressionTest": "packages/cli/src/operator-json-contract.test.ts",
+      "status": "fixed",
+      "notes": "A script piping to jq saw a parse error rather than a refusal — indistinguishable from Anvil crashing. Fixed additively: two refusals gained codes they never had (gateway/gateway_url_required, gateway/invalid_gateway_url), the unreadable-manifest path gained estate/manifest_unreadable, and inventory success now names its shape. Supersedes estate-import-error-envelope-inconsistent, which is now also fixed: the hand-built gateway-identity envelope was folded into the shared emitter, so one reportType is one shape."
+    },
+    {
+      "id": "agent-skill-copy-drifted",
+      "package": "cli",
+      "subsystem": "self-skill",
+      "categories": ["surface-conformance"],
+      "invariant": "Every checked-in copy of the generated self-skill is regenerated from the command registry, so no harness reads a stale command list.",
+      "reproducer": "diff -r skills/anvil .agent/skills/anvil  ->  5 of 9 files absent, 3 commands missing.",
+      "disposition": "documentation",
+      "whyMissed": "The drift guard was exhaustive on one axis and blind on another. It walked every file generateAnvilSkill emits — so a new reference file was covered automatically — but only ever compared against skills/anvil/. Nothing compared the second destination.",
+      "regressionTest": "packages/cli/src/self-skill.test.ts",
+      "status": "fixed",
+      "notes": "The .agent/ copy an Antigravity or Codex harness reads was missing anvil status — step 2 of the loop its own SKILL.md documents — plus benchmark and disclosure, and had no gateway-estates, composing-capabilities, durable-idempotency, gemini-enterprise or upstream-credentials reference at all. Roughly half the product was invisible to that harness. This is precisely the drift Anvil exists to eliminate, occurring on Anvil's own agent-facing surface."
+    },
+    {
+      "id": "release-verdict-not-gateable",
+      "package": "cli",
+      "subsystem": "operator contract",
+      "categories": ["certification-freshness", "deployment-config"],
+      "invariant": "A pipeline can gate on Anvil's own release verdict without reimplementing the evidence ladder.",
+      "reproducer": "anvil status <bundle> exits 0 whether the bundle is release-ready or three steps away; anvil certify also exits 0 with no executable evidence present.",
+      "disposition": "product",
+      "whyMissed": "status computes a deterministic nextAction and always exited 0; the verdict was machine-readable only by parsing JSON. Nothing tested that the verdict was reachable as an exit code, because nothing tested Anvil as a pipeline component.",
+      "regressionTest": "packages/cli/src/operator-json-contract.test.ts",
+      "status": "fixed",
+      "notes": "`anvil status --require <action>` gates on the verdict status already computes; default behaviour unchanged. An unrecognized action fails closed — a gate that passes because its expected action was misspelled is worse than no gate. Does not resolve the wider naming hazard that `certify` is not the release gate; that is tracked in docs/architecture/certification-authority.md."
+    },
+    {
+      "id": "error-codes-unratcheted",
+      "package": "workspace",
+      "subsystem": "operator contract",
+      "categories": ["surface-conformance"],
+      "invariant": "A machine-readable error code cannot be added, removed, or renamed without a reviewed diff, and its assertion coverage cannot regress.",
+      "reproducer": "Extract every string used as a `code` across packages/*/src and cross-reference the test corpus: 305 codes, 76 with no assertion anywhere.",
+      "disposition": "product",
+      "whyMissed": "Codes are asserted incidentally, by whichever test happened to exercise the branch that emits them. Nothing treated the set of codes as a contract in its own right, so a code with no branch coverage also had no contract coverage, and nothing noticed the difference.",
+      "regressionTest": "packages/cli/src/error-code-registry.test.ts",
+      "status": "fixed",
+      "notes": "The registry does not assert the 76 are correct — it makes them visible and prevents the number rising. The extractor counts position rather than shape; a shape-only first draft reported 435 codes, a third of them file paths and MIME types."
+    },
+    {
+      "id": "runverify-duplicates-bundle-verification",
+      "package": "cli",
+      "subsystem": "gateway estate",
+      "categories": ["gateway-estate-identity", "surface-conformance"],
+      "invariant": "Verifying a bundle against its receipt yields the same verdict regardless of which command performs it.",
+      "reproducer": "Compare runVerify's inline verification body against verifyBundleDirectory in estate-bundle-install.ts: both compare a bundle to its receipt, with different error handling and different code sets.",
+      "disposition": "product",
+      "whyMissed": "Both paths are tested against their own expectations. Nothing tests that they agree, so the two can drift apart without any test noticing.",
+      "regressionTest": "packages/cli/src/commands/estate/estate-bundle-install.test.ts",
+      "status": "open",
+      "notes": "Found while extracting the install subsystem. Deduplicating is a semantic change and was deliberately kept out of a mechanical extraction; it belongs with the runVerify extraction."
+    },
+    {
+      "id": "certification-merge-rule-owned-by-cli",
+      "package": "cli",
+      "subsystem": "certification authority",
+      "categories": ["certification-freshness", "surface-conformance"],
+      "invariant": "Whether a bundle passes contract certification does not depend on which command asks.",
+      "reproducer": "Compare the checks produced by runCertify (which bridges @anvil/certification and appends target-kit checks) against the bare certifyBundle call in approve.ts, capability-compose.ts, and idempotency-store.ts.",
+      "disposition": "product",
+      "whyMissed": "Each call site is tested against its own expectations. Nothing tests that the call sites agree with each other, which is the property that actually matters.",
+      "regressionTest": "packages/cli/src/certification-authority.test.ts",
+      "status": "open",
+      "notes": "Characterised, not changed. Moving the merge rule out of the CLI is the follow-up; doing it here would mix a semantic change into a baseline PR."
+    }
+  ]
+}

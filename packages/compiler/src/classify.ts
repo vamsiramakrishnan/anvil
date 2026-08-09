@@ -21,6 +21,7 @@ import {
   type SecretSource,
   snakeCase,
 } from "@anvil/air";
+import { inferPaginationResponseFields } from "./pagination-response.js";
 
 /**
  * The effect/idempotency classifier — the semantics the source spec almost
@@ -428,10 +429,12 @@ const CURSOR_PARAM_NAMES = new Set([
   "pagetoken",
   "next_token",
   "nexttoken",
+  "skip_token",
+  "skiptoken",
   "after",
 ]);
 const PAGE_PARAM_NAMES = new Set(["page"]);
-const OFFSET_PARAM_NAMES = new Set(["offset", "startat"]);
+const OFFSET_PARAM_NAMES = new Set(["offset", "startat", "skip"]);
 
 /**
  * Page-*size* names, in two ranked tiers. The tiering is not cosmetic: a name
@@ -501,17 +504,6 @@ const RESULT_LIMIT_PARAM_NAMES = new Set([
  * rejecting it would drop honest page sizes to catch nothing.
  */
 const NON_SIZE_SCHEMA_TYPES = new Set(["boolean", "array", "object", "null"]);
-const NEXT_FIELD_NAMES = new Set([
-  "next_cursor",
-  "nextcursor",
-  "next_page",
-  "nextpage",
-  "next_page_token",
-  "nextpagetoken",
-  "next_token",
-  "nexttoken",
-]);
-
 /**
  * Rank a parameter as a page-size control, lower being more specific, or
  * `undefined` when the name is not one we will act on.
@@ -608,7 +600,7 @@ export function classifyPagination(
   if (effect.kind !== "read" || (action !== "search" && action !== "list")) return undefined;
 
   const styleOf = (name: string): "cursor" | "page" | "offset" | undefined => {
-    const n = name.toLowerCase();
+    const n = name.toLowerCase().replace(/^\$/, "");
     if (CURSOR_PARAM_NAMES.has(n)) return "cursor";
     if (PAGE_PARAM_NAMES.has(n)) return "page";
     if (OFFSET_PARAM_NAMES.has(n)) return "offset";
@@ -648,20 +640,11 @@ export function classifyPagination(
       ? { pageSizeParam: best.param.name, ...pageSizeBounds(best.param.schema) }
       : undefined;
 
-  let nextField: string | undefined;
-  let itemsField: string | undefined;
-  const props = outputSchema?.properties as Record<string, Record<string, unknown>> | undefined;
-  if (props) {
-    const arrays = Object.entries(props).filter(([, v]) => v?.type === "array");
-    if (arrays.length === 1) itemsField = arrays[0]?.[0];
-    const nexts = Object.keys(props).filter((k) => NEXT_FIELD_NAMES.has(k.toLowerCase()));
-    if (nexts.length === 1) nextField = nexts[0];
-  }
+  const responseFields = inferPaginationResponseFields(outputSchema);
 
   return {
     ...match,
-    ...(nextField ? { nextField } : {}),
-    ...(itemsField ? { itemsField } : {}),
+    ...responseFields,
     ...(size ?? {}),
   };
 }

@@ -485,7 +485,9 @@ describe("request body reconstruction", () => {
     expect(res.outcome).toBe("error");
     if (res.outcome !== "error") return;
     expect(res.envelope.error.code).toBe("validation_error");
-    expect(res.envelope.error.details?.missing).toContain("body");
+    expect((res.envelope.error.details as { missing?: string[] } | undefined)?.missing).toContain(
+      "body",
+    );
     expect(transport.requests).toHaveLength(0);
   });
 });
@@ -540,6 +542,7 @@ describe("retry safety", () => {
     expect(transport.requests).toHaveLength(1); // exactly one attempt
     expect(res.envelope.error.safe_to_retry).toBe(false);
     expect(res.envelope.error.code).toBe("upstream_timeout");
+    expect(res.envelope.error.message).not.toContain("boom");
   });
 });
 
@@ -560,6 +563,95 @@ describe("error mapping", () => {
     if (res.outcome !== "error") return;
     expect(res.envelope.error.code).toBe(code);
     expect(res.envelope.error.upstream?.status).toBe(status);
+  });
+
+  it("uses declared domain codes and recovery guidance without leaking raw upstream prose", async () => {
+    const transport = new MockTransport(() => ({
+      status: 422,
+      headers: { "x-request-id": "req_123" },
+      body: JSON.stringify({
+        code: "amount_too_large",
+        message: "internal account 4111111111111111 exceeded a private threshold",
+      }),
+    }));
+    const res = await execute(
+      op({
+        retries: { mode: "none", maxAttempts: 1, backoff: "none", retryOn: [] },
+        errors: [
+          {
+            code: "validation_error",
+            upstream: { httpStatus: 422, code: "amount_too_large" },
+            message: "Refund amount exceeds the allowed amount for this payment.",
+            retryable: false,
+            recovery: { action: "Lower the refund amount and retry.", fieldPath: "amount" },
+          },
+        ],
+      }),
+      { input: { payment_id: "pay_1", amount: 2500 }, confirm: true, idempotencyKey: "k1" },
+      { ...baseCtx, transport },
+    );
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") return;
+    expect(res.envelope.error).toMatchObject({
+      code: "validation_error",
+      message: "Refund amount exceeds the allowed amount for this payment.",
+      retryable: false,
+      upstream: { status: 422, request_id: "req_123", code: "amount_too_large" },
+      details: {
+        recovery_action: "Lower the refund amount and retry.",
+        field_path: "amount",
+      },
+    });
+    expect(JSON.stringify(res.envelope)).not.toContain("4111111111111111");
+  });
+});
+
+describe("agent-facing input bindings", () => {
+  it("accepts clear agent names while preserving exact wire coordinates", async () => {
+    const transport = new MockTransport(() => ok({ id: "re_1" }));
+    const operation = op({
+      input: {
+        params: [
+          {
+            name: "payment_id",
+            agentName: "payment_identifier",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        body: {
+          contentType: "application/json",
+          required: true,
+          schema: {
+            type: "object",
+            required: ["amount"],
+            properties: { amount: { type: "integer" } },
+          },
+          projection: "fields",
+          fields: [
+            {
+              name: "amount",
+              agentName: "amount_minor_units",
+              required: true,
+              schema: { type: "integer" },
+            },
+          ],
+        },
+      },
+    });
+    const res = await execute(
+      operation,
+      {
+        input: { payment_identifier: "pay_1", amount_minor_units: 2500 },
+        confirm: true,
+        idempotencyKey: "k1",
+      },
+      { ...baseCtx, transport },
+    );
+    expect(res.outcome).toBe("success");
+    expect(transport.requests[0]?.url).toContain("/payments/pay_1/refunds");
+    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({ amount: 2500 });
   });
 });
 
@@ -1236,6 +1328,39 @@ describe("idempotency key validation", () => {
     if (replay.outcome === "success") expect(replay.record.ledger).toBe("replay");
   });
 
+  it("replays the stored agent projection without applying wire paths twice", async () => {
+    const ledger = new InMemoryLedger();
+    const transport = new MockTransport(() =>
+      ok({ customerId: "cus_1", displayName: "Ada", screenActions: ["edit"] }),
+    );
+    const projected = op({
+      output: {
+        agentProjection: {
+          include: ["customerId", "displayName"],
+          rename: { customerId: "customer_id", displayName: "name" },
+        },
+      },
+    });
+    const args = {
+      input: { payment_id: "pay_1", amount: 2500 },
+      confirm: true,
+      idempotencyKey: "projected-replay",
+    };
+
+    const first = await execute(projected, args, { ...baseCtx, transport, ledger });
+    const replay = await execute(projected, args, { ...baseCtx, transport, ledger });
+
+    expect(first.outcome === "success" ? first.data : null).toEqual({
+      customer_id: "cus_1",
+      name: "Ada",
+    });
+    expect(replay.outcome === "success" ? replay.data : null).toEqual({
+      customer_id: "cus_1",
+      name: "Ada",
+    });
+    expect(transport.requests).toHaveLength(1);
+  });
+
   it("accepts the optional MCP input key for key_supported and injects it upstream", async () => {
     const transport = new MockTransport(() => ok({ id: "created" }));
     const optionalKey = op({
@@ -1511,7 +1636,7 @@ describe("durable ledger (prod fail-closed)", () => {
 
 /** A ledger that reports itself durable — stands in for Firestore/Spanner in tests. */
 class DurableTestLedger extends InMemoryLedger {
-  override readonly durable = true;
+  override readonly durable: boolean = true;
 }
 
 describe("production defaults fail closed (no dev fallback)", () => {

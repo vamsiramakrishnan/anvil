@@ -1,4 +1,4 @@
-import type { Operation } from "@anvil/air";
+import { agentFieldName, type Operation } from "@anvil/air";
 
 /**
  * Generate a compact input signature for an operation.
@@ -19,21 +19,21 @@ export function operationInputSignature(op: Operation): string {
   // Required params first
   for (const p of op.input.params) {
     if (p.required) {
-      parts.push(`${p.name}*`);
+      parts.push(`${agentFieldName(p)}*`);
     }
   }
 
   // Optional params
   for (const p of op.input.params) {
     if (!p.required) {
-      parts.push(p.name);
+      parts.push(agentFieldName(p));
     }
   }
 
   const body = op.input.body;
   if (body?.projection === "fields") {
     for (const f of body.fields) {
-      parts.push(`body.${f.name}${f.required ? "*" : ""}`);
+      parts.push(`body.${agentFieldName(f)}${f.required ? "*" : ""}`);
     }
   } else if (body) {
     // Whole-projection body: surface top-level property names from the

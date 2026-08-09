@@ -25,9 +25,9 @@ export function registerCompile(parent: Command, ctx: CommandContext): void {
       .description(
         "Compiles from an immutable Layer 0 source snapshot: everything the compiler reads — the spec and every local $ref — comes from the locked bytes, and the AIR is bound back to the snapshot's identity. " +
           "Pass `--source <snapshot-id>` to compile an already-locked snapshot (add `--entrypoint <path>` to disambiguate a multi-entrypoint source), or pass a spec path to import-and-lock it first, then compile that snapshot. " +
-          "Parses OpenAPI/Swagger, classifies effects and idempotency, applies the manifest, validates safety, and writes the bundle. Non-idempotent mutations are escalated to review_required — they are not exposed until approved.",
+          "Parses or lowers the supported API contract formats, classifies effects and idempotency, applies the manifest, validates safety, and writes the bundle. Non-idempotent mutations are escalated to review_required — they are not exposed until approved.",
       )
-      .argument("[spec]", "OpenAPI/Swagger spec file (imported and locked before compiling)")
+      .argument("[spec]", "API contract file (imported and locked before compiling)")
       .option("--source <snapshot-id>", "compile an already-locked snapshot instead of a spec file")
       .option("--entrypoint <path>", "snapshot-relative entrypoint when a source has several")
       .option(

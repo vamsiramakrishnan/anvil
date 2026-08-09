@@ -1,4 +1,4 @@
-import { type AirDocument, Operation } from "@anvil/air";
+import { type AirDocument, loadAirDocument, Operation } from "@anvil/air";
 import type { HttpRequest, HttpResponse, Transport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -71,11 +71,11 @@ function listOperation(over?: Partial<Operation>): Operation {
 }
 
 async function connect(op: Operation, transport: Transport, options?: Partial<McpBuildOptions>) {
-  const air: AirDocument = {
-    service: { id: "test", version: "1.0.0", canonicalName: "test" },
+  const air: AirDocument = loadAirDocument({
+    service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
     operations: [op],
     workflows: [],
-  };
+  });
   const server = buildMcpServer(air, {
     contextFor: () => ({
       transport,

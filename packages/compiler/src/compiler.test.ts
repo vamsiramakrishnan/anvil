@@ -171,7 +171,13 @@ describe("classifier", () => {
   it("classifies query_passthrough archetype for unconstrained query params", () => {
     const mutationEffect = classifyEffect("post", "createPayment /payments").effect;
     const params = [
-      { name: "sql", in: "query" as const, required: true, schema: { type: "string" } },
+      {
+        name: "sql",
+        in: "query" as const,
+        required: true,
+        schema: { type: "string" },
+        inferred: false,
+      },
     ];
     expect(classifyArchetype(mutationEffect, "create", false, params)).toBe("query_passthrough");
   });
@@ -184,6 +190,7 @@ describe("classifier", () => {
         in: "query" as const,
         required: true,
         schema: { type: "string", maxLength: 1000 },
+        inferred: false,
       },
     ];
     expect(classifyArchetype(mutationEffect, "create", false, params)).toBe("transaction");
@@ -201,7 +208,13 @@ describe("classifier", () => {
   it("query_passthrough does not override long_running", () => {
     const mutationEffect = classifyEffect("post", "createPayment /payments").effect;
     const params = [
-      { name: "jql", in: "query" as const, required: true, schema: { type: "string" } },
+      {
+        name: "jql",
+        in: "query" as const,
+        required: true,
+        schema: { type: "string" },
+        inferred: false,
+      },
     ];
     expect(classifyArchetype(mutationEffect, "create", true, params)).toBe("long_running");
   });

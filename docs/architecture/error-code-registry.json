@@ -1,0 +1,2341 @@
+{
+  "$comment": [
+    "Anvil's machine-readable error codes. Operators branch on these strings, so they",
+    "are a public contract: renaming or dropping one silently breaks an integration",
+    "that was matching on it, and its `else` branch — usually 'proceed' — takes over.",
+    "",
+    "Regenerate with: node tools/regenerate-error-code-registry.mjs. The AST extractor",
+    "is mirrored by error-code-registry.test.ts and",
+    "counts a string literal only where it is USED as a code: a `code:` property, a",
+    "`code =` assignment, the first argument to a *Error constructor, or an argument",
+    "to a shared emit*/refuse*/reject* helper. A plain shape match would sweep in",
+    "file paths like `reference/workflow.md` and MIME types like `application/json`.",
+    "",
+    "Enforced as a ratchet:",
+    "  - a code emitted but not registered fails, so a new one is a reviewed diff line;",
+    "  - a code registered but no longer emitted fails, so removing one is deliberate",
+    "    rather than a silent break for whoever was matching on it;",
+    "  - `asserted` may only go up. A code that had a test and lost it fails; a code",
+    "    that gained one must have that banked here in the same change.",
+    "",
+    "`asserted` means some test in the workspace names the exact string. That is a",
+    "weaker claim than 'the behaviour behind it is covered', and deliberately so: the",
+    "contract being protected here is the string an operator matches on.",
+    "",
+    "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
+    "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
+  ],
+  "total": 384,
+  "asserted": 273,
+  "unasserted": 111,
+  "codes": {
+    "apiconnect/empty_export": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "apiconnect/invalid_export": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "apiconnect/plan_rate_limit": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "apiconnect/unknown_api": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "apigee/empty_export": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "apigee/invalid_export": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "apigee/traffic_policy": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "apigee/unknown_proxy": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "archive/duplicate_path": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "archive/expanded_too_large": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "archive/file_too_large": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "archive/invalid_encoding": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "archive/symlink_rejected": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "archive/too_deep": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "archive/too_many_files": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "archive/unsafe_path": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "auth/alternative_selected": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "auth/end_user_flow_remodeled": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "auth/end_user_flow_unexecutable": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "auth/service_default_not_applied": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "auth/service_oauth2_ambiguous": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "composition/air_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/air_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/bundle_bytes_unverified": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/bundle_directory_required": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/candidate_limit": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "composition/data_point_limit": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "composition/duplicate_review_candidate": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/duplicate_source": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/evidence_changed_during_read": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "composition/evidence_digest_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/evidence_not_regular_file": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/evidence_outside_review": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/evidence_symlink_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/evidence_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/evidence_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/incomplete_review_binding": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/invalid_evidence_member": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/invalid_relation_evidence_member": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/invalid_selected_member": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/operation_limit": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/output_collision": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/output_inside_bundle": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/review_candidate_binding_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/review_candidate_drift": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/review_input_drift": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/review_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/review_invalid_yaml": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/review_member_binding_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/review_mode_required": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/review_source_binding_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/review_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/schema_depth_limit": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/schema_node_limit": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/selected_member_unbound": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "composition/source_limit": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/two_sources_required": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "composition/unknown_review_candidate": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "dotnet/ambiguous_base_address": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/ambiguous_binding_configuration": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/ambiguous_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/ambiguous_protocol_mapping": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/duplicate_artifact_path": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/endpoint_contains_credentials": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/invalid_metadata_root": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/invalid_service_activation": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/malformed_metadata": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/malformed_xml": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/no_discoverable_endpoint": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/no_service_model": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/non_utf8_artifact": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/opaque_assembly": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/opaque_endpoint": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/oversized_artifact": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/oversized_service_activation": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/runtime_default_binding": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/service_activation_missing_service": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/service_missing_name": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/too_many_artifacts": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/unresolved_relative_address": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/unsafe_artifact_path": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "dotnet/unsupported_artifact": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "dotnet/unsupported_metadata": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "estate/adoption_plan_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/audit_inventory_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "estate/baseline_hash_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/baseline_overwrite": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/baseline_report_hash_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/baseline_required": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/baseline_vendor_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "estate/duplicate_bundle_target": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/duplicate_inventory_coordinate": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "estate/duplicate_selection": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "estate/duplicate_service_target": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/invalid_baseline": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/invalid_fail_on": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/invalid_gateway_id": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/invalid_limit": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/invalid_selection": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/manifest_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/output_path_collision": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/selection_init_conflict": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/selection_overwrite": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/unknown_vendor": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "estate/vendor_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "gateway_receipt/bundle_receipt_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/bundle_receipt_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "gateway_receipt/bundle_receipt_unparseable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/candidate_air_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/capability_review_digest_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/capability_review_not_canonical": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/contract_source_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/digest_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/directory_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/evidence_transition_requires_replace": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/export_changed": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/export_missing": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/export_size_changed": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/formal_definition_candidates_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/formal_definition_source_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_receipt/formal_definition_source_missing": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/formal_definition_vendor_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/id_collision": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/id_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/identity_coordinate_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_receipt/identity_digest_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_receipt/invalid": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/invalid_id": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/lifecycle_collision": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/lifecycle_incompatible": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "gateway_receipt/locked_source_entrypoint_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/locked_source_manifest_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/locked_source_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/not_found": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/output_added": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/output_air_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/output_changed": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/output_digest_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/output_identity_collision": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/output_install_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/output_lineage_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "gateway_receipt/output_manifest_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/output_missing": {
+      "packages": [
+        "cli",
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/output_not_directory": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/output_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "gateway_receipt/prior_output_changed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/stale_manifest_untrusted_path": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/stale_output_changed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/stale_output_requires_replace": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/unexpected_file": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/unmanaged_output": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/unparseable": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/unsafe_output_path": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/untrusted_output": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_receipt/unverified_target": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_selection/environment_conflict": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_selection/gateway_id_required": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_selection/invalid_gateway_id": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway_support/adapter_registry_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_support/coordinate_axis_overlap": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_support/incomplete_authority_matrix": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_support/incomplete_semantic_matrix": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_support/native_tier_without_native_input": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_support/normalized_fixture_used_as_native_proof": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_support/normalized_tier_claims_native_input": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_support/research_contract_accepts_input": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_support/research_vendor_exposed": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway_support/unknown_vendor": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/auth_contract_incomplete": {
+      "packages": [
+        "cli",
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/authentication_unproven": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/duplicate_api_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/formal_definition_source_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/gateway_url_required": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/invalid_gateway_url": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/invalid_identity_evidence": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/invalid_spec_override_attestation": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/missing_runtime_coordinate": {
+      "packages": [
+        "cli",
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/no_operations": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/opaque_policy": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/policy_target_unmatched": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/reserved_api_environment": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/reserved_api_revision": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/reserved_api_version": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway/route_only_contract": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "gateway/route_set_ambiguous": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/route_set_extra": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/route_set_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/runtime_coordinate_attested": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/spec_override_without_spec": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/spec_override_wrong_vendor": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/unknown_api": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "gateway/unnecessary_spec_override": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "gateway/unscoped_gateway_identity": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "identity/anonymous_contract": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "kong/empty_export": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "kong/invalid_export": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "kong/policy_noted": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "kong/quota_present": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "kong/unenforced_coordinate_axis": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "kong/unknown_service": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "kong/unparseable": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_binding_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_plan_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/candidate_not_found": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/invalid_coordinate": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/invalid_option": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/inventory_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/product_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/product_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_input_invalid": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_input_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/refinement_input_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_input_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/refinement_not_approvable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/refinement_output_exists": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/refinement_stale": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/source_limit_exceeded": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/source_member_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/source_symlink_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/source_unreadable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "mcp/duplicate_tool": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mcp/malformed_tool_schema": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mcp/no_tools": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "mcp/tool_budget_exceeded": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mcp/tool_name_collision": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "messaging/ambiguous_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "messaging/artemis_no_destinations": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/asyncapi_missing_title": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/asyncapi_no_operations": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/asyncapi_unresolved_channel_reference": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/ccdt_missing_queue_manager_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/invalid_asyncapi": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/kafka_no_supported_objects": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/kafka_projection_truncated": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/malformed_artemis_xml": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "messaging/malformed_document": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "messaging/mqsc_missing_queue_manager_coordinate": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "messaging/mqsc_no_supported_objects": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "messaging/too_many_artifacts": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "mulesoft/empty_export": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mulesoft/invalid_export": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "mulesoft/sla_present": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "mulesoft/unknown_api": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "overlay/loosen_refused": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "overlay/resolved_by_order": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "refinement/import_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "refinement/invalid_submission": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/invalid_task": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/proposal_rejected": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/repository_evidence_invalid": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/repository_revision_mismatch": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/stale_contract": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/task_binding_failed": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "refinement/task_integrity_failed": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
+    },
+    "source/air_entrypoint_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "source/air_hash_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "source/air_origin_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "source/ambiguous_entrypoint": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/empty": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "source/external_ref": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/file_added": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/file_changed": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/file_missing": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/hash_mismatch": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/id_collision": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/invalid_snapshot": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/invalid_target": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "source/invalid_utf8": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/missing_content": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/no_declared_format": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "source/no_entrypoint": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "source/no_snapshot": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "source/not_compilable": {
+      "packages": [
+        "cli",
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/not_found": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/path_escape": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/ref_missing": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/root_unresolved": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "source/unclassified": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/unknown_entrypoint": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/unknown_origin": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "source/unparseable": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "source/unrelated_file": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "target/action_budget_exceeded": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/agent_identity_principal_project_mismatch": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/agent_identity_principal_scope_too_broad": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/endpoint_query_or_fragment": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/engine_egress_confirmation_required": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/engine_location_mismatch": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/engine_project_number_mismatch": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/file_mismatch": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/gateway_authorization_policy_location_mismatch": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/gateway_authorization_policy_project_mismatch": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/gateway_location_mismatch": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/inbound_issuer_tenant_mismatch": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/insecure_transport": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_agent_identity_principal_set": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_app_location": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_config": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/invalid_connector_oauth_scope": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_connector_oauth_tenant": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_engine_id": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/invalid_engine_resource": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_gateway_authorization_policy": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_gateway_location": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_inbound_audience": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_inbound_issuer": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_mcp_endpoint_path": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_project": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_project_number": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_registry_location": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_server_auth": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/invalid_setup": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/invalid_surface": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/invalid_workforce_pool": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/missing_action_descriptions": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/missing_agent_identity_principal_set": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/missing_connector_oauth_provider": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/missing_connector_oauth_scope": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/missing_connector_oauth_tenant": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/missing_file": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/missing_gateway_authorization_policy": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/missing_inbound_audience": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/missing_inbound_issuer": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/missing_project_number": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/missing_setup": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/no_approved_tools": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/no_auth_in_contract": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/non_public_endpoint": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/oauth_scope_audience_mismatch": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/provider_location_validation_required": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/registry_location_mismatch": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/toolspec_too_large": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/unauthenticated_mcp": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/unauthenticated_mcp_confirmation_required": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/unconfirmed_irreversible_action": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/unexpected_file": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/unrelated_graph_scope": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/unsupported_gateway_app_location": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/unsupported_google_oauth_access_token": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/unverified_profile": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "wso2/ambiguous_apictl_archive": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/ambiguous_extracted_project": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/ambiguous_formal_contract": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "wso2/ambiguous_selected_project_lineage": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "wso2/apictl_archive_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/apictl_project_multiple_apis": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "wso2/collection_expansion_limit": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/collection_file_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/collection_symlink_rejected": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/collection_too_deep": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/collection_too_large": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/collection_too_many_files": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/contradictory_revision_identity": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "wso2/empty_apictl_collection": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/empty_export": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "wso2/formal_contract_available": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "wso2/invalid_api_container": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "wso2/invalid_api_entry": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "wso2/invalid_apictl_member_encoding": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/invalid_apis_container": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "wso2/invalid_deployment_environment": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "wso2/invalid_deployment_environments": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "wso2/invalid_export": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "wso2/invalid_formal_definition": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/missing_revision_id": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": true
+    },
+    "wso2/no_apictl_api_projects": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/opaque_car": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/throttling_present": {
+      "packages": [
+        "compiler"
+      ],
+      "asserted": false
+    },
+    "wso2/unsafe_collection_path": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "wso2/unsupported_collection_archive": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "wso2/unsupported_collection_node": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    }
+  }
+}

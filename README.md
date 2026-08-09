@@ -1,165 +1,300 @@
 # Anvil
 
-**You have an API. You want an agent to use it without breaking anything.**
+**Compile an API specification into agent tools you can review, test, and trust.**
 
-Point Anvil at a spec you already have and it gives you three tools that agree
-with each other — a typed **CLI**, an **MCP server**, and an agent **skill** —
-plus the guardrails that stop an agent doing something you didn't sanction.
+Anvil turns one API contract into four aligned surfaces:
 
-```bash
-pnpm anvil agentify examples/payments/openapi.yaml \
-  --manifest examples/payments/anvil.yaml --service payments --out generated/payments
-```
+- a typed CLI for developers and automation;
+- an MCP server for agents;
+- a progressive-disclosure skill that explains how to use the tools; and
+- harness hooks that stop unsafe calls before execution.
 
-That's it. You now have working tools and a review queue.
+All four are generated from one canonical model. A refund cannot require
+confirmation in the CLI and quietly omit it from MCP. Only operations you have
+approved are callable.
 
-> The highest compliment isn't "it generated a lot of code." It's
-> *"the agent stopped guessing."*
+## Try it locally
 
----
-
-## What you actually get
-
-### Your agent stops guessing what a call does
-
-Wire an agent to an API by hand and it has to infer: is this safe to retry?
-Will it charge the card twice? Does a human need to approve it? Those answers
-live in someone's head, not in the tool.
-
-Anvil answers them in the tool itself. Every operation carries whether it reads
-or writes, how bad it is if it goes wrong, whether repeating it is safe, and
-whether it needs confirmation — and the CLI, the MCP server, and the skill all
-report the *same* answer, because they're generated together. They can't drift
-apart as the API changes.
-
-### Nothing reaches the agent until you say so
-
-Compiled operations start life unexposed. You read the risk, then approve.
+Anvil currently runs from source. You need Node.js 22.17 or later, Corepack,
+and Git.
 
 ```bash
-anvil assess generated/payments          # what's ready, and why the rest isn't
-anvil capability approve generated/payments payments.refunds
+git clone https://github.com/vamsiramakrishnan/anvil.git
+cd anvil
+corepack enable
+pnpm install
+pnpm build
+
+pnpm anvil compile examples/payments/openapi.yaml \
+  --manifest examples/payments/anvil.yaml \
+  --service payments \
+  --out generated/payments
+
+pnpm anvil inspect generated/payments
 ```
 
-Unapproved operations aren't hidden and aren't quietly exposed — the skill lists
-them as **not callable**, so the agent knows they exist and knows not to try.
+You now have a runnable bundle in `generated/payments`:
 
-### Your customers don't get charged twice
+| Path | Purpose |
+| --- | --- |
+| `air.yaml` | Canonical operation, safety, auth, and evidence model |
+| `cli/` | Typed commands for approved operations |
+| `mcp/` | MCP server exposing the same approved operations |
+| `skill/` | Agent operating instructions and reference material |
+| `plugin/` | Enforcement hooks for supported agent harnesses |
+| `mock/` and `evals/` | Deterministic test surfaces |
+| `deploy/` | Deployment contracts and generated infrastructure inputs |
 
-A refund that isn't provably safe to repeat is never auto-retried, no matter
-what the network did. And it refuses to run at all without explicit confirmation:
+Preview a financial mutation without sending a request:
+
+```bash
+pnpm anvil run generated/payments refunds create \
+  --payment-id pay_123 \
+  --amount 4200 \
+  --currency usd \
+  --reason duplicate_charge \
+  --idempotency-key refund-pay_123-001 \
+  --confirm \
+  --dry-run
+```
+
+The result is the exact request plan, with credentials redacted. Remove
+`--confirm` and Anvil returns a structured `confirmation_required` refusal
+before any network call.
+
+[Follow the quickstart](apps/docs/src/content/docs/start/quickstart.md) for the
+complete first-run walkthrough.
+
+## Choose your starting point
+
+| What you have | Use | Result |
+| --- | --- | --- |
+| An OpenAPI, WSDL, proto, GraphQL, OData, Discovery, or Postman contract | `anvil compile` or `anvil agentify` | An AIR bundle with aligned CLI, MCP, skill, hooks, tests, and deployment inputs |
+| An API gateway export | `anvil estate inventory` | An estate audit and review-safe adoption plan |
+| Application-server, .NET, or broker configuration but no useful API contract | `anvil legacy inventory` then `anvil legacy gaps` | Evidence-backed candidates with explicit coverage gaps and provenance |
+
+Legacy mode has a different lifecycle from compilation. It can inventory and
+interrogate evidence, refine a candidate into a human-approved capability
+binding, and plan the contract for a deployment-local bridge. It does not
+generate, load, deploy, or run a Java, Windows, or broker bridge.
+
+## Bring your own API
+
+Use `agentify` for a first pass over an unfamiliar contract:
+
+```bash
+pnpm anvil agentify path/to/spec \
+  --service inventory \
+  --out generated/inventory
+```
+
+`agentify` locks the supplied source, compiles it, assesses every operation,
+and proposes capability groupings. It then stops. It does not certify or
+publish the bundle, and it does not silently approve uncertain mutations.
+
+Continue from the command Anvil prints, or orient at any time with:
+
+```bash
+pnpm anvil status generated/inventory
+pnpm anvil inspect generated/inventory
+pnpm anvil assess generated/inventory
+```
+
+When the source contract cannot express an important fact—such as the
+idempotency key for a POST—record that fact in a small, reviewed `anvil.yaml`
+manifest and recompile. Do not edit generated files.
+
+When a coding harness such as Codex or Claude Code investigates those gaps, use
+the [refinement SDK](docs/refinement-sdk.md). The harness gathers evidence and
+proposes a bounded patch; Anvil owns validation, measurement, review receipts,
+and the only write path into AIR.
+
+## The operating loop
+
+```text
+source → compile → inspect → enrich → approve → assure → release plan
+```
+
+The important boundaries are deliberate:
+
+1. **Unknown is not safe.** Unproven mutations remain `review_required` and
+   are absent from callable surfaces.
+2. **Approval controls exposure.** `anvil approve` changes what the generated
+   CLI and MCP server can expose; it is not a documentation annotation.
+3. **The runtime rechecks the contract.** Hooks improve the developer
+   experience, but runtime enforcement remains authoritative.
+4. **Evidence follows the bytes.** Certification, self-test, conformance, and
+   simulation records are bound to the bundle hash and become stale when the
+   bundle changes.
+5. **Publishing prepares a plan.** `anvil publish` does not deploy or make a
+   cloud API call.
+
+## Supported source contracts
+
+Anvil compiles OpenAPI 3.x, Swagger 2.0, GraphQL SDL, gRPC/proto3, SOAP/WSDL
+1.1, Google Discovery documents, OData v2/v4 metadata, and Postman Collection
+v2.x. Local multi-file references are captured into an immutable source
+snapshot before compilation.
+
+See [source format support](docs/SOURCE_FORMATS.md) for detection rules,
+multi-file behavior, and format-specific boundaries. If the source of truth is
+an API gateway estate, begin with [gateway estates](docs/gateways.md) instead
+of compiling one exported file at a time.
+
+If no API contract exists, use the separate legacy workflow below. Do not
+compile reconstructed middleware configuration as though it were an authored
+API contract.
+
+## Inventory a legacy system without invoking it
+
+When evidence must come from several systems, address the acquisition contract
+before collecting anything:
+
+```bash
+pnpm anvil legacy plan collection-plan.json \
+  --out collection-plan.addressed.json
+```
+
+The plan requires revision-pinned repository evidence and cannot express
+unsafe acquisition modes. It validates and identifies the plan; it does not
+fetch evidence or combine inventories. Then collect each hardened offline
+export under its real provenance:
+
+```bash
+pnpm anvil legacy inventory ./refunds-prod-export \
+  --environment prod \
+  --application refund-service \
+  --source-kind deployed_configuration \
+  --source-id websphere-prod-cell-1 \
+  --out refunds-prod.inventory.json
+```
+
+The collectors understand Java EE descriptors and inert Jakarta/Javax EJB
+source annotations; WebLogic, WebSphere, and JBoss bindings; explicit WCF,
+MSMQ, `.svc`, and `serviceActivations` configuration; AsyncAPI, IBM MQ,
+Artemis, and RabbitMQ topology; and Kafka Admin, Schema Registry, Strimzi
+`KafkaTopic`, and Strimzi `KafkaConnector` exports. RabbitMQ collection projects
+only allowlisted topology fields and excludes users, permissions, passwords,
+and credential hashes. Compiled Java and .NET binaries are digest-only inputs.
+The collectors do not connect to a server or broker, expand an archive, load a
+class or assembly, execute code, or consume a message.
+
+AsyncAPI keeps logical channel keys and operation identity separate from the
+physical address, and retains declared reply, correlation, and discriminator
+evidence. Schema Registry observations retain the subject, version, type,
+compatibility, references, and a digest of the schema rather than its body.
+
+Interrogate the result before asking a harness to invent semantics:
+
+```bash
+pnpm anvil legacy graph refunds-prod.inventory.json \
+  --out refunds-prod.graph.json
+pnpm anvil legacy gaps refunds-prod.inventory.json \
+  --plan collection-plan.addressed.json \
+  --check \
+  --out refunds-prod.gaps.json
+pnpm anvil legacy explain refunds-prod.inventory.json lc_<candidate-hash> \
+  --out refunds-submit.explanation.json
+pnpm anvil legacy diff refunds-prod.previous.json refunds-prod.inventory.json \
+  --out refunds-prod.diff.json
+```
+
+`graph` preserves evidence links, `gaps` separates collector yield from
+semantic completeness, `explain` traces one candidate to its claims and source
+artifacts, and `diff` separates logical-lineage changes from deployment
+occurrence changes. The checked-in corpus pins 16 licensed public specimens
+across application servers, .NET, and messaging; its oracles check expected
+behavior, deterministic output, and sensitive-output exclusion without
+vendoring third-party bytes.
+
+Inventory produces technical candidates, not business APIs. It preserves every
+conflicting queue, JNDI, endpoint, direction, and transport claim. A coding
+harness can investigate one exact candidate and propose the missing contract:
+
+```bash
+pnpm anvil legacy refine task \
+  refunds-prod.inventory.json lc_<candidate-hash> \
+  --out refunds-submit.task.json
+
+pnpm anvil legacy refine review \
+  refunds-prod.inventory.json \
+  refunds-submit.task.json \
+  refunds-submit.submission.json \
+  --out refunds-submit.review.json
+
+pnpm anvil legacy refine approve \
+  refunds-prod.inventory.json \
+  refunds-submit.review.json \
+  --reviewer refund-owner@example.com \
+  --reason "Verified against the deployed binding and service contract." \
+  --out refunds-submit.decision.json
+```
+
+The proposal must define a business-shaped operation, clear input and output
+schemas, stable errors, pagination where the real interface supports it, the
+exact transport target, completion semantics, authorization, idempotency, and
+retry policy. Anvil assesses that proposal; a human separately approves or
+rejects it.
+
+An approved binding remains explicit about the current boundary:
 
 ```json
-{ "error": { "code": "confirmation_required",
-  "message": "This operation creates an irreversible financial mutation.",
-  "required_flags": ["--confirm", "--idempotency-key"] } }
+{
+  "runtime": {
+    "placement": "deployment_local_bridge",
+    "status": "not_implemented"
+  }
+}
 ```
 
-That refusal is the feature. Try anything for real with `--dry-run` first — it
-shows you the exact request that would go out, with secrets redacted.
-
-### Your agent doesn't drown in your API
-
-A big estate compiles to thousands of tools. An agent reading that list burns
-its whole context before it finds the one call it needs.
-
-Anvil measures what every tool costs an agent to read, then serves capability
-lanes instead of a flat list — the agent opens the one it needs. On a
-100-operation service that's **7.4× fewer tokens** to reach an operation
-(29,300 → 3,956 median), for one extra round trip.
+From that approved decision, produce a reviewable runtime contract:
 
 ```bash
-anvil disclosure generated/payments      # where the context budget actually goes
+pnpm anvil legacy bridge plan refunds-submit.decision.json \
+  --out refunds-submit.bridge-plan.json
 ```
 
-It names the specific fields responsible, so you get a ticket you can close
-instead of "make your API agent-friendly." Responses are handled the same way:
-page sizes are solved against a token budget rather than fetched-then-truncated,
-and an agent can ask for fewer fields with a JMESPath projection.
+An optional `--driver driver.json` performs a static descriptor compatibility
+assessment. The command does not load the driver, generate bridge code, connect
+to the estate, or prove conformance or live readiness.
 
-### You can prove all of it, per bundle
+Harnesses can use the same pure product surfaces from
+`@anvil/compiler/legacy`: `collectLegacyInventory`,
+`createLegacyCollectionPlan`, `projectLegacyEvidenceGraph`,
+`assessAndPlanLegacyCoverage`, `explainLegacyCandidate`,
+`diffLegacyInventories`, `planLegacyBridge`, and
+`assessLegacyBridgeDriver`. Callers that acquire artifacts own that acquisition
+boundary; Anvil's SDK only evaluates the supplied bytes and records.
 
-Not a claim in this README — something each generated bundle demonstrates about
-itself, with evidence bound to its content hash:
+Start with [the legacy-estate model](docs/legacy-estates.md), then follow
+[inventory](docs/legacy-inventory.md) and
+[candidate refinement](docs/legacy-refinement.md). Harness authors can use the
+[TypeScript SDK](docs/legacy-sdk.md). The runtime work still required is
+specified in [deployment-local bridges](docs/legacy-runtime-bridges.md).
 
-| Command | What it proves |
-|---|---|
-| `anvil selftest` | Boots the real MCP server and calls every approved tool over the real transport — arguments reach the wire faithfully, confirmation gates refuse *before* side effects |
-| `anvil conformance` | The skill, CLI, and MCP tool list name the same operations and document the exact posture the runtime enforces |
-| `anvil simulate` | Drives the whole safety matrix through a deterministic simulator, then **breaks each safety control and proves the surface notices** |
-| `anvil certify` | Every generated surface agrees byte-for-byte with the canonical model |
-| `anvil benchmark` | Scores whether an agent can actually discover and call your tools |
+## Documentation
 
-Evidence goes stale when the bundle changes, and `anvil publish` fails closed
-for production without fresh proof on every lane.
+- [Install Anvil](apps/docs/src/content/docs/cookbooks/install-anvil.md)
+- [Quickstart](apps/docs/src/content/docs/start/quickstart.md)
+- [Write an Anvil manifest](docs/MANIFEST.md)
+- [Refine an API with a coding harness](docs/refinement-sdk.md)
+- [Understand legacy application estates](docs/legacy-estates.md)
+- [Build a legacy inventory](docs/legacy-inventory.md)
+- [Refine and review a legacy candidate](docs/legacy-refinement.md)
+- [Use the legacy TypeScript SDK](docs/legacy-sdk.md)
+- [Design a deployment-local legacy bridge](docs/legacy-runtime-bridges.md)
+- [See how legacy inventory performs on real GitHub projects](docs/backtesting/legacy-corpus.md)
+- [Run Anvil in CI](docs/CI.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Command reference](skills/anvil/reference/commands.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Product boundary](docs/PRODUCT_BOUNDARY.md)
 
----
-
-## Fix the API's problems without forking it
-
-Vendor specs are incomplete. You don't fix that by editing generated code or
-maintaining a fork — you declare what the spec left out, in one file, and
-recompile. All three surfaces move together.
-
-```yaml
-# anvil.yaml
-operations:
-  sendSms:
-    idempotency: { strategy: required_request_key }   # "please don't re-run" becomes enforced
-  get_refund_by_id:
-    description: Retrieve one refund by its refund id.  # fix a vendor's duplicate docs
-  doTransition:
-    name: { resource: issue, verb: transition }        # a name an agent can route on
-query_templates:
-  branch_names:                     # a constrained read instead of raw SQL passthrough
-    operation: run_query
-    template: "SELECT name FROM accounts WHERE branch = '{branch}' LIMIT 10"
-    target_param: sql
-    params: { branch: { schema: { type: string, pattern: "^[A-Z0-9]+$" } } }
-    read_only: true
-```
-
-Don't know what's missing? `anvil refine run` finds the gaps and proposes fixes,
-and `anvil enrich` goes further — it reads the MCP servers GitHub, GitLab,
-Confluence, Notion, and Postman already publish to gather evidence about your
-own API. Both only ever *propose*. Loosening a safety rule needs strong evidence;
-tightening one is cheap.
-
-## Where your API lives
-
-Anvil reads **OpenAPI 3.x**, **Swagger 2.0**, **GraphQL SDL**, **gRPC/proto3**,
-**SOAP/WSDL**, **Google Discovery**, **OData v2/v4**, and **Postman
-Collections** — all into the same model, so everything above works the same
-regardless of protocol.
-
-If your APIs live behind a gateway, Anvil inventories the whole estate first.
-Support differs by vendor and the differences are real: run
-`anvil estate support --json` before preparing an export.
-
-## Next steps
-
-- **[Quickstart](apps/docs/src/content/docs/start/quickstart.md)** — a real bundle in five minutes, no cloud account
-- **[Operating Anvil](apps/docs/src/content/docs/guides/operating-anvil.md)** — the day-to-day loop
-- **[Cookbooks](apps/docs/src/content/docs/cookbooks/)** — install, handle a confirmation gate, import a gateway estate, respond to drift
-- **[Commands](apps/docs/src/content/docs/guides/commands.md)** — every command, generated from the CLI itself
-
-**Driving Anvil from an agent?** It ships a skill for itself:
-[`skills/anvil/SKILL.md`](skills/anvil/SKILL.md), with adapters for
-[Claude Code](CLAUDE.md), [Codex](AGENTS.md), and Antigravity.
-
-## Under the hood
-
-Anvil is a compiler, not a framework. Everything you touch — CLI, MCP server,
-skill, deploy artifacts — is a generated view of one canonical model, so the way
-to change any of it is to change the model and recompile.
-
-The deployed unit is just the MCP server: a thin, stateless service. Nothing on
-the hot path parses a spec or runs an LLM.
-
-If you want the internals: [architecture](docs/ARCHITECTURE.md),
-[product boundary](docs/PRODUCT_BOUNDARY.md), [glossary](docs/GLOSSARY.md), and
-[ADRs](docs/adr/). Built library-first — OpenAPI parsing, Zod, the MCP SDK,
-Vitest, Biome — so Anvil only owns the Anvil-specific layer.
+The rendered documentation is available at
+[vamsiramakrishnan.github.io/anvil](https://vamsiramakrishnan.github.io/anvil/).
+It also publishes [`llms.txt`](https://vamsiramakrishnan.github.io/anvil/llms.txt)
+and a complete
+[`llms-full.txt`](https://vamsiramakrishnan.github.io/anvil/llms-full.txt).
 
 ## License
 

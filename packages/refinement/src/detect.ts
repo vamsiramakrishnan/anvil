@@ -14,6 +14,8 @@ import {
   toolSurfaceFitsBudget,
 } from "@anvil/air";
 import { compareSeverity, type Deficiency, makeDeficiency, severityRank } from "./deficiency.js";
+import { detectFieldNames } from "./detectors/field-names.js";
+import { surfacedFields } from "./fields.js";
 import { type SemanticTarget, targetKey, targetOperationId } from "./target.js";
 
 /* -------------------------------------------------------------------------- */
@@ -33,55 +35,6 @@ const TRANSIENT_ERROR_CODES: ReadonlySet<ErrorCode> = new Set([
   "upstream_unavailable",
   "rate_limited",
 ]);
-
-/** A flat view over an operation's surfaced input fields (params + projected body). */
-interface FieldRef {
-  path: string;
-  name: string;
-  required: boolean;
-  description?: string;
-  enumValues?: unknown[];
-  hasExample: boolean;
-}
-
-function enumOf(schema: Record<string, unknown> | undefined): unknown[] | undefined {
-  const e = schema?.enum;
-  return Array.isArray(e) && e.length > 0 ? e : undefined;
-}
-
-/**
- * The fields an agent actually sees: non-body params, plus body fields when the
- * body is projected to flat scalars. A `whole`-projection body is a single opaque
- * field here — descending its nested schema is a later-stage concern.
- */
-function surfacedFields(op: Operation): FieldRef[] {
-  const fields: FieldRef[] = [];
-  for (const p of op.input.params as Param[]) {
-    fields.push({
-      path: `input.params.${p.name}`,
-      name: p.name,
-      required: p.required,
-      description: p.description,
-      enumValues: enumOf(p.schema),
-      hasExample: p.example !== undefined,
-    });
-  }
-  const body = op.input.body;
-  if (body && body.projection === "fields") {
-    for (const f of body.fields as BodyField[]) {
-      fields.push({
-        path: `input.body.${f.name}`,
-        name: f.name,
-        required: f.required,
-        description: f.description,
-        enumValues: enumOf(f.schema),
-        // BodyField carries no example slot; treat as unexampled for coverage.
-        hasExample: false,
-      });
-    }
-  }
-  return fields;
-}
 
 /**
  * Count of top-level input properties. No longer the *trigger* for a disclosure
@@ -404,6 +357,11 @@ const weakNames: Detector = {
   },
 };
 
+const fieldNames: Detector = {
+  name: "agent-field-names",
+  detect: detectFieldNames,
+};
+
 const indistinctDescriptions: Detector = {
   name: "indistinct-descriptions",
   detect(air) {
@@ -594,6 +552,10 @@ const uiProjectionContract: Detector = {
   detect(air) {
     const out: Deficiency[] = [];
     for (const op of air.operations) {
+      // A reviewed contract-owned projection is the explicit resolution: the
+      // transport may stay UI-shaped while every agent surface receives the
+      // stable view recorded in AIR.
+      if (op.output.agentProjection) continue;
       const path = op.sourceRef.path;
       if (!path) continue;
 
@@ -879,6 +841,7 @@ export const DETECTORS: readonly Detector[] = [
   undocumentedErrors,
   undocumentedPagination,
   weakNames,
+  fieldNames,
   indistinctDescriptions,
   capabilityRouting,
   operationIntentExamples,

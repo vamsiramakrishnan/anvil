@@ -175,7 +175,7 @@ describe("AirDocument", () => {
 
   it("rejects unknown enum values", () => {
     const bad = structuredClone(doc) as { operations: { effect: { kind: string } }[] };
-    bad.operations[0].effect.kind = "teleport";
+    bad.operations[0]!.effect.kind = "teleport";
     expect(() => loadAirDocument(bad)).toThrow();
   });
 });
@@ -314,10 +314,43 @@ describe("operationInputSchema", () => {
     );
     expect(operationBusinessInputCliFlag(operation, "query", "confirm")).toBe("--input-confirm");
   });
+
+  it("publishes agent names while retaining wire names as schema metadata", () => {
+    const air = loadAirDocument({
+      ...doc,
+      operations: [
+        {
+          ...refundOp,
+          input: {
+            params: refundOp.input.params.map((parameter) =>
+              parameter.name === "paymentId"
+                ? {
+                    ...parameter,
+                    agentName: "payment_identifier",
+                    aliases: ["payment_id"],
+                  }
+                : parameter,
+            ),
+          },
+        },
+      ],
+    });
+    const operation = air.operations[0] as Operation;
+    const schema = operationInputSchema(operation);
+    expect(schema.properties).toHaveProperty("payment_identifier");
+    expect(schema.properties).not.toHaveProperty("payment_id");
+    expect((schema.properties as Record<string, unknown>).payment_identifier).toMatchObject({
+      "x-anvil-wire-name": "paymentId",
+      "x-anvil-aliases": ["payment_id"],
+    });
+    expect(operationBusinessInputCliFlag(operation, "path", "paymentId")).toBe(
+      "--payment-identifier",
+    );
+  });
 });
 
 describe("mcpToolDescription interaction-shape lines", () => {
-  const base = () => loadAirDocument(doc).operations[0];
+  const base = () => loadAirDocument(doc).operations[0]!;
 
   it("teaches cursor pagination, long-running polling, and the search hint when present", () => {
     const op = base();

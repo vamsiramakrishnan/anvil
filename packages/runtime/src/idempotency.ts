@@ -208,8 +208,10 @@ export interface IdempotencyLedger {
 }
 
 export class InMemoryLedger implements IdempotencyLedger {
-  /** Process-local: never durable. */
-  readonly durable = false;
+  /** Process-local: never durable. Typed as the interface declares it rather
+   * than the literal `false`, so a test double can stand in for a durable
+   * backend without the class contradicting `IdempotencyLedger`. */
+  readonly durable: boolean = false;
   private readonly store = new Map<string, LedgerEntry>();
   /**
    * The job-handle index (Decision A): a plain sibling map from upstream job

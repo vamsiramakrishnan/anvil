@@ -1,9 +1,10 @@
-# Anvil examples — one pipeline, five protocols
+# Anvil examples
 
-Each directory here is a **complete, diverse API** plus the Anvil manifest that
-enriches the semantics its source format cannot express. They exist so you (or an
-agent like Claude Code) can drive Anvil end to end — compile → inspect → run
-against a generated **mock simulator** — without touching a real upstream.
+The API directories below each contain a **complete, diverse API** plus the
+Anvil manifest that enriches the semantics its source format cannot express.
+They exist so you (or an agent like Claude Code) can drive Anvil end to end —
+compile → inspect → run against a generated **mock simulator** — without
+touching a real upstream.
 
 | Example | Format | Source | Highlights |
 | --- | --- | --- | --- |
@@ -13,6 +14,17 @@ against a generated **mock simulator** — without touching a real upstream.
 | `grpc/`     | gRPC / proto3 | `orders.proto` | `Get*`/`List*`→reads, `PlaceOrder` (financial), maps/enums/nested messages |
 | `soap/`     | SOAP / WSDL 1.1 | `bank.wsdl` | `Get*`/`List*`→reads, `TransferFunds` (financial), `CloseAccount` (destructive) |
 | `sap/`      | OData v2 (`$metadata`/EDMX) | `metadata.edmx` | SAP business-partner entities, composite keys, `sap:deletable=false` annotations |
+
+## Legacy evidence example
+
+`legacy-refunds/` is deliberately not another source-format adapter. It is a
+synthetic WebLogic deployment export with two conflicting JNDI bindings. Use it
+to exercise `anvil legacy inventory`, inspect conflict-preserving candidates,
+and create a hash-bound refinement task without contacting a server.
+
+See [the fixture walkthrough](legacy-refunds/README.md). It stops before harness
+submission and runtime execution because neither business meaning nor a live
+WebLogic bridge can be inferred from deployment descriptors.
 
 For **real** enterprise specifications (NetSuite SOAP, live OData v2/v4, gRPC)
 compiled through the same pipeline, see the backtest corpus

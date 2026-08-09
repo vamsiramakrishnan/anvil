@@ -1,15 +1,4 @@
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { type AirDocument, airFromJson, type Operation } from "@anvil/air";
 import {
@@ -31,7 +20,6 @@ import {
   type GatewayDiagnostic,
   type GatewayFact,
   type GatewayIdentityEvidence,
-  type GatewayImportReceipt,
   type GatewayImportReceiptDraft,
   GatewayImportReceiptView,
   type GatewayPolicyOverlay,
@@ -42,12 +30,10 @@ import {
   gatewayImportIdentity,
   gatewayImportIdentitySlug,
   gatewayManifestDigest,
-  gatewayOperationRef,
   gatewaySha256,
   isGatewayLifecycleArtifact,
   KongGatewayAdapter,
   MulesoftGatewayAdapter,
-  makeOverlay,
   parseManifest,
   readArchive,
   reconcileGatewayIdentity,
@@ -55,21 +41,15 @@ import {
   resolveGatewayApiSelection,
   sniffArchiveFormat,
   verifyGatewayImportOutput,
-  verifyGatewayImportOutputManifest,
   type Wso2ApiProject,
   Wso2GatewayAdapter,
   withoutRouteOnlyGuard,
   ZipArchiveDecoder,
 } from "@anvil/compiler";
-import {
-  type GeneratedBundle,
-  generateBundle,
-  readBundleDir,
-  writeBundle,
-} from "@anvil/generators";
-import { GEMINI_ENTERPRISE_PROFILE, verifyTargetKit } from "@anvil/targets";
+import { generateBundle, readBundleDir } from "@anvil/generators";
 import type { Command } from "commander";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
 import {
   loadWso2ApictlDirectory,
@@ -90,6 +70,28 @@ import {
   renderEstateAdoptionPlan,
 } from "./estate-adoption.js";
 import { buildEstateAudit } from "./estate-audit.js";
+import {
+  type BundleInstallDiagnostic,
+  exactFileSetDiagnostics,
+  gatewayLifecycleArtifacts,
+  listBundleFiles,
+  prepareBundleInstall,
+} from "./estate-bundle-install.js";
+import {
+  attestGatewayRouteSet,
+  attestRuntimeCoordinate,
+  operationKeys,
+  resolveFormalDefinitionLineage,
+  retargetGatewayOverlay,
+} from "./estate-contract-attestation.js";
+import {
+  gatewayIdentityRejection,
+  invalidGatewayId,
+  resolveGatewayUrl,
+  specOverrideReason,
+  specOverrideRejection,
+  suppliedContractRejection,
+} from "./estate-import-policy.js";
 import { registerEstateSupport } from "./estate-support.js";
 import {
   blocksGatewayImport,
@@ -389,51 +391,18 @@ interface ImportOptions extends InventoryOptions {
   replaceDerived?: boolean;
   json?: boolean;
 }
-interface ConnectOptions extends Pick<InventoryOptions, "entry" | "gatewayId" | "json"> {
-  vendor: string;
-}
-
-function normalizeGatewayUrl(value: string): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error(`Invalid --gateway-url '${value}': expected an absolute HTTPS URL.`);
-  }
-  if (url.protocol !== "https:") {
-    throw new Error(`Invalid --gateway-url '${value}': the public gateway URL must use HTTPS.`);
-  }
-  if (url.username || url.password) {
-    throw new Error(`Invalid --gateway-url '${value}': embedded credentials are not allowed.`);
-  }
-  if (url.search || url.hash) {
-    throw new Error(
-      `Invalid --gateway-url '${value}': query strings and fragments are not allowed.`,
-    );
-  }
-  url.pathname = url.pathname === "/" ? "/" : url.pathname.replace(/\/+$/, "");
-  return url.toString();
-}
 interface VerifyOptions {
   root?: string;
   bundle?: string;
   json?: boolean;
 }
 
-function collectOption(value: string, previous: string[]): string[] {
-  return [...previous, value];
+interface ConnectOptions extends Pick<InventoryOptions, "entry" | "gatewayId" | "json"> {
+  vendor: string;
 }
 
-function invalidGatewayId(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  const normalized = value.trim();
-  if (normalized.length === 0) {
-    return "Invalid --gateway-id: expected a non-empty stable control-plane/org/instance id.";
-  }
-  if (normalized.toLowerCase() === "unscoped") {
-    return "Invalid --gateway-id: 'unscoped' is reserved for compatibility lineage whose gateway identity is not proven; provide the real stable control-plane/org/instance id.";
-  }
-  return undefined;
+function collectOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function pathsAlias(left: string, right: string): boolean {
@@ -454,23 +423,12 @@ function adapterFor(
 ): GatewayAdapter<EstateConnection> | undefined {
   const make = VENDORS[vendor];
   if (!make) {
-    const message = `Unknown --vendor '${vendor}'. Use: ${VENDOR_LIST}.`;
-    if (json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-error",
-            code: "estate/unknown_vendor",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
-    }
+    emitRefusal(io, json, {
+      reportType: "anvil.gateway-estate-error",
+      code: "estate/unknown_vendor",
+      message: `Unknown --vendor '${vendor}'. Use: ${VENDOR_LIST}.`,
+      human: "message-only",
+    });
   }
   return make?.();
 }
@@ -788,19 +746,16 @@ function loadEstateForCommand(
     const unsupported = errors.some((message) =>
       message.includes(`[${UNSUPPORTED_NATIVE_ARTIFACT_CODE}]`),
     );
-    io.out(
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          reportType: "anvil.gateway-estate-error",
-          code: unsupported ? UNSUPPORTED_NATIVE_ARTIFACT_CODE : "estate/export_unreadable",
-          message: errors.at(-1) ?? `Cannot read '${exportPath}'.`,
-          diagnostics: errors,
-        },
-        null,
-        2,
-      ),
-    );
+    // `json` is already true here, and the human path is not this function's to
+    // emit — `loadEstateConfig` printed to stderr on the way in. Passing `true`
+    // rather than `json` keeps that split explicit instead of relying on the
+    // outer guard to make the stderr branch unreachable.
+    emitRefusal(io, true, {
+      reportType: "anvil.gateway-estate-error",
+      code: unsupported ? UNSUPPORTED_NATIVE_ARTIFACT_CODE : "estate/export_unreadable",
+      message: errors.at(-1) ?? `Cannot read '${exportPath}'.`,
+      details: { diagnostics: errors },
+    });
   }
   return loaded;
 }
@@ -932,184 +887,6 @@ function strictIdentityDimensions(
   return required;
 }
 
-function operationKeys(operation: Operation): string[] {
-  const route =
-    operation.sourceRef.method && operation.sourceRef.path
-      ? gatewayOperationRef(operation.sourceRef.method, operation.sourceRef.path)
-      : undefined;
-  return [operation.id, operation.canonicalName, operation.sourceRef.operationId, route].filter(
-    (key): key is string => key !== undefined,
-  );
-}
-
-function normalizedRoutePath(value: string): string | undefined {
-  const path = value.trim();
-  if (path === "") return undefined;
-  const leadingSlash = path.startsWith("/") ? path : `/${path}`;
-  return leadingSlash.replace(/\{\+?[^/{]+\}/g, "{}").replace(/(^|\/):[^/]+/g, "$1{}");
-}
-
-function routeKey(operation: Operation): string | undefined {
-  const { method, path } = operation.sourceRef;
-  const normalizedPath = path ? normalizedRoutePath(path) : undefined;
-  return method && normalizedPath ? `${method.toUpperCase()} ${normalizedPath}` : undefined;
-}
-
-function routeMultiset(operations: readonly Operation[]): {
-  routes: Map<string, Operation[]>;
-  unattested: Operation[];
-} {
-  const routes = new Map<string, Operation[]>();
-  const unattested: Operation[] = [];
-  for (const operation of operations) {
-    const key = routeKey(operation);
-    if (!key) {
-      unattested.push(operation);
-      continue;
-    }
-    routes.set(key, [...(routes.get(key) ?? []), operation]);
-  }
-  return { routes, unattested };
-}
-
-/**
- * A supplied contract is authoritative only for API shape, not gateway
- * membership. Prove that it describes exactly the gateway's selected route
- * multiset before allowing any operation to escape the import guard.
- */
-function attestGatewayRouteSet(
-  synthesized: readonly Operation[],
-  supplied: readonly Operation[],
-  coordinate: GatewayContractProvenance["location"],
-): GatewayDiagnostic[] {
-  const gateway = routeMultiset(synthesized);
-  const contract = routeMultiset(supplied);
-  const diagnostics: GatewayDiagnostic[] = [];
-
-  for (const operation of gateway.unattested) {
-    diagnostics.push({
-      level: "warning",
-      code: "gateway/route_set_ambiguous",
-      message: `Gateway operation '${operation.id}' has no attestable HTTP method/path coordinate.`,
-      coordinate,
-    });
-  }
-  for (const operation of contract.unattested) {
-    diagnostics.push({
-      level: "warning",
-      code: "gateway/route_set_ambiguous",
-      message: `Supplied contract operation '${operation.id}' has no attestable HTTP method/path coordinate.`,
-      coordinate,
-    });
-  }
-
-  const keys = [...new Set([...gateway.routes.keys(), ...contract.routes.keys()])].sort();
-  for (const key of keys) {
-    const gatewayCount = gateway.routes.get(key)?.length ?? 0;
-    const contractCount = contract.routes.get(key)?.length ?? 0;
-    if (gatewayCount > 1) {
-      diagnostics.push({
-        level: "warning",
-        code: "gateway/route_set_ambiguous",
-        message: `Gateway route '${key}' appears ${gatewayCount} times; an explicit reviewed route mapping is required.`,
-        coordinate,
-      });
-    }
-    if (contractCount > 1) {
-      diagnostics.push({
-        level: "warning",
-        code: "gateway/route_set_ambiguous",
-        message: `Supplied contract route '${key}' appears ${contractCount} times; an explicit reviewed route mapping is required.`,
-        coordinate,
-      });
-    }
-    if (gatewayCount > contractCount) {
-      diagnostics.push({
-        level: "warning",
-        code: "gateway/route_set_missing",
-        message: `Supplied contract is missing ${gatewayCount - contractCount} gateway operation(s) at '${key}'.`,
-        coordinate,
-      });
-    } else if (contractCount > gatewayCount) {
-      diagnostics.push({
-        level: "warning",
-        code: "gateway/route_set_extra",
-        message: `Supplied contract contains ${contractCount - gatewayCount} operation(s) at '${key}' that are absent from the selected gateway API.`,
-        coordinate,
-      });
-    }
-  }
-  return diagnostics;
-}
-
-/**
- * A native spec may use different operationIds from the gateway export. Match
- * policy targets through the route-only source's method/path and fail closed
- * when a target has no unique method/path peer in the supplied contract.
- */
-function retargetGatewayOverlay(
-  overlay: GatewayPolicyOverlay,
-  synthesized: readonly Operation[],
-  supplied: readonly Operation[],
-  coordinate: GatewayContractProvenance["location"],
-): { overlay: GatewayPolicyOverlay; diagnostics: GatewayDiagnostic[] } {
-  const synthesizedByKey = new Map<string, Operation>();
-  for (const operation of synthesized) {
-    for (const key of operationKeys(operation)) synthesizedByKey.set(key, operation);
-  }
-  const suppliedByRoute = new Map<string, Operation[]>();
-  for (const operation of supplied) {
-    const key = routeKey(operation);
-    if (key) suppliedByRoute.set(key, [...(suppliedByRoute.get(key) ?? []), operation]);
-  }
-
-  const diagnostics: GatewayDiagnostic[] = [];
-  const diagnosed = new Set<string>();
-  const assertions = overlay.assertions.flatMap((assertion) => {
-    if (assertion.target.scope !== "operation") return [assertion];
-    const synthesizedOperation = synthesizedByKey.get(assertion.target.ref);
-    const key = synthesizedOperation ? routeKey(synthesizedOperation) : undefined;
-    const candidates = key ? (suppliedByRoute.get(key) ?? []) : [];
-    if (candidates.length === 1) {
-      const suppliedOperation = candidates[0] as Operation;
-      return [
-        {
-          ...assertion,
-          target: {
-            ...assertion.target,
-            // Use the AIR id rather than a possibly colliding operationId.
-            ref: suppliedOperation.id,
-          },
-        },
-      ];
-    }
-    if (!diagnosed.has(assertion.target.ref)) {
-      diagnostics.push({
-        level: "warning",
-        code: "gateway/policy_target_unmatched",
-        message:
-          candidates.length > 1
-            ? `Gateway policy target '${assertion.target.ref}' maps to ${candidates.length} supplied operations at ${key}; no policy was applied automatically.`
-            : `Gateway policy target '${assertion.target.ref}' has no unique method/path match in the supplied contract; no policy was applied automatically.`,
-        coordinate,
-      });
-      diagnosed.add(assertion.target.ref);
-    }
-    // Do not leave a stale assertion in place: a colliding operationId could
-    // otherwise make the resolver apply gateway policy to the wrong route.
-    return [];
-  });
-  return {
-    overlay: makeOverlay({
-      origin: overlay.origin,
-      id: `${overlay.id}_retargeted`,
-      assertions,
-      evidence: overlay.evidence,
-    }),
-    diagnostics,
-  };
-}
-
 function gatewayGuardOverlay(
   operations: readonly Operation[],
   diagnostics: readonly GatewayDiagnostic[],
@@ -1154,546 +931,6 @@ function receiptOverlay(
   };
 }
 
-interface BundleInstallDiagnostic {
-  level: "error" | "warning" | "info";
-  code: string;
-  message: string;
-  path?: string;
-}
-
-interface BundleCommitResult {
-  retainedBackup?: string;
-  warning?: string;
-}
-
-type PreparedBundleInstall =
-  | {
-      ok: true;
-      written: string[];
-      directory: string;
-      commit: () => BundleCommitResult;
-      rollback: () => void;
-    }
-  | { ok: false; diagnostics: BundleInstallDiagnostic[] };
-
-/** Enumerate a bundle as relative POSIX file paths and refuse non-file nodes. */
-function listBundleFiles(root: string): string[] {
-  const files: string[] = [];
-  const visit = (directory: string, prefix: string): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) {
-        visit(path, relativePath);
-      } else if (entry.isFile()) {
-        files.push(relativePath);
-      } else {
-        throw new Error(`bundle contains unsupported filesystem node '${relativePath}'`);
-      }
-    }
-  };
-  visit(root, "");
-  return files.sort();
-}
-
-function exactFileSetDiagnostics(
-  actual: readonly string[],
-  expected: readonly string[],
-  allowedAdded: ReadonlySet<string> = new Set(),
-): BundleInstallDiagnostic[] {
-  const diagnostics: BundleInstallDiagnostic[] = [];
-  const actualSet = new Set(actual);
-  const expectedSet = new Set(expected);
-  for (const path of expectedSet) {
-    if (!actualSet.has(path)) {
-      diagnostics.push({
-        level: "error",
-        code: "gateway_receipt/output_missing",
-        message: "Generated bundle is missing a recorded file.",
-        path,
-      });
-    }
-  }
-  for (const path of actualSet) {
-    if (!expectedSet.has(path) && !allowedAdded.has(path)) {
-      diagnostics.push({
-        level: "error",
-        code: "gateway_receipt/output_added",
-        message: "Generated bundle contains a file outside the receipt manifest.",
-        path,
-      });
-    }
-  }
-  return diagnostics;
-}
-
-interface GatewayLifecycleArtifacts {
-  paths: Set<string>;
-  diagnostics: BundleInstallDiagnostic[];
-}
-
-/**
- * Recognize post-import records and prove target-kit subtrees independently.
- * The `targets/` namespace is never trusted merely by name: only the known
- * Gemini Enterprise profile, regenerated exactly from canonical AIR, is safe
- * to preserve or ignore as lifecycle state.
- */
-function gatewayLifecycleArtifacts(
-  files: Record<string, string>,
-  air: AirDocument,
-): GatewayLifecycleArtifacts {
-  const paths = new Set(Object.keys(files).filter((path) => isGatewayLifecycleArtifact(path)));
-  const diagnostics: BundleInstallDiagnostic[] = [];
-  const targetPaths = Object.keys(files).filter((path) => path.startsWith("targets/"));
-  const targetIds = new Set(
-    targetPaths
-      .map((path) => /^targets\/([^/]+)\//.exec(path)?.[1])
-      .filter((targetId): targetId is string => targetId !== undefined),
-  );
-  for (const targetId of targetIds) {
-    if (targetId !== GEMINI_ENTERPRISE_PROFILE.id) {
-      diagnostics.push({
-        level: "error",
-        code: "gateway_receipt/unverified_target",
-        message: `Target subtree '${targetId}' is not a recognized, independently verifiable lifecycle artifact; refusing to ignore or delete it.`,
-        path: `targets/${targetId}`,
-      });
-      continue;
-    }
-    const verification = verifyTargetKit(air, GEMINI_ENTERPRISE_PROFILE, files);
-    if (!verification.ok) {
-      diagnostics.push(
-        ...verification.findings.map((finding) => ({
-          level: "error" as const,
-          code: "gateway_receipt/unverified_target",
-          message: finding.detail,
-          path: finding.path,
-        })),
-      );
-      continue;
-    }
-    for (const path of verification.actualFiles) paths.add(path);
-  }
-  for (const path of targetPaths) {
-    if (!/^targets\/[^/]+\//.test(path)) {
-      diagnostics.push({
-        level: "error",
-        code: "gateway_receipt/unverified_target",
-        message: "Target artifact has no verifiable target-profile subtree.",
-        path,
-      });
-    }
-  }
-  return { paths, diagnostics };
-}
-
-function verifyBundleDirectory(
-  root: string,
-  receipt: GatewayImportReceipt,
-  expectedFiles: readonly string[],
-): BundleInstallDiagnostic[] {
-  const diagnostics = exactFileSetDiagnostics(listBundleFiles(root), expectedFiles);
-  const files = new Map<string, Uint8Array>();
-  for (const expected of receipt.output.files) {
-    const path = join(root, expected.path);
-    if (existsSync(path)) files.set(expected.path, readFileSync(path));
-  }
-  diagnostics.push(...verifyGatewayImportOutput(receipt, files).diagnostics);
-  try {
-    const view = GatewayImportReceiptView.parse(
-      JSON.parse(readFileSync(join(root, "import.receipt.json"), "utf8")),
-    );
-    if (view.importId !== receipt.importId || view.receiptDigest !== receipt.digest) {
-      diagnostics.push({
-        level: "error",
-        code: "gateway_receipt/bundle_receipt_mismatch",
-        message: "Bundle receipt view does not identify the private receipt.",
-        path: "import.receipt.json",
-      });
-    }
-  } catch (err) {
-    diagnostics.push({
-      level: "error",
-      code: "gateway_receipt/bundle_receipt_unparseable",
-      message: `Bundle import.receipt.json is not a valid receipt view: ${(err as Error).message}`,
-      path: "import.receipt.json",
-    });
-  }
-  return diagnostics;
-}
-
-/**
- * Stage and verify a complete bundle, then swap it into place. An existing
- * directory is replaceable only when its prior receipt view proves every file
- * belongs to an earlier generated bundle; unknown files are never deleted.
- */
-async function prepareBundleInstall(
-  outDir: string,
-  bundle: GeneratedBundle,
-  receipt: GatewayImportReceipt,
-  store: FileSystemGatewayImportReceiptStore,
-  workspaceRoot: string,
-  replaceDerived = false,
-  deps: Pick<CommandContext["deps"], "cleanupGatewayBundleBackup"> = {},
-): Promise<PreparedBundleInstall> {
-  const directory = resolve(outDir);
-  const parent = dirname(directory);
-  const name = basename(directory);
-  if (!name || directory === parent) {
-    return {
-      ok: false,
-      diagnostics: [
-        {
-          level: "error",
-          code: "gateway_receipt/unsafe_output_path",
-          message: `Refusing to install a generated bundle at broad path '${directory}'.`,
-        },
-      ],
-    };
-  }
-  let stage: string | undefined;
-  let backup: string | undefined;
-  let installed = false;
-  try {
-    mkdirSync(parent, { recursive: true });
-    stage = mkdtempSync(join(parent, `.${name}.anvil-stage-`));
-    const written = writeBundle(stage, bundle);
-    const expected = Object.keys(bundle.files).sort();
-    const stageDiagnostics = verifyBundleDirectory(stage, receipt, expected);
-    if (stageDiagnostics.length > 0) return { ok: false, diagnostics: stageDiagnostics };
-
-    if (existsSync(directory)) {
-      if (!statSync(directory).isDirectory()) {
-        return {
-          ok: false,
-          diagnostics: [
-            {
-              level: "error",
-              code: "gateway_receipt/output_not_directory",
-              message: `Bundle output '${directory}' exists and is not a directory.`,
-            },
-          ],
-        };
-      }
-      let priorView: GatewayImportReceiptView;
-      try {
-        priorView = GatewayImportReceiptView.parse(
-          JSON.parse(readFileSync(join(directory, "import.receipt.json"), "utf8")),
-        );
-      } catch {
-        return {
-          ok: false,
-          diagnostics: [
-            {
-              level: "error",
-              code: "gateway_receipt/unmanaged_output",
-              message:
-                "Existing output has no valid gateway receipt view; refusing to replace or delete its files.",
-              path: directory,
-            },
-          ],
-        };
-      }
-      const priorReceipt = await store.verify(priorView.importId);
-      const expectedPriorView = priorReceipt.receipt
-        ? redactGatewayImportReceipt(priorReceipt.receipt, { workspaceRoot })
-        : undefined;
-      const normalizedPriorView =
-        priorView.lineage.status === "stale"
-          ? { ...priorView, lineage: { status: "bound" as const } }
-          : priorView;
-      if (
-        !priorReceipt.ok ||
-        priorView.receiptDigest !== priorReceipt.receipt?.digest ||
-        JSON.stringify(normalizedPriorView) !== JSON.stringify(expectedPriorView)
-      ) {
-        return {
-          ok: false,
-          diagnostics: [
-            {
-              level: "error",
-              code: "gateway_receipt/untrusted_output",
-              message:
-                "Existing output receipt view is not backed by the intact private receipt in this workspace; refusing to replace or delete its files.",
-              path: directory,
-            },
-          ],
-        };
-      }
-      const priorIdentity = priorReceipt.receipt?.selection.identity;
-      const candidateIdentity = receipt.selection.identity;
-      if (
-        !priorIdentity ||
-        !candidateIdentity ||
-        priorIdentity.digest !== candidateIdentity.digest
-      ) {
-        const describe = (identity: GatewayImportReceipt["selection"]["identity"]): string =>
-          identity
-            ? `${identity.vendor}/${identity.gatewayId}/${identity.apiId}/${identity.environment}/${identity.revision} (${identity.digest})`
-            : "legacy receipt without a first-class gateway identity";
-        return {
-          ok: false,
-          diagnostics: [
-            {
-              level: "error",
-              code: "gateway_receipt/output_identity_collision",
-              message:
-                `Existing output belongs to ${describe(priorIdentity)}, but this import is ${describe(candidateIdentity)}. ` +
-                "A different vendor/gateway/API/environment/revision/export lineage may never replace this directory. Omit --out for the collision-safe default, or choose a new --out directory.",
-              path: directory,
-            },
-          ],
-        };
-      }
-      if (priorIdentity.lineageDigest !== candidateIdentity.lineageDigest && !replaceDerived) {
-        return {
-          ok: false,
-          diagnostics: [
-            {
-              level: "error",
-              code: "gateway_receipt/evidence_transition_requires_replace",
-              message:
-                `The stable gateway coordinate is unchanged (${candidateIdentity.digest}), but export/inventory evidence changed from ${priorIdentity.lineageDigest} to ${candidateIdentity.lineageDigest}. ` +
-                "Review the estate diff, then re-run with --replace-derived to accept this verified lineage transition. A changed unrelated API will not change the default output path.",
-              path: directory,
-            },
-          ],
-        };
-      }
-      const existingFiles = readBundleDir(directory);
-      if (priorView.lineage.status === "bound" && priorReceipt.receipt) {
-        const priorOutputFiles = new Map<string, Uint8Array>();
-        for (const expected of priorReceipt.receipt.output.files) {
-          const path = join(directory, expected.path);
-          if (existsSync(path)) priorOutputFiles.set(expected.path, readFileSync(path));
-        }
-        const priorOutputIntegrity = verifyGatewayImportOutput(
-          priorReceipt.receipt,
-          priorOutputFiles,
-        );
-        if (!priorOutputIntegrity.ok) {
-          return {
-            ok: false,
-            diagnostics: [
-              {
-                level: "error",
-                code: "gateway_receipt/prior_output_changed",
-                message:
-                  "Existing receipt-bound output no longer matches its immutable manifest; refusing a lineage transition or replacement.",
-                path: directory,
-              },
-              ...priorOutputIntegrity.diagnostics,
-            ],
-          };
-        }
-      }
-      let existingAir: AirDocument;
-      try {
-        existingAir = airFromJson(existingFiles["air.json"] ?? "");
-      } catch (err) {
-        return {
-          ok: false,
-          diagnostics: [
-            {
-              level: "error",
-              code: "gateway_receipt/output_air_unreadable",
-              message: `Existing canonical AIR cannot validate lifecycle artifacts: ${err instanceof Error ? err.message : String(err)}`,
-              path: "air.json",
-            },
-          ],
-        };
-      }
-      const recognizedLifecycle = gatewayLifecycleArtifacts(existingFiles, existingAir);
-      if (recognizedLifecycle.diagnostics.length > 0) {
-        return { ok: false, diagnostics: recognizedLifecycle.diagnostics };
-      }
-      if (priorView.lineage.status === "stale") {
-        if (!replaceDerived) {
-          return {
-            ok: false,
-            diagnostics: [
-              {
-                level: "error",
-                code: "gateway_receipt/stale_output_requires_replace",
-                message:
-                  "Existing output was deliberately changed after gateway import. Re-run with --replace-derived to discard the derived approval state after its recorded digest is verified.",
-                path: directory,
-              },
-            ],
-          };
-        }
-        const generatedPaths = new Set(Object.keys(generateBundle(existingAir).files));
-        const untrustedPaths = priorView.lineage.currentOutputFiles
-          .map((file) => file.path)
-          .filter((path) => !generatedPaths.has(path) && !recognizedLifecycle.paths.has(path));
-        if (untrustedPaths.length > 0) {
-          return {
-            ok: false,
-            diagnostics: [
-              {
-                level: "error",
-                code: "gateway_receipt/stale_manifest_untrusted_path",
-                message:
-                  "The stale-lineage manifest names files that are neither deterministic compiler output nor independently recognized lifecycle artifacts; refusing to delete them.",
-                path: untrustedPaths[0],
-              },
-            ],
-          };
-        }
-        const currentFiles = new Map<string, Uint8Array>();
-        for (const expected of priorView.lineage.currentOutputFiles) {
-          const path = join(directory, expected.path);
-          if (existsSync(path)) currentFiles.set(expected.path, readFileSync(path));
-        }
-        const currentIntegrity = verifyGatewayImportOutputManifest(
-          {
-            digest: priorView.lineage.currentOutputDigest,
-            files: priorView.lineage.currentOutputFiles,
-          },
-          currentFiles,
-        );
-        if (!currentIntegrity.ok) {
-          return {
-            ok: false,
-            diagnostics: [
-              {
-                level: "error",
-                code: "gateway_receipt/stale_output_changed",
-                message: `Existing derived output no longer matches the exact staged state recorded at approval: ${currentIntegrity.diagnostics.map((diagnostic) => `${diagnostic.path ? `${diagnostic.path}: ` : ""}${diagnostic.message}`).join("; ")}`,
-                path: directory,
-              },
-            ],
-          };
-        }
-        for (const file of priorView.lineage.currentOutputFiles) {
-          recognizedLifecycle.paths.add(file.path);
-        }
-      }
-      const priorExpected = [
-        ...priorView.output.files.map((file) => file.path),
-        "import.receipt.json",
-      ].sort();
-      const extras = exactFileSetDiagnostics(
-        listBundleFiles(directory),
-        priorExpected,
-        recognizedLifecycle.paths,
-      ).filter((diagnostic) => diagnostic.code === "gateway_receipt/output_added");
-      if (extras.length > 0) return { ok: false, diagnostics: extras };
-
-      if (!replaceDerived && recognizedLifecycle.paths.size > 0) {
-        let candidateAir: AirDocument;
-        try {
-          candidateAir = airFromJson(bundle.files["air.json"] ?? "");
-        } catch (err) {
-          return {
-            ok: false,
-            diagnostics: [
-              {
-                level: "error",
-                code: "gateway_receipt/candidate_air_unreadable",
-                message: `Candidate canonical AIR cannot validate lifecycle artifacts: ${err instanceof Error ? err.message : String(err)}`,
-                path: "air.json",
-              },
-            ],
-          };
-        }
-        const compatibleLifecycle = gatewayLifecycleArtifacts(existingFiles, candidateAir);
-        if (compatibleLifecycle.diagnostics.length > 0) {
-          return {
-            ok: false,
-            diagnostics: compatibleLifecycle.diagnostics.map((diagnostic) => ({
-              ...diagnostic,
-              code: "gateway_receipt/lifecycle_incompatible",
-              message: `${diagnostic.message} Move or remove the artifact, or re-run with --replace-derived to discard verified derived state.`,
-            })),
-          };
-        }
-        const expectedSet = new Set(expected);
-        for (const relativePath of compatibleLifecycle.paths) {
-          if (expectedSet.has(relativePath)) {
-            return {
-              ok: false,
-              diagnostics: [
-                {
-                  level: "error",
-                  code: "gateway_receipt/lifecycle_collision",
-                  message:
-                    "A lifecycle artifact collides with a compiler-owned candidate file; refusing replacement.",
-                  path: relativePath,
-                },
-              ],
-            };
-          }
-          const destination = join(stage, relativePath);
-          mkdirSync(dirname(destination), { recursive: true });
-          copyFileSync(join(directory, relativePath), destination);
-          written.push(relativePath);
-        }
-      }
-
-      backup = mkdtempSync(join(parent, `.${name}.anvil-previous-`));
-      rmSync(backup, { recursive: true, force: true });
-      renameSync(directory, backup);
-    }
-    try {
-      renameSync(stage, directory);
-      installed = true;
-    } catch (err) {
-      if (backup && existsSync(backup) && !existsSync(directory)) renameSync(backup, directory);
-      throw err;
-    }
-
-    let closed = false;
-    return {
-      ok: true,
-      written,
-      directory,
-      commit: () => {
-        if (closed) return {};
-        closed = true;
-        if (!backup) return {};
-        try {
-          (
-            deps.cleanupGatewayBundleBackup ??
-            ((path: string) => rmSync(path, { recursive: true, force: true }))
-          )(backup);
-          return {};
-        } catch (err) {
-          const retainedBackup = existsSync(backup) ? backup : undefined;
-          const detail = err instanceof Error ? err.message : String(err);
-          return {
-            retainedBackup,
-            warning: retainedBackup
-              ? `The new gateway bundle was installed successfully, but the previous bundle backup could not be removed and remains at ${retainedBackup}: ${detail}`
-              : `The new gateway bundle was installed successfully, but backup cleanup reported an error: ${detail}`,
-          };
-        }
-      },
-      rollback: () => {
-        if (closed) return;
-        rmSync(directory, { recursive: true, force: true });
-        if (backup && existsSync(backup)) renameSync(backup, directory);
-        closed = true;
-      },
-    };
-  } catch (err) {
-    if (backup && existsSync(backup) && !existsSync(directory)) renameSync(backup, directory);
-    return {
-      ok: false,
-      diagnostics: [
-        {
-          level: "error",
-          code: "gateway_receipt/output_install_failed",
-          message: err instanceof Error ? err.message : String(err),
-          path: directory,
-        },
-      ],
-    };
-  } finally {
-    if (!installed && stage) rmSync(stage, { recursive: true, force: true });
-  }
-}
-
 async function runInventory(
   exportPath: string,
   opts: InventoryOptions,
@@ -1701,23 +938,12 @@ async function runInventory(
 ): Promise<number> {
   const gatewayIdError = invalidGatewayId(opts.gatewayId);
   if (gatewayIdError) {
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-inventory-error",
-            code: "estate/invalid_gateway_id",
-            message: gatewayIdError,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(gatewayIdError);
-    }
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-inventory-error",
+      code: "estate/invalid_gateway_id",
+      message: gatewayIdError,
+      human: "message-only",
+    });
   }
   const adapter = adapterFor(opts.vendor, io, opts.json);
   if (!adapter) return 1;
@@ -1730,24 +956,12 @@ async function runInventory(
   );
   const parsedLimit = Number(opts.limit ?? "50");
   if (!Number.isSafeInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 10_000) {
-    const message = `Invalid --limit '${opts.limit}': expected an integer from 1 to 10000.`;
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-inventory-error",
-            code: "estate/invalid_limit",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
-    }
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-inventory-error",
+      code: "estate/invalid_limit",
+      message: `Invalid --limit '${opts.limit}': expected an integer from 1 to 10000.`,
+      human: "message-only",
+    });
   }
   const query = opts.query?.toLocaleLowerCase();
   const matched = snapshot.apis.filter(
@@ -1793,6 +1007,7 @@ async function runInventory(
             }
           : filtered
             ? {
+                reportType: "anvil.gateway-estate-inventory",
                 ...snapshot,
                 apis: selected,
                 view: {
@@ -1806,7 +1021,7 @@ async function runInventory(
                   },
                 },
               }
-            : snapshot,
+            : { reportType: "anvil.gateway-estate-inventory", ...snapshot },
         null,
         2,
       ),
@@ -1870,23 +1085,12 @@ async function runInventory(
 async function runConnect(exportPath: string, opts: ConnectOptions, io: CliIO): Promise<number> {
   const gatewayIdError = invalidGatewayId(opts.gatewayId);
   if (gatewayIdError) {
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-connect-error",
-            code: "estate/invalid_gateway_id",
-            message: gatewayIdError,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(gatewayIdError);
-    }
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-connect-error",
+      code: "estate/invalid_gateway_id",
+      message: gatewayIdError,
+      human: "message-only",
+    });
   }
   const adapter = adapterFor(opts.vendor, io, opts.json);
   if (!adapter) return 1;
@@ -1953,44 +1157,21 @@ async function runConnect(exportPath: string, opts: ConnectOptions, io: CliIO): 
 
 async function runAudit(exportPath: string, opts: AuditOptions, io: CliIO): Promise<number> {
   if (!["blocked", "review-required"].includes(opts.failOn ?? "blocked")) {
-    const message = `Invalid --fail-on '${opts.failOn}'. Use: blocked | review-required.`;
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-audit-error",
-            code: "estate/invalid_fail_on",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
-    }
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-audit-error",
+      code: "estate/invalid_fail_on",
+      message: `Invalid --fail-on '${opts.failOn}'. Use: blocked | review-required.`,
+      human: "message-only",
+    });
   }
   const gatewayIdError = invalidGatewayId(opts.gatewayId);
   if (gatewayIdError) {
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-audit-error",
-            code: "estate/invalid_gateway_id",
-            message: gatewayIdError,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(gatewayIdError);
-    }
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-audit-error",
+      code: "estate/invalid_gateway_id",
+      message: gatewayIdError,
+      human: "message-only",
+    });
   }
   const adapter = adapterFor(opts.vendor, io, opts.json);
   if (!adapter) return 1;
@@ -2052,23 +1233,12 @@ function emitPlanError(
   code: string,
   message: string,
 ): number {
-  if (json) {
-    io.out(
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          reportType: "anvil.gateway-estate-adoption-plan-error",
-          code,
-          message,
-        },
-        null,
-        2,
-      ),
-    );
-  } else {
-    io.err(message);
-  }
-  return 1;
+  return emitRefusal(io, json, {
+    reportType: "anvil.gateway-estate-adoption-plan-error",
+    code,
+    message,
+    human: "message-only",
+  });
 }
 
 function writeNewEstateSelection(destination: string, selection: EstateSelectionDocument): void {
@@ -2224,26 +1394,15 @@ function emitEstateImportError(
   message: string,
   details: Record<string, unknown> = {},
 ): number {
-  if (json) {
-    io.out(
-      JSON.stringify(
-        {
-          schemaVersion: 1,
-          reportType: "anvil.gateway-estate-import-error",
-          code,
-          message,
-          ...details,
-          output: { created: false },
-          receipt: { created: false },
-        },
-        null,
-        2,
-      ),
-    );
-  } else {
-    io.err(`[${code}] ${message}`);
-  }
-  return 1;
+  return emitRefusal(io, json, {
+    reportType: "anvil.gateway-estate-import-error",
+    code,
+    message,
+    // Import's refusals always close with the two "nothing was written"
+    // assertions, after whatever the caller added. Key order is part of the
+    // envelope, so they are spread here rather than merged by the emitter.
+    details: { ...details, output: { created: false }, receipt: { created: false } },
+  });
 }
 
 async function runImport(
@@ -2252,48 +1411,25 @@ async function runImport(
   io: CliIO,
   deps: Pick<CommandContext["deps"], "cleanupGatewayBundleBackup"> = {},
 ): Promise<number> {
-  const specOverrideReason = opts.attestSpecOverride?.trim();
-  if (opts.attestSpecOverride !== undefined) {
-    if (!opts.spec) {
-      return emitEstateImportError(
-        io,
-        opts.json,
-        "gateway/spec_override_without_spec",
-        "`--attest-spec-override` requires `--spec`; there is no supplied contract to attest.",
-      );
-    }
-    if (opts.vendor !== "wso2") {
-      return emitEstateImportError(
-        io,
-        opts.json,
-        "gateway/spec_override_wrong_vendor",
-        "`--attest-spec-override` is currently defined only for WSO2 native Definitions lineage.",
-      );
-    }
-    if (!specOverrideReason || specOverrideReason.length > 2_000) {
-      return emitEstateImportError(
-        io,
-        opts.json,
-        "gateway/invalid_spec_override_attestation",
-        "`--attest-spec-override <reason>` requires a non-empty reason of at most 2,000 characters.",
-      );
-    }
+  // Policy rules live in estate-import-policy.ts; they are consulted here, in the
+  // order the inline checks used to run, because which refusal a caller sees when
+  // two things are wrong at once is observable behaviour.
+  const overrideRejected = specOverrideRejection(opts);
+  if (overrideRejected) {
+    return emitEstateImportError(io, opts.json, overrideRejected.code, overrideRejected.message);
   }
-  if (opts.spec && !opts.gatewayUrl) {
-    io.err(
-      "`--gateway-url <https://gateway.example/base>` is required with `--spec`; Anvil will not trust a contract's server as proof that calls still traverse the imported gateway.",
-    );
-    return 1;
+  const attestationReason = specOverrideReason(opts);
+
+  const contractRejected = suppliedContractRejection(opts);
+  if (contractRejected) {
+    return emitEstateImportError(io, opts.json, contractRejected.code, contractRejected.message);
   }
-  let gatewayUrl: string | undefined;
-  if (opts.gatewayUrl) {
-    try {
-      gatewayUrl = normalizeGatewayUrl(opts.gatewayUrl);
-    } catch (err) {
-      io.err(err instanceof Error ? err.message : String(err));
-      return 1;
-    }
+  const resolvedGatewayUrl = resolveGatewayUrl(opts);
+  if ("rejection" in resolvedGatewayUrl) {
+    const { code, message } = resolvedGatewayUrl.rejection;
+    return emitEstateImportError(io, opts.json, code, message);
   }
+  const gatewayUrl = resolvedGatewayUrl.url;
   let manifest: string | undefined;
   let compilerInput: GatewayImportReceiptDraft["compilerInput"];
   if (opts.manifest) {
@@ -2306,10 +1442,12 @@ async function runImport(
         ...(capabilityReviews ? { capabilityReviews } : {}),
       };
     } catch (error) {
-      io.err(
+      return emitEstateImportError(
+        io,
+        opts.json,
+        "estate/manifest_unreadable",
         `Cannot read or parse --manifest '${opts.manifest}': ${error instanceof Error ? error.message : String(error)}`,
       );
-      return 1;
     }
   }
 
@@ -2319,46 +1457,9 @@ async function runImport(
   if (!loaded) return 1;
 
   const explicitGatewayId = opts.gatewayId?.trim();
-  const gatewayIdError = invalidGatewayId(opts.gatewayId);
-  if (gatewayIdError) {
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-import-error",
-            code: "gateway_selection/invalid_gateway_id",
-            message: gatewayIdError,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(gatewayIdError);
-    }
-    return 1;
-  }
-  if (opts.strictIdentity && !explicitGatewayId) {
-    const message =
-      "`--strict-identity` requires `--gateway-id <id>` because this offline export does not prove its control-plane identity.";
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-import-error",
-            code: "gateway_selection/gateway_id_required",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
-    }
-    return 1;
+  const identityRejected = gatewayIdentityRejection(opts);
+  if (identityRejected) {
+    return emitEstateImportError(io, opts.json, identityRejected.code, identityRejected.message);
   }
   const gatewayId = explicitGatewayId ?? "unscoped";
   const connection = estateConnection(gatewayId, loaded);
@@ -2378,25 +1479,19 @@ async function runImport(
     environment: opts.environment,
   });
   if (!resolvedSelection.ok) {
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-import-error",
-            ...resolvedSelection.failure,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(`[${resolvedSelection.failure.code}] ${resolvedSelection.failure.message}`);
-      if (resolvedSelection.failure.candidates.length > 0) {
-        io.err(`Candidates:\n  ${resolvedSelection.failure.candidates.join("\n  ")}`);
-      }
+    // GatewayApiSelectionFailure is declared `{ code, message, candidates }`,
+    // so routing it through the emitter serializes the same keys in the same
+    // order the spread produced.
+    const exit = emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-import-error",
+      code: resolvedSelection.failure.code,
+      message: resolvedSelection.failure.message,
+      details: { candidates: resolvedSelection.failure.candidates },
+    });
+    if (!opts.json && resolvedSelection.failure.candidates.length > 0) {
+      io.err(`Candidates:\n  ${resolvedSelection.failure.candidates.join("\n  ")}`);
     }
-    return 1;
+    return exit;
   }
   const { api: apiRef, apiVersion, revision, environment } = resolvedSelection.selection;
   const selectedCoordinate = {
@@ -2583,69 +1678,36 @@ async function runImport(
       const suppliedFile = added.snapshot.files.find(
         (file) => file.path === bound.source?.entrypoint.path,
       );
-      if (!suppliedFile) {
-        return emitEstateImportError(
-          io,
-          opts.json,
-          "gateway/formal_definition_source_missing",
-          "The locked supplied contract entrypoint is absent from its own source manifest; no lineage can be established.",
-        );
-      }
-      const supplied = {
-        path: suppliedFile.path,
-        digest: `sha256:${suppliedFile.sha256.replace(/^sha256:/, "")}`,
-      };
-      const exactMatch =
-        formalDefinitions.length === 1 && formalDefinitions[0]?.digest === supplied.digest;
-      if (exactMatch && specOverrideReason) {
-        return emitEstateImportError(
-          io,
-          opts.json,
-          "gateway/unnecessary_spec_override",
-          "The supplied contract already exactly matches the selected embedded WSO2 definition. Remove `--attest-spec-override`; no override is needed or recorded.",
-          { formalDefinitions, supplied },
-        );
-      }
-      if (exactMatch) {
-        formalDefinitionLineage = {
-          mode: "embedded_digest_match",
-          candidates: formalDefinitions,
-          supplied,
-        };
-      } else if (specOverrideReason) {
-        formalDefinitionLineage = {
-          mode: "operator_override",
-          candidates: formalDefinitions,
-          supplied,
-          override: {
-            attestation: "operator",
-            reason: specOverrideReason,
-          },
-        };
-      } else {
-        const code =
-          formalDefinitions.length === 0
-            ? "gateway/formal_definition_missing"
-            : formalDefinitions.length > 1
-              ? "gateway/formal_definition_ambiguous"
-              : "gateway/formal_definition_digest_mismatch";
-        const message =
-          formalDefinitions.length === 0
-            ? "The selected WSO2 project has no validated embedded Definitions OpenAPI/Swagger contract to bind to the supplied --spec. Review the project and, only for a legitimate external contract, repeat with `--attest-spec-override <reason>`."
-            : formalDefinitions.length > 1
-              ? `The selected WSO2 project has ${formalDefinitions.length} validated embedded Definitions contracts. Anvil will not infer which one is authoritative; select deliberately and repeat with \`--attest-spec-override <reason>\`.`
-              : `The supplied contract digest ${supplied.digest} does not match the selected embedded WSO2 definition ${formalDefinitions[0]?.digest}. Route compatibility is not byte lineage. Supply the exact extracted member or explicitly attest a legitimate override with \`--attest-spec-override <reason>\`.`;
+      const resolved = resolveFormalDefinitionLineage({
+        formalDefinitions,
+        supplied: suppliedFile
+          ? {
+              path: suppliedFile.path,
+              digest: `sha256:${suppliedFile.sha256.replace(/^sha256:/, "")}`,
+            }
+          : undefined,
+        attestationReason,
+      });
+      if ("rejection" in resolved) {
+        const { code, message, details } = resolved.rejection;
         return emitEstateImportError(io, opts.json, code, message, {
-          formalDefinitions,
-          supplied,
-          selection: {
-            id: apiRef.id,
-            ...(apiVersion ? { apiVersion } : {}),
-            revision,
-            environment,
-          },
+          ...details,
+          // The selection is delivery context, not part of the lineage decision.
+          ...(code === "gateway/formal_definition_missing" ||
+          code === "gateway/formal_definition_ambiguous" ||
+          code === "gateway/formal_definition_digest_mismatch"
+            ? {
+                selection: {
+                  id: apiRef.id,
+                  ...(apiVersion ? { apiVersion } : {}),
+                  revision,
+                  environment,
+                },
+              }
+            : {}),
         });
       }
+      formalDefinitionLineage = resolved.lineage;
     }
 
     source = {
@@ -2719,15 +1781,7 @@ async function runImport(
     diagnostics.push(...retargeted.diagnostics);
   }
 
-  if (gatewayUrl) {
-    diagnostics = diagnostics.filter((d) => d.code !== "gateway/missing_runtime_coordinate");
-    diagnostics.push({
-      level: "info",
-      code: "gateway/runtime_coordinate_attested",
-      message: `Operator attested '${gatewayUrl}' as the public gateway base URL; generated runtime coordinates are pinned to it.`,
-      coordinate: contract.location,
-    });
-  }
+  diagnostics = attestRuntimeCoordinate(diagnostics, gatewayUrl, contract.location);
 
   let result = await compileContract(source, [overlay], {
     serviceId,
@@ -2744,26 +1798,18 @@ async function runImport(
     candidate.service.environment !== undefined &&
     candidate.service.environment !== environment
   ) {
-    const message =
-      `The manifest declares service.environment '${candidate.service.environment}', ` +
-      `but the selected gateway coordinate is '${environment}'. Refusing to generate deployment and credential defaults for the wrong environment.`;
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-estate-import-error",
-            code: "gateway_selection/environment_conflict",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
-    }
-    return 1;
+    // `human: "message-only"` preserves what this site did before the emitter
+    // existed, and it disagrees with emitEstateImportError — same reportType,
+    // one prints `[code] message` and this one does not. Recorded rather than
+    // silently unified: changing operator-visible stderr is its own decision.
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-estate-import-error",
+      code: "gateway_selection/environment_conflict",
+      message:
+        `The manifest declares service.environment '${candidate.service.environment}', ` +
+        `but the selected gateway coordinate is '${environment}'. Refusing to generate deployment and credential defaults for the wrong environment.`,
+      human: "message-only",
+    });
   }
   candidate.service.environment = environment;
   if (candidate.operations.length === 0) {

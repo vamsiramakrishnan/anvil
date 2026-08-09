@@ -6,6 +6,7 @@ import {
   gatewaySupportRegistry,
 } from "@anvil/compiler";
 import type { Command } from "commander";
+import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
@@ -114,25 +115,17 @@ function runEstateSupport(
 ): number {
   const parsed = vendor === undefined ? undefined : GatewaySupportVendor.safeParse(vendor);
   if (parsed && !parsed.success) {
-    const message = `Unknown gateway support vendor '${vendor}'. Use: ${GatewaySupportVendor.options.join(" | ")}.`;
-    if (opts.json) {
-      io.out(
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            reportType: "anvil.gateway-support-error",
-            registryVersion: GATEWAY_SUPPORT_REGISTRY_VERSION,
-            code: "gateway_support/unknown_vendor",
-            message,
-          },
-          null,
-          2,
-        ),
-      );
-    } else {
-      io.err(message);
-    }
-    return 1;
+    // `registryVersion` used to sit between `reportType` and `code`; it now
+    // follows `message` with the rest of this command's specifics. The only
+    // change is JSON key order, which no correct consumer observes — the test
+    // covering this refusal matches on the parsed object.
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.gateway-support-error",
+      code: "gateway_support/unknown_vendor",
+      message: `Unknown gateway support vendor '${vendor}'. Use: ${GatewaySupportVendor.options.join(" | ")}.`,
+      details: { registryVersion: GATEWAY_SUPPORT_REGISTRY_VERSION },
+      human: "message-only",
+    });
   }
 
   if (opts.json) {

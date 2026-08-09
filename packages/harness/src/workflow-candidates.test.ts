@@ -116,7 +116,7 @@ describe("detectWorkflowCandidates", () => {
     const air = doc();
     const listOp = air.operations.find((o) => o.id === "cards.mappings.list");
     if (!listOp) throw new Error("fixture missing list_mappings");
-    listOp.effect = { kind: "mutation", action: "create", risk: "none" };
+    listOp.effect = { kind: "mutation", action: "create", risk: "none", reversible: true };
     expect(detectWorkflowCandidates(air)).toEqual([]);
   });
 

@@ -1,6 +1,7 @@
-import { mkdirSync, mkdtempSync, mkfifoSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -10,6 +11,38 @@ import {
   WSO2_COLLECTION_MAX_FILES,
   Wso2ApictlCollectionError,
 } from "./wso2-apictl.js";
+
+/**
+ * Create a FIFO — the portable POSIX special file.
+ *
+ * Node exposes no API for this: there is no `fs.mkfifoSync`. An earlier revision
+ * of this test imported that name anyway, so the call threw `TypeError` into a
+ * bare `catch` commented "FIFO creation may not be supported" and the assertion
+ * below never once executed. Every package tsconfig excludes `src/**` test files
+ * from `tsc`, so nothing caught the phantom import.
+ *
+ * `mkfifo(1)` is POSIX-mandated, but Windows and some sandboxes still refuse it.
+ * Availability is probed once so the test *skips visibly* rather than passing
+ * vacuously — a special-file refusal is a security boundary, and a green tick
+ * that proves nothing is worse than a reported skip.
+ */
+function mkfifoAvailable(): boolean {
+  if (process.platform === "win32") return false;
+  const probeDir = mkdtempSync(join(tmpdir(), "anvil-mkfifo-probe-"));
+  try {
+    execFileSync("mkfifo", [join(probeDir, "p")], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+  }
+}
+
+const makeFifo = Object.assign(
+  (path: string): void => void execFileSync("mkfifo", [path], { stdio: "ignore" }),
+  { available: mkfifoAvailable() },
+);
 
 let work: string;
 
@@ -388,24 +421,28 @@ describe("loadWso2ApictlDirectory edge cases", () => {
     // during directory traversal.
   });
 
-  it("handles directory with unsupported file type (special file)", () => {
+  it.skipIf(!makeFifo.available)("rejects a special file (FIFO) in the collection", () => {
     const dir = join(work, "special");
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "api.yaml"), "type: api\nversion: v4.2.0\ndata: {}");
+    makeFifo(join(dir, "pipe"));
 
-    // Try to create a FIFO (named pipe) - this will fail on some systems
-    try {
-      mkfifoSync(join(dir, "pipe"));
-
-      expect(() => loadWso2ApictlDirectory(dir)).toThrow(Wso2ApictlCollectionError);
+    // A FIFO is neither a symlink nor a regular file, so it must be refused as an
+    // unsupported node — never silently read, and never silently skipped. The
+    // refusal has to happen *before* the read: deleting it (verified by mutating
+    // `!stat.isFile()` to `false`) does not merely mislabel the node, it hangs the
+    // import forever, because `readFileSync` on a FIFO blocks until a writer opens
+    // it. An estate import must not be stallable by a file an operator can create.
+    const error = (() => {
       try {
         loadWso2ApictlDirectory(dir);
       } catch (e) {
-        expect((e as Wso2ApictlCollectionError).code).toBe("wso2/unsupported_collection_node");
+        return e;
       }
-    } catch {
-      // FIFO creation may not be supported on all systems
-    }
+      throw new Error("loadWso2ApictlDirectory accepted a collection containing a FIFO");
+    })();
+    expect(error).toBeInstanceOf(Wso2ApictlCollectionError);
+    expect((error as Wso2ApictlCollectionError).code).toBe("wso2/unsupported_collection_node");
   });
 
   it("throws when path contains dot segment", () => {
@@ -847,11 +884,62 @@ data:
   });
 });
 
-describe("semantic digest consistency", () => {
-  it("produces identical digest for same content regardless of load method", () => {
+/**
+ * `semanticDigest` is documented as the "canonical expanded-member identity used
+ * by inventory, independent of ZIP repacking" — it is the identity that gateway
+ * receipts and adoption lineage bind to, so repackaging an unchanged export must
+ * not mint a new identity.
+ *
+ * This block previously claimed to prove the digest was "identical regardless of
+ * load method" while comparing a directory load against *different* fixture
+ * content, then asserting only that a directory load equals itself. Directory and
+ * ZIP loads are not comparable — `loadWso2ApictlZip` takes one API-project ZIP and
+ * keys members project-relative, `loadWso2ApictlDirectory` takes a collection root
+ * and keys them collection-relative — so that equality was never the invariant.
+ * These assert the property the field actually promises.
+ */
+describe("semantic digest is a content identity, not a packaging identity", () => {
+  it("survives repacking: compression level and member order do not move it", () => {
+    const members = projectZipMembers("SameApi", "1.0.0");
+    const reordered = Object.fromEntries(Object.entries(members).reverse());
+
+    const stored = loadWso2ApictlZip(zipSync(members, { level: 0 }));
+    const deflated = loadWso2ApictlZip(zipSync(members, { level: 9 }));
+    const shuffled = loadWso2ApictlZip(zipSync(reordered, { level: 6 }));
+
+    expect(deflated.semanticDigest).toBe(stored.semanticDigest);
+    expect(shuffled.semanticDigest).toBe(stored.semanticDigest);
+    // The packaging bytes genuinely differ — otherwise the assertion above is vacuous.
+    expect(Buffer.from(deflated.exportBytes)).not.toEqual(Buffer.from(stored.exportBytes));
+  });
+
+  it("moves when a member's content changes", () => {
+    const base = loadWso2ApictlZip(zipSync(projectZipMembers("SameApi", "1.0.0"), { level: 0 }));
+    const edited = loadWso2ApictlZip(
+      zipSync(
+        projectZipMembers(
+          "SameApi",
+          "1.0.0",
+          `type: api
+version: v4.2.0
+data:
+  name: SameApi
+  context: /same-but-moved
+  version: 1.0.0
+  provider: platform-team
+  isRevision: false
+  revisionId: 0
+`,
+        ),
+        { level: 0 },
+      ),
+    );
+    expect(edited.semanticDigest).not.toBe(base.semanticDigest);
+  });
+
+  it("is stable across repeated directory loads of unchanged bytes", () => {
     const apiDir = join(work, "api");
     mkdirSync(apiDir);
-
     writeFileSync(
       join(apiDir, "api.yaml"),
       `type: api
@@ -870,18 +958,9 @@ data:
       "type: deployment_environments\nversion: v4.2.0\ndata: []",
     );
 
-    // Load from directory
-    const dirResult = loadWso2ApictlDirectory(work);
-
-    // Load from ZIP
-    const members = projectZipMembers("SameApi", "1.0.0");
-    const zip = zipSync(members, { level: 0 });
-    const zipResult = loadWso2ApictlZip(zip);
-
-    // Digests should be different because one is from ZIP and one from directory
-    // but verify both produce consistent results on repeated calls
-    const dirResult2 = loadWso2ApictlDirectory(work);
-    expect(dirResult.semanticDigest).toBe(dirResult2.semanticDigest);
+    expect(loadWso2ApictlDirectory(work).semanticDigest).toBe(
+      loadWso2ApictlDirectory(work).semanticDigest,
+    );
   });
 });
 

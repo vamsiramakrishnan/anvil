@@ -6,7 +6,12 @@ import type {
   JsonSchema,
   KeyDerivation,
 } from "@anvil/air";
-import { resolveIdempotencyCarrier } from "@anvil/air";
+import {
+  AgentProjection,
+  agentProjectionIssues,
+  agentPropKey,
+  resolveIdempotencyCarrier,
+} from "@anvil/air";
 import {
   type EvidenceStrength,
   type JsonValue,
@@ -150,6 +155,24 @@ function fail(check: ValidationCheckId, reason: string): ValidationOutcome {
 
 function patchEntries(patch: SemanticPatch): Array<[string, JsonValue]> {
   return Object.entries(patch.set);
+}
+
+function schemaAtDottedPath(schema: JsonSchema | undefined, path: string): JsonSchema | undefined {
+  let current = schema;
+  for (const segment of path.split(".")) {
+    if (current?.type === "array") {
+      const items = current.items;
+      if (!items || typeof items !== "object" || Array.isArray(items)) return undefined;
+      current = items as JsonSchema;
+    }
+    const properties = current?.properties;
+    if (!properties || typeof properties !== "object" || Array.isArray(properties))
+      return undefined;
+    const next = (properties as Record<string, unknown>)[segment];
+    if (!next || typeof next !== "object" || Array.isArray(next)) return undefined;
+    current = next as JsonSchema;
+  }
+  return current;
 }
 
 const CHECKS: Record<ValidationCheckId, Check> = {
@@ -328,6 +351,61 @@ const CHECKS: Record<ValidationCheckId, Check> = {
       : fail("error_message_nonempty", "error message is missing or empty");
   },
 
+  agent_field_name_valid(_skill, proposal, context) {
+    const name = proposal.patch.set.agent_name;
+    if (typeof name !== "string" || name.trim().length === 0) {
+      return fail("agent_field_name_valid", "agent_name must be a non-empty string");
+    }
+    const candidate = agentPropKey({ name: context.field?.name ?? "", agentName: name });
+    if (!candidate || candidate === "_") {
+      return fail("agent_field_name_valid", "agent_name must contain letters or numbers");
+    }
+    const collision = context.siblingFields?.find(
+      (field) => agentPropKey({ name: field.name, agentName: field.agentName }) === candidate,
+    );
+    if (collision) {
+      return fail(
+        "agent_field_name_valid",
+        `agent_name '${name}' collides with '${collision.agentName ?? collision.name}'`,
+      );
+    }
+    const aliases = proposal.patch.set.aliases;
+    if (aliases !== undefined) {
+      if (
+        !Array.isArray(aliases) ||
+        aliases.length === 0 ||
+        aliases.some((alias) => typeof alias !== "string" || alias.trim().length === 0)
+      ) {
+        return fail("agent_field_name_valid", "aliases must be a non-empty list of names");
+      }
+      const normalized = aliases.map((alias) => agentPropKey({ name: String(alias) }));
+      if (new Set(normalized).size !== normalized.length || normalized.includes(candidate)) {
+        return fail(
+          "agent_field_name_valid",
+          "aliases must be distinct from each other and the agent_name",
+        );
+      }
+    }
+    return ok("agent_field_name_valid", `agent input '${candidate}' is unique on the operation`);
+  },
+
+  response_projection_valid(_skill, proposal, context) {
+    if (!("response_projection" in proposal.patch.set)) {
+      return ok("response_projection_valid", "patch does not define a response projection");
+    }
+    const projection = proposal.patch.set.response_projection;
+    const parsed = AgentProjection.safeParse(projection);
+    if (!parsed.success) {
+      return fail(
+        "response_projection_valid",
+        parsed.error.issues.map((issue) => issue.message).join("; "),
+      );
+    }
+    const issues = agentProjectionIssues(parsed.data, context.operation?.output.schema);
+    if (issues.length > 0) return fail("response_projection_valid", issues.join("; "));
+    return ok("response_projection_valid", "every projection path resolves without synthesis");
+  },
+
   idempotency_carrier_resolves(_skill, proposal, context) {
     const set = proposal.patch.set;
     // retry_basis alone (no idempotency.* keys) touches no carrier — inert.
@@ -375,7 +453,10 @@ const CHECKS: Record<ValidationCheckId, Check> = {
       !("pagination_style" in set) &&
       !("pagination_cursor_param" in set) &&
       !("pagination_next_field" in set) &&
-      !("pagination_items_field" in set)
+      !("pagination_items_field" in set) &&
+      !("pagination_page_size_param" in set) &&
+      !("pagination_max_page_size" in set) &&
+      !("pagination_default_page_size" in set)
     ) {
       return ok("pagination_binding_resolves", "patch does not touch pagination");
     }
@@ -421,7 +502,20 @@ const CHECKS: Record<ValidationCheckId, Check> = {
       }
     }
 
-    // pagination_items_field when proposed must be a non-empty string.
+    const pageSizeParam =
+      typeof set.pagination_page_size_param === "string"
+        ? set.pagination_page_size_param
+        : op.pagination?.pageSizeParam;
+    if ("pagination_page_size_param" in set) {
+      if (!pageSizeParam || !op.input.params.some((p) => p.name === pageSizeParam)) {
+        return fail(
+          "pagination_binding_resolves",
+          `pagination_page_size_param '${String(pageSizeParam)}' does not name an existing input parameter`,
+        );
+      }
+    }
+
+    // Response bindings are dotted schema paths, not unchecked labels.
     if ("pagination_items_field" in set) {
       const itemsField = set.pagination_items_field;
       if (typeof itemsField !== "string" || itemsField.trim().length === 0) {
@@ -430,6 +524,47 @@ const CHECKS: Record<ValidationCheckId, Check> = {
           "pagination_items_field must be a non-empty string",
         );
       }
+      if (schemaAtDottedPath(op.output.schema, itemsField)?.type !== "array") {
+        return fail(
+          "pagination_binding_resolves",
+          `pagination_items_field '${itemsField}' does not resolve to an array in the response schema`,
+        );
+      }
+    }
+    if ("pagination_next_field" in set) {
+      const nextField = set.pagination_next_field;
+      if (
+        typeof nextField !== "string" ||
+        nextField.trim().length === 0 ||
+        !schemaAtDottedPath(op.output.schema, nextField)
+      ) {
+        return fail(
+          "pagination_binding_resolves",
+          `pagination_next_field '${String(nextField)}' does not resolve in the response schema`,
+        );
+      }
+    }
+
+    const positiveInteger = (value: JsonValue | undefined): value is number =>
+      typeof value === "number" && Number.isInteger(value) && value > 0;
+    for (const key of ["pagination_max_page_size", "pagination_default_page_size"] as const) {
+      if (key in set && !positiveInteger(set[key])) {
+        return fail("pagination_binding_resolves", `${key} must be a positive integer`);
+      }
+    }
+    const max =
+      typeof set.pagination_max_page_size === "number"
+        ? set.pagination_max_page_size
+        : op.pagination?.maxPageSize;
+    const dflt =
+      typeof set.pagination_default_page_size === "number"
+        ? set.pagination_default_page_size
+        : op.pagination?.defaultPageSize;
+    if (max !== undefined && dflt !== undefined && dflt > max) {
+      return fail(
+        "pagination_binding_resolves",
+        `pagination default ${dflt} exceeds maximum ${max}`,
+      );
     }
 
     return ok("pagination_binding_resolves", "the proposed pagination binding resolves cleanly");

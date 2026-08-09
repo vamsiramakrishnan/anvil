@@ -1,6 +1,6 @@
 ---
 name: refinement-skill-enrich-errors
-description: Contract and investigation method for the enrich-errors skill — writes message, retryable on a error target from single evidence. Read this before working a undocumented_error or error_retryability_unclear deficiency.
+description: Contract and investigation method for the enrich-errors skill — writes message, retryable, upstream_code, recovery_action, field_path on a error target from single evidence. Read this before working a undocumented_error or error_retryability_unclear deficiency.
 ---
 
 # Skill: enrich-errors (v1)
@@ -19,8 +19,8 @@ description: Contract and investigation method for the enrich-errors skill — w
 - Per-field verification overrides: `retryable` → **verified**.
 
 ## Output boundary
-- May assert claim predicates: `error.message`, `error.retryable`
-- May write ONLY these target-relative fields: `message`, `retryable`
+- May assert claim predicates: `error.message`, `error.retryable`, `error.upstream_code`, `error.recovery_action`, `error.field_path`
+- May write ONLY these target-relative fields: `message`, `retryable`, `upstream_code`, `recovery_action`, `field_path`
 - Structural keys (`type`, `required`, `schema`, `enum`, …) are never writable.
 
 ## Constraints
@@ -40,7 +40,7 @@ description: Contract and investigation method for the enrich-errors skill — w
 - source_evidence
 
 ## Executor's job
-Map the declared error to its real meaning from the implementation or tests: the human-facing `message`, and whether it is `retryable`. Emit `error.message` / `error.retryable` claims. Note the asymmetry: marking an error `retryable=true` LOOSENS safety and needs authoritative (implementation or recorded-traffic) evidence; tightening (`retryable=false`) is always safe.
+Map the declared error to its real meaning from the implementation or tests: the human-facing `message`, stable upstream code, recovery action/field, and whether it is `retryable`. Emit one claim for every field you set. Raw upstream prose is never the agent contract. Note the asymmetry: marking an error `retryable=true` LOOSENS safety and needs authoritative evidence; tightening (`retryable=false`) is always safe.
 
 ## Investigation method
 A repeatable procedure — the *how*, not just the constraints. Open a case
