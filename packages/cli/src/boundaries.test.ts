@@ -144,7 +144,10 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
   "mcp-runtime": ["air", "runtime"],
   simulator: ["air", "compiler"],
   targets: ["air", "compiler"],
-  certification: ["air", "compiler", "simulator", "system-pack"],
+  // "runtime" added for async-events Phase 4: certification's new webhook
+  // checks reuse hostIsAllowed rather than reimplementing egress-allowlist
+  // logic. No cycle: runtime depends on nothing above it in this list.
+  certification: ["air", "compiler", "runtime", "simulator", "system-pack"],
   generators: ["air", "compiler", "mcp-runtime", "refinement", "runtime"],
   harness: ["air", "compiler", "generators", "mcp-runtime", "refinement", "runtime"],
   cli: [

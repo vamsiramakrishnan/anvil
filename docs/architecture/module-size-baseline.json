@@ -115,8 +115,8 @@
       "plan": "Watch."
     },
     "packages/certification/src/checks.ts": {
-      "lines": 892,
-      "plan": "Raised deliberately from 884 for async-events Phase 0: the async-contract certification arms now guard on AsyncContract.statusOperationId being optional (webhook-only contracts have no poll target for those arms to judge), without yet adding the webhook-specific arms themselves — those land with Phase 4's certification work. Expected to grow if certification truth consolidates here; raise deliberately with that change, not incidentally."
+      "lines": 1092,
+      "plan": "Raised deliberately from 892 for async-events Phase 4: three new static checks (async_completion_source_present, webhook_signature_refs_resolve, webhook_remote_verify_host_allowed) plus the new CertificationDeployTarget seam they resolve refs against. Previously raised from 884 for Phase 0's optional-statusOperationId guards. Expected to grow if certification truth consolidates here; raise deliberately with that change, not incidentally."
     },
     "packages/generators/src/skill.ts": {
       "lines": 886,
