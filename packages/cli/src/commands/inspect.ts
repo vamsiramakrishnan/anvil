@@ -70,6 +70,26 @@ function runInspect(path: string, opts: { json?: boolean }, io: CliIO): number {
       `    safeguards    confirm ${confirmation} · idempotency ${op.idempotency} · retry ${retry}`,
     );
     io.out(`    access        ${op.auth.type} · ${op.principal} principal · scopes ${scopes}`);
+    // Gated, like every safeguard line above: an operation with no webhook
+    // completion path, no broken async contract, and no human-approval pending
+    // state prints exactly as it did before this line existed.
+    if (op.asyncContract?.webhook) {
+      const webhook = op.asyncContract.webhook;
+      const pollNote = op.asyncContract.statusCli
+        ? `also pollable via '${op.asyncContract.statusCli}'`
+        : "no poll operation — webhook only";
+      io.out(
+        `    webhook       via '${webhook.webhookOperationId}' · job id '${webhook.webhookJobIdField}' · verified ${webhook.signatureScheme} · ${pollNote}`,
+      );
+    }
+    if (op.asyncContractIssue) {
+      io.out(`    async issue   ${op.asyncContractIssue.code} — ${op.asyncContractIssue.detail}`);
+    }
+    if (op.asyncContract?.pendingStates?.includes("awaiting_human_input")) {
+      io.out(
+        "    pending       awaiting_human_input — may sit waiting on a human decision; answer with `anvil job answer`",
+      );
+    }
     io.out("");
   }
   return 0;

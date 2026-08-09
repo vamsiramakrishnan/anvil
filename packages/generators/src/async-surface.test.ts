@@ -221,3 +221,118 @@ describe("a synchronous surface is untouched", () => {
     expect(catalogEntry(air)?.longRunning).toBeUndefined();
   });
 });
+
+/**
+ * A webhook-only completion (design doc §9): the submit operation resolves
+ * `ok: true` with no status operation at all, only `contract.webhook`. Phase 0
+ * deliberately excluded this shape from `asyncSurfaces`/the catalog's
+ * `asyncContract` field, noting its own section would land "with Phase 6" —
+ * this is that landing, and the regression it guards against is real: before
+ * it, a webhook-only operation fell through to `operationsRef`'s generic
+ * `longRunning` flag, which told the agent to "poll for status" for an
+ * operation that has no poll operation to poll.
+ */
+function webhookOnlyAir(): AirDocument {
+  return loadAirDocument({
+    service: {
+      id: "exports",
+      displayName: "Exports",
+      version: "1",
+      source: { kind: "openapi" },
+      servers: [{ url: "https://exports.example.com" }],
+    },
+    operations: [
+      {
+        id: "exports.jobs.create",
+        canonicalName: "create_export",
+        displayName: "Create export",
+        description: "Start an export.",
+        sourceRef: { kind: "openapi", path: "/exports", method: "post" },
+        effect: { kind: "mutation", action: "create", resource: "export", risk: "low" },
+        input: { params: [{ name: "dataset", in: "query", required: true }] },
+        longRunning: true,
+        archetype: "long_running",
+        asyncContract: {
+          jobIdField: "job.handle",
+          terminalStates: ["succeeded", "failed"],
+          pendingStates: [],
+          webhook: {
+            webhookOperationId: "exports.jobs.webhook",
+            webhookJobIdField: "data.id",
+            webhookStateField: "data.status",
+            signatureVerification: {
+              scheme: "hmac_sha256_header",
+              headerName: "X-Signature",
+              encoding: "hex",
+              secretRef: "EXPORTS_WEBHOOK_SECRET",
+            },
+          },
+        },
+        idempotency: { mode: "natural", mechanism: "none", keyDerivation: "none" },
+        retries: { mode: "none" },
+        confirmation: { required: false },
+        auth: { type: "none", scopes: [] },
+        cli: { command: "exports jobs create" },
+        mcp: { toolName: "exports_create_export" },
+        skill: { intentExamples: [] },
+        state: "approved",
+      },
+      {
+        id: "exports.jobs.webhook",
+        canonicalName: "export_webhook",
+        displayName: "Export webhook",
+        description: "Inbound export completion.",
+        sourceRef: { kind: "openapi", path: "/webhooks/exports", method: "post" },
+        effect: { kind: "read", action: "get", resource: "export_webhook", risk: "none" },
+        input: { params: [] },
+        idempotency: { mode: "none", mechanism: "none" },
+        retries: { mode: "none" },
+        confirmation: { required: false },
+        auth: { type: "none", scopes: [] },
+        cli: { command: "exports jobs webhook" },
+        mcp: { toolName: "exports_jobs_webhook" },
+        skill: { intentExamples: [] },
+        state: "approved",
+        archetype: "webhook_receiver",
+      },
+    ],
+  });
+}
+
+describe("a webhook-only completion reaches the agent (skill + catalog)", () => {
+  it("gets its own long-running section — not the generic 'poll for status' fallback", () => {
+    const air = webhookOnlyAir();
+    const files = generateSkill(air);
+    const opsRef = files["reference/operations.md"] as string;
+    expect(opsRef).not.toContain("poll for status");
+    expect(opsRef).toContain(
+      "Returns before completion: read the job handle from 'job.handle'. No poll operation exists for this call — the upstream completes it by calling back; check status until it reaches one of: succeeded, failed.",
+    );
+    expect(opsRef).toContain("See `long-running.md` for how to track it.");
+
+    const card = files["reference/long-running.md"] as string;
+    expect(card).toBeDefined();
+    expect(card).toContain("### `exports jobs create`  (tool: `exports_create_export`)");
+    expect(card).toContain("No status operation exists to poll");
+    expect(card).not.toContain("Poll with");
+
+    expect(files["SKILL.md"]).toContain("reference/long-running.md");
+  });
+
+  it("carries the webhook coordinates in the catalog, alongside the job-id field and terminal states", () => {
+    const air = webhookOnlyAir();
+    const entry = catalogEntry(air);
+    expect(entry?.longRunning).toBe(true);
+    expect(entry?.asyncContract).toEqual({
+      jobIdField: "job.handle",
+      terminalStates: ["succeeded", "failed"],
+      webhook: {
+        webhookOperationId: "exports.jobs.webhook",
+        webhookJobIdField: "data.id",
+        webhookStateField: "data.status",
+        signatureScheme: "hmac_sha256_header",
+      },
+      instruction: expect.stringContaining("No poll operation exists"),
+    });
+  });
+});

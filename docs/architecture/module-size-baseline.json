@@ -119,8 +119,8 @@
       "plan": "Raised deliberately from 892 for async-events Phase 4: three new static checks (async_completion_source_present, webhook_signature_refs_resolve, webhook_remote_verify_host_allowed) plus the new CertificationDeployTarget seam they resolve refs against. Previously raised from 884 for Phase 0's optional-statusOperationId guards. Expected to grow if certification truth consolidates here; raise deliberately with that change, not incidentally."
     },
     "packages/generators/src/skill.ts": {
-      "lines": 886,
-      "plan": "Raised deliberately from 883 for async-events Phase 0: asyncSurfaces() now skips a webhook-only resolution (no statusOperation to name a CLI command/tool for) rather than reporting nothing changed; its own long-running skill section lands with Phase 6. Watch."
+      "lines": 961,
+      "plan": "Raised deliberately from 886 for async-events Phase 6: the long-running skill section Phase 0 deferred lands here — webhookAsyncSurfaces() resolves webhook-only completions the way asyncSurfaces() resolves poll ones, and reference/long-running.md now renders a section for each instead of silently omitting them. This closes a real agent-facing bug the deferral left behind: without it, a webhook-only operation fell through operationsRef()'s generic longRunning flag and told the agent to \"poll for status\" for an operation with no poll operation to poll. Previously raised from 883 for Phase 0. Watch."
     },
     "packages/compiler/src/normalize.ts": {
       "lines": 928,
