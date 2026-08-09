@@ -81,6 +81,20 @@ export interface LedgerEntry {
   result?: unknown;
   /** Original successful upstream status. Legacy entries replay as 200. */
   responseStatus?: number;
+  /**
+   * The upstream's own job/handle id, when this entry completes a submit
+   * operation with an `AsyncContract` (`jobIdField`). Recorded for
+   * observability/debugging on the entry itself — the actual reverse lookup
+   * (job id -> idempotency key) that a webhook receiver needs is served by
+   * `findBySecondaryKey`, not by scanning entries for this field.
+   *
+   * Single-valued rather than a list: every vendor this design was checked
+   * against (Stripe payment intents, GitHub workflow runs, PayPal orders,
+   * Pub/Sub push jobs) hands back exactly one job id per submit call. A
+   * ledger backend that genuinely needs many job ids per idempotency key is
+   * a real extension, not something to speculatively generalize to here.
+   */
+  jobId?: string;
 }
 
 export type LedgerReadinessCode =
@@ -158,15 +172,54 @@ export interface IdempotencyLedger {
    * Persist a successful result before acknowledging it to the caller.
    * `status` is optional for backwards-compatible custom ledgers; new runtimes
    * always supply the original 2xx status so replay preserves wire semantics.
+   *
+   * `secondaryKey` is the job-handle index write (design doc §14 step 3,
+   * "Decision A" in the implementation plan). A submit operation whose
+   * `AsyncContract` names a `jobIdField` doesn't know its upstream job id at
+   * `reserve()` time — it only appears once the upstream response is in hand,
+   * which is exactly when `complete()` is called. Passing the extracted job id
+   * here as `secondaryKey` records `jobId -> key` in the same durable write as
+   * the completion itself, so the mapping can never observably exist without
+   * the completed entry it points at (no separate TTL, no separate commit to
+   * get out of sync). Omit it for operations with no async contract — this
+   * parameter is additive and optional so every existing caller and every
+   * existing custom `IdempotencyLedger` implementation is unaffected.
    */
-  complete(key: string, result: unknown, status?: number): Promise<void>;
+  complete(key: string, result: unknown, status?: number, secondaryKey?: string): Promise<void>;
   release(key: string): Promise<void>;
+  /**
+   * Resolve an upstream job id (from a webhook payload, e.g.) back to the
+   * idempotency key of the ledger entry that reserved it — the reverse
+   * direction of the `secondaryKey` written by `complete()`. Returns
+   * `undefined` for an id nobody has indexed (unknown job id, or the
+   * completion that would have indexed it hasn't landed yet); it must never
+   * throw for a merely-absent id, only for a genuine backend failure, so a
+   * caller (the webhook receiver) can tell "no such job" from "the ledger is
+   * unreachable" and fail closed only on the latter.
+   *
+   * OPTIONAL: not every `IdempotencyLedger` implementation supports this yet —
+   * a custom backend written before this method existed still satisfies the
+   * interface. Any caller that resolves job ids to ledger rows (the webhook
+   * receiver, `anvil job answer`) MUST check for its presence explicitly and
+   * fail closed (refuse, don't silently no-op) when it is absent, exactly as
+   * it would for an id that resolved to nothing.
+   */
+  findBySecondaryKey?(jobId: string): Promise<string | undefined>;
 }
 
 export class InMemoryLedger implements IdempotencyLedger {
   /** Process-local: never durable. */
   readonly durable = false;
   private readonly store = new Map<string, LedgerEntry>();
+  /**
+   * The job-handle index (Decision A): a plain sibling map from upstream job
+   * id to idempotency key, written at `complete()` time. In-memory storage has
+   * no native secondary-index concept, so this is the "plain `Map<jobId, key>`
+   * alongside the existing store" the implementation plan calls out as fine
+   * for the dev ledger. It shares the primary entry's lifetime by construction
+   * (both are process-local and never separately expired).
+   */
+  private readonly jobIndex = new Map<string, string>();
 
   async reserve(key: string, fingerprint: string) {
     const existing = this.store.get(key);
@@ -187,7 +240,7 @@ export class InMemoryLedger implements IdempotencyLedger {
     return { outcome: "reserved" as const };
   }
 
-  async complete(key: string, result: unknown, status = 200) {
+  async complete(key: string, result: unknown, status = 200, secondaryKey?: string) {
     const existing = this.store.get(key);
     if (existing?.status !== "in_progress") {
       throw new Error("Cannot complete an in-memory reservation that is not in progress.");
@@ -198,11 +251,19 @@ export class InMemoryLedger implements IdempotencyLedger {
       fingerprint: existing.fingerprint,
       result,
       responseStatus: status,
+      ...(secondaryKey === undefined ? {} : { jobId: secondaryKey }),
     });
+    if (secondaryKey !== undefined) {
+      this.jobIndex.set(secondaryKey, key);
+    }
   }
 
   async release(key: string) {
     if (this.store.get(key)?.status === "in_progress") this.store.delete(key);
+  }
+
+  async findBySecondaryKey(jobId: string): Promise<string | undefined> {
+    return this.jobIndex.get(jobId);
   }
 }
 
@@ -278,6 +339,12 @@ const FIRESTORE_API = "https://firestore.googleapis.com/v1";
 const METADATA_TOKEN_URL =
   "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 const FIRESTORE_COLLECTION_PREFIX = "anvil_idempotency";
+/** Sibling collection prefix for the job-handle index (Decision A). Kept as
+ *  its own collection group, not documents inside the primary collection, so
+ *  the primary collection's document id space (hash of the *caller's* key)
+ *  never has to be reconciled against the index's document id space (hash of
+ *  the *upstream's* job id) — two different key spaces, two collections. */
+const FIRESTORE_JOB_INDEX_COLLECTION_PREFIX = "anvil_idempotency_jobs";
 /** Generated-runtime deadline for each metadata or Firestore HTTP exchange. */
 export const DEFAULT_FIRESTORE_TIMEOUT_MS = 10_000;
 export const DEFAULT_LEDGER_RESULT_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -330,6 +397,8 @@ export class FirestoreLedger implements IdempotencyLedger {
   private readonly reservationId: () => string;
   private readonly documentsBase: string;
   private readonly collection: string;
+  /** Collection backing the job-handle index (Decision A). */
+  private readonly jobIndexCollection: string;
   private readonly owned = new Map<string, OwnedReservation>();
   private metadata?: { token: string; expEpochMs: number };
   private readinessCache?: { value: LedgerReadiness; expiresAt: number };
@@ -367,6 +436,7 @@ export class FirestoreLedger implements IdempotencyLedger {
       `/databases/${encodeURIComponent(database)}`;
     this.documentsBase = `${databaseBase}/documents`;
     this.collection = firestoreLedgerCollection(namespace);
+    this.jobIndexCollection = firestoreLedgerJobIndexCollection(namespace);
   }
 
   /**
@@ -486,7 +556,7 @@ export class FirestoreLedger implements IdempotencyLedger {
     return { outcome: "in_progress", reference };
   }
 
-  async complete(key: string, result: unknown, status = 200): Promise<void> {
+  async complete(key: string, result: unknown, status = 200, secondaryKey?: string): Promise<void> {
     const reservation = this.owned.get(key);
     if (!reservation) {
       throw new Error("Cannot complete a Firestore reservation not owned by this process.");
@@ -497,6 +567,15 @@ export class FirestoreLedger implements IdempotencyLedger {
       throw new Error("Idempotency result exceeds the Firestore ledger byte limit.");
     }
     const expiresAt = new Date(this.now() + this.resultTtlMs).toISOString();
+    // Decision A: the index write shares the primary completion's own expiry
+    // rather than inventing a second TTL, so the mapping can never outlive (or
+    // be outlived by) the entry it points at.
+    const finishSuccess = async (): Promise<void> => {
+      this.deleteOwnedIfCurrent(key, reservation);
+      if (secondaryKey !== undefined) {
+        await this.writeJobIndex(secondaryKey, key, expiresAt);
+      }
+    };
     let completed: { response: Response; json: unknown };
     try {
       completed = await this.requestWithTransientRetry(
@@ -509,6 +588,7 @@ export class FirestoreLedger implements IdempotencyLedger {
             "response_status",
             "expires_at",
             "reservation_id",
+            ...(secondaryKey === undefined ? [] : ["job_id"]),
           ],
           reservation.updateTime,
         ),
@@ -521,6 +601,7 @@ export class FirestoreLedger implements IdempotencyLedger {
               result_json: { stringValue: serialized },
               response_status: { integerValue: String(status) },
               expires_at: { timestampValue: expiresAt },
+              ...(secondaryKey === undefined ? {} : { job_id: { stringValue: secondaryKey } }),
             },
           }),
         },
@@ -530,7 +611,7 @@ export class FirestoreLedger implements IdempotencyLedger {
       // the connection failed. Reconcile the exact intended state before
       // reporting failure; never release the reservation on an unknown result.
       if (await this.completedExactly(key, reservation, serialized, status, expiresAt)) {
-        this.deleteOwnedIfCurrent(key, reservation);
+        await finishSuccess();
         return;
       }
       throw new Error("Firestore completion could not be confirmed after bounded retries.");
@@ -548,7 +629,7 @@ export class FirestoreLedger implements IdempotencyLedger {
         expiresAt,
       );
       if (reconciled) {
-        this.deleteOwnedIfCurrent(key, reservation);
+        await finishSuccess();
         return;
       }
       if (isPreconditionFailure(completed)) {
@@ -556,7 +637,101 @@ export class FirestoreLedger implements IdempotencyLedger {
       }
       throw firestoreFailure("complete reservation", completed.response.status);
     }
-    this.deleteOwnedIfCurrent(key, reservation);
+    await finishSuccess();
+  }
+
+  /**
+   * The job-handle index write (Decision A), invoked from `complete()` once
+   * the primary ledger entry is confirmed completed. A create-if-absent with
+   * an explicit collision check, not a blind upsert: a blind overwrite would
+   * let a later completion silently redirect an *earlier* completion's job id
+   * to a different idempotency key, which is exactly the kind of ambiguous
+   * state this codebase refuses to guess through. Bounded to a handful of
+   * requests (each already internally retried by `requestWithTransientRetry`)
+   * — no open-ended loop.
+   */
+  private async writeJobIndex(
+    jobId: string,
+    idempotencyKey: string,
+    expiresAt: string,
+  ): Promise<void> {
+    const documentId = ledgerDocumentId(jobId);
+    const createUrl =
+      `${this.documentsBase}/${this.jobIndexCollection}` +
+      `?documentId=${encodeURIComponent(documentId)}`;
+    const createBody = JSON.stringify({
+      fields: {
+        idempotency_key: { stringValue: idempotencyKey },
+        expires_at: { timestampValue: expiresAt },
+      },
+    });
+
+    const created = await this.requestWithTransientRetry(createUrl, {
+      method: "POST",
+      body: createBody,
+    });
+    if (created.response.ok) return;
+    if (created.response.status !== 409) {
+      throw firestoreFailure("index job handle", created.response.status);
+    }
+
+    const current = await this.requestWithTransientRetry(this.jobIndexDocumentUrl(documentId), {
+      method: "GET",
+    });
+    if (current.response.status === 404) {
+      // Lost the create response, and the document is gone again (e.g. a
+      // concurrent expiry reclaim elsewhere). One retry is enough — this is
+      // the same fixed-document-id race `reserve()` already tolerates.
+      const retried = await this.requestWithTransientRetry(createUrl, {
+        method: "POST",
+        body: createBody,
+      });
+      if (retried.response.ok || retried.response.status === 409) return;
+      throw firestoreFailure("index job handle", retried.response.status);
+    }
+    if (!current.response.ok) {
+      throw firestoreFailure("read job handle index", current.response.status);
+    }
+    const document = requireFirestoreDocument(current.json);
+    const fields = document.fields ?? {};
+    if (fields.idempotency_key?.stringValue === idempotencyKey) {
+      // Already indexed by this exact completion (a retried `complete()` call
+      // for the same reservation) — idempotent, nothing more to do.
+      return;
+    }
+    const expiryRaw = fields.expires_at?.timestampValue;
+    const expiryMs = typeof expiryRaw === "string" ? Date.parse(expiryRaw) : Number.NaN;
+    if (Number.isFinite(expiryMs) && expiryMs <= this.now()) {
+      // A stale entry for a job id whose old mapping already expired. Reclaim
+      // the slot for this completion.
+      const deleteUrl =
+        `${this.jobIndexDocumentUrl(documentId)}` +
+        `?currentDocument.updateTime=${encodeURIComponent(requireUpdateTime(document))}`;
+      const deleted = await this.requestWithTransientRetry(deleteUrl, { method: "DELETE" });
+      if (
+        !deleted.response.ok &&
+        deleted.response.status !== 404 &&
+        !isPreconditionFailure(deleted)
+      ) {
+        throw firestoreFailure("expire job handle index", deleted.response.status);
+      }
+      const retried = await this.requestWithTransientRetry(createUrl, {
+        method: "POST",
+        body: createBody,
+      });
+      if (retried.response.ok || retried.response.status === 409) return;
+      throw firestoreFailure("index job handle", retried.response.status);
+    }
+    // A different, still-live idempotency key already owns this job id. Real
+    // vendors hand back one job id per submission (see `LedgerEntry.jobId`'s
+    // doc comment); a genuine collision here is either a vendor reusing a
+    // handle or a bug upstream of this call. Either way, silently redirecting
+    // a future webhook's completion to the wrong ledger row is worse than
+    // refusing outright.
+    throw new Error(
+      "Firestore ledger job-handle index collision: this job id is already indexed under a " +
+        "different idempotency key.",
+    );
   }
 
   async release(key: string): Promise<void> {
@@ -576,8 +751,47 @@ export class FirestoreLedger implements IdempotencyLedger {
     }
   }
 
+  /**
+   * Resolve an upstream job id to the idempotency key that reserved it
+   * (Decision A's reverse lookup). Fails closed on a genuine backend problem
+   * (throws) but resolves cleanly to `undefined` for an id nobody has
+   * indexed, or one whose index entry has logically expired — the same
+   * distinction the primary ledger's replay path draws between "not found"
+   * and "found but expired" (see `requireCompletedExpiry`'s caller).
+   */
+  async findBySecondaryKey(jobId: string): Promise<string | undefined> {
+    const documentId = ledgerDocumentId(jobId);
+    let current: { response: Response; json: unknown };
+    try {
+      current = await this.requestWithTransientRetry(this.jobIndexDocumentUrl(documentId), {
+        method: "GET",
+      });
+    } catch {
+      throw new Error("Firestore ledger job-handle index lookup failed after bounded retries.");
+    }
+    if (current.response.status === 404) return undefined;
+    if (!current.response.ok) {
+      throw firestoreFailure("look up job handle index", current.response.status);
+    }
+    const fields = requireFirestoreDocument(current.json).fields ?? {};
+    const idempotencyKey = fields.idempotency_key?.stringValue;
+    if (idempotencyKey === undefined) return undefined;
+    const expiryRaw = fields.expires_at?.timestampValue;
+    const expiryMs = typeof expiryRaw === "string" ? Date.parse(expiryRaw) : Number.NaN;
+    // Provider TTL deletion is asynchronous (same posture as the primary
+    // collection's `expires_at`), so a logically expired row can still be
+    // physically present. Treat it as absent rather than trusting a stale
+    // mapping into the ledger.
+    if (Number.isFinite(expiryMs) && expiryMs <= this.now()) return undefined;
+    return idempotencyKey;
+  }
+
   private documentUrl(documentId: string): string {
     return `${this.documentsBase}/${this.collection}/${encodeURIComponent(documentId)}`;
+  }
+
+  private jobIndexDocumentUrl(documentId: string): string {
+    return `${this.documentsBase}/${this.jobIndexCollection}/${encodeURIComponent(documentId)}`;
   }
 
   private reference(documentId: string): string {
@@ -828,6 +1042,25 @@ export function firestoreLedgerCollection(namespace: string): string {
   }
   return (
     `${FIRESTORE_COLLECTION_PREFIX}_` +
+    createHash("sha256").update(namespace).digest("hex").slice(0, 16)
+  );
+}
+
+/**
+ * Job-handle index collection group name (Decision A), sibling to
+ * `firestoreLedgerCollection`. Kept as its own exported function — not a
+ * string transform inlined at the call site — for the same reason the
+ * primary collection name is exported: the generated Terraform TTL policy
+ * (`packages/generators`) needs to name this exact collection group too, once
+ * that follow-on work configures its TTL field the same way it already does
+ * for the primary ledger collection.
+ */
+export function firestoreLedgerJobIndexCollection(namespace: string): string {
+  if (!/^[a-zA-Z0-9_.~-]{1,128}$/.test(namespace)) {
+    throw new Error("Firestore ledger namespace is invalid.");
+  }
+  return (
+    `${FIRESTORE_JOB_INDEX_COLLECTION_PREFIX}_` +
     createHash("sha256").update(namespace).digest("hex").slice(0, 16)
   );
 }
