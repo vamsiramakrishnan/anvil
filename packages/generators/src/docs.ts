@@ -45,6 +45,8 @@ skill are all projections of one AIR model.
 - \`schemas/\` — per-operation input JSON Schemas.
 - \`runtime/\` — compiled manifests + the thin Cloud Run server.
 - \`deploy/\` — Dockerfile + Cloud Run service + env/secret contracts.
+- \`sdk/\` — generated client SDKs (TypeScript, Python, Go, Java), one method per
+  approved operation, carrying the same gates as the CLI and MCP server.
 - \`mock/\` — mock server + scenarios. \`evals/\` — behavior checks. \`tests/\` — conformance tests.
 
 ## Safety

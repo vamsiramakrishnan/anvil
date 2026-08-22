@@ -21,6 +21,7 @@ import {
 } from "./mock.js";
 import { generateHarnessPlugins } from "./plugins.js";
 import { buildToolResources, type ResourceOptions } from "./resources.js";
+import { generateSdks } from "./sdk/index.js";
 import { generateSkill } from "./skill.js";
 
 export interface GeneratedBundle {
@@ -184,6 +185,12 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   // (skill + MCP server + PreToolUse enforcement hook), with a Codex shim and
   // Antigravity guidance sharing one decision core. The outer enforcement ring.
   Object.assign(files, generateHarnessPlugins(air));
+
+  // Client SDKs — the fourth surface. TypeScript, Python, Go, and Java are
+  // projections of the same AIR that produced the CLI, MCP server, and skill,
+  // so a service calling this API from Go and a notebook calling it from Python
+  // are calling the same contract under the same safety gates.
+  Object.assign(files, generateSdks(air));
 
   // Docs, deploy, mocks, conformance.
   Object.assign(files, generateDocs(air));

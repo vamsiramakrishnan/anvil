@@ -94,7 +94,13 @@ describe("anvil self-skill", () => {
     expect(description.length).toBeGreaterThan(0);
     expect(description.length).toBeLessThanOrEqual(1024);
     expect(skill).toContain("Safety rules");
-    expect(skill.length).toBeLessThan(5000); // progressive disclosure budget
+    // The progressive-disclosure budget: what a harness must read before it can
+    // act. Raised from 5000 when client SDKs became the fourth generated
+    // surface — naming it and its command cost 222 characters, and a surface an
+    // agent does not know exists is a surface it cannot use. The budget is a
+    // ceiling to stay under, not headroom to spend: detail belongs in
+    // reference/, which is read on demand.
+    expect(skill.length).toBeLessThan(5300);
   });
 
   it("documents the typed Gemini target journey without identity or scope shortcuts", () => {

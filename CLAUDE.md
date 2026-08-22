@@ -1,8 +1,10 @@
 # Anvil — agent operating guide (Claude Code / CLAUDE.md)
 
 Anvil is an **agent toolchain compiler**: it compiles API specifications into
-aligned CLI + MCP server + skill artifacts from one canonical model (AIR), with
-structured errors, retry/idempotency safety, and an approval workflow.
+aligned CLI + MCP server + skill + client-SDK artifacts from one canonical model
+(AIR), with structured errors, retry/idempotency safety, and an approval
+workflow. The SDKs (TypeScript, Python, Go, Java) live in `@anvil/generators`
+under `src/sdk/` and carry the same gates as every other surface.
 
 ## Operate Anvil through its own skill
 Read **`skills/anvil/SKILL.md`** first — it is the progressive-disclosure
@@ -37,6 +39,6 @@ over a bundle) · `@anvil/system-pack` (the portable, content-addressed
 artifact graph Anvil emits) · `@anvil/targets` (versioned agent-platform
 target profiles and kit generation, e.g. Gemini Enterprise).
 
-The magic is not that Anvil generates code. It is that the CLI, MCP server, and
-skill all agree on what an operation means. The highest compliment: "the agent
+The magic is not that Anvil generates code. It is that the CLI, MCP server,
+skill, and the four client SDKs all agree on what an operation means. The highest compliment: "the agent
 stopped guessing."

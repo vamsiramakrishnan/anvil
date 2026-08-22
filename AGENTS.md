@@ -1,8 +1,8 @@
 # Anvil — agent operating guide (Codex / AGENTS.md)
 
 Anvil is an agent toolchain compiler: it turns API specifications into aligned
-CLI + MCP + skill artifacts from one model (AIR). This file is the runtime-native
-entry point for coding agents operating this repository.
+CLI + MCP + skill + client-SDK artifacts from one model (AIR). This file is the
+runtime-native entry point for coding agents operating this repository.
 
 ## Operate Anvil through its own skill
 The canonical operating manual is a progressive-disclosure skill:

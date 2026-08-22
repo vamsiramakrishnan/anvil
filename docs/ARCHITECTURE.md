@@ -13,7 +13,7 @@ non-goals, read [Product boundary](PRODUCT_BOUNDARY.md).
 
 The architecture protects seven invariants:
 
-1. **One semantic model.** CLI, MCP, skill, hooks, mocks, and deployment inputs
+1. **One semantic model.** CLI, MCP, skill, client SDKs, hooks, mocks, and deployment inputs
    are projections of AIR, not separate sources of truth.
 2. **Captured inputs.** Compilation reads a content-addressed source snapshot,
    not a mutable remote contract.
@@ -35,7 +35,7 @@ The architecture protects seven invariants:
 | Source capture | Files or a source directory | Detect entrypoints, follow permitted local references, reject path escape, store verbatim bytes | Immutable source snapshot |
 | Protocol adaptation | One locked entrypoint | Lower OpenAPI, Swagger, GraphQL, proto3, WSDL, Discovery, OData, or Postman into the shared HTTP-shaped compiler input | Normalized source document |
 | Semantic compilation | Adapted document plus optional manifest | Normalize operations, classify effects, apply reviewed facts, validate safety, discover capabilities | AIR document |
-| Projection | AIR | Generate CLI, MCP, skill, hooks, mocks, evals, runtime documents, targets, and deploy inputs | Bundle directory |
+| Projection | AIR | Generate CLI, MCP, skill, client SDKs, hooks, mocks, evals, runtime documents, targets, and deploy inputs | Bundle directory |
 | Review | Bundle | Inspect diagnostics, enrich missing facts, review capabilities, approve operations | Reviewed bundle |
 | Assurance | One immutable bundle | Check static identity, exercise transport, compare surfaces, simulate safety behavior | Hash-bound evidence records |
 | Release planning | Assured bundle plus target inputs | Verify required evidence and emit an operator plan | Publication plan; no deployment |

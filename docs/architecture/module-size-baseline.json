@@ -43,8 +43,8 @@
       "plan": "Raised deliberately from 1554 for `--require`, which turns the verdict this module already computes into an exit code. status owns nextSafeAction, so the gate belongs here rather than in a new module; putting it elsewhere would have split the verdict from its consumer. Still queued: separate lane-freshness computation (domain) from the rendering, and share the certification-reading logic certify.ts duplicates."
     },
     "packages/generators/src/certify.ts": {
-      "lines": 1427,
-      "plan": "Holds a second certification model alongside @anvil/certification. See docs/architecture/certification-authority.md; do not grow it until that is resolved."
+      "lines": 1450,
+      "plan": "Raised deliberately from 1427 to certify the generated client SDKs as a surface: contract.surfaces-agree now includes sdk/manifest.json, safety.sdk-gates-match refuses a manifest whose confirmation/idempotency/retry flags differ from AIR, and runtime.sdk-present requires a buildable tree per language. Only the three call sites live here — what an SDK must prove about itself is SDK knowledge and lives in packages/generators/src/sdk/certify.ts, so this file stays the place gates are assembled rather than the place every surface's semantics accumulate. Split the four gates into per-gate modules behind one assembler; queued."
     },
     "packages/cli/src/tool-cli.ts": {
       "lines": 1425,

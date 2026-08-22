@@ -25,6 +25,7 @@ import { registerPublish } from "./commands/publish.js";
 import { registerRefine } from "./commands/refine.js";
 import { registerReview } from "./commands/review.js";
 import { registerRun } from "./commands/run.js";
+import { registerSdk } from "./commands/sdk.js";
 import { registerSelftest } from "./commands/selftest.js";
 import { registerServe } from "./commands/serve.js";
 import { registerSimulate } from "./commands/simulate.js";
@@ -95,6 +96,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerApprove(program, ctx);
   registerLint(program, ctx);
   registerBuild(program, ctx);
+  registerSdk(program, ctx);
   registerReview(program, ctx);
   registerTarget(program, ctx);
   registerDeploy(program, ctx);
