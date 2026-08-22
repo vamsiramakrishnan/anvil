@@ -562,6 +562,46 @@ describe("status --require makes the computed verdict gateable", () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* The SDK surface                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `anvil sdk` is the fourth surface's operator entry point, and the first one
+ * added after this contract existed. It gets the contract from day one rather
+ * than a waiver: a report on stdout that names its own shape, and a refusal
+ * that a script can branch on without matching prose.
+ */
+describe("anvil sdk speaks the operator envelope", () => {
+  async function bundle(): Promise<string> {
+    const dir = join(work, "sdk-bundle");
+    const spec = join(work, "sdk-svc.yaml");
+    writeFileSync(
+      spec,
+      `openapi: 3.0.3\ninfo: { title: Svc, version: 1.0.0 }\npaths:\n  /things:\n    get:\n      operationId: listThings\n      tags: [things]\n      responses: { "200": { description: ok } }\n`,
+      "utf8",
+    );
+    mkdirSync(dir, { recursive: true });
+    const compiled = await run(["compile", spec, "--out", dir, "--service", "svc"]);
+    expect(compiled.code, compiled.stderr).toBe(0);
+    return dir;
+  }
+
+  it("emits one manifest document that names its own shape", async () => {
+    const result = await run(["sdk", await bundle(), "--json"]);
+    expect(result.code, result.stderr).toBe(0);
+    const envelope = expectJsonContract(result, "sdk --json");
+    expect(envelope.reportType).toBe("anvil.sdk-manifest");
+  });
+
+  it("refuses an unknown language as a document, not as prose on stderr", async () => {
+    const result = await run(["sdk", await bundle(), "--lang", "cobol", "--json"]);
+    const envelope = expectRefusalContract(result, "sdk --lang cobol --json");
+    expect(envelope.reportType).toBe("anvil.sdk-error");
+    expect(envelope.code).toBe("sdk_language_unknown");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* The ratchet: no --json command arrives unnoticed                            */
 /* -------------------------------------------------------------------------- */
 

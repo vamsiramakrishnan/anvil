@@ -17,6 +17,8 @@ import {
   generateBundle,
   resourceOptionsFromGenerationMetadata,
 } from "./bundle.js";
+import { sdkGateDrift, sdkPresenceFailures, sdkSurfaceOperations } from "./sdk/certify.js";
+import { SDK_LANGUAGES } from "./sdk/index.js";
 import { unresolvedReadiness } from "./semantic-readiness.js";
 
 /**
@@ -685,12 +687,22 @@ function contractChecks(files: Record<string, string>, air: AirDocument): Certif
     else drift.push(...surfaceDrift(expected, approvedSurface(copyParsed.data), rel));
   }
 
+  // The SDKs are a surface like any other: four languages that must expose the
+  // approved set and nothing else. Certifying the manifest rather than four
+  // dialects of generated source is deliberate — the manifest is what every
+  // emitter reads, so a method that is not in it does not exist in any language,
+  // and `contract.generated-bytes-agree` already proves the source is that
+  // manifest's faithful projection.
+  const sdk = sdkSurfaceOperations(files);
+  if (sdk === undefined) drift.push("sdk/manifest.json missing or unreadable");
+  else drift.push(...surfaceDrift(expected, sdk, "sdk/manifest.json"));
+
   checks.push(
     check(
       "contract.surfaces-agree",
       "contract",
       drift,
-      `MCP, CLI, deployed runtime AIR, catalog, and runtime manifest all expose exactly the ${expected.length} approved operation(s)`,
+      `MCP, CLI, deployed runtime AIR, catalog, runtime manifest, and the generated SDKs all expose exactly the ${expected.length} approved operation(s)`,
     ),
   );
 
@@ -1006,6 +1018,12 @@ function safetyChecks(files: Record<string, string>, air: AirDocument): Certific
       incoherentAuthority,
       "every approved operation's auth type, principal, grant, and secret source agree",
     ),
+    check(
+      "safety.sdk-gates-match",
+      "safety",
+      sdkGateDrift(files, air),
+      "every generated SDK declares the same confirmation, idempotency, and retry gates AIR classified",
+    ),
   ];
 }
 
@@ -1144,6 +1162,11 @@ function runtimeChecks(files: Record<string, string>, air: AirDocument): Certifi
     (rel) => `${rel} is missing`,
   );
 
+  // SDKs: every language must be present as a buildable tree, not just as rows
+  // in a manifest. A missing go.mod or pyproject.toml is the difference between
+  // an SDK a developer can vendor and a directory of source they cannot compile.
+  const sdkFailures = sdkPresenceFailures(files);
+
   return [
     check(
       "runtime.mocks-consistent",
@@ -1170,6 +1193,12 @@ function runtimeChecks(files: Record<string, string>, air: AirDocument): Certifi
       "runtime",
       deployFailures,
       "Cloud Run deploy artifacts present",
+    ),
+    check(
+      "runtime.sdk-present",
+      "runtime",
+      sdkFailures,
+      `client SDKs present and buildable for ${SDK_LANGUAGES.join(", ")}`,
     ),
   ];
 }

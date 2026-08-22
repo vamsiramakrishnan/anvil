@@ -2,16 +2,17 @@
 
 **Compile an API specification into agent tools you can review, test, and trust.**
 
-Anvil turns one API contract into four aligned surfaces:
+Anvil turns one API contract into five aligned surfaces:
 
 - a typed CLI for developers and automation;
 - an MCP server for agents;
+- client SDKs for TypeScript, Python, Go, and Java;
 - a progressive-disclosure skill that explains how to use the tools; and
 - harness hooks that stop unsafe calls before execution.
 
-All four are generated from one canonical model. A refund cannot require
-confirmation in the CLI and quietly omit it from MCP. Only operations you have
-approved are callable.
+All five are generated from one canonical model. A refund cannot require
+confirmation in the CLI and quietly omit it from MCP — or from the Go client a
+service calls it through. Only operations you have approved are callable.
 
 ## Try it locally
 
@@ -40,6 +41,7 @@ You now have a runnable bundle in `generated/payments`:
 | `air.yaml` | Canonical operation, safety, auth, and evidence model |
 | `cli/` | Typed commands for approved operations |
 | `mcp/` | MCP server exposing the same approved operations |
+| `sdk/` | Zero-dependency TypeScript, Python, Go, and Java clients |
 | `skill/` | Agent operating instructions and reference material |
 | `plugin/` | Enforcement hooks for supported agent harnesses |
 | `mock/` and `evals/` | Deterministic test surfaces |
@@ -69,7 +71,7 @@ complete first-run walkthrough.
 
 | What you have | Use | Result |
 | --- | --- | --- |
-| An OpenAPI, WSDL, proto, GraphQL, OData, Discovery, or Postman contract | `anvil compile` or `anvil agentify` | An AIR bundle with aligned CLI, MCP, skill, hooks, tests, and deployment inputs |
+| An OpenAPI, WSDL, proto, GraphQL, OData, Discovery, or Postman contract | `anvil compile` or `anvil agentify` | An AIR bundle with aligned CLI, MCP, SDKs, skill, hooks, tests, and deployment inputs |
 | An API gateway export | `anvil estate inventory` | An estate audit and review-safe adoption plan |
 | Application-server, .NET, or broker configuration but no useful API contract | `anvil legacy inventory` then `anvil legacy gaps` | Evidence-backed candidates with explicit coverage gaps and provenance |
 
@@ -277,6 +279,7 @@ specified in [deployment-local bridges](docs/legacy-runtime-bridges.md).
 - [Install Anvil](apps/docs/src/content/docs/cookbooks/install-anvil.md)
 - [Quickstart](apps/docs/src/content/docs/start/quickstart.md)
 - [Write an Anvil manifest](docs/MANIFEST.md)
+- [Call an API from TypeScript, Python, Go, or Java](docs/client-sdks.md)
 - [Refine an API with a coding harness](docs/refinement-sdk.md)
 - [Understand legacy application estates](docs/legacy-estates.md)
 - [Build a legacy inventory](docs/legacy-inventory.md)

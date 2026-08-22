@@ -729,6 +729,18 @@ Options:
 - `--out <dir>` — bundle output directory (default generated/<capability-artifact-id>/<deployment-namespace>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
 
+### `anvil sdk`
+`anvil sdk [options] <path>`
+
+Show or emit the generated client SDKs (TypeScript, Python, Go, Java).
+
+Every approved operation becomes one method in each language, projected from the same AIR that produced the CLI, the MCP server, and the skill — same wire coordinates, same confirmation and idempotency gates, same retry posture, same error taxonomy. Without --out this prints the method table and the gates each call must satisfy; with --out it writes the SDK trees (the same bytes `anvil compile` puts under the bundle's sdk/). Only approved operations are ever emitted.
+
+Options:
+- `--lang <languages>` — comma-separated subset of typescript, python, go, java (default: all)
+- `--out <dir>` — write the SDK trees here instead of printing the method table
+- `--json` — emit the SDK manifest as JSON
+
 ### `anvil review`  *(mutates)*
 `anvil review [options] <dir>`
 

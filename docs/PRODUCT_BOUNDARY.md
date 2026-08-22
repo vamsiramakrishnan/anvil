@@ -23,7 +23,7 @@ Anvil accepts:
 Anvil produces:
 
 - one canonical AIR contract;
-- aligned CLI, MCP, skill, hook, mock, eval, and deployment projections;
+- aligned CLI, MCP, skill, client-SDK, hook, mock, eval, and deployment projections;
 - runtime enforcement documents;
 - structured diagnostics and readiness reports;
 - hash-bound assurance records; and
@@ -90,7 +90,7 @@ Anvil owns generation of every supported surface from AIR. A new generator is
 acceptable; a second hand-maintained semantic contract is not.
 
 The tool name, schema, approval state, and safety posture for one operation must
-agree across CLI, MCP, skill, hooks, mocks, and runtime documents.
+agree across CLI, MCP, skill, client SDKs, hooks, mocks, and runtime documents.
 
 ### 7. Runtime policy enforcement
 
