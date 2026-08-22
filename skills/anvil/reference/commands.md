@@ -863,6 +863,19 @@ Options:
 - `--live <config>` — probe a real deployed MCP endpoint named in this JSON config
 - `--json` — emit the full report as JSON
 
+### `anvil observe`
+`anvil observe [options] <dir>`
+
+Compare a bundle against the running application it was compiled from.
+
+Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json.
+
+Options:
+- `--config <file>` — JSON config naming the running application
+- `--write <manifest>` — write the proposed manifest here instead of printing it
+- `--capture <file>` — save the contract the application served, to re-capture with `anvil source add`
+- `--json` — emit the full report as JSON
+
 ### `anvil benchmark`
 `anvil benchmark [options] <dir>`
 

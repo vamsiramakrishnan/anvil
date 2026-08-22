@@ -16,6 +16,7 @@ export * from "./live.js";
 export * from "./llm-agent.js";
 export * from "./loopback.js";
 export * from "./mcp-source.js";
+export * from "./observe.js";
 export * from "./profiles.js";
 export * from "./reconcile.js";
 export * from "./sources.js";

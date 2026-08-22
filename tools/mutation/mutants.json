@@ -236,6 +236,26 @@
       "tests": [
         "packages/generators/src/sdk.test.ts"
       ]
+    },
+    {
+      "id": "observe/read-only-probe",
+      "file": "packages/harness/src/observe.ts",
+      "control": "The observed-reality lane drives reads only; a mutation is never sent to a customer's running system, whatever the config lists.",
+      "find": "  if (op.effect.kind !== \"read\") {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/harness/src/observe.test.ts"
+      ]
+    },
+    {
+      "id": "observe/claim-license",
+      "file": "packages/harness/src/observe.ts",
+      "control": "A read may only claim that an operation the application does not serve is gone; recorded traffic's high reliability must not launder a claim the observation never earned.",
+      "find": "  if (observation.outcome === \"unreachable\") {",
+      "replace": "  if (true) {",
+      "tests": [
+        "packages/harness/src/observe.test.ts"
+      ]
     }
   ]
 }
