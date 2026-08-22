@@ -381,8 +381,23 @@ final class Invoker {
     return String.valueOf(value);
   }
 
-  private static String encode(String value) {
+  /**
+   * Percent-encode one path segment. {@link URLEncoder} implements
+   * form encoding, where a space becomes {@code +} — which in a path means a
+   * literal plus, not a space — so the one difference is undone here.
+   */
+  private static String encodePath(String value) {
     return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
+  }
+
+  /**
+   * Encode one query name or value. Form encoding is exactly right here, and
+   * the {@code +} for a space is deliberately kept: the TypeScript, Python, and
+   * Go SDKs all emit {@code +} in a query string, and four clients built from
+   * one contract should put the same bytes on the wire.
+   */
+  private static String encodeQuery(String value) {
+    return URLEncoder.encode(value, StandardCharsets.UTF_8);
   }
 
   /** Build the upstream request from the operation spec and caller payload. */
@@ -413,7 +428,7 @@ final class Invoker {
         continue;
       }
       if ("path".equals(param.in)) {
-        path = path.replace("{" + param.wireName + "}", encode(scalar(value)));
+        path = path.replace("{" + param.wireName + "}", encodePath(scalar(value)));
       } else if ("query".equals(param.in)) {
         query.add(new String[] {param.wireName, scalar(value)});
       } else if ("header".equals(param.in)) {
@@ -465,7 +480,7 @@ final class Invoker {
         query.removeIf(pair -> pair[0].equals(carrier.key));
         query.add(new String[] {carrier.key, idempotencyKey});
       } else if ("path".equals(carrier.mechanism)) {
-        path = path.replace("{" + carrier.key + "}", encode(idempotencyKey));
+        path = path.replace("{" + carrier.key + "}", encodePath(idempotencyKey));
       } else if ("body".equals(carrier.mechanism)) {
         List<String> carrierPath =
             carrier.path.isEmpty() ? Arrays.asList(carrier.key) : carrier.path;
@@ -497,7 +512,10 @@ final class Invoker {
     target.append(base).append(path);
     for (int index = 0; index < query.size(); index++) {
       target.append(index == 0 ? '?' : '&');
-      target.append(encode(query.get(index)[0])).append('=').append(encode(query.get(index)[1]));
+      target
+          .append(encodeQuery(query.get(index)[0]))
+          .append('=')
+          .append(encodeQuery(query.get(index)[1]));
     }
 
     HttpRequest.BodyPublisher publisher = HttpRequest.BodyPublishers.noBody();

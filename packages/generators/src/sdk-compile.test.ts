@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AirDocument } from "@anvil/air";
+import { type AirDocument, Operation as OperationSchema } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generateSdks } from "./sdk/index.js";
@@ -103,11 +103,13 @@ function captured(): CapturedRequest[] {
 }
 
 beforeAll(async () => {
-  air = await compile({
-    spec: read("openapi.yaml"),
-    manifest: read("anvil.yaml"),
-    serviceId: "payments",
-  });
+  air = withQueryParameter(
+    await compile({
+      spec: read("openapi.yaml"),
+      manifest: read("anvil.yaml"),
+      serviceId: "payments",
+    }),
+  );
   work = mkdtempSync(join(tmpdir(), "anvil-sdk-compile-"));
   for (const [rel, contents] of Object.entries(generateSdks(air))) {
     const full = join(work, rel);
@@ -137,6 +139,36 @@ afterAll(() => {
   rmSync(work, { recursive: true, force: true });
 });
 
+/**
+ * Give the read operation a query parameter.
+ *
+ * The payments fixture has none, and query encoding is exactly where four
+ * standard libraries are most likely to quietly disagree — a space is `+` in
+ * form encoding and `%20` in a path, and Java's URLEncoder does not know which
+ * one it is being asked for. Without a query parameter in the fixture, that
+ * divergence ships.
+ */
+function withQueryParameter(document: AirDocument): AirDocument {
+  const target = document.operations.find((op) => op.id === "payments.customers.get");
+  if (target === undefined) throw new Error("fixture no longer has payments.customers.get");
+  const widened = OperationSchema.parse({
+    ...target,
+    input: {
+      ...target.input,
+      // Cleared so the assembled schema is recomputed from the widened params.
+      schema: undefined,
+      params: [
+        ...target.input.params,
+        { name: "expand", in: "query", required: false, schema: { type: "string" } },
+      ],
+    },
+  });
+  return {
+    ...document,
+    operations: document.operations.map((op) => (op.id === target.id ? widened : op)),
+  };
+}
+
 /** The one call every language makes, so the four requests are comparable. */
 const REFUND = {
   paymentId: "p 1",
@@ -145,6 +177,9 @@ const REFUND = {
   reason: "duplicate",
   idempotencyKey: "key-1",
 };
+
+/** The read every language also makes: a space in the path and in the query. */
+const LOOKUP = { customerId: "c 1", expand: "a b" };
 
 const run = (command: string, args: string[], cwd: string): string =>
   execFileSync(command, args, { cwd, encoding: "utf8", timeout: 180_000 });
@@ -175,6 +210,7 @@ try {
   console.log("refused:" + (error instanceof AnvilError ? error.code : "wrong-type"));
 }
 await client.createRefund(input, { confirm: true, idempotencyKey: ${JSON.stringify(REFUND.idempotencyKey)} });
+await client.getCustomer({ customer_id: ${JSON.stringify(LOOKUP.customerId)}, expand: ${JSON.stringify(LOOKUP.expand)} });
 console.log("sent");
 `,
       "utf8",
@@ -210,6 +246,7 @@ for extra in ({}, {"confirm": True}):
     except AnvilError as error:
         print("refused:" + error.code)
 client.create_refund(**kwargs, confirm=True, idempotency_key=${JSON.stringify(REFUND.idempotencyKey)})
+client.get_customer(customer_id=${JSON.stringify(LOOKUP.customerId)}, expand=${JSON.stringify(LOOKUP.expand)})
 print("sent")
 `,
       "utf8",
@@ -263,6 +300,10 @@ func main() {
 	if _, err := client.CreateRefund(context.Background(), input, payments.CallOptions{Confirm: true, IdempotencyKey: ${JSON.stringify(REFUND.idempotencyKey)}}); err != nil {
 		panic(err)
 	}
+	expand := ${JSON.stringify(LOOKUP.expand)}
+	if _, err := client.GetCustomer(context.Background(), payments.GetCustomerInput{CustomerId: ${JSON.stringify(LOOKUP.customerId)}, Expand: &expand}); err != nil {
+		panic(err)
+	}
 	fmt.Println("sent")
 }
 `,
@@ -311,6 +352,8 @@ public class Drive {
     }
     client.createRefund(
         input(), CallOptions.none().confirm(true).idempotencyKey(${JSON.stringify(REFUND.idempotencyKey)}));
+    client.getCustomer(
+        new GetCustomerInput(${JSON.stringify(LOOKUP.customerId)}).expand(${JSON.stringify(LOOKUP.expand)}));
     System.out.println("sent");
   }
 
@@ -331,33 +374,65 @@ public class Drive {
 });
 
 describe("the four SDKs agree on the wire", () => {
-  it("sent the same request from every language that ran", () => {
-    const ran = Object.values(TOOLCHAIN).filter(Boolean).length;
-    // Guard against a vacuous pass on an image with no toolchains at all.
-    expect(ran, "no language toolchain was available to exercise").toBeGreaterThan(0);
-    const requests = captured();
-    expect(requests.length).toBe(ran);
+  /** Only the headers the contract owns. */
+  interface Comparable {
+    method: string;
+    url: string;
+    authorization?: string;
+    idempotencyKey?: string;
+    contentType?: string;
+    body: unknown;
+  }
 
-    const normalized = requests.map((request) => ({
+  function normalize(): Comparable[] {
+    // Platform clients add headers of their own (`accept-encoding`,
+    // `http2-settings`); comparing those would compare HTTP stacks rather than
+    // Anvil's projection.
+    return captured().map((request) => ({
       method: request.method,
       url: request.url,
-      // Only the headers the contract owns. Platform clients add their own
-      // (`accept-encoding`, `http2-settings`), and comparing those would be
-      // comparing HTTP stacks rather than comparing Anvil's projection.
       authorization: request.headers.authorization,
       idempotencyKey: request.headers["idempotency-key"],
       contentType: request.headers["content-type"],
-      body: JSON.parse(request.body) as unknown,
+      body: request.body.length > 0 ? (JSON.parse(request.body) as unknown) : null,
     }));
-    const first = normalized[0];
+  }
+
+  const languagesThatRan = (): number => Object.values(TOOLCHAIN).filter(Boolean).length;
+
+  it("sent the same mutation from every language that ran", () => {
+    const ran = languagesThatRan();
+    // Guard against a vacuous pass on an image with no toolchains at all.
+    expect(ran, "no language toolchain was available to exercise").toBeGreaterThan(0);
+    const posts = normalize().filter((request) => request.method === "POST");
+    expect(posts.length).toBe(ran);
+
+    const first = posts[0];
     expect(first).toBeDefined();
-    expect(first?.method).toBe("POST");
     // The path parameter is percent-encoded, the credential carries its scheme,
     // and the idempotency key sits at the coordinate AIR modeled.
     expect(first?.url).toBe("/payments/p%201/refunds");
     expect(first?.authorization).toBe("Bearer tok");
     expect(first?.idempotencyKey).toBe(REFUND.idempotencyKey);
     expect(first?.body).toEqual({ amount: 100, currency: "usd", reason: "duplicate" });
-    for (const request of normalized) expect(request).toEqual(first);
+    for (const request of posts) expect(request).toEqual(first);
+  });
+
+  it("encoded the path and the query the same way in every language", () => {
+    const ran = languagesThatRan();
+    expect(ran).toBeGreaterThan(0);
+    const gets = normalize().filter((request) => request.method === "GET");
+    expect(gets.length).toBe(ran);
+
+    const first = gets[0];
+    expect(first).toBeDefined();
+    // A space is `%20` in a path segment and `+` in a query string, and they
+    // are not interchangeable: `+` in a path means a literal plus. Java's
+    // URLEncoder does form encoding for both, which is why this is asserted
+    // rather than assumed.
+    expect(first?.url).toBe("/customers/c%201?expand=a+b");
+    expect(first?.authorization).toBe("Bearer tok");
+    expect(first?.idempotencyKey).toBeUndefined();
+    for (const request of gets) expect(request).toEqual(first);
   });
 });
