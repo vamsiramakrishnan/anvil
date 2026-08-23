@@ -360,9 +360,19 @@
       ]
     },
     {
-      "id": "observe/unexecuted-check-is-not-a-pass",
+      "id": "observe/empty-contract-is-not-a-contract",
       "file": "packages/harness/src/observe.ts",
-      "control": "A configured check that never ran fails the lane. An unknown probe id, a contract endpoint that could not be read, and a probe that errored each leave the operator with no observation where they asked for one; reporting ok exits 0 on a question that was never asked.",
+      "control": "A document that compiles to no operations is not the application's contract. Accepting one turns an auth wall or a wrong path into a successful acquisition whose diff reports every operation as removed — a wall of false blocking drift that reads like a real emergency.",
+      "find": "  if (fresh.operations.length === 0) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/harness/src/observe.test.ts"
+      ]
+    },
+    {
+      "id": "observe/unknown-probe-id-fails",
+      "file": "packages/harness/src/observe.ts",
+      "control": "A probeReads id this bundle does not define fails the lane. Dropping it silently is how a typo, or an operation renamed out of the bundle, quietly stops covering the endpoint it was added for while CI keeps going green.",
       "find": "      unknown.length === 0 &&",
       "replace": "",
       "tests": [
@@ -370,11 +380,21 @@
       ]
     },
     {
-      "id": "observe/empty-contract-is-not-a-contract",
+      "id": "observe/errored-probe-fails",
       "file": "packages/harness/src/observe.ts",
-      "control": "A document that compiles to no operations is not the application's contract. Accepting one turns an auth wall or a wrong path into a successful acquisition whose diff reports every operation as removed — a wall of false blocking drift that reads like a real emergency.",
-      "find": "  if (fresh.operations.length === 0) {",
-      "replace": "  if (false) {",
+      "control": "A probe that answered with an error fails the lane. The operation was asked and nothing was learned about whether the compiled model matches the application, which is not the same as agreement.",
+      "find": "      errored === 0 &&",
+      "replace": "",
+      "tests": [
+        "packages/harness/src/observe.test.ts"
+      ]
+    },
+    {
+      "id": "observe/unacquired-contract-fails",
+      "file": "packages/harness/src/observe.ts",
+      "control": "A contract endpoint that was configured but could not be read fails the lane. Not asking is a legitimate posture; asking and getting no answer is a question the operator believes was answered.",
+      "find": "      (!acquisition.attempted || acquisition.ok),",
+      "replace": "      true,",
       "tests": [
         "packages/harness/src/observe.test.ts"
       ]

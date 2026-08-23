@@ -119,6 +119,11 @@ beforeAll(async () => {
       // Retired two releases ago. The compiled contract still declares it.
       return send(404, { error: "no such endpoint" });
     }
+    if (url.startsWith("/widgets/w-boom")) {
+      // The application is up and answering, and this operation still told us
+      // nothing about whether the compiled model matches it.
+      return send(500, { error: "internal" });
+    }
     if (/^\/widgets\/[^/]+/.test(url)) {
       // Returns more than the compiled contract ever declared.
       return send(200, { id: "w1", name: "Widget", tenant: "acme", archived: false });
@@ -274,16 +279,25 @@ describe("an application that publishes no contract", () => {
  */
 describe("a check that never ran is not a check that passed", () => {
   it("refuses a probeReads id this bundle does not define", async () => {
+    // contractPath is omitted deliberately. With it, this fixture's published
+    // contract drifts from the compiled one and fails the lane on its own — so
+    // an assertion on `ok` would pass whether or not the unknown id was
+    // noticed. The mutation gate caught exactly that: the same defence-in-depth
+    // masking that hid a missing test for the read-only probe filter.
     const report = await observe({
-      probeReads: ["widgets.widgets.get", "widgets.widgets.gett"],
-      inputs: { "widgets.widgets.get": { widget_id: "w1" } },
+      contractPath: undefined,
+      probeReads: ["widgets.widgets.gett"],
+      inputs: {},
     });
     const refusal = report.observations.find((o) => o.operationId === "widgets.widgets.gett");
     expect(refusal?.outcome).toBe("refused");
     expect(refusal?.detail).toContain("no such operation");
     expect(report.summary.unknownProbeIds).toBe(1);
-    // The point of the refusal: a typo cannot quietly stop exercising the
-    // endpoint it was added for while CI keeps going green.
+    // Nothing else here can fail the lane: no contract was asked for, nothing
+    // was probed, nothing drifted. Only the unknown id can make this false.
+    expect(report.drift).toEqual([]);
+    expect(report.summary.unreachable).toBe(0);
+    expect(report.summary.errored).toBe(0);
     expect(report.ok).toBe(false);
   }, 120_000);
 
@@ -300,6 +314,21 @@ describe("a check that never ran is not a check that passed", () => {
     const report = await observe({ contractPath: "/no-such-contract", probeReads: [], inputs: {} });
     expect(report.contract.attempted).toBe(true);
     expect(report.contract.ok).toBe(false);
+    expect(report.ok).toBe(false);
+  }, 120_000);
+
+  it("fails when a probe errored, so nothing was learned from it", async () => {
+    const report = await observe({
+      contractPath: undefined,
+      probeReads: ["widgets.widgets.get"],
+      inputs: { "widgets.widgets.get": { widget_id: "w-boom" } },
+    });
+    expect(report.summary.errored).toBe(1);
+    // Isolated the same way as the unknown-id case: no contract asked for,
+    // nothing unreachable, nothing refused. Only the error can fail this.
+    expect(report.drift).toEqual([]);
+    expect(report.summary.unreachable).toBe(0);
+    expect(report.summary.unknownProbeIds).toBe(0);
     expect(report.ok).toBe(false);
   }, 120_000);
 
