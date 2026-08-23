@@ -150,7 +150,16 @@ function operationsModule(plan: SdkPlan): string {
       id: op.id,
       httpMethod: op.httpMethod,
       wireProtocol: op.wireProtocol,
-      ...(op.wireBinding
+      ...(op.wireBinding?.protocol === "graphql"
+        ? {
+            graphql: {
+              document: op.wireBinding.document,
+              operationName: op.wireBinding.operationName,
+              rootField: op.wireBinding.rootField,
+            },
+          }
+        : {}),
+      ...(op.wireBinding?.protocol === "soap"
         ? {
             soap: {
               soapAction: op.wireBinding.soapAction ?? "",

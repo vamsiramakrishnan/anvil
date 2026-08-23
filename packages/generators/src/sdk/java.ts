@@ -198,7 +198,12 @@ function operationsFile(pkg: string, plan: SdkPlan): string {
             ${q(op.httpMethod)},
             ${q(op.wireProtocol)},
             ${
-              op.wireBinding
+              op.wireBinding?.protocol === "graphql"
+                ? `new Invoker.GraphqlBinding(${q(op.wireBinding.document)}, ${q(op.wireBinding.operationName)}, ${q(op.wireBinding.rootField)})`
+                : "null"
+            },
+            ${
+              op.wireBinding?.protocol === "soap"
                 ? `new Invoker.SoapBinding(${q(op.wireBinding.soapAction ?? "")}, ${q(op.wireBinding.envelopeNamespace)}, ${q(op.wireBinding.bodyNamespace)}, ${q(op.wireBinding.bodyElement)}, ${q(op.wireBinding.responseElement ?? "")}, ${q(op.wireBinding.contentType)}, ${q(op.wireBinding.soapVersion)})`
                 : "null"
             },

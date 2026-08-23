@@ -4,11 +4,11 @@ Anvil accepts several API description formats, but “supported” has a precise
 meaning: Anvil can detect the input, capture its local source graph, lower it
 into the canonical model, and generate the aligned bundle. It does not imply
 that every vendor extension, script, policy, or native wire transport is
-executed. Anvil speaks two wire protocols — HTTP with a JSON body, and SOAP
-(1.1 and 1.2, document/literal) — and [refuses, loudly, to pretend
-otherwise](./wire-protocols.md) for the rest. Compiling a `.proto` or a GraphQL
-SDL gives you a reviewed model and aligned surfaces, and a bundle that will not
-be certified for deployment until a facade that really does serve it is
+executed. Anvil speaks three wire protocols — HTTP with a JSON body, SOAP (1.1
+and 1.2, document/literal), and GraphQL (queries and mutations) — and [refuses,
+loudly, to pretend otherwise](./wire-protocols.md) for the rest. Compiling a
+`.proto` gives you a reviewed model and aligned surfaces, and a bundle that will
+not be certified for deployment until a facade that really does serve it is
 declared.
 
 Use this page to choose the right entrypoint and understand what must be
@@ -20,7 +20,7 @@ reviewed after compilation.
 | --- | --- | --- | --- |
 | OpenAPI | OpenAPI 3.x YAML or JSON | Local `$ref` files are captured and dereferenced | Remote references are recorded as external and are not fetched during source capture |
 | Swagger | Swagger 2.0 YAML or JSON | Same local-reference behavior as OpenAPI | Converted to OpenAPI with `swagger2openapi` before the shared pipeline |
-| GraphQL | GraphQL SDL (`.graphql`, `.gql`, `.graphqls`) | One SDL entrypoint | Queries become reads; mutations remain conservative mutations; subscriptions are represented but Anvil does not implement a streaming GraphQL client. **Not executable by Anvil's runtime** — see [Wire protocols](./wire-protocols.md) |
+| GraphQL | GraphQL SDL (`.graphql`, `.gql`, `.graphqls`) | One SDL entrypoint | Queries become reads; mutations remain conservative mutations; **Executable**: queries and mutations post a document compiled from the SDL; subscriptions are represented and refused, since Anvil has no streaming client — see [Wire protocols](./wire-protocols.md) |
 | gRPC | proto3 (`.proto`) | Transitive local imports are captured and loaded into one protobuf root | RPCs are lowered to an HTTP-shaped contract. **Not executable by Anvil's runtime** — see [Wire protocols](./wire-protocols.md) |
 | SOAP | WSDL 1.1 with embedded or local XSD | `wsdl:import`, `xsd:include`, and `xsd:import` are captured locally | Supports the documented/literal XSD subset described below. **Executable**: Anvil posts a real envelope to the declared `<soap:address>`; `rpc`/`encoded` bindings are refused rather than guessed — see [Wire protocols](./wire-protocols.md) |
 | Google APIs | Discovery `restDescription` JSON | Single Discovery document | Mechanically maps resources, methods, schemas, parameters, and OAuth scopes; it does not call Google discovery services |

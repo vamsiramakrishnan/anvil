@@ -183,6 +183,7 @@ export function soapWireBinding(input: {
   return {
     ok: true,
     binding: {
+      protocol: "soap",
       ...(operation.soapAction ? { soapAction: operation.soapAction } : {}),
       envelopeNamespace: ENVELOPE_NS[operation.version],
       bodyNamespace: body.namespace,

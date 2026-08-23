@@ -275,6 +275,7 @@ class OperationSpec(object):
         "http_method",
         "wire_protocol",
         "soap",
+        "graphql",
         "path",
         "effect",
         "params",
@@ -290,6 +291,7 @@ class OperationSpec(object):
         http_method: str,
         wire_protocol: str,
         soap: Optional[Dict[str, str]],
+        graphql: Optional[Dict[str, str]],
         path: str,
         effect: str,
         params: List[Dict[str, Any]],
@@ -306,6 +308,9 @@ class OperationSpec(object):
         #: For a SOAP operation: what the envelope must carry, read from the
         #: WSDL by the compiler. Never inferred here.
         self.soap = soap
+        #: For a GraphQL operation: the document compiled from the SDL. Posted
+        #: as handed, so no caller value is ever interpolated into a query.
+        self.graphql = graphql
         #: Path template with {wire_name} placeholders.
         self.path = path
         self.effect = effect
@@ -361,6 +366,8 @@ def assert_wire_executable(spec: OperationSpec, protocol_facade: Optional[str]) 
         return
     # SOAP is speakable exactly when the compiler recovered a binding for it.
     if spec.wire_protocol == "soap" and spec.soap:
+        return
+    if spec.wire_protocol == "graphql" and spec.graphql:
         return
     raise AnvilError(
         code="unsupported_operation",
@@ -522,6 +529,23 @@ def build_request(
             "body": build_envelope(spec.soap, body_value).encode("utf-8"),
         }
 
+    # A GraphQL service serves one endpoint; the field name travels in the
+    # document, never in the URL.
+    if spec.wire_protocol == "graphql" and spec.graphql:
+        headers["content-type"] = "application/json"
+        headers["accept"] = "application/json"
+        payload = {
+            "query": spec.graphql["document"],
+            "operationName": spec.graphql["operationName"],
+            "variables": body_value if isinstance(body_value, dict) else {},
+        }
+        return {
+            "url": base_url.rstrip("/") or "/",
+            "method": "POST",
+            "headers": headers,
+            "body": json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+        }
+
     url = base_url.rstrip("/") + path
     if query:
         url = url + "?" + urllib.parse.urlencode(query)
@@ -649,6 +673,32 @@ def invoke(
                 )
             if status is not None and 200 <= status < 300:
                 return decode_envelope(spec.soap, soap_text)
+
+        # GraphQL reports failures inside a 200 with an errors array — the same
+        # danger as a SOAP fault. A partial response counts as a failure.
+        if spec.wire_protocol == "graphql" and spec.graphql:
+            try:
+                envelope = json.loads(raw.decode("utf-8", "replace")) if raw else {}
+            except Exception:
+                envelope = {}
+            gql_errors = envelope.get("errors") if isinstance(envelope, dict) else None
+            if isinstance(gql_errors, list) and gql_errors:
+                first = gql_errors[0] if isinstance(gql_errors[0], dict) else {}
+                raise AnvilError(
+                    code="unknown_upstream_error",
+                    operation=spec.id,
+                    trace_id=trace,
+                    message="%s failed upstream: %s"
+                    % (spec.id, first.get("message") or "the service returned a GraphQL error"),
+                    retryable=False,
+                    safe_to_retry=safe_to_retry,
+                )
+            if status is not None and 200 <= status < 300:
+                data = envelope.get("data") if isinstance(envelope, dict) else None
+                root = spec.graphql.get("rootField") or ""
+                if isinstance(data, dict) and root in data:
+                    return data[root]
+                return data
 
         if status is not None and 200 <= status < 300:
             return _decode(raw)

@@ -151,9 +151,11 @@ function operationsFile(plan: SdkPlan): string {
 		ID:         ${g(op.id)},
 		HTTPMethod: ${g(op.httpMethod)},
 		WireProtocol: ${g(op.wireProtocol)},${
-      op.wireBinding
-        ? `\n\t\tSoap: &SoapBinding{SoapAction: ${g(op.wireBinding.soapAction ?? "")}, EnvelopeNamespace: ${g(op.wireBinding.envelopeNamespace)}, BodyNamespace: ${g(op.wireBinding.bodyNamespace)}, BodyElement: ${g(op.wireBinding.bodyElement)}, ResponseElement: ${g(op.wireBinding.responseElement ?? "")}, ContentType: ${g(op.wireBinding.contentType)}, SoapVersion: ${g(op.wireBinding.soapVersion)}},`
-        : ""
+      op.wireBinding?.protocol === "graphql"
+        ? `\n\t\tGraphql: &GraphqlBinding{Document: ${g(op.wireBinding.document)}, OperationName: ${g(op.wireBinding.operationName)}, RootField: ${g(op.wireBinding.rootField)}},`
+        : op.wireBinding?.protocol === "soap"
+          ? `\n\t\tSoap: &SoapBinding{SoapAction: ${g(op.wireBinding.soapAction ?? "")}, EnvelopeNamespace: ${g(op.wireBinding.envelopeNamespace)}, BodyNamespace: ${g(op.wireBinding.bodyNamespace)}, BodyElement: ${g(op.wireBinding.bodyElement)}, ResponseElement: ${g(op.wireBinding.responseElement ?? "")}, ContentType: ${g(op.wireBinding.contentType)}, SoapVersion: ${g(op.wireBinding.soapVersion)}},`
+          : ""
     }
 		Path:       ${g(op.path)},
 		Effect:     ${g(op.effect)},

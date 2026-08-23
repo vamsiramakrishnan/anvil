@@ -168,6 +168,13 @@ type ConfirmationSpec struct {
 	Reason        string
 }
 
+// GraphqlBinding is the compiled query document for a GraphQL operation.
+type GraphqlBinding struct {
+	Document      string
+	OperationName string
+	RootField     string
+}
+
 // OperationSpec is one approved operation, as data.
 type OperationSpec struct {
 	ID         string
@@ -179,6 +186,9 @@ type OperationSpec struct {
 	// Soap is what the envelope must carry, for a SOAP operation. Read from the
 	// WSDL by the compiler; never inferred here.
 	Soap *SoapBinding
+	// Graphql is the document compiled from the SDL, for a GraphQL operation.
+	// Posted as handed, so no caller value is ever interpolated into a query.
+	Graphql *GraphqlBinding
 	// Path is the path template with {wire_name} placeholders.
 	Path         string
 	Effect       string

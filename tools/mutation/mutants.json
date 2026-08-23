@@ -488,6 +488,46 @@
       "tests": [
         "packages/cli/src/transport-certify.test.ts"
       ]
+    },
+    {
+      "id": "graphql/arguments-are-variables",
+      "file": "packages/compiler/src/protocols/graphql-binding.ts",
+      "control": "Every argument becomes a declared GraphQL variable, so no caller value is ever interpolated into query text. A value spliced into a statement is a value that can rewrite the statement — the same rule the SQL query policy enforces one layer over.",
+      "find": "    .map((arg: GraphQLArgument) => `$${arg.name}: ${arg.type.toString()}`)",
+      "replace": "    .map((arg: GraphQLArgument) => `$${arg.name}: String`)",
+      "tests": [
+        "packages/generators/src/sdk-graphql.test.ts"
+      ]
+    },
+    {
+      "id": "graphql/subscription-refused",
+      "file": "packages/compiler/src/protocols/graphql-binding.ts",
+      "control": "A subscription is a long-lived stream, not a request and response. Anvil has no streaming client, so it records no binding and the transport gate keeps refusing rather than posting a document nothing can read the answer to.",
+      "find": "  if (kind === \"subscription\") return undefined;",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/sdk-graphql.test.ts"
+      ]
+    },
+    {
+      "id": "graphql/errors-are-not-results",
+      "file": "packages/runtime/src/codec-graphql.ts",
+      "control": "GraphQL reports failures inside a 200 with an errors array. Reported as a result, a failed mutation would be recorded in the idempotency ledger as completed — and a partial response is still a failure, since AIR's output contract describes one shape.",
+      "find": "    if (!Array.isArray(errors) || errors.length === 0) return undefined;",
+      "replace": "    return undefined;",
+      "tests": [
+        "packages/runtime/src/codec-graphql.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/graphql-documents-agree",
+      "file": "packages/generators/src/sdk/certify.ts",
+      "control": "Certification compares each generated client's query document against AIR. A client posting a different document is asking a different question.",
+      "find": "      \"graphqlDocument\",",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/sdk-transport.test.ts"
+      ]
     }
   ]
 }

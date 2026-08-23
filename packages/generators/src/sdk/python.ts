@@ -142,7 +142,8 @@ function operationsModule(plan: SdkPlan): string {
         id=${p(op.id)},
         http_method=${p(op.httpMethod)},
         wire_protocol=${p(op.wireProtocol)},
-        soap=${op.wireBinding ? `{"soapAction": ${p(op.wireBinding.soapAction ?? "")}, "envelopeNamespace": ${p(op.wireBinding.envelopeNamespace)}, "bodyNamespace": ${p(op.wireBinding.bodyNamespace)}, "bodyElement": ${p(op.wireBinding.bodyElement)}, "responseElement": ${p(op.wireBinding.responseElement ?? "")}, "contentType": ${p(op.wireBinding.contentType)}, "soapVersion": ${p(op.wireBinding.soapVersion)}}` : "None"},
+        graphql=${op.wireBinding?.protocol === "graphql" ? `{"document": ${p(op.wireBinding.document)}, "operationName": ${p(op.wireBinding.operationName)}, "rootField": ${p(op.wireBinding.rootField)}}` : "None"},
+        soap=${op.wireBinding?.protocol === "soap" ? `{"soapAction": ${p(op.wireBinding.soapAction ?? "")}, "envelopeNamespace": ${p(op.wireBinding.envelopeNamespace)}, "bodyNamespace": ${p(op.wireBinding.bodyNamespace)}, "bodyElement": ${p(op.wireBinding.bodyElement)}, "responseElement": ${p(op.wireBinding.responseElement ?? "")}, "contentType": ${p(op.wireBinding.contentType)}, "soapVersion": ${p(op.wireBinding.soapVersion)}}` : "None"},
         path=${p(op.path)},
         effect=${p(op.effect)},
         params=[

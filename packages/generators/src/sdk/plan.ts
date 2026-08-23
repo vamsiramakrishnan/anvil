@@ -12,6 +12,7 @@ import {
   resolveAsyncContract,
   resolveIdempotencyCarrier,
   snakeCase,
+  type WireBinding,
   type WireProtocol,
   wireProtocolFor,
 } from "@anvil/air";
@@ -113,15 +114,8 @@ export interface SdkOperation {
    * runtime reads from AIR — no emitter resolves a namespace or an action of
    * its own, which is what keeps five independent clients byte-identical.
    */
-  wireBinding?: {
-    soapAction?: string;
-    envelopeNamespace: string;
-    bodyNamespace: string;
-    bodyElement: string;
-    responseElement?: string;
-    contentType: string;
-    soapVersion: string;
-  };
+  wireBinding?: WireBinding;
+
   /** Path template with `{wire_name}` placeholders, exactly as AIR carries it. */
   path: string;
   effect: "read" | "mutation";

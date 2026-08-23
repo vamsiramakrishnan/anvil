@@ -11,6 +11,7 @@ import { execute, type HttpResponse, InMemoryLedger, MockTransport } from "./ind
  * could not address its own service certified 38 checks out of 38.
  */
 const BINDING = {
+  protocol: "soap" as const,
   soapAction: "http://example.com/banking/TransferFunds",
   envelopeNamespace: "http://schemas.xmlsoap.org/soap/envelope/",
   bodyNamespace: "http://example.com/banking",

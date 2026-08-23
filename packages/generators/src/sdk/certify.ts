@@ -122,6 +122,10 @@ export function sdkGateDrift(files: Record<string, string>, air: AirDocument): s
       // refused by a 1.1 server outright. Same class of fact as the gates
       // above, and the same reason to catch it before it ships.
       "soapAction",
+      // The query document every client posts. A client posting a different one
+      // is asking a different question, which is the same class of divergence
+      // the flags above catch and the same reason to catch it before it ships.
+      "graphqlDocument",
     ] as const) {
       if (got[gate] !== want[gate]) {
         drift.push(

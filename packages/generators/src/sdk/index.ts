@@ -56,6 +56,8 @@ export interface SdkManifestMethod {
   wireProtocol: string;
   /** Present for a SOAP operation: the action the envelope is dispatched by. */
   soapAction?: string;
+  /** Present for a GraphQL operation: the query document every client posts. */
+  graphqlDocument?: string;
   effect: string;
   idempotency: string;
   retrySafe: boolean;
@@ -94,7 +96,12 @@ export function sdkManifest(plan: SdkPlan): SdkManifest {
       mcpTool: op.mcpToolName,
       http: `${op.httpMethod} ${op.path}`,
       wireProtocol: op.wireProtocol,
-      ...(op.wireBinding ? { soapAction: op.wireBinding.soapAction ?? "" } : {}),
+      ...(op.wireBinding?.protocol === "soap"
+        ? { soapAction: op.wireBinding.soapAction ?? "" }
+        : {}),
+      ...(op.wireBinding?.protocol === "graphql"
+        ? { graphqlDocument: op.wireBinding.document }
+        : {}),
       effect: op.effect,
       idempotency: op.idempotency.mode,
       retrySafe: op.retry.mode === "safe",

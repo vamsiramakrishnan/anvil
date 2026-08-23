@@ -351,6 +351,10 @@ export interface OperationSpec {
   wireProtocol: string;
   /** For a SOAP operation: what the envelope must carry. Read from the WSDL by
    *  the compiler; never inferred here. */
+  /** For a GraphQL operation: the document compiled from the SDL. Posted as
+   *  handed — no client builds a query, so no caller value is ever
+   *  interpolated into one. */
+  graphql?: { document: string; operationName: string; rootField: string };
   soap?: {
     soapAction: string;
     envelopeNamespace: string;
@@ -462,8 +466,9 @@ function traceId(): string {
  */
 function assertWireExecutable(spec: OperationSpec, context: InvokeContext): void {
   if (spec.wireProtocol === "http_json" || context.protocolFacade !== undefined) return;
-  // SOAP is speakable exactly when the compiler recovered a binding for it.
+  // A protocol is speakable exactly when the compiler recovered a binding.
   if (spec.wireProtocol === "soap" && spec.soap) return;
+  if (spec.wireProtocol === "graphql" && spec.graphql) return;
   throw new AnvilError({
     code: "unsupported_operation",
     operation: spec.id,
@@ -659,6 +664,22 @@ ${
     : ""
 }
 
+  // A GraphQL service serves one endpoint; the field name travels in the
+  // document, never in the URL. The path above is a coordinate Anvil
+  // synthesized to hold operations apart in a path-keyed model.
+  if (spec.wireProtocol === "graphql" && spec.graphql) {
+    return {
+      url: base || "/",
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        query: spec.graphql.document,
+        operationName: spec.graphql.operationName,
+        variables: bodyValue ?? {},
+      }),
+    };
+  }
+
   const qs = query.toString();
   const request: BuiltRequest = {
     url: base + path + (qs ? "?" + qs : ""),
@@ -782,6 +803,44 @@ ${
       }`
     : ""
 }
+      // GraphQL reports failures inside a 200 with an errors array — the
+      // same danger as a SOAP Fault: reported as a result, a failed mutation
+      // would be recorded as completed. A partial response counts as a
+      // failure, since AIR's output contract describes one shape and a
+      // half-filled one alongside errors the caller cannot see is worse than
+      // no answer.
+      if (spec.wireProtocol === "graphql" && spec.graphql) {
+        const text = await response.text();
+        let parsed: unknown;
+        try {
+          parsed = text ? JSON.parse(text) : null;
+        } catch {
+          parsed = null;
+        }
+        const envelope = (parsed ?? {}) as { data?: Record<string, unknown>; errors?: unknown[] };
+        if (Array.isArray(envelope.errors) && envelope.errors.length > 0) {
+          const first = envelope.errors[0] as { message?: string };
+          throw new AnvilError({
+            code: "unknown_upstream_error",
+            operation: spec.id,
+            traceId: trace,
+            message:
+              spec.id +
+              " failed upstream: " +
+              (first?.message ?? "the service returned a GraphQL error"),
+            // GraphQL has no convention identifying a transient error, and
+            // guessing wrong on a mutation is the failure the contract exists
+            // to prevent.
+            retryable: false,
+            safeToRetry,
+          });
+        }
+        if (response.ok) {
+          const data = envelope.data;
+          if (data && spec.graphql.rootField in data) return data[spec.graphql.rootField];
+          return data ?? null;
+        }
+      }
       if (response.ok) {
         return soapBody !== undefined${withSoap ? " && spec.soap" : ""}
           ? ${withSoap ? "decodeEnvelope(spec.soap, soapBody)" : "null"}

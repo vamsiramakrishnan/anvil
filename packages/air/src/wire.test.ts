@@ -143,6 +143,7 @@ describe("the wire binding is hash-neutral when absent", () => {
           path: "/thing",
           method: "get",
           binding: {
+            protocol: "soap",
             soapAction: "urn:Do",
             envelopeNamespace: "http://schemas.xmlsoap.org/soap/envelope/",
             bodyNamespace: "urn:svc",

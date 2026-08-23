@@ -362,6 +362,9 @@ public final class OperationSpec {
   /** For a SOAP operation: what the envelope must carry. Read from the WSDL by
    *  the compiler; never inferred here. */
   public final Invoker.SoapBinding soap;
+  /** For a GraphQL operation: the document compiled from the SDL. Posted as
+   *  handed, so no caller value is ever interpolated into a query. */
+  public final Invoker.GraphqlBinding graphql;
   /** The path template with {wire_name} placeholders. */
   public final String path;
   public final String effect;
@@ -375,6 +378,7 @@ public final class OperationSpec {
       String id,
       String httpMethod,
       String wireProtocol,
+      Invoker.GraphqlBinding graphql,
       Invoker.SoapBinding soap,
       String path,
       String effect,
@@ -386,6 +390,7 @@ public final class OperationSpec {
     this.id = id;
     this.httpMethod = httpMethod;
     this.wireProtocol = wireProtocol;
+    this.graphql = graphql;
     this.soap = soap;
     this.path = path;
     this.effect = effect;

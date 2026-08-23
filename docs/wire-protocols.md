@@ -1,8 +1,8 @@
 # Wire protocols: what Anvil can actually call
 
-Anvil accepts eight source formats. It speaks two wire protocols: **HTTP with a
-JSON body**, and **SOAP** (1.1 and 1.2, document/literal). GraphQL and gRPC it
-refuses, loudly, rather than pretending.
+Anvil accepts eight source formats. It speaks three wire protocols: **HTTP with
+a JSON body**, **SOAP** (1.1 and 1.2, document/literal), and **GraphQL**
+(queries and mutations). gRPC it refuses, loudly, rather than pretending.
 
 Those facts were once not written down together, and the gap between them was
 invisible. This page is that gap, stated — and closed, for SOAP.
@@ -20,7 +20,7 @@ no per-operation path has to invent one:
 | Source | Synthesized coordinate | What a real call is |
 | --- | --- | --- |
 | WSDL | `POST /BankingPort/TransferFunds` | An XML envelope posted to the single `<soap:address>` endpoint, dispatched by a `SOAPAction` header — **now what Anvil sends** |
-| GraphQL | `POST /graphql/Mutation/checkout` | `{query, variables}` posted to the one GraphQL endpoint; the field name is in the body, never the URL |
+| GraphQL | `POST /graphql/Mutation/checkout` | `{query, variables}` posted to the one GraphQL endpoint; the field name is in the body, never the URL — **now what Anvil sends** |
 | protobuf | `POST /acme.orders.v1.OrderService/GetOrder` | The path is real — it is gRPC's `:path` — but the body is length-prefixed protobuf over HTTP/2, with `grpc-status` in trailers |
 | MCP (adopted) | *no path, no method* | A `tools/call` over the MCP transport |
 
@@ -83,6 +83,51 @@ politely.
 zero-dependency by contract), and via `disallow-doctype-decl` on Java's factory.
 External-entity expansion (XXE) and the billion-laughs denial of service both
 require a DTD, so neither is defended against: both are unparseable.
+
+## GraphQL works, and cost a tenth of what SOAP did
+
+Worth saying why, because the difference is a design decision rather than luck.
+
+A SOAP envelope must be assembled per call from namespaces, element names and an
+action header, so five surfaces each needed an encoder. A GraphQL request is
+`{query, variables}` — ordinary JSON — and **the query is a pure function of the
+schema and the field**. So Anvil compiles it once, at compile time, and stores
+it on the operation:
+
+```
+query Anvil_Product($id: ID!) { product(id: $id)
+  { id name description priceCents currency inStock tags } }
+```
+
+Every surface posts a string it was handed. No client builds a query, which
+means no client can build a *different* one — the agreement is structural rather
+than four implementations that happen to match.
+
+**No caller value ever reaches the query text.** Every argument is a declared
+variable, the same rule the SQL query policy enforces one layer over and for the
+same reason: a value spliced into a statement is a value that can rewrite the
+statement.
+
+This also closes the gap that made GraphQL look unrepresentable. AIR's
+`output.schema` is depth-truncated to keep what an agent reads bounded, so it
+cannot name the nested fields a selection set needs — but that was never a limit
+on the *model*, only on the agent-facing projection. The full SDL is available at
+compile time, which is where the selection set is read. Selection depth is
+bounded and cycles are cut with `__typename`, because a GraphQL schema is a graph
+and `Order.customer.orders` is both legal and infinite.
+
+**Errors are failures.** GraphQL reports them inside a 200 with an `errors`
+array — the same danger as a SOAP Fault. A partial response (`data` *and*
+`errors`) is a failure too: AIR's output contract describes one shape, and a
+half-filled one alongside errors the caller cannot see is how someone acts on
+data that was never returned. None of them retry, because GraphQL names no
+transient error and guessing wrong on a mutation is the failure the safety
+contract exists to prevent.
+
+**Subscriptions are refused.** A subscription is a long-lived stream, not a
+request and response, and Anvil has no streaming client. It records no binding
+and the transport gate keeps refusing — the same posture as an rpc/encoded SOAP
+binding.
 
 ## What the refusal looks like when it applies
 
@@ -150,14 +195,14 @@ had always silently made.
 - **A REST bundle can still be wrong.** Nothing here checks that an OpenAPI
   path is served or that its schema matches reality. It refuses only protocols
   the runtime provably cannot speak.
-- **The GraphQL and gRPC examples are uncertifiable**, deliberately, until
-  either a facade is declared or Anvil grows their codecs. They still compile,
-  inspect, lint, approve, and self-test. `examples/soap` certifies.
+- **The gRPC example is uncertifiable**, deliberately, until either a facade is
+  declared or Anvil grows its codec. It still compiles, inspects, lints,
+  approves, and self-tests. `examples/soap` and `examples/graphql` certify.
 
-## What the remaining two would need
+## What gRPC would need
 
-SOAP is done. The other two need the model to carry what their encoding needs,
-and today it does not:
+SOAP and GraphQL are done. gRPC needs the model to carry what its encoding
+needs, and today it does not:
 
 - **GraphQL** needs a selection set, which AIR cannot hold: `output.schema` is
   depth-truncated to keep schemas bounded.

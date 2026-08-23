@@ -27,13 +27,6 @@ const clock = (iso: string) => () => iso;
 
 const CASES = [
   {
-    name: "GraphQL",
-    spec: "graphql/schema.graphql",
-    manifest: "graphql/anvil.yaml",
-    id: "storefront",
-    protocol: "graphql",
-  },
-  {
     name: "gRPC",
     spec: "grpc/orders.proto",
     manifest: "grpc/anvil.yaml",
@@ -174,6 +167,46 @@ describe("transport executability", () => {
     expect(air.diagnostics.map((d) => d.code)).not.toContain("unexecutable_transport");
   });
 
+  it("certifies a GraphQL bundle now that the runtime can speak to it", async () => {
+    const air = await compile({
+      spec: example("graphql/schema.graphql"),
+      manifest: example("graphql/anvil.yaml"),
+      serviceId: "storefront",
+    });
+    const cert = certifyBundle(generateBundle(air).files, air, {
+      now: clock("2026-01-01T00:00:00.000Z"),
+    });
+    const failed = cert.checks
+      .filter((check) => check.status === "failed")
+      .map((check) => check.id);
+    expect(failed).not.toContain("safety.protocol-runtime-executable");
+    expect(staticChecks(air).find((check) => check.id === "static/transport_executable")?.ok).toBe(
+      true,
+    );
+    for (const op of air.operations) {
+      expect(op.sourceRef.binding?.protocol).toBe("graphql");
+    }
+  });
+
+  it("still refuses a GraphQL subscription, which is a stream and not a request", async () => {
+    const air = await compile({
+      spec: "type Query { ping: String }\ntype Subscription { tick: String }",
+      serviceId: "streaming",
+    });
+    const operations = air.operations.map((op) => ({ ...op, state: "approved" as const }));
+    const bundleAir = { ...air, operations };
+    const tick = operations.find((op) => op.id.includes("tick"));
+    expect(tick?.sourceRef.binding).toBeUndefined();
+
+    const cert = certifyBundle(generateBundle(bundleAir).files, bundleAir, {
+      now: clock("2026-01-01T00:00:00.000Z"),
+    });
+    const failed = cert.checks
+      .filter((check) => check.status === "failed")
+      .map((check) => check.id);
+    expect(failed).toContain("safety.protocol-runtime-executable");
+  });
+
   it("certifies a SOAP bundle now that the runtime can speak to it", async () => {
     // This assertion used to be the opposite. A SOAP bundle was refused because
     // Anvil could not put an envelope on the wire; it now can, and the refusal
@@ -193,7 +226,10 @@ describe("transport executability", () => {
       true,
     );
     for (const op of air.operations) {
-      expect(op.sourceRef.binding?.soapAction).toBeDefined();
+      const binding = op.sourceRef.binding;
+      expect(binding?.protocol).toBe("soap");
+      if (binding?.protocol !== "soap") throw new Error("expected a soap binding");
+      expect(binding.soapAction).toBeDefined();
     }
   });
 

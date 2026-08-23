@@ -70,10 +70,10 @@ const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
     "means its WSDL declared a shape Anvil declines to encode rather than " +
     "encode wrongly — check the compile diagnostics for which",
   graphql:
-    "a GraphQL call posts {query, variables} to the one GraphQL endpoint — the " +
-    "field name travels in the document body, never in the URL. Anvil " +
-    "synthesized this path from the root type and field names; no GraphQL " +
-    "server serves it",
+    "Anvil speaks GraphQL, but only for a query or mutation. This operation " +
+    "carries no wire binding, which means it is a subscription — a long-lived " +
+    "stream rather than a request and response, and Anvil has no streaming " +
+    "client to hold one open",
   grpc:
     "the path is genuinely gRPC's :path, but a gRPC call is length-prefixed " +
     "protobuf over HTTP/2 with grpc-status in trailers, and AIR carries neither " +
@@ -103,7 +103,12 @@ export function wireExecutability(op: Operation): WireExecutability {
   // the source document. A binding is absent for the shapes the WSDL adapter
   // declines to encode — rpc, encoded, or a message described by type rather
   // than element — so those keep refusing rather than being encoded on a guess.
-  if (protocol === "soap" && op.sourceRef.binding !== undefined) return { ok: true };
+  // A protocol is executable exactly when the compiler recovered a binding for
+  // it. A binding is absent for the shapes each adapter declines to encode —
+  // an rpc/encoded SOAP binding, a GraphQL subscription — so those keep
+  // refusing rather than being encoded on a guess.
+  if (protocol === "soap" && op.sourceRef.binding?.protocol === "soap") return { ok: true };
+  if (protocol === "graphql" && op.sourceRef.binding?.protocol === "graphql") return { ok: true };
   return {
     ok: false,
     protocol,

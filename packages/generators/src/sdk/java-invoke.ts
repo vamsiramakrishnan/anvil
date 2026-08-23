@@ -272,6 +272,25 @@ final class Invoker {
 
   private Invoker() {}
 
+  @SuppressWarnings("unchecked")
+  static java.util.Map<String, Object> castMap(Object value) {
+    return (java.util.Map<String, Object>) value;
+  }
+
+  /** The compiled query document for a GraphQL operation. Posted as handed, so
+   *  no caller value is ever interpolated into a query. */
+  public static final class GraphqlBinding {
+    public final String document;
+    public final String operationName;
+    public final String rootField;
+
+    public GraphqlBinding(String document, String operationName, String rootField) {
+      this.document = document;
+      this.operationName = operationName;
+      this.rootField = rootField;
+    }
+  }
+
   /** The resolved client configuration one call runs under. */
   static final class Config {
     final String baseUrl;
@@ -332,6 +351,9 @@ final class Invoker {
     }
     // SOAP is speakable exactly when the compiler recovered a binding for it.
     if ("soap".equals(spec.wireProtocol) && spec.soap != null) {
+      return;
+    }
+    if ("graphql".equals(spec.wireProtocol) && spec.graphql != null) {
       return;
     }
     throw AnvilException.builder(
@@ -552,6 +574,27 @@ final class Invoker {
       base = base.substring(0, base.length() - 1);
     }
 
+    // A GraphQL service serves one endpoint; the field name travels in the
+    // document, never in the URL.
+    if ("graphql".equals(spec.wireProtocol) && spec.graphql != null) {
+      java.util.Map<String, Object> gqlPayload = new java.util.LinkedHashMap<String, Object>();
+      gqlPayload.put("query", spec.graphql.document);
+      gqlPayload.put("operationName", spec.graphql.operationName);
+      gqlPayload.put(
+          "variables",
+          bodyValue instanceof java.util.Map ? bodyValue : new java.util.LinkedHashMap<String, Object>());
+      headers.put("content-type", "application/json");
+      headers.put("accept", "application/json");
+      HttpRequest.Builder gqlBuilder =
+          HttpRequest.newBuilder(URI.create(base))
+              .timeout(timeout)
+              .method("POST", HttpRequest.BodyPublishers.ofString(Json.write(gqlPayload)));
+      for (Map.Entry<String, String> entry : headers.entrySet()) {
+        gqlBuilder.header(entry.getKey(), entry.getValue());
+      }
+      return gqlBuilder.build();
+    }
+
     // A SOAP service serves one endpoint. The path is a coordinate Anvil
     // synthesized to hold operations apart in a path-keyed model, so it is
     // deliberately dropped: the address is the base URL, from soap:address.
@@ -651,6 +694,42 @@ final class Invoker {
       }
 
       int status = response.statusCode();
+      // GraphQL reports failures inside a 200 with an errors array — the same
+      // danger as a SOAP fault. A partial response counts as a failure.
+      if ("graphql".equals(spec.wireProtocol) && spec.graphql != null) {
+        Object parsed = Json.parse(response.body());
+        java.util.Map<String, Object> envelope =
+            parsed instanceof java.util.Map
+                ? castMap(parsed)
+                : new java.util.LinkedHashMap<String, Object>();
+        Object rawErrors = envelope.get("errors");
+        if (rawErrors instanceof java.util.List && !((java.util.List<?>) rawErrors).isEmpty()) {
+          Object first = ((java.util.List<?>) rawErrors).get(0);
+          String message = "the service returned a GraphQL error";
+          if (first instanceof java.util.Map) {
+            Object candidate = castMap(first).get("message");
+            if (candidate instanceof String && !((String) candidate).isEmpty()) {
+              message = (String) candidate;
+            }
+          }
+          throw AnvilException.builder(
+                  "unknown_upstream_error", spec.id, spec.id + " failed upstream: " + message)
+              .traceId(trace)
+              .safeToRetry(safeToRetry)
+              .build();
+        }
+        if (status >= 200 && status < 300) {
+          Object data = envelope.get("data");
+          if (data instanceof java.util.Map) {
+            java.util.Map<String, Object> fields = castMap(data);
+            if (fields.containsKey(spec.graphql.rootField)) {
+              return fields.get(spec.graphql.rootField);
+            }
+          }
+          return data;
+        }
+      }
+
       // A soap:Fault is a failure the transport delivered successfully, and
       // servers send it with 200 as readily as 500 — so the status is not the
       // answer here, the envelope is. Read before the status branch, or a

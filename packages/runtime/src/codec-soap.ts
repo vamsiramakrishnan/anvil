@@ -1,4 +1,4 @@
-import type { Operation, WireBinding } from "@anvil/air";
+import type { Operation, SoapWireBinding } from "@anvil/air";
 import type { FaultAwareCodec, WireFault, WireParts } from "./codec.js";
 import type { HttpRequest, HttpResponse } from "./transport.js";
 import {
@@ -29,9 +29,9 @@ import {
 const BODY_PREFIX = "n";
 const ENV_PREFIX = "soap";
 
-function bindingOf(op: Operation): WireBinding {
+function bindingOf(op: Operation): SoapWireBinding {
   const binding = op.sourceRef.binding;
-  if (!binding) {
+  if (binding?.protocol !== "soap") {
     // Unreachable through the executor — `wireExecutability` refuses an
     // operation with no binding before a request is built. Stated as an error
     // rather than a fallback because a SOAP call assembled from guesses is
@@ -74,7 +74,7 @@ function buildEnvelope(op: Operation, body: unknown): string {
  * content type instead. Getting this wrong is not cosmetic — a 1.1 server
  * dispatches on it and answers a missing one with a fault.
  */
-function actionHeaders(binding: WireBinding): Record<string, string> {
+function actionHeaders(binding: SoapWireBinding): Record<string, string> {
   if (!binding.soapAction) return { "content-type": binding.contentType };
   if (binding.soapVersion === "1.2") {
     return { "content-type": `${binding.contentType}; action="${binding.soapAction}"` };
@@ -115,7 +115,7 @@ export const soapCodec: FaultAwareCodec = {
     const root = parseXml(res.body);
     const bodyEl = findFirst(root, "Body");
     if (!bodyEl) throw new XmlError("the response has no soap:Body");
-    const binding = op.sourceRef.binding;
+    const binding = op.sourceRef.binding?.protocol === "soap" ? op.sourceRef.binding : undefined;
     // Prefer the element the WSDL named; otherwise the body's single child,
     // which is what document/literal guarantees. Never merge several children:
     // a body carrying more than one element is not a shape this codec claims.

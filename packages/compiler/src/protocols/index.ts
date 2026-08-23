@@ -154,7 +154,7 @@ export function adaptProtocol(
 ): OpenApiDocument {
   switch (format) {
     case "graphql":
-      return adaptGraphql(text, title);
+      return adaptGraphql(text, title, diagnostics);
     case "protobuf":
       return adaptProto(text, title, imports.proto);
     case "wsdl":
