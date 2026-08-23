@@ -11,7 +11,7 @@ import type {
   ParamLocation,
   RequestBody,
 } from "@anvil/air";
-import { resolveAsyncContract, snakeCase } from "@anvil/air";
+import { resolveAsyncContract, snakeCase, WireBinding } from "@anvil/air";
 import type { AsyncResponseSignals, LongRunningDetection } from "./classify.js";
 import {
   classifyArchetype,
@@ -84,6 +84,14 @@ interface RawOperation {
   "x-anvil-effect"?: unknown;
   /** Vendor extension: which GraphQL root the operation came from (adapter). */
   "x-graphql-operation"?: unknown;
+  /**
+   * Vendor extension: what a real call to this operation needs on the wire,
+   * read by a protocol adapter out of the source document. Carried into
+   * `sourceRef.binding`, where the runtime's codec reads it. Adapter-written
+   * only — a manifest can never set this, which is what keeps the SOAPAction
+   * header a fact from a WSDL rather than an arbitrary-header channel.
+   */
+  "x-anvil-wire-binding"?: unknown;
   /**
    * Vendor extension stamped by `protocols/webhooks.ts`: this operation was
    * compiled from the spec's own `webhooks:` map, not `paths:`. Read here to
@@ -793,6 +801,12 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         isWebhookReceiver,
       );
 
+      // Adapter-written wire facts. Parsed rather than trusted: the extension
+      // arrives as `unknown` off a lowered document, and an adapter that
+      // recorded a malformed binding must produce no binding at all rather than
+      // a half-built one the codec would then read.
+      const wireBinding = WireBinding.safeParse(raw["x-anvil-wire-binding"]).data;
+
       const successRes =
         raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;
       const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas);
@@ -813,7 +827,13 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         displayName: names.displayName,
         description: raw.description ?? raw.summary ?? "",
         tags: raw.tags ?? [],
-        sourceRef: { kind: parsed.kind, path, method, operationId: raw.operationId },
+        sourceRef: {
+          kind: parsed.kind,
+          path,
+          method,
+          operationId: raw.operationId,
+          ...(wireBinding ? { binding: wireBinding } : {}),
+        },
         effect,
         input: { params, body },
         output: {

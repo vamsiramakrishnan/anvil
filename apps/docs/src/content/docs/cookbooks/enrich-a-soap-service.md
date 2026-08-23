@@ -154,10 +154,9 @@ back.
   generated from the same filled-in model — they cannot disagree about what
   `TransferFunds` means.
 
-## 5. Where Anvil refuses, and why that is the useful part
+## 5. Calling it
 
-The manifest made the *safety* semantics true. It cannot make the *wire* true,
-and Anvil now says so rather than letting you find out in production:
+The manifest made the safety semantics true. Anvil also speaks the wire:
 
 ```bash
 # [docs-tested]
@@ -165,31 +164,48 @@ WORK=$(mktemp -d)
 node packages/cli/dist/bin-anvil.js compile examples/soap/bank.wsdl \
   --manifest examples/soap/anvil.yaml --service banking \
   --out "$WORK/banking" --root "$WORK"
-# The endpoint the WSDL declares now reaches the model...
+# The endpoint the WSDL declares reaches the model...
 grep -q 'banking.example.com/soap' "$WORK/banking/air.json"
-# ...and certification refuses, because the runtime cannot speak SOAP to it.
+# ...along with the SOAPAction and the namespace-qualified body element.
+grep -q 'http://example.com/banking/TransferFunds' "$WORK/banking/air.json"
+grep -q 'TransferFundsRequest' "$WORK/banking/air.json"
+# And certification no longer refuses the transport.
 node packages/cli/dist/bin-anvil.js certify "$WORK/banking" > "$WORK/out.txt" 2>&1 || true
-grep -q 'safety.protocol-runtime-executable' "$WORK/out.txt"
+grep -q 'safety.protocol-runtime-executable' "$WORK/out.txt" && exit 1
 rm -rf "$WORK"
 ```
 
-Anvil's runtime speaks HTTP with a JSON body. A SOAP call is an XML envelope
-posted to the single endpoint in `<soap:address>`, dispatched by a `SOAPAction`
-header. The paths in this bundle — `/BankingPort/TransferFunds` and its three
-siblings — are coordinates Anvil synthesized to hold four operations apart in a
-path-keyed model. They are not addresses; no SOAP server serves them.
+A call to `TransferFunds` posts this, to the endpoint `<soap:address>` declared
+— not to the `/BankingPort/TransferFunds` path Anvil synthesized to hold four
+operations apart in a path-keyed model:
 
-So this bundle is a reviewed, aligned, self-tested model of the service that
-**will not be certified for deployment** until you declare a facade that really
-does serve those coordinates over HTTP+JSON — `--protocol-facade "<reason>"` on
-the CLI, `ANVIL_PROTOCOL_FACADE` on the servers. Your reason is recorded on
-every execution record. See [Wire protocols](/anvil/guides/wire-protocols/) for the
-full picture, including what real SOAP support would require of the model.
+```xml
+POST /soap
+Content-Type: text/xml; charset=utf-8
+SOAPAction: "http://example.com/banking/TransferFunds"
 
-One honest correction while you are here: the `soap_transport_fault` retry
-condition below is declarable and, today, unreachable — the runtime normalizes
-transport failures to `connection_reset` and `dns_failure` and never emits it.
-It costs nothing and buys nothing until Anvil speaks SOAP.
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <n:TransferFundsRequest xmlns:n="http://example.com/banking">
+      <n:amount>100</n:amount>
+    </n:TransferFundsRequest>
+  </soap:Body>
+</soap:Envelope>
+```
+
+The CLI, the MCP server, and all four generated SDKs send exactly those bytes —
+asserted byte-for-byte, in all four languages, by
+`packages/generators/src/sdk-soap.test.ts`.
+
+A `soap:Fault` comes back as a refusal rather than a result, whatever HTTP
+status it arrives with. Only a `Server` fault is treated as transient; a
+`Client` fault will fail identically on retry, so retrying one would be exactly
+the behaviour the safety contract forbids.
+
+**What Anvil still declines.** Only `document`/`literal` bindings whose messages
+are described by `element`. An `rpc` or `encoded` binding compiles, but records
+no wire binding and stays refused — see
+[Wire protocols](/anvil/guides/wire-protocols/) for why refusing beats guessing.
 
 **If it refuses:** a `confirmation_required` envelope at call time means the
 gate you just declared is working — see

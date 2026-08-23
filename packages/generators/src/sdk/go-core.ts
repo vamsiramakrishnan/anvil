@@ -176,6 +176,9 @@ type OperationSpec struct {
 	// means Path below is a coordinate Anvil synthesized to hold operations
 	// apart, not a wire address.
 	WireProtocol string
+	// Soap is what the envelope must carry, for a SOAP operation. Read from the
+	// WSDL by the compiler; never inferred here.
+	Soap *SoapBinding
 	// Path is the path template with {wire_name} placeholders.
 	Path         string
 	Effect       string

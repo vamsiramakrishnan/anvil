@@ -313,6 +313,37 @@ export function conflictedSafetyPredicates(evidence: Evidence): string[] {
 /* Building blocks                                                            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * What a call to a non-HTTP/JSON source needs on the wire, read from the source
+ * document by the compiler.
+ *
+ * Written only by an adapter, never by a manifest. That is a safety property,
+ * not a convention: `soapAction` becomes a request header whose value no agent
+ * supplies, and every other header value in the runtime comes from validated
+ * agent input or the audited auth merge. Keeping this compiler-owned means the
+ * new header is a fact read out of a WSDL rather than a channel for injecting
+ * arbitrary ones.
+ *
+ * Absent for REST sources, and absent for any binding Anvil declines to encode
+ * — an rpc/encoded SOAP binding records nothing here, which leaves the
+ * transport gate refusing rather than the codec guessing.
+ */
+export const WireBinding = z.object({
+  /** SOAP 1.1 sends this as its own header; 1.2 folds it into the content type. */
+  soapAction: z.string().optional(),
+  /** The SOAP envelope namespace — differs between 1.1 and 1.2. */
+  envelopeNamespace: z.string(),
+  /** Namespace of the body's single child element. */
+  bodyNamespace: z.string(),
+  /** Local name of the body's single child element, e.g. TransferFundsRequest. */
+  bodyElement: z.string(),
+  /** Local name of the expected response body element, when the source declares one. */
+  responseElement: z.string().optional(),
+  contentType: z.string(),
+  soapVersion: z.enum(["1.1", "1.2"]),
+});
+export type WireBinding = z.infer<typeof WireBinding>;
+
 /** Provenance: every operation knows where it came from (spec §5.1). */
 export const SourceRef = z.object({
   kind: SourceKind,
@@ -324,6 +355,13 @@ export const SourceRef = z.object({
   /** JSON pointer / SDL coordinate / WSDL operation name, when applicable. */
   pointer: z.string().optional(),
   uri: z.string().optional(),
+  /**
+   * Optional, never defaulted. `contractHash` parses the whole `AirDocument`,
+   * so a `.default()` here would re-hash every stored AIR the moment it was
+   * re-parsed and expire every certification on disk. Absent must hash exactly
+   * as it did before this field existed.
+   */
+  binding: WireBinding.optional(),
 });
 export type SourceRef = z.infer<typeof SourceRef>;
 

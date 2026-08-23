@@ -274,6 +274,10 @@ func assertWireExecutable(spec OperationSpec, config clientConfig) *Error {
 	if spec.WireProtocol == "http_json" || config.protocolFacade != "" {
 		return nil
 	}
+	// SOAP is speakable exactly when the compiler recovered a binding for it.
+	if spec.WireProtocol == "soap" && spec.Soap != nil {
+		return nil
+	}
 	return &Error{
 		Code:      "unsupported_operation",
 		Operation: spec.ID,
@@ -468,6 +472,30 @@ func buildRequest(spec OperationSpec, payload map[string]any, config clientConfi
 		headers["cookie"] = cookie
 	}
 
+	// A SOAP service serves one endpoint. The path is a coordinate Anvil
+	// synthesized to hold operations apart in a path-keyed model, so it is
+	// deliberately dropped: the address is the base URL, from soap:address.
+	if spec.WireProtocol == "soap" && spec.Soap != nil {
+		// Go maps are unordered, so the field order comes from the contract
+		// rather than from iteration — the four SDKs must emit one envelope.
+		order := make([]string, 0)
+		if spec.Body != nil {
+			for _, field := range spec.Body.Fields {
+				order = append(order, field.WireName)
+			}
+		}
+		for key, value := range soapHeaders(*spec.Soap) {
+			headers[key] = value
+		}
+		headers["accept"] = strings.Split(spec.Soap.ContentType, ";")[0]
+		return builtRequest{
+			url:     strings.TrimSuffix(config.baseURL, "/"),
+			method:  "POST",
+			headers: headers,
+			body:    []byte(buildEnvelope(*spec.Soap, bodyValue, order)),
+		}
+	}
+
 	target := strings.TrimSuffix(config.baseURL, "/") + path
 	if encoded := query.Encode(); encoded != "" {
 		target += "?" + encoded
@@ -573,6 +601,46 @@ func invoke(ctx context.Context, config clientConfig, spec OperationSpec, payloa
 		cancel()
 		if readErr != nil {
 			raw = nil
+		}
+
+		// A soap:Fault is a failure the transport delivered successfully, and
+		// servers send it with 200 as readily as 500 — so the status is not the
+		// answer here, the envelope is. Read before the status branch, or a
+		// faulted 200 would be returned to the caller as a result.
+		if spec.WireProtocol == "soap" && spec.Soap != nil {
+			soapText := string(raw)
+			if fault := soapFaultIn(soapText); fault != nil {
+				// Only a Server fault is transient. A Client fault will fail
+				// identically on retry, and retrying a mutation on one is
+				// exactly what the safety contract forbids.
+				if fault.Retryable && safeToRetry && attempt < maxAttempts {
+					decision := ResolveRetryDelay(attempt, spec.Retry, 0, false, config.random)
+					if !decision.Stop {
+						config.sleep(time.Duration(decision.DelayMs) * time.Millisecond)
+						continue
+					}
+				}
+				return nil, &Error{
+					Code:        "unknown_upstream_error",
+					Operation:   spec.ID,
+					TraceID:     trace,
+					Message:     spec.ID + " failed upstream: " + fault.Message,
+					Retryable:   fault.Retryable,
+					SafeToRetry: safeToRetry,
+				}
+			}
+			if response.StatusCode >= 200 && response.StatusCode < 300 {
+				value, err := decodeEnvelope(*spec.Soap, soapText)
+				if err != nil {
+					return nil, &Error{
+						Code:      "unknown_upstream_error",
+						Operation: spec.ID,
+						TraceID:   trace,
+						Message:   spec.ID + " returned a SOAP response that could not be read.",
+					}
+				}
+				return value, nil
+			}
 		}
 
 		if response.StatusCode >= 200 && response.StatusCode < 300 {

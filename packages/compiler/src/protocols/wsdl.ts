@@ -22,6 +22,7 @@
 import { posix } from "node:path";
 import type { Diagnostic } from "@anvil/air";
 import type { OpenApiDocument } from "../parse.js";
+import { collectSoapBindings, namespacesOf, soapWireBinding } from "./soap-binding.js";
 import { childrenNamed, findAll, localName, parseXml, type XmlElement } from "./xml.js";
 
 type JsonSchemaLike = Record<string, unknown>;
@@ -431,6 +432,11 @@ export function adaptWsdl(
     .map((d) => findAll(d, "documentation")[0]?.text)
     .find((text) => text !== undefined);
 
+  // The wire facts: soapAction, style/use, and the SOAP version, per operation.
+  const soapBindings = collectSoapBindings(docs.definitions);
+  const rootNamespaces = namespacesOf(root);
+  const targetNamespace = root.attrs.targetNamespace ?? "";
+
   const portTypes = docs.definitions.flatMap((d) => findAll(d, "portType"));
   // Operation-name occurrence counts across every portType. Some real WSDLs
   // (Travelport uAPI) give every portType a single operation with the same
@@ -468,6 +474,27 @@ export function adaptWsdl(
       let path = generic ? `/${effectiveName}` : `/${portName}/${opName}`;
       if (generic && paths[path]) path = `/${portName}/${opName}`;
 
+      // The QName the envelope's body element must carry. `element` is already
+      // read into the message model; only its prefix was being discarded.
+      const wire = soapWireBinding({
+        operation: soapBindings.get(opName),
+        requestElement: inputMsg?.parts.find((part) => part.element)?.element,
+        responseElement: outputMsg?.parts.find((part) => part.element)?.element,
+        namespaces: rootNamespaces,
+        targetNamespace,
+      });
+      if (!wire.ok) {
+        diagnostics?.push({
+          level: "warning",
+          code: "soap_binding_unencodable",
+          path: `${portName}.${opName}`,
+          message:
+            `Anvil recorded no wire binding for SOAP operation '${opName}': ${wire.reason}. ` +
+            `The operation still compiles and can be driven against a facade, but Anvil's ` +
+            `runtime will refuse to call the service directly.`,
+        });
+      }
+
       const bodySchema = messageBodySchema(inputMsg, xsd);
       const responseSchema = messageBodySchema(outputMsg, xsd) ?? { type: "object" };
       const opDoc = findAll(operation, "documentation")[0]?.text;
@@ -485,6 +512,7 @@ export function adaptWsdl(
         },
         "x-soap-operation": opName,
         "x-soap-port-type": portName,
+        ...(wire.ok ? { "x-anvil-wire-binding": wire.binding } : {}),
         // The READ_OP name test is a heuristic; classify.ts records it as an
         // adapter assertion with heuristic-grade confidence.
         ...(read ? { "x-anvil-effect": "read" } : {}),

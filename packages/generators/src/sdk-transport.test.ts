@@ -79,6 +79,41 @@ describe("the SDK transport gate", () => {
     expect(drift.join(" ")).toContain("wireProtocol");
   });
 
+  it("catches a client that would dispatch on the wrong SOAP action", () => {
+    // A SOAP 1.1 server dispatches on SOAPAction. A client sending the wrong
+    // one is refused by the service; one sending none is refused outright. Same
+    // class of fact as the confirmation and idempotency flags, and the same
+    // reason to catch it before it ships rather than in production.
+    const manifest = JSON.parse(soap.files["sdk/manifest.json"] ?? "{}");
+    expect(manifest.methods[0].soapAction).toBe("http://example.com/banking/GetAccountBalance");
+    manifest.methods[0].soapAction = "http://example.com/banking/SomethingElse";
+    const drift = sdkGateDrift(
+      { ...soap.files, "sdk/manifest.json": JSON.stringify(manifest, null, 2) },
+      soap.air,
+    );
+    expect(drift.join(" ")).toContain("soapAction");
+  });
+
+  it("emits the envelope builder into all four clients", () => {
+    // Four independent implementations of one envelope. The bytes are compared
+    // across four real toolchains in sdk-soap.test.ts; this is the cheap check
+    // that all four carry it at all, since a builder present in three is a
+    // builder missing from one.
+    const sources: Array<[string, string]> = [
+      ["sdk/typescript/src/soap.ts", "buildEnvelope"],
+      ["sdk/python/anvil_banking/_invoke.py", "build_envelope"],
+      ["sdk/go/soap.go", "buildEnvelope"],
+      ["sdk/java/src/main/java/com/anvil/sdk/banking/Invoker.java", "buildEnvelope"],
+    ];
+    for (const [path, symbol] of sources) {
+      const source = soap.files[path];
+      expect(source, `${path} is missing`).toBeDefined();
+      expect(source ?? "").toContain(symbol);
+      // Every one refuses a DTD, in its own language's idiom.
+      expect(source ?? "").toMatch(/DOCTYPE|doctype/);
+    }
+  });
+
   it("leaves a REST bundle's SDKs alone", () => {
     expect(sdkGateDrift(rest.files, rest.air)).toEqual([]);
   });

@@ -27,13 +27,6 @@ const clock = (iso: string) => () => iso;
 
 const CASES = [
   {
-    name: "SOAP/WSDL",
-    spec: "soap/bank.wsdl",
-    manifest: "soap/anvil.yaml",
-    id: "banking",
-    protocol: "soap",
-  },
-  {
     name: "GraphQL",
     spec: "graphql/schema.graphql",
     manifest: "graphql/anvil.yaml",
@@ -48,6 +41,36 @@ const CASES = [
     protocol: "grpc",
   },
 ] as const;
+
+/** A SOAP service whose binding Anvil deliberately declines: rpc/encoded, with
+ *  its input message described by `type` rather than `element`. */
+const RPC_ENCODED_WSDL = `<?xml version="1.0"?>
+<wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+    xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:tns="urn:legacy" targetNamespace="urn:legacy" name="Legacy">
+  <wsdl:message name="RunInput"><wsdl:part name="job" type="xsd:string"/></wsdl:message>
+  <wsdl:message name="RunOutput"><wsdl:part name="result" type="xsd:string"/></wsdl:message>
+  <wsdl:portType name="LegacyPort">
+    <wsdl:operation name="RunBatch">
+      <wsdl:input message="tns:RunInput"/>
+      <wsdl:output message="tns:RunOutput"/>
+    </wsdl:operation>
+  </wsdl:portType>
+  <wsdl:binding name="LegacyBinding" type="tns:LegacyPort">
+    <soap:binding style="rpc" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <wsdl:operation name="RunBatch">
+      <soap:operation soapAction="urn:legacy/RunBatch"/>
+      <wsdl:input><soap:body use="encoded"/></wsdl:input>
+      <wsdl:output><soap:body use="encoded"/></wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+  <wsdl:service name="Legacy">
+    <wsdl:port name="LegacyPort" binding="tns:LegacyBinding">
+      <soap:address location="https://legacy.example.com/rpc"/>
+    </wsdl:port>
+  </wsdl:service>
+</wsdl:definitions>`;
 
 const compiled = new Map<string, { air: AirDocument; files: Record<string, string> }>();
 
@@ -132,9 +155,55 @@ describe("transport executability", () => {
     expect(air.diagnostics.map((d) => d.code)).not.toContain("unexecutable_transport");
   });
 
-  it("recovers the endpoint the WSDL declares instead of reporting none", () => {
-    const { air } = compiled.get("SOAP/WSDL") ?? {};
-    if (!air) throw new Error("banking did not compile");
+  it("certifies a SOAP bundle now that the runtime can speak to it", async () => {
+    // This assertion used to be the opposite. A SOAP bundle was refused because
+    // Anvil could not put an envelope on the wire; it now can, and the refusal
+    // would be the lie instead.
+    const air = await compile({
+      spec: example("soap/bank.wsdl"),
+      manifest: example("soap/anvil.yaml"),
+      serviceId: "banking",
+    });
+    const files = generateBundle(air).files;
+    const cert = certifyBundle(files, air, { now: clock("2026-01-01T00:00:00.000Z") });
+    const failed = cert.checks
+      .filter((check) => check.status === "failed")
+      .map((check) => check.id);
+    expect(failed).not.toContain("safety.protocol-runtime-executable");
+    expect(staticChecks(air).find((check) => check.id === "static/transport_executable")?.ok).toBe(
+      true,
+    );
+    for (const op of air.operations) {
+      expect(op.sourceRef.binding?.soapAction).toBeDefined();
+    }
+  });
+
+  it("still refuses a SOAP binding it declines to encode", async () => {
+    // rpc/encoded wraps the parts in an operation-named element and carries
+    // per-element type attributes. Both are expressible and neither is
+    // implemented, so the compiler records no binding and the gate holds —
+    // which is the whole posture: refuse rather than encode on a guess.
+    const air = await compile({ spec: RPC_ENCODED_WSDL, serviceId: "legacy" });
+    const approved = air.operations.map((op) => ({ ...op, state: "approved" as const }));
+    const bundleAir = { ...air, operations: approved };
+    expect(approved.every((op) => op.sourceRef.binding === undefined)).toBe(true);
+    expect(air.diagnostics.map((d) => d.code)).toContain("soap_binding_unencodable");
+
+    const cert = certifyBundle(generateBundle(bundleAir).files, bundleAir, {
+      now: clock("2026-01-01T00:00:00.000Z"),
+    });
+    const failed = cert.checks
+      .filter((check) => check.status === "failed")
+      .map((check) => check.id);
+    expect(failed).toContain("safety.protocol-runtime-executable");
+  });
+
+  it("recovers the endpoint the WSDL declares instead of reporting none", async () => {
+    const air = await compile({
+      spec: example("soap/bank.wsdl"),
+      manifest: example("soap/anvil.yaml"),
+      serviceId: "banking",
+    });
     // `<soap:address location="https://banking.example.com/soap">` used to be
     // dropped, so `servers` was `[]` and the generated skill told the operator
     // "the source spec declares no server URL" — false for every WSDL with a

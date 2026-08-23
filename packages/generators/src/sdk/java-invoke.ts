@@ -330,6 +330,10 @@ final class Invoker {
     if ("http_json".equals(spec.wireProtocol) || config.protocolFacade != null) {
       return;
     }
+    // SOAP is speakable exactly when the compiler recovered a binding for it.
+    if ("soap".equals(spec.wireProtocol) && spec.soap != null) {
+      return;
+    }
     throw AnvilException.builder(
             "unsupported_operation",
             spec.id,
@@ -547,6 +551,23 @@ final class Invoker {
     while (base.endsWith("/")) {
       base = base.substring(0, base.length() - 1);
     }
+
+    // A SOAP service serves one endpoint. The path is a coordinate Anvil
+    // synthesized to hold operations apart in a path-keyed model, so it is
+    // deliberately dropped: the address is the base URL, from soap:address.
+    if ("soap".equals(spec.wireProtocol) && spec.soap != null) {
+      headers.putAll(soapHeaders(spec.soap));
+      headers.put("accept", spec.soap.contentType.split(";")[0]);
+      HttpRequest.Builder soapBuilder =
+          HttpRequest.newBuilder(URI.create(base))
+              .timeout(timeout)
+              .method("POST", HttpRequest.BodyPublishers.ofString(buildEnvelope(spec.soap, bodyValue)));
+      for (Map.Entry<String, String> entry : headers.entrySet()) {
+        soapBuilder.header(entry.getKey(), entry.getValue());
+      }
+      return soapBuilder.build();
+    }
+
     target.append(base).append(path);
     for (int index = 0; index < query.size(); index++) {
       target.append(index == 0 ? '?' : '&');
@@ -630,6 +651,35 @@ final class Invoker {
       }
 
       int status = response.statusCode();
+      // A soap:Fault is a failure the transport delivered successfully, and
+      // servers send it with 200 as readily as 500 — so the status is not the
+      // answer here, the envelope is. Read before the status branch, or a
+      // faulted 200 would be returned to the caller as a result.
+      if ("soap".equals(spec.wireProtocol) && spec.soap != null) {
+        SoapFault fault = soapFaultIn(response.body());
+        if (fault != null) {
+          // Only a Server fault is transient. A Client fault will fail
+          // identically on retry, and retrying a mutation on one is exactly
+          // what the safety contract forbids.
+          if (fault.retryable && safeToRetry && attempt < maxAttempts) {
+            Safety.RetryDecision decision =
+                Safety.resolveRetryDelay(attempt, spec.retry, -1L, config.random.getAsDouble());
+            if (!decision.stop && sleep(decision.delayMs)) {
+              continue;
+            }
+          }
+          throw AnvilException.builder(
+                  "unknown_upstream_error", spec.id, spec.id + " failed upstream: " + fault.message)
+              .traceId(trace)
+              .retryable(fault.retryable)
+              .safeToRetry(safeToRetry)
+              .build();
+        }
+        if (status >= 200 && status < 300) {
+          return decodeEnvelope(spec.soap, response.body());
+        }
+      }
+
       if (status >= 200 && status < 300) {
         return Json.parse(response.body());
       }

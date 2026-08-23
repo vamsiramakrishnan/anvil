@@ -54,6 +54,8 @@ export interface SdkManifestMethod {
   /** The wire protocol a real call must speak; anything but `http_json` means
    *  the client refuses rather than posting JSON at a synthesized coordinate. */
   wireProtocol: string;
+  /** Present for a SOAP operation: the action the envelope is dispatched by. */
+  soapAction?: string;
   effect: string;
   idempotency: string;
   retrySafe: boolean;
@@ -92,6 +94,7 @@ export function sdkManifest(plan: SdkPlan): SdkManifest {
       mcpTool: op.mcpToolName,
       http: `${op.httpMethod} ${op.path}`,
       wireProtocol: op.wireProtocol,
+      ...(op.wireBinding ? { soapAction: op.wireBinding.soapAction ?? "" } : {}),
       effect: op.effect,
       idempotency: op.idempotency.mode,
       retrySafe: op.retry.mode === "safe",

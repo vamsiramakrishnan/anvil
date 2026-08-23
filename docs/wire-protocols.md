@@ -1,10 +1,11 @@
 # Wire protocols: what Anvil can actually call
 
-Anvil accepts eight source formats. It can put exactly one wire protocol on the
-wire: **HTTP with a JSON body**.
+Anvil accepts eight source formats. It speaks two wire protocols: **HTTP with a
+JSON body**, and **SOAP** (1.1 and 1.2, document/literal). GraphQL and gRPC it
+refuses, loudly, rather than pretending.
 
-Those two facts were never written down together, and the gap between them was
-invisible. This page is that gap, stated.
+Those facts were once not written down together, and the gap between them was
+invisible. This page is that gap, stated — and closed, for SOAP.
 
 ## What was wrong
 
@@ -18,7 +19,7 @@ no per-operation path has to invent one:
 
 | Source | Synthesized coordinate | What a real call is |
 | --- | --- | --- |
-| WSDL | `POST /BankingPort/TransferFunds` | An XML envelope posted to the single `<soap:address>` endpoint, dispatched by a `SOAPAction` header |
+| WSDL | `POST /BankingPort/TransferFunds` | An XML envelope posted to the single `<soap:address>` endpoint, dispatched by a `SOAPAction` header — **now what Anvil sends** |
 | GraphQL | `POST /graphql/Mutation/checkout` | `{query, variables}` posted to the one GraphQL endpoint; the field name is in the body, never the URL |
 | protobuf | `POST /acme.orders.v1.OrderService/GetOrder` | The path is real — it is gRPC's `:path` — but the body is length-prefixed protobuf over HTTP/2, with `grpc-status` in trailers |
 | MCP (adopted) | *no path, no method* | A `tools/call` over the MCP transport |
@@ -35,7 +36,55 @@ the same `sourceRef` the client sends to. A SOAP bundle whose `service.servers`
 was empty, and which could not have addressed the service at all, certified with
 **38 of 38 checks passing and zero failures**.
 
-## What Anvil does now
+## SOAP works
+
+The WSDL adapter now reads what it used to discard — the `<soap:address>`
+endpoint, the `soapAction`, the SOAP version, and the namespace-qualified QName
+of the body element — and records them on `sourceRef.binding`. A codec in the
+runtime turns that into an envelope, and each of the four SDKs carries the same
+codec in its own decision core.
+
+```xml
+POST /soap
+Content-Type: text/xml; charset=utf-8
+SOAPAction: "http://example.com/banking/TransferFunds"
+
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <n:TransferFundsRequest xmlns:n="http://example.com/banking">
+      <n:amount>100</n:amount>
+    </n:TransferFundsRequest>
+  </soap:Body>
+</soap:Envelope>
+```
+
+Five surfaces, those exact bytes, asserted byte-for-byte across four real
+toolchains in `packages/generators/src/sdk-soap.test.ts`.
+
+**Faults are failures.** A `soap:Fault` arrives inside a successful envelope, and
+servers send one with HTTP 200 as readily as 500 — so the status is not the
+answer. Anvil reads the envelope first, refuses the call, and never records a
+faulted mutation in the idempotency ledger as completed. Only a `Server` fault
+is transient (`soap_transport_fault`, the retry condition AIR has declared since
+the beginning and nothing could previously emit); a `Client` fault will fail
+identically on retry, so retrying one is refused.
+
+**What is still declined.** Only `document`/`literal` bindings whose messages are
+described by `element`. An `rpc` or `encoded` binding, or a message described by
+`type`, records no binding and stays refused with a compile diagnostic naming
+which. That is the posture, not a gap to be embarrassed about: rpc wraps the
+parts in an operation-named element and encoded carries per-element type
+attributes, and encoding either on a guess is how you corrupt a legacy system
+politely.
+
+**Reading XML safely.** Anvil parses SOAP responses with a reader that refuses
+`<!DOCTYPE` and `<!ENTITY` outright — in the runtime, in the TypeScript client
+(Node has no XML parser in its standard library, and the generated SDKs are
+zero-dependency by contract), and via `disallow-doctype-decl` on Java's factory.
+External-entity expansion (XXE) and the billion-laughs denial of service both
+require a DTD, so neither is defended against: both are unparseable.
+
+## What the refusal looks like when it applies
 
 `@anvil/air` models the wire protocol as a fact of its own, derived from the
 source kind in exactly one place. Four surfaces read it:
@@ -52,12 +101,12 @@ source kind in exactly one place. Four surfaces read it:
   rather than restating it, so they cannot reach opposite verdicts.
 
 ```
-$ anvil certify out/banking
+$ anvil certify out/storefront
   safety    FAIL  (7/8 checks)
-    ✗ safety.protocol-runtime-executable: 4 approved operation(s) speak soap,
-      which this runtime cannot put on the wire — a SOAP call is an XML envelope
-      posted to the single endpoint named by <soap:address>, dispatched by a
-      SOAPAction header — not JSON posted to a per-operation path. …
+    ✗ safety.protocol-runtime-executable: 9 approved operation(s) speak graphql,
+      which this runtime cannot put on the wire — a GraphQL call posts
+      {query, variables} to the one GraphQL endpoint; the field name travels in
+      the document body, never in the URL. …
 ```
 
 This makes no call work that did not work before. It converts a green lie into a
@@ -101,21 +150,15 @@ had always silently made.
 - **A REST bundle can still be wrong.** Nothing here checks that an OpenAPI
   path is served or that its schema matches reality. It refuses only protocols
   the runtime provably cannot speak.
-- **The three non-REST examples are now uncertifiable**, deliberately, until
-  either a facade is declared or Anvil grows real codecs. They still compile,
-  inspect, lint, approve, and self-test.
+- **The GraphQL and gRPC examples are uncertifiable**, deliberately, until
+  either a facade is declared or Anvil grows their codecs. They still compile,
+  inspect, lint, approve, and self-test. `examples/soap` certifies.
 
-## What real support would need
+## What the remaining two would need
 
-Refusing is step one. Executing needs the model to carry what the encoding
-needs, and today it does not:
+SOAP is done. The other two need the model to carry what their encoding needs,
+and today it does not:
 
-- **SOAP** needs a constant header (AIR's `Param` has no fixed-value field, and
-  the only constant-header path in the runtime is the audited auth merge), an
-  envelope wrapper (`RequestBody.projection` is only `fields | whole`), and XML
-  namespaces — which the WSDL adapter drops *by explicit design*, because its
-  multi-file XSD merge depends on being namespace-blind. Collapsing four
-  operations onto the single real `/soap` path also breaks the path-keyed map.
 - **GraphQL** needs a selection set, which AIR cannot hold: `output.schema` is
   depth-truncated to keep schemas bounded.
 - **gRPC** needs protobuf field numbers, which the adapter never reads, plus

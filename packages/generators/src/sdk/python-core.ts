@@ -274,6 +274,7 @@ class OperationSpec(object):
         "id",
         "http_method",
         "wire_protocol",
+        "soap",
         "path",
         "effect",
         "params",
@@ -288,6 +289,7 @@ class OperationSpec(object):
         id: str,
         http_method: str,
         wire_protocol: str,
+        soap: Optional[Dict[str, str]],
         path: str,
         effect: str,
         params: List[Dict[str, Any]],
@@ -301,6 +303,9 @@ class OperationSpec(object):
         #: What a real call must speak. Anything but "http_json" means the path
         #: below is a coordinate Anvil synthesized, not a wire address.
         self.wire_protocol = wire_protocol
+        #: For a SOAP operation: what the envelope must carry, read from the
+        #: WSDL by the compiler. Never inferred here.
+        self.soap = soap
         #: Path template with {wire_name} placeholders.
         self.path = path
         self.effect = effect
@@ -353,6 +358,9 @@ def assert_wire_executable(spec: OperationSpec, protocol_facade: Optional[str]) 
     sending JSON to it would be a well-formed lie. Mirrors the runtime's own
     gate so every surface refuses alike."""
     if spec.wire_protocol == "http_json" or protocol_facade is not None:
+        return
+    # SOAP is speakable exactly when the compiler recovered a binding for it.
+    if spec.wire_protocol == "soap" and spec.soap:
         return
     raise AnvilError(
         code="unsupported_operation",
@@ -501,6 +509,19 @@ def build_request(
     if cookie:
         headers["cookie"] = cookie
 
+    # A SOAP service serves one endpoint. The path is a coordinate Anvil
+    # synthesized to hold operations apart in a path-keyed model, so it is
+    # deliberately dropped: the address is the base URL, from soap:address.
+    if spec.wire_protocol == "soap" and spec.soap:
+        headers.update(soap_headers(spec.soap))
+        headers["accept"] = spec.soap["contentType"].split(";")[0]
+        return {
+            "url": base_url.rstrip("/") or "/",
+            "method": "POST",
+            "headers": headers,
+            "body": build_envelope(spec.soap, body_value).encode("utf-8"),
+        }
+
     url = base_url.rstrip("/") + path
     if query:
         url = url + "?" + urllib.parse.urlencode(query)
@@ -600,6 +621,34 @@ def invoke(
             sleep(delay_ms / 1000.0)
             attempt += 1
             continue
+
+        # A soap:Fault is a failure the transport delivered successfully, and
+        # servers send it with 200 as readily as 500 — so the status is not the
+        # answer here, the envelope is. Read before the status branch, or a
+        # faulted 200 would be returned to the caller as a result.
+        if spec.wire_protocol == "soap" and spec.soap:
+            soap_text = raw.decode("utf-8", "replace") if raw else ""
+            fault = soap_fault(soap_text)
+            if fault is not None:
+                # Only a Server fault is transient. A Client fault will fail
+                # identically on retry, and retrying a mutation on one is
+                # exactly what the safety contract forbids.
+                if fault["retryable"] and safe_to_retry and attempt < max_attempts:
+                    action, delay_ms = resolve_retry_delay(attempt, spec.retry, None, rng)
+                    if action != "stop":
+                        sleep(delay_ms / 1000.0)
+                        attempt += 1
+                        continue
+                raise AnvilError(
+                    code="unknown_upstream_error",
+                    operation=spec.id,
+                    trace_id=trace,
+                    message="%s failed upstream: %s" % (spec.id, fault["message"]),
+                    retryable=bool(fault["retryable"]),
+                    safe_to_retry=safe_to_retry,
+                )
+            if status is not None and 200 <= status < 300:
+                return decode_envelope(spec.soap, soap_text)
 
         if status is not None and 200 <= status < 300:
             return _decode(raw)

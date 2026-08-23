@@ -65,10 +65,10 @@ export type WireExecutability =
 
 const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
   soap:
-    "a SOAP call is an XML envelope posted to the single endpoint named by " +
-    "<soap:address>, dispatched by a SOAPAction header — not JSON posted to a " +
-    "per-operation path. Anvil synthesized this path from the WSDL port and " +
-    "operation names; no SOAP server serves it",
+    "Anvil speaks SOAP, but only for a document/literal binding whose messages " +
+    "are described by element. This operation carries no wire binding, which " +
+    "means its WSDL declared a shape Anvil declines to encode rather than " +
+    "encode wrongly — check the compile diagnostics for which",
   graphql:
     "a GraphQL call posts {query, variables} to the one GraphQL endpoint — the " +
     "field name travels in the document body, never in the URL. Anvil " +
@@ -99,6 +99,11 @@ const NEXT_ACTION =
 export function wireExecutability(op: Operation): WireExecutability {
   const protocol = wireProtocolFor(op.sourceRef);
   if (protocol === RUNTIME_WIRE_PROTOCOL) return { ok: true };
+  // SOAP is executable exactly when the compiler recovered a wire binding from
+  // the source document. A binding is absent for the shapes the WSDL adapter
+  // declines to encode — rpc, encoded, or a message described by type rather
+  // than element — so those keep refusing rather than being encoded on a guess.
+  if (protocol === "soap" && op.sourceRef.binding !== undefined) return { ok: true };
   return {
     ok: false,
     protocol,

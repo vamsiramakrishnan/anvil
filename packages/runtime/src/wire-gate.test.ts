@@ -153,3 +153,65 @@ describe("transport gate", () => {
     });
   });
 });
+
+/**
+ * The codec seam is a refactor, and a refactor's only obligation is that
+ * nothing moved. The assertion is against literal expected bytes rather than
+ * anything recomputed from AIR — an expectation derived from the same model as
+ * the code under test moves with the bug instead of catching it, which is the
+ * exact tautology that let a non-executable bundle certify 38/38.
+ */
+describe("the codec seam preserves HTTP/JSON byte-for-byte", () => {
+  it("sends the same method, url, headers and body it always did", async () => {
+    const transport = new MockTransport(() => ok({ ok: true }));
+    const res = await execute(
+      op({
+        sourceRef: { kind: "openapi", path: "/widgets/{widget_id}/parts", method: "post" },
+        effect: { kind: "mutation", resource: "part", risk: "low", reversible: true },
+        confirmation: { required: false },
+        idempotency: { mode: "natural", keyDerivation: "none" },
+        input: {
+          params: [
+            { name: "widget_id", in: "path", required: true, schema: { type: "string" } },
+            { name: "expand", in: "query", required: false, schema: { type: "string" } },
+            { name: "X-Tenant", in: "header", required: false, schema: { type: "string" } },
+          ],
+          body: {
+            contentType: "application/json",
+            required: true,
+            schema: { type: "object", properties: { label: { type: "string" } } },
+            projection: "fields",
+            fields: [{ name: "label", required: true, schema: { type: "string" } }],
+          },
+        },
+      }),
+      { input: { widget_id: "w 1", expand: "a b", x_tenant: "acme", label: "left" } },
+      { ...baseCtx, transport, ledger: new InMemoryLedger() },
+    );
+
+    expect(res.outcome).toBe("success");
+    const sent = transport.requests[0];
+    expect(sent?.method).toBe("POST");
+    expect(sent?.url).toBe("https://banking.example.com/widgets/w%201/parts?expand=a+b");
+    expect(sent?.headers["content-type"]).toBe("application/json");
+    expect(sent?.headers.accept).toBe("application/json");
+    expect(sent?.headers["X-Tenant"]).toBe("acme");
+    expect(sent?.body).toBe('{"label":"left"}');
+  });
+
+  it("decodes a JSON response, and a non-JSON body as its own text", async () => {
+    const transport = new MockTransport(() => ({
+      status: 200,
+      headers: {},
+      body: "not json at all",
+    }));
+    const res = await execute(
+      op({ sourceRef: { kind: "openapi", path: "/thing", method: "get" } }),
+      { input: {} },
+      { ...baseCtx, transport, ledger: new InMemoryLedger() },
+    );
+    expect(res.outcome).toBe("success");
+    if (res.outcome !== "success") throw new Error("expected success");
+    expect(res.data).toBe("not json at all");
+  });
+});

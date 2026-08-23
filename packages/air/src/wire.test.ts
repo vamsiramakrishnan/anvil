@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SourceKind } from "./enums.js";
-import { Operation as OperationSchema } from "./schema.js";
+import { contractHash } from "./hash.js";
+import { AirDocument, Operation as OperationSchema } from "./schema.js";
 import {
   RUNTIME_WIRE_PROTOCOL,
   unexecutableWireFailures,
@@ -85,5 +86,75 @@ describe("wire protocol", () => {
       expect(soap).toContain(id);
     }
     expect(failures.find((f) => f.includes("graphql"))).toContain("svc.four.get");
+  });
+});
+
+describe("the wire binding is hash-neutral when absent", () => {
+  it("does not change contractHash for a document that has none", () => {
+    // The reason `binding` is `.optional()` and never `.default()`. `contractHash`
+    // parses the whole AirDocument, so a default would materialise the key on
+    // every re-parse and expire every certification on disk the day this field
+    // shipped. This test is what stops someone "tidying" it into a default.
+    const doc = {
+      anvilVersion: "0.1.0",
+      service: {
+        id: "svc",
+        name: "svc",
+        version: "1.0.0",
+        servers: [],
+        source: { kind: "openapi" },
+      },
+      operations: [op("openapi")],
+      capabilities: [],
+      workflows: [],
+      diagnostics: [],
+    };
+    const withoutKey = AirDocument.parse(structuredClone(doc));
+    const withUndefined = AirDocument.parse({
+      ...structuredClone(doc),
+      operations: [
+        {
+          ...op("openapi"),
+          sourceRef: { kind: "openapi", path: "/thing", method: "get", binding: undefined },
+        },
+      ],
+    });
+    expect(contractHash(withUndefined)).toBe(contractHash(withoutKey));
+  });
+
+  it("does change it once a binding is actually recorded", () => {
+    // The other half: a recorded binding is a material fact about the call, so
+    // it must move the hash. A field that never moves the hash is a field
+    // certification cannot attest to.
+    const base = {
+      anvilVersion: "0.1.0",
+      service: { id: "svc", name: "svc", version: "1.0.0", servers: [], source: { kind: "wsdl" } },
+      operations: [op("wsdl")],
+      capabilities: [],
+      workflows: [],
+      diagnostics: [],
+    };
+    const bound = structuredClone(base) as Record<string, never> & typeof base;
+    bound.operations = [
+      {
+        ...op("wsdl"),
+        sourceRef: {
+          kind: "wsdl",
+          path: "/thing",
+          method: "get",
+          binding: {
+            soapAction: "urn:Do",
+            envelopeNamespace: "http://schemas.xmlsoap.org/soap/envelope/",
+            bodyNamespace: "urn:svc",
+            bodyElement: "DoRequest",
+            contentType: "text/xml; charset=utf-8",
+            soapVersion: "1.1",
+          },
+        },
+      },
+    ] as typeof bound.operations;
+    expect(contractHash(AirDocument.parse(bound))).not.toBe(
+      contractHash(AirDocument.parse(structuredClone(base))),
+    );
   });
 });

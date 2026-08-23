@@ -1,6 +1,7 @@
 import type { SdkOperation, SdkPlan } from "./plan.js";
 import { errorsModule, invokeModule, safetyModule, specModule } from "./python-core.js";
 import { safetyNotes, wrap } from "./shared.js";
+import { needsSoap, PYTHON_SOAP } from "./soap.js";
 
 /**
  * The Python SDK — a zero-dependency package over `urllib.request`.
@@ -20,7 +21,12 @@ export function generatePythonSdk(plan: SdkPlan): Record<string, string> {
     [`${root}/${pkg}/_safety.py`]: safetyModule(),
     [`${root}/${pkg}/spec.py`]: specModule(),
     [`${root}/${pkg}/operations.py`]: operationsModule(plan),
-    [`${root}/${pkg}/_invoke.py`]: invokeModule(),
+    // The SOAP helpers live in the same module that calls them. Python
+    // resolves module-level names at call time, so definition order is
+    // irrelevant, and a REST service never carries them at all.
+    [`${root}/${pkg}/_invoke.py`]: needsSoap(plan.operations)
+      ? `${invokeModule()}\n${PYTHON_SOAP}`
+      : invokeModule(),
     [`${root}/${pkg}/client.py`]: clientModule(plan),
   };
 }
@@ -136,6 +142,7 @@ function operationsModule(plan: SdkPlan): string {
         id=${p(op.id)},
         http_method=${p(op.httpMethod)},
         wire_protocol=${p(op.wireProtocol)},
+        soap=${op.wireBinding ? `{"soapAction": ${p(op.wireBinding.soapAction ?? "")}, "envelopeNamespace": ${p(op.wireBinding.envelopeNamespace)}, "bodyNamespace": ${p(op.wireBinding.bodyNamespace)}, "bodyElement": ${p(op.wireBinding.bodyElement)}, "responseElement": ${p(op.wireBinding.responseElement ?? "")}, "contentType": ${p(op.wireBinding.contentType)}, "soapVersion": ${p(op.wireBinding.soapVersion)}}` : "None"},
         path=${p(op.path)},
         effect=${p(op.effect)},
         params=[

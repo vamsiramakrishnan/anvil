@@ -117,6 +117,11 @@ export function sdkGateDrift(files: Record<string, string>, air: AirDocument): s
       // four SDKs agree with the CLI and MCP server covers what a call IS, and
       // not only whether the caller was allowed to make it.
       "wireProtocol",
+      // The action a SOAP envelope is dispatched by. A client that sends the
+      // wrong one is refused by the service; a client that sends none is
+      // refused by a 1.1 server outright. Same class of fact as the gates
+      // above, and the same reason to catch it before it ships.
+      "soapAction",
     ] as const) {
       if (got[gate] !== want[gate]) {
         drift.push(

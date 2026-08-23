@@ -107,6 +107,21 @@ export interface SdkOperation {
    * enforce it from the same row the CLI and MCP server read from AIR.
    */
   wireProtocol: WireProtocol;
+  /**
+   * What a call to this operation needs on the wire, when the source is not
+   * HTTP/JSON. Carried per operation so every emitter reads the same row the
+   * runtime reads from AIR — no emitter resolves a namespace or an action of
+   * its own, which is what keeps five independent clients byte-identical.
+   */
+  wireBinding?: {
+    soapAction?: string;
+    envelopeNamespace: string;
+    bodyNamespace: string;
+    bodyElement: string;
+    responseElement?: string;
+    contentType: string;
+    soapVersion: string;
+  };
   /** Path template with `{wire_name}` placeholders, exactly as AIR carries it. */
   path: string;
   effect: "read" | "mutation";
@@ -433,6 +448,7 @@ export function sdkPlan(air: AirDocument): SdkPlan {
       description: commentLine(op.description, op.displayName),
       httpMethod: (op.sourceRef.method ?? "get").toUpperCase(),
       wireProtocol: wireProtocolFor(op.sourceRef),
+      ...(op.sourceRef.binding ? { wireBinding: op.sourceRef.binding } : {}),
       path: op.sourceRef.path ?? "/",
       effect: op.effect.kind,
       action: op.effect.action,

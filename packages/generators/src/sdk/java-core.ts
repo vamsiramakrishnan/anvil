@@ -359,6 +359,9 @@ public final class OperationSpec {
    * address.
    */
   public final String wireProtocol;
+  /** For a SOAP operation: what the envelope must carry. Read from the WSDL by
+   *  the compiler; never inferred here. */
+  public final Invoker.SoapBinding soap;
   /** The path template with {wire_name} placeholders. */
   public final String path;
   public final String effect;
@@ -372,6 +375,7 @@ public final class OperationSpec {
       String id,
       String httpMethod,
       String wireProtocol,
+      Invoker.SoapBinding soap,
       String path,
       String effect,
       Param[] params,
@@ -382,6 +386,7 @@ public final class OperationSpec {
     this.id = id;
     this.httpMethod = httpMethod;
     this.wireProtocol = wireProtocol;
+    this.soap = soap;
     this.path = path;
     this.effect = effect;
     this.params = Collections.unmodifiableList(Arrays.asList(params));
