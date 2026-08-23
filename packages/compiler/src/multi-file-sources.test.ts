@@ -134,13 +134,27 @@ describe("multi-file Swagger 2.0", () => {
   });
 
   it("refuses a reference to a file the snapshot does not carry", async () => {
-    // Never a partial compile: a definition Anvil could not read is a contract
-    // it does not have, and silently dropping it would ship a smaller surface
-    // than the source describes.
+    // Caught by source-reference resolution, before the bundler ever runs.
     const { "models.yaml": _dropped, ...missing } = swaggerFiles;
     await expect(
       compileSource(sourceOf(missing, "api.yaml", "swagger"), { serviceId: "widgets" }),
-    ).rejects.toThrow(/resolve/i);
+    ).rejects.toThrow(/resolve source references/i);
+  });
+
+  it("refuses a reference into a file that exists but has no such definition", async () => {
+    // The bundler's own refusal, and the only one that reaches it: the file
+    // resolves, so nothing upstream objects, and a pointer at a definition that
+    // is not there would otherwise be dropped in silence — shipping a surface
+    // smaller than the source describes with nothing to say so.
+    const dangling = SWAGGER_ENTRY.replace(
+      "schema: { $ref: './models.yaml#/definitions/Widget' }",
+      "schema: { $ref: './models.yaml#/definitions/Nope' }",
+    );
+    await expect(
+      compileSource(sourceOf({ ...swaggerFiles, "api.yaml": dangling }, "api.yaml", "swagger"), {
+        serviceId: "widgets",
+      }),
+    ).rejects.toThrow(/Swagger 2\.0 references.*definitions\/Nope/s);
   });
 });
 
