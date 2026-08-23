@@ -273,6 +273,9 @@ class OperationSpec(object):
     __slots__ = (
         "id",
         "http_method",
+        "wire_protocol",
+        "soap",
+        "graphql",
         "path",
         "effect",
         "params",
@@ -286,6 +289,9 @@ class OperationSpec(object):
         self,
         id: str,
         http_method: str,
+        wire_protocol: str,
+        soap: Optional[Dict[str, str]],
+        graphql: Optional[Dict[str, str]],
         path: str,
         effect: str,
         params: List[Dict[str, Any]],
@@ -296,6 +302,15 @@ class OperationSpec(object):
     ) -> None:
         self.id = id
         self.http_method = http_method
+        #: What a real call must speak. Anything but "http_json" means the path
+        #: below is a coordinate Anvil synthesized, not a wire address.
+        self.wire_protocol = wire_protocol
+        #: For a SOAP operation: what the envelope must carry, read from the
+        #: WSDL by the compiler. Never inferred here.
+        self.soap = soap
+        #: For a GraphQL operation: the document compiled from the SDL. Posted
+        #: as handed, so no caller value is ever interpolated into a query.
+        self.graphql = graphql
         #: Path template with {wire_name} placeholders.
         self.path = path
         self.effect = effect
@@ -339,6 +354,31 @@ RESERVED_HEADERS = frozenset(
 
 def _trace_id() -> str:
     return str(uuid.uuid4())
+
+
+def assert_wire_executable(spec: OperationSpec, protocol_facade: Optional[str]) -> None:
+    """The transport gate. The confirmation gate asks whether the caller intends
+    the effect; this asks whether this client can express the call at all. A
+    SOAP, GraphQL, or gRPC operation arrives with a path Anvil invented, and
+    sending JSON to it would be a well-formed lie. Mirrors the runtime's own
+    gate so every surface refuses alike."""
+    if spec.wire_protocol == "http_json" or protocol_facade is not None:
+        return
+    # SOAP is speakable exactly when the compiler recovered a binding for it.
+    if spec.wire_protocol == "soap" and spec.soap:
+        return
+    if spec.wire_protocol == "graphql" and spec.graphql:
+        return
+    raise AnvilError(
+        code="unsupported_operation",
+        operation=spec.id,
+        trace_id=_trace_id(),
+        message="%s speaks %s, which this client cannot put on the wire: %s %s is a "
+        "coordinate Anvil synthesized, not an address the service serves. Point "
+        "base_url at a facade that really does serve it over HTTP+JSON and pass "
+        "protocol_facade with the reason, so the assumption is recorded."
+        % (spec.id, spec.wire_protocol, spec.http_method, spec.path),
+    )
 
 
 def assert_confirmed(spec: OperationSpec, confirm: bool) -> None:
@@ -476,6 +516,36 @@ def build_request(
     if cookie:
         headers["cookie"] = cookie
 
+    # A SOAP service serves one endpoint. The path is a coordinate Anvil
+    # synthesized to hold operations apart in a path-keyed model, so it is
+    # deliberately dropped: the address is the base URL, from soap:address.
+    if spec.wire_protocol == "soap" and spec.soap:
+        headers.update(soap_headers(spec.soap))
+        headers["accept"] = spec.soap["contentType"].split(";")[0]
+        return {
+            "url": base_url.rstrip("/") or "/",
+            "method": "POST",
+            "headers": headers,
+            "body": build_envelope(spec.soap, body_value).encode("utf-8"),
+        }
+
+    # A GraphQL service serves one endpoint; the field name travels in the
+    # document, never in the URL.
+    if spec.wire_protocol == "graphql" and spec.graphql:
+        headers["content-type"] = "application/json"
+        headers["accept"] = "application/json"
+        payload = {
+            "query": spec.graphql["document"],
+            "operationName": spec.graphql["operationName"],
+            "variables": body_value if isinstance(body_value, dict) else {},
+        }
+        return {
+            "url": base_url.rstrip("/") or "/",
+            "method": "POST",
+            "headers": headers,
+            "body": json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+        }
+
     url = base_url.rstrip("/") + path
     if query:
         url = url + "?" + urllib.parse.urlencode(query)
@@ -504,6 +574,7 @@ def invoke(
     payload: Dict[str, Any],
     *,
     base_url: str,
+    protocol_facade: Optional[str] = None,
     auth: Optional[Dict[str, Any]],
     token: Optional[str],
     user_agent: str,
@@ -517,6 +588,7 @@ def invoke(
 ) -> Any:
     """Run one operation end to end: gate, build, send, and retry only where
     the contract proves retrying is safe."""
+    assert_wire_executable(spec, protocol_facade)
     assert_confirmed(spec, confirm)
     payload = {key: value for key, value in payload.items() if value is not None}
     resolved_key = resolve_idempotency_key(spec, idempotency_key, payload)
@@ -573,6 +645,60 @@ def invoke(
             sleep(delay_ms / 1000.0)
             attempt += 1
             continue
+
+        # A soap:Fault is a failure the transport delivered successfully, and
+        # servers send it with 200 as readily as 500 — so the status is not the
+        # answer here, the envelope is. Read before the status branch, or a
+        # faulted 200 would be returned to the caller as a result.
+        if spec.wire_protocol == "soap" and spec.soap:
+            soap_text = raw.decode("utf-8", "replace") if raw else ""
+            fault = soap_fault(soap_text)
+            if fault is not None:
+                # Only a Server fault is transient. A Client fault will fail
+                # identically on retry, and retrying a mutation on one is
+                # exactly what the safety contract forbids.
+                if fault["retryable"] and safe_to_retry and attempt < max_attempts:
+                    action, delay_ms = resolve_retry_delay(attempt, spec.retry, None, rng)
+                    if action != "stop":
+                        sleep(delay_ms / 1000.0)
+                        attempt += 1
+                        continue
+                raise AnvilError(
+                    code="unknown_upstream_error",
+                    operation=spec.id,
+                    trace_id=trace,
+                    message="%s failed upstream: %s" % (spec.id, fault["message"]),
+                    retryable=bool(fault["retryable"]),
+                    safe_to_retry=safe_to_retry,
+                )
+            if status is not None and 200 <= status < 300:
+                return decode_envelope(spec.soap, soap_text)
+
+        # GraphQL reports failures inside a 200 with an errors array — the same
+        # danger as a SOAP fault. A partial response counts as a failure.
+        if spec.wire_protocol == "graphql" and spec.graphql:
+            try:
+                envelope = json.loads(raw.decode("utf-8", "replace")) if raw else {}
+            except Exception:
+                envelope = {}
+            gql_errors = envelope.get("errors") if isinstance(envelope, dict) else None
+            if isinstance(gql_errors, list) and gql_errors:
+                first = gql_errors[0] if isinstance(gql_errors[0], dict) else {}
+                raise AnvilError(
+                    code="unknown_upstream_error",
+                    operation=spec.id,
+                    trace_id=trace,
+                    message="%s failed upstream: %s"
+                    % (spec.id, first.get("message") or "the service returned a GraphQL error"),
+                    retryable=False,
+                    safe_to_retry=safe_to_retry,
+                )
+            if status is not None and 200 <= status < 300:
+                data = envelope.get("data") if isinstance(envelope, dict) else None
+                root = spec.graphql.get("rootField") or ""
+                if isinstance(data, dict) and root in data:
+                    return data[root]
+                return data
 
         if status is not None and 200 <= status < 300:
             return _decode(raw)

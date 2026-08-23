@@ -602,6 +602,77 @@ describe("anvil sdk speaks the operator envelope", () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* The observed-reality lane                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `anvil observe` is the only lane that talks to a customer's running system,
+ * which makes its refusals the ones an operator is most likely to hit in a
+ * pipeline they cannot attach a terminal to. It speaks the envelope from the
+ * first commit.
+ */
+describe("anvil observe speaks the operator envelope", () => {
+  it("refuses a missing bundle as a document, not as prose on stderr", async () => {
+    const config = join(work, "observe.json");
+    writeFileSync(config, JSON.stringify({ baseUrl: "http://127.0.0.1:1" }), "utf8");
+    const result = await run([
+      "observe",
+      join(work, "no-such-bundle"),
+      "--config",
+      config,
+      "--json",
+    ]);
+    const envelope = expectRefusalContract(result, "observe missing bundle --json");
+    expect(envelope.reportType).toBe("anvil.observe-error");
+    expect(envelope.code).toBe("observe_bundle_missing");
+  });
+
+  it("refuses an unreadable config as a document", async () => {
+    const dir = join(work, "observe-bundle");
+    const spec = join(work, "observe-svc.yaml");
+    writeFileSync(
+      spec,
+      `openapi: 3.0.3\ninfo: { title: Svc, version: 1.0.0 }\npaths:\n  /things:\n    get:\n      operationId: listThings\n      tags: [things]\n      responses: { "200": { description: ok } }\n`,
+      "utf8",
+    );
+    mkdirSync(dir, { recursive: true });
+    expect((await run(["compile", spec, "--out", dir, "--service", "svc"])).code).toBe(0);
+    const result = await run(["observe", dir, "--config", join(work, "absent.json"), "--json"]);
+    const envelope = expectRefusalContract(result, "observe bad config --json");
+    expect(envelope.reportType).toBe("anvil.observe-error");
+    expect(envelope.code).toBe("observe_config_invalid");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Adopting someone else's MCP server                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `anvil adopt` reaches out to a server Anvil does not own, which makes its
+ * refusals the ones most likely to be hit unattended — an endpoint that moved,
+ * a token that expired. They speak the envelope.
+ */
+describe("anvil adopt speaks the operator envelope", () => {
+  it("refuses an unknown mode as a document, not as prose on stderr", async () => {
+    const result = await run(["adopt", "http://127.0.0.1:1/mcp", "--mode", "absorb", "--json"]);
+    const envelope = expectRefusalContract(result, "adopt --mode absorb --json");
+    expect(envelope.reportType).toBe("anvil.adopt-error");
+    expect(envelope.code).toBe("adopt_mode_unknown");
+  });
+
+  it("refuses an unreachable endpoint as a document", async () => {
+    const result = await run(["adopt", "http://127.0.0.1:1/mcp", "--json"]);
+    const envelope = expectRefusalContract(result, "adopt unreachable --json");
+    expect(envelope.reportType).toBe("anvil.adopt-error");
+    expect(typeof envelope.code).toBe("string");
+    // A Moodle MCP endpoint carries its token in the query string; a refusal
+    // that echoed the endpoint would leak it into CI output.
+    expect(result.stdout + result.stderr).not.toContain("wstoken");
+  }, 60_000);
+});
+
+/* -------------------------------------------------------------------------- */
 /* The ratchet: no --json command arrives unnoticed                            */
 /* -------------------------------------------------------------------------- */
 

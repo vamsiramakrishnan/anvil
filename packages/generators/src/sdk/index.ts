@@ -51,6 +51,13 @@ export interface SdkManifestMethod {
   cli: string;
   mcpTool: string;
   http: string;
+  /** The wire protocol a real call must speak; anything but `http_json` means
+   *  the client refuses rather than posting JSON at a synthesized coordinate. */
+  wireProtocol: string;
+  /** Present for a SOAP operation: the action the envelope is dispatched by. */
+  soapAction?: string;
+  /** Present for a GraphQL operation: the query document every client posts. */
+  graphqlDocument?: string;
   effect: string;
   idempotency: string;
   retrySafe: boolean;
@@ -88,6 +95,13 @@ export function sdkManifest(plan: SdkPlan): SdkManifest {
       cli: op.cliCommand,
       mcpTool: op.mcpToolName,
       http: `${op.httpMethod} ${op.path}`,
+      wireProtocol: op.wireProtocol,
+      ...(op.wireBinding?.protocol === "soap"
+        ? { soapAction: op.wireBinding.soapAction ?? "" }
+        : {}),
+      ...(op.wireBinding?.protocol === "graphql"
+        ? { graphqlDocument: op.wireBinding.document }
+        : {}),
       effect: op.effect,
       idempotency: op.idempotency.mode,
       retrySafe: op.retry.mode === "safe",

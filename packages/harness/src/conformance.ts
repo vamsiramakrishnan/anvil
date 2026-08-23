@@ -251,6 +251,11 @@ export async function runConformance(
         args: [join(dir, "mcp", "server.js")],
         env: {
           ANVIL_BASE_URL: base,
+          // See runLoopback for why this is a declaration and not a workaround:
+          // the generated mock is built from the same synthesized coordinates
+          // the bundle sends to, so it genuinely is a protocol facade for them.
+          ANVIL_PROTOCOL_FACADE:
+            "Anvil's generated mock, built from the same AIR coordinates the bundle sends to",
           ANVIL_ENV: "dev",
           ANVIL_ALLOWED_HOSTS: "127.0.0.1",
           ANVIL_AUTH_PROFILE: "default",
@@ -800,6 +805,12 @@ function spawnCliProcess(
         ANVIL_ALLOWED_HOSTS: "127.0.0.1",
         ANVIL_AUTH_PROFILE: "default",
         ANVIL_LEDGER: "",
+        // Both surfaces must be told the same thing, or wire-agreement would
+        // compare a refusal against a request and call that a disagreement.
+        // That the CLI needed it too is the property this lane exists to prove:
+        // the surfaces share one executor and therefore one transport gate.
+        ANVIL_PROTOCOL_FACADE:
+          "Anvil's generated mock, built from the same AIR coordinates the bundle sends to",
         ...credentialEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],

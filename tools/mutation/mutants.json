@@ -236,6 +236,319 @@
       "tests": [
         "packages/generators/src/sdk.test.ts"
       ]
+    },
+    {
+      "id": "observe/read-only-probe",
+      "file": "packages/harness/src/observe.ts",
+      "control": "The observed-reality lane drives reads only; a mutation is never sent to a customer's running system, whatever the config lists.",
+      "find": "  if (op.effect.kind !== \"read\") {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/harness/src/observe.test.ts"
+      ]
+    },
+    {
+      "id": "observe/claim-license",
+      "file": "packages/harness/src/observe.ts",
+      "control": "A read may only claim that an operation the application does not serve is gone; recorded traffic's high reliability must not launder a claim the observation never earned.",
+      "find": "  if (observation.outcome === \"unreachable\") {",
+      "replace": "  if (true) {",
+      "tests": [
+        "packages/harness/src/observe.test.ts"
+      ]
+    },
+    {
+      "id": "postman/endpoint-collision-reported",
+      "file": "packages/compiler/src/protocols/postman.ts",
+      "control": "A Postman request dropped because its (path, method) is already taken is reported, never lost silently.",
+      "find": "      diagnostics?.push({",
+      "replace": "      [].push({",
+      "tests": [
+        "packages/compiler/src/protocols/postman.bugbash.test.ts"
+      ]
+    },
+    {
+      "id": "adopt/conservative-classification",
+      "file": "packages/compiler/src/adopt/air.ts",
+      "control": "An adopted MCP tool without a readOnlyHint is a non-idempotent mutation that confirms — unknown side effect beats assumed safety.",
+      "find": "  if (a.readOnlyHint) {",
+      "replace": "  if (a.readOnlyHint !== false) {",
+      "tests": [
+        "packages/cli/src/cmd-adopt.test.ts"
+      ]
+    },
+    {
+      "id": "wire/runtime-transport-gate",
+      "file": "packages/runtime/src/wire-gate.ts",
+      "control": "The runtime refuses an operation whose wire protocol it cannot speak. Without it a SOAP/GraphQL/gRPC operation is posted as JSON to a coordinate Anvil invented — a well-formed lie, indistinguishable on the wire from a real request.",
+      "find": "  if (verdict.ok || facade !== undefined) return undefined;",
+      "replace": "  if (true) return undefined;",
+      "tests": [
+        "packages/runtime/src/wire-gate.test.ts"
+      ]
+    },
+    {
+      "id": "wire/protocol-map-total",
+      "file": "packages/air/src/wire.ts",
+      "control": "Each non-REST source kind maps to the protocol it actually speaks. Collapsing wsdl to http_json is exactly the conflation this module exists to end: a source format is not a wire protocol.",
+      "find": "  wsdl: \"soap\",",
+      "replace": "  wsdl: \"http_json\",",
+      "tests": [
+        "packages/air/src/wire.test.ts",
+        "packages/runtime/src/wire-gate.test.ts",
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "wire/certification-refuses",
+      "file": "packages/generators/src/certify.ts",
+      "control": "Certification refuses a bundle whose wire protocol the runtime cannot speak. Without it a SOAP bundle with servers: [] certifies with zero failures, because every hermetic lane compares the bundle against a mock generated from the same AIR.",
+      "find": "  const unexecutableWire = unexecutableWireFailures(air.operations);",
+      "replace": "  const unexecutableWire: string[] = [];",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "wire/compile-time-diagnostic",
+      "file": "packages/compiler/src/validate.ts",
+      "control": "The compiler says at compile time what the runtime and certification will refuse later, so an unexecutable transport is not first heard about at deploy.",
+      "find": "    const wire = wireExecutability(op);",
+      "replace": "    const wire = { ok: true } as ReturnType<typeof wireExecutability>;",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "wire/wsdl-endpoint-extracted",
+      "file": "packages/compiler/src/protocols/wsdl.ts",
+      "control": "The endpoint a WSDL declares in <soap:address> reaches AIR. Dropping it made service.servers empty and the generated skill state, falsely, that the source declares no server URL.",
+      "find": "  const servers = [...new Set(addresses)].map((url) => ({ url }));",
+      "replace": "  const servers: Array<{ url: string }> = [];",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/transport-gate",
+      "file": "packages/generators/src/sdk/typescript-core.ts",
+      "control": "The generated clients refuse an operation whose wire protocol they cannot speak. The SDKs do not go through the runtime's executor, so a gate that lived only there would leave four surfaces free to send the lie.",
+      "find": "  if (spec.wireProtocol === \"http_json\" || context.protocolFacade !== undefined) return;",
+      "replace": "  return;",
+      "tests": [
+        "packages/generators/src/sdk-transport.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/transport-gate-certified",
+      "file": "packages/generators/src/sdk/certify.ts",
+      "control": "Certification checks the SDK manifest's declared wire protocol against AIR, so a client that believes it speaks HTTP+JSON to a SOAP operation is caught rather than shipped.",
+      "find": "      \"wireProtocol\",",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/sdk-transport.test.ts"
+      ]
+    },
+    {
+      "id": "adopt/endpoint-credential-stripped",
+      "file": "packages/compiler/src/adopt/snapshot.ts",
+      "control": "A credential carried in the endpoint's query string never reaches the snapshot, the AIR, or anything derived from them. An MCP endpoint's token lives there by convention (Moodle's ?wstoken=), and these artifacts are written to disk and echoed by --json.",
+      "find": "      endpoint: credentialFreeEndpoint(capture.endpoint),",
+      "replace": "      endpoint: capture.endpoint,",
+      "tests": [
+        "packages/compiler/src/adopt/adopt.test.ts"
+      ]
+    },
+    {
+      "id": "observe/empty-contract-is-not-a-contract",
+      "file": "packages/harness/src/observe.ts",
+      "control": "A document that compiles to no operations is not the application's contract. Accepting one turns an auth wall or a wrong path into a successful acquisition whose diff reports every operation as removed — a wall of false blocking drift that reads like a real emergency.",
+      "find": "  if (fresh.operations.length === 0) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/harness/src/observe.test.ts"
+      ]
+    },
+    {
+      "id": "observe/unknown-probe-id-fails",
+      "file": "packages/harness/src/observe.ts",
+      "control": "A probeReads id this bundle does not define fails the lane. Dropping it silently is how a typo, or an operation renamed out of the bundle, quietly stops covering the endpoint it was added for while CI keeps going green.",
+      "find": "      unknown.length === 0 &&",
+      "replace": "",
+      "tests": [
+        "packages/harness/src/observe.test.ts"
+      ]
+    },
+    {
+      "id": "observe/errored-probe-fails",
+      "file": "packages/harness/src/observe.ts",
+      "control": "A probe that answered with an error fails the lane. The operation was asked and nothing was learned about whether the compiled model matches the application, which is not the same as agreement.",
+      "find": "      errored === 0 &&",
+      "replace": "",
+      "tests": [
+        "packages/harness/src/observe.test.ts"
+      ]
+    },
+    {
+      "id": "observe/unacquired-contract-fails",
+      "file": "packages/harness/src/observe.ts",
+      "control": "A contract endpoint that was configured but could not be read fails the lane. Not asking is a legitimate posture; asking and getting no answer is a question the operator believes was answered.",
+      "find": "      (!acquisition.attempted || acquisition.ok),",
+      "replace": "      true,",
+      "tests": [
+        "packages/harness/src/observe.test.ts"
+      ]
+    },
+    {
+      "id": "soap/body-element-qualified",
+      "file": "packages/runtime/src/codec-soap.ts",
+      "control": "The envelope's body element carries the namespace the WSDL declares. An unqualified element is the single commonest reason a real SOAP server rejects an otherwise correct request.",
+      "find": "    `<${BODY_PREFIX}:${binding.bodyElement} xmlns:${BODY_PREFIX}=\"${escapeXml(binding.bodyNamespace)}\">` +",
+      "replace": "    `<${BODY_PREFIX}:${binding.bodyElement}>` +",
+      "tests": [
+        "packages/runtime/src/codec-soap.test.ts"
+      ]
+    },
+    {
+      "id": "soap/soapaction-sent",
+      "file": "packages/runtime/src/codec-soap.ts",
+      "control": "SOAP 1.1 sends the action as its own quoted header; a 1.1 server dispatches on it and answers a missing one with a fault.",
+      "find": "    soapaction: `\"${binding.soapAction}\"`,",
+      "replace": "",
+      "tests": [
+        "packages/runtime/src/codec-soap.test.ts"
+      ]
+    },
+    {
+      "id": "soap/fault-is-not-a-result",
+      "file": "packages/runtime/src/executor.ts",
+      "control": "A soap:Fault is refused rather than returned as a result. Servers deliver one with HTTP 200 as readily as 500, so the status is not the answer — and reporting one as success would record a failed mutation in the idempotency ledger as completed.",
+      "find": "        const fault = isFaultAware(codec) ? codec.faultIn(op, res) : undefined;",
+      "replace": "        const fault = undefined;",
+      "tests": [
+        "packages/runtime/src/codec-soap.test.ts"
+      ]
+    },
+    {
+      "id": "soap/client-fault-never-retried",
+      "file": "packages/runtime/src/codec-soap.ts",
+      "control": "Only a transport-layer Server fault is transient. An application fault — a rejected transfer, an unknown account — fails identically on retry, and retrying a mutation on one is exactly what the safety contract forbids.",
+      "find": "    const retryable = localName(code).toLowerCase() === \"server\";",
+      "replace": "    const retryable = true;",
+      "tests": [
+        "packages/runtime/src/codec-soap.test.ts"
+      ]
+    },
+    {
+      "id": "soap/rpc-encoded-refused",
+      "file": "packages/compiler/src/protocols/soap-binding.ts",
+      "control": "Only document/literal is claimed. An rpc binding wraps the parts in an operation-named element and encoded carries per-element type attributes; neither is implemented, so the compiler records no binding and the transport gate keeps refusing rather than the codec encoding on a guess.",
+      "find": "  if (operation.style !== \"document\") {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "soap/xml-reader-refuses-doctype",
+      "file": "packages/runtime/src/xml.ts",
+      "control": "The XML reader refuses DOCTYPE and ENTITY declarations. A DTD is the prerequisite for both external-entity expansion (XXE) and the billion-laughs denial of service; refusing it makes both unparseable rather than defended against.",
+      "find": "    if (source.startsWith(\"<!DOCTYPE\", i) || source.startsWith(\"<!ENTITY\", i)) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/runtime/src/xml.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/soap-envelopes-agree",
+      "file": "packages/generators/src/sdk/certify.ts",
+      "control": "Certification compares each generated client's declared SOAPAction against AIR. A client that dispatches on the wrong action is refused by the service; one that sends none is refused by a 1.1 server outright.",
+      "find": "      \"soapAction\",",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/sdk-transport.test.ts"
+      ]
+    },
+    {
+      "id": "soap/encoded-use-refused",
+      "file": "packages/compiler/src/protocols/soap-binding.ts",
+      "control": "use=\"encoded\" carries per-element type attributes Anvil does not emit. Refused rather than encoded on a guess.",
+      "find": "  if (operation.use !== \"literal\") {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "soap/type-described-message-refused",
+      "file": "packages/compiler/src/protocols/soap-binding.ts",
+      "control": "A message described by type rather than element gives the envelope no body element QName to qualify. Refused rather than invented.",
+      "find": "  if (!requestElement) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "graphql/arguments-are-variables",
+      "file": "packages/compiler/src/protocols/graphql-binding.ts",
+      "control": "Every argument becomes a declared GraphQL variable, so no caller value is ever interpolated into query text. A value spliced into a statement is a value that can rewrite the statement — the same rule the SQL query policy enforces one layer over.",
+      "find": "    .map((arg: GraphQLArgument) => `$${arg.name}: ${arg.type.toString()}`)",
+      "replace": "    .map((arg: GraphQLArgument) => `$${arg.name}: String`)",
+      "tests": [
+        "packages/generators/src/sdk-graphql.test.ts"
+      ]
+    },
+    {
+      "id": "graphql/subscription-refused",
+      "file": "packages/compiler/src/protocols/graphql-binding.ts",
+      "control": "A subscription is a long-lived stream, not a request and response. Anvil has no streaming client, so it records no binding and the transport gate keeps refusing rather than posting a document nothing can read the answer to.",
+      "find": "  if (kind === \"subscription\") return undefined;",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/sdk-graphql.test.ts"
+      ]
+    },
+    {
+      "id": "graphql/errors-are-not-results",
+      "file": "packages/runtime/src/codec-graphql.ts",
+      "control": "GraphQL reports failures inside a 200 with an errors array. Reported as a result, a failed mutation would be recorded in the idempotency ledger as completed — and a partial response is still a failure, since AIR's output contract describes one shape.",
+      "find": "    if (!Array.isArray(errors) || errors.length === 0) return undefined;",
+      "replace": "    return undefined;",
+      "tests": [
+        "packages/runtime/src/codec-graphql.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/graphql-documents-agree",
+      "file": "packages/generators/src/sdk/certify.ts",
+      "control": "Certification compares each generated client's query document against AIR. A client posting a different document is asking a different question.",
+      "find": "      \"graphqlDocument\",",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/sdk-transport.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/streaming-refused",
+      "file": "packages/compiler/src/protocols/grpc.ts",
+      "control": "A streaming RPC records no binding. A stream is not a request and a response, and no JSON transcoder turns one into a single exchange.",
+      "find": "      const unary = !method.requestStream && !method.responseStream;",
+      "replace": "      const unary = true;",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/needs-a-declared-transcoder",
+      "file": "packages/air/src/wire.ts",
+      "control": "gRPC is refused until an operator declares a transcoder. Its path is real, which makes the temptation to just call it strong — and a native gRPC server rejects JSON over HTTP/1.1, so calling it anyway is the original bug.",
+      "find": "  if (protocol === \"graphql\" && op.sourceRef.binding?.protocol === \"graphql\") return { ok: true };",
+      "replace": "  if (protocol === \"graphql\" || protocol === \"grpc\") return { ok: true };",
+      "tests": [
+        "packages/runtime/src/wire-gate.test.ts",
+        "packages/cli/src/transport-certify.test.ts"
+      ]
     }
   ]
 }

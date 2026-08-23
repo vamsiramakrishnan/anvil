@@ -7,6 +7,7 @@ import {
   type Operation,
   operationIdempotencyKeySchemaIssue,
   resolveIdempotencyCarrier,
+  wireExecutability,
 } from "@anvil/air";
 
 export interface ValidationResult {
@@ -47,6 +48,25 @@ export function validate(operations: Operation[]): ValidationResult {
     if (seenCommands.has(op.cli.command))
       flag("error", "duplicate_cli_command", `Duplicate CLI command '${op.cli.command}'.`);
     seenCommands.add(op.cli.command);
+
+    // Say at compile time what the runtime and certification will refuse later.
+    // Deliberately a warning that does NOT force review: an operation whose wire
+    // protocol Anvil cannot speak is still legitimately compiled, inspected,
+    // linted, and driven against a facade (Anvil's own generated mock is one).
+    // What it may not do is be certified for deployment, and that judgement
+    // belongs to certification, which can see the whole bundle. The point here
+    // is only that the fact stops being invisible.
+    const wire = wireExecutability(op);
+    if (!wire.ok) {
+      flag(
+        "warning",
+        "unexecutable_transport",
+        `Operation '${op.id}' speaks ${wire.protocol}, which Anvil's runtime cannot put on the wire: ${wire.reason}.`,
+      );
+      notes.push(
+        `Wire protocol ${wire.protocol} is not executable by Anvil's HTTP/JSON runtime. ${wire.nextAction}`,
+      );
+    }
 
     const carrier = resolveIdempotencyCarrier(op);
 

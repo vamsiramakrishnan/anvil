@@ -415,7 +415,7 @@ describe("idempotency body-carrier container validation", () => {
   it("auto-creates missing intermediate containers for a multi-segment body carrier path", async () => {
     const transport = new MockTransport(() => ok({ id: "order_1" }));
     const deepOp = op({
-      sourceRef: { kind: "graphql", path: "/graphql/Mutation/checkout", method: "post" },
+      sourceRef: { kind: "openapi", path: "/checkout", method: "post" },
       confirmation: { required: false },
       idempotency: {
         mode: "required",

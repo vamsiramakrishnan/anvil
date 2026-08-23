@@ -353,6 +353,18 @@ public final class OperationSpec {
 
   public final String id;
   public final String httpMethod;
+  /**
+   * What a real call must speak. Anything but "http_json" means the path below
+   * is a coordinate Anvil synthesized to hold operations apart, not a wire
+   * address.
+   */
+  public final String wireProtocol;
+  /** For a SOAP operation: what the envelope must carry. Read from the WSDL by
+   *  the compiler; never inferred here. */
+  public final Invoker.SoapBinding soap;
+  /** For a GraphQL operation: the document compiled from the SDL. Posted as
+   *  handed, so no caller value is ever interpolated into a query. */
+  public final Invoker.GraphqlBinding graphql;
   /** The path template with {wire_name} placeholders. */
   public final String path;
   public final String effect;
@@ -365,6 +377,9 @@ public final class OperationSpec {
   public OperationSpec(
       String id,
       String httpMethod,
+      String wireProtocol,
+      Invoker.GraphqlBinding graphql,
+      Invoker.SoapBinding soap,
       String path,
       String effect,
       Param[] params,
@@ -374,6 +389,9 @@ public final class OperationSpec {
       Confirmation confirmation) {
     this.id = id;
     this.httpMethod = httpMethod;
+    this.wireProtocol = wireProtocol;
+    this.graphql = graphql;
+    this.soap = soap;
     this.path = path;
     this.effect = effect;
     this.params = Collections.unmodifiableList(Arrays.asList(params));

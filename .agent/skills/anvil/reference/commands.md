@@ -68,6 +68,20 @@ Options:
 - `--root <ws>` — workspace root for .anvil/sources
 - `--json` — emit one machine-readable object with all four stages
 
+### `anvil adopt`
+`anvil adopt [options] <endpoint>`
+
+Capture an existing MCP server's surface and classify what its tools mean.
+
+Connects to an MCP server, captures its advertised tools, and lowers each one to an AIR operation with a conservative safety classification: absent a readOnlyHint a tool is treated as a non-idempotent mutation that requires confirmation and is never auto-retried, because MCP's tool contract carries no idempotency, confirmation, or effect semantics of its own. Writes the content-addressed surface snapshot, the AIR, the derived capability contracts, the surface signature, and the adoption plan — then `anvil inspect` the result to see what the server has been exposing. The endpoint is an http(s) URL (streamable HTTP) or a command line to spawn (stdio; prefix `stdio:` to force it). Read-only: adoption captures and classifies, it never calls a tool and never regenerates the provider's server.
+
+Options:
+- `--mode <mode>` — adopt | facade | replace — what an eventual build would emit (default: adopt)
+- `--service <id>` — service id for the derived AIR (default: from the server name)
+- `--out <dir>` — write the adoption artifacts here
+- `--header <name:value...>` — header for an HTTP endpoint; ${VAR} resolves from the environment
+- `--json` — emit the adoption outcome as JSON
+
 ### `anvil compile`  *(mutates)*
 `anvil compile [options] [spec]`
 
@@ -861,6 +875,19 @@ With --live <config.json>, probes a REAL deployed MCP endpoint instead of the mo
 
 Options:
 - `--live <config>` — probe a real deployed MCP endpoint named in this JSON config
+- `--json` — emit the full report as JSON
+
+### `anvil observe`
+`anvil observe [options] <dir>`
+
+Compare a bundle against the running application it was compiled from.
+
+Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json.
+
+Options:
+- `--config <file>` — JSON config naming the running application
+- `--write <manifest>` — write the proposed manifest here instead of printing it
+- `--capture <file>` — save the contract the application served, to re-capture with `anvil source add`
 - `--json` — emit the full report as JSON
 
 ### `anvil benchmark`

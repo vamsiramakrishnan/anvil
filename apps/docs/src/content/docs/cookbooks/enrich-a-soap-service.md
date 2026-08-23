@@ -154,6 +154,59 @@ back.
   generated from the same filled-in model — they cannot disagree about what
   `TransferFunds` means.
 
+## 5. Calling it
+
+The manifest made the safety semantics true. Anvil also speaks the wire:
+
+```bash
+# [docs-tested]
+WORK=$(mktemp -d)
+node packages/cli/dist/bin-anvil.js compile examples/soap/bank.wsdl \
+  --manifest examples/soap/anvil.yaml --service banking \
+  --out "$WORK/banking" --root "$WORK"
+# The endpoint the WSDL declares reaches the model...
+grep -q 'banking.example.com/soap' "$WORK/banking/air.json"
+# ...along with the SOAPAction and the namespace-qualified body element.
+grep -q 'http://example.com/banking/TransferFunds' "$WORK/banking/air.json"
+grep -q 'TransferFundsRequest' "$WORK/banking/air.json"
+# And certification no longer refuses the transport.
+node packages/cli/dist/bin-anvil.js certify "$WORK/banking" > "$WORK/out.txt" 2>&1 || true
+grep -q 'safety.protocol-runtime-executable' "$WORK/out.txt" && exit 1
+rm -rf "$WORK"
+```
+
+A call to `TransferFunds` posts this, to the endpoint `<soap:address>` declared
+— not to the `/BankingPort/TransferFunds` path Anvil synthesized to hold four
+operations apart in a path-keyed model:
+
+```xml
+POST /soap
+Content-Type: text/xml; charset=utf-8
+SOAPAction: "http://example.com/banking/TransferFunds"
+
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <n:TransferFundsRequest xmlns:n="http://example.com/banking">
+      <n:amount>100</n:amount>
+    </n:TransferFundsRequest>
+  </soap:Body>
+</soap:Envelope>
+```
+
+The CLI, the MCP server, and all four generated SDKs send exactly those bytes —
+asserted byte-for-byte, in all four languages, by
+`packages/generators/src/sdk-soap.test.ts`.
+
+A `soap:Fault` comes back as a refusal rather than a result, whatever HTTP
+status it arrives with. Only a `Server` fault is treated as transient; a
+`Client` fault will fail identically on retry, so retrying one would be exactly
+the behaviour the safety contract forbids.
+
+**What Anvil still declines.** Only `document`/`literal` bindings whose messages
+are described by `element`. An `rpc` or `encoded` binding compiles, but records
+no wire binding and stays refused — see
+[Wire protocols](/anvil/guides/wire-protocols/) for why refusing beats guessing.
+
 **If it refuses:** a `confirmation_required` envelope at call time means the
 gate you just declared is working — see
 [Handle a confirmation-required refusal](/anvil/cookbooks/handle-confirmation-required/).

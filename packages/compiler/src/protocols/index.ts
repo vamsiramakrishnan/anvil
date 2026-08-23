@@ -10,6 +10,7 @@
  * content sniff) so Layer 0 can recognize these formats without a full parse.
  * The heavy lifting happens in `adaptProtocol`, called from `parse.ts`.
  */
+import type { Diagnostic } from "@anvil/air";
 import type { OpenApiDocument } from "../parse.js";
 import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
@@ -142,18 +143,26 @@ export function adaptProtocol(
   text: string,
   title?: string,
   imports: AdaptImports = {},
+  /**
+   * Optional sink for adapter-level findings the caller drains into
+   * `ParsedSpec.diagnostics`. The Postman adapter reports requests it had to
+   * drop (`postman_endpoint_collision`); the WSDL adapter reports the paths it
+   * had to invent (`wsdl_synthesized_paths`). Both are facts about the lowering
+   * that no later stage can recover, so they are stated where they happen.
+   */
+  diagnostics?: Diagnostic[],
 ): OpenApiDocument {
   switch (format) {
     case "graphql":
-      return adaptGraphql(text, title);
+      return adaptGraphql(text, title, diagnostics);
     case "protobuf":
-      return adaptProto(text, title, imports.proto);
+      return adaptProto(text, title, imports.proto, diagnostics);
     case "wsdl":
-      return adaptWsdl(text, imports.wsdl, imports.sourcePath);
+      return adaptWsdl(text, imports.wsdl, imports.sourcePath, diagnostics);
     case "discovery":
       return adaptDiscovery(text);
     case "postman":
-      return adaptPostman(text);
+      return adaptPostman(text, diagnostics);
     case "odata":
       return adaptOData(text, title);
   }

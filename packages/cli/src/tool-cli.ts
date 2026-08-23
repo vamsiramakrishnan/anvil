@@ -533,6 +533,8 @@ async function invoke(
 
   const baseUrl = (flags["base-url"] as string) ?? air.service.servers[0]?.url ?? "";
   const allowedHosts = allowedHostsFor(config.allowedHosts, baseUrl, true);
+  const protocolFacade =
+    (flags["protocol-facade"] as string | undefined) ?? env.ANVIL_PROTOCOL_FACADE;
 
   const ctx: ExecuteContext = {
     transport: deps.transport ?? new FetchTransport(),
@@ -549,6 +551,7 @@ async function invoke(
     baseUrl,
     authProfile: (flags["auth-profile"] as string) ?? config.authProfile,
     allowedHosts,
+    ...(protocolFacade !== undefined ? { protocolFacade } : {}),
     env: config.env,
     retries: flags["no-retries"] === true ? false : undefined,
     timeoutMs,
@@ -948,6 +951,11 @@ const GLOBAL_OPERATION_FLAGS = [
   "idempotency-key",
   "auth-profile",
   "base-url",
+  // The operator's stated reason that --base-url really is a facade serving the
+  // synthesized coordinates of a non-HTTP/JSON source (SOAP, GraphQL, gRPC, an
+  // adopted MCP tool) over HTTP+JSON. Without it the runtime refuses those
+  // operations rather than putting a well-formed lie on the wire.
+  "protocol-facade",
   "timeout",
   "input",
   // Route this invocation THROUGH an MCP server instead of executing directly:

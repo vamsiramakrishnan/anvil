@@ -313,6 +313,85 @@ export function conflictedSafetyPredicates(evidence: Evidence): string[] {
 /* Building blocks                                                            */
 /* -------------------------------------------------------------------------- */
 
+export const SoapWireBinding = z.object({
+  protocol: z.literal("soap"),
+  /** SOAP 1.1 sends this as its own header; 1.2 folds it into the content type. */
+  soapAction: z.string().optional(),
+  /** The SOAP envelope namespace — differs between 1.1 and 1.2. */
+  envelopeNamespace: z.string(),
+  /** Namespace of the body's single child element. */
+  bodyNamespace: z.string(),
+  /** Local name of the body's single child element, e.g. TransferFundsRequest. */
+  bodyElement: z.string(),
+  /** Local name of the expected response body element, when the source declares one. */
+  responseElement: z.string().optional(),
+  contentType: z.string(),
+  soapVersion: z.enum(["1.1", "1.2"]),
+});
+export type SoapWireBinding = z.infer<typeof SoapWireBinding>;
+
+export const GraphqlWireBinding = z.object({
+  protocol: z.literal("graphql"),
+  /**
+   * The complete query document, built at compile time from the SDL.
+   *
+   * Stored whole rather than assembled per call, which is what makes GraphQL
+   * cheap where SOAP was expensive: the document is a pure function of the
+   * schema and the field, so the runtime posts a string it was handed and no
+   * surface needs a GraphQL implementation of its own. It also means the
+   * selection set is decided once, reviewably, instead of four times.
+   */
+  document: z.string(),
+  /** The operation name inside the document, for server-side logging and APQ. */
+  operationName: z.string(),
+  /** The root field this operation calls, so a response can be unwrapped. */
+  rootField: z.string(),
+});
+export type GraphqlWireBinding = z.infer<typeof GraphqlWireBinding>;
+
+export const GrpcWireBinding = z.object({
+  protocol: z.literal("grpc"),
+  /** Fully-qualified service name, e.g. acme.orders.v1.OrderService. */
+  service: z.string(),
+  method: z.string(),
+  /**
+   * How a call actually reaches the service.
+   *
+   * `json_transcoded` is the only value Anvil records, and it is a claim about
+   * the *deployment* rather than the source: a transcoder (grpc-gateway,
+   * Envoy's gRPC-JSON filter, Google's HTTP annotations) accepts JSON on the
+   * real gRPC path and speaks protobuf onward. Native gRPC — length-prefixed
+   * protobuf over HTTP/2 with status in trailers — is not something Anvil can
+   * emit from four zero-dependency clients, because Python's standard library
+   * has no HTTP/2 client at all.
+   */
+  transport: z.literal("json_transcoded"),
+});
+export type GrpcWireBinding = z.infer<typeof GrpcWireBinding>;
+
+/**
+ * What a call to a non-HTTP/JSON source needs on the wire, read from the source
+ * document by the compiler.
+ *
+ * Written only by an adapter, never by a manifest. That is a safety property,
+ * not a convention: `soapAction` becomes a request header whose value no agent
+ * supplies, and every other header value in the runtime comes from validated
+ * agent input or the audited auth merge. Keeping this compiler-owned means the
+ * new header is a fact read out of a WSDL rather than a channel for injecting
+ * arbitrary ones — and a GraphQL document is a whole query, which an agent
+ * must never be able to author.
+ *
+ * Absent for REST sources, and absent for any binding Anvil declines to encode
+ * — an rpc/encoded SOAP binding records nothing here, which leaves the
+ * transport gate refusing rather than the codec guessing.
+ */
+export const WireBinding = z.discriminatedUnion("protocol", [
+  SoapWireBinding,
+  GraphqlWireBinding,
+  GrpcWireBinding,
+]);
+export type WireBinding = z.infer<typeof WireBinding>;
+
 /** Provenance: every operation knows where it came from (spec §5.1). */
 export const SourceRef = z.object({
   kind: SourceKind,
@@ -324,6 +403,13 @@ export const SourceRef = z.object({
   /** JSON pointer / SDL coordinate / WSDL operation name, when applicable. */
   pointer: z.string().optional(),
   uri: z.string().optional(),
+  /**
+   * Optional, never defaulted. `contractHash` parses the whole `AirDocument`,
+   * so a `.default()` here would re-hash every stored AIR the moment it was
+   * re-parsed and expire every certification on disk. Absent must hash exactly
+   * as it did before this field existed.
+   */
+  binding: WireBinding.optional(),
 });
 export type SourceRef = z.infer<typeof SourceRef>;
 

@@ -1,6 +1,7 @@
 import type { SdkOperation, SdkPlan } from "./plan.js";
 import { errorsModule, invokeModule, safetyModule, specModule } from "./python-core.js";
 import { safetyNotes, wrap } from "./shared.js";
+import { needsSoap, PYTHON_SOAP } from "./soap.js";
 
 /**
  * The Python SDK — a zero-dependency package over `urllib.request`.
@@ -20,7 +21,12 @@ export function generatePythonSdk(plan: SdkPlan): Record<string, string> {
     [`${root}/${pkg}/_safety.py`]: safetyModule(),
     [`${root}/${pkg}/spec.py`]: specModule(),
     [`${root}/${pkg}/operations.py`]: operationsModule(plan),
-    [`${root}/${pkg}/_invoke.py`]: invokeModule(),
+    // The SOAP helpers live in the same module that calls them. Python
+    // resolves module-level names at call time, so definition order is
+    // irrelevant, and a REST service never carries them at all.
+    [`${root}/${pkg}/_invoke.py`]: needsSoap(plan.operations)
+      ? `${invokeModule()}\n${PYTHON_SOAP}`
+      : invokeModule(),
     [`${root}/${pkg}/client.py`]: clientModule(plan),
   };
 }
@@ -135,6 +141,9 @@ function operationsModule(plan: SdkPlan): string {
     return `    ${p(op.names.snake)}: OperationSpec(
         id=${p(op.id)},
         http_method=${p(op.httpMethod)},
+        wire_protocol=${p(op.wireProtocol)},
+        graphql=${op.wireBinding?.protocol === "graphql" ? `{"document": ${p(op.wireBinding.document)}, "operationName": ${p(op.wireBinding.operationName)}, "rootField": ${p(op.wireBinding.rootField)}}` : "None"},
+        soap=${op.wireBinding?.protocol === "soap" ? `{"soapAction": ${p(op.wireBinding.soapAction ?? "")}, "envelopeNamespace": ${p(op.wireBinding.envelopeNamespace)}, "bodyNamespace": ${p(op.wireBinding.bodyNamespace)}, "bodyElement": ${p(op.wireBinding.bodyElement)}, "responseElement": ${p(op.wireBinding.responseElement ?? "")}, "contentType": ${p(op.wireBinding.contentType)}, "soapVersion": ${p(op.wireBinding.soapVersion)}}` : "None"},
         path=${p(op.path)},
         effect=${p(op.effect)},
         params=[
@@ -204,6 +213,7 @@ class ${className}(object):
     def __init__(
         self,
         base_url: Optional[str] = None,
+        protocol_facade: Optional[str] = None,
         token: Optional[str] = None,
         timeout: float = 30.0,
         opener: Any = None,
@@ -212,6 +222,15 @@ class ${className}(object):
         user_agent: Optional[str] = None,
     ) -> None:
         self.base_url = base_url or DEFAULT_BASE_URL
+        #: Your stated reason that base_url is a facade which really does serve
+        #: the synthesized coordinates of a non-HTTP/JSON source over HTTP+JSON.
+        #: A declaration, never an inference; without it those operations are
+        #: refused rather than sent.
+        self.protocol_facade = (
+            protocol_facade
+            if protocol_facade is not None
+            else os.environ.get("ANVIL_PROTOCOL_FACADE")
+        )
         #: The credential this SDK carries on the wire. Never logged or echoed.
         self._token = token if token is not None else os.environ.get(TOKEN_ENV_VAR)
         self.timeout = timeout
@@ -243,6 +262,7 @@ class ${className}(object):
             OPERATIONS[name],
             payload,
             base_url=self.base_url,
+            protocol_facade=self.protocol_facade,
             auth=_AUTH_CARRIER,
             token=self._token,
             user_agent=self._user_agent,

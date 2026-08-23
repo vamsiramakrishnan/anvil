@@ -111,6 +111,21 @@ export function sdkGateDrift(files: Record<string, string>, air: AirDocument): s
       "humanApproval",
       "idempotencyKeyRequired",
       "retrySafe",
+      // The transport gate is a safety gate like the others: an SDK that
+      // believes it speaks HTTP+JSON to a SOAP operation will send a
+      // well-formed lie rather than refuse. Checked here so the claim that the
+      // four SDKs agree with the CLI and MCP server covers what a call IS, and
+      // not only whether the caller was allowed to make it.
+      "wireProtocol",
+      // The action a SOAP envelope is dispatched by. A client that sends the
+      // wrong one is refused by the service; a client that sends none is
+      // refused by a 1.1 server outright. Same class of fact as the gates
+      // above, and the same reason to catch it before it ships.
+      "soapAction",
+      // The query document every client posts. A client posting a different one
+      // is asking a different question, which is the same class of divergence
+      // the flags above catch and the same reason to catch it before it ships.
+      "graphqlDocument",
     ] as const) {
       if (got[gate] !== want[gate]) {
         drift.push(

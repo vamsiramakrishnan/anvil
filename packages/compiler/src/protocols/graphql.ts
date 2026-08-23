@@ -26,6 +26,8 @@
  * + the type predicates); this module only walks the resulting schema and maps
  * its types to JSON Schema.
  */
+
+import type { Diagnostic } from "@anvil/air";
 import {
   buildSchema,
   type GraphQLArgument,
@@ -46,6 +48,7 @@ import {
   isUnionType,
 } from "graphql";
 import type { OpenApiDocument } from "../parse.js";
+import { graphqlWireBinding } from "./graphql-binding.js";
 
 type JsonSchemaLike = Record<string, unknown>;
 
@@ -133,11 +136,25 @@ function addRoot(
   paths: Record<string, Record<string, unknown>>,
   root: GraphQLObjectType | null | undefined,
   kind: "query" | "mutation" | "subscription",
+  diagnostics?: Diagnostic[],
 ): void {
   if (!root) return;
   for (const [fieldName, field] of Object.entries(root.getFields())) {
     const path = `/graphql/${root.name}/${fieldName}`;
     const reqSchema = argsSchema(field.args);
+    // The query document, compiled from the SDL rather than assembled per call.
+    const wire = graphqlWireBinding(kind, field);
+    if (!wire) {
+      diagnostics?.push({
+        level: "warning",
+        code: "graphql_binding_unencodable",
+        path: `${root.name}.${fieldName}`,
+        message:
+          `Anvil recorded no wire binding for GraphQL ${kind} '${fieldName}': a subscription is a ` +
+          `long-lived stream, and Anvil has no streaming client. The operation still compiles and ` +
+          `can be driven against a facade, but Anvil's runtime will refuse to call it directly.`,
+      });
+    }
     const streaming = kind === "subscription" ? " (streaming subscription)" : "";
     const op: Record<string, unknown> = {
       operationId: fieldName,
@@ -151,6 +168,7 @@ function addRoot(
         },
       },
       "x-graphql-operation": kind,
+      ...(wire ? { "x-anvil-wire-binding": wire } : {}),
       "x-graphql-field": fieldName,
       // Queries/subscriptions are definitionally reads — an adapter assertion
       // classify.ts honors regardless of the (truthful, POST) wire method.
@@ -171,7 +189,11 @@ function addRoot(
  * caller dereferences it, so recursion in the schema graph is handled by the
  * same machinery the OpenAPI path relies on.
  */
-export function adaptGraphql(source: string, title = "GraphQL API"): OpenApiDocument {
+export function adaptGraphql(
+  source: string,
+  title = "GraphQL API",
+  diagnostics?: Diagnostic[],
+): OpenApiDocument {
   // assumeValid: build a partial/example schema without a full type-system
   // validation pass, so a permissive SDL still lowers into a tool surface.
   const schema: GraphQLSchema = buildSchema(source, { assumeValid: true });
@@ -180,9 +202,9 @@ export function adaptGraphql(source: string, title = "GraphQL API"): OpenApiDocu
   const subscription = schema.getSubscriptionType();
 
   const paths: Record<string, Record<string, unknown>> = {};
-  addRoot(paths, query, "query");
-  addRoot(paths, mutation, "mutation");
-  addRoot(paths, subscription, "subscription");
+  addRoot(paths, query, "query", diagnostics);
+  addRoot(paths, mutation, "mutation", diagnostics);
+  addRoot(paths, subscription, "subscription", diagnostics);
 
   const rootNames = new Set(
     [query, mutation, subscription].filter(Boolean).map((t) => (t as GraphQLObjectType).name),

@@ -124,6 +124,16 @@ export async function runLoopback(
         // token endpoint, which is excluded from upstream wire captures.
         env: {
           ANVIL_BASE_URL: base,
+          // The generated mock IS a protocol facade: it is built from the same
+          // `sourceRef` the adapter synthesized, so it serves `/BankingPort/…`
+          // over HTTP+JSON exactly as the runtime would send it. That is why
+          // this lane passed a SOAP bundle that could never make a real call —
+          // and why the runtime's transport gate must be told, in words, that
+          // this particular base URL really does serve those coordinates.
+          // Declaring it here is not a workaround; it is the lane stating the
+          // assumption it has always silently made.
+          ANVIL_PROTOCOL_FACADE:
+            "Anvil's generated mock, built from the same AIR coordinates the bundle sends to",
           ANVIL_ENV: "dev",
           ANVIL_ALLOWED_HOSTS: "127.0.0.1",
           ANVIL_AUTH_PROFILE: "default",

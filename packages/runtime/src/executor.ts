@@ -18,6 +18,7 @@ import {
   type CredentialResolver,
   credentialProfileName,
 } from "./auth.js";
+import { codecFor, isFaultAware } from "./codec.js";
 import {
   hostIsAllowed,
   MAX_UPSTREAM_TIMEOUT_MS,
@@ -51,6 +52,7 @@ import {
   type Transport,
   TransportError,
 } from "./transport.js";
+import { wireFacadeDecision, wireGateError } from "./wire-gate.js";
 
 export interface DryRunPlan {
   operation: string;
@@ -93,6 +95,12 @@ export interface ExecuteContext {
   timeoutMs?: number;
   /** Set false to force single-attempt execution regardless of policy. */
   retries?: boolean;
+  /**
+   * An operator's stated reason that `baseUrl` is a protocol facade serving
+   * the synthesized coordinates of a non-HTTP/JSON source over HTTP+JSON.
+   * The only way past the transport gate, and recorded when used.
+   */
+  protocolFacade?: string;
 }
 
 export interface ExecuteInput {
@@ -309,6 +317,7 @@ function buildRequest(
   baseUrl: string,
   binding: IdempotencyCarrierBinding | undefined,
   idempotencyKey: string | undefined,
+  facadeDeclared: boolean,
 ): HttpRequest {
   let path = op.sourceRef.path ?? "/";
   const query = new URLSearchParams();
@@ -478,16 +487,13 @@ function buildRequest(
     }
   }
 
-  const method = (op.sourceRef.method ?? "get").toUpperCase();
-  const base = baseUrl.replace(/\/$/, "");
-  const qs = query.toString();
-  const url = `${base}${path}${qs ? `?${qs}` : ""}`;
-  const req: HttpRequest = { method, url, headers };
-  if (hasBody) {
-    req.headers["content-type"] = op.input.body?.contentType ?? "application/json";
-    req.body = JSON.stringify(bodyValue);
-  }
-  return req;
+  // The codec turns bound values into bytes. It is resolved rather than
+  // assumed: `wireGateError` above has already refused any operation whose
+  // protocol has no codec, so a missing one here is a programming error, not a
+  // reason to fall back to JSON.
+  const codec = codecFor(op, facadeDeclared);
+  if (!codec) throw new Error(`no wire codec registered for operation '${op.id}'`);
+  return codec.encode(op, { path, query, headers, body: bodyValue, hasBody, baseUrl });
 }
 
 function canonicalUpstream(baseUrl: string): string {
@@ -652,6 +658,18 @@ export async function execute(
     // can never even be planned, regardless of which caller reached us.
     if (op.state !== "approved") {
       return fail(unapprovedOperationError(op, traceId));
+    }
+
+    // 0b. Transport gate — the approval gate asks whether this operation may be
+    // called; this asks whether *this runtime* can make the call faithfully. A
+    // source whose wire protocol is not HTTP+JSON reaches here with a coordinate
+    // Anvil invented, and building a request from it would put a well-formed lie
+    // on the wire. Refuse unless an operator declared a facade that serves it.
+    const wireError = wireGateError(op, traceId, ctx.protocolFacade);
+    if (wireError) return fail(wireError);
+    if (ctx.protocolFacade !== undefined) {
+      const decision = wireFacadeDecision(op, ctx.protocolFacade);
+      if (decision) policyDecisions.push(decision);
     }
 
     if (
@@ -949,7 +967,30 @@ export async function execute(
         }),
       );
     }
-    const baseRequest = buildRequest(op, input, ctx.baseUrl, carrier, key);
+    // Resolved once and shared by request construction and response decoding:
+    // a call must be read back by the same protocol it was written in.
+    const codec = codecFor(op, ctx.protocolFacade !== undefined);
+    if (!codec) {
+      return fail(
+        new AnvilError({
+          code: "unsupported_operation",
+          message:
+            `Operation '${op.id}' has no wire codec registered in this runtime. ` +
+            `The transport gate should have refused it earlier; this is a build defect.`,
+          operation: op.id,
+          traceId,
+          retryable: false,
+        }),
+      );
+    }
+    const baseRequest = buildRequest(
+      op,
+      input,
+      ctx.baseUrl,
+      carrier,
+      key,
+      ctx.protocolFacade !== undefined,
+    );
     if (ctx.timeoutMs) baseRequest.timeoutMs = ctx.timeoutMs;
 
     // 5. Dry-run short-circuits before any auth or side effect.
@@ -1151,11 +1192,44 @@ export async function execute(
         const res = await ctx.transport.send(request);
         lastResponse = res;
         record.responseBytes = byteLen(res.body);
+        const fault = isFaultAware(codec) ? codec.faultIn(op, res) : undefined;
+        if (fault) {
+          // A protocol can deliver a failure inside a successful HTTP
+          // response — a SOAP Fault is the canonical case. The envelope
+          // arrived, so the transport is satisfied, and the operation still
+          // did not happen. Handled on exactly the same terms as a non-2xx
+          // below rather than as a special case: the retry decision, the
+          // ledger reservation, and the terminal envelope all have one
+          // meaning, and a second copy of them would be a second chance to
+          // get the safety rules subtly different.
+          const faultRetryable =
+            fault.retryable &&
+            retriesEnabled &&
+            attempt < maxAttempts &&
+            conditionIsRetryable("soap_transport_fault", op.retries);
+          if (faultRetryable) {
+            await sleep(computeBackoffMs(attempt, op.retries, ctx.rng));
+            continue;
+          }
+          finalError = new AnvilError({
+            code: "unknown_upstream_error",
+            message: `${op.id} failed upstream: ${fault.message}`,
+            operation: op.id,
+            traceId,
+            retryable: fault.retryable,
+            safeToRetry: retrySafe,
+            details: { upstream_fault: fault.code },
+          });
+          break;
+        }
         if (res.status >= 200 && res.status < 300) {
-          const data = applyAgentProjection(
-            res.body ? safeJson(res.body) : null,
-            op.output.agentProjection,
-          );
+          const decoded = codec.decode(op, res);
+          // A protocol can deliver a failure inside a successful HTTP response.
+          // A SOAP Fault is the canonical case: the envelope arrived intact, so
+          // the transport is satisfied, and the operation still did not happen.
+          // Refusing it here — before the ledger records a completion — is what
+          // stops a fault being replayed forever as a successful mutation.
+          const data = applyAgentProjection(decoded, op.output.agentProjection);
           if (reservationOwned && ledgerKey && ctx.ledger) {
             try {
               await ctx.ledger.complete(ledgerKey, data, res.status);
@@ -1291,14 +1365,6 @@ export async function execute(
   } catch (err) {
     if (err instanceof AnvilError) return fail(err);
     return fail(unknownError(op.id, traceId, err));
-  }
-}
-
-function safeJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
   }
 }
 

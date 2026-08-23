@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { registerAdopt } from "./commands/adopt.js";
 import { registerAgentify } from "./commands/agentify.js";
 import { registerApprove } from "./commands/approve.js";
 import { registerAssess } from "./commands/assess.js";
@@ -20,6 +21,7 @@ import { registerInspect } from "./commands/inspect.js";
 import { registerJob } from "./commands/job.js";
 import { registerLegacy } from "./commands/legacy/legacy.js";
 import { registerLint } from "./commands/lint.js";
+import { registerObserve } from "./commands/observe.js";
 import { registerPackage } from "./commands/package.js";
 import { registerPublish } from "./commands/publish.js";
 import { registerRefine } from "./commands/refine.js";
@@ -81,6 +83,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   // after certify would list them in an order a user can't actually follow.
   registerSource(program, ctx);
   registerAgentify(program, ctx);
+  registerAdopt(program, ctx);
   registerCompile(program, ctx);
   registerStatus(program, ctx);
   registerInspect(program, ctx);
@@ -103,6 +106,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerCertify(program, ctx);
   registerSelftest(program, ctx);
   registerConformance(program, ctx);
+  registerObserve(program, ctx);
   registerBenchmark(program, ctx);
   registerSimulate(program, ctx);
   registerDisclosure(program, ctx);

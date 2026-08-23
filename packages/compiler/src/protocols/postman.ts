@@ -49,6 +49,7 @@
  * script blocks is appended to `info.description` and recorded as
  * `x-anvil-postman-scripts`.
  */
+import type { Diagnostic } from "@anvil/air";
 import type { OpenApiDocument } from "../parse.js";
 
 /* ----------------------------- source shapes ----------------------------- */
@@ -955,7 +956,14 @@ function countScripts(collection: PostmanCollection): number {
   return count;
 }
 
-export function adaptPostman(text: string): OpenApiDocument {
+/**
+ * Lower a Postman collection.
+ *
+ * `diagnostics` is an optional sink the caller drains into `ParsedSpec`. It
+ * exists because this adapter can genuinely lose requests — see the collision
+ * note below — and losing them silently was worse than the limitation itself.
+ */
+export function adaptPostman(text: string, diagnostics?: Diagnostic[]): OpenApiDocument {
   let collection: PostmanCollection;
   try {
     collection = JSON.parse(text) as PostmanCollection;
@@ -1040,11 +1048,34 @@ export function adaptPostman(text: string): OpenApiDocument {
       if (scheme) operation.security = [{ [scheme]: [] }];
     }
 
-    // First operation per (path, method) wins — OpenAPI cannot hold two.
+    // First operation per (path, method) wins — the internal model is
+    // path-keyed and OpenAPI cannot hold two. That is a real limitation, and it
+    // used to be a SILENT one: a collection whose requests share an endpoint and
+    // differ only by a query selector (an RPC-over-HTTP API — Moodle's
+    // `?wsfunction=`, a JSON-RPC gateway) collapsed to one operation and said
+    // nothing, so 800 functions could compile to 1 with a clean exit code.
+    // Anvil's whole claim is that a surface never quietly loses an operation, so
+    // the collision is now reported with the request that lost and the one that
+    // holds the slot.
     const pathItem = paths[url.path] ?? {};
     if (pathItem[method] === undefined) {
       pathItem[method] = operation;
       paths[url.path] = pathItem;
+    } else {
+      const holder = (pathItem[method] as { summary?: string; operationId?: string }) ?? {};
+      diagnostics?.push({
+        level: "warning",
+        code: "postman_endpoint_collision",
+        path: `${method.toUpperCase()} ${url.path}`,
+        message:
+          `Postman request ${JSON.stringify(leaf.item.name ?? id)} was dropped: ` +
+          `${method.toUpperCase()} ${url.path} is already taken by ` +
+          `${JSON.stringify(holder.summary ?? holder.operationId ?? "an earlier request")}. ` +
+          "Anvil keys operations by path and method, so requests that differ only by a " +
+          "query selector or body cannot both be represented. Give each one a distinct " +
+          "path (a gateway rewrite, or the synthetic per-operation paths Anvil already " +
+          "uses for SOAP) and re-import.",
+      });
     }
   }
 

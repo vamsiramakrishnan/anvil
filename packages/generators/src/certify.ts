@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AirDocument, Operation } from "@anvil/air";
-import { AirDocument as AirDocumentSchema, authCoherenceIssues, hashCanonical } from "@anvil/air";
+import {
+  AirDocument as AirDocumentSchema,
+  authCoherenceIssues,
+  hashCanonical,
+  unexecutableWireFailures,
+} from "@anvil/air";
 import {
   GatewayImportReceiptView,
   GatewayKind,
@@ -103,6 +108,8 @@ export const LIVE_CONFORMANCE_REPORT_FILE = "conformance.live.report.json";
 export const SIMULATION_REPORT_FILE = "simulation.report.json";
 /** Where `anvil review` writes model-review evidence. */
 export const REVIEW_REPORT_FILE = "review.report.json";
+/** The observed-reality lane's record (`anvil observe`). */
+export const OBSERVE_REPORT_FILE = "observe.report.json";
 /** Where `anvil benchmark` writes deterministic agent-task benchmark results. */
 export const BENCHMARK_REPORT_FILE = "benchmark.report.json";
 
@@ -165,6 +172,7 @@ export const DERIVED_RECORD_FILES: ReadonlySet<string> = new Set([
   LIVE_CONFORMANCE_REPORT_FILE,
   SIMULATION_REPORT_FILE,
   REVIEW_REPORT_FILE,
+  OBSERVE_REPORT_FILE,
   // A benchmark score is a record about the bundle, not part of its content:
   // leaving it inside the identity meant running `anvil benchmark` silently
   // staled every OTHER lane's hash-bound evidence.
@@ -980,6 +988,14 @@ function safetyChecks(files: Record<string, string>, air: AirDocument): Certific
     .flatMap((operation) =>
       authCoherenceIssues(operation.auth).map((issue) => `${operation.id}: ${issue}`),
     );
+  // The auth gate one axis over: `safety.auth-runtime-supported` refuses when the
+  // runtime cannot faithfully carry the CREDENTIAL; nothing refused when it
+  // cannot faithfully speak the WIRE. A WSDL bundle with `servers: []` certified
+  // 38/38 while being unable to make a single call, because every hermetic lane
+  // compares the bundle against a mock built from the same AIR. Kept a separate
+  // check id rather than folded into the auth one: the two refusals have
+  // different next actions, and one check with two remedies is a worse refusal.
+  const unexecutableWire = unexecutableWireFailures(air.operations);
 
   return [
     check(
@@ -1017,6 +1033,12 @@ function safetyChecks(files: Record<string, string>, air: AirDocument): Certific
       "safety",
       incoherentAuthority,
       "every approved operation's auth type, principal, grant, and secret source agree",
+    ),
+    check(
+      "safety.protocol-runtime-executable",
+      "safety",
+      unexecutableWire,
+      "every approved operation's wire protocol is one the HTTP/JSON runtime can actually speak",
     ),
     check(
       "safety.sdk-gates-match",

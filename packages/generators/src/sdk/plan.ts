@@ -12,6 +12,9 @@ import {
   resolveAsyncContract,
   resolveIdempotencyCarrier,
   snakeCase,
+  type WireBinding,
+  type WireProtocol,
+  wireProtocolFor,
 } from "@anvil/air";
 
 /**
@@ -97,6 +100,22 @@ export interface SdkOperation {
   description: string;
   /** Uppercase HTTP method. */
   httpMethod: string;
+  /**
+   * What a real call must speak on the wire. `http_json` for everything the
+   * generated clients can construct; anything else means the coordinate below
+   * is one Anvil synthesized, and the client refuses rather than posting JSON
+   * at an address no server serves. Carried per operation so the four SDKs
+   * enforce it from the same row the CLI and MCP server read from AIR.
+   */
+  wireProtocol: WireProtocol;
+  /**
+   * What a call to this operation needs on the wire, when the source is not
+   * HTTP/JSON. Carried per operation so every emitter reads the same row the
+   * runtime reads from AIR — no emitter resolves a namespace or an action of
+   * its own, which is what keeps five independent clients byte-identical.
+   */
+  wireBinding?: WireBinding;
+
   /** Path template with `{wire_name}` placeholders, exactly as AIR carries it. */
   path: string;
   effect: "read" | "mutation";
@@ -422,6 +441,8 @@ export function sdkPlan(air: AirDocument): SdkPlan {
       displayName: op.displayName,
       description: commentLine(op.description, op.displayName),
       httpMethod: (op.sourceRef.method ?? "get").toUpperCase(),
+      wireProtocol: wireProtocolFor(op.sourceRef),
+      ...(op.sourceRef.binding ? { wireBinding: op.sourceRef.binding } : {}),
       path: op.sourceRef.path ?? "/",
       effect: op.effect.kind,
       action: op.effect.action,

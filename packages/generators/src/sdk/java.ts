@@ -3,6 +3,7 @@ import { invokerFile, safetyFile } from "./java-invoke.js";
 import { jsonFile } from "./java-json.js";
 import type { SdkField, SdkOperation, SdkPlan } from "./plan.js";
 import { safetyNotes, wrap } from "./shared.js";
+import { JAVA_SOAP } from "./soap.js";
 
 /**
  * The Java SDK — a zero-dependency library over `java.net.http`.
@@ -23,7 +24,11 @@ export function generateJavaSdk(plan: SdkPlan): Record<string, string> {
     [`${dir}/CallOptions.java`]: callOptionsFile(pkg),
     [`${dir}/Safety.java`]: safetyFile(pkg),
     [`${dir}/Operations.java`]: operationsFile(pkg, plan),
-    [`${dir}/Invoker.java`]: invokerFile(pkg),
+    // Always appended, unlike the TypeScript module: `OperationSpec.soap` is a
+    // typed field, so `Invoker.SoapBinding` has to exist even in a REST
+    // service. Java permits unused static methods, so the cost is dead code
+    // rather than a compile error.
+    [`${dir}/Invoker.java`]: invokerFile(pkg).replace(/\n\}\n?$/, `\n${JAVA_SOAP}\n}\n`),
     [`${dir}/${clientName(plan)}.java`]: clientFile(pkg, plan),
   };
   for (const op of plan.operations) {
@@ -191,6 +196,17 @@ function operationsFile(pkg: string, plan: SdkPlan): string {
         new OperationSpec(
             ${q(op.id)},
             ${q(op.httpMethod)},
+            ${q(op.wireProtocol)},
+            ${
+              op.wireBinding?.protocol === "graphql"
+                ? `new Invoker.GraphqlBinding(${q(op.wireBinding.document)}, ${q(op.wireBinding.operationName)}, ${q(op.wireBinding.rootField)})`
+                : "null"
+            },
+            ${
+              op.wireBinding?.protocol === "soap"
+                ? `new Invoker.SoapBinding(${q(op.wireBinding.soapAction ?? "")}, ${q(op.wireBinding.envelopeNamespace)}, ${q(op.wireBinding.bodyNamespace)}, ${q(op.wireBinding.bodyElement)}, ${q(op.wireBinding.responseElement ?? "")}, ${q(op.wireBinding.contentType)}, ${q(op.wireBinding.soapVersion)})`
+                : "null"
+            },
             ${q(op.path)},
             ${q(op.effect)},
             new OperationSpec.Param[] {
@@ -332,10 +348,21 @@ public final class ${name} {
   /** Configures a client. The credential is never logged, echoed, or thrown. */
   public static final class Builder {
     private String baseUrl = DEFAULT_BASE_URL;
+    private String protocolFacade = System.getenv("ANVIL_PROTOCOL_FACADE");
     private String token = System.getenv(TOKEN_ENV_VAR);
     private Duration timeout = Duration.ofSeconds(30);
     private HttpClient httpClient;
     private DoubleSupplier random = Math::random;
+
+    /**
+     * Declares that the base URL really does serve the synthesized coordinates
+     * of a non-HTTP/JSON source (SOAP, GraphQL, gRPC) over HTTP+JSON. Without
+     * it those operations are refused rather than sent.
+     */
+    public Builder protocolFacade(String reason) {
+      this.protocolFacade = reason;
+      return this;
+    }
 
     public Builder baseUrl(String value) {
       this.baseUrl = value;
@@ -381,6 +408,7 @@ public final class ${name} {
       return new ${name}(
           new Invoker.Config(
               baseUrl,
+              protocolFacade,
               token,
               ${plan.auth.carrier ? q(plan.auth.carrier.in) : "null"},
               ${plan.auth.carrier ? q(plan.auth.carrier.name) : "null"},

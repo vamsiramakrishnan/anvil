@@ -173,6 +173,12 @@ const allowedHosts = allowedHostsFor(
   baseUrl,
   process.env.ANVIL_BASE_URL !== undefined,
 );
+// A non-HTTP/JSON source (SOAP, GraphQL, gRPC, an adopted MCP tool) reaches the
+// runtime with a coordinate Anvil synthesized. Set ANVIL_PROTOCOL_FACADE to the
+// reason ANVIL_BASE_URL really does serve those coordinates over HTTP+JSON; the
+// runtime refuses those operations otherwise, and records this reason when it
+// does not. It is a declaration, never an inference.
+const protocolFacade = process.env.ANVIL_PROTOCOL_FACADE;
 
 // /webhooks/<service>/<opId> route table (design doc §7/§14) — a pure
 // projection of AIR computed at generation time (resolvedWebhookRoutes,
@@ -305,6 +311,7 @@ function mcpContext() {
     baseUrl,
     authProfile: config.authProfile,
     allowedHosts,
+    protocolFacade,
     env: config.env,
     timeoutMs: config.upstreamTimeoutMs,
     // The per-request caller identity (set by withInboundIdentity around dispatch);
