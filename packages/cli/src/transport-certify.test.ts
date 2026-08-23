@@ -167,6 +167,31 @@ describe("transport executability", () => {
     expect(air.diagnostics.map((d) => d.code)).not.toContain("unexecutable_transport");
   });
 
+  it("refuses a streaming RPC, which no transcoder turns into one exchange", async () => {
+    // Compiled from its own proto: the shipped example declares no streaming
+    // RPC, and asserting otherwise would check the fixture rather than the
+    // behaviour — the same correction the GraphQL subscription case needed.
+    const air = await compile({
+      spec: `syntax = "proto3";
+package acme.stream.v1;
+message Tick { string id = 1; }
+service Feed {
+  rpc GetTick(Tick) returns (Tick);
+  rpc Watch(Tick) returns (stream Tick);
+}`,
+      serviceId: "feed",
+    });
+    const watch = air.operations.find((op) => op.id.includes("watch"));
+    expect(watch).toBeDefined();
+    expect(watch?.sourceRef.binding).toBeUndefined();
+    expect(air.diagnostics.map((d) => d.code)).toContain("grpc_binding_unencodable");
+
+    // The unary RPC beside it is bound, so the refusal is about streaming
+    // rather than about this proto failing to compile.
+    const unary = air.operations.find((op) => op.id.includes("tick") && !op.id.includes("watch"));
+    expect(unary?.sourceRef.binding?.protocol).toBe("grpc");
+  });
+
   it("records the transcoding assumption gRPC has always silently made", async () => {
     // gRPC is the one case where the synthesized path is not synthesized at
     // all: `/package.Service/Method` IS gRPC's own :path. What Anvil cannot do
