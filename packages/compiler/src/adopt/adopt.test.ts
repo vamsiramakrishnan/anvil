@@ -185,3 +185,69 @@ describe("MCP adoption — server drift", () => {
     expect(drift.removedTools).toEqual([]);
   });
 });
+
+/**
+ * An MCP endpoint routinely carries its credential in the query string —
+ * Moodle's documented form is `?wstoken=…`. The snapshot is persisted to
+ * `mcp-surface.json`, copied into AIR's `sourceRef.uri` and `origin.uri`, and
+ * echoed by `anvil adopt --json`. Every one of those is a place a secret must
+ * not land, so the credential is stripped once, at the boundary — not
+ * separately by each consumer, which is how three of the four kept it.
+ */
+describe("a credential in the endpoint never reaches an artifact", () => {
+  const SECRET = "SECRET-WSTOKEN";
+  const TOKENED = `https://moodle.example/webservice/mcp/server.php?wstoken=${SECRET}`;
+
+  it("keeps it out of the snapshot, the AIR, and everything derived from them", async () => {
+    const out = await adoptMcp(
+      TOKENED,
+      new FakeMcpProbe({ [TOKENED]: sampleRefundServer(TOKENED) }),
+      { mode: "adopt" },
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+
+    // The whole result, serialized — the cheapest way to assert that no
+    // consumer added later reintroduces the leak somewhere new.
+    expect(JSON.stringify(out.result)).not.toContain(SECRET);
+    expect(out.result.snapshot.endpoint).toBe("https://moodle.example/webservice/mcp/server.php");
+    for (const op of out.result.air.operations) {
+      expect(op.sourceRef.uri ?? "").not.toContain(SECRET);
+    }
+  });
+
+  it("strips a stdio command's arguments, where a token would also be passed", async () => {
+    const CMD = `node moodle-mcp.js --token ${SECRET}`;
+    const out = await adoptMcp(CMD, new FakeMcpProbe({ [CMD]: sampleRefundServer(CMD) }), {
+      mode: "adopt",
+    });
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(JSON.stringify(out.result)).not.toContain(SECRET);
+    expect(out.result.snapshot.endpoint).toBe("node");
+  });
+
+  it("still tells two hosts apart in what it records", async () => {
+    // Stripping the credential must not collapse two different servers into one
+    // indistinguishable record. The digest is deliberately *not* the thing that
+    // separates them — it is content-addressed over the surface (protocol,
+    // server, transport, capabilities, tools, resources, prompts), so two hosts
+    // serving the same tools share it by design. The recorded endpoint is what
+    // distinguishes them, and it must survive stripping.
+    const a = await adoptMcp(
+      TOKENED,
+      new FakeMcpProbe({ [TOKENED]: sampleRefundServer(TOKENED) }),
+      {
+        mode: "adopt",
+      },
+    );
+    const other = "https://other.example/webservice/mcp/server.php?wstoken=x";
+    const b = await adoptMcp(other, new FakeMcpProbe({ [other]: sampleRefundServer(other) }), {
+      mode: "adopt",
+    });
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    expect(a.result.snapshot.endpoint).not.toBe(b.result.snapshot.endpoint);
+    expect(b.result.snapshot.endpoint).toContain("other.example");
+  });
+});

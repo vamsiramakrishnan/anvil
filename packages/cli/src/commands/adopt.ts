@@ -112,7 +112,9 @@ async function runAdopt(endpoint: string, opts: AdoptOptions, io: CliIO): Promis
         {
           schemaVersion: 1,
           reportType: "anvil.adoption",
-          endpoint,
+          // Never the raw endpoint: it can carry the credential in its query
+          // string, and this document lands in CI logs.
+          endpoint: result.snapshot.endpoint,
           mode: mode.data,
           service: result.air.service.id,
           digest: result.snapshot.digest,
@@ -134,7 +136,7 @@ async function runAdopt(endpoint: string, opts: AdoptOptions, io: CliIO): Promis
     return 0;
   }
 
-  render(endpoint, result, io);
+  render(result, io);
   return 0;
 }
 
@@ -155,7 +157,7 @@ function write(dir: string, result: AdoptionResult, io: CliIO): void {
   io.out(`Wrote the adoption to ${dir} (${Object.keys(files).length} files).`);
 }
 
-function render(endpoint: string, result: AdoptionResult, io: CliIO): void {
+function render(result: AdoptionResult, io: CliIO): void {
   const air = result.air;
   const mutations = air.operations.filter((op) => op.effect.kind === "mutation");
   const confirming = air.operations.filter((op) => op.confirmation.required);
@@ -163,7 +165,7 @@ function render(endpoint: string, result: AdoptionResult, io: CliIO): void {
     `${result.snapshot.server.name} @ ${result.snapshot.server.version} — ${air.operations.length} tool(s) captured over ${result.snapshot.transport}`,
   );
   io.out(
-    `Surface digest ${result.snapshot.digest.slice(0, 16)}… · endpoint ${safeEndpoint(endpoint)}`,
+    `Surface digest ${result.snapshot.digest.slice(0, 16)}… · endpoint ${result.snapshot.endpoint}`,
   );
   io.out("");
   for (const op of air.operations) {
@@ -197,14 +199,4 @@ function render(endpoint: string, result: AdoptionResult, io: CliIO): void {
   io.out(
     "Nothing was called and no server was regenerated. Review with `anvil inspect <out-dir>`.",
   );
-}
-
-/** An MCP endpoint can carry a token in its query string; never echo one. */
-function safeEndpoint(endpoint: string): string {
-  try {
-    const url = new URL(endpoint);
-    return `${url.protocol}//${url.host}${url.pathname}`;
-  } catch {
-    return endpoint.split(/\s+/)[0] ?? endpoint;
-  }
 }

@@ -266,3 +266,48 @@ describe("an application that publishes no contract", () => {
     expect(report.drift).toEqual([]);
   }, 120_000);
 });
+
+/**
+ * A lane that exits 0 having learned nothing is worse than one that reports a
+ * difference. A difference is information; an unexecuted check that passes is
+ * automation being told a question was answered when it was never asked.
+ */
+describe("a check that never ran is not a check that passed", () => {
+  it("refuses a probeReads id this bundle does not define", async () => {
+    const report = await observe({
+      probeReads: ["widgets.widgets.get", "widgets.widgets.gett"],
+      inputs: { "widgets.widgets.get": { widget_id: "w1" } },
+    });
+    const refusal = report.observations.find((o) => o.operationId === "widgets.widgets.gett");
+    expect(refusal?.outcome).toBe("refused");
+    expect(refusal?.detail).toContain("no such operation");
+    expect(report.summary.unknownProbeIds).toBe(1);
+    // The point of the refusal: a typo cannot quietly stop exercising the
+    // endpoint it was added for while CI keeps going green.
+    expect(report.ok).toBe(false);
+  }, 120_000);
+
+  it("fails when the contract endpoint answered but not with a contract", async () => {
+    // 200 with a body that is not a spec — the shape a misconfigured path or an
+    // auth wall that redirects to an HTML login page actually takes.
+    const report = await observe({ contractPath: "/widgets/w1", probeReads: [], inputs: {} });
+    expect(report.contract.attempted).toBe(true);
+    expect(report.contract.ok).toBe(false);
+    expect(report.ok).toBe(false);
+  }, 120_000);
+
+  it("fails when the contract endpoint was configured but is not served", async () => {
+    const report = await observe({ contractPath: "/no-such-contract", probeReads: [], inputs: {} });
+    expect(report.contract.attempted).toBe(true);
+    expect(report.contract.ok).toBe(false);
+    expect(report.ok).toBe(false);
+  }, 120_000);
+
+  it("still passes when no contract was asked for at all", async () => {
+    // Not asking is a legitimate posture — an app may publish nothing. Only a
+    // question asked and not answered is a failure.
+    const report = await observe({ contractPath: undefined, probeReads: [], inputs: {} });
+    expect(report.contract.attempted).toBe(false);
+    expect(report.ok).toBe(true);
+  }, 120_000);
+});

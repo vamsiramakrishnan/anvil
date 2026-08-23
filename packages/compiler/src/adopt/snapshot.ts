@@ -32,6 +32,28 @@ function isPlainObject(v: unknown): boolean {
 }
 
 /** Validate a capture and freeze it into a content-addressed snapshot. */
+/**
+ * The endpoint as it may be written down. An MCP endpoint routinely carries its
+ * credential in the query string — Moodle's `?wstoken=` is the documented form —
+ * and the snapshot is persisted to `mcp-surface.json`, copied into AIR's
+ * `sourceRef.uri`, and echoed by `--json`. Every one of those is a place a
+ * secret must not land, so the credential is stripped here, at the boundary
+ * where the live URL stops being needed: the probe has already connected by the
+ * time this runs, and nothing downstream reconnects from the snapshot.
+ *
+ * Fragments go too, and userinfo (`https://user:pass@host`) with them.
+ */
+export function credentialFreeEndpoint(endpoint: string): string {
+  try {
+    const url = new URL(endpoint);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    // Not a URL — a stdio command line. Keep only the program, since arguments
+    // are exactly where a token would be passed.
+    return endpoint.split(/\s+/)[0] ?? "";
+  }
+}
+
 export function buildMcpSurfaceSnapshot(
   capture: McpCapture,
   options: BuildSnapshotOptions = {},
@@ -114,7 +136,7 @@ export function buildMcpSurfaceSnapshot(
     ok: true,
     snapshot: {
       schemaVersion: 1,
-      endpoint: capture.endpoint,
+      endpoint: credentialFreeEndpoint(capture.endpoint),
       protocolVersion: capture.protocolVersion,
       server: capture.server,
       transport: capture.transport,

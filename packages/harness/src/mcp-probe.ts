@@ -102,13 +102,20 @@ export function mcpProbe(options: ProbeOptions = {}): McpProbe {
     async capture(endpoint: string): Promise<McpCaptureResult> {
       const client = new Client({ name: "anvil-adopt", version: "0.1.0" });
       const timeoutMs = options.timeoutMs ?? 30_000;
-      const deadline = <T>(promise: Promise<T>, label: string): Promise<T> =>
-        Promise.race([
-          promise,
-          new Promise<T>((_, reject) =>
-            setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs),
-          ),
-        ]);
+      // The timer is cleared when the race settles. Left running, a referenced
+      // 30-second timeout keeps the event loop alive after a fast success, and
+      // the CLI sets `process.exitCode` rather than calling `process.exit` — so
+      // `anvil adopt` would appear to hang for the whole timeout after having
+      // already done its work.
+      const deadline = <T>(promise: Promise<T>, label: string): Promise<T> => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const expiry = new Promise<T>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+        });
+        return Promise.race([promise, expiry]).finally(() => {
+          if (timer !== undefined) clearTimeout(timer);
+        });
+      };
       let transport: Transport;
       try {
         transport = options.transportFactory

@@ -40,7 +40,7 @@ anvil observe generated/widgets --config observe.json
 {
   "baseUrl": "http://localhost:8080",
   "contractPath": "/v3/api-docs",
-  "headers": { "Authorization": "Bearer ${WIDGETS_TOKEN}" },
+  "contractHeaders": { "Authorization": "Bearer ${WIDGETS_TOKEN}" },
   "probeReads": ["widgets.widgets.get"],
   "inputs": { "widgets.widgets.get": { "widget_id": "w1" } },
   "env": { "WIDGETS_API_KEY": "${WIDGETS_API_KEY}" }
@@ -50,6 +50,15 @@ anvil observe generated/widgets --config observe.json
 `${VAR}` resolves from the environment at request time, so a config file — a
 thing people commit — never carries a secret. The report records the target as a
 host only, because a base URL can carry a query-string credential.
+
+The two credential settings are deliberately separate, and the names say which
+is which. `contractHeaders` authenticates the **contract fetch** — a plain HTTP
+GET Anvil makes itself. `env` authenticates the **probes**, which do not go
+through that path at all: they run through the bundle's own generated MCP
+server, which resolves credentials the way every other Anvil surface does, from
+the auth profile the operation declares. Set the environment variable that
+profile reads. Injecting headers around it would route probe traffic through a
+path no real caller uses, which is the opposite of what this lane is for.
 
 Useful flags: `--write <manifest>` saves the proposal instead of printing it,
 `--capture <file>` saves the contract the application served, and `--json` emits

@@ -65,10 +65,17 @@ export const ObserveConfig = z.object({
    */
   contractPath: z.string().optional(),
   /**
-   * Headers for the contract fetch and the probes. `${VAR}` resolves from the
-   * environment at request time, so no secret is written here.
+   * Headers for the CONTRACT FETCH only. `${VAR}` resolves from the environment
+   * at request time, so no secret is written here.
+   *
+   * Deliberately not the probes'. The probes run through the bundle's own
+   * generated MCP server, which resolves credentials the way every other Anvil
+   * surface does — from the auth profile the operation declares, reading the
+   * environment. Injecting arbitrary headers around that would route probe
+   * traffic through a path no other caller uses, which is the opposite of what
+   * this lane is for. Give the probes their credential through `env`.
    */
-  headers: z.record(z.string(), z.string()).default({}),
+  contractHeaders: z.record(z.string(), z.string()).default({}),
   /**
    * Operation ids whose READ is safe to actually invoke against this app.
    * Empty by default. A read can still cost money, page someone, or return
@@ -133,8 +140,13 @@ export const ObserveReport = z.object({
     unreachable: z.number().int().nonnegative(),
     contractGaps: z.number().int().nonnegative(),
     driftItems: z.number().int().nonnegative(),
+    /** Probes that answered with an error — asked, but nothing learned. */
+    errored: z.number().int().nonnegative().default(0),
+    /** Configured probe ids this bundle does not define. */
+    unknownProbeIds: z.number().int().nonnegative().default(0),
   }),
-  /** False when the app contradicted the contract in a way that needs a human. */
+  /** False when the app contradicted the contract in a way that needs a human,
+   *  or when a check the operator configured never actually ran. */
   ok: z.boolean(),
 });
 export type ObserveReport = z.infer<typeof ObserveReport>;
@@ -247,7 +259,7 @@ async function observeContract(
   let text: string;
   try {
     const response = await withTimeout(
-      fetchImpl(url, { headers: resolveHeaders(config.headers) }),
+      fetchImpl(url, { headers: resolveHeaders(config.contractHeaders) }),
       timeoutMs,
       "contract fetch",
     );
@@ -294,6 +306,28 @@ async function observeContract(
       drift: [],
     };
   }
+  // A document that compiles to nothing is not the application's contract. An
+  // auth wall that answers 200 with an HTML login page, or a path that serves
+  // some unrelated JSON, both land here — and both would otherwise be reported
+  // as a successful acquisition whose diff says every operation was removed.
+  // That is a wall of false blocking drift from a misconfigured path, which
+  // reads exactly like a real emergency.
+  if (fresh.operations.length === 0) {
+    return {
+      acquisition: {
+        attempted: true,
+        url,
+        sha256,
+        ok: false,
+        detail:
+          "the endpoint answered, but what it served declares no operations — " +
+          "it is not this application's contract. Check contractPath, and whether " +
+          "an auth wall answered in the contract's place.",
+      },
+      drift: [],
+    };
+  }
+
   // The same differ `anvil drift` uses. Two contracts, one comparison rule —
   // an observed-drift item and a re-compile drift item mean the same thing.
   const drift = diffContracts(air, fresh);
@@ -362,6 +396,29 @@ export async function runObserve(
   const listed = air.operations.filter((op) => config.probeReads.includes(op.id));
   const toProbe: Operation[] = [];
   const refused: Operation[] = [];
+
+  // An id in probeReads that matches nothing in AIR is the same failure the
+  // loop below refuses loudly, arriving one step earlier: the operator believes
+  // that operation is being exercised. Dropping it silently is how a typo, or
+  // an operation renamed out of the bundle, quietly stops covering the endpoint
+  // it was added for — while the report still says the lane passed.
+  const known = new Set(air.operations.map((op) => op.id));
+  const unknown = config.probeReads.filter((id) => !known.has(id));
+  for (const id of unknown) {
+    observations.push({
+      operationId: id,
+      tool: id,
+      outcome: "refused",
+      observedFields: [],
+      declaredFields: [],
+      undeclaredFields: [],
+      absentFields: [],
+      detail:
+        "listed in probeReads but no such operation exists in this bundle — " +
+        "check the id against `anvil inspect`, or remove it from the config.",
+    });
+  }
+
   for (const op of listed) {
     const reason = refusalReason(op);
     if (reason === undefined) {
@@ -503,6 +560,9 @@ export async function runObserve(
   const blockingDrift = drift.filter(
     (item) => item.severity === "blocking" || item.severity === "high",
   ).length;
+  // An operation that answered with an error is not an observation: nothing was
+  // learned about whether the model matches the application.
+  const errored = observations.filter((o) => o.outcome === "error").length;
 
   return {
     schemaVersion: 1,
@@ -520,10 +580,26 @@ export async function runObserve(
       unreachable,
       contractGaps,
       driftItems: drift.length,
+      errored,
+      unknownProbeIds: unknown.length,
     },
     // An unreachable operation or a high-severity contract difference is the
     // application telling you the compiled model is wrong. That is a failure of
     // the lane, not a note in it.
-    ok: unreachable === 0 && blockingDrift === 0 && refused.length === 0,
+    //
+    // So is a check that never ran. A contract endpoint that answered 401, or
+    // was unreachable, or served something unparseable, and a probe that errored
+    // rather than returning — each of those leaves the lane with no observation
+    // where the operator asked for one. Reporting ok for them is worse than
+    // reporting a difference: a difference is information, while an unexecuted
+    // check that exits 0 is automation being told a question was answered when
+    // it was not asked.
+    ok:
+      unreachable === 0 &&
+      blockingDrift === 0 &&
+      refused.length === 0 &&
+      errored === 0 &&
+      unknown.length === 0 &&
+      (!acquisition.attempted || acquisition.ok),
   };
 }
