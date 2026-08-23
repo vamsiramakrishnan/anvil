@@ -43,16 +43,16 @@
       "plan": "Raised deliberately from 1554 for `--require`, which turns the verdict this module already computes into an exit code. status owns nextSafeAction, so the gate belongs here rather than in a new module; putting it elsewhere would have split the verdict from its consumer. Still queued: separate lane-freshness computation (domain) from the rendering, and share the certification-reading logic certify.ts duplicates."
     },
     "packages/generators/src/certify.ts": {
-      "lines": 1453,
-      "plan": "Raised deliberately from 1427 to certify the generated client SDKs as a surface: contract.surfaces-agree now includes sdk/manifest.json, safety.sdk-gates-match refuses a manifest whose confirmation/idempotency/retry flags differ from AIR, and runtime.sdk-present requires a buildable tree per language. Only the three call sites live here — what an SDK must prove about itself is SDK knowledge and lives in packages/generators/src/sdk/certify.ts, so this file stays the place gates are assembled rather than the place every surface's semantics accumulate. Split the four gates into per-gate modules behind one assembler; queued. Then +3 to register observe.report.json as a derived record, so `anvil observe` cannot invalidate the bundle hash the evidence it produces is about."
+      "lines": 1472,
+      "plan": "Raised deliberately from 1427 to certify the generated client SDKs as a surface: contract.surfaces-agree now includes sdk/manifest.json, safety.sdk-gates-match refuses a manifest whose confirmation/idempotency/retry flags differ from AIR, and runtime.sdk-present requires a buildable tree per language. Only the three call sites live here — what an SDK must prove about itself is SDK knowledge and lives in packages/generators/src/sdk/certify.ts, so this file stays the place gates are assembled rather than the place every surface's semantics accumulate. Split the four gates into per-gate modules behind one assembler; queued. Then +3 to register observe.report.json as a derived record, so `anvil observe` cannot invalidate the bundle hash the evidence it produces is about. Then +19 for safety.protocol-runtime-executable, the gate that refuses to certify a bundle whose wire protocol the runtime cannot speak. Only the call site lives here — what a protocol IS belongs to @anvil/air's wire.ts, which @anvil/certification reads too so the two engines cannot reach opposite verdicts; this file stays the place gates are assembled."
     },
     "packages/cli/src/tool-cli.ts": {
-      "lines": 1425,
-      "plan": "The shared generated-CLI engine. Separate argument decoding from execution and rendering. Queued."
+      "lines": 1433,
+      "plan": "The shared generated-CLI engine. Separate argument decoding from execution and rendering. Queued. Raised deliberately from 1425 for --protocol-facade: the generated CLI shares the runtime's transport gate, so it needs the same one declaration the generated servers take from ANVIL_PROTOCOL_FACADE. Three lines (a flag name, its resolution, its place in ExecuteContext) beside --base-url, which it qualifies; separating them would put the claim about a base URL in a different module from the base URL."
     },
     "packages/runtime/src/executor.ts": {
-      "lines": 1322,
-      "plan": "Deliberately NOT queued for decomposition. execute() is a strictly ordered safety gauntlet; splitting it into stages trades a readable sequence for a reorderable pipeline. The control here is an ordering test, not a file split."
+      "lines": 1331,
+      "plan": "Deliberately NOT queued for decomposition. execute() is a strictly ordered safety gauntlet; splitting it into stages trades a readable sequence for a reorderable pipeline. The control here is an ordering test, not a file split. Raised deliberately from 1322 for the transport gate at step 0b: an operation whose wire protocol this runtime cannot speak is refused before a request is built, so no surface can route around it. The refusal's construction lives in wire-gate.ts; what stays here is its position in the gauntlet, which is exactly the thing this entry says must not be split out."
     },
     "packages/cli/src/commands/estate/estate-adoption.ts": {
       "lines": 1264,
@@ -99,8 +99,8 @@
       "plan": "Raised deliberately from 979 for async-events Phase 2, Decision A: the job-handle index (LedgerEntry.jobId, complete()'s new optional secondaryKey param, findBySecondaryKey) needed in both InMemoryLedger and FirestoreLedger, the latter backed by its own sibling Firestore collection with the same create/verify/reconcile rigor the rest of the class already applies. Safety-critical. Prefer tests over splitting, as with executor.ts. Previously raised from 977 for a comment explaining why InMemoryLedger.durable is annotated `boolean` rather than inferred as the literal `false` — the class implements an interface that permits either, and the literal type prevented a durable test double from subclassing it."
     },
     "packages/harness/src/conformance.ts": {
-      "lines": 974,
-      "plan": "Watch."
+      "lines": 985,
+      "plan": "Watch. Raised deliberately from 974 to declare, in words, the protocol facade this lane has always silently relied on: the generated mock is built from the same synthesized coordinates the bundle sends to, which is why a SOAP bundle passed here while being unable to make a real call. Both the MCP child env and the CLI spawn env carry it, because wire-agreement compares the two and a refusal on one side is not a disagreement."
     },
     "packages/refinement/src/detect.ts": {
       "lines": 948,
@@ -115,8 +115,8 @@
       "plan": "Watch."
     },
     "packages/certification/src/checks.ts": {
-      "lines": 1092,
-      "plan": "Raised deliberately from 892 for async-events Phase 4: three new static checks (async_completion_source_present, webhook_signature_refs_resolve, webhook_remote_verify_host_allowed) plus the new CertificationDeployTarget seam they resolve refs against. Previously raised from 884 for Phase 0's optional-statusOperationId guards. Expected to grow if certification truth consolidates here; raise deliberately with that change, not incidentally."
+      "lines": 1107,
+      "plan": "Raised deliberately from 892 for async-events Phase 4: three new static checks (async_completion_source_present, webhook_signature_refs_resolve, webhook_remote_verify_host_allowed) plus the new CertificationDeployTarget seam they resolve refs against. Previously raised from 884 for Phase 0's optional-statusOperationId guards. Expected to grow if certification truth consolidates here; raise deliberately with that change, not incidentally. Then +15 for static/transport_executable, mirroring safety.protocol-runtime-executable from @anvil/generators. Mirrored rather than owned: both read unexecutableWireFailures from @anvil/air, so neither engine restates what a protocol means and the two verdicts cannot drift."
     },
     "packages/generators/src/skill.ts": {
       "lines": 961,

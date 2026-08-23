@@ -303,7 +303,7 @@ describe("idempotency gate", () => {
 
   it("injects a nested JSON Pointer body carrier without mutating caller input", async () => {
     const bodyOp = op({
-      sourceRef: { kind: "graphql", path: "/graphql/Mutation/checkout", method: "post" },
+      sourceRef: { kind: "openapi", path: "/checkout", method: "post" },
       idempotency: {
         mode: "required",
         mechanism: "body",

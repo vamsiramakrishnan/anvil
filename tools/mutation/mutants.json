@@ -276,6 +276,58 @@
       "tests": [
         "packages/cli/src/cmd-adopt.test.ts"
       ]
+    },
+    {
+      "id": "wire/runtime-transport-gate",
+      "file": "packages/runtime/src/wire-gate.ts",
+      "control": "The runtime refuses an operation whose wire protocol it cannot speak. Without it a SOAP/GraphQL/gRPC operation is posted as JSON to a coordinate Anvil invented — a well-formed lie, indistinguishable on the wire from a real request.",
+      "find": "  if (verdict.ok || facade !== undefined) return undefined;",
+      "replace": "  if (true) return undefined;",
+      "tests": [
+        "packages/runtime/src/wire-gate.test.ts"
+      ]
+    },
+    {
+      "id": "wire/protocol-map-total",
+      "file": "packages/air/src/wire.ts",
+      "control": "Each non-REST source kind maps to the protocol it actually speaks. Collapsing wsdl to http_json is exactly the conflation this module exists to end: a source format is not a wire protocol.",
+      "find": "  wsdl: \"soap\",",
+      "replace": "  wsdl: \"http_json\",",
+      "tests": [
+        "packages/air/src/wire.test.ts",
+        "packages/runtime/src/wire-gate.test.ts",
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "wire/certification-refuses",
+      "file": "packages/generators/src/certify.ts",
+      "control": "Certification refuses a bundle whose wire protocol the runtime cannot speak. Without it a SOAP bundle with servers: [] certifies with zero failures, because every hermetic lane compares the bundle against a mock generated from the same AIR.",
+      "find": "  const unexecutableWire = unexecutableWireFailures(air.operations);",
+      "replace": "  const unexecutableWire: string[] = [];",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "wire/compile-time-diagnostic",
+      "file": "packages/compiler/src/validate.ts",
+      "control": "The compiler says at compile time what the runtime and certification will refuse later, so an unexecutable transport is not first heard about at deploy.",
+      "find": "    const wire = wireExecutability(op);",
+      "replace": "    const wire = { ok: true } as ReturnType<typeof wireExecutability>;",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "wire/wsdl-endpoint-extracted",
+      "file": "packages/compiler/src/protocols/wsdl.ts",
+      "control": "The endpoint a WSDL declares in <soap:address> reaches AIR. Dropping it made service.servers empty and the generated skill state, falsely, that the source declares no server URL.",
+      "find": "  const servers = [...new Set(addresses)].map((url) => ({ url }));",
+      "replace": "  const servers: Array<{ url: string }> = [];",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
     }
   ]
 }

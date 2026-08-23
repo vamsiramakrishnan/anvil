@@ -51,6 +51,7 @@ import {
   type Transport,
   TransportError,
 } from "./transport.js";
+import { wireFacadeDecision, wireGateError } from "./wire-gate.js";
 
 export interface DryRunPlan {
   operation: string;
@@ -93,6 +94,12 @@ export interface ExecuteContext {
   timeoutMs?: number;
   /** Set false to force single-attempt execution regardless of policy. */
   retries?: boolean;
+  /**
+   * An operator's stated reason that `baseUrl` is a protocol facade serving
+   * the synthesized coordinates of a non-HTTP/JSON source over HTTP+JSON.
+   * The only way past the transport gate, and recorded when used.
+   */
+  protocolFacade?: string;
 }
 
 export interface ExecuteInput {
@@ -652,6 +659,18 @@ export async function execute(
     // can never even be planned, regardless of which caller reached us.
     if (op.state !== "approved") {
       return fail(unapprovedOperationError(op, traceId));
+    }
+
+    // 0b. Transport gate — the approval gate asks whether this operation may be
+    // called; this asks whether *this runtime* can make the call faithfully. A
+    // source whose wire protocol is not HTTP+JSON reaches here with a coordinate
+    // Anvil invented, and building a request from it would put a well-formed lie
+    // on the wire. Refuse unless an operator declared a facade that serves it.
+    const wireError = wireGateError(op, traceId, ctx.protocolFacade);
+    if (wireError) return fail(wireError);
+    if (ctx.protocolFacade !== undefined) {
+      const decision = wireFacadeDecision(op, ctx.protocolFacade);
+      if (decision) policyDecisions.push(decision);
     }
 
     if (

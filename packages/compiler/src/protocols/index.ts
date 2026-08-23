@@ -145,8 +145,10 @@ export function adaptProtocol(
   imports: AdaptImports = {},
   /**
    * Optional sink for adapter-level findings the caller drains into
-   * `ParsedSpec.diagnostics`. Only the Postman adapter uses it today — it is the
-   * one lowering that can drop a request (see `postman_endpoint_collision`).
+   * `ParsedSpec.diagnostics`. The Postman adapter reports requests it had to
+   * drop (`postman_endpoint_collision`); the WSDL adapter reports the paths it
+   * had to invent (`wsdl_synthesized_paths`). Both are facts about the lowering
+   * that no later stage can recover, so they are stated where they happen.
    */
   diagnostics?: Diagnostic[],
 ): OpenApiDocument {
@@ -156,7 +158,7 @@ export function adaptProtocol(
     case "protobuf":
       return adaptProto(text, title, imports.proto);
     case "wsdl":
-      return adaptWsdl(text, imports.wsdl, imports.sourcePath);
+      return adaptWsdl(text, imports.wsdl, imports.sourcePath, diagnostics);
     case "discovery":
       return adaptDiscovery(text);
     case "postman":

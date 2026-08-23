@@ -26,6 +26,7 @@ import {
   resolveAsyncContract,
   resolveIdempotencyCarrier,
   toolSurfaceFitsBudget,
+  unexecutableWireFailures,
   type WebhookSignatureVerification,
 } from "@anvil/air";
 import { surfaceSignatureFor } from "@anvil/compiler";
@@ -136,6 +137,20 @@ export function staticChecks(
       invalidCarriers
         .map(({ operation, carrier }) => `${operation.id}: ${carrier.issue}`)
         .join("; "),
+    ),
+  );
+
+  // A call is certifiable only when the runtime can put it on the wire at all.
+  // Mirrored from `safety.protocol-runtime-executable` in @anvil/generators so
+  // the two engines cannot reach opposite verdicts on the same bundle; both read
+  // the one definition in @anvil/air rather than restating what a protocol means.
+  const unexecutable = unexecutableWireFailures(air.operations);
+  checks.push(
+    check(
+      "static/transport_executable",
+      "static",
+      unexecutable.length === 0,
+      unexecutable.join("; "),
     ),
   );
 

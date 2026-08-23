@@ -20,6 +20,7 @@
  * filesystem.
  */
 import { posix } from "node:path";
+import type { Diagnostic } from "@anvil/air";
 import type { OpenApiDocument } from "../parse.js";
 import { childrenNamed, findAll, localName, parseXml, type XmlElement } from "./xml.js";
 
@@ -383,6 +384,7 @@ export function adaptWsdl(
   source: string,
   resolveImport?: WsdlImportResolver,
   sourcePath?: string,
+  diagnostics?: Diagnostic[],
 ): OpenApiDocument {
   const root = parseXml(source);
   const docs = collectDocuments(root, sourcePath, resolveImport);
@@ -407,6 +409,22 @@ export function adaptWsdl(
     docs.definitions.flatMap((d) => findAll(d, "service"))[0]?.attrs.name ??
     root.attrs.name ??
     "SoapService";
+
+  // The endpoint the WSDL actually declares. Until this was read, `<soap:address
+  // location="...">` was dropped on the floor: `service.servers` compiled to
+  // `[]` and the generated skill told the operator "the source spec declares no
+  // server URL" — a sentence that was false for every WSDL that has a port.
+  // Extracting it does not make the bundle callable (the runtime cannot speak
+  // SOAP; see @anvil/air's wire.ts), but a refusal that can name the real
+  // endpoint alongside the synthesized path is the difference between "this is
+  // wrong" and "this is wrong, and here is what the document actually said".
+  const addresses = docs.definitions
+    .flatMap((d) => findAll(d, "service"))
+    .flatMap((svc) => childrenNamed(svc, "port"))
+    .flatMap((port) => findAll(port, "address"))
+    .map((address) => address.attrs.location)
+    .filter((location): location is string => typeof location === "string" && location !== "");
+  const servers = [...new Set(addresses)].map((url) => ({ url }));
 
   const paths: Record<string, Record<string, unknown>> = {};
   const documentation = docs.definitions
@@ -484,6 +502,28 @@ export function adaptWsdl(
   const schemas: Record<string, JsonSchemaLike> = {};
   for (const [name, schema] of xsd.namedTypes) schemas[name] = schema;
 
+  // Name the lowering's central fiction rather than leaving it to be discovered
+  // at runtime. A SOAP service serves ONE endpoint dispatched by SOAPAction;
+  // Anvil keys operations by path, so it synthesizes `/<port>/<operation>` to
+  // hold them apart. That is a legitimate internal coordinate and a wrong wire
+  // address, and only the first half of that was ever written down.
+  const synthesized = Object.keys(paths);
+  if (synthesized.length > 0) {
+    diagnostics?.push({
+      level: "warning",
+      code: "wsdl_synthesized_paths",
+      path: servers[0]?.url,
+      message:
+        `Anvil keyed ${synthesized.length} SOAP operation(s) by synthesized path ` +
+        `(${synthesized.slice(0, 3).join(", ")}${synthesized.length > 3 ? ", …" : ""}) because ` +
+        `operations are path-keyed, but a SOAP service serves one endpoint` +
+        `${servers[0] ? ` — the ${servers[0].url ? "declared" : ""} <soap:address>` : ""} ` +
+        `— dispatched by SOAPAction. These paths are internal coordinates, not wire ` +
+        `addresses; Anvil's HTTP/JSON runtime refuses to call them unless a facade ` +
+        `that really serves them is declared.`,
+    });
+  }
+
   return {
     openapi: "3.0.3",
     info: {
@@ -491,6 +531,7 @@ export function adaptWsdl(
       version: "1.0.0",
       ...(documentation ? { description: documentation } : {}),
     },
+    ...(servers.length > 0 ? { servers } : {}),
     paths,
     components: { schemas: schemas as Record<string, unknown> },
   };
