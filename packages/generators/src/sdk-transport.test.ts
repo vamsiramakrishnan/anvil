@@ -20,6 +20,7 @@ const example = (rel: string) =>
 let soap: { air: AirDocument; files: Record<string, string> };
 let rest: { air: AirDocument; files: Record<string, string> };
 let graphql: { air: AirDocument; files: Record<string, string> };
+let grpcGateway: { air: AirDocument; files: Record<string, string> };
 
 beforeAll(async () => {
   const air = await compile({
@@ -40,6 +41,12 @@ beforeAll(async () => {
     serviceId: "storefront",
   });
   graphql = { air: storefront, files: generateBundle(storefront).files };
+  const inventory = await compile({
+    spec: example("grpc-gateway/inventory.proto"),
+    manifest: example("grpc-gateway/anvil.yaml"),
+    serviceId: "inventory",
+  });
+  grpcGateway = { air: inventory, files: generateBundle(inventory).files };
 });
 
 describe("the SDK transport gate", () => {
@@ -50,6 +57,38 @@ describe("the SDK transport gate", () => {
     for (const method of sdkManifest(sdkPlan(rest.air)).methods) {
       expect(method.wireProtocol).toBe("http_json");
     }
+  });
+
+  it("gives all four clients the plain HTTP path for a proto that declared its route", () => {
+    // The whole point of deriving the protocol from the binding rather than
+    // branching per surface: a gRPC method carrying `google.api.http` is
+    // HTTP+JSON on the wire, so every client takes the path it already had.
+    // Four clients each needing a new branch is four chances for one to differ.
+    const manifest = sdkManifest(sdkPlan(grpcGateway.air));
+    expect(manifest.methods.length).toBeGreaterThan(0);
+    for (const method of manifest.methods) expect(method.wireProtocol).toBe("http_json");
+
+    // And the declared verbs really did survive into the clients — proof the
+    // operations were lowered onto the route rather than left on gRPC's POST.
+    const verbs = new Set(manifest.methods.map((m) => m.http.split(" ")[0]));
+    expect(verbs).toContain("GET");
+    expect(verbs).toContain("DELETE");
+    // The gRPC coordinate is nowhere in any client — the declared route replaced it.
+    expect(manifest.methods.every((m) => !m.http.includes("InventoryService/"))).toBe(true);
+  });
+
+  it("is certified for a declared-route proto, in all four clients", () => {
+    // Same gate as SOAP and GraphQL: a client that disagrees with AIR about
+    // what it speaks is caught here rather than in production.
+    expect(sdkGateDrift(grpcGateway.files, grpcGateway.air)).toEqual([]);
+
+    const manifest = JSON.parse(grpcGateway.files["sdk/manifest.json"] ?? "{}");
+    manifest.methods[0].wireProtocol = "grpc";
+    const drift = sdkGateDrift(
+      { ...grpcGateway.files, "sdk/manifest.json": JSON.stringify(manifest, null, 2) },
+      grpcGateway.air,
+    );
+    expect(drift.join(" ")).toContain("wireProtocol");
   });
 
   it("emits the gate into all four decision cores", () => {

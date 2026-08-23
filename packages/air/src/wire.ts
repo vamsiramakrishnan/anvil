@@ -54,8 +54,22 @@ const PROTOCOL_BY_SOURCE_KIND: Record<SourceKind, WireProtocol> = {
  * The protocol is a property of the *service the spec describes*; a facade is a
  * property of the *deployment*, declared by an operator (see `WireExecutability`)
  * rather than inferred from a document that cannot know about it.
+ *
+ * The one thing that *does* change the answer is the source document declaring
+ * its own HTTP mapping. A proto method carrying `google.api.http` names the
+ * verb and path a gateway serves, the compiler lowers the operation to exactly
+ * that route, and what goes on the wire is then JSON over HTTP with nothing
+ * gRPC about it. That is not a facade being assumed — it is the spec being
+ * read, the same standing as a WSDL's `soap:address`. Answering from the
+ * binding here is what lets every surface inherit it at once: the runtime
+ * resolves the ordinary JSON codec, all four SDKs take their existing
+ * `http_json` path, and certification stops reporting it as unreachable —
+ * without one line of per-protocol branching in any of them.
  */
 export function wireProtocolFor(source: SourceRef): WireProtocol {
+  if (source.binding?.protocol === "grpc" && source.binding.transport === "http_rule") {
+    return RUNTIME_WIRE_PROTOCOL;
+  }
   return PROTOCOL_BY_SOURCE_KIND[source.kind];
 }
 
@@ -78,10 +92,14 @@ const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
     "unlike the other protocols, this path is real — it is gRPC's own :path — " +
     "but a native call is length-prefixed protobuf over HTTP/2 with the status " +
     "in trailers, and Anvil cannot emit that from four zero-dependency clients " +
-    "because Python's standard library has no HTTP/2 client. What does work is " +
-    "a JSON transcoder (grpc-gateway, Envoy's gRPC-JSON filter, Google's HTTP " +
-    "annotations), which accepts JSON on this exact path and speaks protobuf " +
-    "onward — declare one and Anvil calls it",
+    "because Python's standard library has no HTTP/2 client. Two things do " +
+    "work. If the proto method carries a `google.api.http` option, Anvil reads " +
+    "it and calls the declared route with no further ceremony, so an operation " +
+    "still refusing here means the proto declared no rule — or declared one " +
+    "Anvil would have had to guess at, which the compile diagnostics name. " +
+    "Failing that, a JSON transcoder (grpc-gateway, Envoy's gRPC-JSON filter) " +
+    "accepts JSON on this exact path and speaks protobuf onward — declare one " +
+    "and Anvil calls it",
   mcp_tool:
     "an adopted MCP tool is invoked by a tools/call over the MCP transport; it " +
     "has no path and no method, which the runtime would silently degrade to " +

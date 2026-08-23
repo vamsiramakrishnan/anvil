@@ -81,6 +81,33 @@ function stripODataKey(segment: string): { resource: string; keyed: boolean } {
     : { resource: segment, keyed: false };
 }
 
+/**
+ * A custom method (AIP-136) hangs a verb off the end of the path with a colon —
+ * `/v1/items/{item_id}:adjust`, `/v1/orders:search`. The verb names the action
+ * over the resource the rest of the path addresses; it is not a segment of its
+ * own, and it is the dominant shape in an annotated proto, where anything that
+ * is not plain CRUD gets one.
+ *
+ * Unread, every custom method on a collection collapses onto that collection's
+ * POST — `CreateItem` and `AdjustQuantity` both become `items create` — and the
+ * disambiguator then has to invent `direct_2`, which is precisely the kind of
+ * name an agent has to guess at.
+ *
+ * Deliberately narrow: only a lowerCamel verb, only after the final segment. A
+ * colon anywhere else in a path is not a custom method, and a URI scheme
+ * (`https://`) never reaches here because a path is what is passed in.
+ */
+function stripCustomMethod(path: string): { path: string; action?: string } {
+  const idx = path.lastIndexOf(":");
+  if (idx < 0) return { path };
+  const verb = path.slice(idx + 1);
+  if (!/^[a-z][A-Za-z0-9]*$/.test(verb)) return { path };
+  // A colon before the last `/` belongs to some earlier segment, not to a
+  // trailing custom method.
+  if (path.slice(idx).includes("/")) return { path };
+  return { path: path.slice(0, idx), action: verb };
+}
+
 export function actionFor(method: HttpMethod, endsWithParam: boolean): string {
   switch (method) {
     case "get":
@@ -200,7 +227,10 @@ export function deriveNames(
   method: HttpMethod,
   raw: RawForNaming,
 ): DerivedNames {
-  const segments = path.split("/").filter(Boolean);
+  // A trailing `:verb` is read off before any segment reasoning: it names the
+  // action, and everything before it is the resource path as usual.
+  const custom = stripCustomMethod(path);
+  const segments = custom.path.split("/").filter(Boolean);
   const concrete = segments.filter((s) => !s.startsWith("{"));
   const hasResource = concrete.length > 0;
   // Clean the trailing segment before reading anything off it: strip a REST
@@ -278,21 +308,24 @@ export function deriveNames(
   // reclassified to a read; the action verb must agree, or the CLI/MCP surface
   // would call a read "create" while its own safety posture says otherwise.
   const readIntentSignal = semanticSignal;
-  // Priority: an RPC method name (Slack `postMessage`) names the action
-  // directly; then a verb-trailing segment; then a read-intent write; then the
-  // HTTP-method default. An RPC action is snake_cased so it reads as one CLI
-  // token (`post_message`) that matches the operationId-derived tool name.
-  const action = decomposed?.rpcAction
-    ? snakeCase(decomposed.rpcAction)
-    : effectiveTrailingVerb
-      ? effectiveTrailingVerb
-      : isReadIntentWriteMethod(method, readIntentSignal, declaredIntentSignals)
-        ? (actionVerbFor(readIntentSignal) as string)
-        : method === "post"
-          ? (postVerbFromOperationId(raw.operationId) ?? actionFor(method, endsWithParam))
-          : method === "patch" || method === "put"
-            ? (upsertVerbFromOperationId(raw.operationId) ?? actionFor(method, endsWithParam))
-            : actionFor(method, endsWithParam);
+  // Priority: a custom method (`:adjust`) and an RPC method name (Slack
+  // `postMessage`) both name the action directly; then a verb-trailing segment;
+  // then a read-intent write; then the HTTP-method default. Both are
+  // snake_cased so they read as one CLI token (`post_message`) matching the
+  // operationId-derived tool name.
+  const action = custom.action
+    ? snakeCase(custom.action)
+    : decomposed?.rpcAction
+      ? snakeCase(decomposed.rpcAction)
+      : effectiveTrailingVerb
+        ? effectiveTrailingVerb
+        : isReadIntentWriteMethod(method, readIntentSignal, declaredIntentSignals)
+          ? (actionVerbFor(readIntentSignal) as string)
+          : method === "post"
+            ? (postVerbFromOperationId(raw.operationId) ?? actionFor(method, endsWithParam))
+            : method === "patch" || method === "put"
+              ? (upsertVerbFromOperationId(raw.operationId) ?? actionFor(method, endsWithParam))
+              : actionFor(method, endsWithParam);
 
   const fromOperationId = Boolean(raw.operationId);
   const canonicalName = raw.operationId

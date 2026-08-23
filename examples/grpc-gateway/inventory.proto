@@ -1,0 +1,126 @@
+// Inventory gRPC service — the annotated half of Anvil's proto3 support.
+//
+// Every method here carries `google.api.http`, the option grpc-gateway, Envoy's
+// gRPC-JSON filter, and ESPv2 all read to decide which HTTP route to serve.
+// Anvil reads the same option and calls the same route, so these operations are
+// ordinary HTTP+JSON on the wire and need no `--protocol-facade` declaration —
+// the source document already answered the question a bare proto cannot.
+//
+// Compare `examples/grpc/orders.proto`, which carries no annotations: there the
+// wire path is gRPC's own `/package.Service/Method` and a native call would be
+// length-prefixed protobuf over HTTP/2, so those operations keep refusing until
+// an operator declares that a transcoder is deployed.
+//
+// The last two methods are here on purpose. `ArchiveItem` declares a rule Anvil
+// declines — a multi-segment path template — and `SyncCatalog` declares none at
+// all. Both stay unapproved, and both keep refusing with the reason.
+
+syntax = "proto3";
+
+package acme.inventory.v1;
+
+import "google/api/annotations.proto";
+
+// Note there is no `warehouse_id` here. `CreateItemRequest` carries one as a
+// query parameter, and a field of the same name inside the body would give an
+// agent two slots for one value — which Anvil refuses as a duplicate agent
+// input rather than silently picking a winner.
+message Item {
+  string item_id = 1;
+  string sku = 2;
+  string name = 3;
+  int32 quantity_on_hand = 4;
+}
+
+message GetItemRequest {
+  string item_id = 1;
+  // Not bound into the path, so it travels in the query string.
+  string view = 2;
+}
+
+message ListItemsRequest {
+  string warehouse_id = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+message ListItemsResponse {
+  repeated Item items = 1;
+  string next_page_token = 2;
+}
+
+message CreateItemRequest {
+  // The parent collection, sent as a query parameter.
+  string warehouse_id = 1;
+  // `body: "item"` sends this field alone as the request body.
+  Item item = 2;
+}
+
+message AdjustQuantityRequest {
+  string item_id = 1;
+  int32 delta = 2;
+  string reason = 3;
+  // AIP-155 request id. `body: "*"` puts it in the JSON body, which is where
+  // the manifest points the idempotency key.
+  string request_id = 4;
+}
+
+message DeleteItemRequest {
+  string item_id = 1;
+}
+
+message ArchiveItemRequest {
+  string name = 1;
+}
+
+message SyncCatalogRequest {
+  string source_url = 1;
+}
+
+message SyncCatalogResponse {
+  int32 items_synced = 1;
+}
+
+service InventoryService {
+  // A declared GET: retry-safe by HTTP semantics, with no body at all.
+  rpc GetItem(GetItemRequest) returns (Item) {
+    option (google.api.http) = { get: "/v1/items/{item_id}" };
+  }
+
+  // Every field travels in the query string, since no field is bound into the
+  // path and the rule declares no body.
+  rpc ListItems(ListItemsRequest) returns (ListItemsResponse) {
+    option (google.api.http) = { get: "/v1/items" };
+  }
+
+  // `body: "item"` splits the message: `item` becomes the JSON body and
+  // `warehouse_id` becomes a query parameter.
+  rpc CreateItem(CreateItemRequest) returns (Item) {
+    option (google.api.http) = { post: "/v1/items" body: "item" };
+  }
+
+  // `body: "*"` sends the whole message minus the path-bound field, so an agent
+  // is asked for `item_id` exactly once. The `:adjust` suffix is AIP-136's
+  // custom-method spelling and is literal path text, not a template.
+  rpc AdjustQuantity(AdjustQuantityRequest) returns (Item) {
+    option (google.api.http) = { post: "/v1/items/{item_id}:adjust" body: "*" };
+  }
+
+  // A declared DELETE, which classifies as destructive on the verb alone —
+  // something the unannotated lowering, where every call is POST, cannot see.
+  rpc DeleteItem(DeleteItemRequest) returns (Item) {
+    option (google.api.http) = { delete: "/v1/items/{item_id}" };
+  }
+
+  // Declines: `{name=items/*}` matches a value containing a slash, and Anvil
+  // percent-encodes a path parameter, so the call would address a different
+  // resource rather than fail. Anvil records no binding and does not fall back
+  // to gRPC's own path, because a gateway serves the declared route and no other.
+  rpc ArchiveItem(ArchiveItemRequest) returns (Item) {
+    option (google.api.http) = { post: "/v1/{name=items/*}:archive" body: "*" };
+  }
+
+  // No annotation: gRPC's own coordinate, and a transcoder that can only be
+  // assumed until an operator declares one.
+  rpc SyncCatalog(SyncCatalogRequest) returns (SyncCatalogResponse) {}
+}

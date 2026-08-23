@@ -1,0 +1,69 @@
+# Supplemental Anvil manifest for the Inventory gRPC service.
+#
+# Note what is *not* here: nothing declares a transport, an endpoint, or a
+# facade. Every approved operation below carries `google.api.http` in the proto,
+# so the route is read from the source document rather than asserted by an
+# operator. The manifest's job is the same as it is for an OpenAPI service —
+# effect, risk, and idempotency semantics the source cannot express.
+service:
+  name: inventory
+  display_name: Inventory Service (gRPC + HTTP annotations)
+  owner: supply-chain-platform
+
+operations:
+  # Reads. The declared GET already makes these retry-safe; the manifest only
+  # approves them.
+  GetItem:
+    state: approved
+  ListItems:
+    state: approved
+
+  # CreateItem sends only `item` as the body, so its key cannot ride in the
+  # body — it goes in the header the gateway already honours.
+  CreateItem:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: required_request_key
+      key_location: header
+      header: Idempotency-Key
+    confirmation:
+      required: true
+      reason: CreateItem adds stock records that downstream replenishment reads.
+    state: approved
+
+  # AdjustQuantity is a relative change: applying it twice is not the same as
+  # applying it once, which is precisely why it is not naturally idempotent and
+  # why the key is required rather than merely supported. `body: "*"` puts the
+  # whole message in the body, so the key can ride there.
+  AdjustQuantity:
+    side_effect: mutation
+    risk: medium
+    idempotency:
+      strategy: required_request_key
+      key_location: body
+      field: request_id
+    confirmation:
+      required: true
+      reason: AdjustQuantity applies a relative delta; a repeat double-counts.
+    state: approved
+
+  # DeleteItem classifies as destructive from the declared DELETE verb alone.
+  # The manifest states the confirmation reason rather than the posture.
+  DeleteItem:
+    side_effect: mutation
+    risk: destructive
+    reversible: false
+    confirmation:
+      required: true
+      risk: destructive
+      reason: DeleteItem removes the stock record and its on-hand history.
+    state: approved
+
+  # Left unapproved deliberately, and both would refuse at call time anyway:
+  # ArchiveItem declares a rule Anvil declines to encode, and SyncCatalog
+  # declares none, so it needs a transcoder an operator must vouch for.
+  ArchiveItem:
+    state: review_required
+  SyncCatalog:
+    state: review_required

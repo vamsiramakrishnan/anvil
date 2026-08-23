@@ -28,6 +28,11 @@ function op(kind: string, id = "svc.thing.get", state = "approved") {
   });
 }
 
+/** An approved operation carrying a specific `sourceRef`, bindings included. */
+function opWith(sourceRef: Record<string, unknown>, id = "svc.thing.get") {
+  return OperationSchema.parse({ ...op("openapi", id), sourceRef });
+}
+
 describe("wire protocol", () => {
   it("is total over SourceKind, so there is no unknown case to fall through", () => {
     // The guard against the failure mode this module was written to end: a new
@@ -61,6 +66,43 @@ describe("wire protocol", () => {
       expect(verdict.nextAction).toContain("ANVIL_BASE_URL");
     }
     expect(wireExecutability(op("openapi")).ok).toBe(true);
+  });
+
+  it("answers http_json for a gRPC method that declared its own HTTP rule", () => {
+    // The one case where the source document overrides the source *format*. A
+    // proto carrying `google.api.http` names the route a gateway serves, the
+    // compiler lowered the operation onto it, and what goes on the wire is
+    // ordinary JSON over HTTP. Deriving that here rather than branching per
+    // surface is what lets the runtime, all four SDKs, and both certification
+    // engines inherit it without a line of protocol-specific code each.
+    const declared = {
+      kind: "protobuf",
+      path: "/v1/orders/{order_id}",
+      method: "get",
+      binding: { protocol: "grpc", service: "a.b.S", method: "GetOrder", transport: "http_rule" },
+    } as const;
+    expect(wireProtocolFor(declared)).toBe(RUNTIME_WIRE_PROTOCOL);
+    expect(wireExecutability(opWith(declared)).ok).toBe(true);
+    expect(unexecutableWireFailures([opWith(declared)])).toEqual([]);
+  });
+
+  it("keeps refusing a gRPC method whose transcoder is only assumed", () => {
+    // `json_transcoded` is a claim about a deployment the proto cannot see, so
+    // it stays a refusal until an operator declares the facade. Only the
+    // document's own declaration earns executability.
+    const assumed = {
+      kind: "protobuf",
+      path: "/a.b.S/GetOrder",
+      method: "post",
+      binding: {
+        protocol: "grpc",
+        service: "a.b.S",
+        method: "GetOrder",
+        transport: "json_transcoded",
+      },
+    } as const;
+    expect(wireProtocolFor(assumed)).toBe("grpc");
+    expect(wireExecutability(opWith(assumed)).ok).toBe(false);
   });
 
   it("asks only about the surface that is actually exposed", () => {

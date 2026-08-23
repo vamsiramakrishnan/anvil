@@ -4,9 +4,14 @@
 its local source graph, lower it into AIR, or execute the resulting operation.
 These capabilities are listed separately below.
 
-For example, Anvil can parse proto3 and generate aligned surfaces. It cannot
-execute native gRPC. The bundle needs a declared JSON transcoder before that
-operation becomes wire-executable.
+For example, Anvil can parse proto3 and generate aligned surfaces from any
+`.proto` file. Whether it can also *execute* those operations depends on what
+the file declares. A method carrying `google.api.http` names the HTTP route a
+gateway serves, so Anvil calls that route directly and the operation is
+wire-executable with nothing further to configure. A method with no annotation
+leaves Anvil with only gRPC's own coordinate, which a native call would reach
+over HTTP/2 with length-prefixed protobuf — so the bundle needs a declared JSON
+transcoder before that operation becomes wire-executable.
 
 Use this page to choose the right entrypoint and understand what must be
 reviewed after compilation.
@@ -18,7 +23,7 @@ reviewed after compilation.
 | OpenAPI | OpenAPI 3.x YAML or JSON | Captures and resolves local `$ref` files | HTTP with JSON | Remote references are recorded but not fetched |
 | Swagger | Swagger 2.0 YAML or JSON | Single file only; bundle external references first | Converted to OpenAPI, then HTTP with JSON | Multi-file Swagger 2.0 is rejected |
 | GraphQL | GraphQL SDL (`.graphql`, `.gql`, `.graphqls`) | One SDL entrypoint | Queries and mutations | Subscriptions are represented but refused |
-| gRPC | proto3 (`.proto`) | Captures transitive local imports | HTTP-shaped calls through a declared JSON transcoder | Native gRPC and streaming RPCs are refused |
+| gRPC | proto3 (`.proto`) | Captures transitive local imports | The route a `google.api.http` method declares; otherwise HTTP-shaped calls through a declared JSON transcoder | Native gRPC and streaming RPCs are refused |
 | SOAP | WSDL 1.1 with embedded or local XSD | Captures `wsdl:import`, `xsd:include`, and `xsd:import` | Supported document/literal bindings | See the test-backed [wire protocol matrix](./wire-protocols.md) |
 | Google APIs | Discovery `restDescription` JSON | One document | HTTP with JSON | Does not call Google discovery services |
 | OData | v2 or v4 `$metadata` / EDMX XML | One metadata entrypoint | HTTP with JSON for generated entity-set operations | Actions, functions, and navigation semantics require review |
@@ -107,11 +112,20 @@ schemas; nested messages, enums, repeated fields, maps, `oneof`, and local
 imports are parsed through `protobufjs`. Unresolved well-known types degrade
 conservatively instead of stopping the whole compile.
 
-gRPC method names do not prove side effects. Read-like prefixes such as `Get`
-and `List` can classify as reads; other RPCs remain mutations until reviewed.
-The adapter preserves service and method identity, but the generated
-HTTP-shaped request model is not itself a binary gRPC client. Validate the
-runtime bridge or protocol adapter used in your deployment.
+A method carrying `google.api.http` is lowered to the verb and path it declares,
+with path, query, and body bound as the rule says. A trailing custom method
+(`/v1/items/{item_id}:adjust`, AIP-136) names the operation's action, so it does
+not collide with the collection's plain `POST`. Such a method classifies exactly
+as the equivalent OpenAPI operation, verb semantics included.
+
+For a method with no annotation, names do not prove side effects. Read-like
+prefixes such as `Get` and `List` can classify as reads; other RPCs remain
+mutations until reviewed. The adapter preserves service and method identity, but
+the generated HTTP-shaped request model is not itself a binary gRPC client.
+Validate the runtime bridge or protocol adapter used in your deployment.
+
+See the [wire protocol matrix](./wire-protocols.md) for which annotation shapes
+are refused and why.
 
 ### SOAP and WSDL
 

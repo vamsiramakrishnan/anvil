@@ -549,6 +549,56 @@
         "packages/runtime/src/wire-gate.test.ts",
         "packages/cli/src/transport-certify.test.ts"
       ]
+    },
+    {
+      "id": "grpc/http-rule-multi-segment-refused",
+      "file": "packages/compiler/src/protocols/grpc-http-rule.ts",
+      "control": "A path template whose pattern spans more than one path segment is refused. The runtime percent-encodes a path parameter, so a slash-bearing value would address a DIFFERENT resource and succeed against it — the worst shape of failure, since nothing errors.",
+      "find": "    if (pattern !== \"*\") {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/compiler/src/protocols/grpc-http-rule.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/assumed-transcoder-still-refused",
+      "file": "packages/air/src/wire.ts",
+      "control": "Only a rule the proto DECLARED earns http_json. `json_transcoded` is a guess about a deployment the proto cannot see, and treating it as executable would post JSON at a native gRPC server that rejects it.",
+      "find": "  if (source.binding?.protocol === \"grpc\" && source.binding.transport === \"http_rule\") {",
+      "replace": "  if (source.binding?.protocol === \"grpc\") {",
+      "tests": [
+        "packages/air/src/wire.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/declined-rule-does-not-fall-back",
+      "file": "packages/compiler/src/protocols/grpc.ts",
+      "control": "An annotated method whose rule Anvil declines records NO binding. Falling back to gRPC's own coordinate would aim the call at a path the gateway provably does not serve, since a gateway serves the declared route and no other.",
+      "find": "        ...(unary && (rule || !outcome)",
+      "replace": "        ...(unary",
+      "tests": [
+        "packages/compiler/src/protocols/grpc-http-rule.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/streaming-annotation-ignored",
+      "file": "packages/compiler/src/protocols/grpc.ts",
+      "control": "A streaming RPC is refused before its annotation is read. No gateway turns a stream into one bounded request and response, so a declared route on one is not a route Anvil can take.",
+      "find": "      const outcome = unary",
+      "replace": "      const outcome = true",
+      "tests": [
+        "packages/compiler/src/protocols/grpc-http-rule.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/declared-routes-merge",
+      "file": "packages/compiler/src/protocols/grpc.ts",
+      "control": "Two RPCs may declare different verbs on one route (GET and DELETE on /v1/items/{item_id}). Replacing the path entry instead of merging into it silently drops an approved operation from every surface.",
+      "find": "      paths[path] = { ...(existing ?? {}), [verb]: op };",
+      "replace": "      paths[path] = { [verb]: op };",
+      "tests": [
+        "packages/compiler/src/protocols/grpc-http-rule.test.ts"
+      ]
     }
   ]
 }

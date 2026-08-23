@@ -357,15 +357,21 @@ export const GrpcWireBinding = z.object({
   /**
    * How a call actually reaches the service.
    *
-   * `json_transcoded` is the only value Anvil records, and it is a claim about
-   * the *deployment* rather than the source: a transcoder (grpc-gateway,
-   * Envoy's gRPC-JSON filter, Google's HTTP annotations) accepts JSON on the
-   * real gRPC path and speaks protobuf onward. Native gRPC — length-prefixed
+   * `http_rule` means the proto method carried `google.api.http`, declaring its
+   * own verb and path. That is a fact the *source document* states, the same
+   * standing as a WSDL's `soap:address`, and it is what every gateway reads to
+   * decide which route to serve — so the operation was lowered to that route
+   * and is ordinary HTTP+JSON on the wire, needing no operator declaration.
+   *
+   * `json_transcoded` is the weaker claim, about the *deployment* rather than
+   * the source: a bare proto cannot know whether a transcoder (grpc-gateway,
+   * Envoy's gRPC-JSON filter) sits in front of it accepting JSON on the real
+   * gRPC path, so an operator must declare one. Native gRPC — length-prefixed
    * protobuf over HTTP/2 with status in trailers — is not something Anvil can
    * emit from four zero-dependency clients, because Python's standard library
    * has no HTTP/2 client at all.
    */
-  transport: z.literal("json_transcoded"),
+  transport: z.enum(["json_transcoded", "http_rule"]),
 });
 export type GrpcWireBinding = z.infer<typeof GrpcWireBinding>;
 

@@ -18,7 +18,8 @@ Compilation does not turn an unsupported transport into HTTP.
 | GraphQL | Queries and mutations supported | Compiled document plus variables sent to one GraphQL endpoint | Subscriptions |
 | SOAP 1.1 | Document/literal support is test-backed | XML envelope sent to the declared `soap:address` with `SOAPAction` | RPC/encoded and type-only messages |
 | SOAP 1.2 | Implemented, not yet covered by the acceptance suite | SOAP 1.2 envelope and content type | RPC/encoded and type-only messages |
-| gRPC | Supported only through a declared JSON transcoder | JSON sent to the service/method path | Native gRPC and streaming RPCs |
+| gRPC with `google.api.http` | Supported, no declaration required | The verb, path, query, and body the annotation declares | Multi-segment path templates, nested field bindings, custom method kinds |
+| gRPC without annotations | Supported only through a declared JSON transcoder | JSON sent to the service/method path | Native gRPC and streaming RPCs |
 
 Read [source format support](SOURCE_FORMATS.md) for parsing and source-graph
 rules. Those rules are independent of this runtime matrix.
@@ -31,7 +32,9 @@ Adapters preserve protocol facts on the operation's source binding.
   field.
 - SOAP stores the service endpoint, action, envelope namespace, body namespace,
   body element, response element, content type, and version.
-- gRPC stores the service, method, and JSON-transcoding posture.
+- gRPC stores the service, method, and how the service is reached: `http_rule`
+  when the proto declared its own route, `json_transcoded` when a transcoder can
+  only be assumed.
 
 The generated CLI, MCP server, runtime, and four client SDKs read those facts.
 They do not reconstruct them independently.
@@ -102,16 +105,67 @@ Anvil does not implement native gRPC. Native gRPC requires HTTP/2, protobuf
 framing, field-number fidelity, status trailers, and streaming behavior that
 the generated cross-language clients do not share today.
 
-A JSON transcoder provides a supported boundary. Examples include
-grpc-gateway and Envoy's gRPC-JSON transcoder. The deployment must declare that
-boundary; Anvil does not infer it from a `.proto` file.
+There are two routes to a working gRPC service, and which one applies depends
+on what the `.proto` file itself says.
+
+### Methods that declare `google.api.http`
+
+A method carrying the annotation states its own HTTP mapping:
+
+```proto
+rpc GetItem(GetItemRequest) returns (Item) {
+  option (google.api.http) = { get: "/v1/items/{item_id}" };
+}
+```
+
+This is the option grpc-gateway, Envoy's gRPC-JSON filter, and ESPv2 all read to
+decide which route to serve. Anvil reads the same option and calls the same
+route, so no declaration is required — the source document has already answered
+the question. The operation is compiled to the declared verb and path, fields
+bound in the template become path parameters, a named `body` field becomes the
+JSON body, `body: "*"` sends the whole message minus the path-bound fields, and
+everything else travels in the query string. On the wire there is nothing gRPC
+about the call.
+
+The declared verb also carries its ordinary HTTP semantics. A `get:` rule is a
+retry-safe read; a `delete:` rule classifies as destructive. The method-name
+heuristic that infers effect for an unannotated proto steps aside, because the
+annotation is the better evidence, and the operation classifies exactly as the
+OpenAPI document it has declared itself to be.
+
+Four rule shapes are refused, each with the reason on the compile diagnostic:
+
+- A path template binding a value that spans more than one path segment
+  (`{parent=projects/*}`, `{name=books/**}`). Anvil percent-encodes a path
+  parameter, so such a value would address a different resource rather than
+  fail.
+- A template binding a field inside a nested message (`{book.name}`). Path
+  parameters bind by top-level field name.
+- A `custom` method kind, which names a verb outside the set OpenAPI and the
+  runtime share.
+- A rule whose request message could not be resolved, so its bindings cannot be
+  checked against it.
+
+A refused rule does **not** fall back to gRPC's own path. A gateway serves the
+declared route and no other, so that path is one the deployment provably does
+not answer.
+
+### Methods without annotations
+
+A bare `.proto` cannot know whether a transcoder is deployed in front of it, so
+the boundary must be declared. Examples include grpc-gateway and Envoy's
+gRPC-JSON transcoder.
 
 Without the declaration, execution stops before request construction. With the
 declaration, Anvil sends JSON to the recorded service/method path and records
 the reason on the execution result.
 
-Streaming RPCs remain unavailable. A stream cannot be represented as one
-bounded request and response.
+Streaming RPCs remain unavailable under either route. A stream cannot be
+represented as one bounded request and response, and no gateway makes it one —
+so an annotation on a streaming RPC is not read.
+
+`examples/grpc-gateway/` is an annotated service; `examples/grpc/` is a bare
+one.
 
 ## Declaring a protocol facade
 
