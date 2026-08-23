@@ -19,6 +19,7 @@ const example = (rel: string) =>
 
 let soap: { air: AirDocument; files: Record<string, string> };
 let rest: { air: AirDocument; files: Record<string, string> };
+let graphql: { air: AirDocument; files: Record<string, string> };
 
 beforeAll(async () => {
   const air = await compile({
@@ -33,6 +34,12 @@ beforeAll(async () => {
     serviceId: "payments",
   });
   rest = { air: payments, files: generateBundle(payments).files };
+  const storefront = await compile({
+    spec: example("graphql/schema.graphql"),
+    manifest: example("graphql/anvil.yaml"),
+    serviceId: "storefront",
+  });
+  graphql = { air: storefront, files: generateBundle(storefront).files };
 });
 
 describe("the SDK transport gate", () => {
@@ -111,6 +118,34 @@ describe("the SDK transport gate", () => {
       expect(source ?? "").toContain(symbol);
       // Every one refuses a DTD, in its own language's idiom.
       expect(source ?? "").toMatch(/DOCTYPE|doctype/);
+    }
+  });
+
+  it("catches a client that would post a different query document", () => {
+    // A client posting a different document is asking a different question.
+    // Same class of divergence as a wrong SOAPAction, and the same reason to
+    // catch it before it ships rather than in production.
+    expect(sdkGateDrift(graphql.files, graphql.air)).toEqual([]);
+
+    const manifest = JSON.parse(graphql.files["sdk/manifest.json"] ?? "{}");
+    expect(manifest.methods[0].graphqlDocument).toContain("query Anvil_");
+    manifest.methods[0].graphqlDocument = "query Anvil_Product { product { id } }";
+    const drift = sdkGateDrift(
+      { ...graphql.files, "sdk/manifest.json": JSON.stringify(manifest, null, 2) },
+      graphql.air,
+    );
+    expect(drift.join(" ")).toContain("graphqlDocument");
+  });
+
+  it("gives every client the same document, and none of them a query builder", () => {
+    // The point of compiling the document once: four clients that post a
+    // string cannot disagree about it the way four query builders could.
+    const document = (graphql.air.operations[0]?.sourceRef.binding as { document?: string })
+      ?.document;
+    expect(document).toBeDefined();
+    for (const [path, source] of Object.entries(graphql.files)) {
+      if (!path.startsWith("sdk/") || !path.includes("operations")) continue;
+      expect(source).toContain(document ?? "");
     }
   });
 
