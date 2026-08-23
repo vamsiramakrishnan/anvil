@@ -42,27 +42,45 @@ const CASES = [
   },
 ] as const;
 
-/** A SOAP service whose binding Anvil deliberately declines: rpc/encoded, with
- *  its input message described by `type` rather than `element`. */
-const RPC_ENCODED_WSDL = `<?xml version="1.0"?>
+/**
+ * SOAP bindings Anvil deliberately declines, one per reason.
+ *
+ * Kept separate on purpose: a single fixture that trips all three checks proves
+ * only that *something* refused it, and would let any one of the three be
+ * deleted without a test noticing. The mutation gate caught exactly that.
+ */
+function declinedWsdl(options: {
+  style: string;
+  use: string;
+  described: "element" | "type";
+}): string {
+  const part =
+    options.described === "element"
+      ? `<wsdl:part name="parameters" element="tns:RunBatchRequest"/>`
+      : `<wsdl:part name="job" type="xsd:string"/>`;
+  return `<?xml version="1.0"?>
 <wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
     xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
     xmlns:xsd="http://www.w3.org/2001/XMLSchema"
     xmlns:tns="urn:legacy" targetNamespace="urn:legacy" name="Legacy">
-  <wsdl:message name="RunInput"><wsdl:part name="job" type="xsd:string"/></wsdl:message>
-  <wsdl:message name="RunOutput"><wsdl:part name="result" type="xsd:string"/></wsdl:message>
+  <wsdl:types>
+    <xsd:schema targetNamespace="urn:legacy" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+      <xsd:element name="RunBatchRequest">
+        <xsd:complexType><xsd:sequence>
+          <xsd:element name="job" type="xsd:string"/>
+        </xsd:sequence></xsd:complexType>
+      </xsd:element>
+    </xsd:schema>
+  </wsdl:types>
+  <wsdl:message name="RunInput">${part}</wsdl:message>
   <wsdl:portType name="LegacyPort">
-    <wsdl:operation name="RunBatch">
-      <wsdl:input message="tns:RunInput"/>
-      <wsdl:output message="tns:RunOutput"/>
-    </wsdl:operation>
+    <wsdl:operation name="RunBatch"><wsdl:input message="tns:RunInput"/></wsdl:operation>
   </wsdl:portType>
   <wsdl:binding name="LegacyBinding" type="tns:LegacyPort">
-    <soap:binding style="rpc" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <soap:binding style="${options.style}" transport="http://schemas.xmlsoap.org/soap/http"/>
     <wsdl:operation name="RunBatch">
       <soap:operation soapAction="urn:legacy/RunBatch"/>
-      <wsdl:input><soap:body use="encoded"/></wsdl:input>
-      <wsdl:output><soap:body use="encoded"/></wsdl:output>
+      <wsdl:input><soap:body use="${options.use}"/></wsdl:input>
     </wsdl:operation>
   </wsdl:binding>
   <wsdl:service name="Legacy">
@@ -71,6 +89,7 @@ const RPC_ENCODED_WSDL = `<?xml version="1.0"?>
     </wsdl:port>
   </wsdl:service>
 </wsdl:definitions>`;
+}
 
 const compiled = new Map<string, { air: AirDocument; files: Record<string, string> }>();
 
@@ -178,25 +197,39 @@ describe("transport executability", () => {
     }
   });
 
-  it("still refuses a SOAP binding it declines to encode", async () => {
-    // rpc/encoded wraps the parts in an operation-named element and carries
-    // per-element type attributes. Both are expressible and neither is
-    // implemented, so the compiler records no binding and the gate holds —
-    // which is the whole posture: refuse rather than encode on a guess.
-    const air = await compile({ spec: RPC_ENCODED_WSDL, serviceId: "legacy" });
-    const approved = air.operations.map((op) => ({ ...op, state: "approved" as const }));
-    const bundleAir = { ...air, operations: approved };
-    expect(approved.every((op) => op.sourceRef.binding === undefined)).toBe(true);
-    expect(air.diagnostics.map((d) => d.code)).toContain("soap_binding_unencodable");
+  const DECLINED = [
+    { why: "rpc style", style: "rpc", use: "literal", described: "element" as const },
+    { why: "encoded use", style: "document", use: "encoded", described: "element" as const },
+    {
+      why: "a type-described message",
+      style: "document",
+      use: "literal",
+      described: "type" as const,
+    },
+  ];
 
-    const cert = certifyBundle(generateBundle(bundleAir).files, bundleAir, {
-      now: clock("2026-01-01T00:00:00.000Z"),
+  for (const c of DECLINED) {
+    it(`still refuses a SOAP binding with ${c.why}`, async () => {
+      // Each fixture trips exactly one check, so deleting any one of the three
+      // is visible. Anvil encodes document/literal with element-described
+      // messages; the rest compile, record no binding, and stay refused —
+      // encoding one on a guess is how you corrupt a legacy system politely.
+      const air = await compile({ spec: declinedWsdl(c), serviceId: "legacy" });
+      const operations = air.operations.map((op) => ({ ...op, state: "approved" as const }));
+      const bundleAir = { ...air, operations };
+      expect(operations.length).toBeGreaterThan(0);
+      expect(operations.every((op) => op.sourceRef.binding === undefined)).toBe(true);
+      expect(air.diagnostics.map((d) => d.code)).toContain("soap_binding_unencodable");
+
+      const cert = certifyBundle(generateBundle(bundleAir).files, bundleAir, {
+        now: clock("2026-01-01T00:00:00.000Z"),
+      });
+      const failed = cert.checks
+        .filter((check) => check.status === "failed")
+        .map((check) => check.id);
+      expect(failed).toContain("safety.protocol-runtime-executable");
     });
-    const failed = cert.checks
-      .filter((check) => check.status === "failed")
-      .map((check) => check.id);
-    expect(failed).toContain("safety.protocol-runtime-executable");
-  });
+  }
 
   it("recovers the endpoint the WSDL declares instead of reporting none", async () => {
     const air = await compile({

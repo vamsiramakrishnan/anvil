@@ -423,8 +423,8 @@
       "id": "soap/fault-is-not-a-result",
       "file": "packages/runtime/src/executor.ts",
       "control": "A soap:Fault is refused rather than returned as a result. Servers deliver one with HTTP 200 as readily as 500, so the status is not the answer — and reporting one as success would record a failed mutation in the idempotency ledger as completed.",
-      "find": "          const fault = isFaultAware(codec) ? codec.faultIn(op, res) : undefined;",
-      "replace": "          const fault = undefined;",
+      "find": "        const fault = isFaultAware(codec) ? codec.faultIn(op, res) : undefined;",
+      "replace": "        const fault = undefined;",
       "tests": [
         "packages/runtime/src/codec-soap.test.ts"
       ]
@@ -467,6 +467,26 @@
       "replace": "",
       "tests": [
         "packages/generators/src/sdk-transport.test.ts"
+      ]
+    },
+    {
+      "id": "soap/encoded-use-refused",
+      "file": "packages/compiler/src/protocols/soap-binding.ts",
+      "control": "use=\"encoded\" carries per-element type attributes Anvil does not emit. Refused rather than encoded on a guess.",
+      "find": "  if (operation.use !== \"literal\") {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "soap/type-described-message-refused",
+      "file": "packages/compiler/src/protocols/soap-binding.ts",
+      "control": "A message described by type rather than element gives the envelope no body element QName to qualify. Refused rather than invented.",
+      "find": "  if (!requestElement) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
       ]
     }
   ]
