@@ -67,8 +67,8 @@
       "plan": "Cohesive vendor-support surface. Watch."
     },
     "packages/compiler/src/protocols/postman.ts": {
-      "lines": 1084,
-      "plan": "One parser, one format. Splitting parsers by size would not improve ownership."
+      "lines": 1115,
+      "plan": "One parser, one format. Splitting parsers by size would not improve ownership. Raised deliberately from 1084 to stop a silent loss: requests colliding on one (path, method) were dropped with no diagnostic, so an RPC-over-HTTP collection (Moodle's ~800 wsfunction requests) compiled to a single operation and exited zero. The added lines are the diagnostic and the sink that carries it out to ParsedSpec."
     },
     "packages/air/src/schema.ts": {
       "lines": 1126,

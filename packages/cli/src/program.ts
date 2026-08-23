@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { registerAdopt } from "./commands/adopt.js";
 import { registerAgentify } from "./commands/agentify.js";
 import { registerApprove } from "./commands/approve.js";
 import { registerAssess } from "./commands/assess.js";
@@ -82,6 +83,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   // after certify would list them in an order a user can't actually follow.
   registerSource(program, ctx);
   registerAgentify(program, ctx);
+  registerAdopt(program, ctx);
   registerCompile(program, ctx);
   registerStatus(program, ctx);
   registerInspect(program, ctx);

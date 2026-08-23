@@ -215,13 +215,22 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
     }
     const text = new TextDecoder("utf-8").decode(bytes);
     let lowered: OpenApiDocument;
+    // Findings the adapter raises while lowering — carried out with the parse
+    // result rather than dropped, so a lossy lowering is visible to an operator.
+    const adapterDiagnostics: Diagnostic[] = [];
     try {
       const resolveImport = snapshotImportResolver(source);
-      lowered = adaptProtocol(protocol.format, text, undefined, {
-        proto: resolveImport,
-        wsdl: resolveImport,
-        sourcePath: source.entrypoint.path,
-      });
+      lowered = adaptProtocol(
+        protocol.format,
+        text,
+        undefined,
+        {
+          proto: resolveImport,
+          wsdl: resolveImport,
+          sourcePath: source.entrypoint.path,
+        },
+        adapterDiagnostics,
+      );
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to parse ${protocol.format} source: ${detail}`);
@@ -230,7 +239,11 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
     const { schema, errors } = await dereference(lowered as Record<string, unknown>);
     if (!schema) throw failure(errors);
     const decycled = decycle(schema as OpenApiDocument);
-    return { kind: protocol.kind, ...decycled };
+    return {
+      kind: protocol.kind,
+      ...decycled,
+      diagnostics: [...adapterDiagnostics, ...decycled.diagnostics],
+    };
   }
 
   const entry = source.entrypoint.path;

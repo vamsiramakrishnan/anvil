@@ -1,3 +1,4 @@
+import type { Diagnostic } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { adaptPostman, isPostmanCollection, postmanSchemaVersion } from "./postman.js";
 
@@ -1270,5 +1271,95 @@ describe("disabled query parameter UX and operation descriptions", () => {
     const op = opAt(doc, "/search", "get");
     expect(op?.description).toContain("Perform a full-text search");
     expect(op?.description).toContain("1 of 2 documented query parameters are disabled");
+  });
+});
+
+/**
+ * An RPC-over-HTTP collection: every request POSTs to one endpoint and is told
+ * apart by a query selector. Moodle's ~800 web-service functions are the case
+ * that found this — they all live at `POST /webservice/rest/server.php` and
+ * differ only by `?wsfunction=`.
+ *
+ * Anvil's internal model is path-keyed, so it genuinely cannot hold two
+ * operations there. That limitation is fine. Losing 799 functions and exiting
+ * zero was not: the adapter kept the first request per (path, method) and said
+ * nothing, so a collection could compile to a single operation with no error,
+ * no warning, and no clue.
+ */
+describe("requests that collide on one endpoint", () => {
+  const rpcCollection = (names: string[]): string =>
+    JSON.stringify({
+      info: {
+        name: "RPC",
+        schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+      },
+      item: names.map((name) => ({
+        name,
+        request: {
+          method: "POST",
+          url: {
+            raw: `https://api.example.com/rpc?fn=${name}`,
+            host: ["api", "example", "com"],
+            path: ["rpc"],
+            query: [{ key: "fn", value: name }],
+          },
+        },
+      })),
+    });
+
+  it("reports every request it had to drop, naming the one that holds the slot", () => {
+    const diagnostics: Diagnostic[] = [];
+    adaptPostman(rpcCollection(["get_users", "delete_users", "create_user"]), diagnostics);
+    const collisions = diagnostics.filter((d) => d.code === "postman_endpoint_collision");
+    expect(collisions).toHaveLength(2);
+    for (const collision of collisions) {
+      expect(collision.level).toBe("warning");
+      // Both halves of the fact: what was lost, and what it lost to.
+      expect(collision.message).toContain("get_users");
+      expect(collision.path).toBe("POST /rpc");
+    }
+    expect(collisions.map((d) => d.message).join(" ")).toContain("delete_users");
+    expect(collisions.map((d) => d.message).join(" ")).toContain("create_user");
+  });
+
+  it("still keeps the first request, so the diagnostic is a warning and not a loss of everything", () => {
+    const doc = adaptPostman(rpcCollection(["get_users", "delete_users"]));
+    expect(opAt(doc, "/rpc", "post")?.summary).toBe("get_users");
+  });
+
+  it("says nothing when no request collides", () => {
+    const diagnostics: Diagnostic[] = [];
+    const collection = JSON.stringify({
+      info: {
+        name: "REST",
+        schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+      },
+      item: [
+        {
+          name: "list",
+          request: {
+            method: "GET",
+            url: {
+              raw: "https://api.example.com/users",
+              host: ["api", "example", "com"],
+              path: ["users"],
+            },
+          },
+        },
+        {
+          name: "create",
+          request: {
+            method: "POST",
+            url: {
+              raw: "https://api.example.com/users",
+              host: ["api", "example", "com"],
+              path: ["users"],
+            },
+          },
+        },
+      ],
+    });
+    adaptPostman(collection, diagnostics);
+    expect(diagnostics).toEqual([]);
   });
 });

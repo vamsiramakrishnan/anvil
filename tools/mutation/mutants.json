@@ -256,6 +256,26 @@
       "tests": [
         "packages/harness/src/observe.test.ts"
       ]
+    },
+    {
+      "id": "postman/endpoint-collision-reported",
+      "file": "packages/compiler/src/protocols/postman.ts",
+      "control": "A Postman request dropped because its (path, method) is already taken is reported, never lost silently.",
+      "find": "      diagnostics?.push({",
+      "replace": "      [].push({",
+      "tests": [
+        "packages/compiler/src/protocols/postman.bugbash.test.ts"
+      ]
+    },
+    {
+      "id": "adopt/conservative-classification",
+      "file": "packages/compiler/src/adopt/air.ts",
+      "control": "An adopted MCP tool without a readOnlyHint is a non-idempotent mutation that confirms — unknown side effect beats assumed safety.",
+      "find": "  if (a.readOnlyHint) {",
+      "replace": "  if (a.readOnlyHint !== false) {",
+      "tests": [
+        "packages/cli/src/cmd-adopt.test.ts"
+      ]
     }
   ]
 }

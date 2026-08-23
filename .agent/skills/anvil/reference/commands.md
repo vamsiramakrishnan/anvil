@@ -68,6 +68,20 @@ Options:
 - `--root <ws>` — workspace root for .anvil/sources
 - `--json` — emit one machine-readable object with all four stages
 
+### `anvil adopt`
+`anvil adopt [options] <endpoint>`
+
+Capture an existing MCP server's surface and classify what its tools mean.
+
+Connects to an MCP server, captures its advertised tools, and lowers each one to an AIR operation with a conservative safety classification: absent a readOnlyHint a tool is treated as a non-idempotent mutation that requires confirmation and is never auto-retried, because MCP's tool contract carries no idempotency, confirmation, or effect semantics of its own. Writes the content-addressed surface snapshot, the AIR, the derived capability contracts, the surface signature, and the adoption plan — then `anvil inspect` the result to see what the server has been exposing. The endpoint is an http(s) URL (streamable HTTP) or a command line to spawn (stdio; prefix `stdio:` to force it). Read-only: adoption captures and classifies, it never calls a tool and never regenerates the provider's server.
+
+Options:
+- `--mode <mode>` — adopt | facade | replace — what an eventual build would emit (default: adopt)
+- `--service <id>` — service id for the derived AIR (default: from the server name)
+- `--out <dir>` — write the adoption artifacts here
+- `--header <name:value...>` — header for an HTTP endpoint; ${VAR} resolves from the environment
+- `--json` — emit the adoption outcome as JSON
+
 ### `anvil compile`  *(mutates)*
 `anvil compile [options] [spec]`
 

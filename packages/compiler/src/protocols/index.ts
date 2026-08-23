@@ -10,6 +10,7 @@
  * content sniff) so Layer 0 can recognize these formats without a full parse.
  * The heavy lifting happens in `adaptProtocol`, called from `parse.ts`.
  */
+import type { Diagnostic } from "@anvil/air";
 import type { OpenApiDocument } from "../parse.js";
 import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
@@ -142,6 +143,12 @@ export function adaptProtocol(
   text: string,
   title?: string,
   imports: AdaptImports = {},
+  /**
+   * Optional sink for adapter-level findings the caller drains into
+   * `ParsedSpec.diagnostics`. Only the Postman adapter uses it today — it is the
+   * one lowering that can drop a request (see `postman_endpoint_collision`).
+   */
+  diagnostics?: Diagnostic[],
 ): OpenApiDocument {
   switch (format) {
     case "graphql":
@@ -153,7 +160,7 @@ export function adaptProtocol(
     case "discovery":
       return adaptDiscovery(text);
     case "postman":
-      return adaptPostman(text);
+      return adaptPostman(text, diagnostics);
     case "odata":
       return adaptOData(text, title);
   }

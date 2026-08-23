@@ -645,6 +645,34 @@ describe("anvil observe speaks the operator envelope", () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* Adopting someone else's MCP server                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `anvil adopt` reaches out to a server Anvil does not own, which makes its
+ * refusals the ones most likely to be hit unattended — an endpoint that moved,
+ * a token that expired. They speak the envelope.
+ */
+describe("anvil adopt speaks the operator envelope", () => {
+  it("refuses an unknown mode as a document, not as prose on stderr", async () => {
+    const result = await run(["adopt", "http://127.0.0.1:1/mcp", "--mode", "absorb", "--json"]);
+    const envelope = expectRefusalContract(result, "adopt --mode absorb --json");
+    expect(envelope.reportType).toBe("anvil.adopt-error");
+    expect(envelope.code).toBe("adopt_mode_unknown");
+  });
+
+  it("refuses an unreachable endpoint as a document", async () => {
+    const result = await run(["adopt", "http://127.0.0.1:1/mcp", "--json"]);
+    const envelope = expectRefusalContract(result, "adopt unreachable --json");
+    expect(envelope.reportType).toBe("anvil.adopt-error");
+    expect(typeof envelope.code).toBe("string");
+    // A Moodle MCP endpoint carries its token in the query string; a refusal
+    // that echoed the endpoint would leak it into CI output.
+    expect(result.stdout + result.stderr).not.toContain("wstoken");
+  }, 60_000);
+});
+
+/* -------------------------------------------------------------------------- */
 /* The ratchet: no --json command arrives unnoticed                            */
 /* -------------------------------------------------------------------------- */
 
