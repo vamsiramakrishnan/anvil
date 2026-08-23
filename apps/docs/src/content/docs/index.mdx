@@ -1,22 +1,21 @@
 ---
 title: Anvil
-description: Compile API contracts into aligned agent tools, or inventory and refine legacy invocation boundaries when no useful API contract exists.
+description: Compile one API contract into aligned CLI, MCP, SDK, skill, hook, test, and deployment surfaces.
 template: splash
 hero:
   tagline: >-
-    Turn an API contract into agent tools you can inspect before you expose and
-    verify before you ship. Anvil generates a typed CLI, an MCP server, an agent
-    skill, and harness hooks from one safety contract.
+    Compile one API contract into a CLI, MCP server, client SDKs, an agent skill,
+    hooks, tests, and deployment inputs. Review an operation before it becomes
+    callable. Enforce the same contract at runtime.
   actions:
-    - text: Get started
+    - text: Run the quickstart
       link: /anvil/start/quickstart/
       icon: right-arrow
+    - text: Understand the model
+      link: /anvil/start/what-is-anvil/
+      variant: minimal
     - text: Install from source
       link: /anvil/cookbooks/install-anvil/
-      variant: minimal
-    - text: Try the compiler
-      link: /anvil/playground/
-      icon: rocket
       variant: minimal
 ---
 
@@ -25,20 +24,20 @@ import PipelineDiagram from '../../components/diagrams/PipelineDiagram.astro';
 import AlignmentDiagram from '../../components/diagrams/AlignmentDiagram.astro';
 import LoopDiagram from '../../components/diagrams/LoopDiagram.astro';
 
-## A compiler, not another wrapper framework
+## One contract. Every surface.
 
-An API contract tells an agent how to send a request. It rarely says whether a
-timed-out POST is safe to retry, whether an operation can be undone, or whether
-a person must approve it.
+An API specification defines transport: paths, methods, fields, and schemas.
+An agent also needs operating policy: effect, risk, approval, confirmation,
+idempotency, retry, and auth.
 
-Anvil turns the source contract plus a small reviewed manifest into one
-canonical model. It generates every agent-facing surface from that model.
+If each surface defines that policy separately, the surfaces can disagree.
+Anvil records the policy once in AIR and generates every surface from AIR.
 
 <PipelineDiagram />
 
-The practical result is simple: you do not maintain a CLI, an MCP server, and a
-prompt as separate integrations. One operation has one name, one schema, one
-auth posture, and one set of safety rules everywhere it appears.
+The consequence is concrete. A refund cannot require confirmation in the CLI
+and omit it from MCP. An unapproved operation cannot appear in one client but
+remain hidden in another.
 
 ```bash
 pnpm anvil compile examples/payments/openapi.yaml \
@@ -46,176 +45,123 @@ pnpm anvil compile examples/payments/openapi.yaml \
   --service payments \
   --out generated/payments
 
+pnpm anvil status generated/payments
 pnpm anvil inspect generated/payments
 ```
 
-## What developers get
+## What `compile` produces
 
 <CardGrid>
-  <Card title="A runnable CLI" icon="seti:powershell">
-    Typed commands for approved operations. Use the same invocation model in a
-    terminal, a test, or CI.
+  <Card title="CLI" icon="seti:powershell">
+    Typed commands for developers, automation, and CI.
   </Card>
-  <Card title="An MCP server" icon="seti:pipeline">
-    The deployable surface for agents. It exposes only approved operations and
-    enforces the contract again at runtime.
+  <Card title="MCP server" icon="seti:pipeline">
+    Agent tools for approved operations, backed by runtime policy checks.
   </Card>
-  <Card title="An agent skill" icon="document">
-    Progressive-disclosure instructions, setup, examples, errors, and operation
-    reference generated from the same model.
+  <Card title="Client SDKs" icon="seti:typescript">
+    TypeScript, Python, Go, and Java clients generated from the same operations.
+  </Card>
+  <Card title="Agent skill" icon="document">
+    Setup, intent routing, constraints, examples, errors, and operation reference.
   </Card>
   <Card title="Harness hooks" icon="approve-check">
-    Early deny or escalation in supported developer harnesses, without moving
-    the authority out of the runtime.
+    Earlier refusals and escalation for supported coding harnesses.
+  </Card>
+  <Card title="Assurance and deploy inputs" icon="seti:config">
+    Mocks, evaluations, conformance records, target kits, and operator plans.
   </Card>
 </CardGrid>
 
 <AlignmentDiagram />
 
-## Safe by explicit construction
+## Rules that do not change
 
-Anvil does not turn uncertainty into permission.
+| Condition | Result |
+| --- | --- |
+| Operation is not approved | It is absent from callable surfaces |
+| Mutation idempotency is unproven | It is not retried automatically |
+| Confirmation is missing | The call fails before execution |
+| A harness hook is absent | The runtime still enforces the contract |
+| Bundle bytes change | Existing assurance evidence becomes stale |
+| `publish` succeeds | A release plan exists; nothing has been deployed |
 
-- **Unknown mutations wait.** If idempotency or effect cannot be established,
-  the operation remains `review_required` and is not callable.
-- **Approval changes exposure.** Only approved operations appear in the
-  generated CLI catalog and MCP tool list.
-- **Retries require proof.** A mutation without a valid idempotency contract is
-  never retried automatically.
-- **Confirmation is executable policy.** A gated call returns a structured
-  refusal with the exact missing requirements.
-- **The runtime remains authoritative.** Hooks provide an earlier, friendlier
-  stop; the runtime repeats the checks before network access.
+These rules are executable. They are not prompt guidance.
 
-Try the refusal locally:
-
-```bash
-pnpm anvil run generated/payments refunds create \
-  --payment-id pay_123 \
-  --amount 4200 \
-  --currency usd \
-  --reason duplicate_charge \
-  --dry-run
-```
-
-Anvil returns `confirmation_required` before constructing or sending the
-request. Add `--confirm` and an idempotency key to receive a redacted dry-run
-plan.
-
-## A workflow you can resume
+## One operating loop
 
 <LoopDiagram />
 
 ```bash
-# Discover an unfamiliar API, then stop for review.
+# Capture, compile, assess, and stop for review.
 pnpm anvil agentify path/to/spec --out generated/service
 
-# Understand the current contract and the next safe action.
+# Inspect the current state and the next required action.
 pnpm anvil status generated/service
 pnpm anvil inspect generated/service
-pnpm anvil assess generated/service
+pnpm anvil lint generated/service
 
-# After reviewed enrichment and approval, prove the bundle.
+# After enrichment and approval, verify one bundle hash.
 pnpm anvil certify generated/service
 pnpm anvil selftest generated/service
 pnpm anvil conformance generated/service
 pnpm anvil simulate generated/service
 
-# Prepare a release plan. This does not deploy.
+# Prepare an operator plan. This does not deploy.
 pnpm anvil publish generated/service --env prod
 ```
 
-`status` is the re-entry point. It checks source identity, generated
-projections, approval state, assurance freshness, target configuration, and
-release-plan state, then names the next action.
+Run `status` when you resume a bundle or a gate fails. It reports the first
+required action.
 
-## Bring the contract you already have
+## Start from the evidence you have
 
-Anvil supports OpenAPI 3.x, Swagger 2.0, GraphQL SDL, gRPC/proto3, SOAP/WSDL,
-Google Discovery, OData v2/v4 metadata, and Postman Collection v2.x. Local
-multi-file graphs are captured before compilation so generated evidence is
-bound to the bytes that were actually read.
+| Input | Start with | Boundary |
+| --- | --- | --- |
+| API contract | `anvil agentify` or `anvil compile` | Can become an executable bundle after review and assurance |
+| Gateway export | `anvil estate inventory` | Preserves gateway identity, policies, coordinates, and import provenance |
+| Legacy deployment configuration | `anvil legacy inventory` | Produces offline evidence and reviewed bindings, not a runnable bridge |
+| Existing MCP server | `anvil adopt` | Unknown tools remain conservative mutations until reviewed |
 
-Each adapter has an explicit boundary. Postman scripts are reported, not
-executed. WSDL support covers a documented XSD subset. Remote references are
-recorded but not fetched during local source capture. Read
-[Source format support](/anvil/guides/source-formats/) for the exact contract.
+Supported contracts include OpenAPI, Swagger, GraphQL SDL, proto3, WSDL,
+Google Discovery, OData metadata, and Postman collections. Parsing a format does
+not imply native wire support. Read [source format support](/anvil/guides/source-formats/)
+before planning around gRPC, SOAP, GraphQL subscriptions, or vendor extensions.
 
-If the source of truth is an API gateway, begin with estate inventory and
-triage rather than compiling arbitrary exports one at a time. See
-[Import a gateway estate](/anvil/cookbooks/import-a-gateway-estate/).
+## Verification gates
 
-## When the API contract does not exist
-
-Legacy systems often expose their real integration boundary through deployment
-descriptors, WCF configuration, queue-manager definitions, or application-server
-bindings. Those files establish technical facts, but they do not establish a
-safe business operation.
-
-Anvil provides a separate offline workflow:
-
-```bash
-pnpm anvil legacy inventory ./refunds-prod-export \
-  --environment prod \
-  --application refund-service \
-  --out refunds-prod.inventory.json
-```
-
-Inventory retains conflicting bindings instead of choosing one. A coding
-harness can then propose a business-shaped operation with clear schemas,
-errors, pagination, transport, completion, authorization, idempotency, and
-retry decisions. Anvil assesses the proposal and requires a separate human
-approval.
-
-This release stops at a reviewed binding. It does not yet generate or run the
-deployment-local Java, Windows, or broker bridge. Start with
-[Understand legacy estates](/anvil/concepts/legacy-estates/), then
-[build an inventory](/anvil/guides/legacy-inventory/).
-
-## Prove the bundle you are about to ship
-
-Anvil separates four assurance questions:
-
-| Command | Evidence produced |
+| Command | It answers |
 | --- | --- |
-| `certify` | Static agreement between AIR and generated bytes |
-| `selftest` | End-to-end behavior over the generated MCP transport |
-| `conformance` | Agreement across CLI, MCP, skill, hooks, and runtime posture |
-| `simulate` | Safety-matrix coverage plus injected regression detection |
+| `certify` | Do generated bytes agree with AIR? |
+| `selftest` | Does the generated MCP surface behave correctly over local transport? |
+| `conformance` | Do the generated CLI, MCP server, and skill agree? |
+| `simulate` | Do safety controls hold across the generated scenario matrix? |
 
-The reports are bound to the current bundle hash. Change the bundle and the
-evidence becomes stale. Production release planning fails closed when required
-evidence is missing or stale.
+Every record names the bundle hash it tested. A changed bundle requires new
+evidence.
 
-## Choose your next step
+## Choose the next page
 
 <CardGrid>
   <Card title="First local bundle" icon="rocket">
-    [Complete the quickstart](/anvil/start/quickstart/) with the payments fixture
-    and no external credentials.
+    [Run the quickstart](/anvil/start/quickstart/) without credentials or an
+    upstream service.
   </Card>
-  <Card title="Your own API" icon="document">
-    Check [source format support](/anvil/guides/source-formats/), then learn how
-    to [write a manifest](/anvil/guides/manifest/).
+  <Card title="Your API" icon="document">
+    Check [source support](/anvil/guides/source-formats/), then write a
+    [reviewed manifest](/anvil/guides/manifest/).
   </Card>
-  <Card title="A legacy system without an API" icon="seti:config">
-    [Inventory offline deployment evidence](/anvil/guides/legacy-inventory/),
-    refine one candidate, and keep runtime availability explicit.
+  <Card title="Gateway estate" icon="seti:config">
+    [Inventory the estate](/anvil/cookbooks/import-a-gateway-estate/) before
+    importing individual APIs.
+  </Card>
+  <Card title="Legacy system" icon="seti:config">
+    [Inventory offline evidence](/anvil/guides/legacy-inventory/) and preserve
+    the current runtime boundary.
   </Card>
   <Card title="Production pipeline" icon="seti:pipeline">
-    [Run Anvil in CI](/anvil/guides/ci/) with review boundaries and
-    hash-consistent assurance.
+    [Run Anvil in CI](/anvil/guides/ci/) with explicit review and release gates.
   </Card>
-  <Card title="Platform adoption" icon="seti:config">
-    [Adopt Anvil across a platform](/anvil/start/for-enterprises/) while keeping
-    semantics with API owners and deployment with the platform team.
-  </Card>
-  <Card title="Something failed" icon="warning">
-    Use [Troubleshooting](/anvil/guides/troubleshooting/) to interpret refusals,
-    stale evidence, source errors, and release-plan failures.
-  </Card>
-  <Card title="Architecture" icon="pencil">
-    Read the [compiler and runtime architecture](/anvil/concepts/architecture/)
-    and the [product boundary](/anvil/concepts/product-boundary/).
+  <Card title="Failure or refusal" icon="warning">
+    Start with [troubleshooting](/anvil/guides/troubleshooting/) and `anvil status`.
   </Card>
 </CardGrid>

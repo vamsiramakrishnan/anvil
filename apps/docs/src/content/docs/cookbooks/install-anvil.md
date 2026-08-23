@@ -1,23 +1,20 @@
 ---
 title: Install Anvil
-description: Build Anvil from source, verify the CLI, and compile a disposable example before using your own API contract.
+description: Build Anvil from source, verify the CLI, and run one offline compiler smoke test.
 sidebar:
   order: 1
 ---
 
-Anvil currently runs from source; there is no published global package. This
-page gets you to a verified local CLI without changing your global npm setup.
+Anvil currently runs from source. It is not published as a global package.
 
-## Prerequisites
+This guide leaves global npm packages unchanged. It builds the repository and
+verifies the complete local compiler path.
 
-You need:
+## Requirements
 
-- Node.js 22.17 or later;
-- Corepack, which is included with supported Node.js releases;
-- Git; and
-- a shell that can run the commands below.
-
-Check the versions first:
+- Node.js 22.17 or later
+- Corepack
+- Git
 
 ```bash
 node --version
@@ -25,8 +22,7 @@ corepack --version
 git --version
 ```
 
-You do not need Docker, a database, or cloud credentials to compile and test a
-bundle locally.
+You do not need Docker, a database, cloud credentials, or an upstream API.
 
 ## Clone and build
 
@@ -38,8 +34,8 @@ pnpm install
 pnpm build
 ```
 
-The repository pins pnpm in `package.json`. Let Corepack select that version;
-do not substitute the latest pnpm release when reproducing a build failure.
+The repository pins pnpm in `package.json`. Let Corepack select that version.
+Use the pinned version when reproducing a failure.
 
 Verify the CLI:
 
@@ -48,15 +44,16 @@ pnpm anvil --version
 pnpm anvil --help
 ```
 
-`pnpm anvil` runs the built entrypoint at
-`packages/cli/dist/bin-anvil.js`. The documentation uses `anvil` for installed
-or aliased environments and `pnpm anvil` when commands are intended to run from
-this checkout.
+`pnpm anvil` runs `packages/cli/dist/bin-anvil.js` from the current checkout.
+The remaining documentation uses:
 
-## Verify the complete path
+- `pnpm anvil` for commands run from this repository; and
+- `anvil` when the executable is installed or aliased.
 
-Compile the repository's payments fixture into a temporary directory, inspect
-it, and remove it when finished:
+## Run the compiler smoke test
+
+The following block compiles the checked-in payments fixture in a temporary
+directory. It contacts no upstream service.
 
 ```bash
 # [docs-tested]
@@ -74,36 +71,38 @@ test -f "$WORK/payments/skill/SKILL.md"
 rm -rf "$WORK"
 ```
 
-If that block exits successfully, the compiler, generators, and CLI can work
-together on your machine.
+Success establishes three facts:
 
-## Optional shell shortcut
+1. the workspace built;
+2. the CLI can compile and inspect a bundle; and
+3. the expected AIR, MCP, and skill artifacts exist.
 
-If you prefer the shorter commands used in the reference docs, create an alias
-for the current shell:
+It does not establish cloud deployment or access to a real API.
+
+## Optional shell alias
 
 ```bash
 alias anvil='node packages/cli/dist/bin-anvil.js'
 anvil --help
 ```
 
-The alias is not persistent. Add it to your shell profile only if this checkout
-has a stable location.
+The alias applies only to the current shell unless you add it to a shell
+profile. Use it only when the checkout path is stable.
 
-## Common installation failures
+## Installation failures
 
-| Symptom | What to do |
+| Symptom | Action |
 | --- | --- |
-| `pnpm: command not found` | Run `corepack enable`, then reopen the shell if necessary. |
-| pnpm reports a version mismatch | Run `corepack pnpm --version`; the result should match `packageManager` in `package.json`. |
-| A module under `dist/` is missing | Run `pnpm build` again and fix the first package that fails. |
-| Native `sharp` or `esbuild` install fails | Confirm you are using a supported Node.js version and the repository's pinned pnpm version. Remove only `node_modules`, then rerun `pnpm install`. |
-| The docs site fails while the CLI packages build | Run the docs build separately with `pnpm --filter @anvil/docs build` so the Astro error is isolated. |
+| `pnpm: command not found` | Run `corepack enable`, then reopen the shell if required |
+| pnpm version mismatch | Run `corepack pnpm --version` and compare it with `packageManager` in `package.json` |
+| Missing module under `dist/` | Run `pnpm build` and fix the first package failure |
+| `sharp` or `esbuild` install failure | Confirm the Node version, remove `node_modules`, and reinstall with the pinned pnpm version |
+| Docs fail after packages build | Run `pnpm --filter @anvil/docs build` to isolate the Astro failure |
 
-For command and bundle problems after installation, use the
-[troubleshooting guide](/anvil/guides/troubleshooting/).
+For compiler and bundle failures, use
+[troubleshooting](/anvil/guides/troubleshooting/).
 
-## Next step
+## Next
 
-Continue to the [quickstart](/anvil/start/quickstart/) to compile, inspect, and
-exercise a bundle without contacting a real API.
+[Run the quickstart](/anvil/start/quickstart/) to inspect a mutation, observe a
+policy refusal, and verify the generated MCP path.

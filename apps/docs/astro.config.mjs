@@ -92,8 +92,11 @@ export default defineConfig({
           label: "Build",
           items: [
             { label: "Source format support", slug: "guides/source-formats" },
+            { label: "Wire protocol support", slug: "guides/wire-protocols" },
             { label: "Write a manifest", slug: "guides/manifest" },
             { label: "Enrich and approve", slug: "guides/enrich-approve-workflow" },
+            { label: "Use client SDKs", slug: "guides/client-sdks" },
+            { label: "Prepare a gateway export", slug: "cookbooks/prepare-a-gateway-export" },
             { label: "Import a gateway estate", slug: "cookbooks/import-a-gateway-estate" },
             { label: "Enrich a SOAP service", slug: "cookbooks/enrich-a-soap-service" },
             { label: "Cut context cost", slug: "cookbooks/cut-agent-context-cost" },
@@ -117,6 +120,7 @@ export default defineConfig({
           items: [
             { label: "Operating Anvil", slug: "guides/operating-anvil" },
             { label: "Run Anvil in CI", slug: "guides/ci" },
+            { label: "Observe running apps", slug: "guides/observing-running-apps" },
             { label: "Troubleshooting", slug: "guides/troubleshooting" },
             { label: "Respond to spec drift", slug: "cookbooks/respond-to-drift" },
             {
@@ -134,6 +138,7 @@ export default defineConfig({
           label: "Connect agents",
           items: [
             { label: "Refine with a coding harness", slug: "guides/refinement-sdk" },
+            { label: "Adopt an MCP server", slug: "guides/adopting-mcp-servers" },
             { label: "Gemini Enterprise", slug: "cookbooks/connect-gemini-enterprise" },
             { label: "Claude Code plugin", slug: "cookbooks/install-claude-code-plugin" },
             { label: "Codex hook", slug: "cookbooks/wire-codex-hook" },

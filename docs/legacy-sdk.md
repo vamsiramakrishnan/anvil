@@ -9,6 +9,10 @@ inventory diffs, collector contracts, and bridge planning.
 The entrypoint is Node-only. It compiles caller-supplied bytes. It does not
 connect to an application server, broker, repository, or runtime.
 
+`@anvil/compiler/legacy` is currently a workspace API. Use it from an Anvil
+checkout after `pnpm install` and `pnpm build`. The package is not yet
+documented as an independently published install.
+
 ## Import the public entrypoint
 
 ```ts

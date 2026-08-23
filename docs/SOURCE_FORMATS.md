@@ -1,31 +1,28 @@
 # Source format support
 
-Anvil accepts several API description formats, but “supported” has a precise
-meaning: Anvil can detect the input, capture its local source graph, lower it
-into the canonical model, and generate the aligned bundle. It does not imply
-that every vendor extension, script, policy, or native wire transport is
-executed. Anvil speaks three wire protocols — HTTP with a JSON body, SOAP (1.1
-and 1.2, document/literal), and GraphQL (queries and mutations) — and [refuses,
-loudly, to pretend otherwise](./wire-protocols.md) for the rest. Compiling a
-`.proto` gives you a reviewed model and aligned surfaces, and a bundle that will
-not be certified for deployment until a facade that really does serve it is
-declared.
+“Supported” can mean four different things: Anvil can parse an input, capture
+its local source graph, lower it into AIR, or execute the resulting operation.
+These capabilities are listed separately below.
+
+For example, Anvil can parse proto3 and generate aligned surfaces. It cannot
+execute native gRPC. The bundle needs a declared JSON transcoder before that
+operation becomes wire-executable.
 
 Use this page to choose the right entrypoint and understand what must be
 reviewed after compilation.
 
 ## Support matrix
 
-| Source | Accepted input | Multi-file behavior | Important boundary |
-| --- | --- | --- | --- |
-| OpenAPI | OpenAPI 3.x YAML or JSON | Local `$ref` files are captured and dereferenced | Remote references are recorded as external and are not fetched during source capture |
-| Swagger | Swagger 2.0 YAML or JSON | Same local-reference behavior as OpenAPI | Converted to OpenAPI with `swagger2openapi` before the shared pipeline |
-| GraphQL | GraphQL SDL (`.graphql`, `.gql`, `.graphqls`) | One SDL entrypoint | Queries become reads; mutations remain conservative mutations; **Executable**: queries and mutations post a document compiled from the SDL; subscriptions are represented and refused, since Anvil has no streaming client — see [Wire protocols](./wire-protocols.md) |
-| gRPC | proto3 (`.proto`) | Transitive local imports are captured and loaded into one protobuf root | RPCs are lowered to an HTTP-shaped contract on gRPC's own real path. **Executable through a declared JSON transcoder** (grpc-gateway, Envoy); native gRPC is not, since Python's standard library has no HTTP/2 client. Streaming RPCs are refused — see [Wire protocols](./wire-protocols.md) |
-| SOAP | WSDL 1.1 with embedded or local XSD | `wsdl:import`, `xsd:include`, and `xsd:import` are captured locally | Supports the documented/literal XSD subset described below. **Executable**: Anvil posts a real envelope to the declared `<soap:address>`; `rpc`/`encoded` bindings are refused rather than guessed — see [Wire protocols](./wire-protocols.md) |
-| Google APIs | Discovery `restDescription` JSON | Single Discovery document | Mechanically maps resources, methods, schemas, parameters, and OAuth scopes; it does not call Google discovery services |
-| OData | v2 or v4 `$metadata` / EDMX XML | One metadata entrypoint | Generates conventional entity-set CRUD operations and honors supported SAP mutability annotations; actions/functions and navigation semantics require review |
-| Postman | Collection v2.0 or v2.1 JSON | One collection document | Saved examples inform schemas; pre-request and test scripts are counted and reported, never executed |
+| Source | Accepted input | Local source graph | Generated runtime | Declined or external behavior |
+| --- | --- | --- | --- | --- |
+| OpenAPI | OpenAPI 3.x YAML or JSON | Captures and resolves local `$ref` files | HTTP with JSON | Remote references are recorded but not fetched |
+| Swagger | Swagger 2.0 YAML or JSON | Single file only; bundle external references first | Converted to OpenAPI, then HTTP with JSON | Multi-file Swagger 2.0 is rejected |
+| GraphQL | GraphQL SDL (`.graphql`, `.gql`, `.graphqls`) | One SDL entrypoint | Queries and mutations | Subscriptions are represented but refused |
+| gRPC | proto3 (`.proto`) | Captures transitive local imports | HTTP-shaped calls through a declared JSON transcoder | Native gRPC and streaming RPCs are refused |
+| SOAP | WSDL 1.1 with embedded or local XSD | Captures `wsdl:import`, `xsd:include`, and `xsd:import` | Supported document/literal bindings | See the test-backed [wire protocol matrix](./wire-protocols.md) |
+| Google APIs | Discovery `restDescription` JSON | One document | HTTP with JSON | Does not call Google discovery services |
+| OData | v2 or v4 `$metadata` / EDMX XML | One metadata entrypoint | HTTP with JSON for generated entity-set operations | Actions, functions, and navigation semantics require review |
+| Postman | Collection v2.0 or v2.1 JSON | One collection document | HTTP with JSON | Pre-request and test scripts are reported but never executed |
 
 The format adapter is only the first stage. Every source then uses the same
 normalize, classify, manifest, validate, capability, and generation pipeline.
@@ -84,9 +81,10 @@ OpenAPI is the richest source for HTTP semantics, but the document still may
 not prove business effect or idempotency. Inspect POST operations carefully;
 method alone is not a sufficient safety classification.
 
-Swagger 2.0 is upgraded before normalization. Review conversion diagnostics,
-especially around body/form parameters, security definitions, and response
-schemas.
+Swagger 2.0 is upgraded before normalization. It must be supplied as one
+bundled document; multi-file Swagger 2.0 is rejected. Review conversion
+diagnostics, especially around body/form parameters, security definitions, and
+response schemas.
 
 ### GraphQL SDL
 
@@ -129,7 +127,8 @@ understands the common document/literal XSD subset:
 - common XSD scalar types.
 
 Operation names provide conservative effect hints; they do not prove
-idempotency. See [Add the safety facts a WSDL leaves out](../apps/docs/src/content/docs/cookbooks/enrich-a-soap-service.md)
+idempotency. See [Add the safety facts a WSDL leaves
+out](https://vamsiramakrishnan.github.io/anvil/cookbooks/enrich-a-soap-service/)
 for a complete example.
 
 ### Google Discovery

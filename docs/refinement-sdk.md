@@ -4,12 +4,13 @@ Anvil can ask Codex, Claude Code, Antigravity, or another coding harness to
 investigate an API contract without giving that harness permission to rewrite the
 contract.
 
-The split is deliberate:
+The responsibilities are separate:
 
 - the harness searches the repository, connects implementation details, and
   proposes a narrow semantic change;
 - Anvil owns the task boundary, evidence verification, deterministic validation,
-  measurement, approval policy, and the only write path into AIR.
+  measurement, and approval policy. It validates an accepted proposal before
+  applying a change.
 
 Use this workflow when an API is callable but still makes an agent guess. Typical
 examples include an input named `val`, an amount with no unit, an error with no
@@ -31,6 +32,10 @@ separate [`@anvil/compiler/legacy` SDK](legacy-sdk.md).
 
 For Codex or Claude Code, start with the portable task protocol. It keeps process
 and language choices out of the trust model.
+
+`@anvil/refinement` is currently a workspace API. Use it from an Anvil checkout
+after `pnpm install` and `pnpm build`. The package is not yet documented as an
+independently published install.
 
 ## Run the portable task protocol
 
@@ -122,9 +127,11 @@ Anvil reads the file from the task's pinned Git commit during import. It records
 Git blob ID, SHA-256 of the complete blob, SHA-256 of the selected excerpt, and line
 range. A dirty working tree cannot silently redefine evidence for an older task.
 
-If the repository does not support a change, the correct response is an honest
-decline: `supported`, `conflicted`, `insufficient_evidence`, or
-`blocked_by_missing_source`. Declines carry no patch and remain auditable.
+The harness must not force a patch. It can return `supported` when the current
+value is already correct, `conflicted` when sources disagree,
+`insufficient_evidence` when proof is weak, or `blocked_by_missing_source` when
+a required source is unavailable. These outcomes carry no patch and remain
+auditable.
 
 ### 4. Import, validate, and measure
 

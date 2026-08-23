@@ -30,7 +30,7 @@ From the repository root:
 ```bash
 corepack enable
 pnpm install
-pnpm --filter @anvil/air --filter @anvil/compiler build
+pnpm --filter @anvil/compiler... build
 pnpm --filter @anvil/docs dev
 ```
 
@@ -71,11 +71,19 @@ the command reference.
 ## Writing standard
 
 - Lead with the task outcome and prerequisites.
+- State one claim per paragraph. Use short sentences when a second clause does
+  not add necessary precision.
+- Prefer condition → consequence → action. Example: “The bundle changed, so its
+  assurance records are stale. Run the assurance sequence again.”
 - Use exact command names and distinguish local planning from external action.
 - Explain a refusal before telling the reader how to override or satisfy it.
 - Prefer one canonical explanation and link to it from shorter pages.
+- Separate format parsing, semantic lowering, code generation, and runtime
+  execution. Support for one does not imply support for the others.
 - Avoid mutable test counts, benchmark totals, dates, and implementation-status
   claims unless they are generated from code.
+- Avoid argumentative fillers such as “honest,” “loudly,” “load-bearing,” and
+  “the point.” State the behavior or boundary directly.
 - Keep secrets and real customer data out of examples.
 - Use `status` as the recovery entrypoint when a workflow can be resumed.
 - State format and provider boundaries explicitly; do not imply support from a
