@@ -164,7 +164,7 @@ export function adaptProtocol(
     case "postman":
       return adaptPostman(text, diagnostics);
     case "odata":
-      return adaptOData(text, title);
+      return adaptOData(text, title, diagnostics);
   }
 }
 

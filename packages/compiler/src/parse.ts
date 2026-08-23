@@ -5,6 +5,7 @@ import { convertObj } from "swagger2openapi";
 import { bundleDocument, DEFAULT_MAX_SCHEMA_DEPTH } from "./decycle.js";
 import { adaptProtocol, type ProtocolFormat, type ProtoImportResolver } from "./protocols/index.js";
 import { type CompilerSource, ephemeralCompilerSource } from "./source/compiler-source.js";
+import { bundleSwaggerExternalRefs } from "./swagger-bundle.js";
 
 /**
  * The scalar loader-plugin contract (not re-exported by the package root, so we
@@ -149,6 +150,37 @@ const PROTOCOL_FORMATS: Record<string, { format: ProtocolFormat; kind: SourceKin
  * directory structure OR just carries the sibling files flat both resolve. A
  * missing import returns undefined and the adapter degrades gracefully.
  */
+/** SDL file extensions, matched case-insensitively. */
+const SDL_EXTENSIONS = [".graphql", ".gql", ".graphqls"];
+
+/**
+ * Every SDL document in the snapshot, entrypoint first, then the rest in a
+ * stable order so the composed schema is byte-identical across compiles.
+ *
+ * Each part is prefixed with its path as a comment. That costs nothing — a `#`
+ * line is a GraphQL comment — and means a schema error reported against the
+ * composed document can still be traced back to the file it came from.
+ */
+function composeGraphqlSdl(source: CompilerSource): string {
+  const decoder = new TextDecoder("utf-8");
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  const push = (path: string): void => {
+    if (seen.has(path)) return;
+    const bytes = source.files.get(path);
+    if (bytes === undefined) return;
+    seen.add(path);
+    parts.push(`# ${path}\n${decoder.decode(bytes)}`);
+  };
+  // The entrypoint leads: if more than one file declares a `schema { ... }`
+  // block, the one the operator pointed at is the one that should win.
+  push(source.entrypoint.path);
+  for (const path of [...source.files.keys()].sort()) {
+    if (SDL_EXTENSIONS.some((ext) => path.toLowerCase().endsWith(ext))) push(path);
+  }
+  return parts.join("\n\n");
+}
+
 function snapshotImportResolver(source: CompilerSource): ProtoImportResolver {
   const decoder = new TextDecoder("utf-8");
   const byBasename = new Map<string, Uint8Array>();
@@ -198,8 +230,9 @@ function stampSchemaTitles(doc: OpenApiDocument): void {
  * through swagger2openapi's converter, and $ref resolution flows through
  * @scalar/openapi-parser. Non-REST protocols (GraphQL/gRPC/SOAP) are lowered by
  * an adapter into a pre-dereference OpenAPI 3.0 document first. Multi-file
- * external $refs are supported for OpenAPI 3.x; a Swagger 2.0 entrypoint that
- * spans files is rejected rather than silently dropping references.
+ * external $refs are supported for OpenAPI 3.x and for Swagger 2.0 alike; a 2.0
+ * source that spans files has its references resolved before conversion, since
+ * the converter itself cannot follow them.
  */
 export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
   // Non-REST protocols (GraphQL, gRPC/proto, SOAP/WSDL) are lowered into a
@@ -213,7 +246,17 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
         `Entrypoint bytes are not represented in the snapshot: ${source.entrypoint.path}`,
       );
     }
-    const text = new TextDecoder("utf-8").decode(bytes);
+    // A GraphQL schema is the one protocol source routinely written as several
+    // files — `schema.graphql` plus a `types/` directory, or a base type and the
+    // `extend type Query` blocks that add to it. SDL has no import statement, so
+    // there is nothing for a resolver to follow: composition IS concatenation,
+    // and the schema only exists once the pieces are put together. Reading the
+    // entrypoint alone would compile a schema whose Query type is missing most
+    // of its fields.
+    const text =
+      protocol.format === "graphql"
+        ? composeGraphqlSdl(source)
+        : new TextDecoder("utf-8").decode(bytes);
     let lowered: OpenApiDocument;
     // Findings the adapter raises while lowering — carried out with the parse
     // result rather than dropped, so a lossy lowering is visible to an operator.
@@ -264,16 +307,30 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
   const isSwagger = typeof entrypoint?.swagger === "string" && entrypoint.swagger.startsWith("2");
 
   if (isSwagger) {
-    // Swagger conversion owns the whole 2.0 field mapping and must see the raw
-    // document, so it runs before dereference exactly as it always has. The
-    // converter cannot follow external files, so a multi-file 2.0 source is a
-    // structured error rather than a partial compile.
+    // Swagger conversion owns the whole 2.0 field mapping, so for a single
+    // document it runs before dereference exactly as it always has — that
+    // ordering is what every existing 2.0 fixture is checked against.
+    //
+    // `swagger2openapi` cannot follow external files, which is why a multi-file
+    // 2.0 source used to be rejected outright. It does not have to be: `$ref`
+    // resolution is @scalar/openapi-parser's job in this pipeline, and running
+    // it first hands the converter a self-contained 2.0 document — still with
+    // its `definitions`, `parameters`, `responses`, and `securityDefinitions`
+    // intact, which is everything the 2.0 field mapping reads. Nothing is lost
+    // by resolving first, because `ParsedSpec` is a fully dereferenced document
+    // either way; only the order changes, and only for the case that used to be
+    // a hard failure.
+    let resolved = entrypoint as OpenApiDocument;
     if (filesystem.length > 1) {
-      throw new Error(
-        "Multi-file Swagger 2.0 sources are not supported; bundle the definition into a single document.",
-      );
+      const bundled = bundleSwaggerExternalRefs(filesystem);
+      if (bundled.unresolved.length > 0) {
+        throw new Error(
+          `Failed to resolve Swagger 2.0 references from the snapshot: ${bundled.unresolved.join(", ")}`,
+        );
+      }
+      resolved = bundled.document as OpenApiDocument;
     }
-    const converted = await convertSwagger(entrypoint as OpenApiDocument);
+    const converted = await convertSwagger(resolved);
     const { schema, errors } = await dereference(converted);
     if (!schema) throw failure(errors);
     const decycled = decycle(schema as OpenApiDocument);

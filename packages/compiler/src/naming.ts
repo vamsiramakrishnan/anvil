@@ -227,9 +227,12 @@ export function deriveNames(
   method: HttpMethod,
   raw: RawForNaming,
 ): DerivedNames {
-  // A trailing `:verb` is read off before any segment reasoning: it names the
-  // action, and everything before it is the resource path as usual.
-  const custom = stripCustomMethod(path);
+  // A coordinate may carry query text an adapter compiled into it — an OData v2
+  // function import is addressed as `/ActivateProduct?ProductID='{id}'`. That
+  // is wire syntax, never part of a resource name, so naming never sees it.
+  // A trailing `:verb` is then read off before any segment reasoning: it names
+  // the action, and everything before it is the resource path as usual.
+  const custom = stripCustomMethod(path.split("?")[0] as string);
   const segments = custom.path.split("/").filter(Boolean);
   const concrete = segments.filter((s) => !s.startsWith("{"));
   const hasResource = concrete.length > 0;

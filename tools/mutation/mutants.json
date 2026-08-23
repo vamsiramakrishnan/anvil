@@ -599,6 +599,26 @@
       "tests": [
         "packages/compiler/src/protocols/grpc-http-rule.test.ts"
       ]
+    },
+    {
+      "id": "odata/unstated-verb-is-a-mutation",
+      "file": "packages/compiler/src/protocols/odata-operations.ts",
+      "control": "An OData v2 FunctionImport that declares no m:HttpMethod is treated as a mutation. Defaulting it to GET would expose a write as a safe, auto-retryable read — the exact direction the asymmetric-trust rule forbids guessing in.",
+      "find": "          const verb = declaredVerb === \"GET\" ? \"get\" : \"post\";",
+      "replace": "          const verb = declaredVerb === \"POST\" ? \"post\" : \"get\";",
+      "tests": [
+        "packages/compiler/src/protocols/odata-operations.test.ts"
+      ]
+    },
+    {
+      "id": "swagger/unresolved-ref-is-not-a-partial-compile",
+      "file": "packages/compiler/src/parse.ts",
+      "control": "A multi-file Swagger 2.0 reference Anvil could not resolve fails the compile. Continuing would ship a surface smaller than the source describes, with no signal that anything was dropped.",
+      "find": "      if (bundled.unresolved.length > 0) {",
+      "replace": "      if (bundled.unresolved.length > 99) {",
+      "tests": [
+        "packages/compiler/src/multi-file-sources.test.ts"
+      ]
     }
   ]
 }

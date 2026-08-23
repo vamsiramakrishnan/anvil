@@ -21,12 +21,12 @@ reviewed after compilation.
 | Source | Accepted input | Local source graph | Generated runtime | Declined or external behavior |
 | --- | --- | --- | --- | --- |
 | OpenAPI | OpenAPI 3.x YAML or JSON | Captures and resolves local `$ref` files | HTTP with JSON | Remote references are recorded but not fetched |
-| Swagger | Swagger 2.0 YAML or JSON | Single file only; bundle external references first | Converted to OpenAPI, then HTTP with JSON | Multi-file Swagger 2.0 is rejected |
-| GraphQL | GraphQL SDL (`.graphql`, `.gql`, `.graphqls`) | One SDL entrypoint | Queries and mutations | Subscriptions are represented but refused |
+| Swagger | Swagger 2.0 YAML or JSON | Captures and resolves local `$ref` files | Converted to OpenAPI, then HTTP with JSON | Remote references are recorded but not fetched |
+| GraphQL | GraphQL SDL (`.graphql`, `.gql`, `.graphqls`) | Composes every SDL file in the snapshot | Queries and mutations | Subscriptions are represented but refused |
 | gRPC | proto3 (`.proto`) | Captures transitive local imports | The route a `google.api.http` method declares; otherwise HTTP-shaped calls through a declared JSON transcoder | Native gRPC and streaming RPCs are refused |
 | SOAP | WSDL 1.1 with embedded or local XSD | Captures `wsdl:import`, `xsd:include`, and `xsd:import` | Supported document/literal bindings | See the test-backed [wire protocol matrix](./wire-protocols.md) |
 | Google APIs | Discovery `restDescription` JSON | One document | HTTP with JSON | Does not call Google discovery services |
-| OData | v2 or v4 `$metadata` / EDMX XML | One metadata entrypoint | HTTP with JSON for generated entity-set operations | Actions, functions, and navigation semantics require review |
+| OData | v2 or v4 `$metadata` / EDMX XML | One metadata entrypoint | Entity sets, plus actions, functions, and v2 function imports | Bound operations and navigation semantics require review |
 | Postman | Collection v2.0 or v2.1 JSON | One collection document | HTTP with JSON | Pre-request and test scripts are reported but never executed |
 
 The format adapter is only the first stage. Every source then uses the same
@@ -86,10 +86,16 @@ OpenAPI is the richest source for HTTP semantics, but the document still may
 not prove business effect or idempotency. Inspect POST operations carefully;
 method alone is not a sufficient safety classification.
 
-Swagger 2.0 is upgraded before normalization. It must be supplied as one
-bundled document; multi-file Swagger 2.0 is rejected. Review conversion
-diagnostics, especially around body/form parameters, security definitions, and
-response schemas.
+Swagger 2.0 is upgraded before normalization. It may span files exactly as
+OpenAPI 3.x may: a 2.0 entrypoint's external `$ref`s are folded into the
+document before conversion, because the 2.0 converter cannot follow them
+itself. Only external references are folded in — an internal `#/definitions`
+reference is left as written, so a self-referential definition stays a
+reference rather than becoming a cycle. A reference to a file the snapshot does
+not carry fails the compile rather than silently dropping the definition.
+
+Review conversion diagnostics, especially around body/form parameters, security
+definitions, and response schemas.
 
 ### GraphQL SDL
 
@@ -104,6 +110,20 @@ Arguments become the request schema and return types become response schemas.
 Custom scalars degrade to documented string values unless the source provides a
 stronger mapping. SDL does not carry endpoint URL, resolver-side authorization,
 or mutation idempotency; supply those operational facts separately.
+
+A schema split across files compiles as one schema. SDL has no import
+statement, so composition *is* concatenation: every SDL document in the snapshot
+is composed, entrypoint first, and `extend type Query` blocks in sibling files
+add their fields to the root type. Capture the directory to get them all:
+
+```bash
+anvil source add path/to/graphql-schema-directory
+anvil compile --source <snapshot-id> --entrypoint schema.graphql --out generated/service
+```
+
+Pointing `anvil compile` at a single `.graphql` file compiles that file alone,
+which is the right answer for a single-file schema and the wrong one for a
+split schema whose root type would come out nearly empty.
 
 ### gRPC and proto3
 
@@ -159,8 +179,32 @@ where the metadata permits them. The adapter recognizes the structural subset
 shared by OData v2 and v4 and honors supported SAP
 `sap:creatable`, `sap:updatable`, and `sap:deletable` annotations.
 
-Navigation properties, actions, functions, deep inserts, and service-specific
-conventions may need an enriched or upstream-normalized contract.
+An update body omits the entity's key properties. The key is how `PATCH
+/Set('{key}')` addresses the entity, so carrying it in the body as well would
+give a caller two places to put one identity.
+
+Entity sets are only the nouns. A service's verbs — `ActivateProduct`,
+`GetNearestAirport`, `ResetDataSource` — are compiled too, and OData states
+their effect rather than leaving it to be guessed:
+
+| Declaration | Lowers to | Effect |
+| --- | --- | --- |
+| v4 `Function` (via `FunctionImport`) | `GET /Name(arg='value')` | Read — v4 requires a function to be side-effect-free |
+| v4 `Action` (via `ActionImport`) | `POST /Name` with a JSON body | Mutation |
+| v2 `FunctionImport` with `m:HttpMethod="GET"` | `GET /Name?arg='value'` | Read |
+| v2 `FunctionImport` with `m:HttpMethod="POST"` | `POST /Name?arg='value'` | Mutation |
+| v2 `FunctionImport` with no `m:HttpMethod` | `POST /Name` | Mutation, with a diagnostic saying the document did not state it |
+
+Parameter values carry OData's literal syntax — a quoted string, v2's
+`datetime'…'` prefix, its `M`/`L` suffixes — compiled into the coordinate, so a
+caller supplies the plain value and Anvil spells it correctly on the wire.
+
+Bound actions and functions are not emitted. A bound operation is addressed
+through a specific entity instance (`/People('russell')/NS.ShareTrip`), and
+which instance is not something the metadata alone can answer; each one is
+reported as a diagnostic rather than silently dropped. Navigation properties,
+deep inserts, and service-specific conventions may still need an enriched or
+upstream-normalized contract.
 
 ### Postman collections
 
