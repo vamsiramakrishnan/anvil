@@ -273,6 +273,7 @@ class OperationSpec(object):
     __slots__ = (
         "id",
         "http_method",
+        "wire_protocol",
         "path",
         "effect",
         "params",
@@ -286,6 +287,7 @@ class OperationSpec(object):
         self,
         id: str,
         http_method: str,
+        wire_protocol: str,
         path: str,
         effect: str,
         params: List[Dict[str, Any]],
@@ -296,6 +298,9 @@ class OperationSpec(object):
     ) -> None:
         self.id = id
         self.http_method = http_method
+        #: What a real call must speak. Anything but "http_json" means the path
+        #: below is a coordinate Anvil synthesized, not a wire address.
+        self.wire_protocol = wire_protocol
         #: Path template with {wire_name} placeholders.
         self.path = path
         self.effect = effect
@@ -339,6 +344,26 @@ RESERVED_HEADERS = frozenset(
 
 def _trace_id() -> str:
     return str(uuid.uuid4())
+
+
+def assert_wire_executable(spec: OperationSpec, protocol_facade: Optional[str]) -> None:
+    """The transport gate. The confirmation gate asks whether the caller intends
+    the effect; this asks whether this client can express the call at all. A
+    SOAP, GraphQL, or gRPC operation arrives with a path Anvil invented, and
+    sending JSON to it would be a well-formed lie. Mirrors the runtime's own
+    gate so every surface refuses alike."""
+    if spec.wire_protocol == "http_json" or protocol_facade is not None:
+        return
+    raise AnvilError(
+        code="unsupported_operation",
+        operation=spec.id,
+        trace_id=_trace_id(),
+        message="%s speaks %s, which this client cannot put on the wire: %s %s is a "
+        "coordinate Anvil synthesized, not an address the service serves. Point "
+        "base_url at a facade that really does serve it over HTTP+JSON and pass "
+        "protocol_facade with the reason, so the assumption is recorded."
+        % (spec.id, spec.wire_protocol, spec.http_method, spec.path),
+    )
 
 
 def assert_confirmed(spec: OperationSpec, confirm: bool) -> None:
@@ -504,6 +529,7 @@ def invoke(
     payload: Dict[str, Any],
     *,
     base_url: str,
+    protocol_facade: Optional[str] = None,
     auth: Optional[Dict[str, Any]],
     token: Optional[str],
     user_agent: str,
@@ -517,6 +543,7 @@ def invoke(
 ) -> Any:
     """Run one operation end to end: gate, build, send, and retry only where
     the contract proves retrying is safe."""
+    assert_wire_executable(spec, protocol_facade)
     assert_confirmed(spec, confirm)
     payload = {key: value for key, value in payload.items() if value is not None}
     resolved_key = resolve_idempotency_key(spec, idempotency_key, payload)

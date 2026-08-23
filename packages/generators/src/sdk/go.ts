@@ -144,6 +144,7 @@ function operationsFile(plan: SdkPlan): string {
     return `\t${g(op.names.pascal)}: {
 		ID:         ${g(op.id)},
 		HTTPMethod: ${g(op.httpMethod)},
+		WireProtocol: ${g(op.wireProtocol)},
 		Path:       ${g(op.path)},
 		Effect:     ${g(op.effect)},
 		Params: []ParamSpec{
@@ -207,8 +208,12 @@ var authCarrier = ${
   }
 
 type clientConfig struct {
-	baseURL     string
-	token       string
+	baseURL string
+	// protocolFacade is the operator's stated reason that baseURL really does
+	// serve the synthesized coordinates of a non-HTTP/JSON source over
+	// HTTP+JSON. A declaration, never an inference.
+	protocolFacade string
+	token          string
 	authCarrier *AuthCarrier
 	timeout     time.Duration
 	httpClient  *http.Client
@@ -231,6 +236,13 @@ type Option func(*clientConfig)
 // WithBaseURL overrides the compiled-in upstream base URL.
 func WithBaseURL(baseURL string) Option {
 	return func(config *clientConfig) { config.baseURL = baseURL }
+}
+
+// WithProtocolFacade declares that the base URL really does serve the
+// synthesized coordinates of a non-HTTP/JSON source (SOAP, GraphQL, gRPC) over
+// HTTP+JSON. Without it those operations are refused rather than sent.
+func WithProtocolFacade(reason string) Option {
+	return func(config *clientConfig) { config.protocolFacade = reason }
 }
 
 // WithToken sets the credential this SDK carries. It is never logged, echoed,
@@ -263,8 +275,9 @@ func WithSleep(sleep func(time.Duration)) Option {
 // New builds a client. Without WithToken it reads ${plan.auth.envVar}.
 func New(options ...Option) (*Client, error) {
 	config := clientConfig{
-		baseURL:     DefaultBaseURL,
-		token:       os.Getenv(TokenEnvVar),
+		baseURL:        DefaultBaseURL,
+		protocolFacade: os.Getenv("ANVIL_PROTOCOL_FACADE"),
+		token:          os.Getenv(TokenEnvVar),
 		authCarrier: authCarrier,
 		timeout:     30 * time.Second,
 		httpClient:  http.DefaultClient,

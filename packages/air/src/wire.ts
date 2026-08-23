@@ -87,9 +87,9 @@ const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
 const NEXT_ACTION =
   "Point ANVIL_BASE_URL at a facade that really does serve these coordinates " +
   "over HTTP+JSON (Anvil's own generated mock is one such facade, which is why " +
-  "the hermetic lanes pass), and declare it — `--protocol-facade <reason>` on " +
-  "the generated servers, or the `protocol_facade` manifest key — so the " +
-  "assumption is recorded rather than assumed.";
+  "the hermetic lanes pass), and declare it in words — `--protocol-facade " +
+  "<reason>` on the generated CLI, ANVIL_PROTOCOL_FACADE on the generated " +
+  "servers — so the assumption is recorded rather than assumed.";
 
 /**
  * Whether the HTTP/JSON runtime can put a faithful request for this operation

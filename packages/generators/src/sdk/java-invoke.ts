@@ -275,6 +275,13 @@ final class Invoker {
   /** The resolved client configuration one call runs under. */
   static final class Config {
     final String baseUrl;
+    /**
+     * The operator's stated reason that baseUrl really does serve the
+     * synthesized coordinates of a non-HTTP/JSON source over HTTP+JSON. A
+     * declaration, never an inference.
+     */
+    final String protocolFacade;
+
     final String token;
     final String authIn;
     final String authName;
@@ -286,6 +293,7 @@ final class Invoker {
 
     Config(
         String baseUrl,
+        String protocolFacade,
         String token,
         String authIn,
         String authName,
@@ -295,6 +303,7 @@ final class Invoker {
         String userAgent,
         java.util.function.DoubleSupplier random) {
       this.baseUrl = baseUrl;
+      this.protocolFacade = protocolFacade;
       this.token = token;
       this.authIn = authIn;
       this.authName = authName;
@@ -308,6 +317,35 @@ final class Invoker {
 
   private static String traceId() {
     return UUID.randomUUID().toString();
+  }
+
+  /**
+   * The transport gate. The confirmation gate asks whether the caller intends
+   * the effect; this asks whether this client can express the call at all. A
+   * SOAP, GraphQL, or gRPC operation arrives with a path Anvil invented, and
+   * sending JSON to it would be a well-formed lie. Mirrors the runtime's own
+   * gate so every surface refuses alike.
+   */
+  static void assertWireExecutable(OperationSpec spec, Config config) {
+    if ("http_json".equals(spec.wireProtocol) || config.protocolFacade != null) {
+      return;
+    }
+    throw AnvilException.builder(
+            "unsupported_operation",
+            spec.id,
+            spec.id
+                + " speaks "
+                + spec.wireProtocol
+                + ", which this client cannot put on the wire: "
+                + spec.httpMethod
+                + " "
+                + spec.path
+                + " is a coordinate Anvil synthesized, not an address the service serves."
+                + " Point builder().baseUrl(...) at a facade that really does serve it over"
+                + " HTTP+JSON and pass protocolFacade(...) with the reason, so the assumption"
+                + " is recorded.")
+        .traceId(traceId())
+        .build();
   }
 
   /** The confirmation gate. Refuses before anything reaches the wire. */
@@ -543,6 +581,7 @@ final class Invoker {
    */
   static Object invoke(
       Config config, OperationSpec spec, Map<String, Object> rawPayload, CallOptions options) {
+    assertWireExecutable(spec, config);
     assertConfirmed(spec, options);
     Map<String, Object> payload = new LinkedHashMap<String, Object>();
     for (Map.Entry<String, Object> entry : rawPayload.entrySet()) {

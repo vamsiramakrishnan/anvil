@@ -51,6 +51,9 @@ export interface SdkManifestMethod {
   cli: string;
   mcpTool: string;
   http: string;
+  /** The wire protocol a real call must speak; anything but `http_json` means
+   *  the client refuses rather than posting JSON at a synthesized coordinate. */
+  wireProtocol: string;
   effect: string;
   idempotency: string;
   retrySafe: boolean;
@@ -88,6 +91,7 @@ export function sdkManifest(plan: SdkPlan): SdkManifest {
       cli: op.cliCommand,
       mcpTool: op.mcpToolName,
       http: `${op.httpMethod} ${op.path}`,
+      wireProtocol: op.wireProtocol,
       effect: op.effect,
       idempotency: op.idempotency.mode,
       retrySafe: op.retry.mode === "safe",

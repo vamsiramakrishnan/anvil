@@ -191,6 +191,7 @@ function operationsFile(pkg: string, plan: SdkPlan): string {
         new OperationSpec(
             ${q(op.id)},
             ${q(op.httpMethod)},
+            ${q(op.wireProtocol)},
             ${q(op.path)},
             ${q(op.effect)},
             new OperationSpec.Param[] {
@@ -332,10 +333,21 @@ public final class ${name} {
   /** Configures a client. The credential is never logged, echoed, or thrown. */
   public static final class Builder {
     private String baseUrl = DEFAULT_BASE_URL;
+    private String protocolFacade = System.getenv("ANVIL_PROTOCOL_FACADE");
     private String token = System.getenv(TOKEN_ENV_VAR);
     private Duration timeout = Duration.ofSeconds(30);
     private HttpClient httpClient;
     private DoubleSupplier random = Math::random;
+
+    /**
+     * Declares that the base URL really does serve the synthesized coordinates
+     * of a non-HTTP/JSON source (SOAP, GraphQL, gRPC) over HTTP+JSON. Without
+     * it those operations are refused rather than sent.
+     */
+    public Builder protocolFacade(String reason) {
+      this.protocolFacade = reason;
+      return this;
+    }
 
     public Builder baseUrl(String value) {
       this.baseUrl = value;
@@ -381,6 +393,7 @@ public final class ${name} {
       return new ${name}(
           new Invoker.Config(
               baseUrl,
+              protocolFacade,
               token,
               ${plan.auth.carrier ? q(plan.auth.carrier.in) : "null"},
               ${plan.auth.carrier ? q(plan.auth.carrier.name) : "null"},

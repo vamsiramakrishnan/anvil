@@ -6,6 +6,7 @@ import {
   kebabCase,
   queryPolicySentence,
   resolveAsyncContract,
+  unexecutableWireFailures,
 } from "@anvil/air";
 import { stringify as toYaml } from "yaml";
 import { credentialContract } from "./deploy.js";
@@ -53,6 +54,28 @@ function frontmatter(name: string, description: string): string {
  * stays small — routing and safety only — and defers detail to reference/*.
  * The skill is the operating manual for agents, not prose decoration.
  */
+/**
+ * What this service speaks, when that is not what the runtime speaks. Silent on
+ * an HTTP/JSON service, because a section saying "this works normally" is noise
+ * an agent has to read past on every call.
+ */
+function wireProtocolSection(air: AirDocument): string {
+  const failures = unexecutableWireFailures(air.operations);
+  if (failures.length === 0) return "";
+  return [
+    "",
+    "## Wire protocol — this service cannot be called by this runtime",
+    "",
+    ...failures.map((failure) => `- ${failure}`),
+    "",
+    "The paths above are coordinates Anvil synthesized to hold operations apart",
+    "in a path-keyed model, not addresses the service serves. Every surface —",
+    "CLI, MCP server, and all four SDKs — refuses these operations rather than",
+    "posting JSON at them. Do not report the refusal as a transient failure: it",
+    "will not succeed on retry, and it is not something the caller did wrong.",
+  ].join("\n");
+}
+
 export function generateSkill(air: AirDocument): Record<string, string> {
   const svc = air.service;
   const exposed = air.operations.filter((op) => op.state === "approved");
@@ -809,7 +832,7 @@ ${credentials.coarseOverride}
 
 ## Base URL
 ${baseUrl ? `Declared server: \`${baseUrl}\`.` : "_The source spec declares no server URL — supply one explicitly._"} Override with \`--base-url <url>\` (CLI) or \`ANVIL_BASE_URL\` (servers).
-
+${wireProtocolSection(air)}
 ## Environment & egress
 - \`ANVIL_ENV\` — \`dev\` | \`staging\` | \`prod\`. Only the exact value \`dev\` is
   permissive; unset, misspelled, or unknown values fail closed to \`prod\`.

@@ -353,6 +353,12 @@ public final class OperationSpec {
 
   public final String id;
   public final String httpMethod;
+  /**
+   * What a real call must speak. Anything but "http_json" means the path below
+   * is a coordinate Anvil synthesized to hold operations apart, not a wire
+   * address.
+   */
+  public final String wireProtocol;
   /** The path template with {wire_name} placeholders. */
   public final String path;
   public final String effect;
@@ -365,6 +371,7 @@ public final class OperationSpec {
   public OperationSpec(
       String id,
       String httpMethod,
+      String wireProtocol,
       String path,
       String effect,
       Param[] params,
@@ -374,6 +381,7 @@ public final class OperationSpec {
       Confirmation confirmation) {
     this.id = id;
     this.httpMethod = httpMethod;
+    this.wireProtocol = wireProtocol;
     this.path = path;
     this.effect = effect;
     this.params = Collections.unmodifiableList(Arrays.asList(params));

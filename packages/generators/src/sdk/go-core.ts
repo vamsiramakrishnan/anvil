@@ -172,6 +172,10 @@ type ConfirmationSpec struct {
 type OperationSpec struct {
 	ID         string
 	HTTPMethod string
+	// WireProtocol is what a real call must speak. Anything but "http_json"
+	// means Path below is a coordinate Anvil synthesized to hold operations
+	// apart, not a wire address.
+	WireProtocol string
 	// Path is the path template with {wire_name} placeholders.
 	Path         string
 	Effect       string

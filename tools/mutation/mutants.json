@@ -328,6 +328,26 @@
       "tests": [
         "packages/cli/src/transport-certify.test.ts"
       ]
+    },
+    {
+      "id": "sdk/transport-gate",
+      "file": "packages/generators/src/sdk/typescript-core.ts",
+      "control": "The generated clients refuse an operation whose wire protocol they cannot speak. The SDKs do not go through the runtime's executor, so a gate that lived only there would leave four surfaces free to send the lie.",
+      "find": "  if (spec.wireProtocol === \"http_json\" || context.protocolFacade !== undefined) return;",
+      "replace": "  return;",
+      "tests": [
+        "packages/generators/src/sdk-transport.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/transport-gate-certified",
+      "file": "packages/generators/src/sdk/certify.ts",
+      "control": "Certification checks the SDK manifest's declared wire protocol against AIR, so a client that believes it speaks HTTP+JSON to a SOAP operation is caught rather than shipped.",
+      "find": "      \"wireProtocol\",",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/sdk-transport.test.ts"
+      ]
     }
   ]
 }

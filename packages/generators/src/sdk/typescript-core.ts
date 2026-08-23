@@ -345,6 +345,10 @@ export interface RetrySpec {
 export interface OperationSpec {
   id: string;
   httpMethod: string;
+  /** What a real call must speak. Anything but "http_json" means the path
+   *  below is a coordinate Anvil synthesized to hold operations apart, not a
+   *  wire address — see the transport gate. */
+  wireProtocol: string;
   /** Path template with {wire_name} placeholders. */
   path: string;
   effect: "read" | "mutation";
@@ -389,6 +393,14 @@ export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 export interface ClientOptions {
   /** Upstream base URL. Defaults to the server recorded in AIR. */
   baseUrl?: string;
+  /**
+   * Your stated reason that baseUrl is a facade which really does serve the
+   * synthesized coordinates of a non-HTTP/JSON source (SOAP, GraphQL, gRPC)
+   * over HTTP+JSON. Without it those operations are refused rather than sent.
+   * A declaration, never an inference — the same one the CLI takes as
+   * --protocol-facade and the servers as ANVIL_PROTOCOL_FACADE.
+   */
+  protocolFacade?: string;
   /** The credential this SDK carries on the wire. Never logged or echoed. */
   token?: string;
   /** Request deadline in milliseconds. */
@@ -413,6 +425,7 @@ const RESERVED_HEADERS = new Set([
 
 export interface InvokeContext {
   baseUrl: string;
+  protocolFacade?: string;
   token?: string;
   authCarrier?: { in: "header" | "query"; name: string; scheme?: string };
   timeoutMs: number;
@@ -426,6 +439,33 @@ function traceId(): string {
   return typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
     : Math.random().toString(16).slice(2) + Date.now().toString(16);
+}
+
+/**
+ * The transport gate. The confirmation gate asks whether the caller intends the
+ * effect; this asks whether this client can express the call at all. A SOAP,
+ * GraphQL, or gRPC operation arrives with a path Anvil invented, and sending
+ * JSON to it would be a well-formed lie — indistinguishable on the wire from a
+ * real request. Mirrors the runtime's own gate so every surface refuses alike.
+ */
+function assertWireExecutable(spec: OperationSpec, context: InvokeContext): void {
+  if (spec.wireProtocol === "http_json" || context.protocolFacade !== undefined) return;
+  throw new AnvilError({
+    code: "unsupported_operation",
+    operation: spec.id,
+    traceId: traceId(),
+    message:
+      spec.id +
+      " speaks " +
+      spec.wireProtocol +
+      ", which this client cannot put on the wire: " +
+      spec.httpMethod +
+      " " +
+      spec.path +
+      " is a coordinate Anvil synthesized, not an address the service serves. " +
+      "Point baseUrl at a facade that really does serve it over HTTP+JSON and " +
+      "pass protocolFacade with the reason, so the assumption is recorded.",
+  });
 }
 
 /** The confirmation gate. Refuses before anything reaches the wire. */
@@ -627,6 +667,7 @@ export async function invoke(
   options: CallOptions,
   context: InvokeContext,
 ): Promise<unknown> {
+  assertWireExecutable(spec, context);
   assertConfirmed(spec, options);
   const idempotencyKey = await resolveIdempotencyKey(spec, options.idempotencyKey, input);
   assertKeyed(spec, idempotencyKey);

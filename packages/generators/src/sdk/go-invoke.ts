@@ -265,6 +265,26 @@ func traceID() string {
 	return hex.EncodeToString(buffer)
 }
 
+// assertWireExecutable is the transport gate. assertConfirmed asks whether the
+// caller intends the effect; this asks whether this client can express the call
+// at all. A SOAP, GraphQL, or gRPC operation arrives with a path Anvil
+// invented, and sending JSON to it would be a well-formed lie. Mirrors the
+// runtime's own gate so every surface refuses alike.
+func assertWireExecutable(spec OperationSpec, config clientConfig) *Error {
+	if spec.WireProtocol == "http_json" || config.protocolFacade != "" {
+		return nil
+	}
+	return &Error{
+		Code:      "unsupported_operation",
+		Operation: spec.ID,
+		TraceID:   traceID(),
+		Message: spec.ID + " speaks " + spec.WireProtocol + ", which this client cannot put on the wire: " +
+			spec.HTTPMethod + " " + spec.Path + " is a coordinate Anvil synthesized, not an address the " +
+			"service serves. Point WithBaseURL at a facade that really does serve it over HTTP+JSON and " +
+			"pass WithProtocolFacade with the reason, so the assumption is recorded.",
+	}
+}
+
 // assertConfirmed is the confirmation gate. It refuses before anything reaches
 // the wire.
 func assertConfirmed(spec OperationSpec, options CallOptions) *Error {
@@ -481,6 +501,9 @@ func decode(raw []byte) any {
 // invoke runs one operation end to end: gate, build, send, and retry only where
 // the contract proves retrying is safe.
 func invoke(ctx context.Context, config clientConfig, spec OperationSpec, payload map[string]any, options CallOptions) (any, error) {
+	if refusal := assertWireExecutable(spec, config); refusal != nil {
+		return nil, refusal
+	}
 	if refusal := assertConfirmed(spec, options); refusal != nil {
 		return nil, refusal
 	}

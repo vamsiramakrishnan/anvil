@@ -141,6 +141,7 @@ function operationsModule(plan: SdkPlan): string {
     const spec = {
       id: op.id,
       httpMethod: op.httpMethod,
+      wireProtocol: op.wireProtocol,
       path: op.path,
       effect: op.effect,
       params: op.params.map((p) => ({
@@ -280,6 +281,7 @@ export class ${className} {
       options.fetch ?? ((url, init) => fetch(url, init));
     this.context = {
       baseUrl: options.baseUrl ?? DEFAULT_BASE_URL,
+      protocolFacade: options.protocolFacade ?? env?.["ANVIL_PROTOCOL_FACADE"],
       token,
       authCarrier: AUTH_CARRIER,
       timeoutMs: options.timeoutMs ?? 30000,
