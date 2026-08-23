@@ -215,3 +215,66 @@ describe("the codec seam preserves HTTP/JSON byte-for-byte", () => {
     expect(res.data).toBe("not json at all");
   });
 });
+
+/**
+ * gRPC through a JSON transcoder.
+ *
+ * The one protocol whose path was never synthesized — `/package.Service/Method`
+ * IS gRPC's `:path`. What Anvil cannot do is speak native gRPC from four
+ * zero-dependency clients, because Python's standard library has no HTTP/2
+ * client at all. A transcoder (grpc-gateway, Envoy's gRPC-JSON filter) accepts
+ * JSON on that exact path, which is a fact about the deployment — so it is
+ * declared, not assumed.
+ */
+describe("gRPC reaches a declared transcoder and nothing else", () => {
+  const grpcOp = () =>
+    op({
+      sourceRef: {
+        kind: "protobuf",
+        path: "/acme.orders.v1.OrderService/GetOrder",
+        method: "post",
+        binding: {
+          protocol: "grpc",
+          service: "acme.orders.v1.OrderService",
+          method: "GetOrder",
+          transport: "json_transcoded",
+        },
+      },
+    });
+
+  it("refuses without one, and says a transcoder is what works", async () => {
+    const transport = new MockTransport(() => ok({}));
+    const res = await execute(
+      grpcOp(),
+      { input: {} },
+      { ...baseCtx, transport, ledger: new InMemoryLedger() },
+    );
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") throw new Error("expected a refusal");
+    expect(res.envelope.error.message).toContain("transcoder");
+    // A native gRPC server would reject JSON over HTTP/1.1; claiming otherwise
+    // is the original bug this whole model exists to end.
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("calls the real gRPC path once one is declared, and records the claim", async () => {
+    const transport = new MockTransport(() => ok({ orderId: "o1" }));
+    const res = await execute(
+      grpcOp(),
+      { input: {} },
+      {
+        ...baseCtx,
+        transport,
+        ledger: new InMemoryLedger(),
+        protocolFacade: "Envoy gRPC-JSON transcoder",
+      },
+    );
+    expect(res.outcome).toBe("success");
+    expect(transport.requests[0]?.url).toBe(
+      "https://banking.example.com/acme.orders.v1.OrderService/GetOrder",
+    );
+    expect(res.record.policyDecisions.join(" ")).toContain(
+      "protocol_facade_declared:grpc:Envoy gRPC-JSON transcoder",
+    );
+  });
+});

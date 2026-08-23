@@ -195,14 +195,48 @@ had always silently made.
 - **A REST bundle can still be wrong.** Nothing here checks that an OpenAPI
   path is served or that its schema matches reality. It refuses only protocols
   the runtime provably cannot speak.
-- **The gRPC example is uncertifiable**, deliberately, until either a facade is
-  declared or Anvil grows its codec. It still compiles, inspects, lints,
-  approves, and self-tests. `examples/soap` and `examples/graphql` certify.
+- **The gRPC example is uncertifiable** until a transcoder is declared —
+  deliberately, since a native gRPC server would reject what Anvil sends. It
+  still compiles, inspects, lints, approves, and self-tests. `examples/soap` and
+  `examples/graphql` certify outright.
 
-## What gRPC would need
+## gRPC: transcoded, and honest about it
 
-SOAP and GraphQL are done. gRPC needs the model to carry what its encoding
-needs, and today it does not:
+gRPC is the odd one. Its path was never synthesized — `/package.Service/Method`
+*is* gRPC's own `:path`, and the adapter has always read it verbatim. What Anvil
+cannot do is speak **native** gRPC, and the blocker is specific and checkable:
+
+> Python's standard library has no HTTP/2 client.
+
+The generated SDKs are zero-dependency by contract. Node has `node:http2` and
+Java's `HttpClient` does HTTP/2, but Python has neither, and Go's `net/http` only
+negotiates h2 over TLS — cleartext needs `golang.org/x/net`. So native gRPC
+would mean either breaking the zero-dependency contract or shipping a protocol
+three clients speak and one does not, which is the surface divergence the whole
+product exists to prevent.
+
+What does work is a **JSON transcoder** — grpc-gateway, Envoy's gRPC-JSON
+filter, Google's HTTP annotations — which accepts JSON on that exact path and
+speaks protobuf onward. That is what `grpc.ts` has assumed since it was written,
+in a comment. It is now recorded on the operation:
+
+```json
+{ "protocol": "grpc", "service": "acme.orders.v1.OrderService",
+  "method": "GetOrder", "transport": "json_transcoded" }
+```
+
+A transcoder is a fact about the **deployment**, not the source, so Anvil will
+not assume one. Without a declaration the call is refused and nothing reaches
+the network; with `--protocol-facade "Envoy gRPC-JSON transcoder"` it goes
+through, and the reason is recorded on the execution record.
+
+**Streaming RPCs are refused** outright — no binding, same posture as a GraphQL
+subscription. A stream is not a request and a response, and no transcoder turns
+one into a single JSON exchange.
+
+## What native gRPC would still need
+
+Beyond the HTTP/2 problem, the model would need:
 
 - **GraphQL** needs a selection set, which AIR cannot hold: `output.schema` is
   depth-truncated to keep schemas bounded.

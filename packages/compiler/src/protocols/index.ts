@@ -156,7 +156,7 @@ export function adaptProtocol(
     case "graphql":
       return adaptGraphql(text, title, diagnostics);
     case "protobuf":
-      return adaptProto(text, title, imports.proto);
+      return adaptProto(text, title, imports.proto, diagnostics);
     case "wsdl":
       return adaptWsdl(text, imports.wsdl, imports.sourcePath, diagnostics);
     case "discovery":

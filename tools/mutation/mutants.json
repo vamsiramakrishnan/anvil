@@ -528,6 +528,27 @@
       "tests": [
         "packages/generators/src/sdk-transport.test.ts"
       ]
+    },
+    {
+      "id": "grpc/streaming-refused",
+      "file": "packages/compiler/src/protocols/grpc.ts",
+      "control": "A streaming RPC records no binding. A stream is not a request and a response, and no JSON transcoder turns one into a single exchange.",
+      "find": "      const unary = !method.requestStream && !method.responseStream;",
+      "replace": "      const unary = true;",
+      "tests": [
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/needs-a-declared-transcoder",
+      "file": "packages/air/src/wire.ts",
+      "control": "gRPC is refused until an operator declares a transcoder. Its path is real, which makes the temptation to just call it strong — and a native gRPC server rejects JSON over HTTP/1.1, so calling it anyway is the original bug.",
+      "find": "  if (protocol === \"graphql\" && op.sourceRef.binding?.protocol === \"graphql\") return { ok: true };",
+      "replace": "  if (protocol === \"graphql\" || protocol === \"grpc\") return { ok: true };",
+      "tests": [
+        "packages/runtime/src/wire-gate.test.ts",
+        "packages/cli/src/transport-certify.test.ts"
+      ]
     }
   ]
 }

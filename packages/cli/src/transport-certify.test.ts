@@ -167,6 +167,40 @@ describe("transport executability", () => {
     expect(air.diagnostics.map((d) => d.code)).not.toContain("unexecutable_transport");
   });
 
+  it("records the transcoding assumption gRPC has always silently made", async () => {
+    // gRPC is the one case where the synthesized path is not synthesized at
+    // all: `/package.Service/Method` IS gRPC's own :path. What Anvil cannot do
+    // is speak native gRPC — length-prefixed protobuf over HTTP/2 — from four
+    // zero-dependency clients, because Python's standard library has no HTTP/2
+    // client. A JSON transcoder accepts JSON on that exact path, which is what
+    // the adapter has always assumed in a comment and now writes down.
+    const air = await compile({
+      spec: example("grpc/orders.proto"),
+      manifest: example("grpc/anvil.yaml"),
+      serviceId: "orders",
+    });
+    for (const op of air.operations) {
+      const binding = op.sourceRef.binding;
+      expect(binding?.protocol).toBe("grpc");
+      if (binding?.protocol !== "grpc") throw new Error("expected a grpc binding");
+      expect(binding.transport).toBe("json_transcoded");
+      expect(op.sourceRef.path).toBe(`/${binding.service}/${binding.method}`);
+    }
+
+    // Still refused without a declared transcoder: a native gRPC server would
+    // reject JSON over HTTP/1.1, and claiming otherwise is the original bug.
+    const cert = certifyBundle(generateBundle(air).files, air, {
+      now: clock("2026-01-01T00:00:00.000Z"),
+    });
+    const failed = cert.checks
+      .filter((check) => check.status === "failed")
+      .map((check) => check.id);
+    expect(failed).toContain("safety.protocol-runtime-executable");
+    const detail =
+      cert.checks.find((c) => c.id === "safety.protocol-runtime-executable")?.detail ?? "";
+    expect(detail).toContain("transcoder");
+  });
+
   it("certifies a GraphQL bundle now that the runtime can speak to it", async () => {
     const air = await compile({
       spec: example("graphql/schema.graphql"),

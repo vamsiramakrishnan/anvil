@@ -349,6 +349,26 @@ export const GraphqlWireBinding = z.object({
 });
 export type GraphqlWireBinding = z.infer<typeof GraphqlWireBinding>;
 
+export const GrpcWireBinding = z.object({
+  protocol: z.literal("grpc"),
+  /** Fully-qualified service name, e.g. acme.orders.v1.OrderService. */
+  service: z.string(),
+  method: z.string(),
+  /**
+   * How a call actually reaches the service.
+   *
+   * `json_transcoded` is the only value Anvil records, and it is a claim about
+   * the *deployment* rather than the source: a transcoder (grpc-gateway,
+   * Envoy's gRPC-JSON filter, Google's HTTP annotations) accepts JSON on the
+   * real gRPC path and speaks protobuf onward. Native gRPC — length-prefixed
+   * protobuf over HTTP/2 with status in trailers — is not something Anvil can
+   * emit from four zero-dependency clients, because Python's standard library
+   * has no HTTP/2 client at all.
+   */
+  transport: z.literal("json_transcoded"),
+});
+export type GrpcWireBinding = z.infer<typeof GrpcWireBinding>;
+
 /**
  * What a call to a non-HTTP/JSON source needs on the wire, read from the source
  * document by the compiler.
@@ -365,7 +385,11 @@ export type GraphqlWireBinding = z.infer<typeof GraphqlWireBinding>;
  * — an rpc/encoded SOAP binding records nothing here, which leaves the
  * transport gate refusing rather than the codec guessing.
  */
-export const WireBinding = z.discriminatedUnion("protocol", [SoapWireBinding, GraphqlWireBinding]);
+export const WireBinding = z.discriminatedUnion("protocol", [
+  SoapWireBinding,
+  GraphqlWireBinding,
+  GrpcWireBinding,
+]);
 export type WireBinding = z.infer<typeof WireBinding>;
 
 /** Provenance: every operation knows where it came from (spec §5.1). */

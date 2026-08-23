@@ -75,9 +75,13 @@ const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
     "stream rather than a request and response, and Anvil has no streaming " +
     "client to hold one open",
   grpc:
-    "the path is genuinely gRPC's :path, but a gRPC call is length-prefixed " +
-    "protobuf over HTTP/2 with grpc-status in trailers, and AIR carries neither " +
-    "the field numbers that encoding needs nor any framing",
+    "unlike the other protocols, this path is real — it is gRPC's own :path — " +
+    "but a native call is length-prefixed protobuf over HTTP/2 with the status " +
+    "in trailers, and Anvil cannot emit that from four zero-dependency clients " +
+    "because Python's standard library has no HTTP/2 client. What does work is " +
+    "a JSON transcoder (grpc-gateway, Envoy's gRPC-JSON filter, Google's HTTP " +
+    "annotations), which accepts JSON on this exact path and speaks protobuf " +
+    "onward — declare one and Anvil calls it",
   mcp_tool:
     "an adopted MCP tool is invoked by a tools/call over the MCP transport; it " +
     "has no path and no method, which the runtime would silently degrade to " +

@@ -17,6 +17,8 @@
  * `resolveAll`, so an unresolved well-known import (e.g.
  * `google.protobuf.Timestamp`) degrades gracefully instead of throwing.
  */
+
+import type { Diagnostic } from "@anvil/air";
 import protobuf from "protobufjs";
 import type { OpenApiDocument } from "../parse.js";
 
@@ -166,6 +168,7 @@ export function adaptProto(
   source: string,
   title?: string,
   resolveImport?: ProtoImportResolver,
+  diagnostics?: Diagnostic[],
 ): OpenApiDocument {
   let root: protobuf.Root;
   let pkg: string | undefined;
@@ -216,6 +219,22 @@ export function adaptProto(
         method.requestStream || method.responseStream
           ? ` (${method.requestStream ? "client" : ""}${method.requestStream && method.responseStream ? "+" : ""}${method.responseStream ? "server" : ""} streaming)`
           : "";
+      // Streaming is refused outright: a stream is not a request and a
+      // response, and no transcoder turns one into a single JSON exchange.
+      // Unary calls record a binding that states the transcoding assumption
+      // this adapter has always made in a comment.
+      const unary = !method.requestStream && !method.responseStream;
+      if (!unary) {
+        diagnostics?.push({
+          level: "warning",
+          code: "grpc_binding_unencodable",
+          path: `${serviceFqn}/${method.name}`,
+          message:
+            `Anvil recorded no wire binding for gRPC '${method.name}': it is a streaming RPC, and ` +
+            `a stream is not a request and a response. Anvil has no streaming client and no ` +
+            `transcoder turns one into a single JSON exchange.`,
+        });
+      }
       const op: Record<string, unknown> = {
         operationId: method.name,
         summary: `${service.name}.${method.name}${streaming}`,
@@ -226,6 +245,16 @@ export function adaptProto(
             content: { "application/json": { schema: rpcMessageSchema(method.responseType, c) } },
           },
         },
+        ...(unary
+          ? {
+              "x-anvil-wire-binding": {
+                protocol: "grpc",
+                service: serviceFqn,
+                method: method.name,
+                transport: "json_transcoded",
+              },
+            }
+          : {}),
         "x-grpc-service": serviceFqn,
         "x-grpc-method": method.name,
         "x-grpc-streaming": streaming.trim() || undefined,
