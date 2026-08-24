@@ -500,16 +500,6 @@
       ]
     },
     {
-      "id": "graphql/subscription-refused",
-      "file": "packages/compiler/src/protocols/graphql-binding.ts",
-      "control": "A subscription is a long-lived stream, not a request and response. Anvil has no streaming client, so it records no binding and the transport gate keeps refusing rather than posting a document nothing can read the answer to.",
-      "find": "  if (kind === \"subscription\") return undefined;",
-      "replace": "",
-      "tests": [
-        "packages/generators/src/sdk-graphql.test.ts"
-      ]
-    },
-    {
       "id": "graphql/errors-are-not-results",
       "file": "packages/runtime/src/codec-graphql.ts",
       "control": "GraphQL reports failures inside a 200 with an errors array. Reported as a result, a failed mutation would be recorded in the idempotency ledger as completed — and a partial response is still a failure, since AIR's output contract describes one shape.",
