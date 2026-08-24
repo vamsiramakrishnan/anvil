@@ -22,7 +22,7 @@ reviewed after compilation.
 | --- | --- | --- | --- | --- |
 | OpenAPI | OpenAPI 3.x YAML or JSON | Captures and resolves local `$ref` files | HTTP with JSON | Remote references are recorded but not fetched |
 | Swagger | Swagger 2.0 YAML or JSON | Captures and resolves local `$ref` files | Converted to OpenAPI, then HTTP with JSON | Remote references are recorded but not fetched |
-| GraphQL | GraphQL SDL (`.graphql`, `.gql`, `.graphqls`) | Composes every SDL file in the snapshot | Queries and mutations | Subscriptions are represented but refused |
+| GraphQL | GraphQL SDL (`.graphql`, `.gql`, `.graphqls`) | Composes every SDL file in the snapshot | Queries, mutations, and subscriptions as bounded windows | The generated SDKs refuse the subscription wire by design |
 | gRPC | proto3 (`.proto`) | Captures transitive local imports | The route a `google.api.http` method declares; otherwise HTTP-shaped calls through a declared JSON transcoder | Native gRPC and streaming RPCs are refused |
 | SOAP | WSDL 1.1 with embedded or local XSD | Captures `wsdl:import`, `xsd:include`, and `xsd:import` | Supported document/literal bindings | See the test-backed [wire protocol matrix](./wire-protocols.md) |
 | Google APIs | Discovery `restDescription` JSON | One document | HTTP with JSON | Does not call Google discovery services |
@@ -103,8 +103,9 @@ Anvil maps each root field to one operation:
 
 - `Query` fields are reads;
 - `Mutation` fields are mutations; and
-- `Subscription` fields are represented as read-like operations with streaming
-  noted in their description.
+- `Subscription` fields become bounded observation windows: the call collects
+  events until an event or time bound and returns them as an array. See the
+  [wire protocol matrix](./wire-protocols.md) for the contract and its bounds.
 
 Arguments become the request schema and return types become response schemas.
 Custom scalars degrade to documented string values unless the source provides a

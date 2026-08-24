@@ -4,7 +4,8 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AirDocument } from "@anvil/air";
+import type { AirDocument, SourceRef } from "@anvil/air";
+import { wireProtocolFor } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generateSdks } from "./sdk/index.js";
@@ -137,12 +138,17 @@ describe("the compiler built a real query document", () => {
     expect(binding.document).not.toContain(PRODUCT);
   });
 
-  it("refuses a subscription, which is a stream and not a request", async () => {
+  it("puts a subscription on its own wire, which these clients do not speak", async () => {
     // Compiled from its own SDL: the shipped example declares no subscription,
     // and a test that asserted otherwise would be checking the fixture rather
-    // than the behaviour. Anvil has no streaming client, so it records no
-    // binding and the transport gate keeps refusing — the same posture as an
-    // rpc/encoded SOAP binding.
+    // than the behaviour.
+    //
+    // A subscription is executable — the runtime reads a bounded window of
+    // Server-Sent Events — but not from here. These clients are request and
+    // response, so `graphql_sse` falls through their gate and is refused by
+    // name. That is the four of them *agreeing* the operation is unreachable
+    // from a stateless client, which is a different thing from disagreeing with
+    // the runtime about what it means.
     const streaming = await compile({
       spec: `
         type Query { ping: String }
@@ -151,12 +157,16 @@ describe("the compiler built a real query document", () => {
       serviceId: "streaming",
     });
     const subscription = streaming.operations.find((op) => op.id.includes("order_updated"));
-    expect(subscription).toBeDefined();
-    expect(subscription?.sourceRef.binding).toBeUndefined();
-    expect(streaming.diagnostics.map((d) => d.code)).toContain("graphql_binding_unencodable");
+    expect(subscription?.sourceRef.binding?.protocol).toBe("graphql_sse");
+    expect(subscription?.stream).toMatchObject({ transport: "graphql_sse" });
+    expect(streaming.diagnostics.map((d) => d.code)).not.toContain("graphql_binding_unencodable");
 
-    // And the query beside it is bound, so the refusal is about subscriptions
-    // rather than about this document failing to compile.
+    // The SDK gate speaks http_json, soap, and graphql — and nothing else.
+    const speakable = ["http_json", "soap", "graphql"];
+    expect(speakable).not.toContain(wireProtocolFor(subscription?.sourceRef as SourceRef));
+
+    // And the query beside it is on the ordinary GraphQL wire, so the split is
+    // about subscriptions rather than about this document failing to compile.
     const ping = streaming.operations.find((op) => op.id.includes("ping"));
     expect(ping?.sourceRef.binding?.protocol).toBe("graphql");
   });

@@ -1,5 +1,6 @@
 import { type Operation, type WireProtocol, wireProtocolFor } from "@anvil/air";
 import { graphqlCodec } from "./codec-graphql.js";
+import { graphqlSseCodec } from "./codec-graphql-sse.js";
 import { soapCodec } from "./codec-soap.js";
 import type { HttpRequest, HttpResponse } from "./transport.js";
 
@@ -111,6 +112,7 @@ const CODECS = new Map<WireProtocol, WireCodec>([
   [httpJsonCodec.protocol, httpJsonCodec],
   [soapCodec.protocol, soapCodec],
   [graphqlCodec.protocol, graphqlCodec],
+  [graphqlSseCodec.protocol, graphqlSseCodec],
 ]);
 
 /**

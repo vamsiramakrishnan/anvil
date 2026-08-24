@@ -619,6 +619,57 @@
       "tests": [
         "packages/compiler/src/multi-file-sources.test.ts"
       ]
+    },
+    {
+      "id": "stream/event-bound-applies-to-the-bytes",
+      "file": "packages/runtime/src/transport.ts",
+      "control": "The event bound is applied to the bytes that leave the transport, not only to the loop condition. A burst delivers hundreds of events in ONE socket read, so by the time the counter is re-checked the buffer already holds them all — this is the bug that reached a live run.",
+      "find": "  return truncateToEvents(text, bound.maxEvents);",
+      "replace": "  return text;",
+      "tests": [
+        "packages/runtime/src/stream-window.test.ts"
+      ]
+    },
+    {
+      "id": "stream/keep-alives-are-not-events",
+      "file": "packages/runtime/src/transport.ts",
+      "control": "Only a frame carrying `data:` counts toward the event bound. A server holding an idle subscription open sends comment frames, and counting those lets a silent service exhaust a hundred-event window having published nothing at all.",
+      "find": "    out.push({ end: match.index + match[0].length, isEvent: /(^|\\n)data:/.test(frame) });",
+      "replace": "    out.push({ end: match.index + match[0].length, isEvent: true });",
+      "tests": [
+        "packages/runtime/src/stream-window.test.ts"
+      ]
+    },
+    {
+      "id": "stream/window-outlives-the-request-timeout",
+      "file": "packages/runtime/src/transport.ts",
+      "control": "A stream's own window is its deadline; the request timeout is only the backstop behind it. Left at the ordinary value the abort fires first, turning a subscription that legitimately saw nothing into a timeout — and then retrying it, because a read is retry-safe.",
+      "find": "    const timeoutMs = Math.max(req.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS, streamCeilingMs);",
+      "replace": "    const timeoutMs = req.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;",
+      "tests": [
+        "packages/runtime/src/stream-window.test.ts"
+      ]
+    },
+    {
+      "id": "stream/unterminated-frame-is-not-an-event",
+      "file": "packages/runtime/src/codec-graphql-sse.ts",
+      "control": "A frame Anvil never saw the end of is not reported, and that must depend on the missing boundary rather than on its JSON failing to parse — a frame cut just after its closing brace parses perfectly and is still an event that was never completed.",
+      "find": "  if (!text.endsWith(\"\\n\\n\")) parts.pop();",
+      "replace": "  if (false) parts.pop();",
+      "tests": [
+        "packages/runtime/src/stream-window.test.ts"
+      ]
+    },
+    {
+      "id": "stream/needs-a-bound-to-be-executable",
+      "file": "packages/air/src/wire.ts",
+      "control": "A subscription binding alone earns nothing: without a stream contract there is no bound, nothing makes the window close, and a call that never returns is not a call. This is what certification checks before a bundle is deployed.",
+      "find": "    op.stream !== undefined",
+      "replace": "    true",
+      "tests": [
+        "packages/air/src/wire.test.ts",
+        "packages/cli/src/transport-certify.test.ts"
+      ]
     }
   ]
 }

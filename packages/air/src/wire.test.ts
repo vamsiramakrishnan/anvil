@@ -105,6 +105,33 @@ describe("wire protocol", () => {
     expect(wireExecutability(opWith(assumed)).ok).toBe(false);
   });
 
+  it("answers graphql_sse for a subscription, and only with a bound", () => {
+    // The contract is what makes a subscription a call. Without it there is
+    // nothing to make the window close, and a call that never returns is not a
+    // call — so the binding alone earns nothing.
+    const binding = {
+      protocol: "graphql_sse",
+      document: "subscription Anvil_Ticks { ticks { seq } }",
+      operationName: "Anvil_Ticks",
+      rootField: "ticks",
+    } as const;
+    const unbounded = { kind: "graphql", path: "/graphql/Subscription/ticks", binding } as const;
+    expect(wireProtocolFor(unbounded)).toBe("graphql_sse");
+    expect(wireExecutability(opWith(unbounded)).ok).toBe(false);
+
+    const bounded = OperationSchema.parse({
+      ...opWith(unbounded),
+      stream: {
+        transport: "graphql_sse",
+        delivery: "at_most_once",
+        maxEvents: 100,
+        maxSeconds: 30,
+      },
+    });
+    expect(wireExecutability(bounded).ok).toBe(true);
+    expect(unexecutableWireFailures([bounded])).toEqual([]);
+  });
+
   it("asks only about the surface that is actually exposed", () => {
     // An unapproved operation is already refused by the approval gate; asking
     // about it here would report a problem nobody can reach.

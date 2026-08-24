@@ -349,6 +349,31 @@ export const GraphqlWireBinding = z.object({
 });
 export type GraphqlWireBinding = z.infer<typeof GraphqlWireBinding>;
 
+/**
+ * A GraphQL *subscription*, which is a different wire from a query against the
+ * same endpoint: the request opts into `text/event-stream` and the answer is a
+ * sequence of Server-Sent Events rather than one JSON body.
+ *
+ * The document is compiled from the SDL exactly as a query's is — same builder,
+ * same selection-set rules — so nothing here is a second GraphQL implementation.
+ * Only the framing differs, which is why this is a separate protocol rather than
+ * a flag on the query binding: a consumer that reads one as the other gets a
+ * parse failure, and the discriminator is what makes that impossible.
+ *
+ * Server-Sent Events rather than WebSocket deliberately. `graphql-ws` needs a
+ * WebSocket client, which Python's and Go's standard libraries do not have —
+ * the same wall that stops native gRPC. `graphql-sse` is chunked HTTP, which
+ * every one of them can already read, so choosing it keeps the door open for
+ * the generated clients instead of closing it permanently.
+ */
+export const GraphqlSseBinding = z.object({
+  protocol: z.literal("graphql_sse"),
+  document: z.string(),
+  operationName: z.string(),
+  rootField: z.string(),
+});
+export type GraphqlSseBinding = z.infer<typeof GraphqlSseBinding>;
+
 export const GrpcWireBinding = z.object({
   protocol: z.literal("grpc"),
   /** Fully-qualified service name, e.g. acme.orders.v1.OrderService. */
@@ -394,6 +419,7 @@ export type GrpcWireBinding = z.infer<typeof GrpcWireBinding>;
 export const WireBinding = z.discriminatedUnion("protocol", [
   SoapWireBinding,
   GraphqlWireBinding,
+  GraphqlSseBinding,
   GrpcWireBinding,
 ]);
 export type WireBinding = z.infer<typeof WireBinding>;
@@ -888,6 +914,38 @@ export const SQL_DIALECTS = [
   "databricks",
 ] as const;
 
+/**
+ * What makes a subscription a *call*.
+ *
+ * A stream has no natural end, and everything in Anvil's safety core assumes
+ * one: a single result to validate, one execution record to write, one outcome
+ * for idempotency and retry to reason about. So a subscription is exposed as a
+ * bounded observation window — open the stream, collect until one of these
+ * bounds is reached, return what arrived. The bound is not a limitation bolted
+ * on; it is the thing that turns "listen forever" into an operation.
+ *
+ * Both bounds are ceilings the runtime enforces, and neither is an agent input.
+ * A caller that could widen its own window could hold a connection open for as
+ * long as it liked, which is the unbounded case wearing a parameter.
+ */
+export const StreamContractSchema = z.object({
+  /** The only stream wire Anvil reads. See `GraphqlSseBinding` for why not WebSocket. */
+  transport: z.literal("graphql_sse"),
+  /**
+   * `at_most_once`, and stated rather than assumed. Anvil opens the stream,
+   * reads a window, and closes it; events published outside that window are not
+   * replayed and nothing resumes from a cursor. An agent told a stream is
+   * at-least-once would reason about duplicates it will never see, and one told
+   * nothing would assume it had seen everything.
+   */
+  delivery: z.literal("at_most_once"),
+  /** Stop after this many events arrive. */
+  maxEvents: z.number().int().positive(),
+  /** Stop after this long, whether or not any event arrived. */
+  maxSeconds: z.number().int().positive(),
+});
+export type StreamContract = z.infer<typeof StreamContractSchema>;
+
 export const Operation = z.object({
   /** Stable, dotted operation id, e.g. payments.refund.create. */
   id: z.string(),
@@ -938,6 +996,12 @@ export const Operation = z.object({
    * agent polling a tool it cannot call is worse off than one told nothing.
    */
   asyncContract: AsyncContractSchema.optional(),
+  /**
+   * Present only on a `stream_source` operation, and what makes it executable:
+   * `wireExecutability` refuses a subscription binding with no contract,
+   * because without a bound there is nothing to make the call return.
+   */
+  stream: StreamContractSchema.optional(),
   /** How an agent should interact with this operation (transaction, search, long_running, etc.). */
   archetype: InteractionArchetype.optional(),
   deprecated: z.boolean().default(false),

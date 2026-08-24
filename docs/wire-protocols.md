@@ -15,7 +15,8 @@ Compilation does not turn an unsupported transport into HTTP.
 | Protocol | Runtime status | Request shape | Refused modes |
 | --- | --- | --- | --- |
 | HTTP with JSON | Supported | Method, URL, headers, query, and JSON body from AIR | Unsupported content types remain unavailable |
-| GraphQL | Queries and mutations supported | Compiled document plus variables sent to one GraphQL endpoint | Subscriptions |
+| GraphQL | Queries and mutations supported | Compiled document plus variables sent to one GraphQL endpoint | — |
+| GraphQL subscriptions | Supported through a bounded observation window | The same compiled document, requested as `text/event-stream` | WebSocket (`graphql-ws`); the generated SDKs refuse this wire by design |
 | SOAP 1.1 | Document/literal support is test-backed | XML envelope sent to the declared `soap:address` with `SOAPAction` | RPC/encoded and type-only messages |
 | SOAP 1.2 | Implemented, not yet covered by the acceptance suite | SOAP 1.2 envelope and content type | RPC/encoded and type-only messages |
 | gRPC with `google.api.http` | Supported, no declaration required | The verb, path, query, and body the annotation declares | Multi-segment path templates, nested field bindings, custom method kinds |
@@ -29,7 +30,8 @@ rules. Those rules are independent of this runtime matrix.
 Adapters preserve protocol facts on the operation's source binding.
 
 - GraphQL stores the endpoint, compiled document, operation name, and root
-  field.
+  field. A subscription stores the same facts under its own protocol, plus a
+  stream contract carrying its delivery guarantee and its bounds.
 - SOAP stores the service endpoint, action, envelope namespace, body namespace,
   body element, response element, content type, and version.
 - gRPC stores the service, method, and how the service is reached: `http_rule`
@@ -60,8 +62,64 @@ from the full SDL before it creates the bounded projection.
 GraphQL can return an `errors` array with HTTP 200. Anvil treats that response
 as a failure, including responses that contain both `data` and `errors`.
 
-Subscriptions are refused because the generated clients implement bounded
-request-response calls, not streams.
+### Subscriptions
+
+A subscription is compiled and executed, through a **bounded observation
+window**. The call opens the stream, collects events until a bound is reached,
+and returns them as an array.
+
+The bound is not a limitation added on top. It is what makes a subscription a
+call at all: everything in Anvil's safety core assumes one result to validate,
+one execution record to write, and one outcome for retry and idempotency to
+reason about. A stream with no end has none of those.
+
+The request is the same document a query sends, with one header changed:
+
+```http
+POST /graphql
+Accept: text/event-stream
+```
+
+Anvil reads `graphql-sse` — subscriptions over Server-Sent Events — and not
+`graphql-ws`. That is deliberate rather than incidental: a WebSocket client is
+something Python's and Go's standard libraries do not have, the same wall that
+stops native gRPC, while SSE is chunked HTTP that every one of them can already
+read. Choosing it keeps the door open for the generated clients.
+
+Each operation carries a stream contract:
+
+| Field | Meaning |
+| --- | --- |
+| `transport` | `graphql_sse` |
+| `delivery` | `at_most_once` — Anvil reads a window and closes it; nothing is replayed and nothing resumes from a cursor |
+| `maxEvents` | Stop after this many events (default 100) |
+| `maxSeconds` | Stop after this long, whether or not anything arrived (default 30) |
+
+Four things end a window: the event bound, the time bound, the server closing
+the stream, or the subscription failing to start. An empty array is a real
+answer — nothing was published while Anvil was listening — and is never
+collapsed into `null`.
+
+Neither bound is an agent input. A caller able to widen its own window could
+hold a connection open indefinitely, which is the unbounded case wearing a
+parameter. An Anvil manifest can raise either ceiling for an operation that
+needs it.
+
+Two rules keep a window honest. A frame Anvil did not see the end of is not
+reported, even when its JSON happens to parse — the missing boundary is the
+signal, not the parse. And keep-alive comments do not count as events, or an
+idle service could exhaust a hundred-event window having published nothing.
+
+An error in the **first** frame is a subscription that never started, and fails
+the call. An error in a later frame is one bad event inside a window that
+otherwise delivered; it is dropped and the window still returns, because failing
+the whole call would discard good events the caller already waited for.
+
+The four generated SDKs refuse this wire. They are request-and-response clients
+and do not carry the bounded-read loop, so `graphql_sse` falls through their
+transport gate and is refused by name. That is the surfaces agreeing the
+operation is unreachable from a stateless client — not disagreeing about what it
+means.
 
 ## SOAP
 

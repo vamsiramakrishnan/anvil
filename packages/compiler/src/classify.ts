@@ -370,6 +370,9 @@ export function classifyConfirmation(effect: Effect, idempotency: Idempotency): 
  * query_passthrough, which blocks them by default. This dominates search/transaction
  * but not long_running.
  *
+ * `isStreamSource` and `isWebhookReceiver` both dominate every other rule,
+ * including `longRunning`, and neither is ever inferred from shape.
+ *
  * `isWebhookReceiver` dominates every other rule, including `longRunning`. It is
  * never inferred from an operation's shape (a webhook payload can look exactly
  * like an ordinary read response) — it is set only when the operation was
@@ -386,8 +389,14 @@ export function classifyArchetype(
   params?: readonly Param[],
   body?: { projection: string; fields?: readonly BodyField[] },
   isWebhookReceiver?: boolean,
+  isStreamSource?: boolean,
 ): InteractionArchetype | undefined {
   if (isWebhookReceiver) return "webhook_receiver";
+  // Like `isWebhookReceiver`, never inferred from shape: it is set only when the
+  // compiler recovered a stream contract, which no ordinary read can carry. A
+  // bounded subscription window *looks* exactly like a list read, so guessing
+  // here would be guessing wrong in both directions.
+  if (isStreamSource) return "stream_source";
   // Long-running operations dominate other classifications.
   if (longRunning) return "long_running";
 

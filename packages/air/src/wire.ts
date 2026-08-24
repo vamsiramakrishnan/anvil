@@ -22,7 +22,14 @@ import type { Operation, SourceRef } from "./schema.js";
  * field to `AirDocument`, so `contractHash` is unchanged and no stored
  * certification expires on the day the concept arrives.
  */
-export const WIRE_PROTOCOLS = ["http_json", "soap", "graphql", "grpc", "mcp_tool"] as const;
+export const WIRE_PROTOCOLS = [
+  "http_json",
+  "soap",
+  "graphql",
+  "graphql_sse",
+  "grpc",
+  "mcp_tool",
+] as const;
 export type WireProtocol = (typeof WIRE_PROTOCOLS)[number];
 
 /**
@@ -70,6 +77,10 @@ export function wireProtocolFor(source: SourceRef): WireProtocol {
   if (source.binding?.protocol === "grpc" && source.binding.transport === "http_rule") {
     return RUNTIME_WIRE_PROTOCOL;
   }
+  // A GraphQL *subscription* is a different wire from a query against the same
+  // endpoint — Server-Sent Events rather than one JSON response — so the
+  // binding names it and the source format does not.
+  if (source.binding?.protocol === "graphql_sse") return "graphql_sse";
   return PROTOCOL_BY_SOURCE_KIND[source.kind];
 }
 
@@ -84,10 +95,10 @@ const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
     "means its WSDL declared a shape Anvil declines to encode rather than " +
     "encode wrongly — check the compile diagnostics for which",
   graphql:
-    "Anvil speaks GraphQL, but only for a query or mutation. This operation " +
-    "carries no wire binding, which means it is a subscription — a long-lived " +
-    "stream rather than a request and response, and Anvil has no streaming " +
-    "client to hold one open",
+    "Anvil speaks GraphQL for a query or a mutation over one JSON response, " +
+    "and for a subscription over a bounded Server-Sent Events window. This " +
+    "operation carries no wire binding at all, so the compiler declined to " +
+    "encode it — check the compile diagnostics for which shape and why",
   grpc:
     "unlike the other protocols, this path is real — it is gRPC's own :path — " +
     "but a native call is length-prefixed protobuf over HTTP/2 with the status " +
@@ -100,6 +111,14 @@ const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
     "Failing that, a JSON transcoder (grpc-gateway, Envoy's gRPC-JSON filter) " +
     "accepts JSON on this exact path and speaks protobuf onward — declare one " +
     "and Anvil calls it",
+  graphql_sse:
+    "a GraphQL subscription is observed through a bounded window — the call " +
+    "collects events until the stream contract's event or time bound and " +
+    "returns them. This operation carries no such contract, so there is " +
+    "nothing to make it terminate, and a call that never returns is not a " +
+    "call. Note that only the runtime reads this wire: the generated clients " +
+    "are request/response and refuse it by design, which is them agreeing it " +
+    "is unreachable from a stateless client rather than disagreeing about it",
   mcp_tool:
     "an adopted MCP tool is invoked by a tools/call over the MCP transport; it " +
     "has no path and no method, which the runtime would silently degrade to " +
@@ -131,6 +150,15 @@ export function wireExecutability(op: Operation): WireExecutability {
   // refusing rather than being encoded on a guess.
   if (protocol === "soap" && op.sourceRef.binding?.protocol === "soap") return { ok: true };
   if (protocol === "graphql" && op.sourceRef.binding?.protocol === "graphql") return { ok: true };
+  // A subscription is executable exactly when it is *bounded*: the stream
+  // contract is what turns "listen forever" into one call with one result.
+  if (
+    protocol === "graphql_sse" &&
+    op.sourceRef.binding?.protocol === "graphql_sse" &&
+    op.stream !== undefined
+  ) {
+    return { ok: true };
+  }
   return {
     ok: false,
     protocol,
