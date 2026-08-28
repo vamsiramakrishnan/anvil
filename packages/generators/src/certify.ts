@@ -110,6 +110,8 @@ export const SIMULATION_REPORT_FILE = "simulation.report.json";
 export const REVIEW_REPORT_FILE = "review.report.json";
 /** The observed-reality lane's record (`anvil observe`). */
 export const OBSERVE_REPORT_FILE = "observe.report.json";
+/** Where `anvil observe --from-records` writes the recorded-traffic report. */
+export const GENERATED_TRAFFIC_REPORT_FILE = "traffic.report.json";
 /** Where `anvil benchmark` writes deterministic agent-task benchmark results. */
 export const BENCHMARK_REPORT_FILE = "benchmark.report.json";
 
@@ -173,6 +175,7 @@ export const DERIVED_RECORD_FILES: ReadonlySet<string> = new Set([
   SIMULATION_REPORT_FILE,
   REVIEW_REPORT_FILE,
   OBSERVE_REPORT_FILE,
+  GENERATED_TRAFFIC_REPORT_FILE,
   // A benchmark score is a record about the bundle, not part of its content:
   // leaving it inside the identity meant running `anvil benchmark` silently
   // staled every OTHER lane's hash-bound evidence.

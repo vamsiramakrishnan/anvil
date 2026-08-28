@@ -682,6 +682,10 @@ describe("publication gating: executable evidence", () => {
     expect(bundleHash(withBenchmark)).toBe(bundleHash(files));
     const statuses = executableEvidenceStatuses({ ...withBenchmark, ...reportFiles() });
     expect(executableEvidenceReady(statuses)).toBe(true);
+    // Same boundary for the recorded-traffic report `observe --from-records`
+    // writes: a record ABOUT the bundle, never part of its identity.
+    const withTraffic = { ...files, "traffic.report.json": "{}" };
+    expect(bundleHash(withTraffic)).toBe(bundleHash(files));
   });
 
   it("tracks the benchmark as an advisory lane with the same freshness discipline", () => {

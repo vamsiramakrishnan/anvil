@@ -690,6 +690,16 @@
       "tests": [
         "packages/harness/src/records.test.ts"
       ]
+    },
+    {
+      "id": "pack/install-gates-on-certification",
+      "file": "packages/cli/src/commands/pack.ts",
+      "control": "Digests prove the bytes are the builder's bytes; the certification says whether those bytes ever passed the gates. Delete the gate and an uncertified or failed-certification pack installs silently — distribution without the trust that makes it safe to distribute.",
+      "find": "  if (status !== \"certified\" && opts.allowUncertified !== true) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/commands/pack.test.ts"
+      ]
     }
   ]
 }

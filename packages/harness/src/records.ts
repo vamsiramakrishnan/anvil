@@ -273,4 +273,8 @@ export function runRecords({ air, dir }: RecordsOptions): TrafficReport {
   };
 }
 
-export const TRAFFIC_REPORT_FILE = "traffic.report.json";
+// Re-exported from the identity boundary's own module: the report is written
+// into the bundle directory, so the name MUST be in DERIVED_RECORD_FILES or
+// writing it would silently stale every evidence lane — the exact bug the
+// benchmark report once had.
+export { GENERATED_TRAFFIC_REPORT_FILE as TRAFFIC_REPORT_FILE } from "@anvil/generators";

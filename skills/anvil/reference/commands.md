@@ -926,6 +926,39 @@ Options:
 - `--check` — gate: exit non-zero when a tool surface exceeds its budget
 - `--json` — emit the full bill of materials as JSON
 
+### `anvil pack`
+`anvil pack [options] [command]`
+
+Build, verify, and install content-addressed system packs.
+
+#### `anvil pack build`  *(mutates)*
+`anvil pack build [options] <dir>`
+
+Assemble a bundle into one verifiable, content-addressed pack file.
+
+Reads a generated bundle and assembles it into an Agent System Pack: every generated file becomes a digested artifact, the artifact manifest and pack digests are computed over the content, and the bundle's certification status (certification.json, when present) is carried on the pack envelope. Derived records (*.report.json and other evidence files) stay out, exactly as they stay out of the bundle's identity hash. The output is one deterministic file: the same bundle always packs to byte-identical output.
+
+Options:
+- `--out <file>` — where to write the pack (default: <dir>/system.pack.json)
+
+#### `anvil pack verify`
+`anvil pack verify [options] <file>`
+
+Recompute every digest in a pack file and report what diverged.
+
+Reads a pack file and verifies it end to end: envelope entries re-hash against their claimed digests, every artifact's content re-hashes against the manifest, and the manifest and pack digests recompute. Failures are reported one per line — a verify that cannot say what diverged is just a slower way of being wrong.
+
+#### `anvil pack install`  *(mutates)*
+`anvil pack install [options] <source>`
+
+Verify a pack — digests and certification — then unpack it, transactionally.
+
+Fetches a pack from a local path or an https:// URL, verifies every content digest, the artifact manifest digest, and the pack digest, and checks the pack carries a certification with status 'certified' — all BEFORE a single file lands at the target. An uncertified or failed-certification pack refuses unless --allow-uncertified states the operator's intent in so many words. Unpacking stages into a temporary directory and renames it in, so an interrupted install leaves either nothing or a complete bundle. Refuses to overwrite an existing target.
+
+Options:
+- `--out <dir>` — directory to install the bundle into (must not exist)
+- `--allow-uncertified` — install even when the pack carries no 'certified' certification (recorded in the output)
+
 ### `anvil publish`  *(mutates)*
 `anvil publish [options] <dir>`
 
