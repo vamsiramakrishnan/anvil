@@ -25,6 +25,7 @@ import {
   allowedHostsFor,
   FetchTransport,
   InMemoryObserver,
+  JsonlRecordSpool,
   loadRuntimeConfig,
   resolveCredentials,
   resolveLedger,
@@ -43,7 +44,12 @@ const credentials = resolveCredentials(config);
 const ledger = resolveLedger(config.ledger, {
   resultTtlMs: config.ledgerResultTtlSeconds * 1000,
 });
-const observer = new InMemoryObserver();
+// ANVIL_RECORDS_DIR spools every execution record (no secrets, no payloads --
+// ExecutionRecord's own contract) to JSONL for anvil observe --from-records,
+// which folds real traffic back into evidence. Unset, records stay in memory.
+const observer = process.env.ANVIL_RECORDS_DIR
+  ? new JsonlRecordSpool(process.env.ANVIL_RECORDS_DIR)
+  : new InMemoryObserver();
 
 // ANVIL_BASE_URL is a deliberate operator override (loopback self-test, staging
 // smoke tests); when set without an explicit allowlist, egress pins to its host.
@@ -118,6 +124,7 @@ import {
   currentInboundIdentity,
   FetchTransport,
   InMemoryObserver,
+  JsonlRecordSpool,
   loadRuntimeConfig,
   probeLedgerReadiness,
   resolveCredentials,
@@ -139,7 +146,9 @@ const deps = {
   ledger: resolveLedger(config.ledger, {
     resultTtlMs: config.ledgerResultTtlSeconds * 1000,
   }),
-  observer: new InMemoryObserver(),
+  observer: process.env.ANVIL_RECORDS_DIR
+    ? new JsonlRecordSpool(process.env.ANVIL_RECORDS_DIR)
+    : new InMemoryObserver(),
 };
 const baseUrl = process.env.ANVIL_BASE_URL ?? air.service.servers[0]?.url ?? "";
 const allowedHosts = allowedHostsFor(

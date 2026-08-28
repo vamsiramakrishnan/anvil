@@ -102,6 +102,7 @@ import {
   FetchTransport,
   handleWebhook,
   InMemoryObserver,
+  JsonlRecordSpool,
   loadRuntimeConfig,
   probeLedgerReadiness,
   resolveCredentials,
@@ -149,7 +150,12 @@ const config = loadRuntimeConfig();
 const catalog = JSON.parse(
   readFileSync(fileURLToPath(new URL("./operations.manifest.json", import.meta.url)), "utf8"),
 );
-const observer = new InMemoryObserver();
+// ANVIL_RECORDS_DIR spools every execution record (no secrets, no payloads --
+// ExecutionRecord's own contract) to JSONL for anvil observe --from-records,
+// which folds real traffic back into evidence. Unset, records stay in memory.
+const observer = process.env.ANVIL_RECORDS_DIR
+  ? new JsonlRecordSpool(process.env.ANVIL_RECORDS_DIR)
+  : new InMemoryObserver();
 // Resolve the idempotency ledger once at boot. ANVIL_LEDGER selects a durable
 // backend; without one, required-idempotency mutations fail closed outside dev
 // (enforced in the executor) — a horizontally-scaled runtime never silently
@@ -542,7 +548,7 @@ const server = createServer(async (req, res) => {
   // Everything below exposes the tool surface — gate it on the inbound token.
   if (url.pathname === "/metrics") {
     if (!(await authorized(req, res)).ok) return;
-    return json(res, 200, { records: observer.records.length });
+    return json(res, 200, { records: observer.count });
   }
   if (url.pathname === "/openapi") {
     if (!(await authorized(req, res)).ok) return;

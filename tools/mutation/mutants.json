@@ -680,6 +680,16 @@
       "tests": [
         "packages/compiler/src/protocols/graphql-subscription.test.ts"
       ]
+    },
+    {
+      "id": "records/traffic-never-deprecates-a-living-operation",
+      "file": "packages/harness/src/records.ts",
+      "control": "Recorded traffic's one patch-bearing claim is deprecation, and only when NO observed call succeeded. Delete the check and an operation with live successes beside stale 404s gets proposed as deprecated — high-reliability evidence laundering a wrong conclusion.",
+      "find": "    summary.successes === 0 &&",
+      "replace": "    true &&",
+      "tests": [
+        "packages/harness/src/records.test.ts"
+      ]
     }
   ]
 }

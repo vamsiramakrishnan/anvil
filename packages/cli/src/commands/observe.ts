@@ -1,6 +1,15 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { OBSERVE_REPORT_FILE, ObserveConfig, type ObserveReport, runObserve } from "@anvil/harness";
+import { loadAirDocument } from "@anvil/air";
+import {
+  OBSERVE_REPORT_FILE,
+  ObserveConfig,
+  type ObserveReport,
+  runObserve,
+  runRecords,
+  TRAFFIC_REPORT_FILE,
+  type TrafficReport,
+} from "@anvil/harness";
 import type { Command } from "commander";
 import { stringify as stringifyYaml } from "yaml";
 import { emitRefusal } from "../envelope.js";
@@ -25,10 +34,14 @@ export function registerObserve(parent: Command, ctx: CommandContext): void {
       .command("observe")
       .summary("Compare a bundle against the running application it was compiled from.")
       .description(
-        "Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json.",
+        "Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json. RECORDED TRAFFIC (--from-records <dir>): instead of probing live, folds the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server; records carry outcomes, error codes, retry and ledger behaviour — no secrets, no payloads) into recorded_traffic evidence through the same reconciler. Traffic corroborates freely; the one patch it earns is deprecation, when every one of enough calls answered not_found. Writes traffic.report.json.",
       )
       .argument("<dir>", "generated bundle directory")
-      .requiredOption("--config <file>", "JSON config naming the running application")
+      .option("--config <file>", "JSON config naming the running application")
+      .option(
+        "--from-records <dir>",
+        "fold a serving-path record spool (ANVIL_RECORDS_DIR) into evidence instead of probing live",
+      )
       .option("--write <manifest>", "write the proposed manifest here instead of printing it")
       .option(
         "--capture <file>",
@@ -43,7 +56,8 @@ export function registerObserve(parent: Command, ctx: CommandContext): void {
 }
 
 interface ObserveOptions {
-  config: string;
+  config?: string;
+  fromRecords?: string;
   write?: string;
   capture?: string;
   json?: boolean;
@@ -58,6 +72,28 @@ async function runObserveCommand(dir: string, opts: ObserveOptions, io: CliIO): 
       message: `No generated bundle at ${bundle}: air.json is not there. Compile first.`,
     });
   }
+  // Two ways to meet reality, one at a time: probe the running application
+  // (--config) or fold its spooled traffic back into evidence (--from-records).
+  if (opts.fromRecords !== undefined && opts.config !== undefined) {
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.observe-error",
+      code: "observe_mode_ambiguous",
+      message:
+        "Pass either --config (probe the live application) or --from-records (read a spool), not both.",
+    });
+  }
+  if (opts.fromRecords !== undefined) {
+    return runFromRecords(bundle, opts.fromRecords, opts, io);
+  }
+  if (opts.config === undefined) {
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.observe-error",
+      code: "observe_mode_missing",
+      message:
+        "Pass --config to probe the running application, or --from-records to fold a record spool into evidence.",
+    });
+  }
+
   let config: ObserveConfig;
   try {
     config = ObserveConfig.parse(JSON.parse(readFileSync(resolve(opts.config), "utf8")));
@@ -112,6 +148,66 @@ async function runObserveCommand(dir: string, opts: ObserveOptions, io: CliIO): 
 
   render(report, opts, io);
   return report.ok ? 0 : 1;
+}
+
+function runFromRecords(bundle: string, spoolDir: string, opts: ObserveOptions, io: CliIO): number {
+  const dir = resolve(spoolDir);
+  if (!existsSync(dir)) {
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.observe-error",
+      code: "observe_records_missing",
+      message: `No record spool at ${dir}. Point --from-records at the directory ANVIL_RECORDS_DIR wrote to.`,
+    });
+  }
+  const air = loadAirDocument(JSON.parse(readFileSync(join(bundle, "air.json"), "utf8")));
+  const report = runRecords({ air, dir });
+  writeFileSync(join(bundle, TRAFFIC_REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+  if (opts.write !== undefined && report.proposal !== undefined) {
+    writeFileSync(
+      resolve(opts.write),
+      stringifyYaml({ operations: report.proposal.operations }),
+      "utf8",
+    );
+  }
+  if (opts.json === true) {
+    io.out(JSON.stringify({ reportType: "anvil.traffic-report", ...report }, null, 2));
+    return report.ok ? 0 : 1;
+  }
+  renderTraffic(report, opts, io);
+  return report.ok ? 0 : 1;
+}
+
+function renderTraffic(report: TrafficReport, opts: ObserveOptions, io: CliIO): void {
+  io.out(`${report.service} — recorded traffic from ${report.source}`);
+  io.out("");
+  for (const s of report.traffic) {
+    const codes = Object.entries(s.errorCodes)
+      .map(([code, n]) => `${code}×${n}`)
+      .join(", ");
+    io.out(
+      `  ${s.operationId}: ${s.calls} call(s), ${s.successes} ok, ${s.errors} error(s)` +
+        `${codes ? ` (${codes})` : ""}, ${s.replays} replay(s), ${s.retriedSuccesses} retried-ok`,
+    );
+  }
+  if (report.unobserved.length > 0) {
+    io.out(`  Approved but never observed: ${report.unobserved.join(", ")}`);
+  }
+  if (report.unknownOperationIds.length > 0) {
+    io.out(`  In traffic but not in this AIR: ${report.unknownOperationIds.join(", ")}`);
+  }
+  io.out("");
+  if (report.proposal) {
+    const ids = Object.keys(report.proposal.operations);
+    io.out(`Proposal: ${ids.length} operation patch(es) — ${ids.join(", ")}.`);
+    if (opts.write === undefined) {
+      io.out("Re-run with --write <manifest> to save it, review, then `anvil compile --manifest`.");
+    }
+  } else {
+    io.out("No patch proposed: traffic corroborates the model as compiled.");
+  }
+  io.out(report.detail);
+  io.out(`Wrote ${TRAFFIC_REPORT_FILE}.`);
 }
 
 /**
