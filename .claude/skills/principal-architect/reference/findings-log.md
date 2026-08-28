@@ -71,14 +71,15 @@ Cite these rather than rediscovering them from scratch:
   (bug-bash retro fix) intentionally did not touch this — splitting
   `estate.ts`'s internals is a separate, larger piece of work, not covered
   by a directory reorganization.
-- **`undocumented_pagination` has a detector, no skill.** Same "detector
-  exists, no skill closes it" shape as `classify-idempotency` was before
-  this session — `Operation.pagination` is a fully-typed AIR field
-  (cursor/page/offset/link styles), the detector fires on list/search
-  operations missing it, but nothing proposes it and nothing wires a
-  classified `pagination` through to generated `--limit`/`--cursor`
-  CLI/MCP params. A real, concrete next slice if pagination/token-economy
-  work becomes a priority.
+- **Pagination: closed.** This entry previously claimed "detector exists, no
+  skill closes it" — that had gone stale: `classifyPagination` infers the
+  contract in normalize, the `document-pagination` refinement skill proposes
+  it, `apply.ts` writes it, and the MCP description + skill card teach it.
+  The last genuinely missing piece was the operator path — a manifest could
+  not declare pagination — closed with the `pagination` manifest field
+  (validated against real input params; declines on mutations and phantom
+  carriers). Lesson repeated: verify this log against the code before citing
+  it.
 
 ## Public-corpus gauntlet (Slack, Jira, Twilio, Stripe, GitHub, NOAA WSDL)
 

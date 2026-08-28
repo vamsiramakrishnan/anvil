@@ -1394,3 +1394,74 @@ paths:
     expect(op?.reviewNotes.some((n) => n.includes("no job_id_field was supplied"))).toBe(true);
   });
 });
+
+describe("pagination manifest patch", () => {
+  // The operator path for the one enrichable fact a manifest could not
+  // declare: detection (`undocumented_pagination`) fires, inference
+  // (`classifyPagination`) covers the provable cases, refinement can propose —
+  // and when all three fall short, this is how a human states the contract.
+  const spec = `
+openapi: 3.0.0
+info: { title: Ledger, version: 1.0.0 }
+paths:
+  /entries:
+    get:
+      operationId: listEntries
+      parameters:
+        - { name: after, in: query, required: false, schema: { type: string } }
+        - { name: size, in: query, required: false, schema: { type: integer } }
+      responses: { "200": { description: ok } }
+    post:
+      operationId: createEntry
+      responses: { "201": { description: created } }
+`;
+  const manifestFor = (block: string, operation = "listEntries") => `
+service: { name: ledger }
+operations:
+  ${operation}:
+${block}
+`;
+
+  it("declares pagination on a read whose carrier params are real", async () => {
+    const air = await compile({
+      spec,
+      manifest: manifestFor(
+        "    pagination:\n      style: cursor\n      cursor_param: after\n      page_size_param: size\n      max_page_size: 100",
+      ),
+      serviceId: "ledger",
+    });
+    const op = air.operations.find((o) => o.id.includes("entries") && o.effect.kind === "read");
+    expect(op?.pagination).toEqual({
+      style: "cursor",
+      cursorParam: "after",
+      pageSizeParam: "size",
+      maxPageSize: 100,
+    });
+    expect(op?.reviewNotes.join(" ")).toContain("Pagination declared by manifest");
+  });
+
+  it("refuses a carrier parameter the operation does not have", async () => {
+    const air = await compile({
+      spec,
+      manifest: manifestFor("    pagination:\n      style: cursor\n      cursor_param: page_token"),
+      serviceId: "ledger",
+    });
+    const op = air.operations.find((o) => o.id.includes("entries") && o.effect.kind === "read");
+    // A contract bound to a phantom parameter would teach every surface to
+    // pass an argument the wire ignores — declined with the reason, leaving
+    // what inference already proved ('after' is a real cursor param) intact.
+    expect(op?.pagination?.cursorParam).toBe("after");
+    expect(op?.reviewNotes.join(" ")).toContain("phantom");
+  });
+
+  it("refuses pagination on a mutation", async () => {
+    const air = await compile({
+      spec,
+      manifest: manifestFor("    pagination:\n      style: page", "createEntry"),
+      serviceId: "ledger",
+    });
+    const op = air.operations.find((o) => o.effect.kind === "mutation");
+    expect(op?.pagination).toBeUndefined();
+    expect(op?.reviewNotes.join(" ")).toContain("mutation");
+  });
+});

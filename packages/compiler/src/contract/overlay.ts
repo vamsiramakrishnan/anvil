@@ -239,6 +239,7 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     if (m.async_contract) assertions.push(set(ref, "asyncContract", m.async_contract));
     // Observation-window ceilings, carried verbatim — `applyOperationManifest`
     // owns the "resize, never create" rule against the compiled contract.
+    if (m.pagination) assertions.push(set(ref, "pagination", m.pagination));
     if (m.stream) assertions.push(set(ref, "stream", m.stream));
 
     if (m.state) assertions.push(set(ref, "state", m.state));
@@ -350,6 +351,9 @@ export function projectOperationManifest(
 
   const asyncContract = v<OperationManifest["async_contract"]>("asyncContract");
   if (asyncContract) m.async_contract = asyncContract;
+
+  const pagination = v<OperationManifest["pagination"]>("pagination");
+  if (pagination) m.pagination = pagination;
 
   const stream = v<OperationManifest["stream"]>("stream");
   if (stream) m.stream = stream;
