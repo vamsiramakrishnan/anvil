@@ -11,7 +11,7 @@ import type {
   ParamLocation,
   RequestBody,
 } from "@anvil/air";
-import { resolveAsyncContract, snakeCase, WireBinding } from "@anvil/air";
+import { resolveAsyncContract, StreamContractSchema, snakeCase, WireBinding } from "@anvil/air";
 import type { AsyncResponseSignals, LongRunningDetection } from "./classify.js";
 import {
   classifyArchetype,
@@ -92,6 +92,7 @@ interface RawOperation {
    * header a fact from a WSDL rather than an arbitrary-header channel.
    */
   "x-anvil-wire-binding"?: unknown;
+  "x-anvil-stream"?: unknown;
   /**
    * Vendor extension stamped by `protocols/webhooks.ts`: this operation was
    * compiled from the spec's own `webhooks:` map, not `paths:`. Read here to
@@ -792,6 +793,12 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         namedSchemas,
       );
 
+      // Parsed rather than trusted, like the wire binding beside it: the
+      // extension arrives as `unknown` off a lowered document. Its presence is
+      // what makes the operation a stream source — structurally certain, the
+      // same standing as `isWebhookReceiver`, rather than guessed from shape.
+      const stream = StreamContractSchema.safeParse(raw["x-anvil-stream"]).data;
+
       const archetype = classifyArchetype(
         effect,
         effect.action,
@@ -799,6 +806,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         params,
         body,
         isWebhookReceiver,
+        stream !== undefined,
       );
 
       // Adapter-written wire facts. Parsed rather than trusted: the extension
@@ -848,6 +856,7 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
         streaming: false,
         longRunning,
         archetype,
+        ...(stream ? { stream } : {}),
         ...(pagination ? { pagination } : {}),
         deprecated: Boolean(raw.deprecated),
         cli: { command: names.cliCommand, aliases: [] },

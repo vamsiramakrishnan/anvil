@@ -121,6 +121,9 @@ importers:
       '@anvil/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@anvil/system-pack':
+        specifier: workspace:*
+        version: link:../system-pack
       '@anvil/targets':
         specifier: workspace:*
         version: link:../targets

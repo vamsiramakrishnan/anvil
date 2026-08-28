@@ -1,6 +1,6 @@
 ---
 name: anvil-enrich
-description: Triangulate a better, behaviorally-grounded spec by enriching AIR from the systems' own published MCP servers (Confluence docs, GitHub/GitLab code, Postman traffic). Two parts — an interactive interview to define which sources to consult (`anvil sources init`), then evidence-graded enrichment (`anvil enrich`) that proposes a manifest patch. Use when a compiled spec is thin: missing idempotency/confirmation, weak descriptions, undocumented errors, or view-shaped names that need real behavioral meaning.
+description: Triangulate a better, behaviorally-grounded spec by enriching AIR from the systems' own published MCP servers (Confluence docs, GitHub/GitLab code, Postman traffic). Two parts — an interactive interview to define which sources to consult (`anvil enrich-sources init`), then evidence-graded enrichment (`anvil enrich`) that proposes a manifest patch. Use when a compiled spec is thin: missing idempotency/confirmation, weak descriptions, undocumented errors, or view-shaped names that need real behavioral meaning.
 ---
 
 # Enriching a spec from its own systems of record
@@ -22,13 +22,13 @@ The evidence is **tier-weighted**, and that asymmetry is the whole safety story:
   phrases agents route on) but **never loosens safety alone**.
 - **Postman** → real-usage; corroborates, stays below the loosen bar.
 
-## Part 1 — the interview: define the sources (`anvil sources init`)
+## Part 1 — the interview: define the sources (`anvil enrich-sources init`)
 
 Defining which servers to enrich from is a judgement call you make *with the
 operator*, not something to hard-code. Scaffold it, then interview:
 
 ```
-anvil sources init <dir> --json        # proposal + the questions to ask
+anvil enrich-sources init <dir> --json        # proposal + the questions to ask
 ```
 
 `init` reads the compiled AIR and proposes the two evidence poles (a code host,
@@ -44,7 +44,7 @@ the operator:
    must be in the environment; never write them into the file.
 
 Fill the `<…>` scopes with the operator's answers and save
-`sources.yaml` (`anvil sources init <dir> --write sources.yaml`, then edit).
+`sources.yaml` (`anvil enrich-sources init <dir> --write sources.yaml`, then edit).
 
 ## Part 2 — enrich (`anvil enrich`)
 

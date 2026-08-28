@@ -15,10 +15,12 @@ Compilation does not turn an unsupported transport into HTTP.
 | Protocol | Runtime status | Request shape | Refused modes |
 | --- | --- | --- | --- |
 | HTTP with JSON | Supported | Method, URL, headers, query, and JSON body from AIR | Unsupported content types remain unavailable |
-| GraphQL | Queries and mutations supported | Compiled document plus variables sent to one GraphQL endpoint | Subscriptions |
+| GraphQL | Queries and mutations supported | Compiled document plus variables sent to one GraphQL endpoint | — |
+| GraphQL subscriptions | Supported through a bounded observation window | The same compiled document, requested as `text/event-stream` | WebSocket (`graphql-ws`); the generated SDKs refuse this wire by design |
 | SOAP 1.1 | Document/literal support is test-backed | XML envelope sent to the declared `soap:address` with `SOAPAction` | RPC/encoded and type-only messages |
 | SOAP 1.2 | Implemented, not yet covered by the acceptance suite | SOAP 1.2 envelope and content type | RPC/encoded and type-only messages |
-| gRPC | Supported only through a declared JSON transcoder | JSON sent to the service/method path | Native gRPC and streaming RPCs |
+| gRPC with `google.api.http` | Supported, no declaration required | The verb, path, query, and body the annotation declares | Multi-segment path templates, nested field bindings, custom method kinds |
+| gRPC without annotations | Supported only through a declared JSON transcoder | JSON sent to the service/method path | Native gRPC and streaming RPCs |
 
 Read [source format support](SOURCE_FORMATS.md) for parsing and source-graph
 rules. Those rules are independent of this runtime matrix.
@@ -28,10 +30,13 @@ rules. Those rules are independent of this runtime matrix.
 Adapters preserve protocol facts on the operation's source binding.
 
 - GraphQL stores the endpoint, compiled document, operation name, and root
-  field.
+  field. A subscription stores the same facts under its own protocol, plus a
+  stream contract carrying its delivery guarantee and its bounds.
 - SOAP stores the service endpoint, action, envelope namespace, body namespace,
   body element, response element, content type, and version.
-- gRPC stores the service, method, and JSON-transcoding posture.
+- gRPC stores the service, method, and how the service is reached: `http_rule`
+  when the proto declared its own route, `json_transcoded` when a transcoder can
+  only be assumed.
 
 The generated CLI, MCP server, runtime, and four client SDKs read those facts.
 They do not reconstruct them independently.
@@ -57,8 +62,67 @@ from the full SDL before it creates the bounded projection.
 GraphQL can return an `errors` array with HTTP 200. Anvil treats that response
 as a failure, including responses that contain both `data` and `errors`.
 
-Subscriptions are refused because the generated clients implement bounded
-request-response calls, not streams.
+### Subscriptions
+
+A subscription is compiled and executed, through a **bounded observation
+window**. The call opens the stream, collects events until a bound is reached,
+and returns them as an array.
+
+The bound is not a limitation added on top. It is what makes a subscription a
+call at all: everything in Anvil's safety core assumes one result to validate,
+one execution record to write, and one outcome for retry and idempotency to
+reason about. A stream with no end has none of those.
+
+The request is the same document a query sends, with one header changed:
+
+```http
+POST /graphql
+Accept: text/event-stream
+```
+
+Anvil reads `graphql-sse` — subscriptions over Server-Sent Events — and not
+`graphql-ws`. That is deliberate rather than incidental: a WebSocket client is
+something Python's and Go's standard libraries do not have, the same wall that
+stops native gRPC, while SSE is chunked HTTP that every one of them can already
+read. Choosing it keeps the door open for the generated clients.
+
+Each operation carries a stream contract:
+
+| Field | Meaning |
+| --- | --- |
+| `transport` | `graphql_sse` |
+| `delivery` | `at_most_once` — Anvil reads a window and closes it; nothing is replayed and nothing resumes from a cursor |
+| `maxEvents` | Stop after this many events (default 100) |
+| `maxSeconds` | Stop after this long, whether or not anything arrived (default 30) |
+
+Four things end a window: the event bound, the time bound, the server closing
+the stream, or the subscription failing to start. An empty array is a real
+answer — nothing was published while Anvil was listening — and is never
+collapsed into `null`.
+
+Neither bound is an agent input. A caller able to widen its own window could
+hold a connection open indefinitely, which is the unbounded case wearing a
+parameter. An Anvil manifest can resize either ceiling for an operation that
+needs it (`stream: { max_events, max_seconds }`), up to AIR's absolute caps of
+10,000 events and 300 seconds — the caps live on the schema itself, so nothing
+can represent an unbounded window. A manifest can resize a window but never
+create one.
+
+Two rules keep a window honest. A frame Anvil did not see the end of is not
+reported, even when its JSON happens to parse — the missing boundary is the
+signal, not the parse. And keep-alive comments do not count as events, or an
+idle service could exhaust a hundred-event window having published nothing.
+
+An error in the **first** frame is a subscription that never started, and fails
+the call. An error in a later frame is one bad event inside a window that
+otherwise delivered; it is dropped and the window still returns, because failing
+the whole call would discard good events the caller already waited for.
+
+The four generated SDKs refuse this wire. They are request-and-response clients
+and do not carry the bounded-read loop, so `graphql_sse` falls through their
+transport gate and is refused by name. That is the surfaces agreeing the
+operation is unreachable from a stateless client — not disagreeing about what it
+means.
 
 ## SOAP
 
@@ -102,16 +166,67 @@ Anvil does not implement native gRPC. Native gRPC requires HTTP/2, protobuf
 framing, field-number fidelity, status trailers, and streaming behavior that
 the generated cross-language clients do not share today.
 
-A JSON transcoder provides a supported boundary. Examples include
-grpc-gateway and Envoy's gRPC-JSON transcoder. The deployment must declare that
-boundary; Anvil does not infer it from a `.proto` file.
+There are two routes to a working gRPC service, and which one applies depends
+on what the `.proto` file itself says.
+
+### Methods that declare `google.api.http`
+
+A method carrying the annotation states its own HTTP mapping:
+
+```proto
+rpc GetItem(GetItemRequest) returns (Item) {
+  option (google.api.http) = { get: "/v1/items/{item_id}" };
+}
+```
+
+This is the option grpc-gateway, Envoy's gRPC-JSON filter, and ESPv2 all read to
+decide which route to serve. Anvil reads the same option and calls the same
+route, so no declaration is required — the source document has already answered
+the question. The operation is compiled to the declared verb and path, fields
+bound in the template become path parameters, a named `body` field becomes the
+JSON body, `body: "*"` sends the whole message minus the path-bound fields, and
+everything else travels in the query string. On the wire there is nothing gRPC
+about the call.
+
+The declared verb also carries its ordinary HTTP semantics. A `get:` rule is a
+retry-safe read; a `delete:` rule classifies as destructive. The method-name
+heuristic that infers effect for an unannotated proto steps aside, because the
+annotation is the better evidence, and the operation classifies exactly as the
+OpenAPI document it has declared itself to be.
+
+Four rule shapes are refused, each with the reason on the compile diagnostic:
+
+- A path template binding a value that spans more than one path segment
+  (`{parent=projects/*}`, `{name=books/**}`). Anvil percent-encodes a path
+  parameter, so such a value would address a different resource rather than
+  fail.
+- A template binding a field inside a nested message (`{book.name}`). Path
+  parameters bind by top-level field name.
+- A `custom` method kind, which names a verb outside the set OpenAPI and the
+  runtime share.
+- A rule whose request message could not be resolved, so its bindings cannot be
+  checked against it.
+
+A refused rule does **not** fall back to gRPC's own path. A gateway serves the
+declared route and no other, so that path is one the deployment provably does
+not answer.
+
+### Methods without annotations
+
+A bare `.proto` cannot know whether a transcoder is deployed in front of it, so
+the boundary must be declared. Examples include grpc-gateway and Envoy's
+gRPC-JSON transcoder.
 
 Without the declaration, execution stops before request construction. With the
 declaration, Anvil sends JSON to the recorded service/method path and records
 the reason on the execution result.
 
-Streaming RPCs remain unavailable. A stream cannot be represented as one
-bounded request and response.
+Streaming RPCs remain unavailable under either route. A stream cannot be
+represented as one bounded request and response, and no gateway makes it one —
+so an annotation on a streaming RPC is not read.
+
+`examples/grpc-gateway/` is an annotated service; `examples/grpc/` is a bare
+one.
 
 ## Declaring a protocol facade
 
@@ -129,6 +244,16 @@ HTTP-shaped request generated by Anvil.
 
 The declaration records a deployment fact. It does not change AIR's source
 provenance or claim that the upstream speaks another protocol.
+
+A facade declares coordinates, not framing, so it never touches a
+subscription: a `graphql_sse` operation keeps its `text/event-stream` request,
+its stream bound, and its array answer with or without a facade declared. If a
+facade could re-route a subscription through the JSON codec, the same
+operation would answer with one object under `ANVIL_PROTOCOL_FACADE` and an
+array without it — two meanings for one operation, selected by an environment
+variable. And a facade is not a way past the bound: a subscription with no
+stream contract refuses even with one declared, because no facade can make an
+unbounded window terminate.
 
 ## What refusal guarantees
 

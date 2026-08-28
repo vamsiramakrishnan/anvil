@@ -465,6 +465,24 @@ function traceId(): string {
  * real request. Mirrors the runtime's own gate so every surface refuses alike.
  */
 function assertWireExecutable(spec: OperationSpec, context: InvokeContext): void {
+  // A subscription is a bounded event-stream window with an array answer.
+  // This client is request/response, and a protocol facade declares
+  // coordinates, not framing — so the refusal holds with a facade declared.
+  // The runtime and MCP surfaces read this wire; use one of those.
+  if (spec.wireProtocol === "graphql_sse") {
+    throw new AnvilError({
+      code: "unsupported_operation",
+      operation: spec.id,
+      traceId: traceId(),
+      message:
+        spec.id +
+        " is a GraphQL subscription, observed through a bounded Server-Sent Events " +
+        "window. This client is request/response and cannot hold that window open, " +
+        "and a protocol facade cannot change the framing of an event stream. " +
+        "Call it through the generated MCP server or CLI, which share the runtime " +
+        "that reads this wire.",
+    });
+  }
   if (spec.wireProtocol === "http_json" || context.protocolFacade !== undefined) return;
   // A protocol is speakable exactly when the compiler recovered a binding.
   if (spec.wireProtocol === "soap" && spec.soap) return;

@@ -247,7 +247,10 @@ service Feed {
     }
   });
 
-  it("still refuses a GraphQL subscription, which is a stream and not a request", async () => {
+  it("certifies a GraphQL subscription now that the window makes it terminate", async () => {
+    // This assertion used to be the opposite too. A subscription was refused
+    // because a stream has no single result; it is now observed through a
+    // bounded window, which is exactly the thing that gives it one.
     const air = await compile({
       spec: "type Query { ping: String }\ntype Subscription { tick: String }",
       serviceId: "streaming",
@@ -255,7 +258,32 @@ service Feed {
     const operations = air.operations.map((op) => ({ ...op, state: "approved" as const }));
     const bundleAir = { ...air, operations };
     const tick = operations.find((op) => op.id.includes("tick"));
-    expect(tick?.sourceRef.binding).toBeUndefined();
+    expect(tick?.sourceRef.binding?.protocol).toBe("graphql_sse");
+    expect(tick?.stream).toMatchObject({ delivery: "at_most_once" });
+
+    const cert = certifyBundle(generateBundle(bundleAir).files, bundleAir, {
+      now: clock("2026-01-01T00:00:00.000Z"),
+    });
+    const failed = cert.checks
+      .filter((check) => check.status === "failed")
+      .map((check) => check.id);
+    expect(failed).not.toContain("safety.protocol-runtime-executable");
+  });
+
+  it("refuses a subscription whose bound was stripped", async () => {
+    // The other half, and the one that matters: the binding alone earns
+    // nothing. Remove the contract and the operation is a call that never
+    // returns, which certification must catch before it is deployed.
+    const air = await compile({
+      spec: "type Query { ping: String }\ntype Subscription { tick: String }",
+      serviceId: "streaming",
+    });
+    const operations = air.operations.map((op) => ({
+      ...op,
+      state: "approved" as const,
+      stream: undefined,
+    }));
+    const bundleAir = { ...air, operations };
 
     const cert = certifyBundle(generateBundle(bundleAir).files, bundleAir, {
       now: clock("2026-01-01T00:00:00.000Z"),

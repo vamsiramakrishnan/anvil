@@ -132,6 +132,18 @@ function argsSchema(args: readonly GraphQLArgument[]): JsonSchemaLike | undefine
   return { type: "object", properties, ...(required.length ? { required } : {}) };
 }
 
+/**
+ * How much of a subscription one call observes.
+ *
+ * Deliberately modest. The window is meant to answer "what is happening right
+ * now", which an agent then acts on or re-opens — not to be a substitute for a
+ * durable consumer. A generous default would encourage holding a connection for
+ * minutes inside a tool call, which is the unbounded case with extra steps.
+ * An Anvil manifest can raise either ceiling for an operation that needs it.
+ */
+const DEFAULT_STREAM_MAX_EVENTS = 100;
+const DEFAULT_STREAM_MAX_SECONDS = 30;
+
 function addRoot(
   paths: Record<string, Record<string, unknown>>,
   root: GraphQLObjectType | null | undefined,
@@ -150,12 +162,25 @@ function addRoot(
         code: "graphql_binding_unencodable",
         path: `${root.name}.${fieldName}`,
         message:
-          `Anvil recorded no wire binding for GraphQL ${kind} '${fieldName}': a subscription is a ` +
-          `long-lived stream, and Anvil has no streaming client. The operation still compiles and ` +
-          `can be driven against a facade, but Anvil's runtime will refuse to call it directly.`,
+          `Anvil recorded no wire binding for GraphQL ${kind} '${fieldName}'. The operation still ` +
+          `compiles and can be driven against a facade, but Anvil's runtime will refuse to call ` +
+          `it directly.`,
       });
     }
-    const streaming = kind === "subscription" ? " (streaming subscription)" : "";
+    // A subscription is observed through a bounded window rather than held
+    // open: the call collects events until one of these ceilings and returns
+    // them. Without a bound there is no single result, so this contract is
+    // exactly what `wireExecutability` requires before it will allow the call.
+    const stream =
+      kind === "subscription" && wire
+        ? {
+            transport: "graphql_sse",
+            delivery: "at_most_once",
+            maxEvents: DEFAULT_STREAM_MAX_EVENTS,
+            maxSeconds: DEFAULT_STREAM_MAX_SECONDS,
+          }
+        : undefined;
+    const streaming = kind === "subscription" ? " (bounded subscription window)" : "";
     const op: Record<string, unknown> = {
       operationId: fieldName,
       summary: field.description ?? `GraphQL ${kind} ${fieldName}${streaming}`,
@@ -168,6 +193,7 @@ function addRoot(
         },
       },
       "x-graphql-operation": kind,
+      ...(stream ? { "x-anvil-stream": stream } : {}),
       ...(wire ? { "x-anvil-wire-binding": wire } : {}),
       "x-graphql-field": fieldName,
       // Queries/subscriptions are definitionally reads — an adapter assertion

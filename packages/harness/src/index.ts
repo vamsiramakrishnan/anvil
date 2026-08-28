@@ -20,6 +20,7 @@ export * from "./mcp-source.js";
 export * from "./observe.js";
 export * from "./profiles.js";
 export * from "./reconcile.js";
+export * from "./records.js";
 export * from "./sources.js";
 export * from "./sources-init.js";
 export * from "./workflow-candidates.js";

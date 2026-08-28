@@ -1021,6 +1021,54 @@ describe("info, version, description, and script accounting", () => {
     const doc = adaptPostman(spec);
     expect("x-anvil-postman-scripts" in (doc as object)).toBe(false);
   });
+
+  it("names each script-bearing request in a diagnostic, not just a count", () => {
+    // The silent-completeness failure this closes: a collection whose auth flow
+    // lives in a pre-request script compiles into a surface that LOOKS complete
+    // and cannot authenticate. A number in the service description names
+    // neither the request nor the risk; a diagnostic names both.
+    const spec = JSON.stringify({
+      info: { schema: SCHEMA_V21 },
+      event: [{ listen: "prerequest", script: { exec: "pm.sendRequest('/token');" } }],
+      item: [
+        {
+          name: "Payments",
+          item: [
+            {
+              name: "Create payment",
+              event: [
+                { listen: "prerequest", script: { exec: "sign(pm.request);" } },
+                { listen: "test", script: { exec: "pm.environment.set('id', 1);" } },
+              ],
+              request: { method: "POST", url: "https://api.example.com/payments" },
+            },
+          ],
+        },
+      ],
+    });
+    const diagnostics: Diagnostic[] = [];
+    adaptPostman(spec, diagnostics);
+    const scripts = diagnostics.filter((d) => d.code === "postman_script_untranslated");
+    expect(scripts).toHaveLength(2);
+    expect(scripts[0]?.level).toBe("warning");
+    expect(scripts[0]?.path).toBe("the collection itself");
+    expect(scripts[1]?.path).toBe("'Payments/Create payment'");
+    expect(scripts[1]?.message).toContain("pre-request and test");
+    // The diagnostic carries the remedy — declare, then verify — because a
+    // warning an operator cannot act on is just a different way of being silent.
+    expect(scripts[1]?.message).toContain("manifest");
+    expect(scripts[1]?.message).toContain("anvil conformance");
+  });
+
+  it("emits no script diagnostic for a collection with none", () => {
+    const spec = JSON.stringify({
+      info: { schema: SCHEMA_V21 },
+      item: [{ name: "Ping", request: { method: "GET", url: "https://api.example.com/ping" } }],
+    });
+    const diagnostics: Diagnostic[] = [];
+    adaptPostman(spec, diagnostics);
+    expect(diagnostics.filter((d) => d.code === "postman_script_untranslated")).toHaveLength(0);
+  });
 });
 
 /* --------------------------------------------- servers --------------------------------------------- */

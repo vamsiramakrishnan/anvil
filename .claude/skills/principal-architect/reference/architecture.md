@@ -42,9 +42,10 @@ Core compile/serve path:
 - **`@anvil/runtime`** — the safety hot path: what actually gates a live call
   (confirmation, idempotency key handling, retry policy enforcement).
 - **`@anvil/mcp-runtime`** — the thin MCP serving path; the actual deployed
-  unit. One tool per `Operation`, strictly 1:1 with one underlying call —
-  there is currently no server-side multi-step orchestration (see
-  `findings-log.md` on `Workflow`/`WorkflowStep`).
+  unit. One tool per `Operation`, plus approved `Workflow`s registered as
+  composite tools (`server.ts` — an earlier version of this doc claimed no
+  server-side orchestration existed, which had gone stale; verify here before
+  citing).
 - **`@anvil/generators`** — the build-time artifact foundry: turns AIR into
   the CLI, MCP server, skill docs, mocks, schemas.
 - **`@anvil/cli`** — the `anvil` command itself + the shared tool-CLI engine

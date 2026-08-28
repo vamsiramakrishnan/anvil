@@ -6,13 +6,48 @@ import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 import { loadAir } from "./shared.js";
 
-/** `anvil sources` — the built-in enrichment source profiles + the init interview. */
+/**
+ * `anvil enrich-sources` — the built-in enrichment source profiles + the init
+ * interview.
+ *
+ * Previously `anvil sources`, which sat one letter from `anvil source` — a
+ * command about something else entirely (spec snapshots vs. the MCP servers
+ * enrichment consults). A name an operator has to read twice is a name an
+ * agent will route wrong; the old spelling stays as a working alias that says
+ * where to go, because a rename that breaks scripts trades one papercut for a
+ * worse one.
+ */
 export function registerSources(parent: Command, ctx: CommandContext): void {
+  registerProfiles(parent, ctx, "enrich-sources", false);
+  registerProfiles(parent, ctx, "sources", true);
+}
+
+const DEPRECATION_LINE =
+  "`anvil sources` is deprecated (one letter from `anvil source`, which snapshots specs) — " +
+  "use `anvil enrich-sources`. This alias keeps working.";
+
+function registerProfiles(
+  parent: Command,
+  ctx: CommandContext,
+  name: string,
+  deprecated: boolean,
+): void {
+  // stderr, never stdout: `--json` makes stdout a machine-readable contract,
+  // and a human banner in the middle of it is a parse error downstream.
+  const warn = (): void => {
+    if (deprecated) ctx.io.err(DEPRECATION_LINE);
+  };
   const sources = parent
-    .command("sources")
-    .summary("List enrichment sources, or scaffold a sources.yaml with `sources init`.")
+    .command(name, deprecated ? { hidden: true } : {})
+    .summary(
+      deprecated
+        ? "Deprecated alias of `anvil enrich-sources`."
+        : "List enrichment sources, or scaffold a sources.yaml with `enrich-sources init`.",
+    )
     .description(
-      "The published MCP servers Anvil enriches from. `anvil sources` (or `sources list`) shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman). `anvil sources init <dir>` scaffolds a sources.yaml for a compiled service and lists the interview questions to finish it.",
+      deprecated
+        ? DEPRECATION_LINE
+        : "The published MCP servers Anvil enriches from. `anvil enrich-sources` (or `enrich-sources list`) shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman). `anvil enrich-sources init <dir>` scaffolds a sources.yaml for a compiled service and lists the interview questions to finish it.",
     );
   annotate(sources, { mutates: false });
 
@@ -21,6 +56,7 @@ export function registerSources(parent: Command, ctx: CommandContext): void {
       .command("list", { isDefault: true })
       .summary("List the built-in enrichment source profiles.")
       .action(() => {
+        warn();
         ctx.code = runSources(ctx.io);
       }),
     { mutates: false },
@@ -37,6 +73,7 @@ export function registerSources(parent: Command, ctx: CommandContext): void {
       .option("--write <file>", "write the scaffolded sources.yaml here")
       .option("--json", "emit the proposal + interview questions as JSON")
       .action((path: string, opts: { write?: string; json?: boolean }) => {
+        warn();
         ctx.code = runSourcesInit(path, opts, ctx.io);
       }),
     { mutates: false },

@@ -62,6 +62,8 @@ export const SemanticPredicate = z.enum([
   // identity / description
   "displayName",
   "description",
+  // agent-phrased routing examples (documentation; feeds skill + benchmark)
+  "intentExamples",
   "state",
   // agent-facing routing name (re-homes canonicalName / CLI / MCP together)
   "name.resource",
@@ -101,6 +103,13 @@ export const SemanticPredicate = z.enum([
   // completes), so splitting it would let two overlays each supply half of a
   // contract that was never coherent as a pair.
   "asyncContract",
+  // how a paginated read is paged — one combined predicate (a style without
+  // its carrier param was never coherent as a pair)
+  "pagination",
+  // observation-window ceilings for a streaming operation — one combined
+  // predicate for the same reason as `asyncContract`: the window is one shape,
+  // and two overlays each supplying half of it was never a coherent pair.
+  "stream",
   // catalog-derived schema knowledge (harness-supplied; skill-card context)
   "querySchema",
 ]);

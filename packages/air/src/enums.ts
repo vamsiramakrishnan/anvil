@@ -247,6 +247,13 @@ export type SourceKind = z.infer<typeof SourceKind>;
  *   file_transfer     — moves file content rather than structured data
  *   webhook_receiver  — receiver-only; never a directly-callable MCP tool,
  *                       wired through `AsyncContract.webhook` instead
+ *   stream_source     — a subscription observed through a *bounded window*:
+ *                       the call opens the stream, collects until the event or
+ *                       time bound in `StreamContract`, and returns what
+ *                       arrived. It stays a directly-callable read precisely
+ *                       because the bound is what makes it terminate — an
+ *                       unbounded stream has no single result, no one execution
+ *                       record, and nothing for retry or idempotency to mean.
  */
 export const InteractionArchetype = z.enum([
   "transaction",
@@ -256,6 +263,7 @@ export const InteractionArchetype = z.enum([
   "bulk",
   "file_transfer",
   "webhook_receiver",
+  "stream_source",
 ]);
 export type InteractionArchetype = z.infer<typeof InteractionArchetype>;
 

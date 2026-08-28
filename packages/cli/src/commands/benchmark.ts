@@ -3,33 +3,63 @@ import { join } from "node:path";
 import type { AirDocument, Operation } from "@anvil/air";
 import { agentPropKey } from "@anvil/air";
 import { BENCHMARK_REPORT_FILE, bundleHash, exampleInput, readBundleDir } from "@anvil/generators";
+import { NodeAgentProcessRunner } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
+import {
+  agentRouter,
+  bareCatalog,
+  benchmarkOperations,
+  curatedCatalog,
+  lexicalRouter,
+  type RoutableTool,
+  type RoutingOutcome,
+  routeAndScore,
+  type TaskRouter,
+} from "./benchmark-routing.js";
 import { loadBundleAir, resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 
 /**
- * `anvil benchmark <dir>` — deterministic agent-task benchmark. For each
- * approved operation with intentExamples, derives a task and scores whether
- * the MCP tool is discoverable, required params are satisfiable from example
- * inputs, the call succeeds against the mock, and (for paginated ops) cursor
- * param pagination works. Emits benchmark.report.json with per-operation
- * pass/fail details and an aggregate score. `--check <threshold>` exits
- * non-zero if (passed/total) < threshold.
+ * `anvil benchmark <dir>` — the demand-side measurement.
+ *
+ * Every other gate in this repository proves the SUPPLY side: the bundle is
+ * faithful to AIR, the surfaces agree, the safety posture holds. None of them
+ * ask whether an agent handed this surface actually reaches the right tool.
+ * This lane asks exactly that: each approved operation's intent examples are
+ * routed — intent in, tool name out — over the catalog the generated MCP
+ * server serves, and over the bare catalog the source document supplies on its
+ * own. A task passes when the curated surface routes it to the right tool AND
+ * its required parameters are satisfiable from the surface's own examples.
+ *
+ * The bare-catalog score is the baseline that makes the curated score mean
+ * something: the difference is what compilation bought. Routed by the
+ * deterministic lexical router by default (a floor — an agent that can only
+ * read), or by a real model via `--agent <command>`.
  */
 export function registerBenchmark(parent: Command, ctx: CommandContext): void {
   annotate(
     parent
       .command("benchmark")
       .summary(
-        "Measure agent-task completion probability: tool discovery, param satisfiability, call success, pagination.",
+        "Route each intent example over the served tool catalog and score whether the agent reaches the right tool.",
       )
       .description(
-        "Deterministic benchmark for each approved operation's agent-task potential. Derives one task per skill.intentExamples entry; scores each on tool discoverability in the MCP server, required-param satisfiability from synthesized examples, call success against the mock upstream, and (for paginated operations) cursor-param pagination. Writes benchmark.report.json with per-operation task results, pass/fail counts, and an aggregate score. Exit 0 only when aggregate score meets the threshold.",
+        "Agent-task benchmark. For each approved operation's skill.intentExamples entry, routes the " +
+          "intent over (a) the curated catalog the generated MCP server serves and (b) the bare catalog " +
+          "the source document supplies on its own, then checks required parameters are satisfiable from " +
+          "surface examples. A task passes when the curated route reaches the right tool and its params " +
+          "are satisfiable; the bare score is the baseline that shows what compilation bought. Routing is " +
+          "deterministic (lexical) by default; pass --agent <command> to route with a real model over " +
+          "stdin/stdout. Writes benchmark.report.json. Exit 0 only when the score meets --check.",
       )
       .argument("<dir>", "generated bundle directory (or its air.yaml)")
       .option("--check <threshold>", "exit non-zero if score < threshold (0..1)")
+      .option(
+        "--agent <command>",
+        'route with a real model: a command that reads the routing prompt on stdin and prints {"tool": "<name>"}',
+      )
       .action(async (dir: string, opts: BenchmarkCliOptions) => {
         ctx.code = await runBenchmarkCommand(dir, opts, ctx.io);
       }),
@@ -39,10 +69,18 @@ export function registerBenchmark(parent: Command, ctx: CommandContext): void {
 
 export interface BenchmarkCliOptions {
   check?: string;
+  agent?: string;
 }
 
 export interface BenchmarkTask {
   intent: string;
+  /** Routing over the catalog the generated MCP server serves. */
+  curated: RoutingOutcome;
+  /** Routing over the source document's own names, nothing Anvil authored. */
+  bare: RoutingOutcome;
+  /** Required params satisfiable from the surface's own examples. */
+  satisfiable: boolean;
+  /** curated.pass && satisfiable — the score `--check` gates on. */
   pass: boolean;
   failReason?: string;
 }
@@ -55,12 +93,23 @@ export interface BenchmarkOperationResult {
 }
 
 export interface BenchmarkReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  router: string;
+  /** How many tools the router had to choose among — routing 1-of-2 and
+   *  1-of-40 are different feats, so the size is part of the result. */
+  catalogSize: number;
   operations: BenchmarkOperationResult[];
   summary: {
     total: number;
     passed: number;
+    /** passed/total on the curated surface — what `--check` gates. */
     score: number;
+    /** Tasks the curated catalog routed correctly. */
+    curatedRouted: number;
+    /** Tasks the bare catalog routed correctly — the baseline. */
+    bareRouted: number;
+    /** curated score minus bare score, in points of task share. */
+    upliftPts: number;
   };
   bundleHash: string;
 }
@@ -78,24 +127,24 @@ export async function runBenchmarkCommand(
   const files = readBundleDir(dir);
   const air = loadBundleAir(dir, files);
 
-  // Run the benchmark
-  const report = await runBenchmark(dir, air, opts);
+  const router: TaskRouter = opts.agent
+    ? agentRouter(new NodeAgentProcessRunner(), opts.agent)
+    : lexicalRouter();
+
+  const report = await runBenchmark(air, router);
   const boundReport: BenchmarkReport = {
     ...report,
     bundleHash: bundleHash(files),
   };
 
-  // Write the report
   writeFileSync(
     join(dir, BENCHMARK_REPORT_FILE),
     `${JSON.stringify(boundReport, null, 2)}\n`,
     "utf8",
   );
 
-  // Render human-readable output
   io.out(renderBenchmarkSummary(boundReport, dir));
 
-  // Check threshold if provided
   if (opts.check !== undefined) {
     const threshold = parseFloat(opts.check);
     if (Number.isNaN(threshold) || threshold < 0 || threshold > 1) {
@@ -110,97 +159,88 @@ export async function runBenchmarkCommand(
 }
 
 async function runBenchmark(
-  dir: string,
   air: AirDocument,
-  _opts: BenchmarkCliOptions,
+  router: TaskRouter,
 ): Promise<Omit<BenchmarkReport, "bundleHash">> {
+  const ops = benchmarkOperations(air);
+  const curated = curatedCatalog(ops);
+  const bare = bareCatalog(ops);
+
   const operations: BenchmarkOperationResult[] = [];
-  let totalTasks = 0;
-  let passedTasks = 0;
+  let total = 0;
+  let passed = 0;
+  let curatedRouted = 0;
+  let bareRouted = 0;
 
-  // Filter for approved operations
-  const approvedOps = air.operations.filter((op) => op.state === "approved");
-
-  for (const op of approvedOps) {
+  for (const op of ops) {
     const tasks: BenchmarkTask[] = [];
-    const intentExamples = op.skill?.intentExamples ?? [];
-
-    // If no intent examples, record as "no tasks derivable"
-    if (intentExamples.length === 0) {
-      operations.push({
-        operationId: op.id,
-        toolName: op.mcp.toolName,
-        tasks: [],
-        score: 0,
-      });
-      continue;
-    }
-
-    // For each intent example, create a task and score it
-    for (const intent of intentExamples) {
-      const task: BenchmarkTask = { intent, pass: false };
-      try {
-        // Score the task
-        await scoreTask(op, intent, dir, air, task);
-      } catch (err) {
-        task.failReason = err instanceof Error ? err.message : String(err);
-      }
-
-      if (task.pass) {
-        passedTasks++;
-      }
-      totalTasks++;
+    for (const intent of op.skill.intentExamples) {
+      const task = await scoreTask(op, intent, router, curated, bare);
+      total++;
+      if (task.pass) passed++;
+      if (task.curated.pass) curatedRouted++;
+      if (task.bare.pass) bareRouted++;
       tasks.push(task);
     }
-
-    const score = tasks.length > 0 ? tasks.filter((t) => t.pass).length / tasks.length : 0;
     operations.push({
       operationId: op.id,
       toolName: op.mcp.toolName,
       tasks,
-      score,
+      score: tasks.length > 0 ? tasks.filter((t) => t.pass).length / tasks.length : 0,
     });
   }
 
+  const score = total > 0 ? passed / total : 0;
+  const bareScore = total > 0 ? bareRouted / total : 0;
+  const curatedScore = total > 0 ? curatedRouted / total : 0;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    router: router.name,
+    catalogSize: curated.length,
     operations,
     summary: {
-      total: totalTasks,
-      passed: passedTasks,
-      score: totalTasks > 0 ? passedTasks / totalTasks : 0,
+      total,
+      passed,
+      score,
+      curatedRouted,
+      bareRouted,
+      upliftPts: Math.round((curatedScore - bareScore) * 1000) / 10,
     },
   };
 }
 
 async function scoreTask(
   op: Operation,
-  _intent: string,
-  _dir: string,
-  _air: AirDocument,
-  task: BenchmarkTask,
-): Promise<void> {
-  // 1. Check tool discoverability
-  const toolName = op.mcp.toolName;
-  if (!toolName) {
-    throw new Error("No toolName in operation MCP config");
+  intent: string,
+  router: TaskRouter,
+  curated: readonly RoutableTool[],
+  bare: readonly RoutableTool[],
+): Promise<BenchmarkTask> {
+  const curatedOutcome = await routeAndScore(router, intent, curated, op.id);
+  const bareOutcome = await routeAndScore(router, intent, bare, op.id);
+
+  let satisfiable = true;
+  let failReason: string | undefined;
+  try {
+    validateExampleInput(op, exampleInput(op));
+  } catch (err) {
+    satisfiable = false;
+    failReason = err instanceof Error ? err.message : String(err);
+  }
+  if (!curatedOutcome.pass && failReason === undefined) {
+    failReason = curatedOutcome.routed
+      ? `routed to '${curatedOutcome.routed}' instead of '${op.mcp.toolName}'`
+      : "no tool routed — the intent matches nothing in the served catalog";
   }
 
-  // 2. Check required params are satisfiable
-  const exampleParams = exampleInput(op);
-  validateExampleInput(op, exampleParams);
-
-  // 3. Boot the mock and call the operation
-  // For now, we'll do a simplified check: just verify the operation can be loaded
-  // In a full implementation, we'd boot the mock server and actually call it.
-  // For this v1 deterministic version, we check:
-  // - Operation exists
-  // - Tool name is non-empty
-  // - Example input is valid for the schema
-  // - No access to paginate check without a mock server
-
-  // Mark as pass if we got this far without errors
-  task.pass = true;
+  return {
+    intent,
+    curated: curatedOutcome,
+    bare: bareOutcome,
+    satisfiable,
+    pass: curatedOutcome.pass && satisfiable,
+    ...(failReason !== undefined ? { failReason } : {}),
+  };
 }
 
 function validateExampleInput(op: Operation, exampleParams: Record<string, unknown>): void {
@@ -216,10 +256,12 @@ function validateExampleInput(op: Operation, exampleParams: Record<string, unkno
 }
 
 function renderBenchmarkSummary(report: BenchmarkReport, dir: string): string {
-  const lines: string[] = [`Agent-task benchmark — ${dir}`];
-  lines.push("");
+  const lines: string[] = [
+    `Agent-task benchmark — ${dir}`,
+    `Router: ${report.router} over ${report.catalogSize} tools`,
+    "",
+  ];
 
-  // Per-operation details
   for (const opResult of report.operations) {
     const taskCount = opResult.tasks.length;
     if (taskCount === 0) {
@@ -241,17 +283,16 @@ function renderBenchmarkSummary(report: BenchmarkReport, dir: string): string {
   }
 
   lines.push("");
-  const { total, passed, score } = report.summary;
+  const { total, passed, score, curatedRouted, bareRouted, upliftPts } = report.summary;
   const scorePercent = (score * 100).toFixed(1);
-  if (passed === total) {
-    lines.push(
-      `PASSED — ${passed}/${total} tasks passed (${scorePercent}%). Wrote ${join(dir, BENCHMARK_REPORT_FILE)}.`,
-    );
-  } else {
-    lines.push(
-      `${passed}/${total} tasks passed (${scorePercent}%). Wrote ${join(dir, BENCHMARK_REPORT_FILE)}.`,
-    );
-  }
+  lines.push(
+    `Routing: curated ${curatedRouted}/${total}, bare ${bareRouted}/${total} ` +
+      `(${upliftPts >= 0 ? "+" : ""}${upliftPts.toFixed(1)} pts from compilation).`,
+  );
+  lines.push(
+    `${passed === total ? "PASSED — " : ""}${passed}/${total} tasks passed (${scorePercent}%). ` +
+      `Wrote ${join(dir, BENCHMARK_REPORT_FILE)}.`,
+  );
 
   return lines.join("\n");
 }

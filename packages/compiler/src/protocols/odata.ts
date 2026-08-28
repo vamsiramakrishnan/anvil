@@ -23,7 +23,14 @@
  * entity-set annotations are honoured so the generated surface is truthful: an
  * entity set marked not-creatable never emits a POST.
  */
+import type { Diagnostic } from "@anvil/air";
 import type { OpenApiDocument } from "../parse.js";
+import {
+  collectOdataOperations,
+  type OdataOperationModel,
+  type OdataParam,
+  odataVersion,
+} from "./odata-operations.js";
 import { childrenNamed, findAll, parseXml, type XmlElement } from "./xml.js";
 
 type JsonSchemaLike = Record<string, unknown>;
@@ -113,6 +120,28 @@ function structuralSchema(
   return { schema, props };
 }
 
+/**
+ * The same entity with its key properties removed, for an update body.
+ *
+ * `PATCH /Set('{BusinessPartner}')` addresses the entity by key in the path. An
+ * update body that also carries `BusinessPartner` gives the agent two slots for
+ * one identity, and they can disagree — which is why validation refused the
+ * operation outright, leaving every OData entity set with a broken update. The
+ * key is the address, not part of the payload.
+ */
+function withoutKeys(schema: JsonSchemaLike, keys: readonly string[]): JsonSchemaLike {
+  const properties = { ...((schema.properties ?? {}) as Record<string, JsonSchemaLike>) };
+  for (const key of keys) delete properties[key];
+  const required = Array.isArray(schema.required)
+    ? (schema.required as string[]).filter((name) => !keys.includes(name))
+    : undefined;
+  return {
+    ...schema,
+    properties,
+    ...(required && required.length > 0 ? { required } : { required: undefined }),
+  };
+}
+
 /** Read the key property names declared on an EntityType. */
 function keyNames(type: XmlElement): string[] {
   const key = childrenNamed(type, "Key")[0];
@@ -127,7 +156,37 @@ function sapAllows(set: XmlElement, attr: string): boolean {
   return set.attrs[`sap:${attr}`] !== "false";
 }
 
-export function adaptOData(source: string, title?: string): OpenApiDocument {
+/**
+ * The key segment an instance of this entity type is addressed by —
+ * `('{ID}')`, `({Seq})`, or `(Region='{Region}',Id={Id})` — with each key as a
+ * required path parameter. Identical spelling to the entity set's own item
+ * path, because a bound operation and a GET address the same instance.
+ */
+function keySegmentOf(et: EntityTypeModel): { segment: string; params: OdataParam[] } | undefined {
+  if (et.keys.length === 0) return undefined;
+  const templ = (k: string) => {
+    const edm = et.properties.get(k)?.edm ?? "Edm.String";
+    return edmLocal(edm) === "String" ? `'{${k}}'` : `{${k}}`;
+  };
+  const segment =
+    et.keys.length === 1
+      ? `(${templ(et.keys[0] as string)})`
+      : `(${et.keys.map((k) => `${k}=${templ(k)}`).join(",")})`;
+  return {
+    segment,
+    params: et.keys.map((k) => ({
+      name: k,
+      type: et.properties.get(k)?.edm ?? "Edm.String",
+      required: true,
+    })),
+  };
+}
+
+export function adaptOData(
+  source: string,
+  title?: string,
+  diagnostics?: Diagnostic[],
+): OpenApiDocument {
   const root = parseXml(source);
   const schemas = findAll(root, "Schema");
 
@@ -155,13 +214,19 @@ export function adaptOData(source: string, title?: string): OpenApiDocument {
       if (!name) continue;
       const { schema: s, props } = structuralSchema(et, complexNames);
       components[name] = s;
-      entityTypes.set(name, { name, keys: keyNames(et), properties: props });
+      const keys = keyNames(et);
+      // A named companion rather than an inline body: the SDKs and the MCP tool
+      // schema all read better with a type that has a name, and the update
+      // payload genuinely is a different type from the entity.
+      if (keys.length > 0) components[`${name}_Update`] = withoutKeys(s, keys);
+      entityTypes.set(name, { name, keys, properties: props });
     }
   }
 
   const namespaceOf = (schema: XmlElement) => schema.attrs.Namespace ?? "";
   const paths: Record<string, Record<string, unknown>> = {};
 
+  const setsByType = new Map<string, string[]>();
   for (const schema of schemas) {
     const ns = namespaceOf(schema);
     for (const container of childrenNamed(schema, "EntityContainer")) {
@@ -169,10 +234,29 @@ export function adaptOData(source: string, title?: string): OpenApiDocument {
         const setName = set.attrs.Name;
         if (!setName) continue;
         // EntitySet.EntityType is a namespace-qualified reference; match locally.
-        const et = entityTypes.get(edmLocal(set.attrs.EntityType ?? "")) ?? undefined;
+        const typeLocal = edmLocal(set.attrs.EntityType ?? "");
+        const et = entityTypes.get(typeLocal) ?? undefined;
+        if (et) setsByType.set(typeLocal, [...(setsByType.get(typeLocal) ?? []), setName]);
         buildEntitySetPaths(paths, setName, et, ns, set);
       }
     }
+  }
+
+  // The other half of the service: everything it *does*, as opposed to
+  // everything it stores. Emitted after the entity sets so a function import
+  // sharing a name with a set cannot displace it. The bound context is what
+  // lets an instance-bound operation be addressed through the one entity set
+  // that exposes its binding type.
+  const version = odataVersion(root, schemas);
+  const boundContext = {
+    setsByType,
+    keySegmentFor: (typeLocal: string) => {
+      const et = entityTypes.get(typeLocal);
+      return et ? keySegmentOf(et) : undefined;
+    },
+  };
+  for (const operation of collectOdataOperations(schemas, version, diagnostics, boundContext)) {
+    buildOperationPath(paths, operation, entityTypes, complexNames);
   }
 
   const info: Record<string, unknown> = {
@@ -197,6 +281,9 @@ function buildEntitySetPaths(
   set: XmlElement,
 ): void {
   const ref = et ? { $ref: `#/components/schemas/${et.name}` } : { type: "object" };
+  // The update body drops the key properties the path already carries.
+  const updateRef =
+    et && et.keys.length > 0 ? { $ref: `#/components/schemas/${et.name}_Update` } : ref;
   const noun = et?.name ?? setName;
   const keys = et?.keys ?? [];
   const tag = setName;
@@ -270,7 +357,10 @@ function buildEntitySetPaths(
         summary: `Update a ${noun}`,
         tags: [tag],
         parameters: keyParams,
-        requestBody: { required: true, content: { "application/json": { schema: ref } } },
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: updateRef } },
+        },
         responses: okResponse(`Updated ${noun}`, ref),
       };
     }
@@ -289,6 +379,70 @@ function buildEntitySetPaths(
   if (Object.keys(collection).length > 0) paths[collectionPath] = collection;
   if (Object.keys(item).length > 0) paths[itemPath] = item;
   void namespace;
+}
+
+/**
+ * One invocable operation — an action, a function, or a v2 function import.
+ *
+ * No `x-anvil-effect` is asserted anywhere here, and that is the point: the
+ * verb already carries the truth. A v4 `Function` is side-effect-free by
+ * specification and lowers to GET; an `Action` lowers to POST; a v2
+ * `FunctionImport` lowers to whatever `m:HttpMethod` declares. Ordinary REST
+ * classification then reaches the right answer with nothing adapter-specific
+ * downstream — the same shape as a proto method that declared its HTTP rule.
+ */
+function buildOperationPath(
+  paths: Record<string, Record<string, unknown>>,
+  operation: OdataOperationModel,
+  entityTypes: Map<string, EntityTypeModel>,
+  complexNames: Set<string>,
+): void {
+  const returned = operation.returnType ? edmLocal(operation.returnType) : undefined;
+  const collection = operation.returnType?.startsWith("Collection(") === true;
+  const single =
+    returned && entityTypes.has(returned)
+      ? { $ref: `#/components/schemas/${returned}` }
+      : returned
+        ? edmType(operation.returnType as string, complexNames)
+        : { type: "object" };
+  const response = collection ? { type: "array", items: single } : single;
+
+  const op: Record<string, unknown> = {
+    operationId: operation.name,
+    summary: `${operation.name}${operation.entitySet ? ` → ${operation.entitySet}` : ""}`,
+    tags: [operation.entitySet ?? operation.name],
+    responses: okResponse(`${operation.name} result`, response as JsonSchemaLike),
+  };
+
+  // Parameters bound into the coordinate. The OData literal syntax around them
+  // is already part of the path text, so the runtime substitutes only the
+  // value and the quotes stay literal.
+  if (operation.pathParams.length > 0) {
+    op.parameters = operation.pathParams.map((p) => ({
+      name: p.name,
+      in: "path",
+      required: true,
+      schema: edmType(p.type, complexNames),
+    }));
+  }
+  if (operation.bodyParams.length > 0) {
+    const properties: Record<string, JsonSchemaLike> = {};
+    const required: string[] = [];
+    for (const p of operation.bodyParams) {
+      properties[p.name] = edmType(p.type, complexNames);
+      if (p.required) required.push(p.name);
+    }
+    op.requestBody = {
+      required: true,
+      content: {
+        "application/json": {
+          schema: { type: "object", properties, ...(required.length > 0 ? { required } : {}) },
+        },
+      },
+    };
+  }
+
+  paths[operation.path] = { ...(paths[operation.path] ?? {}), [operation.verb]: op };
 }
 
 function queryParam(name: string, type: string, description: string) {

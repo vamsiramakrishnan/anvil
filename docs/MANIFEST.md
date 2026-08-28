@@ -76,13 +76,16 @@ Prefer the source operation id when it is stable and unique.
 | `risk` | Record `none`, `low`, `medium`, `high`, `financial`, or `destructive` | Drives confirmation and human-approval policy |
 | `reversible` | State whether the effect can be undone | Do not infer reversibility from HTTP method |
 | `display_name`, `description` | Improve agent-facing explanation | Keep descriptions factual and task-specific |
+| `intent_examples` | Agent-phrased routing examples ("refund a customer") | Feed the skill surface and `anvil benchmark`; write them as a user would ask, not as the API names things |
 | `name.resource`, `name.verb` | Repair weak routing names across CLI, MCP, and skill | Changes the projected name while preserving stable operation identity |
 | `idempotency` | Declare how duplicate effects are prevented | Never claim retry safety without an upstream contract or equivalent evidence |
 | `confirmation` | Require explicit intent and optionally human approval | `human_approval: true` implies confirmation |
 | `auth` | Define principal, carrier, profile, issuer, audience, and source | Store identifiers and variable names only, never credential values |
 | `retries` | Bound attempts and retryable conditions | Runtime still disables retries when idempotency does not make them safe |
+| `pagination` | Declare how a paginated read is paged (`style`, `cursor_param`, `items_field`, …) when the spec did not make it inferable | Carrier parameters are validated against the operation's real inputs; a phantom parameter or a mutation declines with a review note |
 | `query_policy` | Constrain a raw query passthrough | A policy moves the operation out of `blocked`, not directly to `approved` |
 | `query_schema` | Add catalog-grounded tables, columns, sensitivity, and examples | Documentation input; runtime does not treat it as enforcement |
+| `stream` | Resize a subscription's observation window (`max_events`, `max_seconds`) | Capped at 10,000 events / 300 seconds by AIR's schema; resizes an existing window, never creates one |
 | `state` | Record lifecycle state | Approval must follow inspection and organizational review |
 
 ## Idempotency strategies

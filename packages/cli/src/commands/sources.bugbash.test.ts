@@ -23,7 +23,7 @@ afterEach(() => {
 
 async function sources(...argv: string[]) {
   const io = bufferIO();
-  const code = await runAnvilCli(["sources", ...argv], { io });
+  const code = await runAnvilCli(["enrich-sources", ...argv], { io });
   return { code, out: io.stdout.join("\n"), err: io.stderr.join("\n") };
 }
 
@@ -317,6 +317,19 @@ operations: []
   });
 });
 
+describe("the deprecated `anvil sources` alias", () => {
+  it("still works, warns on stderr only, and stays out of --json stdout", async () => {
+    const io = bufferIO();
+    const code = await runAnvilCli(["sources", "list"], { io });
+    expect(code).toBe(0);
+    // The listing still arrives; the pointer goes to stderr, so a script
+    // piping stdout — or parsing --json — never sees the banner.
+    expect(io.stdout.join("\n")).toContain("Enrichment sources");
+    expect(io.stdout.join("\n")).not.toContain("deprecated");
+    expect(io.stderr.join("\n")).toContain("enrich-sources");
+  });
+});
+
 describe("anvil sources — help and usage", () => {
   it("responds to --help on the parent command", async () => {
     const result = await sources("--help");
@@ -333,7 +346,7 @@ describe("anvil sources — help and usage", () => {
     // `list` only has a `.summary()`, not a `.description()`, so its own
     // --help is just usage + options — the summary only surfaces in the
     // parent's Commands listing (see the previous test).
-    expect(result.out).toContain("Usage: anvil sources list");
+    expect(result.out).toContain("Usage: anvil enrich-sources list");
     expect(result.out).toContain("-h, --help");
   });
 

@@ -1,4 +1,4 @@
-import type { GraphqlWireBinding } from "@anvil/air";
+import type { GraphqlSseBinding, GraphqlWireBinding } from "@anvil/air";
 import {
   type GraphQLArgument,
   type GraphQLField,
@@ -92,12 +92,7 @@ function selectionFor(type: GraphQLNamedType, depth: number, seen: ReadonlySet<s
 export function graphqlWireBinding(
   kind: "query" | "mutation" | "subscription",
   field: GraphQLField<unknown, unknown>,
-): GraphqlWireBinding | undefined {
-  // A subscription is a long-lived stream, not a request/response. Anvil has no
-  // streaming client, so it records no binding and the transport gate keeps
-  // refusing — the same posture as an rpc/encoded SOAP binding.
-  if (kind === "subscription") return undefined;
-
+): GraphqlWireBinding | GraphqlSseBinding | undefined {
   const operationName = `Anvil_${field.name.charAt(0).toUpperCase()}${field.name.slice(1)}`;
   const variables = field.args
     .map((arg: GraphQLArgument) => `$${arg.name}: ${arg.type.toString()}`)
@@ -108,8 +103,12 @@ export function graphqlWireBinding(
   const call = argumentList ? `${field.name}(${argumentList})` : field.name;
   const header = variables ? `${kind} ${operationName}(${variables})` : `${kind} ${operationName}`;
 
+  // A subscription is the same document over a different wire: the request opts
+  // into Server-Sent Events and the answer is a sequence of frames rather than
+  // one JSON body. Nothing about *building* it differs, which is why one
+  // builder serves all three kinds — only the protocol it is filed under.
   return {
-    protocol: "graphql",
+    protocol: kind === "subscription" ? "graphql_sse" : "graphql",
     document: `${header} { ${call}${selection} }`,
     operationName,
     rootField: field.name,

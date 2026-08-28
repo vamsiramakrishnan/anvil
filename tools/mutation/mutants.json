@@ -281,8 +281,8 @@
       "id": "wire/runtime-transport-gate",
       "file": "packages/runtime/src/wire-gate.ts",
       "control": "The runtime refuses an operation whose wire protocol it cannot speak. Without it a SOAP/GraphQL/gRPC operation is posted as JSON to a coordinate Anvil invented — a well-formed lie, indistinguishable on the wire from a real request.",
-      "find": "  if (verdict.ok || facade !== undefined) return undefined;",
-      "replace": "  if (true) return undefined;",
+      "find": "  if (verdict.ok) return undefined;\n  // A facade declares that the base URL serves the synthesized *coordinates*",
+      "replace": "  if (true) return undefined;\n  // A facade declares that the base URL serves the synthesized *coordinates*",
       "tests": [
         "packages/runtime/src/wire-gate.test.ts"
       ]
@@ -500,16 +500,6 @@
       ]
     },
     {
-      "id": "graphql/subscription-refused",
-      "file": "packages/compiler/src/protocols/graphql-binding.ts",
-      "control": "A subscription is a long-lived stream, not a request and response. Anvil has no streaming client, so it records no binding and the transport gate keeps refusing rather than posting a document nothing can read the answer to.",
-      "find": "  if (kind === \"subscription\") return undefined;",
-      "replace": "",
-      "tests": [
-        "packages/generators/src/sdk-graphql.test.ts"
-      ]
-    },
-    {
       "id": "graphql/errors-are-not-results",
       "file": "packages/runtime/src/codec-graphql.ts",
       "control": "GraphQL reports failures inside a 200 with an errors array. Reported as a result, a failed mutation would be recorded in the idempotency ledger as completed — and a partial response is still a failure, since AIR's output contract describes one shape.",
@@ -548,6 +538,167 @@
       "tests": [
         "packages/runtime/src/wire-gate.test.ts",
         "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/http-rule-multi-segment-refused",
+      "file": "packages/compiler/src/protocols/grpc-http-rule.ts",
+      "control": "A path template whose pattern spans more than one path segment is refused. The runtime percent-encodes a path parameter, so a slash-bearing value would address a DIFFERENT resource and succeed against it — the worst shape of failure, since nothing errors.",
+      "find": "    if (pattern !== \"*\") {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/compiler/src/protocols/grpc-http-rule.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/assumed-transcoder-still-refused",
+      "file": "packages/air/src/wire.ts",
+      "control": "Only a rule the proto DECLARED earns http_json. `json_transcoded` is a guess about a deployment the proto cannot see, and treating it as executable would post JSON at a native gRPC server that rejects it.",
+      "find": "  if (source.binding?.protocol === \"grpc\" && source.binding.transport === \"http_rule\") {",
+      "replace": "  if (source.binding?.protocol === \"grpc\") {",
+      "tests": [
+        "packages/air/src/wire.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/declined-rule-does-not-fall-back",
+      "file": "packages/compiler/src/protocols/grpc.ts",
+      "control": "An annotated method whose rule Anvil declines records NO binding. Falling back to gRPC's own coordinate would aim the call at a path the gateway provably does not serve, since a gateway serves the declared route and no other.",
+      "find": "        ...(unary && (rule || !outcome)",
+      "replace": "        ...(unary",
+      "tests": [
+        "packages/compiler/src/protocols/grpc-http-rule.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/streaming-annotation-ignored",
+      "file": "packages/compiler/src/protocols/grpc.ts",
+      "control": "A streaming RPC is refused before its annotation is read. No gateway turns a stream into one bounded request and response, so a declared route on one is not a route Anvil can take.",
+      "find": "      const outcome = unary",
+      "replace": "      const outcome = true",
+      "tests": [
+        "packages/compiler/src/protocols/grpc-http-rule.test.ts"
+      ]
+    },
+    {
+      "id": "grpc/declared-routes-merge",
+      "file": "packages/compiler/src/protocols/grpc.ts",
+      "control": "Two RPCs may declare different verbs on one route (GET and DELETE on /v1/items/{item_id}). Replacing the path entry instead of merging into it silently drops an approved operation from every surface.",
+      "find": "      paths[path] = { ...(existing ?? {}), [verb]: op };",
+      "replace": "      paths[path] = { [verb]: op };",
+      "tests": [
+        "packages/compiler/src/protocols/grpc-http-rule.test.ts"
+      ]
+    },
+    {
+      "id": "odata/unstated-verb-is-a-mutation",
+      "file": "packages/compiler/src/protocols/odata-operations.ts",
+      "control": "An OData v2 FunctionImport that declares no m:HttpMethod is treated as a mutation. Defaulting it to GET would expose a write as a safe, auto-retryable read — the exact direction the asymmetric-trust rule forbids guessing in.",
+      "find": "          const verb = declaredVerb === \"GET\" ? \"get\" : \"post\";",
+      "replace": "          const verb = declaredVerb === \"POST\" ? \"post\" : \"get\";",
+      "tests": [
+        "packages/compiler/src/protocols/odata-operations.test.ts"
+      ]
+    },
+    {
+      "id": "swagger/unresolved-ref-is-not-a-partial-compile",
+      "file": "packages/compiler/src/parse.ts",
+      "control": "A multi-file Swagger 2.0 reference Anvil could not resolve fails the compile. Continuing would ship a surface smaller than the source describes, with no signal that anything was dropped.",
+      "find": "      if (bundled.unresolved.length > 0) {",
+      "replace": "      if (bundled.unresolved.length > 99) {",
+      "tests": [
+        "packages/compiler/src/multi-file-sources.test.ts"
+      ]
+    },
+    {
+      "id": "stream/event-bound-applies-to-the-bytes",
+      "file": "packages/runtime/src/transport.ts",
+      "control": "The event bound is applied to the bytes that leave the transport, not only to the loop condition. A burst delivers hundreds of events in ONE socket read, so by the time the counter is re-checked the buffer already holds them all — this is the bug that reached a live run.",
+      "find": "  return truncateToEvents(text, bound.maxEvents);",
+      "replace": "  return text;",
+      "tests": [
+        "packages/runtime/src/stream-window.test.ts"
+      ]
+    },
+    {
+      "id": "stream/keep-alives-are-not-events",
+      "file": "packages/runtime/src/transport.ts",
+      "control": "Only a frame carrying `data:` counts toward the event bound. A server holding an idle subscription open sends comment frames, and counting those lets a silent service exhaust a hundred-event window having published nothing at all.",
+      "find": "    out.push({ end: match.index + match[0].length, isEvent: /(^|\\n)data:/.test(frame) });",
+      "replace": "    out.push({ end: match.index + match[0].length, isEvent: true });",
+      "tests": [
+        "packages/runtime/src/stream-window.test.ts"
+      ]
+    },
+    {
+      "id": "stream/window-outlives-the-request-timeout",
+      "file": "packages/runtime/src/transport.ts",
+      "control": "A stream's own window is its deadline; the request timeout is only the backstop behind it. Left at the ordinary value the abort fires first, turning a subscription that legitimately saw nothing into a timeout — and then retrying it, because a read is retry-safe.",
+      "find": "    const timeoutMs = Math.max(req.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS, streamCeilingMs);",
+      "replace": "    const timeoutMs = req.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;",
+      "tests": [
+        "packages/runtime/src/stream-window.test.ts"
+      ]
+    },
+    {
+      "id": "stream/unterminated-frame-is-not-an-event",
+      "file": "packages/runtime/src/codec-graphql-sse.ts",
+      "control": "A frame Anvil never saw the end of is not reported, and that must depend on the missing boundary rather than on its JSON failing to parse — a frame cut just after its closing brace parses perfectly and is still an event that was never completed.",
+      "find": "  if (!text.endsWith(\"\\n\\n\")) parts.pop();",
+      "replace": "  if (false) parts.pop();",
+      "tests": [
+        "packages/runtime/src/stream-window.test.ts"
+      ]
+    },
+    {
+      "id": "stream/needs-a-bound-to-be-executable",
+      "file": "packages/air/src/wire.ts",
+      "control": "A subscription binding alone earns nothing: without a stream contract there is no bound, nothing makes the window close, and a call that never returns is not a call. This is what certification checks before a bundle is deployed.",
+      "find": "    op.stream !== undefined",
+      "replace": "    true",
+      "tests": [
+        "packages/air/src/wire.test.ts",
+        "packages/cli/src/transport-certify.test.ts"
+      ]
+    },
+    {
+      "id": "stream/facade-does-not-change-the-framing",
+      "file": "packages/runtime/src/codec.ts",
+      "control": "A protocol facade declares coordinates, not framing. If it re-routed a subscription through the JSON codec, the call would lose `accept: text/event-stream` and its stream bound, and answer with one object where every other configuration answers with an array — one operation, two meanings, selected by an environment variable.",
+      "find": "  const protocol = wireProtocolFor(op.sourceRef);\n  if (protocol === \"graphql_sse\") return graphqlSseCodec;\n  if (facadeDeclared) return httpJsonCodec;\n  return CODECS.get(protocol);",
+      "replace": "  if (facadeDeclared) return httpJsonCodec;\n  return CODECS.get(wireProtocolFor(op.sourceRef));",
+      "tests": [
+        "packages/runtime/src/wire-gate.test.ts"
+      ]
+    },
+    {
+      "id": "stream/the-window-has-an-absolute-ceiling",
+      "file": "packages/air/src/schema.ts",
+      "control": "The observation window's ceilings live on AIR's schema, so neither a manifest nor a hand-edited air.json can represent an unbounded window. Delete the ceiling and a five-minute cap becomes a connection held open as long as anyone asks.",
+      "find": "  maxSeconds: z.number().int().positive().max(STREAM_MAX_SECONDS_CEILING),",
+      "replace": "  maxSeconds: z.number().int().positive(),",
+      "tests": [
+        "packages/compiler/src/protocols/graphql-subscription.test.ts"
+      ]
+    },
+    {
+      "id": "records/traffic-never-deprecates-a-living-operation",
+      "file": "packages/harness/src/records.ts",
+      "control": "Recorded traffic's one patch-bearing claim is deprecation, and only when NO observed call succeeded. Delete the check and an operation with live successes beside stale 404s gets proposed as deprecated — high-reliability evidence laundering a wrong conclusion.",
+      "find": "    summary.errors === summary.calls &&",
+      "replace": "    true &&",
+      "tests": [
+        "packages/harness/src/records.test.ts"
+      ]
+    },
+    {
+      "id": "pack/install-gates-on-certification",
+      "file": "packages/cli/src/commands/pack.ts",
+      "control": "Digests prove the bytes are the builder's bytes; the certification says whether those bytes ever passed the gates. Delete the gate and an uncertified or failed-certification pack installs silently — distribution without the trust that makes it safe to distribute.",
+      "find": "  if (status !== \"certified\" && opts.allowUncertified !== true) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/commands/pack.test.ts"
       ]
     }
   ]

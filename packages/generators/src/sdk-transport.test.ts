@@ -20,6 +20,7 @@ const example = (rel: string) =>
 let soap: { air: AirDocument; files: Record<string, string> };
 let rest: { air: AirDocument; files: Record<string, string> };
 let graphql: { air: AirDocument; files: Record<string, string> };
+let grpcGateway: { air: AirDocument; files: Record<string, string> };
 
 beforeAll(async () => {
   const air = await compile({
@@ -40,6 +41,12 @@ beforeAll(async () => {
     serviceId: "storefront",
   });
   graphql = { air: storefront, files: generateBundle(storefront).files };
+  const inventory = await compile({
+    spec: example("grpc-gateway/inventory.proto"),
+    manifest: example("grpc-gateway/anvil.yaml"),
+    serviceId: "inventory",
+  });
+  grpcGateway = { air: inventory, files: generateBundle(inventory).files };
 });
 
 describe("the SDK transport gate", () => {
@@ -50,6 +57,38 @@ describe("the SDK transport gate", () => {
     for (const method of sdkManifest(sdkPlan(rest.air)).methods) {
       expect(method.wireProtocol).toBe("http_json");
     }
+  });
+
+  it("gives all four clients the plain HTTP path for a proto that declared its route", () => {
+    // The whole point of deriving the protocol from the binding rather than
+    // branching per surface: a gRPC method carrying `google.api.http` is
+    // HTTP+JSON on the wire, so every client takes the path it already had.
+    // Four clients each needing a new branch is four chances for one to differ.
+    const manifest = sdkManifest(sdkPlan(grpcGateway.air));
+    expect(manifest.methods.length).toBeGreaterThan(0);
+    for (const method of manifest.methods) expect(method.wireProtocol).toBe("http_json");
+
+    // And the declared verbs really did survive into the clients — proof the
+    // operations were lowered onto the route rather than left on gRPC's POST.
+    const verbs = new Set(manifest.methods.map((m) => m.http.split(" ")[0]));
+    expect(verbs).toContain("GET");
+    expect(verbs).toContain("DELETE");
+    // The gRPC coordinate is nowhere in any client — the declared route replaced it.
+    expect(manifest.methods.every((m) => !m.http.includes("InventoryService/"))).toBe(true);
+  });
+
+  it("is certified for a declared-route proto, in all four clients", () => {
+    // Same gate as SOAP and GraphQL: a client that disagrees with AIR about
+    // what it speaks is caught here rather than in production.
+    expect(sdkGateDrift(grpcGateway.files, grpcGateway.air)).toEqual([]);
+
+    const manifest = JSON.parse(grpcGateway.files["sdk/manifest.json"] ?? "{}");
+    manifest.methods[0].wireProtocol = "grpc";
+    const drift = sdkGateDrift(
+      { ...grpcGateway.files, "sdk/manifest.json": JSON.stringify(manifest, null, 2) },
+      grpcGateway.air,
+    );
+    expect(drift.join(" ")).toContain("wireProtocol");
   });
 
   it("emits the gate into all four decision cores", () => {
@@ -151,5 +190,48 @@ describe("the SDK transport gate", () => {
 
   it("leaves a REST bundle's SDKs alone", () => {
     expect(sdkGateDrift(rest.files, rest.air)).toEqual([]);
+  });
+
+  it("refuses a subscription before the facade short-circuit, in all four cores", () => {
+    // The defect this pins down: every gate once read `http_json || facade →
+    // pass`, so declaring ANVIL_PROTOCOL_FACADE let a `graphql_sse` operation
+    // through a client with no SSE window — one JSON object out of a client,
+    // an array out of the runtime, for the same operation. A facade declares
+    // coordinates, not framing, so the subscription refusal must come FIRST.
+    // The assertion is on ordering inside the emitted gate, because ordering
+    // was exactly what was wrong.
+    // The third entry is the facade *check expression*, not the parameter name
+    // — a signature mentions the parameter before the body can check it.
+    const gates: Record<(typeof SDK_LANGUAGES)[number], [string, string, string]> = {
+      typescript: [
+        "sdk/typescript/src/invoke.ts",
+        "assertWireExecutable",
+        "protocolFacade !== undefined",
+      ],
+      python: [
+        "sdk/python/anvil_banking/_invoke.py",
+        "assert_wire_executable",
+        "protocol_facade is not None",
+      ],
+      go: ["sdk/go/invoke.go", "assertWireExecutable", 'protocolFacade != ""'],
+      java: [
+        "sdk/java/src/main/java/com/anvil/sdk/banking/Invoker.java",
+        "assertWireExecutable",
+        "protocolFacade != null",
+      ],
+    };
+    for (const language of SDK_LANGUAGES) {
+      const [path, gateSymbol, facadeToken] = gates[language];
+      const source = soap.files[path] ?? "";
+      const gate = source.slice(source.indexOf(gateSymbol));
+      const refusal = gate.indexOf('"graphql_sse"');
+      const facade = gate.indexOf(facadeToken);
+      expect(refusal, `${language}: the gate never mentions graphql_sse`).toBeGreaterThanOrEqual(0);
+      expect(facade, `${language}: the gate never consults the facade`).toBeGreaterThanOrEqual(0);
+      expect(
+        refusal,
+        `${language}: the facade short-circuit runs before the subscription refusal`,
+      ).toBeLessThan(facade);
+    }
   });
 });

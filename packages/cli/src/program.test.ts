@@ -62,7 +62,7 @@ describe("root help", () => {
       "refine",
       "case",
       "enrich",
-      "sources",
+      "enrich-sources",
       "approve",
       "lint",
       "build",

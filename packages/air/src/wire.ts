@@ -22,7 +22,14 @@ import type { Operation, SourceRef } from "./schema.js";
  * field to `AirDocument`, so `contractHash` is unchanged and no stored
  * certification expires on the day the concept arrives.
  */
-export const WIRE_PROTOCOLS = ["http_json", "soap", "graphql", "grpc", "mcp_tool"] as const;
+export const WIRE_PROTOCOLS = [
+  "http_json",
+  "soap",
+  "graphql",
+  "graphql_sse",
+  "grpc",
+  "mcp_tool",
+] as const;
 export type WireProtocol = (typeof WIRE_PROTOCOLS)[number];
 
 /**
@@ -54,8 +61,26 @@ const PROTOCOL_BY_SOURCE_KIND: Record<SourceKind, WireProtocol> = {
  * The protocol is a property of the *service the spec describes*; a facade is a
  * property of the *deployment*, declared by an operator (see `WireExecutability`)
  * rather than inferred from a document that cannot know about it.
+ *
+ * The one thing that *does* change the answer is the source document declaring
+ * its own HTTP mapping. A proto method carrying `google.api.http` names the
+ * verb and path a gateway serves, the compiler lowers the operation to exactly
+ * that route, and what goes on the wire is then JSON over HTTP with nothing
+ * gRPC about it. That is not a facade being assumed — it is the spec being
+ * read, the same standing as a WSDL's `soap:address`. Answering from the
+ * binding here is what lets every surface inherit it at once: the runtime
+ * resolves the ordinary JSON codec, all four SDKs take their existing
+ * `http_json` path, and certification stops reporting it as unreachable —
+ * without one line of per-protocol branching in any of them.
  */
 export function wireProtocolFor(source: SourceRef): WireProtocol {
+  if (source.binding?.protocol === "grpc" && source.binding.transport === "http_rule") {
+    return RUNTIME_WIRE_PROTOCOL;
+  }
+  // A GraphQL *subscription* is a different wire from a query against the same
+  // endpoint — Server-Sent Events rather than one JSON response — so the
+  // binding names it and the source format does not.
+  if (source.binding?.protocol === "graphql_sse") return "graphql_sse";
   return PROTOCOL_BY_SOURCE_KIND[source.kind];
 }
 
@@ -70,18 +95,30 @@ const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
     "means its WSDL declared a shape Anvil declines to encode rather than " +
     "encode wrongly — check the compile diagnostics for which",
   graphql:
-    "Anvil speaks GraphQL, but only for a query or mutation. This operation " +
-    "carries no wire binding, which means it is a subscription — a long-lived " +
-    "stream rather than a request and response, and Anvil has no streaming " +
-    "client to hold one open",
+    "Anvil speaks GraphQL for a query or a mutation over one JSON response, " +
+    "and for a subscription over a bounded Server-Sent Events window. This " +
+    "operation carries no wire binding at all, so the compiler declined to " +
+    "encode it — check the compile diagnostics for which shape and why",
   grpc:
     "unlike the other protocols, this path is real — it is gRPC's own :path — " +
     "but a native call is length-prefixed protobuf over HTTP/2 with the status " +
     "in trailers, and Anvil cannot emit that from four zero-dependency clients " +
-    "because Python's standard library has no HTTP/2 client. What does work is " +
-    "a JSON transcoder (grpc-gateway, Envoy's gRPC-JSON filter, Google's HTTP " +
-    "annotations), which accepts JSON on this exact path and speaks protobuf " +
-    "onward — declare one and Anvil calls it",
+    "because Python's standard library has no HTTP/2 client. Two things do " +
+    "work. If the proto method carries a `google.api.http` option, Anvil reads " +
+    "it and calls the declared route with no further ceremony, so an operation " +
+    "still refusing here means the proto declared no rule — or declared one " +
+    "Anvil would have had to guess at, which the compile diagnostics name. " +
+    "Failing that, a JSON transcoder (grpc-gateway, Envoy's gRPC-JSON filter) " +
+    "accepts JSON on this exact path and speaks protobuf onward — declare one " +
+    "and Anvil calls it",
+  graphql_sse:
+    "a GraphQL subscription is observed through a bounded window — the call " +
+    "collects events until the stream contract's event or time bound and " +
+    "returns them. This operation carries no such contract, so there is " +
+    "nothing to make it terminate, and a call that never returns is not a " +
+    "call. Note that only the runtime reads this wire: the generated clients " +
+    "are request/response and refuse it by design, which is them agreeing it " +
+    "is unreachable from a stateless client rather than disagreeing about it",
   mcp_tool:
     "an adopted MCP tool is invoked by a tools/call over the MCP transport; it " +
     "has no path and no method, which the runtime would silently degrade to " +
@@ -113,6 +150,15 @@ export function wireExecutability(op: Operation): WireExecutability {
   // refusing rather than being encoded on a guess.
   if (protocol === "soap" && op.sourceRef.binding?.protocol === "soap") return { ok: true };
   if (protocol === "graphql" && op.sourceRef.binding?.protocol === "graphql") return { ok: true };
+  // A subscription is executable exactly when it is *bounded*: the stream
+  // contract is what turns "listen forever" into one call with one result.
+  if (
+    protocol === "graphql_sse" &&
+    op.sourceRef.binding?.protocol === "graphql_sse" &&
+    op.stream !== undefined
+  ) {
+    return { ok: true };
+  }
   return {
     ok: false,
     protocol,

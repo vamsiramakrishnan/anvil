@@ -158,6 +158,9 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
     "harness",
     "refinement",
     "runtime",
+    // The distribution seam: `anvil pack` assembles, verifies, and installs
+    // content-addressed packs. Same direction certification already points.
+    "system-pack",
     "targets",
   ],
 };

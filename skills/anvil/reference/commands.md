@@ -695,20 +695,20 @@ Options:
 - `--out <file>` — write without overwriting different content
 - `--json` — emit the complete deterministic inventory diff
 
-### `anvil sources`
-`anvil sources [options] [command]`
+### `anvil enrich-sources`
+`anvil enrich-sources [options] [command]`
 
-List enrichment sources, or scaffold a sources.yaml with `sources init`.
+List enrichment sources, or scaffold a sources.yaml with `enrich-sources init`.
 
-The published MCP servers Anvil enriches from. `anvil sources` (or `sources list`) shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman). `anvil sources init <dir>` scaffolds a sources.yaml for a compiled service and lists the interview questions to finish it.
+The published MCP servers Anvil enriches from. `anvil enrich-sources` (or `enrich-sources list`) shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman). `anvil enrich-sources init <dir>` scaffolds a sources.yaml for a compiled service and lists the interview questions to finish it.
 
-#### `anvil sources list`
-`anvil sources list [options]`
+#### `anvil enrich-sources list`
+`anvil enrich-sources list [options]`
 
 List the built-in enrichment source profiles.
 
-#### `anvil sources init`
-`anvil sources init [options] <path>`
+#### `anvil enrich-sources init`
+`anvil enrich-sources init [options] <path>`
 
 Scaffold a sources.yaml for a service, with the interview questions to finish it.
 
@@ -882,10 +882,11 @@ Options:
 
 Compare a bundle against the running application it was compiled from.
 
-Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json.
+Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json. RECORDED TRAFFIC (--from-records <dir>): instead of probing live, folds the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server; records carry outcomes, error codes, retry and ledger behaviour — no secrets, no payloads) into recorded_traffic evidence through the same reconciler. Traffic corroborates freely; the one patch it earns is deprecation, when every one of enough calls answered not_found. Writes traffic.report.json.
 
 Options:
 - `--config <file>` — JSON config naming the running application
+- `--from-records <dir>` — fold a serving-path record spool (ANVIL_RECORDS_DIR) into evidence instead of probing live
 - `--write <manifest>` — write the proposed manifest here instead of printing it
 - `--capture <file>` — save the contract the application served, to re-capture with `anvil source add`
 - `--json` — emit the full report as JSON
@@ -893,12 +894,13 @@ Options:
 ### `anvil benchmark`
 `anvil benchmark [options] <dir>`
 
-Measure agent-task completion probability: tool discovery, param satisfiability, call success, pagination.
+Route each intent example over the served tool catalog and score whether the agent reaches the right tool.
 
-Deterministic benchmark for each approved operation's agent-task potential. Derives one task per skill.intentExamples entry; scores each on tool discoverability in the MCP server, required-param satisfiability from synthesized examples, call success against the mock upstream, and (for paginated operations) cursor-param pagination. Writes benchmark.report.json with per-operation task results, pass/fail counts, and an aggregate score. Exit 0 only when aggregate score meets the threshold.
+Agent-task benchmark. For each approved operation's skill.intentExamples entry, routes the intent over (a) the curated catalog the generated MCP server serves and (b) the bare catalog the source document supplies on its own, then checks required parameters are satisfiable from surface examples. A task passes when the curated route reaches the right tool and its params are satisfiable; the bare score is the baseline that shows what compilation bought. Routing is deterministic (lexical) by default; pass --agent <command> to route with a real model over stdin/stdout. Writes benchmark.report.json. Exit 0 only when the score meets --check.
 
 Options:
 - `--check <threshold>` — exit non-zero if score < threshold (0..1)
+- `--agent <command>` — route with a real model: a command that reads the routing prompt on stdin and prints {"tool": "<name>"}
 
 ### `anvil simulate`  *(mutates)*
 `anvil simulate [options] <dir>`
@@ -923,6 +925,39 @@ Options:
 - `--reach` — detail the tokens-to-reach distribution and its round trips
 - `--check` — gate: exit non-zero when a tool surface exceeds its budget
 - `--json` — emit the full bill of materials as JSON
+
+### `anvil pack`
+`anvil pack [options] [command]`
+
+Build, verify, and install content-addressed system packs.
+
+#### `anvil pack build`  *(mutates)*
+`anvil pack build [options] <dir>`
+
+Assemble a bundle into one verifiable, content-addressed pack file.
+
+Reads a generated bundle and assembles it into an Agent System Pack: every generated file becomes a digested artifact, the artifact manifest and pack digests are computed over the content, and the bundle's certification status (certification.json, when present) is carried on the pack envelope. Derived records (*.report.json and other evidence files) stay out, exactly as they stay out of the bundle's identity hash. The output is one deterministic file: the same bundle always packs to byte-identical output.
+
+Options:
+- `--out <file>` — where to write the pack (default: <dir>/system.pack.json)
+
+#### `anvil pack verify`
+`anvil pack verify [options] <file>`
+
+Recompute every digest in a pack file and report what diverged.
+
+Reads a pack file and verifies it end to end: envelope entries re-hash against their claimed digests, every artifact's content re-hashes against the manifest, and the manifest and pack digests recompute. Failures are reported one per line — a verify that cannot say what diverged is just a slower way of being wrong.
+
+#### `anvil pack install`  *(mutates)*
+`anvil pack install [options] <source>`
+
+Verify a pack — digests and certification — then unpack it, transactionally.
+
+Fetches a pack from a local path or an https:// URL, verifies every content digest, the artifact manifest digest, and the pack digest, and checks the pack carries a certification with status 'certified' — all BEFORE a single file lands at the target. An uncertified or failed-certification pack refuses unless --allow-uncertified states the operator's intent in so many words. Unpacking stages into a temporary directory and renames it in, so an interrupted install leaves either nothing or a complete bundle. Refuses to overwrite an existing target.
+
+Options:
+- `--out <dir>` — directory to install the bundle into (must not exist)
+- `--allow-uncertified` — install even when the pack carries no 'certified' certification (recorded in the output)
 
 ### `anvil publish`  *(mutates)*
 `anvil publish [options] <dir>`

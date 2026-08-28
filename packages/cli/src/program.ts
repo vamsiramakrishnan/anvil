@@ -22,6 +22,7 @@ import { registerJob } from "./commands/job.js";
 import { registerLegacy } from "./commands/legacy/legacy.js";
 import { registerLint } from "./commands/lint.js";
 import { registerObserve } from "./commands/observe.js";
+import { registerPack } from "./commands/pack.js";
 import { registerPackage } from "./commands/package.js";
 import { registerPublish } from "./commands/publish.js";
 import { registerRefine } from "./commands/refine.js";
@@ -110,6 +111,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerBenchmark(program, ctx);
   registerSimulate(program, ctx);
   registerDisclosure(program, ctx);
+  registerPack(program, ctx);
   registerPublish(program, ctx);
   registerSync(program, ctx);
   registerDrift(program, ctx);

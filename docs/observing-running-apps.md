@@ -127,6 +127,32 @@ step 1 stays an explicit act. When `anvil observe` later notices the published
 contract has moved, `--capture` hands you the exact bytes it read, with the
 digest its findings are bound to, and you re-enter at step 1.
 
+## The flywheel: fold recorded traffic back in
+
+Probing is observation by appointment. A deployed bundle can also observe
+continuously: set `ANVIL_RECORDS_DIR` on the generated MCP or HTTP server and
+it spools every execution record — outcome, error code, retry and
+idempotency-ledger behaviour, latency; no secrets and no payloads, by the
+record's own contract — to newline-delimited JSON. Then:
+
+```bash
+anvil observe generated/service --from-records /var/anvil/records --write traffic.yaml
+```
+
+reads the spool and turns what production traffic already proved into
+`recorded_traffic` claims — the highest-reliability evidence the trust model
+recognizes — through the same asymmetric-trust reconciler as every other
+enrichment lane. The report (`traffic.report.json`) shows per-operation
+traffic, the approved operations nobody ever calls, and any traffic naming
+operations the model no longer carries.
+
+The licensing discipline is this page's, unchanged: traffic corroborates
+freely and may tighten, and the one patch it earns is deprecation — an
+operation whose every observed call (five or more) the application answered
+with `not_found` is an operation the application says is gone. Nothing
+loosens, nothing writes AIR; the proposal is reviewed and fed to
+`anvil compile --manifest` like any other.
+
 ## The same lane for WebLogic, .NET, and messaging
 
 The lane cares about one thing: can the application be reached over HTTP, and

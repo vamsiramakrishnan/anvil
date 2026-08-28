@@ -272,6 +272,20 @@ func traceID() string {
 // invented, and sending JSON to it would be a well-formed lie. Mirrors the
 // runtime's own gate so every surface refuses alike.
 func assertWireExecutable(spec OperationSpec, config clientConfig) *Error {
+	// A subscription is a bounded event-stream window with an array answer.
+	// This client is request/response, and a protocol facade declares
+	// coordinates, not framing — so the refusal holds with a facade declared.
+	if spec.WireProtocol == "graphql_sse" {
+		return &Error{
+			Code:      "unsupported_operation",
+			Operation: spec.ID,
+			TraceID:   traceID(),
+			Message: spec.ID + " is a GraphQL subscription, observed through a bounded Server-Sent " +
+				"Events window. This client is request/response and cannot hold that window open, " +
+				"and a protocol facade cannot change the framing of an event stream. Call it " +
+				"through the generated MCP server or CLI, which share the runtime that reads this wire.",
+		}
+	}
 	if spec.WireProtocol == "http_json" || config.protocolFacade != "" {
 		return nil
 	}

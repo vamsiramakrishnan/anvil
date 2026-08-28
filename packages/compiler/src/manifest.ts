@@ -9,6 +9,8 @@ import {
   type Operation,
   type RetryCondition,
   SQL_DIALECTS,
+  STREAM_MAX_EVENTS_CEILING,
+  STREAM_MAX_SECONDS_CEILING,
   snakeCase,
   type WebhookContract,
   type WebhookSignatureVerification,
@@ -217,6 +219,13 @@ export const OperationManifest = z.object({
   reversible: z.boolean().optional(),
   display_name: z.string().optional(),
   description: z.string().optional(),
+  /**
+   * Agent-phrased routing examples for the skill surface ("refund a customer",
+   * "give money back"). Workflows could always declare these; operations
+   * gained them so an operator can author routing phrases directly — and so
+   * `anvil benchmark` has tasks to route without waiting on the enrich loop.
+   */
+  intent_examples: z.array(z.string()).optional(),
   idempotency: z
     .object({
       strategy: z
@@ -365,6 +374,39 @@ export const OperationManifest = z.object({
    * (see `applyOperationManifest`).
    */
   async_contract: ManifestAsyncContract.optional(),
+  /**
+   * Declare how a paginated read is paged, when the spec did not make it
+   * inferable (`classifyPagination`) and the refinement loop has not proposed
+   * it. Style is required; the parameter names are validated against the
+   * operation's real inputs, because a pagination contract bound to a phantom
+   * parameter would teach every surface to pass an argument the wire ignores.
+   */
+  pagination: z
+    .object({
+      style: z.enum(["cursor", "page", "offset", "link"]),
+      cursor_param: z.string().optional(),
+      next_field: z.string().optional(),
+      items_field: z.string().optional(),
+      page_size_param: z.string().optional(),
+      max_page_size: z.number().int().positive().optional(),
+      default_page_size: z.number().int().positive().optional(),
+    })
+    .optional(),
+  /**
+   * Resize a subscription's observation window. Only the ceilings are
+   * manifest-writable: the transport, the delivery semantics, and the
+   * existence of a bound are compiler-owned facts, so a manifest can widen or
+   * narrow the window of an operation that already streams but can never
+   * create a stream, change its wire, or remove the bound that makes the call
+   * terminate. The absolute ceilings are AIR's own (`StreamContractSchema`),
+   * so a manifest cannot author what a hand-edited document would be refused.
+   */
+  stream: z
+    .object({
+      max_events: z.number().int().min(1).max(STREAM_MAX_EVENTS_CEILING).optional(),
+      max_seconds: z.number().int().min(1).max(STREAM_MAX_SECONDS_CEILING).optional(),
+    })
+    .optional(),
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
 });
 export type OperationManifest = z.infer<typeof OperationManifest>;
@@ -709,6 +751,7 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
   if (m.action) op.effect.action = m.action;
   if (m.display_name) op.displayName = m.display_name;
   if (m.description) op.description = m.description;
+  if (m.intent_examples) op.skill.intentExamples = [...m.intent_examples];
 
   // Re-home the agent-facing routing names from one (service, resource, verb)
   // triple, so canonicalName / CLI command / MCP tool cannot drift apart. Only
@@ -928,6 +971,78 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
         "async_contract manifest patch left unset: no job_id_field was supplied and the " +
         "operation has no prior AsyncContract to merge onto, so no completion contract " +
         "could be constructed without inventing a coordinate.";
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    }
+  }
+
+  // Pagination is a fact about how a READ hands back a large result. On a
+  // mutation it is meaningless, and a carrier parameter that names no real
+  // input would teach every surface to pass an argument the wire ignores —
+  // both decline with the reason, in the async_contract pattern, rather than
+  // half-applying.
+  if (m.pagination) {
+    const inputNames = new Set(op.input.params.map((p) => p.name));
+    const phantom = [m.pagination.cursor_param, m.pagination.page_size_param].filter(
+      (name): name is string => name !== undefined && !inputNames.has(name),
+    );
+    if (op.effect.kind !== "read") {
+      const note =
+        "pagination manifest patch left unset: the operation is a mutation, and pagination " +
+        "is a contract about how a read hands back a large result.";
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    } else if (phantom.length > 0) {
+      const note =
+        `pagination manifest patch left unset: parameter(s) ${phantom.map((n) => `'${n}'`).join(", ")} ` +
+        `do not exist on this operation, and a pagination contract bound to a phantom parameter ` +
+        `would teach every surface to pass an argument the wire ignores.`;
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    } else {
+      op.pagination = {
+        style: m.pagination.style,
+        ...(m.pagination.cursor_param !== undefined
+          ? { cursorParam: m.pagination.cursor_param }
+          : {}),
+        ...(m.pagination.next_field !== undefined ? { nextField: m.pagination.next_field } : {}),
+        ...(m.pagination.items_field !== undefined ? { itemsField: m.pagination.items_field } : {}),
+        ...(m.pagination.page_size_param !== undefined
+          ? { pageSizeParam: m.pagination.page_size_param }
+          : {}),
+        ...(m.pagination.max_page_size !== undefined
+          ? { maxPageSize: m.pagination.max_page_size }
+          : {}),
+        ...(m.pagination.default_page_size !== undefined
+          ? { defaultPageSize: m.pagination.default_page_size }
+          : {}),
+      };
+      const note =
+        `Pagination declared by manifest: ${m.pagination.style}` +
+        (m.pagination.cursor_param ? ` via '${m.pagination.cursor_param}'` : "") +
+        ".";
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    }
+  }
+
+  // Resize the observation window of an operation that already streams. The
+  // window's existence is what makes a subscription a call, and the compiler
+  // owns that fact — so a `stream` patch on an operation with no stream
+  // contract is refused with the reason rather than inventing one, exactly as
+  // an `async_contract` patch with nothing to anchor to is.
+  if (m.stream) {
+    if (op.stream) {
+      op.stream = {
+        ...op.stream,
+        ...(m.stream.max_events !== undefined ? { maxEvents: m.stream.max_events } : {}),
+        ...(m.stream.max_seconds !== undefined ? { maxSeconds: m.stream.max_seconds } : {}),
+      };
+      const note =
+        `Observation window resized by manifest: up to ${op.stream.maxEvents} event(s) ` +
+        `or ${op.stream.maxSeconds} second(s) per call.`;
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    } else {
+      const note =
+        "stream manifest patch left unset: the operation does not stream, and a manifest " +
+        "can resize an observation window but never create one — the window is a fact the " +
+        "compiler reads from the source, not a declaration.";
       if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
     }
   }

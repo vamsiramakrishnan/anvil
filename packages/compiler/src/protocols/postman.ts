@@ -937,23 +937,52 @@ function* eachLeaf(items: PostmanItem[] | undefined, folders: string[] = []): Ge
   }
 }
 
-/** Count script blocks (pre-request/test JS) across the whole tree. */
-function countScripts(collection: PostmanCollection): number {
+/**
+ * Script blocks (pre-request/test JS) across the whole tree, by site.
+ *
+ * Collected rather than merely counted, because the count alone was the silent
+ * half of a silent failure: a collection whose *auth flow* lives in a
+ * pre-request script compiles into a bundle that looks complete and cannot
+ * authenticate, and "2 script block(s) were not translated" buried in the
+ * service description names neither the request nor the risk. Each site
+ * becomes a compile diagnostic, so `anvil compile` and `anvil lint` show
+ * exactly which requests depend on JavaScript the bundle will never run.
+ */
+interface ScriptSite {
+  where: string;
+  kinds: string[];
+}
+
+function scriptSites(collection: PostmanCollection): { count: number; sites: ScriptSite[] } {
+  const sites: ScriptSite[] = [];
   let count = 0;
-  const hasCode = (e: PostmanEvent): boolean => {
-    const exec = e.script?.exec;
-    const text = Array.isArray(exec) ? exec.join("\n") : (exec ?? "");
-    return text.trim() !== "";
+  const kindsOf = (events: PostmanEvent[] | undefined): string[] => {
+    const kinds: string[] = [];
+    for (const e of events ?? []) {
+      const exec = e.script?.exec;
+      const text = Array.isArray(exec) ? exec.join("\n") : (exec ?? "");
+      if (text.trim() === "") continue;
+      kinds.push(e.listen === "prerequest" ? "pre-request" : (e.listen ?? "script"));
+    }
+    return kinds;
   };
-  count += (collection.event ?? []).filter(hasCode).length;
-  const walk = (items: PostmanItem[] | undefined): void => {
+  const collectionKinds = kindsOf(collection.event);
+  count += collectionKinds.length;
+  if (collectionKinds.length > 0) {
+    sites.push({ where: "the collection itself", kinds: collectionKinds });
+  }
+  const walk = (items: PostmanItem[] | undefined, folders: string[]): void => {
     for (const item of items ?? []) {
-      count += (item.event ?? []).filter(hasCode).length;
-      walk(item.item);
+      const kinds = kindsOf(item.event);
+      count += kinds.length;
+      if (kinds.length > 0) {
+        sites.push({ where: `'${[...folders, item.name ?? "(unnamed)"].join("/")}'`, kinds });
+      }
+      walk(item.item, [...folders, item.name ?? ""]);
     }
   };
-  walk(collection.item);
-  return count;
+  walk(collection.item, []);
+  return { count, sites };
 }
 
 /**
@@ -1079,7 +1108,26 @@ export function adaptPostman(text: string, diagnostics?: Diagnostic[]): OpenApiD
     }
   }
 
-  const scripts = countScripts(collection);
+  const { count: scripts, sites: scriptLocations } = scriptSites(collection);
+  // One diagnostic per script-bearing site, naming it. A pre-request script is
+  // very often the auth flow itself (token fetch, signature computation), and a
+  // test script is often request chaining — either way the compiled bundle
+  // will not run it, and the fix is a declaration, not a translation: model
+  // the auth contract in an Anvil manifest, then prove the result against the
+  // live service with the harness.
+  for (const site of scriptLocations) {
+    diagnostics?.push({
+      level: "warning",
+      code: "postman_script_untranslated",
+      path: site.where,
+      message:
+        `Postman ${site.kinds.join(" and ")} script(s) on ${site.where} were not translated — ` +
+        `Anvil compiles saved requests, never collection JavaScript. Scripts frequently encode ` +
+        `the auth flow or chain one request's output into the next, so the compiled surface can ` +
+        `look complete and still fail to authenticate. Declare the auth contract in an Anvil ` +
+        `manifest and verify against the live service with 'anvil conformance'.`,
+    });
+  }
   const baseDescription = descriptionText(collection.info?.description);
   const scriptsNote =
     scripts > 0

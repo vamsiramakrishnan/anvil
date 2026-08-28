@@ -109,6 +109,9 @@ export const CONTRACT_SAFETY_PREDICATES: ReadonlySet<SemanticPredicate> =
     // forge completion) is exactly the kind of contradiction two overlays
     // must not resolve by array order.
     "asyncContract",
+    // Same contested-only footing: how long a connection may be held open is a
+    // resource-safety fact two overlays must not settle by array order.
+    "stream",
   ]);
 
 type ManifestStrategy = NonNullable<NonNullable<OperationManifest["idempotency"]>["strategy"]>;
@@ -176,6 +179,7 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     if (m.action) assertions.push(set(ref, "effect.action", m.action));
     if (m.display_name) assertions.push(set(ref, "displayName", m.display_name));
     if (m.description) assertions.push(set(ref, "description", m.description));
+    if (m.intent_examples) assertions.push(set(ref, "intentExamples", m.intent_examples));
     if (m.name?.resource) assertions.push(set(ref, "name.resource", m.name.resource));
     if (m.name?.verb) assertions.push(set(ref, "name.verb", m.name.verb));
 
@@ -233,6 +237,10 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     // Hand-supplied completion contract, carried verbatim — `applyOperationManifest`
     // owns merging it onto whatever `normalize.ts` already derived.
     if (m.async_contract) assertions.push(set(ref, "asyncContract", m.async_contract));
+    // Observation-window ceilings, carried verbatim — `applyOperationManifest`
+    // owns the "resize, never create" rule against the compiled contract.
+    if (m.pagination) assertions.push(set(ref, "pagination", m.pagination));
+    if (m.stream) assertions.push(set(ref, "stream", m.stream));
 
     if (m.state) assertions.push(set(ref, "state", m.state));
   }
@@ -343,6 +351,15 @@ export function projectOperationManifest(
 
   const asyncContract = v<OperationManifest["async_contract"]>("asyncContract");
   if (asyncContract) m.async_contract = asyncContract;
+
+  const pagination = v<OperationManifest["pagination"]>("pagination");
+  if (pagination) m.pagination = pagination;
+
+  const stream = v<OperationManifest["stream"]>("stream");
+  if (stream) m.stream = stream;
+
+  const intentExamples = v<string[]>("intentExamples");
+  if (intentExamples) m.intent_examples = intentExamples;
 
   const state = v<OperationManifest["state"]>("state");
   if (state) m.state = state;
