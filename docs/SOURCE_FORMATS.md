@@ -26,7 +26,7 @@ reviewed after compilation.
 | gRPC | proto3 (`.proto`) | Captures transitive local imports | The route a `google.api.http` method declares; otherwise HTTP-shaped calls through a declared JSON transcoder | Native gRPC and streaming RPCs are refused |
 | SOAP | WSDL 1.1 with embedded or local XSD | Captures `wsdl:import`, `xsd:include`, and `xsd:import` | Supported document/literal bindings | See the test-backed [wire protocol matrix](./wire-protocols.md) |
 | Google APIs | Discovery `restDescription` JSON | One document | HTTP with JSON | Does not call Google discovery services |
-| OData | v2 or v4 `$metadata` / EDMX XML | One metadata entrypoint | Entity sets, plus actions, functions, and v2 function imports | Bound operations and navigation semantics require review |
+| OData | v2 or v4 `$metadata` / EDMX XML | One metadata entrypoint | Entity sets; actions, functions, and v2 function imports; instance-bound operations through their entity set | Collection-bound and ambiguously-bound operations decline with a named reason; navigation semantics require review |
 | Postman | Collection v2.0 or v2.1 JSON | One collection document | HTTP with JSON | Pre-request and test scripts are reported but never executed |
 
 The format adapter is only the first stage. Every source then uses the same
@@ -106,6 +106,22 @@ Anvil maps each root field to one operation:
 - `Subscription` fields become bounded observation windows: the call collects
   events until an event or time bound and returns them as an array. See the
   [wire protocol matrix](./wire-protocols.md) for the contract and its bounds.
+
+A subscription's window defaults to 100 events or 30 seconds, whichever comes
+first. An operator can resize either ceiling in the manifest:
+
+```yaml
+operations:
+  orderUpdated:
+    stream:
+      max_events: 500
+      max_seconds: 120
+```
+
+The absolute caps — 10,000 events, 300 seconds — live on AIR's own schema, so
+neither a manifest nor a hand-edited document can represent an unbounded
+window. A manifest can resize a window but never create one: which operations
+stream is a fact the compiler reads from the SDL, not a declaration.
 
 Arguments become the request schema and return types become response schemas.
 Custom scalars degrade to documented string values unless the source provides a
@@ -200,12 +216,18 @@ Parameter values carry OData's literal syntax — a quoted string, v2's
 `datetime'…'` prefix, its `M`/`L` suffixes — compiled into the coordinate, so a
 caller supplies the plain value and Anvil spells it correctly on the wire.
 
-Bound actions and functions are not emitted. A bound operation is addressed
-through a specific entity instance (`/People('russell')/NS.ShareTrip`), and
-which instance is not something the metadata alone can answer; each one is
-reported as a diagnostic rather than silently dropped. Navigation properties,
-deep inserts, and service-specific conventions may still need an enriched or
-upstream-normalized contract.
+Bound actions and functions lower whenever their address can be constructed
+without guessing. An operation bound to an entity instance is addressed through
+the one entity set that exposes its binding type —
+`POST /Airports('{IcaoCode}')/Trippin.Deactivate` — with the instance key as an
+ordinary required path parameter (the same one the set's own read-by-key asks
+for), a bound function's arguments inline in the coordinate, and a bound
+action's arguments as the JSON body. Three shapes still decline, each with a
+diagnostic naming its reason: an operation bound to a collection, a binding
+type no entity set exposes, and a binding type exposed by more than one set —
+either address would be a guess, and Anvil does not put guesses on the wire.
+Navigation properties, deep inserts, and service-specific conventions may still
+need an enriched or upstream-normalized contract.
 
 ### Postman collections
 
@@ -213,9 +235,43 @@ Folders become tags, saved requests become operations, and saved response/body
 examples inform schemas. Secret-like auth values, header values, and query
 values are not copied into the model.
 
-Anvil does not execute pre-request or test scripts because those scripts can
-contain auth flows, stateful chaining, and arbitrary code. The adapter reports
-their presence so the omission is visible.
+Anvil does not execute pre-request or test scripts, and never will: collections
+routinely embed live tokens, and a script is arbitrary JavaScript running
+inside a compiler. The refusal is loud rather than silent. Every script-bearing
+request is named in a `postman_script_untranslated` compile diagnostic —
+pre-request scripts are very often the auth flow itself, so a collection could
+otherwise compile into a surface that looks complete and cannot authenticate.
+The diagnostic carries the remedy: declare the auth contract in an Anvil
+manifest, then prove the result against the live service with
+`anvil conformance`.
+
+## Declined, and why
+
+Some gaps on this page are decisions, not roadmap. Filing a permanent no under
+"not yet" reads as a promise, so each is stated with its reason.
+
+- **Native gRPC.** A native call is length-prefixed protobuf over HTTP/2 with
+  the status in trailers. Anvil's four generated SDKs are zero-dependency by
+  contract, and Python's standard library has no HTTP/2 client — a native
+  client would either break that contract or exist in some languages and not
+  others, which is exactly the cross-surface divergence Anvil exists to
+  prevent. Two paths work and stay: a `google.api.http` annotation, which
+  Anvil reads with nothing further declared, and a JSON transcoder
+  (grpc-gateway, Envoy's gRPC-JSON filter) declared as a protocol facade.
+- **GraphQL subscriptions over WebSocket (`graphql-ws`).** The same wall:
+  Python's and Go's standard libraries have no WebSocket client.
+  Subscriptions are served over `graphql-sse` — chunked HTTP, which every
+  runtime already reads. A service that speaks only `graphql-ws` needs an
+  SSE-speaking gateway in front of it; that is a real cost, stated rather
+  than hidden.
+- **Postman script execution.** Collections routinely embed live tokens, and
+  a script is arbitrary JavaScript running inside a compiler. The scripts'
+  presence is surfaced per request (see above); the modeled fix is a
+  manifest, never execution.
+- **Fetching remote `$ref`s at compile time.** Compilation reads only the
+  content-addressed snapshot, so a compile is reproducible and a URL cannot
+  change a contract after review. Vendor remote schemas into the import root
+  and snapshot them.
 
 ## Gateways are a different entrypoint
 

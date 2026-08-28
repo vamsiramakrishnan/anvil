@@ -83,6 +83,7 @@ Prefer the source operation id when it is stable and unique.
 | `retries` | Bound attempts and retryable conditions | Runtime still disables retries when idempotency does not make them safe |
 | `query_policy` | Constrain a raw query passthrough | A policy moves the operation out of `blocked`, not directly to `approved` |
 | `query_schema` | Add catalog-grounded tables, columns, sensitivity, and examples | Documentation input; runtime does not treat it as enforcement |
+| `stream` | Resize a subscription's observation window (`max_events`, `max_seconds`) | Capped at 10,000 events / 300 seconds by AIR's schema; resizes an existing window, never creates one |
 | `state` | Record lifecycle state | Approval must follow inspection and organizational review |
 
 ## Idempotency strategies

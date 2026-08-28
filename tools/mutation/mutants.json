@@ -660,6 +660,26 @@
         "packages/air/src/wire.test.ts",
         "packages/cli/src/transport-certify.test.ts"
       ]
+    },
+    {
+      "id": "stream/facade-does-not-change-the-framing",
+      "file": "packages/runtime/src/codec.ts",
+      "control": "A protocol facade declares coordinates, not framing. If it re-routed a subscription through the JSON codec, the call would lose `accept: text/event-stream` and its stream bound, and answer with one object where every other configuration answers with an array — one operation, two meanings, selected by an environment variable.",
+      "find": "  const protocol = wireProtocolFor(op.sourceRef);\n  if (protocol === \"graphql_sse\") return graphqlSseCodec;\n  if (facadeDeclared) return httpJsonCodec;\n  return CODECS.get(protocol);",
+      "replace": "  if (facadeDeclared) return httpJsonCodec;\n  return CODECS.get(wireProtocolFor(op.sourceRef));",
+      "tests": [
+        "packages/runtime/src/wire-gate.test.ts"
+      ]
+    },
+    {
+      "id": "stream/the-window-has-an-absolute-ceiling",
+      "file": "packages/air/src/schema.ts",
+      "control": "The observation window's ceilings live on AIR's schema, so neither a manifest nor a hand-edited air.json can represent an unbounded window. Delete the ceiling and a five-minute cap becomes a connection held open as long as anyone asks.",
+      "find": "  maxSeconds: z.number().int().positive().max(STREAM_MAX_SECONDS_CEILING),",
+      "replace": "  maxSeconds: z.number().int().positive(),",
+      "tests": [
+        "packages/compiler/src/protocols/graphql-subscription.test.ts"
+      ]
     }
   ]
 }
