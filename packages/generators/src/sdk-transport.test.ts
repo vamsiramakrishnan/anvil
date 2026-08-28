@@ -191,4 +191,47 @@ describe("the SDK transport gate", () => {
   it("leaves a REST bundle's SDKs alone", () => {
     expect(sdkGateDrift(rest.files, rest.air)).toEqual([]);
   });
+
+  it("refuses a subscription before the facade short-circuit, in all four cores", () => {
+    // The defect this pins down: every gate once read `http_json || facade →
+    // pass`, so declaring ANVIL_PROTOCOL_FACADE let a `graphql_sse` operation
+    // through a client with no SSE window — one JSON object out of a client,
+    // an array out of the runtime, for the same operation. A facade declares
+    // coordinates, not framing, so the subscription refusal must come FIRST.
+    // The assertion is on ordering inside the emitted gate, because ordering
+    // was exactly what was wrong.
+    // The third entry is the facade *check expression*, not the parameter name
+    // — a signature mentions the parameter before the body can check it.
+    const gates: Record<(typeof SDK_LANGUAGES)[number], [string, string, string]> = {
+      typescript: [
+        "sdk/typescript/src/invoke.ts",
+        "assertWireExecutable",
+        "protocolFacade !== undefined",
+      ],
+      python: [
+        "sdk/python/anvil_banking/_invoke.py",
+        "assert_wire_executable",
+        "protocol_facade is not None",
+      ],
+      go: ["sdk/go/invoke.go", "assertWireExecutable", 'protocolFacade != ""'],
+      java: [
+        "sdk/java/src/main/java/com/anvil/sdk/banking/Invoker.java",
+        "assertWireExecutable",
+        "protocolFacade != null",
+      ],
+    };
+    for (const language of SDK_LANGUAGES) {
+      const [path, gateSymbol, facadeToken] = gates[language];
+      const source = soap.files[path] ?? "";
+      const gate = source.slice(source.indexOf(gateSymbol));
+      const refusal = gate.indexOf('"graphql_sse"');
+      const facade = gate.indexOf(facadeToken);
+      expect(refusal, `${language}: the gate never mentions graphql_sse`).toBeGreaterThanOrEqual(0);
+      expect(facade, `${language}: the gate never consults the facade`).toBeGreaterThanOrEqual(0);
+      expect(
+        refusal,
+        `${language}: the facade short-circuit runs before the subscription refusal`,
+      ).toBeLessThan(facade);
+    }
+  });
 });

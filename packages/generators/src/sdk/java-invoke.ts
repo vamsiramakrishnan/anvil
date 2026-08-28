@@ -346,6 +346,22 @@ final class Invoker {
    * gate so every surface refuses alike.
    */
   static void assertWireExecutable(OperationSpec spec, Config config) {
+    // A subscription is a bounded event-stream window with an array answer.
+    // This client is request/response, and a protocol facade declares
+    // coordinates, not framing — so the refusal holds with a facade declared.
+    if ("graphql_sse".equals(spec.wireProtocol)) {
+      throw AnvilException.builder(
+              "unsupported_operation",
+              spec.id,
+              spec.id
+                  + " is a GraphQL subscription, observed through a bounded Server-Sent Events"
+                  + " window. This client is request/response and cannot hold that window open,"
+                  + " and a protocol facade cannot change the framing of an event stream. Call it"
+                  + " through the generated MCP server or CLI, which share the runtime that reads"
+                  + " this wire.")
+          .traceId(traceId())
+          .build();
+    }
     if ("http_json".equals(spec.wireProtocol) || config.protocolFacade != null) {
       return;
     }

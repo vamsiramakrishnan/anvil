@@ -126,8 +126,19 @@ const CODECS = new Map<WireProtocol, WireCodec>([
  * *this* wire is HTTP+JSON, whatever the service behind the facade speaks.
  * Anvil's own generated mock is exactly such a translator, which is why the
  * hermetic lanes drive SOAP bundles through the JSON codec and are right to.
+ *
+ * A facade is a claim about *coordinates*, never about *framing*, so it does
+ * not touch a subscription. `graphql_sse` reads a bounded event-stream window
+ * and answers with an array; routing it through the JSON codec would drop the
+ * `accept: text/event-stream` request, drop the stream bound that makes the
+ * call terminate, and hand back one object where every other configuration of
+ * the same operation hands back an array — the same operation meaning two
+ * different things depending on an environment variable, which is the exact
+ * divergence this codebase exists to prevent.
  */
 export function codecFor(op: Operation, facadeDeclared = false): WireCodec | undefined {
+  const protocol = wireProtocolFor(op.sourceRef);
+  if (protocol === "graphql_sse") return graphqlSseCodec;
   if (facadeDeclared) return httpJsonCodec;
-  return CODECS.get(wireProtocolFor(op.sourceRef));
+  return CODECS.get(protocol);
 }

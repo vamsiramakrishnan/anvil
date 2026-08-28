@@ -278,3 +278,94 @@ describe("gRPC reaches a declared transcoder and nothing else", () => {
     );
   });
 });
+
+/**
+ * A protocol facade and a subscription.
+ *
+ * A facade declares that the base URL serves the synthesized *coordinates*
+ * over HTTP+JSON. A subscription's difference from a query is not a
+ * coordinate — it is the framing of the exchange: `accept: text/event-stream`,
+ * a bounded window, an array answer. If declaring a facade re-routed the call
+ * through the JSON codec, the same operation would answer with one object
+ * under `ANVIL_PROTOCOL_FACADE` and an array without it — two meanings for one
+ * operation, selected by an environment variable. So the facade must leave a
+ * subscription's wire exactly alone.
+ */
+describe("a facade does not change what a subscription means", () => {
+  const subscription = (overrides: Record<string, unknown> = {}) =>
+    op({
+      sourceRef: {
+        kind: "graphql",
+        path: "/graphql/Subscription/ticks",
+        method: "post",
+        binding: {
+          protocol: "graphql_sse",
+          document: "subscription Anvil_Ticks { ticks { seq } }",
+          operationName: "Anvil_Ticks",
+          rootField: "ticks",
+        },
+      },
+      stream: {
+        transport: "graphql_sse",
+        delivery: "at_most_once",
+        maxEvents: 100,
+        maxSeconds: 30,
+      },
+      ...overrides,
+    });
+
+  const sseBody = (...seqs: number[]) =>
+    seqs.map((n) => `data: ${JSON.stringify({ data: { ticks: { seq: n } } })}\n\n`).join("");
+
+  it("keeps the SSE wire — accept header, stream bound, array answer — with a facade declared", async () => {
+    const transport = new MockTransport(() => ({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body: sseBody(1, 2),
+    }));
+    const res = await execute(
+      subscription(),
+      { input: {} },
+      {
+        ...baseCtx,
+        transport,
+        ledger: new InMemoryLedger(),
+        protocolFacade: "a gateway in front of the GraphQL service",
+      },
+    );
+    expect(res.outcome).toBe("success");
+    if (res.outcome !== "success") throw new Error("expected success");
+    const sent = transport.requests[0];
+    // The one header that makes this a subscription rather than a query.
+    expect(sent?.headers.accept).toBe("text/event-stream");
+    // The bound is what makes the call terminate; dropping it under a facade
+    // would let the request run to the generic timeout and then retry.
+    expect(sent?.streamBound).toEqual({ maxEvents: 100, maxSeconds: 30 });
+    // Always an array — the same answer shape as without the facade.
+    expect(res.data).toEqual([{ seq: 1 }, { seq: 2 }]);
+    // The facade was declared but not *used*: nothing about this call rests on
+    // it, so no facade decision may appear on the record.
+    expect(res.record.policyDecisions.join(" ")).not.toContain("protocol_facade_declared");
+  });
+
+  it("is not a way past the stream bound: an unbounded subscription still refuses", async () => {
+    const transport = new MockTransport(() => ok({}));
+    const res = await execute(
+      subscription({ stream: undefined }),
+      { input: {} },
+      {
+        ...baseCtx,
+        transport,
+        ledger: new InMemoryLedger(),
+        protocolFacade: "a gateway in front of the GraphQL service",
+      },
+    );
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") throw new Error("expected a refusal");
+    expect(res.envelope.error.code).toBe("unsupported_operation");
+    // The refusal names the real fix — a stream contract — not a facade,
+    // because no facade can make an unbounded window terminate.
+    expect(res.envelope.error.message).toContain("bound");
+    expect(transport.requests).toHaveLength(0);
+  });
+});

@@ -362,6 +362,20 @@ def assert_wire_executable(spec: OperationSpec, protocol_facade: Optional[str]) 
     SOAP, GraphQL, or gRPC operation arrives with a path Anvil invented, and
     sending JSON to it would be a well-formed lie. Mirrors the runtime's own
     gate so every surface refuses alike."""
+    # A subscription is a bounded event-stream window with an array answer.
+    # This client is request/response, and a protocol facade declares
+    # coordinates, not framing -- so the refusal holds with a facade declared.
+    if spec.wire_protocol == "graphql_sse":
+        raise AnvilError(
+            code="unsupported_operation",
+            operation=spec.id,
+            trace_id=_trace_id(),
+            message="%s is a GraphQL subscription, observed through a bounded "
+            "Server-Sent Events window. This client is request/response and cannot "
+            "hold that window open, and a protocol facade cannot change the framing "
+            "of an event stream. Call it through the generated MCP server or CLI, "
+            "which share the runtime that reads this wire." % spec.id,
+        )
     if spec.wire_protocol == "http_json" or protocol_facade is not None:
         return
     # SOAP is speakable exactly when the compiler recovered a binding for it.
