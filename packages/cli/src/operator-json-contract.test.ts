@@ -729,7 +729,7 @@ const UNEXERCISED: Record<string, string> = {
   "source list": "needs a populated source store",
   "source show": "needs a populated source store",
   "source validate": "needs a source fixture",
-  "sources init": "writes a scaffold; needs a temp-root harness",
+  "enrich-sources init": "writes a scaffold; needs a temp-root harness",
   // Need refinement/case state.
   "case battery": "needs a case store fixture",
   "case close": "needs a case store fixture",

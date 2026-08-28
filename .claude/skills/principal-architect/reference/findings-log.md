@@ -61,11 +61,10 @@ surfaced the `estate connect` staleness bug described in the gap below.
 ## Known, deferred, evidenced technical debt (flagged, not yet executed)
 
 Cite these rather than rediscovering them from scratch:
-- **`source` vs `sources` CLI naming collision** — flagged as the
-  highest-leverage *but* highest-risk UX fix in the CLI surface (two
-  near-identical top-level commands with different meanings). Deliberately
-  not executed without explicit go-ahead, because renaming a top-level
-  command is a breaking-change-shaped decision, not a pure quality fix.
+- **`source` vs `sources` CLI naming collision: resolved.** `anvil sources`
+  became `anvil enrich-sources`; the old spelling stays as a hidden, working
+  alias that prints where to go, so nothing broke. Executed once the operator
+  gave a broad close-the-debt go-ahead.
 - **`packages/cli/src/commands/estate.ts` is 3,327 lines.** The
   `commands/estate/` and `commands/capability/` subdirectory split
   (bug-bash retro fix) intentionally did not touch this — splitting

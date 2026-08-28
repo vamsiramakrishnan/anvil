@@ -695,20 +695,20 @@ Options:
 - `--out <file>` — write without overwriting different content
 - `--json` — emit the complete deterministic inventory diff
 
-### `anvil sources`
-`anvil sources [options] [command]`
+### `anvil enrich-sources`
+`anvil enrich-sources [options] [command]`
 
-List enrichment sources, or scaffold a sources.yaml with `sources init`.
+List enrichment sources, or scaffold a sources.yaml with `enrich-sources init`.
 
-The published MCP servers Anvil enriches from. `anvil sources` (or `sources list`) shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman). `anvil sources init <dir>` scaffolds a sources.yaml for a compiled service and lists the interview questions to finish it.
+The published MCP servers Anvil enriches from. `anvil enrich-sources` (or `enrich-sources list`) shows the built-in profiles — GitHub, GitLab, Confluence, Jira, Notion, Postman — with the default server for each and whether its evidence can loosen safety (code hosts) or only tighten/corroborate (docs, Postman). `anvil enrich-sources init <dir>` scaffolds a sources.yaml for a compiled service and lists the interview questions to finish it.
 
-#### `anvil sources list`
-`anvil sources list [options]`
+#### `anvil enrich-sources list`
+`anvil enrich-sources list [options]`
 
 List the built-in enrichment source profiles.
 
-#### `anvil sources init`
-`anvil sources init [options] <path>`
+#### `anvil enrich-sources init`
+`anvil enrich-sources init [options] <path>`
 
 Scaffold a sources.yaml for a service, with the interview questions to finish it.
 
