@@ -281,8 +281,8 @@
       "id": "wire/runtime-transport-gate",
       "file": "packages/runtime/src/wire-gate.ts",
       "control": "The runtime refuses an operation whose wire protocol it cannot speak. Without it a SOAP/GraphQL/gRPC operation is posted as JSON to a coordinate Anvil invented — a well-formed lie, indistinguishable on the wire from a real request.",
-      "find": "  if (verdict.ok || facade !== undefined) return undefined;",
-      "replace": "  if (true) return undefined;",
+      "find": "  if (verdict.ok) return undefined;\n  // A facade declares that the base URL serves the synthesized *coordinates*",
+      "replace": "  if (true) return undefined;\n  // A facade declares that the base URL serves the synthesized *coordinates*",
       "tests": [
         "packages/runtime/src/wire-gate.test.ts"
       ]
