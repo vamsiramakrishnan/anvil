@@ -179,6 +179,7 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     if (m.action) assertions.push(set(ref, "effect.action", m.action));
     if (m.display_name) assertions.push(set(ref, "displayName", m.display_name));
     if (m.description) assertions.push(set(ref, "description", m.description));
+    if (m.intent_examples) assertions.push(set(ref, "intentExamples", m.intent_examples));
     if (m.name?.resource) assertions.push(set(ref, "name.resource", m.name.resource));
     if (m.name?.verb) assertions.push(set(ref, "name.verb", m.name.verb));
 
@@ -352,6 +353,9 @@ export function projectOperationManifest(
 
   const stream = v<OperationManifest["stream"]>("stream");
   if (stream) m.stream = stream;
+
+  const intentExamples = v<string[]>("intentExamples");
+  if (intentExamples) m.intent_examples = intentExamples;
 
   const state = v<OperationManifest["state"]>("state");
   if (state) m.state = state;

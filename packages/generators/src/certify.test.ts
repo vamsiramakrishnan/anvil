@@ -666,10 +666,17 @@ describe("publication gating: executable evidence", () => {
     const withBenchmark = {
       ...files,
       "benchmark.report.json": JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         bundleHash: bundleHash(files),
         operations: [],
-        summary: { total: 10, passed: 10, score: 1 },
+        summary: {
+          total: 10,
+          passed: 10,
+          score: 1,
+          curatedRouted: 10,
+          bareRouted: 4,
+          upliftPts: 60,
+        },
       }),
     };
     expect(bundleHash(withBenchmark)).toBe(bundleHash(files));
@@ -681,10 +688,17 @@ describe("publication gating: executable evidence", () => {
     const subject = bundleHash(files);
     const report = (hash: string) =>
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         bundleHash: hash,
         operations: [],
-        summary: { total: 134, passed: 134, score: 1 },
+        summary: {
+          total: 134,
+          passed: 134,
+          score: 1,
+          curatedRouted: 134,
+          bareRouted: 70,
+          upliftPts: 47.8,
+        },
       });
     const fresh = benchmarkEvidenceStatus({ ...files, "benchmark.report.json": report(subject) });
     expect(fresh).toMatchObject({ state: "fresh", fresh: true, score: 1 });
@@ -695,6 +709,18 @@ describe("publication gating: executable evidence", () => {
     expect(stale).toMatchObject({ state: "stale", fresh: false, score: 1 });
     expect(benchmarkEvidenceStatus(files)).toMatchObject({ state: "missing", score: null });
     expect(benchmarkEvidenceStatus({ ...files, "benchmark.report.json": "{" })).toMatchObject({
+      state: "corrupt",
+      score: null,
+    });
+    // A v1 report came from the scorer that always passed; its perfect score
+    // measured nothing, so it must never read as fresh evidence.
+    const v1 = JSON.stringify({
+      schemaVersion: 1,
+      bundleHash: subject,
+      operations: [],
+      summary: { total: 10, passed: 10, score: 1 },
+    });
+    expect(benchmarkEvidenceStatus({ ...files, "benchmark.report.json": v1 })).toMatchObject({
       state: "corrupt",
       score: null,
     });

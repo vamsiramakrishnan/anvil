@@ -893,12 +893,13 @@ Options:
 ### `anvil benchmark`
 `anvil benchmark [options] <dir>`
 
-Measure agent-task completion probability: tool discovery, param satisfiability, call success, pagination.
+Route each intent example over the served tool catalog and score whether the agent reaches the right tool.
 
-Deterministic benchmark for each approved operation's agent-task potential. Derives one task per skill.intentExamples entry; scores each on tool discoverability in the MCP server, required-param satisfiability from synthesized examples, call success against the mock upstream, and (for paginated operations) cursor-param pagination. Writes benchmark.report.json with per-operation task results, pass/fail counts, and an aggregate score. Exit 0 only when aggregate score meets the threshold.
+Agent-task benchmark. For each approved operation's skill.intentExamples entry, routes the intent over (a) the curated catalog the generated MCP server serves and (b) the bare catalog the source document supplies on its own, then checks required parameters are satisfiable from surface examples. A task passes when the curated route reaches the right tool and its params are satisfiable; the bare score is the baseline that shows what compilation bought. Routing is deterministic (lexical) by default; pass --agent <command> to route with a real model over stdin/stdout. Writes benchmark.report.json. Exit 0 only when the score meets --check.
 
 Options:
 - `--check <threshold>` — exit non-zero if score < threshold (0..1)
+- `--agent <command>` — route with a real model: a command that reads the routing prompt on stdin and prints {"tool": "<name>"}
 
 ### `anvil simulate`  *(mutates)*
 `anvil simulate [options] <dir>`

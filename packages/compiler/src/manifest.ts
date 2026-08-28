@@ -219,6 +219,13 @@ export const OperationManifest = z.object({
   reversible: z.boolean().optional(),
   display_name: z.string().optional(),
   description: z.string().optional(),
+  /**
+   * Agent-phrased routing examples for the skill surface ("refund a customer",
+   * "give money back"). Workflows could always declare these; operations
+   * gained them so an operator can author routing phrases directly — and so
+   * `anvil benchmark` has tasks to route without waiting on the enrich loop.
+   */
+  intent_examples: z.array(z.string()).optional(),
   idempotency: z
     .object({
       strategy: z
@@ -726,6 +733,7 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
   if (m.action) op.effect.action = m.action;
   if (m.display_name) op.displayName = m.display_name;
   if (m.description) op.description = m.description;
+  if (m.intent_examples) op.skill.intentExamples = [...m.intent_examples];
 
   // Re-home the agent-facing routing names from one (service, resource, verb)
   // triple, so canonicalName / CLI command / MCP tool cannot drift apart. Only

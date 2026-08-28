@@ -252,7 +252,10 @@ export function executableEvidenceReady(statuses: ExecutableEvidenceStatuses): b
 }
 
 const BenchmarkEvidenceReport = z.object({
-  schemaVersion: z.literal(1),
+  // 2 is the first version whose score measures anything (intent routing over
+  // the served catalog). A v1 report came from a scorer that always passed,
+  // so treating it as unreadable — stale, never fresh — is the honest reading.
+  schemaVersion: z.literal(2),
   bundleHash: z.string().regex(/^[0-9a-f]{64}$/),
   summary: z.object({
     total: z.number().int().nonnegative(),

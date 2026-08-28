@@ -95,13 +95,25 @@ describe("anvil benchmark — command and rendering", () => {
 
       // Verify report structure — typed against the exported report contract,
       // so a shape change here is a deliberate contract change, not drift.
-      expect(report.schemaVersion).toBe(1);
+      expect(report.schemaVersion).toBe(2);
+      expect(report.router).toBe("lexical");
+      expect(report.catalogSize).toBeGreaterThan(0);
       expect(Array.isArray(report.operations)).toBe(true);
       const firstOp: BenchmarkOperationResult | undefined = report.operations[0];
       const firstTask: BenchmarkTask | undefined = firstOp?.tasks[0];
       if (firstOp) expect(typeof firstOp.score).toBe("number");
-      if (firstTask) expect(typeof firstTask.pass).toBe("boolean");
+      if (firstTask) {
+        expect(typeof firstTask.pass).toBe("boolean");
+        // Every task carries the paired comparison — the bare baseline is what
+        // makes the curated score mean something.
+        expect(typeof firstTask.curated.pass).toBe("boolean");
+        expect(typeof firstTask.bare.pass).toBe("boolean");
+        expect(typeof firstTask.satisfiable).toBe("boolean");
+      }
       expect(report.summary).toBeDefined();
+      expect(report.summary.curatedRouted).toBeGreaterThanOrEqual(0);
+      expect(report.summary.bareRouted).toBeGreaterThanOrEqual(0);
+      expect(typeof report.summary.upliftPts).toBe("number");
       expect(report.summary.total).toBeGreaterThanOrEqual(0);
       expect(report.summary.passed).toBeGreaterThanOrEqual(0);
       expect(report.summary.score).toBeGreaterThanOrEqual(0);
@@ -200,7 +212,10 @@ describe("anvil benchmark — command and rendering", () => {
         (o) => o.state === "approved" && o.input.params.some((p) => p.required),
       );
       if (!op) throw new Error("payments fixture has no approved op with a required param");
-      op.skill.intentExamples = ["get a payment by id"];
+      // The intent is built from the operation's own id tokens, so the lexical
+      // router provably reaches this tool — the test is about satisfiability,
+      // and must not hinge on routing luck against sibling tools.
+      op.skill.intentExamples = [op.id.replace(/[._]/g, " ")];
       writeFileSync(airPath, stringifyYaml(air), "utf8");
 
       const io = bufferIO();
@@ -213,6 +228,67 @@ describe("anvil benchmark — command and rendering", () => {
       expect(scored?.tasks).toHaveLength(1);
       expect(scored?.tasks[0]?.pass).toBe(true);
       expect(scored?.tasks[0]?.failReason).toBeUndefined();
+    });
+  });
+
+  describe("Manifest-authored intent examples", () => {
+    it("routes tasks an operator declared in the manifest, end to end", async () => {
+      // The full chain: manifest intent_examples -> skill.intentExamples ->
+      // benchmark tasks, with the paired curated/bare routing on each. This is
+      // what lets an operator drive the benchmark without waiting on the
+      // enrich loop to author routing phrases.
+      const spec = `
+openapi: 3.0.0
+info: { title: Ledger, version: 1.0.0 }
+paths:
+  /invoices/{id}:
+    get:
+      operationId: getInvoice
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: ok } }
+  /invoices:
+    post:
+      operationId: createInvoice
+      responses: { "201": { description: created } }
+`;
+      const manifest = `
+service: { name: ledger }
+operations:
+  getInvoice:
+    intent_examples: ["get the invoice details", "show me an invoice"]
+    state: approved
+  createInvoice:
+    intent_examples: ["bill a customer", "raise a new invoice"]
+    side_effect: mutation
+    state: approved
+`;
+      const air = await compile({ spec, manifest, serviceId: "ledger" });
+      const dir = mkdtempSync(join(tmpdir(), "anvil-benchmark-manifest-"));
+      dirs.push(dir);
+      writeBundle(dir, generateBundle(air));
+
+      const io = bufferIO();
+      const code = await runBenchmarkCommand(dir, {}, io);
+      expect(code).toBe(0);
+      const report: BenchmarkReport = JSON.parse(
+        readFileSync(join(dir, "benchmark.report.json"), "utf8"),
+      );
+      expect(report.summary.total).toBe(4);
+      const get = report.operations.find((o) => o.operationId.includes("invoice"));
+      expect(get?.tasks.length).toBeGreaterThan(0);
+      // "get the invoice details" carries the get tool's own vocabulary, so
+      // even the lexical floor router must reach it. (An intent with no
+      // discriminating token — "show me an invoice" — is allowed to miss:
+      // the router is a documented floor, and that miss is the benchmark's
+      // signal that the surface lacks the routing vocabulary.)
+      const lookup = report.operations
+        .flatMap((o) => o.tasks)
+        .find((t) => t.intent === "get the invoice details");
+      expect(lookup?.curated.pass).toBe(true);
+      // And every task carries the paired baseline outcome.
+      for (const task of report.operations.flatMap((o) => o.tasks)) {
+        expect(typeof task.bare.pass).toBe("boolean");
+      }
     });
   });
 

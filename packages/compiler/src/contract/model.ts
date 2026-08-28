@@ -62,6 +62,8 @@ export const SemanticPredicate = z.enum([
   // identity / description
   "displayName",
   "description",
+  // agent-phrased routing examples (documentation; feeds skill + benchmark)
+  "intentExamples",
   "state",
   // agent-facing routing name (re-homes canonicalName / CLI / MCP together)
   "name.resource",
