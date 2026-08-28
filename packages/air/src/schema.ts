@@ -927,7 +927,15 @@ export const SQL_DIALECTS = [
  * Both bounds are ceilings the runtime enforces, and neither is an agent input.
  * A caller that could widen its own window could hold a connection open for as
  * long as it liked, which is the unbounded case wearing a parameter.
+ *
+ * The absolute ceilings live here, on the schema, rather than in manifest
+ * validation: a window is bounded because AIR refuses to represent an
+ * unbounded one, so a hand-edited `air.json` cannot smuggle in what a manifest
+ * would have been refused. Five minutes is deliberately generous for "what is
+ * happening right now" and deliberately hopeless as a durable consumer.
  */
+export const STREAM_MAX_EVENTS_CEILING = 10_000;
+export const STREAM_MAX_SECONDS_CEILING = 300;
 export const StreamContractSchema = z.object({
   /** The only stream wire Anvil reads. See `GraphqlSseBinding` for why not WebSocket. */
   transport: z.literal("graphql_sse"),
@@ -940,9 +948,9 @@ export const StreamContractSchema = z.object({
    */
   delivery: z.literal("at_most_once"),
   /** Stop after this many events arrive. */
-  maxEvents: z.number().int().positive(),
+  maxEvents: z.number().int().positive().max(STREAM_MAX_EVENTS_CEILING),
   /** Stop after this long, whether or not any event arrived. */
-  maxSeconds: z.number().int().positive(),
+  maxSeconds: z.number().int().positive().max(STREAM_MAX_SECONDS_CEILING),
 });
 export type StreamContract = z.infer<typeof StreamContractSchema>;
 

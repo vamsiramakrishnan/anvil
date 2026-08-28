@@ -9,6 +9,8 @@ import {
   type Operation,
   type RetryCondition,
   SQL_DIALECTS,
+  STREAM_MAX_EVENTS_CEILING,
+  STREAM_MAX_SECONDS_CEILING,
   snakeCase,
   type WebhookContract,
   type WebhookSignatureVerification,
@@ -365,6 +367,21 @@ export const OperationManifest = z.object({
    * (see `applyOperationManifest`).
    */
   async_contract: ManifestAsyncContract.optional(),
+  /**
+   * Resize a subscription's observation window. Only the ceilings are
+   * manifest-writable: the transport, the delivery semantics, and the
+   * existence of a bound are compiler-owned facts, so a manifest can widen or
+   * narrow the window of an operation that already streams but can never
+   * create a stream, change its wire, or remove the bound that makes the call
+   * terminate. The absolute ceilings are AIR's own (`StreamContractSchema`),
+   * so a manifest cannot author what a hand-edited document would be refused.
+   */
+  stream: z
+    .object({
+      max_events: z.number().int().min(1).max(STREAM_MAX_EVENTS_CEILING).optional(),
+      max_seconds: z.number().int().min(1).max(STREAM_MAX_SECONDS_CEILING).optional(),
+    })
+    .optional(),
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
 });
 export type OperationManifest = z.infer<typeof OperationManifest>;
@@ -928,6 +945,31 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
         "async_contract manifest patch left unset: no job_id_field was supplied and the " +
         "operation has no prior AsyncContract to merge onto, so no completion contract " +
         "could be constructed without inventing a coordinate.";
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    }
+  }
+
+  // Resize the observation window of an operation that already streams. The
+  // window's existence is what makes a subscription a call, and the compiler
+  // owns that fact — so a `stream` patch on an operation with no stream
+  // contract is refused with the reason rather than inventing one, exactly as
+  // an `async_contract` patch with nothing to anchor to is.
+  if (m.stream) {
+    if (op.stream) {
+      op.stream = {
+        ...op.stream,
+        ...(m.stream.max_events !== undefined ? { maxEvents: m.stream.max_events } : {}),
+        ...(m.stream.max_seconds !== undefined ? { maxSeconds: m.stream.max_seconds } : {}),
+      };
+      const note =
+        `Observation window resized by manifest: up to ${op.stream.maxEvents} event(s) ` +
+        `or ${op.stream.maxSeconds} second(s) per call.`;
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    } else {
+      const note =
+        "stream manifest patch left unset: the operation does not stream, and a manifest " +
+        "can resize an observation window but never create one — the window is a fact the " +
+        "compiler reads from the source, not a declaration.";
       if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
     }
   }

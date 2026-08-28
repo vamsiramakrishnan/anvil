@@ -101,6 +101,10 @@ export const SemanticPredicate = z.enum([
   // completes), so splitting it would let two overlays each supply half of a
   // contract that was never coherent as a pair.
   "asyncContract",
+  // observation-window ceilings for a streaming operation — one combined
+  // predicate for the same reason as `asyncContract`: the window is one shape,
+  // and two overlays each supplying half of it was never a coherent pair.
+  "stream",
   // catalog-derived schema knowledge (harness-supplied; skill-card context)
   "querySchema",
 ]);
