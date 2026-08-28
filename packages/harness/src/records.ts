@@ -162,12 +162,15 @@ export function summarizeTraffic(records: readonly SpooledRecord[]): TrafficSumm
  */
 export function trafficLicenses(summary: TrafficSummary): OperationClaim | undefined {
   const notFound = summary.errorCodes.not_found ?? 0;
+  // Unanimity is two comparisons: every recorded call errored, and every error
+  // was not_found. An earlier spelling also restated `successes === 0`, and
+  // the mutation gate proved the restatement dead — errors === calls already
+  // forbids a success, and a check that cannot fail is a check that cannot
+  // protect anything.
   if (
     summary.calls >= MIN_SAMPLES_FOR_CLAIM &&
-    summary.successes === 0 &&
-    summary.dryRuns === 0 &&
-    notFound === summary.errors &&
-    notFound === summary.calls
+    summary.errors === summary.calls &&
+    notFound === summary.errors
   ) {
     return { type: "deprecated", value: true, direction: "tighten" };
   }
