@@ -32,8 +32,10 @@ function registerProfiles(
   name: string,
   deprecated: boolean,
 ): void {
+  // stderr, never stdout: `--json` makes stdout a machine-readable contract,
+  // and a human banner in the middle of it is a parse error downstream.
   const warn = (): void => {
-    if (deprecated) ctx.io.out(DEPRECATION_LINE);
+    if (deprecated) ctx.io.err(DEPRECATION_LINE);
   };
   const sources = parent
     .command(name, deprecated ? { hidden: true } : {})
