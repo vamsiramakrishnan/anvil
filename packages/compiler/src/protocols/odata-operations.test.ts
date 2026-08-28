@@ -107,17 +107,101 @@ describe("OData v4 actions and functions", () => {
     expect(action).toBeDefined();
     expect(action.requestBody).toBeUndefined();
   });
+});
 
-  it("declines a bound operation and says why", () => {
-    // A bound action is addressed through a specific entity instance, and which
-    // instance is not something the metadata alone can answer.
-    const bound = V4.replace(
+describe("OData v4 bound operations", () => {
+  // "Which instance?" is not a guess when the binding type is exposed by
+  // exactly one keyed entity set: the instance's key is an ordinary required
+  // path parameter, the same one the set's own GET already asks for. So these
+  // lower — and only genuinely ambiguous shapes still decline, each naming its
+  // ambiguity.
+  const boundAction =
+    '<Action Name="Deactivate" IsBound="true">' +
+    '<Parameter Name="airport" Type="Trippin.Airport"/>' +
+    '<Parameter Name="reason" Type="Edm.String" Nullable="false"/>' +
+    "</Action>";
+
+  it("lowers a bound action through the one entity set that exposes its type", () => {
+    const doc = adaptOData(V4.replace('<Action Name="ResetDataSource"/>', boundAction));
+    const op = doc.paths?.["/Airports('{IcaoCode}')/Trippin.Deactivate"]?.post as Record<
+      string,
+      unknown
+    >;
+    expect(op).toBeDefined();
+    // The instance key is the address; the operation's own arguments are the body.
+    expect(op.parameters).toEqual([
+      { name: "IcaoCode", in: "path", required: true, schema: { type: "string" } },
+    ]);
+    const body = op.requestBody as {
+      content: Record<
+        string,
+        { schema: { properties: Record<string, unknown>; required?: string[] } }
+      >;
+    };
+    const schema = body.content["application/json"]?.schema;
+    expect(Object.keys(schema?.properties ?? {})).toEqual(["reason"]);
+    // The binding parameter is the addressed instance, never an agent input.
+    expect(schema?.properties).not.toHaveProperty("airport");
+  });
+
+  it("lowers a bound function to GET with its arguments inline after the key", () => {
+    const doc = adaptOData(
+      V4.replace(
+        '<Function Name="GetBusiest"><ReturnType Type="Trippin.Airport"/></Function>',
+        '<Function Name="Nearby" IsBound="true">' +
+          '<Parameter Name="airport" Type="Trippin.Airport"/>' +
+          '<Parameter Name="radiusKm" Type="Edm.Int32" Nullable="false"/>' +
+          '<ReturnType Type="Collection(Trippin.Airport)"/></Function>',
+      ),
+    );
+    const path = "/Airports('{IcaoCode}')/Trippin.Nearby(radiusKm={radiusKm})";
+    const op = (doc.paths?.[path] as Record<string, unknown>)?.get as Record<string, unknown>;
+    expect(op).toBeDefined();
+    expect((op.parameters as Array<{ name: string }>).map((p) => p.name)).toEqual([
+      "IcaoCode",
+      "radiusKm",
+    ]);
+  });
+
+  it("still declines a collection-bound operation, saying so", () => {
+    const doc = V4.replace(
       '<Action Name="ResetDataSource"/>',
-      '<Action Name="ShareTrip" IsBound="true"><Parameter Name="person" Type="Trippin.Airport"/></Action>',
+      '<Action Name="ResetAll" IsBound="true">' +
+        '<Parameter Name="airports" Type="Collection(Trippin.Airport)"/></Action>',
     );
     const diagnostics: Diagnostic[] = [];
-    adaptOData(bound, "t", diagnostics);
-    expect(diagnostics.map((d) => d.code)).toContain("odata_bound_operation_skipped");
+    adaptOData(doc, "t", diagnostics);
+    const skipped = diagnostics.find((d) => d.code === "odata_bound_operation_skipped");
+    expect(skipped?.message).toContain("bound to a collection");
+  });
+
+  it("still declines a binding type no entity set exposes", () => {
+    const doc = V4.replace(
+      '<Action Name="ResetDataSource"/>',
+      '<Action Name="Audit" IsBound="true"><Parameter Name="x" Type="Trippin.Ghost"/></Action>',
+    );
+    const diagnostics: Diagnostic[] = [];
+    adaptOData(doc, "t", diagnostics);
+    const skipped = diagnostics.find((d) => d.code === "odata_bound_operation_skipped");
+    expect(skipped?.message).toContain("no entity set");
+  });
+
+  it("still declines a binding type two entity sets expose, naming both", () => {
+    // Either address would be a guess, and a guessed address is the exact bug
+    // the wire model exists to prevent.
+    const doc = V4.replace(
+      '<EntitySet Name="Airports" EntityType="Trippin.Airport"/>',
+      '<EntitySet Name="Airports" EntityType="Trippin.Airport"/>' +
+        '<EntitySet Name="Heliports" EntityType="Trippin.Airport"/>',
+    ).replace(
+      '<Action Name="ResetDataSource"/>',
+      '<Action Name="Close" IsBound="true"><Parameter Name="a" Type="Trippin.Airport"/></Action>',
+    );
+    const diagnostics: Diagnostic[] = [];
+    adaptOData(doc, "t", diagnostics);
+    const skipped = diagnostics.find((d) => d.code === "odata_bound_operation_skipped");
+    expect(skipped?.message).toContain("Airports");
+    expect(skipped?.message).toContain("Heliports");
   });
 });
 

@@ -75,7 +75,10 @@ function isVersionLike(segment: string): boolean {
  * name and whether a key predicate was present.
  */
 function stripODataKey(segment: string): { resource: string; keyed: boolean } {
-  const match = /^([A-Za-z_]\w*)\(.*\)$/.exec(segment);
+  // The name may itself be dotted: a bound operation's segment is the
+  // namespace-qualified `Trippin.Nearby(radiusKm={radiusKm})`, and its inline
+  // argument list is wire syntax exactly like a key predicate — never name text.
+  const match = /^([A-Za-z_][\w.]*)\(.*\)$/.exec(segment);
   return match
     ? { resource: match[1] as string, keyed: true }
     : { resource: segment, keyed: false };
@@ -246,7 +249,24 @@ export function deriveNames(
   const lastStripped = concrete[concrete.length - 1];
   const odata = lastStripped !== undefined ? stripODataKey(lastStripped) : undefined;
   const lastRaw = odata?.resource ?? concrete[concrete.length - 1];
-  const decomposed = lastRaw !== undefined ? decomposeSegment(lastRaw) : undefined;
+  let decomposed = lastRaw !== undefined ? decomposeSegment(lastRaw) : undefined;
+  // An OData *bound* operation rides as `/Set(key)/Namespace.Operation`. The
+  // dotted segment's prefix is the schema namespace — never a resource — and
+  // the entity the operation acts on is the keyed set right before it. So the
+  // set names the resource and the operation names the action, which is how
+  // the same call reads in OData's own documentation. The keyed previous
+  // segment is what makes this unambiguous: only OData writes a key predicate
+  // into a segment, so a Slack-style `chat.postMessage` (no keyed segment
+  // before it) never takes this branch.
+  if (decomposed?.rpcAction !== undefined && concrete.length > 1) {
+    const prev = stripODataKey(concrete[concrete.length - 2] as string);
+    if (prev.keyed) {
+      decomposed = {
+        resource: decomposeSegment(prev.resource).resource,
+        rpcAction: decomposed.rpcAction,
+      };
+    }
+  }
   // A static trailing path segment that names a verb from the shared action
   // vocabulary (classify.ts) is a verb over the resource before it, not a
   // sub-resource itself — e.g. `GET /field/search` searches fields, it does not

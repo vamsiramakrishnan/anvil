@@ -28,6 +28,7 @@ import type { OpenApiDocument } from "../parse.js";
 import {
   collectOdataOperations,
   type OdataOperationModel,
+  type OdataParam,
   odataVersion,
 } from "./odata-operations.js";
 import { childrenNamed, findAll, parseXml, type XmlElement } from "./xml.js";
@@ -155,6 +156,32 @@ function sapAllows(set: XmlElement, attr: string): boolean {
   return set.attrs[`sap:${attr}`] !== "false";
 }
 
+/**
+ * The key segment an instance of this entity type is addressed by —
+ * `('{ID}')`, `({Seq})`, or `(Region='{Region}',Id={Id})` — with each key as a
+ * required path parameter. Identical spelling to the entity set's own item
+ * path, because a bound operation and a GET address the same instance.
+ */
+function keySegmentOf(et: EntityTypeModel): { segment: string; params: OdataParam[] } | undefined {
+  if (et.keys.length === 0) return undefined;
+  const templ = (k: string) => {
+    const edm = et.properties.get(k)?.edm ?? "Edm.String";
+    return edmLocal(edm) === "String" ? `'{${k}}'` : `{${k}}`;
+  };
+  const segment =
+    et.keys.length === 1
+      ? `(${templ(et.keys[0] as string)})`
+      : `(${et.keys.map((k) => `${k}=${templ(k)}`).join(",")})`;
+  return {
+    segment,
+    params: et.keys.map((k) => ({
+      name: k,
+      type: et.properties.get(k)?.edm ?? "Edm.String",
+      required: true,
+    })),
+  };
+}
+
 export function adaptOData(
   source: string,
   title?: string,
@@ -199,6 +226,7 @@ export function adaptOData(
   const namespaceOf = (schema: XmlElement) => schema.attrs.Namespace ?? "";
   const paths: Record<string, Record<string, unknown>> = {};
 
+  const setsByType = new Map<string, string[]>();
   for (const schema of schemas) {
     const ns = namespaceOf(schema);
     for (const container of childrenNamed(schema, "EntityContainer")) {
@@ -206,7 +234,9 @@ export function adaptOData(
         const setName = set.attrs.Name;
         if (!setName) continue;
         // EntitySet.EntityType is a namespace-qualified reference; match locally.
-        const et = entityTypes.get(edmLocal(set.attrs.EntityType ?? "")) ?? undefined;
+        const typeLocal = edmLocal(set.attrs.EntityType ?? "");
+        const et = entityTypes.get(typeLocal) ?? undefined;
+        if (et) setsByType.set(typeLocal, [...(setsByType.get(typeLocal) ?? []), setName]);
         buildEntitySetPaths(paths, setName, et, ns, set);
       }
     }
@@ -214,9 +244,18 @@ export function adaptOData(
 
   // The other half of the service: everything it *does*, as opposed to
   // everything it stores. Emitted after the entity sets so a function import
-  // sharing a name with a set cannot displace it.
+  // sharing a name with a set cannot displace it. The bound context is what
+  // lets an instance-bound operation be addressed through the one entity set
+  // that exposes its binding type.
   const version = odataVersion(root, schemas);
-  for (const operation of collectOdataOperations(schemas, version, diagnostics)) {
+  const boundContext = {
+    setsByType,
+    keySegmentFor: (typeLocal: string) => {
+      const et = entityTypes.get(typeLocal);
+      return et ? keySegmentOf(et) : undefined;
+    },
+  };
+  for (const operation of collectOdataOperations(schemas, version, diagnostics, boundContext)) {
     buildOperationPath(paths, operation, entityTypes, complexNames);
   }
 

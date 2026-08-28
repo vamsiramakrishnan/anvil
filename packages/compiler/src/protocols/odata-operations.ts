@@ -42,10 +42,24 @@ export interface OdataOperationModel {
   entitySet: string | undefined;
 }
 
-interface OdataParam {
+export interface OdataParam {
   name: string;
   type: string;
   required: boolean;
+}
+
+/**
+ * What the adapter knows about entity sets, handed in so a *bound* operation
+ * can be addressed. A bound action or function is invoked through an entity
+ * instance — `/Products('HT-1000')/NS.Activate` — so lowering one needs
+ * exactly two facts this module does not otherwise hold: which entity set
+ * exposes the binding type, and how that set spells its key segment.
+ */
+export interface OdataBoundContext {
+  /** Local entity type name → the entity sets that expose it. */
+  setsByType: Map<string, string[]>;
+  /** Local entity type name → the key segment (`('{ID}')`) and its params. */
+  keySegmentFor: (typeLocal: string) => { segment: string; params: OdataParam[] } | undefined;
 }
 
 /** An attribute read by local name, so a prefix (`m:HttpMethod`, `sap:label`)
@@ -146,16 +160,20 @@ function pathFor(name: string, params: OdataParam[], version: OdataVersion): str
 /**
  * Every invocable operation the container exposes.
  *
- * Bound operations are declined with a reason rather than guessed at: a bound
- * action is addressed through an entity instance
- * (`/People('russellwhyte')/NS.ShareTrip`), so calling one means first knowing
- * which instance, and the binding parameter's key is not something Anvil can
- * synthesize from the metadata alone.
+ * A *bound* operation is addressed through an entity instance —
+ * `/Products('HT-1000')/NS.Activate` — so it lowers whenever the address can
+ * be constructed without guessing: the binding type is exposed by exactly one
+ * entity set, and that set has a key. The instance's key becomes an ordinary
+ * required path parameter, the same one the entity set's own GET already asks
+ * for. What still declines, each with its reason: a collection-bound
+ * operation, a binding type no entity set exposes, and a binding type exposed
+ * by several sets (either address would be a guess).
  */
 export function collectOdataOperations(
   schemas: readonly XmlElement[],
   version: OdataVersion,
   diagnostics?: Diagnostic[],
+  bound?: OdataBoundContext,
 ): OdataOperationModel[] {
   const found: OdataOperationModel[] = [];
   const seen = new Set<string>();
@@ -177,24 +195,92 @@ export function collectOdataOperations(
     }
   }
 
-  const declineBound = (name: string, what: string): void => {
+  const declineBound = (name: string, what: string, reason: string): void => {
     diagnostics?.push({
       level: "warning",
       code: "odata_bound_operation_skipped",
       path: name,
       message:
-        `Anvil did not emit OData ${what} '${name}': it is bound to an entity type, so it is ` +
-        `addressed through a specific instance and Anvil cannot synthesize which one from the ` +
-        `metadata alone. Model it in an Anvil manifest if the service needs it.`,
+        `Anvil did not emit OData ${what} '${name}': ${reason} ` +
+        `Model it in an Anvil manifest if the service needs it.`,
     });
   };
 
   for (const schema of schemas) {
+    const ns = schema.attrs.Namespace ?? "";
     for (const kind of ["Action", "Function"] as const) {
       for (const el of childrenNamed(schema, kind)) {
-        if (attrLocal(el, "IsBound") === "true" && el.attrs.Name) {
-          declineBound(el.attrs.Name, kind.toLowerCase());
+        if (attrLocal(el, "IsBound") !== "true" || !el.attrs.Name) continue;
+        const name = el.attrs.Name;
+        const what = kind.toLowerCase();
+        // The binding parameter is the first one, by specification; its type
+        // names what the operation hangs off.
+        const bindingParam = childrenNamed(el, "Parameter")[0];
+        const bindingType = bindingParam?.attrs.Type ?? "";
+        if (/^Collection\(/.test(bindingType)) {
+          declineBound(
+            name,
+            what,
+            `it is bound to a collection (${bindingType}), and Anvil lowers instance-bound ` +
+              `operations only.`,
+          );
+          continue;
         }
+        const typeLocal = bindingType.split(".").pop() ?? "";
+        const sets = bound?.setsByType.get(typeLocal) ?? [];
+        if (sets.length === 0) {
+          declineBound(
+            name,
+            what,
+            `it is bound to '${bindingType}', which no entity set in this container exposes, ` +
+              `so there is no address to reach an instance through.`,
+          );
+          continue;
+        }
+        if (sets.length > 1) {
+          declineBound(
+            name,
+            what,
+            `it is bound to '${bindingType}', which ${sets.length} entity sets expose ` +
+              `(${sets.join(", ")}) — either address would be a guess.`,
+          );
+          continue;
+        }
+        const keyed = bound?.keySegmentFor(typeLocal);
+        if (!keyed) {
+          declineBound(
+            name,
+            what,
+            `it is bound to '${bindingType}', whose entity type declares no key, so an ` +
+              `instance cannot be addressed.`,
+          );
+          continue;
+        }
+
+        const setName = sets[0] as string;
+        const params = parametersOf(el, bindingParam?.attrs.Name);
+        const isAction = kind === "Action";
+        const qualified = ns ? `${ns}.${name}` : name;
+        // v4 addresses a bound function's arguments inline after the qualified
+        // name; a bound action takes them as a JSON body. Both hang off the
+        // instance: /Set(key)/Namespace.Operation .
+        const inline = isAction
+          ? ""
+          : `(${params
+              .map((p) => `${p.name}=${literalTemplate(p.type, `{${p.name}}`, "4")}`)
+              .join(",")})`;
+        const id = seen.has(name) ? `${setName}_${name}` : name;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        found.push({
+          name: id,
+          verb: isAction ? "post" : "get",
+          path: `/${setName}${keyed.segment}/${qualified}${inline}`,
+          pathParams: isAction ? [...keyed.params] : [...keyed.params, ...params],
+          bodyParams: isAction ? params : [],
+          returnType: childrenNamed(el, "ReturnType")[0]?.attrs.Type,
+          entitySet: setName,
+        });
       }
     }
 
@@ -250,7 +336,7 @@ export function collectOdataOperations(
           found.push({
             name,
             verb,
-            path: pathFor(name, params, "2"),
+            path: pathFor(name, params, version),
             pathParams: params,
             bodyParams: [],
             returnType: imported.attrs.ReturnType,
