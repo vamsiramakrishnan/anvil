@@ -11,6 +11,16 @@ What landed, and what deliberately did not:
   `resolveNameCollisions`; and a `service_prefix_stutter` compile **warning**
   when an operator-chosen service id duplicates the operationIds' leading word
   (the toolName join itself is untouched).
+- **One gate this document missed, found by the corpus**: rules A and C run
+  only for source kinds whose paths follow resource grammar (OpenAPI/Swagger,
+  Discovery, Postman, OData). The six measured estates never exercised an
+  adapter-lowered RPC kind; NetSuite's WSDL — lowered to
+  `/NetSuitePortType/<methodName>` — has operations literally named `get`,
+  `add`, `getAll`, and unguarded rule C (and rule A, via `getAll`) collapsed
+  them onto the synthetic port-type wrapper as their resource, the exact
+  failure mode §6 documents for GraphQL's single-word guard. `normalize` now
+  passes the estate path context only for resource-grammar kinds, and
+  `deriveNames` re-homes nothing without it.
 - **Still rejected / not implemented**: rule B as a compiler rule (§6 stands);
   rewriting `spec_authored` stutters; using `ACTION_VERB_WORDS` to disqualify
   segments; the "last NOUN-ish segment" idea; everything in §"What A+C do not

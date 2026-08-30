@@ -237,7 +237,19 @@ literal sibilant class `(ch|sh|x|z|ss)es` had to be narrowed (`z` → `zz`, plus
 a small `-che` stem list) because it minted new non-words on GitHub's real
 estate (`caches → cach`, `machine-sizes → machine-siz`).
 
+The corpus caught what the six measured estates could not: NetSuite's WSDL
+lowers to `/NetSuitePortType/get|add|getAll`, and unguarded rules A/C
+collapsed those bare-CRUD method names onto the synthetic wrapper as their
+resource — the same failure mode the trailing-verb rule's single-word guard
+documents for GraphQL. Fix: `normalize` hands `deriveNames` the estate path
+context only for resource-grammar source kinds (openapi/swagger/discovery/
+postman/odata); without it the rules stay off. Also found stale-at-base:
+`tools/corpus/expected/{box,adyen,adobe_aem}.json` pinned pre-subsetFallback
+collision tokens (verified identical under the base compiler) — refreshed
+alongside plaid's deliberately-left-stale pin.
+
 The one-line lesson: a rule measured against real estates before it ships
-lands exactly on its prediction — and the two places it drifted (three
-missed singulars, the sibilant class) were both places where a hand count or
-a spelled-out regex had NOT been machine-checked against the estates first.
+lands exactly on its prediction — and every place it drifted (three missed
+singulars, the sibilant class, the WSDL wrapper) was a place where a hand
+count, a spelled-out regex, or an unmeasured source kind had NOT been
+machine-checked against real estates first.

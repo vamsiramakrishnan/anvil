@@ -706,12 +706,20 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
   // Estate-wide path knowledge for the naming pass: the bare-CRUD-verb rule in
   // `deriveNames` must know which words the estate uses as real collections
   // (non-terminal segments) before it may treat a trailing verb word as a
-  // method. Built once, from every path that carries at least one operation.
-  const estate = estatePathContext(
-    Object.entries(paths)
-      .filter(([, item]) => HTTP_METHODS.some((m) => item[m]))
-      .map(([p]) => p),
-  );
+  // method. Built once, from every path that carries at least one operation —
+  // and ONLY for source kinds whose paths follow resource grammar. An
+  // adapter-lowered RPC kind (WSDL/GraphQL/protobuf/MCP) writes synthetic
+  // `/<Wrapper>/<methodName>` paths where a bare CRUD method name (NetSuite's
+  // `get`, `add`) must stay the resource; without the context, `deriveNames`
+  // keeps its hands off (see `EstatePathContext`).
+  const RESOURCE_PATH_KINDS = new Set(["openapi", "swagger", "discovery", "postman", "odata"]);
+  const estate = RESOURCE_PATH_KINDS.has(parsed.kind)
+    ? estatePathContext(
+        Object.entries(paths)
+          .filter(([, item]) => HTTP_METHODS.some((m) => item[m]))
+          .map(([p]) => p),
+      )
+    : undefined;
 
   for (const [path, pathItem] of Object.entries(paths)) {
     // Path-item-level parameters apply to every method below (this is how

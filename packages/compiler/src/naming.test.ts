@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { type Operation, Operation as OperationSchema } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { compile } from "./compile.js";
-import { resolveNameCollisions, singularize } from "./naming.js";
+import { deriveNames, estatePathContext, resolveNameCollisions, singularize } from "./naming.js";
 
 /**
  * The naming pass's resource-derivation rules and the singularize fix, from
@@ -149,6 +149,31 @@ describe("resource derivation for verb-shaped trailing segments (rules A and C)"
     const op = air.operations[0];
     expect(op?.effect.resource).toBe("field");
     expect(op?.cli.command).toBe("jira field search");
+  });
+
+  it("never re-homes on an adapter-lowered RPC estate (no estate context)", () => {
+    // A WSDL/GraphQL/protobuf adapter lowers every operation to
+    // `/<SyntheticWrapper>/<methodName>`. NetSuite's SOAP port declares bare
+    // CRUD method names (`get`, `add`, `getAll`); re-homing them would collapse
+    // the whole estate onto the wrapper as its resource. normalize passes no
+    // estate context for those kinds, and without it the rules stay off.
+    const lowered = deriveNames("netsuite", "/NetSuitePortType/get", "post", {
+      operationId: "get",
+    });
+    expect(lowered.resource).toBe("get");
+    const bulk = deriveNames("netsuite", "/NetSuitePortType/getAll", "post", {
+      operationId: "getAll",
+    });
+    expect(bulk.resource).toBe("getAll");
+    // The same shapes DO re-home on a resource-grammar estate.
+    const rest = deriveNames(
+      "plaid",
+      "/transactions/get",
+      "post",
+      { operationId: "transactionsGet" },
+      estatePathContext(["/transactions/get"]),
+    );
+    expect(rest.resource).toBe("transactions");
   });
 
   it("leaves GraphQL-style multi-word field segments as the resource", async () => {

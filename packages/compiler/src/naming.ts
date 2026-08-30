@@ -152,6 +152,15 @@ function isBulkVerbSegment(segment: string): boolean {
  * statistical pre-filter applied BEFORE the bare-CRUD-verb rule, insurance
  * against the one shape that rule could misread. It fired zero times on all six
  * estates the design doc measured; it exists so the seventh estate is safe too.
+ *
+ * The context is also the "this estate's paths follow resource grammar" signal:
+ * `normalize` builds one only for source kinds whose paths ARE resource paths
+ * (OpenAPI/Swagger, Discovery, Postman, OData). An adapter-lowered RPC kind
+ * (WSDL, GraphQL, protobuf, MCP) writes `/<SyntheticWrapper>/<methodName>`
+ * paths, where re-homing a bare verb name (NetSuite's `get`, `add`, `getAll`)
+ * would collapse every such operation onto the wrapper as its resource — the
+ * exact failure the trailing-verb rule's single-word guard exists to prevent.
+ * No context, no re-homing.
  */
 export interface EstatePathContext {
   /** Lower-cased concrete non-terminal segments across every path in the estate. */
@@ -215,17 +224,19 @@ function rehomeMethodSegments(
     }
   }
   if (i < 0) return resource;
+  // Both rules need the estate context — for rule C's non-terminal guard, and
+  // because its absence marks an adapter-lowered RPC estate (see
+  // `EstatePathContext`) whose method-name segments must stay the resource.
+  if (!estate) return resource;
   const start = i;
   // Rule A: bulk-qualified verb segments are methods.
   while (i > 0 && isBulkVerbSegment(segments[i] as string)) i--;
   // Rule C: bare CRUD-verb segments are methods — unless the word names a real
   // collection somewhere in this estate (the non-terminal guard).
-  if (estate) {
-    while (i > 0) {
-      const word = (segments[i] as string).toLowerCase();
-      if (!CRUD_SEGMENT_WORDS.has(word) || estate.nonTerminalSegments.has(word)) break;
-      i--;
-    }
+  while (i > 0) {
+    const word = (segments[i] as string).toLowerCase();
+    if (!CRUD_SEGMENT_WORDS.has(word) || estate.nonTerminalSegments.has(word)) break;
+    i--;
   }
   return i === start ? resource : decomposeSegment(segments[i] as string).resource;
 }

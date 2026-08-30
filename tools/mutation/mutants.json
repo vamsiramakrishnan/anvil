@@ -705,8 +705,8 @@
       "id": "naming/rehome-non-terminal-guard",
       "file": "packages/compiler/src/naming.ts",
       "control": "The bare-CRUD-verb re-homing rule must never claim a verb word the estate itself uses as a real collection (a non-terminal path segment). Delete the guard and an estate with /count/{id}/lines loses its `count` resource to the rule — the exact over-reach the estate-wide pre-filter exists to prevent. It fired zero times on all six measured estates; that makes it insurance, and untested insurance is decoration.",
-      "find": "      if (!CRUD_SEGMENT_WORDS.has(word) || estate.nonTerminalSegments.has(word)) break;",
-      "replace": "      if (!CRUD_SEGMENT_WORDS.has(word)) break;",
+      "find": "    if (!CRUD_SEGMENT_WORDS.has(word) || estate.nonTerminalSegments.has(word)) break;",
+      "replace": "    if (!CRUD_SEGMENT_WORDS.has(word)) break;",
       "tests": [
         "packages/compiler/src/naming.test.ts"
       ]
