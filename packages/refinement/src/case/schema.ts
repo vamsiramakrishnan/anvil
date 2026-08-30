@@ -54,6 +54,7 @@ export const zValidationCheckId = z.enum([
   "response_projection_valid",
   "idempotency_carrier_resolves",
   "pagination_binding_resolves",
+  "resource_grounded_in_contract",
 ]);
 export const zEvalFamily = z.enum([
   "operation_routing",

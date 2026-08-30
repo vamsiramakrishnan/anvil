@@ -11,7 +11,9 @@ import {
   agentProjectionIssues,
   agentPropKey,
   resolveIdempotencyCarrier,
+  snakeCase,
 } from "@anvil/air";
+import { concretePathSegments, normalizedWords, wordGrounds } from "../vocabulary.js";
 import {
   type EvidenceStrength,
   type JsonValue,
@@ -568,6 +570,54 @@ const CHECKS: Record<ValidationCheckId, Check> = {
     }
 
     return ok("pagination_binding_resolves", "the proposed pagination binding resolves cleanly");
+  },
+
+  /**
+   * The boundary that makes an unreliable harness safe on `rehome-resource`:
+   * every token of a proposed routing resource must be a word the operation's
+   * OWN contract states — its concrete path segments, its canonical name, or
+   * its display name (plural-insensitive, tolerant of the compiler
+   * singularizer's known over-strip so `release` grounds against `releases`).
+   * An invented word — however plausible — is refused deterministically here,
+   * never left for a reviewer to catch.
+   */
+  resource_grounded_in_contract(_skill, proposal, context) {
+    const set = proposal.patch.set;
+    if (!("resource" in set)) {
+      return ok("resource_grounded_in_contract", "patch does not touch the routing resource");
+    }
+    const value = set.resource;
+    if (typeof value !== "string" || snakeCase(value).length === 0) {
+      return fail("resource_grounded_in_contract", "resource must be a non-empty string");
+    }
+    const op = context.operation;
+    if (!op) {
+      return fail("resource_grounded_in_contract", "no operation in context to ground against");
+    }
+    const contractWords = new Set<string>();
+    for (const segment of concretePathSegments(op.sourceRef.path)) {
+      for (const word of normalizedWords(segment)) contractWords.add(word);
+    }
+    for (const word of normalizedWords(`${op.canonicalName} ${op.displayName}`)) {
+      contractWords.add(word);
+    }
+    const proposedWords = normalizedWords(snakeCase(value));
+    if (proposedWords.length === 0) {
+      return fail("resource_grounded_in_contract", "resource contains no content words");
+    }
+    const ungrounded = proposedWords.filter(
+      (word) => ![...contractWords].some((contractWord) => wordGrounds(word, contractWord)),
+    );
+    if (ungrounded.length > 0) {
+      return fail(
+        "resource_grounded_in_contract",
+        `proposed resource word(s) not stated by the operation's own path or name text: ${ungrounded.join(", ")}`,
+      );
+    }
+    return ok(
+      "resource_grounded_in_contract",
+      "every proposed resource word is grounded in the operation's own path or name vocabulary",
+    );
   },
 };
 

@@ -15,8 +15,10 @@ import {
 } from "@anvil/air";
 import { compareSeverity, type Deficiency, makeDeficiency, severityRank } from "./deficiency.js";
 import { detectFieldNames } from "./detectors/field-names.js";
+import { detectResourceContradictions } from "./detectors/resource-name.js";
 import { surfacedFields } from "./fields.js";
 import { type SemanticTarget, targetKey, targetOperationId } from "./target.js";
+import { normalizedWords } from "./vocabulary.js";
 
 /* -------------------------------------------------------------------------- */
 /* Small helpers — pure, deterministic, no AIR mutation.                       */
@@ -92,14 +94,6 @@ const UI_ENVELOPE_FIELDS = new Set([
 ]);
 
 const MIN_UI_ENVELOPE_SIGNALS = 2;
-
-function normalizedWords(value: string): string[] {
-  return value
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[^A-Za-z0-9]+/)
-    .map((word) => word.toLowerCase())
-    .filter(Boolean);
-}
 
 function normalizeFieldName(value: string): string {
   return normalizedWords(value).join("");
@@ -360,6 +354,17 @@ const weakNames: Detector = {
 const fieldNames: Detector = {
   name: "agent-field-names",
   detect: detectFieldNames,
+};
+
+/**
+ * "Rule B"'s safe home (design doc §6): the derived `effect.resource` shares no
+ * content token with the operation's own name text. A structural fact only —
+ * vendors use synonyms, so absence from the name proves nothing — hence a
+ * reviewable deficiency carrying the full evidence bundle, never a rewrite.
+ */
+const resourceContradictedByOwnName: Detector = {
+  name: "resource-contradicted-by-own-name",
+  detect: detectResourceContradictions,
 };
 
 const indistinctDescriptions: Detector = {
@@ -842,6 +847,7 @@ export const DETECTORS: readonly Detector[] = [
   undocumentedPagination,
   weakNames,
   fieldNames,
+  resourceContradictedByOwnName,
   indistinctDescriptions,
   capabilityRouting,
   operationIntentExamples,

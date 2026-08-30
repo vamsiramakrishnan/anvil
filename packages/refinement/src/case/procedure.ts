@@ -243,12 +243,57 @@ const investigateUiProjection: InvestigationProcedure = {
   ],
 };
 
+const rehomeResource: InvestigationProcedure = {
+  skill: "rehome-resource",
+  question: (t) =>
+    `Decide the routing resource of ${targetNoun(t)}: the path-derived resource never appears in the operation's own name text. Is the name a synonym for the path segment, or is the derived resource wrong?`,
+  searchHints: [
+    "the vendor's own wording: the operation's summary, description, and docs for this endpoint",
+    "sibling operations under the same parent path segment (carried in the task's deficiency facts)",
+    "the handler/model/serializer names in the implementation for the entity this endpoint acts on",
+    "the estate's naming-style facts in the task (REST resource grammar vs RPC-over-HTTP)",
+  ],
+  steps: [
+    {
+      phase: "research",
+      instruction:
+        "Read the path, the name text, and the sibling operations. Establish what entity this operation actually acts on — not which segment happens to precede it.",
+    },
+    {
+      phase: "research",
+      instruction:
+        "Check for a synonym pair (hook/webhook, content/file): when the name and the path spell the SAME entity differently, the path's word is usually still the right resource and no change is needed.",
+    },
+    {
+      phase: "extract",
+      instruction:
+        "Record claims naming the entity, each tied to a source span; keep contradictions visible.",
+    },
+    {
+      phase: "synthesize",
+      instruction:
+        "Propose ONLY `resource`, and only a word the operation's own path or name text states — the deterministic grounding check refuses anything else. When the evidence does not decide, decline honestly.",
+    },
+    {
+      phase: "critique",
+      instruction:
+        "Try to falsify the choice: a scope segment (org, repo, user) that merely corroborates the name is the audited failure mode, not a resource.",
+    },
+    {
+      phase: "test",
+      instruction:
+        "Record the routing checks the re-home should improve; the closure a reviewer applies is the manifest `name: { resource }` override.",
+    },
+  ],
+};
+
 const PROCEDURES: Record<string, InvestigationProcedure> = {
   "describe-field": describeField,
   "describe-operation": describeOperation,
   "generate-examples": generateExamples,
   "enrich-errors": enrichErrors,
   "investigate-ui-projection": investigateUiProjection,
+  "rehome-resource": rehomeResource,
 };
 
 /**

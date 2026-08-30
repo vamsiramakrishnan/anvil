@@ -127,6 +127,50 @@ operations:
 Anvil reprojects the canonical name, CLI command, MCP tool, and skill reference
 together while preserving the operation's stable identity.
 
+### When the derived resource contradicts the operation's own name
+
+`anvil refine plan` raises `resource_contradicted_by_own_name` when an
+operation's path-derived routing resource never appears in its own name text —
+GitHub's `/orgs/{org}/hooks/{hook_id}` derives resource `hook` while the
+vendor's name says "webhook". This is deliberately a **detector, not a compiler
+rewrite**: vendors use synonyms, so absence from the name proves nothing (a
+measured audit of the automatic rule found more than half of its "fixes"
+semantically wrong). What is deterministic runs in code; the grey area is
+handed, with evidence, to a decision-maker:
+
+```bash
+# 1. Detect — deterministic, read-only.
+anvil refine plan generated/service
+
+# 2. Export one hash-bound task for the contradicted operation. Its facts carry
+#    the path, method, segments, operationId, name text, derived resource and
+#    action, the sibling operations on the same path, and the estate's naming
+#    style — everything a coding harness needs to decide.
+anvil refine export-task generated/service "operation:<id>" \
+  --skill rehome-resource --out task.json
+
+# 3. Any coding harness investigates and returns one submission JSON.
+
+# 4. Import: deterministic validation re-runs before anything can reach review.
+#    A proposed resource that is not a word the operation's own path or name
+#    text states is REFUSED (`resource_grounded_in_contract`); a valid proposal
+#    ALWAYS lands at review tier — never auto.
+anvil refine import-proposal generated/service task.json submission.json --out pack/
+
+# 5. A person decides, and only the reviewed bytes apply.
+anvil refine review pack/
+anvil refine approve pack/ <refinement-id> --reviewer you@example.com --reason "..."
+anvil refine apply-pack generated/service pack/
+```
+
+The durable closure is this manifest's `name: { resource }` override: record
+the decided resource here and recompile, and every routing surface reprojects
+together. The heuristic executor (`anvil refine run --skill rehome-resource`)
+proposes only the trivially safe subset — a non-word stem the old singularizer
+produced (`releas`) whose real word the operation's own name spells
+(`release`); every synonym question (`hook` vs `webhook`) goes to the harness
+and then to a reviewer.
+
 ## Auth without secrets
 
 The manifest describes how credentials are resolved; it must not contain

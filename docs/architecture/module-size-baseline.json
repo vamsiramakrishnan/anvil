@@ -87,8 +87,8 @@
       "plan": "One vendor adapter. Per-vendor files are the intended boundary."
     },
     "packages/refinement/src/skills/executor.ts": {
-      "lines": 995,
-      "plan": "Watch."
+      "lines": 947,
+      "plan": "Banked: singularize/pluralize/projectRoutingNames/concretePathSegments lifted to src/vocabulary.ts (shared with the resource-contradiction detector and the grounding validation check), and the rehome-resource heuristic lives in skills/rehome.ts. Watch."
     },
     "packages/compiler/src/disclosure-bom.ts": {
       "lines": 992,
@@ -103,8 +103,8 @@
       "plan": "Watch. Raised deliberately from 974 to declare, in words, the protocol facade this lane has always silently relied on: the generated mock is built from the same synthesized coordinates the bundle sends to, which is why a SOAP bundle passed here while being unable to make a real call. Both the MCP child env and the CLI spawn env carry it, because wire-agreement compares the two and a refusal on one side is not a disagreement."
     },
     "packages/refinement/src/detect.ts": {
-      "lines": 948,
-      "plan": "Deterministic deficiency detection over AIR; cohesive. Watch."
+      "lines": 917,
+      "plan": "Deterministic deficiency detection over AIR; cohesive. normalizedWords lifted to src/vocabulary.ts; per-detector logic that outgrows a screen moves to src/detectors/ (field-names.ts, resource-name.ts are the pattern). Watch."
     },
     "packages/compiler/src/decycle.ts": {
       "lines": 922,
