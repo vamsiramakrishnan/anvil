@@ -105,7 +105,9 @@ function exampleFromSchema(field: FieldContext): { value: JsonValue; ref: string
 // The corroboration tokenizer lives in ../vocabulary.js (one home for every
 // surface that asks "do these two names speak the same vocabulary"); re-exported
 // here because this module is where its first caller and its tests grew up.
-export { routingTokens } from "../vocabulary.js";
+import { routingTokens } from "../vocabulary.js";
+
+export { routingTokens };
 
 export class HeuristicSkillExecutor implements SkillExecutor {
   readonly name = "heuristic";
