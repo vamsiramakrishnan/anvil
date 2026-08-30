@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
@@ -641,6 +641,75 @@ describe("anvil observe speaks the operator envelope", () => {
     const envelope = expectRefusalContract(result, "observe bad config --json");
     expect(envelope.reportType).toBe("anvil.observe-error");
     expect(envelope.code).toBe("observe_config_invalid");
+  });
+});
+
+describe("anvil capability propose speaks the operator envelope", () => {
+  /** A compiled bundle, the only input both propose modes need. */
+  async function bundle(): Promise<string> {
+    const dir = join(work, "propose-bundle");
+    const spec = join(work, "propose-svc.yaml");
+    writeFileSync(
+      spec,
+      `openapi: 3.0.3\ninfo: { title: Svc, version: 1.0.0 }\npaths:\n  /things:\n    get:\n      operationId: listThings\n      tags: [things]\n      responses: { "200": { description: ok } }\n`,
+      "utf8",
+    );
+    mkdirSync(dir, { recursive: true });
+    expect((await run(["compile", spec, "--out", dir, "--service", "svc"])).code).toBe(0);
+    return dir;
+  }
+
+  it("emits spec-discovery proposals as one document", async () => {
+    const result = await run(["capability", "propose", await bundle(), "--json"]);
+    expect(result.code).toBe(0);
+    const envelope = expectJsonContract(result, "capability propose --json");
+    expect(envelope.reportType).toBe("anvil.capability-proposals");
+  });
+
+  it("refuses a spool directory that is not there as a document", async () => {
+    const result = await run([
+      "capability",
+      "propose",
+      await bundle(),
+      "--from-records",
+      join(work, "no-such-spool"),
+      "--json",
+    ]);
+    const envelope = expectRefusalContract(result, "capability propose bad spool --json");
+    expect(envelope.reportType).toBe("anvil.capability-propose-error");
+    expect(envelope.code).toBe("capability_propose_records_missing");
+  });
+
+  it("refuses --out without --from-records as a document", async () => {
+    const result = await run([
+      "capability",
+      "propose",
+      await bundle(),
+      "--out",
+      join(work, "report.json"),
+      "--json",
+    ]);
+    const envelope = expectRefusalContract(result, "capability propose stray --out --json");
+    expect(envelope.code).toBe("capability_propose_out_without_records");
+  });
+
+  it("refuses to write its report inside the bundle it read", async () => {
+    const dir = await bundle();
+    const spool = join(work, "propose-spool");
+    mkdirSync(spool, { recursive: true });
+    const result = await run([
+      "capability",
+      "propose",
+      dir,
+      "--from-records",
+      spool,
+      "--out",
+      join(dir, "observed.report.json"),
+      "--json",
+    ]);
+    const envelope = expectRefusalContract(result, "capability propose --out inside bundle --json");
+    expect(envelope.code).toBe("capability_propose_out_inside_bundle");
+    expect(existsSync(join(dir, "observed.report.json"))).toBe(false);
   });
 });
 

@@ -1,10 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AirDocument, airFromYaml, airToYaml } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
+import { JsonlRecordSpool } from "@anvil/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runAnvilCli } from "./anvil-cli.js";
 import { bufferIO } from "./io.js";
@@ -51,7 +52,7 @@ describe("anvil capability", () => {
     const io = bufferIO();
     expect(await runAnvilCli(["capability"], { io })).toBe(0);
     expect(io.text()).toContain("Usage: anvil capability");
-    expect(io.text()).toMatch(/propose <path>/);
+    expect(io.text()).toMatch(/propose \[options\] <path>/);
     expect(io.text()).toMatch(/approve \[options\] <path> <capability-id>/);
     // Local help only: no sibling top-level commands leak in.
     expect(io.text()).not.toContain("agentify");
@@ -212,6 +213,141 @@ describe("anvil capability", () => {
     expect(await runAnvilCli(["capability", "approve", dir, id], { io })).toBe(0);
     expect(io.text()).toContain("capability_tool_budget");
     expect(reload().capabilities[0]?.lifecycle).toBe("approved");
+  });
+});
+
+/**
+ * Grounding a grouping in behaviour instead of documentation.
+ *
+ * The spec-discovery mode above groups by OpenAPI tag — the vendor's reference
+ * taxonomy, organised by resource. This mode reads the spool the serving path
+ * writes and groups by what was used together inside one `traceId`. The two
+ * assertions that matter are that a ubiquitous operation never reaches a member
+ * list, and that a grouping is allowed to disagree with the tag taxonomy.
+ */
+describe("anvil capability propose --from-records", () => {
+  /** Drive `count` traces of `operationIds` through the runtime's own spool. */
+  function spoolTraces(
+    spool: JsonlRecordSpool,
+    prefix: string,
+    operationIds: string[],
+    count: number,
+  ): void {
+    for (let i = 0; i < count; i++) {
+      for (const operationId of operationIds) {
+        spool.onRecord({
+          traceId: `${prefix}-${i}`,
+          operationId,
+          effect: "read",
+          outcome: "success",
+          latencyMs: 3,
+          retryCount: 0,
+          idempotencyKeyPresent: false,
+          requestBytes: 0,
+          responseBytes: 32,
+          policyDecisions: [],
+          confirmationRequired: false,
+          confirmed: false,
+        });
+      }
+    }
+  }
+
+  it("groups by observed co-occurrence, filtering the operation that is in every trace", async () => {
+    const air = await writePaymentsAir();
+    const id = (canonical: string) =>
+      air.operations.find((op) => op.canonicalName === canonical)?.id as string;
+    const customer = id("get_customer");
+    const payment = id("get_payment");
+    const refund = id("create_refund");
+    const capture = id("capture_payment");
+
+    const spoolDir = join(dir, "..", "spool");
+    mkdirSync(spoolDir, { recursive: true });
+    const spool = new JsonlRecordSpool(spoolDir);
+    // Every trace looks the customer up first: the behavioural equivalent of a
+    // shared transport envelope, present in every distinct trace shape. The
+    // payment read is common too — 3 of the 4 shapes — but not ubiquitous, and
+    // the filter has to be selective enough to keep it.
+    spoolTraces(spool, "refunding", [customer, payment, refund], 8);
+    spoolTraces(spool, "capturing", [customer, payment, capture], 6);
+    spoolTraces(spool, "looking-up", [customer, payment], 5);
+    spoolTraces(spool, "recapturing", [customer, capture], 5);
+
+    const before = readFileSync(join(dir, "air.yaml"), "utf8");
+    const out = join(dir, "..", "observed.report.json");
+    const io = bufferIO();
+    expect(
+      await runAnvilCli(["capability", "propose", dir, "--from-records", spoolDir, "--out", out], {
+        io,
+      }),
+    ).toBe(0);
+
+    // Read-only: the AIR the groupings were derived from is untouched.
+    expect(readFileSync(join(dir, "air.yaml"), "utf8")).toBe(before);
+
+    const report = JSON.parse(readFileSync(out, "utf8"));
+    expect(report.reportType).toBe("anvil.observed-capability-proposal");
+    expect(report.summary.traces).toBe(24);
+    expect(report.summary.traceShapes).toBe(4);
+
+    // The pre-filter fired on the ubiquitous operation, and said so.
+    expect(
+      report.suppressedUbiquitousOperations.map((s: { operationId: string }) => s.operationId),
+    ).toEqual([customer]);
+    expect(io.text()).toContain("Filtered before grouping");
+
+    // It is in no grouping and no co-occurrence pair.
+    for (const grouping of report.groupings) {
+      expect(grouping.operationIds).not.toContain(customer);
+    }
+    for (const pair of report.cooccurrence) {
+      expect([pair.a, pair.b]).not.toContain(customer);
+    }
+
+    // Two shapes clear the floor; the third collapses to a single operation.
+    expect(report.groupings.map((g: { operationIds: string[] }) => g.operationIds)).toEqual([
+      [refund, payment].sort(),
+      [capture, payment].sort(),
+    ]);
+    expect(report.groupings.map((g: { traces: number }) => g.traces)).toEqual([8, 6]);
+
+    // The finding a tag taxonomy cannot make: refunding uses a `refunds`
+    // operation and a `payments` operation as one task.
+    expect(report.groupings[0].crossesExistingCapabilities).toBe(true);
+    expect(report.groupings[0].spansCapabilities).toEqual([
+      "payments.payments",
+      "payments.refunds",
+    ]);
+    expect(io.text()).toContain("CUTS ACROSS");
+
+    // Evidence is recorded_traffic, and its provenance is the count.
+    const claim = report.groupings[0].evidence[0];
+    expect(claim.source).toBe("recorded_traffic");
+    expect(claim.note).toContain("8 of 24 recorded trace(s)");
+
+    // Propose-only, stated in the report and on the terminal.
+    expect(report.boundary).toMatchObject({
+      autoApproved: false,
+      writesAir: false,
+      buildReady: false,
+    });
+    expect(io.text()).toContain("Propose-only");
+  });
+
+  it("proposes nothing from a spool whose shapes never reach the floor", async () => {
+    const air = await writePaymentsAir();
+    const ids = air.operations.map((op) => op.id);
+    const spoolDir = join(dir, "..", "thin-spool");
+    mkdirSync(spoolDir, { recursive: true });
+    const spool = new JsonlRecordSpool(spoolDir);
+    spoolTraces(spool, "rare", [ids[0] as string, ids[1] as string], 4);
+
+    const io = bufferIO();
+    expect(
+      await runAnvilCli(["capability", "propose", dir, "--from-records", spoolDir], { io }),
+    ).toBe(0);
+    expect(io.text()).toContain("No grouping reached 5 trace(s)");
   });
 });
 
