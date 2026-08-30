@@ -87,6 +87,15 @@ export interface CapabilityBudgetCheck {
   measuredOperations?: number;
   /** How many disclosed operations did not — the slack in the lower bound. */
   unmeasuredOperations?: number;
+  /**
+   * Operation tools an approved workflow REPLACED on the agent-facing surface
+   * (`Workflow.supersedes`). They are not disclosed, so they are not counted —
+   * this is the number that makes a suddenly-smaller `toolCount` legible rather
+   * than mysterious.
+   */
+  supersededOperations?: number;
+  /** Composite workflow tools counted in `toolCount` (approved workflows only). */
+  workflowTools?: number;
   verdict: CapabilityBudgetVerdict;
   /**
    * The governing finding: whichever dimension produced the worse verdict, with
@@ -116,26 +125,63 @@ export function capabilityToolBudget(
 }
 
 /**
- * Budget the actual surface a capability build can disclose: its direct
- * members plus every operation referenced by an authored workflow it owns.
- * Dependencies count regardless of current operation approval, so approving a
- * dependency later cannot silently expand a grouping beyond what was reviewed.
+ * Budget the actual surface a capability build can disclose — the surface as it
+ * is *served*, after composition has taken its bite out of it.
+ *
+ * Three terms, and the third is the point:
+ *  - its direct members, plus every operation an authored workflow it owns
+ *    references. Dependencies count regardless of current operation approval, so
+ *    approving a dependency later cannot silently expand a grouping beyond what
+ *    was reviewed.
+ *  - MINUS every operation an **approved** workflow supersedes: those tools are
+ *    not listed by `@anvil/mcp-runtime`, so charging the capability for them
+ *    would budget a surface nobody is served. Only approved workflows count,
+ *    matching the runtime exactly — an unapproved workflow suppresses nothing
+ *    there and must therefore discount nothing here.
+ *  - PLUS one tool per approved workflow the capability owns, because a
+ *    composite IS a tool an agent has to route past.
+ *
+ * That third term is what makes composition pay. Before it, wrapping three
+ * operations in a workflow left the budget at three and added an unbudgeted
+ * fourth tool to the served surface: composing *cost* an operator budget and
+ * bought them nothing. Now wrapping three and superseding all three scores one.
+ * A workflow that supersedes nothing still scores +1 — which is honest, and is
+ * the same signal read from the other end: a purely additive composite really
+ * does make the surface an agent routes over bigger.
  */
 export function capabilityDisclosureBudget(
   air: AirDocument,
   capabilityId: string,
 ): CapabilityBudgetCheck {
   const capability = requireCapability(air, capabilityId);
-  return budgetForOperationIds(capability, disclosedOperationIds(air, capability), air.operations);
+  const approvedWorkflows = air.workflows.filter((workflow) => workflow.state === "approved");
+  // Supersession is a property of the served MCP surface, which spans the whole
+  // document — a workflow in a neighbouring capability that replaces an
+  // operation this one also lists has still removed the tool. So the set is
+  // gathered document-wide, not per capability.
+  const superseded = new Set(approvedWorkflows.flatMap((workflow) => workflow.supersedes ?? []));
+  const disclosed = disclosedOperationIds(air, capability).filter((id) => !superseded.has(id));
+  const workflowTools = approvedWorkflows.filter(
+    (workflow) => workflow.capabilityId === capability.id,
+  ).length;
+  const supersededOperations = new Set(
+    disclosedOperationIds(air, capability).filter((id) => superseded.has(id)),
+  ).size;
+  return {
+    ...budgetForOperationIds(capability, disclosed, air.operations, workflowTools),
+    supersededOperations,
+    workflowTools,
+  };
 }
 
 function budgetForOperationIds(
   capability: Capability,
   operationIds: readonly string[],
   operations: readonly Operation[] = [],
+  extraTools = 0,
 ): CapabilityBudgetCheck {
   const unique = new Set(operationIds);
-  const toolCount = unique.size;
+  const toolCount = unique.size + extraTools;
   const count = countBand(capability.id, toolCount);
   const tokens = tokenBand(capability.id, unique, operations);
   return {

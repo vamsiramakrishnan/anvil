@@ -34,7 +34,7 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
       .summary("Review capability groupings: propose, inspect, approve, reject, or diff.")
       .description(
         "The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. " +
-          "`approve`/`reject` persist the review decision to the AIR file. Approval enforces the effective disclosure budget (direct members plus authored workflow dependencies): more than 20 tools is blocked without --allow-large and an audit note; more than 15 warns. Only an approved capability can be built with `anvil build`.",
+          "`approve`/`reject` persist the review decision to the AIR file. Approval enforces the effective disclosure budget — the surface actually served: direct members plus authored workflow dependencies, minus operations an approved workflow supersedes, plus one tool per approved workflow. More than 20 tools is blocked without --allow-large and an audit note; more than 15 warns. Composing a workflow that supersedes its own steps therefore LOWERS what a capability spends. Only an approved capability can be built with `anvil build`.",
       ),
     { mutates: true },
   );
@@ -322,11 +322,18 @@ function runDiff(path: string, id: string, io: CliIO): number {
 
 /* --------------------------------- helpers -------------------------------- */
 
-/** One-line rendering of the tool-budget verdict for the summary view. */
+/**
+ * One-line rendering of the tool-budget verdict for the summary view. Names what
+ * composition took off the count, because a number that dropped for a reason the
+ * operator cannot see reads as a bug in the budget rather than a win.
+ */
 function budgetLine(budget: CapabilityBudgetCheck): string {
+  const composed = budget.supersededOperations
+    ? `, ${budget.supersededOperations} superseded by workflow`
+    : "";
   if (budget.verdict === "ok")
-    return `ok (${budget.toolCount} tool(s); default disclosure is 5–15)`;
-  return `${budget.verdict} — ${budget.diagnostic?.message ?? ""}`;
+    return `ok (${budget.toolCount} tool(s)${composed}; default disclosure is 5–15)`;
+  return `${budget.verdict}${composed} — ${budget.diagnostic?.message ?? ""}`;
 }
 
 /** Render a typed diagnostic the same way `anvil lint` does. */

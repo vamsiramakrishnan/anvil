@@ -382,3 +382,53 @@ describe("mcpToolDescription interaction-shape lines", () => {
     expect(text).not.toContain("Narrow with filters");
   });
 });
+
+describe("Workflow.supersedes", () => {
+  /** A workflow whose steps are two operations, with an overridable `supersedes`. */
+  const workflowWith = (supersedes: string[] | undefined) => ({
+    id: "payments.refunds.refund_customer",
+    capabilityId: "payments.refunds",
+    displayName: "Refund a customer",
+    steps: [{ operationId: "payments.payment.get" }, { operationId: "payments.refund.create" }],
+    ...(supersedes ? { supersedes } : {}),
+  });
+
+  const parse = (supersedes: string[] | undefined) =>
+    loadAirDocument({
+      service: { id: "payments", version: "1.0.0", source: { kind: "openapi" } },
+      operations: [],
+      workflows: [workflowWith(supersedes)],
+    });
+
+  it("is absent, not empty, when unspecified — an older air.yaml round-trips unchanged", () => {
+    const air = parse(undefined);
+    expect(air.workflows[0]?.supersedes).toBeUndefined();
+    expect(airToYaml(air)).not.toContain("supersedes");
+  });
+
+  it("accepts a workflow's own step operations", () => {
+    const air = parse(["payments.refund.create"]);
+    expect(air.workflows[0]?.supersedes).toEqual(["payments.refund.create"]);
+  });
+
+  it("refuses an operation the workflow does not perform", () => {
+    // The load-bearing rule: a workflow may not delete a tool it cannot stand
+    // in for. `payments.payment.list` may be a real operation elsewhere; it is
+    // not a step here, and that is the whole objection.
+    expect(() => parse(["payments.payment.list"])).toThrowError(
+      /not one of this workflow's own step operations/,
+    );
+  });
+
+  it("refuses a self-reference", () => {
+    expect(() => parse(["payments.refunds.refund_customer"])).toThrowError(
+      /may not supersede itself/,
+    );
+  });
+
+  it("refuses a duplicate", () => {
+    expect(() => parse(["payments.refund.create", "payments.refund.create"])).toThrowError(
+      /duplicate superseded operation/,
+    );
+  });
+});
