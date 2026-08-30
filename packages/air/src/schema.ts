@@ -1190,22 +1190,85 @@ export type WorkflowStep = z.infer<typeof WorkflowStep>;
  * (auto-inference is a staged seam). A generated CLI exposes them as
  * `<service> workflows <name>`.
  */
-export const Workflow = z.object({
-  /** Stable, dotted id, e.g. payments.refunds.refund_customer. */
-  id: z.string(),
-  /** The capability this workflow belongs to. */
-  capabilityId: z.string(),
-  displayName: z.string(),
-  description: z.string().default(""),
-  intentExamples: z.array(z.string()).default([]),
-  steps: z.array(WorkflowStep).default([]),
-  /** Whether the whole workflow needs a human in the loop before running. */
-  humanApproval: z.boolean().default(false),
-  /** How to undo a partially-completed run, if known. */
-  rollbackStrategy: z.string().optional(),
-  state: OperationState.default("generated"),
-  evidence: Evidence.default({ claims: [] }),
-});
+export const Workflow = z
+  .object({
+    /** Stable, dotted id, e.g. payments.refunds.refund_customer. */
+    id: z.string(),
+    /** The capability this workflow belongs to. */
+    capabilityId: z.string(),
+    displayName: z.string(),
+    description: z.string().default(""),
+    intentExamples: z.array(z.string()).default([]),
+    steps: z.array(WorkflowStep).default([]),
+    /** Whether the whole workflow needs a human in the loop before running. */
+    humanApproval: z.boolean().default(false),
+    /** How to undo a partially-completed run, if known. */
+    rollbackStrategy: z.string().optional(),
+    /**
+     * Operation ids this workflow REPLACES on the agent-facing MCP tool surface.
+     *
+     * Composition is meant to be *subtractive*: a higher-order tool that wraps
+     * three calls should cost one slot, not four. Without this field a workflow
+     * only ever added a tool, so the one act that should shrink the surface an
+     * agent routes over made it bigger — the opposite of the incentive routing
+     * accuracy needs.
+     *
+     * Scope is deliberately narrow, and the refinement below enforces it: a
+     * workflow may only supersede operations it actually *performs* (its own
+     * step operations). Letting it suppress anything else would be a workflow
+     * deleting a tool it has no way to stand in for.
+     *
+     * What this changes: whether the operation is LISTED as an MCP tool. What
+     * it never changes: that the operation still exists in AIR, still generates
+     * into the CLI and every client SDK, and is still callable there under the
+     * same safety contract. Suppression is a disclosure decision, not an
+     * approval one — `@anvil/mcp-runtime` applies it only for a workflow that is
+     * approved AND registrable, so a skipped workflow can never silently delete
+     * a tool.
+     *
+     * Absent (rather than empty) on every workflow authored before the field
+     * existed, so an older `air.yaml` round-trips byte-identically.
+     */
+    supersedes: z.array(z.string()).optional(),
+    state: OperationState.default("generated"),
+    evidence: Evidence.default({ claims: [] }),
+  })
+  .superRefine((workflow, ctx) => {
+    if (!workflow.supersedes) return;
+    const stepOperationIds = new Set(workflow.steps.map((step) => step.operationId));
+    const seen = new Set<string>();
+    workflow.supersedes.forEach((operationId, index) => {
+      // A workflow id is not an operation id; naming itself here would be a
+      // workflow suppressing its own composite tool, which leaves nothing.
+      if (operationId === workflow.id) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `workflow '${workflow.id}' may not supersede itself`,
+          path: ["supersedes", index],
+        });
+        return;
+      }
+      if (seen.has(operationId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `duplicate superseded operation '${operationId}'`,
+          path: ["supersedes", index],
+        });
+        return;
+      }
+      seen.add(operationId);
+      // The load-bearing rule: suppress only what you actually perform.
+      if (!stepOperationIds.has(operationId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            `workflow '${workflow.id}' may not supersede '${operationId}': it is not one of ` +
+            "this workflow's own step operations, so the workflow does not perform it",
+          path: ["supersedes", index],
+        });
+      }
+    });
+  });
 export type Workflow = z.infer<typeof Workflow>;
 
 /* -------------------------------------------------------------------------- */

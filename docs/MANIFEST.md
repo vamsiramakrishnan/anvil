@@ -175,6 +175,43 @@ Unknown operation references block the workflow. An unapproved mutation step
 also prevents an executable workflow. This is deliberate: a valid sequence
 cannot grant authority to an invalid step.
 
+### Make composition subtractive with `supersedes`
+
+A workflow that only ever *adds* a tool makes the surface an agent routes over
+bigger — the opposite of what composing one is for. `supersedes` names the
+operations the composite replaces on the MCP tool surface:
+
+```yaml
+workflows:
+  refund_customer:
+    capability: refunds
+    state: approved
+    supersedes:
+      - createRefund
+    steps:
+      - operation: getPayment
+      - operation: createRefund
+        bindings:
+          payment_id: $.output.id
+```
+
+Three rules, all enforced rather than advised:
+
+- **Only what it performs.** Every entry must resolve to an operation this
+  workflow already names as a step. A reference to anything else — or to no
+  operation at all — blocks the workflow with a diagnostic.
+- **Only when approved.** `@anvil/mcp-runtime` suppresses nothing for a workflow
+  it will not register: unapproved, an unapproved step, a malformed binding, a
+  later step needing the caller's idempotency key. A skipped workflow can never
+  silently delete a tool.
+- **Only the MCP surface.** A superseded operation is still in AIR, still
+  generated into the CLI and all four client SDKs, and still callable there
+  under exactly the same safety contract. Only `tools/list` shrinks.
+
+Because `anvil capability approve` budgets the surface that is actually served,
+superseding an operation *lowers* what the capability spends, while the
+composite itself costs one tool.
+
 ## Record capability review decisions
 
 Capabilities are discovered deterministically and reviewed separately from

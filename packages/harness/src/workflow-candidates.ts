@@ -15,6 +15,17 @@ export interface WorkflowCandidate {
   toOperationId: string;
   /** toOperation's input param name -> JSON Pointer into fromOperation's output. */
   bindings: Record<string, string>;
+  /**
+   * Operation ids this candidate PROPOSES the composite should replace on the
+   * MCP tool surface (`Workflow.supersedes`). A proposal and nothing more:
+   * nothing here applies it, `reconcileWorkflow` carries it into a manifest
+   * entry that is always `state: "review_required"`, and only a human approving
+   * that workflow lets `@anvil/mcp-runtime` act on it. Suppressing a tool is a
+   * tightening — the cheap direction under asymmetric trust — but it can still
+   * break a caller that legitimately invoked the operation on its own, and that
+   * is a judgement about callers Anvil cannot observe.
+   */
+  supersedes: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -77,7 +88,22 @@ export function detectWorkflowCandidates(air: AirDocument): WorkflowCandidate[] 
 
         const bindings: Record<string, string> = {};
         for (const name of required) bindings[name] = `$.output.${name}`;
-        out.push({ fromOperationId: fromOp.id, toOperationId: toOp.id, bindings });
+        // Propose superseding `to` only, never `from`.
+        //
+        // This is read straight off the structural fact the detector just
+        // proved, not off a preference: EVERY required param of `to` is bound
+        // from `from`'s output, so within this pairing `to` is not callable
+        // from anything the agent already holds — the composite genuinely
+        // stands in for it. `from` is the opposite: a read an agent reaches
+        // independently, whose output is the entry point to this sequence and
+        // to others the detector never looked at. Suppressing it would remove a
+        // tool the composite does not replace.
+        out.push({
+          fromOperationId: fromOp.id,
+          toOperationId: toOp.id,
+          bindings,
+          supersedes: [toOp.id],
+        });
       }
     }
   }

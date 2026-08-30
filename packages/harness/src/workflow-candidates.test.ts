@@ -89,6 +89,10 @@ describe("detectWorkflowCandidates", () => {
         fromOperationId: "cards.mappings.list",
         toOperationId: "cards.mappings.get",
         bindings: { atmCardN: "$.output.atmCardN", atmAccountNo: "$.output.atmAccountNo" },
+        // The narrow half of the pair: every required param of `get` comes from
+        // `list`'s output, so the composite genuinely stands in for it. `list`
+        // is an independent entry point and is deliberately NOT proposed.
+        supersedes: ["cards.mappings.get"],
       },
     ]);
   });

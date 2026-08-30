@@ -442,6 +442,14 @@ export const WorkflowManifest = z.object({
   human_approval: z.boolean().optional(),
   rollback: z.string().optional(),
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
+  /**
+   * Operation references this workflow REPLACES on the MCP tool surface — the
+   * subtractive half of composition (see `Workflow.supersedes` in `@anvil/air`).
+   * Each entry must resolve to an operation this workflow already names as a
+   * step; `buildWorkflows` blocks the workflow otherwise rather than emitting a
+   * suppression it cannot justify.
+   */
+  supersedes: z.array(z.string()).optional(),
   steps: z
     .array(
       z.object({
@@ -1146,6 +1154,44 @@ export function buildWorkflows(
       }
     }
 
+    // Resolve what this workflow supersedes, against the operations it actually
+    // performs. Two failure modes, both blocking rather than silently dropped: a
+    // reference that names no operation at all, and one that names a real
+    // operation this workflow does not run. The second is the dangerous one — it
+    // would remove a tool the composite cannot stand in for — so it is refused
+    // here as well as in the AIR schema's own refinement, and the workflow is
+    // blocked exactly the way an unresolved step blocks it.
+    const stepOperationIds = new Set(steps.map((step) => step.operationId));
+    const supersedes: string[] = [];
+    for (const reference of wf.supersedes ?? []) {
+      const target = operations.find((o) => matches(o, reference));
+      if (!target) {
+        const note = `supersedes unknown operation "${reference}"`;
+        blockerNotes.push(note);
+        diagnostics.push({
+          level: "error",
+          code: "workflow_supersedes_unresolved",
+          message: `Workflow "${name}" ${note}; the workflow is blocked until the reference is repaired.`,
+        });
+        continue;
+      }
+      if (!stepOperationIds.has(target.id)) {
+        const note = `supersedes "${reference}" (${target.id}), which is not one of its own steps`;
+        blockerNotes.push(note);
+        diagnostics.push({
+          level: "error",
+          code: "workflow_supersedes_not_a_step",
+          operationId: target.id,
+          message:
+            `Workflow "${name}" ${note}; a workflow may only replace operations it performs. ` +
+            "The workflow is blocked until the reference is removed or the step is added.",
+        });
+        continue;
+      }
+      if (supersedes.includes(target.id)) continue;
+      supersedes.push(target.id);
+    }
+
     // Resolve the owning capability: explicit, else the first step's capability.
     const firstOpCap = steps.length
       ? operations.find((o) => o.id === steps[0]?.operationId)?.capabilityId
@@ -1171,6 +1217,9 @@ export function buildWorkflows(
       steps,
       humanApproval: wf.human_approval ?? false,
       rollbackStrategy: wf.rollback,
+      // Absent, not empty, when nothing is superseded: a workflow authored
+      // before this field existed must serialize byte-identically.
+      ...(supersedes.length > 0 ? { supersedes } : {}),
       state: blocked ? "blocked" : (wf.state ?? "generated"),
       evidence: {
         claims: [

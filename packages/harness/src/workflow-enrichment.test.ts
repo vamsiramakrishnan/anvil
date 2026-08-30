@@ -137,6 +137,35 @@ describe("workflow candidate enrichment", () => {
     expect(air.workflows).toEqual([]);
   });
 
+  it("proposes supersession, and can never apply it", async () => {
+    const servers = {
+      github: makeSourceServer((q) =>
+        q.includes("list_mappings") && q.includes("get_mapping")
+          ? "the mapping controller calls list_mappings, then get_mapping for the selected row"
+          : "",
+      ),
+    };
+    const air = doc();
+    const report = await runEnrichment(air, [githubSource], {
+      transportFactory: factoryFor(servers),
+    });
+
+    const entry = report.proposedManifest.workflows.list_mappings_then_get_mapping;
+    // The narrow half only: every required param of `get_mapping` comes from
+    // `list_mappings`'s output, so the composite stands in for it. `list_mappings`
+    // is an independent entry point and is deliberately never proposed.
+    expect(entry?.supersedes).toEqual(["cards.mappings.get"]);
+    expect(entry?.supersedes).not.toContain("cards.mappings.list");
+
+    // And the gate that makes proposing it safe: `review_required` is not
+    // `approved`, and @anvil/mcp-runtime suppresses nothing for a workflow it
+    // will not register. No amount of corroborating evidence changes that —
+    // suppressing a tool can break a legitimate direct caller, which is a
+    // judgement about callers Anvil cannot observe.
+    expect(entry?.state).toBe("review_required");
+    expect(air.workflows).toEqual([]);
+  });
+
   it("does not propose a workflow when no connected source corroborates the candidate", async () => {
     const servers = { github: makeSourceServer(() => "") };
     const report = await runEnrichment(doc(), [githubSource], {

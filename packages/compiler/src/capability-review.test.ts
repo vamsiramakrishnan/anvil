@@ -6,6 +6,7 @@ import {
   BUDGET_WAIVED_CODE,
   BUDGET_WARNING_CODE,
   CapabilityReviewError,
+  capabilityDisclosureBudget,
   capabilityToolBudget,
   diffCapability,
   proposeCapabilities,
@@ -445,5 +446,131 @@ describe("propose + diff (re-discovery without mutation)", () => {
     expect(diff.unchanged).toBe(false);
     expect(diff.addedOperations).toContain(dropped);
     expect(diff.removedOperations).toContain("things.things.phantom");
+  });
+});
+
+describe("workflow supersession — the budget it earns and the rules it obeys", () => {
+  /** Two operations under one tag, plus a workflow over both. */
+  const twoOpSpec = `openapi: 3.0.0
+info: { title: things, version: 1.0.0 }
+paths:
+  /things:
+    get:
+      operationId: listThings
+      tags: [things]
+      responses: { "200": { description: ok } }
+  /things/{id}:
+    get:
+      operationId: getThing
+      tags: [things]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+`;
+
+  const workflowManifest = (extra: string) => `workflows:
+  fetch_thing:
+    capability: things.things
+    state: approved
+${extra}    steps:
+      - operation: listThings
+      - operation: getThing
+`;
+
+  it("carries supersedes from the manifest onto the workflow", async () => {
+    const air = await compile({
+      spec: twoOpSpec,
+      serviceId: "things",
+      manifest: workflowManifest("    supersedes:\n      - getThing\n"),
+    });
+    expect(air.workflows[0]?.supersedes).toEqual(["things.things.get"]);
+    expect(air.workflows[0]?.state).toBe("approved");
+  });
+
+  it("blocks a workflow that supersedes an operation it does not perform", async () => {
+    const air = await compile({
+      spec: twoOpSpec,
+      serviceId: "things",
+      manifest: `workflows:
+  fetch_thing:
+    capability: things.things
+    state: approved
+    supersedes:
+      - listThings
+    steps:
+      - operation: getThing
+`,
+    });
+    // Blocked, not silently dropped: a workflow asking to delete a tool it has
+    // no way to stand in for is a repair request, not a preference.
+    expect(air.workflows[0]?.state).toBe("blocked");
+    expect(air.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "workflow_supersedes_not_a_step", level: "error" }),
+      ]),
+    );
+  });
+
+  it("blocks a workflow that supersedes an operation that does not exist", async () => {
+    const air = await compile({
+      spec: twoOpSpec,
+      serviceId: "things",
+      manifest: workflowManifest("    supersedes:\n      - nopeThing\n"),
+    });
+    expect(air.workflows[0]?.state).toBe("blocked");
+    expect(air.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "workflow_supersedes_unresolved", level: "error" }),
+      ]),
+    );
+  });
+
+  it("an approved workflow LOWERS what its capability spends", async () => {
+    const withoutComposition = await compile({ spec: twoOpSpec, serviceId: "things" });
+    expect(capabilityDisclosureBudget(withoutComposition, "things.things").toolCount).toBe(2);
+
+    // Additive composition costs: two operations plus the composite is three.
+    const additive = await compile({
+      spec: twoOpSpec,
+      serviceId: "things",
+      manifest: workflowManifest(""),
+    });
+    expect(capabilityDisclosureBudget(additive, "things.things").toolCount).toBe(3);
+
+    // Subtractive composition pays: the composite replaces both members, so the
+    // capability spends ONE tool where it used to spend two.
+    const subtractive = await compile({
+      spec: twoOpSpec,
+      serviceId: "things",
+      manifest: workflowManifest("    supersedes:\n      - listThings\n      - getThing\n"),
+    });
+    const budget = capabilityDisclosureBudget(subtractive, "things.things");
+    expect(budget.toolCount).toBe(1);
+    expect(budget.supersededOperations).toBe(2);
+    expect(budget.workflowTools).toBe(1);
+  });
+
+  it("an UNapproved workflow discounts nothing — it supersedes nothing at runtime", async () => {
+    const air = await compile({
+      spec: twoOpSpec,
+      serviceId: "things",
+      manifest: `workflows:
+  fetch_thing:
+    capability: things.things
+    state: review_required
+    supersedes:
+      - getThing
+    steps:
+      - operation: listThings
+      - operation: getThing
+`,
+    });
+    // The budget mirrors the served surface exactly: an unapproved workflow
+    // registers no composite and suppresses nothing, so it must not be able to
+    // buy a discount the runtime will never honour.
+    const budget = capabilityDisclosureBudget(air, "things.things");
+    expect(budget.toolCount).toBe(2);
+    expect(budget.supersededOperations).toBe(0);
+    expect(budget.workflowTools).toBe(0);
   });
 });
