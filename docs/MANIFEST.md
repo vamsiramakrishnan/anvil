@@ -127,6 +127,27 @@ operations:
 Anvil reprojects the canonical name, CLI command, MCP tool, and skill reference
 together while preserving the operation's stable identity.
 
+## Settle the estate's path grammar
+
+The compiler classifies whether the estate's URL paths are nouns (REST) or
+verbs (RPC-over-HTTP) from estate-wide evidence and records the verdict, with
+its counts, in `service.source.pathGrammar` (see
+[SOURCE_FORMATS.md](./SOURCE_FORMATS.md#path-grammar-classification)). When the
+evidence genuinely splits, the compile emits a `path_grammar_ambiguous` warning
+and keeps the source kind's default reading. A top-level manifest key settles
+it:
+
+```yaml
+path_grammar: rpc_plain
+```
+
+Accepted values are `resource_grammar`, `rpc_plain`, `rpc_dotted`, and
+`adapter_lowered` — never `ambiguous`, because a declaration must settle the
+question, not un-settle it. The declaration always applies; if it contradicts a
+definite measured verdict, the compile records a
+`path_grammar_override_contradicts_evidence` warning so the disagreement is
+reviewable rather than silent.
+
 ## Auth without secrets
 
 The manifest describes how credentials are resolved; it must not contain

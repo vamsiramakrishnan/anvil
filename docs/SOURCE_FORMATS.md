@@ -245,6 +245,54 @@ The diagnostic carries the remedy: declare the auth contract in an Anvil
 manifest, then prove the result against the live service with
 `anvil conformance`.
 
+## Path grammar classification
+
+Every source's paths carry meaning in one of two grammars: nouns (REST — the
+HTTP method is the verb) or verbs (RPC-over-HTTP — the terminal path segment is
+the method). The compiler used to know this only implicitly, by source kind,
+which is how Plaid — an RPC grammar published as OpenAPI — had 72% of its
+operations take a bare CRUD verb (`get`, `create`) as their resource. The
+grammar is now classified explicitly, once per compile, from one deterministic
+pass over the estate's operations (no network, no model), and declared in AIR
+at `service.source.pathGrammar` with the classification, its basis, and the
+counts that decided it — `anvil inspect` prints the verdict so a surprising
+catalog name traces to an inspectable decision.
+
+The taxonomy:
+
+| Classification | Meaning | Example estate |
+| --- | --- | --- |
+| `resource_grammar` | Nouns in the path; HTTP methods carry the verb | Zendesk, GitHub, Stripe |
+| `rpc_plain` | Verbs as plain terminal segments; method mix collapsed onto POST | Plaid (`POST /transactions/get`) |
+| `rpc_dotted` | Dotted RPC method segments the URL itself declares | Slack (`/chat.postMessage`) |
+| `adapter_lowered` | A protocol adapter (WSDL/GraphQL/protobuf/MCP) wrote the paths; the shape is declared by construction | NetSuite's lowered `/NetSuitePortType/get` |
+| `ambiguous` | The evidence genuinely splits; the compiler declines to pick | — |
+
+The evidence is three paired signals — the fraction of operations ending in a
+CRUD-verb segment, the GET/HEAD share of the method mix, and the fraction of
+paths carrying a `{param}` segment — each with an RPC pole, a REST pole, and a
+deliberate abstention band between them, plus a dotted-terminal count that
+short-circuits to `rpc_dotted` (Slack: 174 of 174) and a verb-repetition count
+recorded for the operator. A grammar is picked only when at least two signals
+commit to one side and none commit to the other. Measured on the untrimmed
+estates the thresholds were calibrated against: Plaid classifies `rpc_plain`
+(252/351 verb terminals, 5/351 GET, 4/351 parameterized), Zendesk/GitHub/
+Stripe/BigQuery classify `resource_grammar`, Slack `rpc_dotted`.
+
+What the classification drives: whether the naming pass receives the
+estate-wide path context that arms the trailing-method re-homing rules
+(`docs/design/resource-derivation-and-tool-name-stutter.md`). Resource and
+plain-RPC grammars read a trailing CRUD verb as a method; dotted-RPC and
+adapter-lowered grammars must not, because there the method name is the
+operation's identity. An `ambiguous` estate emits a `path_grammar_ambiguous`
+compile warning naming both candidate grammars and the counts for each, and
+falls back to the source kind's pre-classifier reading, so declining to guess
+never changes an estate's names. The warning names the remedy: a top-level
+manifest declaration (`path_grammar: rpc_plain` — see
+[MANIFEST.md](./MANIFEST.md#settle-the-estates-path-grammar)), which always
+applies, and which records a `path_grammar_override_contradicts_evidence`
+warning when it overrules a definite measured verdict.
+
 ## Declined, and why
 
 Some gaps on this page are decisions, not roadmap. Filing a permanent no under

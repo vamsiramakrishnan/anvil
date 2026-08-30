@@ -432,3 +432,71 @@ describe("Workflow.supersedes", () => {
     );
   });
 });
+
+describe("service source path grammar", () => {
+  // Same additive-field discipline as Workflow.supersedes above: optional and
+  // never defaulted, so a document written before the field existed round-trips
+  // byte-identically.
+  it("is absent, not defaulted, when unspecified — an older air.yaml round-trips unchanged", () => {
+    const air = loadAirDocument({
+      service: { id: "payments", version: "1.0.0", source: { kind: "openapi" } },
+      operations: [],
+    });
+    expect(air.service.source.pathGrammar).toBeUndefined();
+    expect(airToYaml(air)).not.toContain("pathGrammar");
+  });
+
+  it("carries a classification with its basis and evidence counts", () => {
+    const air = loadAirDocument({
+      service: {
+        id: "plaid",
+        version: "1.0.0",
+        source: {
+          kind: "openapi",
+          pathGrammar: {
+            classification: "rpc_plain",
+            basis: "estate_evidence",
+            evidence: {
+              operations: 351,
+              readMethodOperations: 5,
+              parameterizedPathOperations: 4,
+              verbTerminalOperations: 252,
+              dottedTerminalOperations: 0,
+              repeatedVerbWords: 7,
+            },
+          },
+        },
+      },
+      operations: [],
+    });
+    expect(air.service.source.pathGrammar?.classification).toBe("rpc_plain");
+    expect(air.service.source.pathGrammar?.evidence.verbTerminalOperations).toBe(252);
+  });
+
+  it("refuses an unknown classification", () => {
+    expect(() =>
+      loadAirDocument({
+        service: {
+          id: "svc",
+          version: "1.0.0",
+          source: {
+            kind: "openapi",
+            pathGrammar: {
+              classification: "vibes",
+              basis: "estate_evidence",
+              evidence: {
+                operations: 0,
+                readMethodOperations: 0,
+                parameterizedPathOperations: 0,
+                verbTerminalOperations: 0,
+                dottedTerminalOperations: 0,
+                repeatedVerbWords: 0,
+              },
+            },
+          },
+        },
+        operations: [],
+      }),
+    ).toThrowError();
+  });
+});

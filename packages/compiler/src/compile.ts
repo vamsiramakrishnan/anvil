@@ -294,7 +294,9 @@ async function buildAir(
   const title = (doc.info?.title as string | undefined) ?? "service";
   const serviceId = options.serviceId ?? manifest.service?.name ?? snakeCase(title) ?? "service";
 
-  const normalized = normalize(serviceId, parsed);
+  const normalized = normalize(serviceId, parsed, {
+    pathGrammarOverride: manifest.path_grammar,
+  });
   const serviceAuthDefaults = applyServiceAuthDefaults(normalized.operations, manifest.auth);
   let operations = serviceAuthDefaults.operations;
   // Naming pass: resolve any name collisions coherently across id/CLI/tool with
@@ -453,6 +455,7 @@ async function buildAir(
           sourceHash: provenance.sourceHash,
           origin: { kind: provenance.origin.kind, uri: provenance.origin.uri },
           entrypoint: provenance.entrypoint.path,
+          pathGrammar: normalized.pathGrammar,
         },
         auth: serviceAuth,
         servers: (doc.servers ?? []).map((s) => ({ url: s.url, description: s.description })),

@@ -552,3 +552,52 @@ failure and closes it when green, so a scheduled red lands in the tracker
 instead of a run list nobody reads. Those 13+1 systems have no naming
 baseline yet; once their compile reds are fixed, the oracle fails with the
 exact record command until one is recorded (reviewed).
+
+## 2026-08-30 — Path grammar becomes a compiled, evidenced decision (zero id churn)
+
+Successor to the resource-derivation fix above. The kind-gate that fix ended
+with (estate path context only for openapi/swagger/discovery/postman/odata)
+made the REST-vs-RPC grammar call implicitly, by source kind. Now
+`classifyPathGrammar` (`packages/compiler/src/path-grammar.ts`) makes it
+explicitly, from one deterministic pass over the estate (three paired signals
+with abstention bands: CRUD-verb terminal fraction, GET/HEAD share, `{param}`
+path fraction; plus a dotted-terminal short-circuit and a verb-repetition
+count carried as evidence). The verdict + counts land in AIR at
+`service.source.pathGrammar` (additive, optional — an older air.yaml
+round-trips byte-identically), drive the estate-context gate in `normalize`,
+print from `anvil inspect`, and are overridable by a top-level manifest
+`path_grammar:` key (a contradicting override applies but records a
+`path_grammar_override_contradicts_evidence` warning). A genuinely split
+estate declines: `ambiguous` classification, `path_grammar_ambiguous` warning
+naming both candidates with counts, fallback to the pre-classifier source-kind
+gate — armed as mutation mutant
+`path-grammar/ambiguous-never-silently-selects`.
+
+**Verdicts on the measured estates** (all basis `estate_evidence` unless
+noted; counts are `verb-terminal / GET-HEAD / parameterized / dotted` over
+ops):
+
+| estate | ops | verdict | winning counts |
+|---|---:|---|---|
+| plaid | 351 | **rpc_plain** | 252 verb-terminal, 5 GET/HEAD, 4 parameterized |
+| zendesk (untrimmed) | 640 | resource_grammar | 70 verb-terminal, 333 GET/HEAD, 363 parameterized |
+| github | 1222 | resource_grammar | 13 / 638 / 1135 |
+| stripe | 594 | resource_grammar | 3 / 265 / 393 |
+| bigquery (discovery) | 42 | resource_grammar | 2 / 16 / 41 |
+| slack | 174 | **rpc_dotted** | 174/174 dotted terminals |
+| odata trippin / northwind | 25 / 130 | resource_grammar | trippin's 3 bound-op dotted terminals stay under the 0.5 gate |
+| examples/{payments,sap} | 4 / 11 | resource_grammar | — |
+| examples/{soap,graphql} | 4 / 9 | adapter_lowered (source_kind) | by construction; counts still recorded |
+
+**Zero-churn proof held exactly**: all 12 before/after dumps byte-identical on
+id/resource/action/canonicalName/cli/toolName (3,206 operations), plus
+`node tools/corpus/run.mjs estates` green. The classifier NAMES what the code
+already did; the one place its verdict differs from the old kind-gate — Slack
+(openapi kind, but context now off as `rpc_dotted`) — is an estate where rules
+A+C fired zero times, measured, so the names cannot move.
+
+**Deliberately not done** (recorded as future work in the design doc): driving
+`effect.action` from the terminal verb on `rpc_plain` estates (would erase
+Plaid's 26 residual `…get_get` stutters but changes ids and `OperationAction`),
+and weighing an `rpc_plain` verdict in read classification (safety loosening —
+needs the asymmetric evidence bar, not a grammar verdict).

@@ -21,6 +21,7 @@ export * from "./manifest.js";
 export * from "./naming.js";
 export * from "./normalize.js";
 export * from "./parse.js";
+export * from "./path-grammar.js";
 export * from "./protocols/index.js";
 export * from "./source/index.js";
 export * from "./validate.js";

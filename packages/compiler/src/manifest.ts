@@ -611,6 +611,19 @@ export const AnvilManifest = z.object({
     type: z.union([AuthType, z.literal("oauth2")]).optional(),
     scopes: z.array(z.string()).optional(),
   }).optional(),
+  /**
+   * Declare the estate's path grammar outright, overriding the compiler's
+   * evidence-based classification (`service.source.pathGrammar`). The intended
+   * use is settling a `path_grammar_ambiguous` compile warning; a declaration
+   * that contradicts a definite measured verdict still applies — the operator
+   * may know the API better than the counts — but is recorded as a
+   * `path_grammar_override_contradicts_evidence` warning rather than applied
+   * silently. `ambiguous` is deliberately not declarable: an override must
+   * settle the question, not un-settle it.
+   */
+  path_grammar: z
+    .enum(["resource_grammar", "rpc_plain", "rpc_dotted", "adapter_lowered"])
+    .optional(),
   operations: z.record(z.string(), OperationManifest).default({}),
   workflows: z.record(z.string(), WorkflowManifest).default({}),
   capabilities: z.record(z.string(), CapabilityReviewManifest).default({}),

@@ -34,6 +34,20 @@ function runInspect(path: string, opts: { json?: boolean }, io: CliIO): number {
   io.out(
     `${air.service.displayName ?? air.service.id} @ ${air.service.version} — ${air.operations.length} operations`,
   );
+  // Why the estate's paths were read the way they were: the compiled grammar
+  // verdict with the counts behind it, so a surprising catalog name traces to
+  // an inspectable decision instead of a silent heuristic. Gated: an air.yaml
+  // from before the field existed prints exactly as it did.
+  const grammar = air.service.source.pathGrammar;
+  if (grammar) {
+    const e = grammar.evidence;
+    io.out(
+      `path grammar ${grammar.classification} (by ${grammar.basis}) — of ${e.operations} operations: ` +
+        `${e.readMethodOperations} GET/HEAD, ${e.parameterizedPathOperations} parameterized paths, ` +
+        `${e.verbTerminalOperations} CRUD-verb terminals, ${e.dottedTerminalOperations} dotted RPC terminals, ` +
+        `${e.repeatedVerbWords} verb words repeated across parents`,
+    );
+  }
   io.out("");
   for (const op of catalog.operations) {
     const operation = air.operations.find((candidate) => candidate.id === op.id);

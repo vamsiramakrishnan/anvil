@@ -48,6 +48,37 @@ What landed, and what deliberately did not:
   26 — the hand-verified table missed `dispatche`(2) and
   `marketplace_purchas`(1).
 
+**Successor (2026-08-30): path grammar is now a first-class compiled decision.**
+The kind-gate this document's corpus finding forced (`normalize` passing estate
+path context only for resource-grammar source kinds) made the grammar decision
+implicitly, by source kind. It is now made explicitly by a deterministic
+estate-evidence classifier (`packages/compiler/src/path-grammar.ts`), declared
+in AIR at `service.source.pathGrammar` with its evidence counts, surfaced by
+`anvil inspect`, overridable by a manifest `path_grammar` key, and — when the
+evidence genuinely splits — declined with a `path_grammar_ambiguous` warning
+that falls back to the source-kind gate, so an undecidable estate keeps
+byte-identical names. See `docs/SOURCE_FORMATS.md#path-grammar-classification`.
+Shipped id-neutral by constraint: zero operation id / CLI command / tool name
+churn on every measured estate. **Future work the classification enables but
+this release deliberately does not do** (each changes ids and must wait for a
+declared id-breaking release):
+
+- **A better `rpc_plain` naming strategy than resource-only A+C.** Plaid's 26
+  residual `…get_get`-style stutters are the structural floor of re-homing the
+  resource while leaving the action to the HTTP method: on a classified
+  `rpc_plain` estate the terminal verb IS the action, and driving
+  `effect.action` from it (a closed verb→`OperationAction` map, or extending
+  the enum) would name `/asset_report/get` `asset_report.get` instead of
+  `asset_report.create.get_direct`. §6 rejected this when it required guessing
+  per-operation; a whole-estate `rpc_plain` verdict is the evidence that was
+  missing. Still unimplemented: `OperationAction` is a contract surface.
+- **Read reclassification on `rpc_plain` estates.** Only 8 of Plaid's 351
+  operations classify as reads because every endpoint is POST (§8's closing
+  finding). A classified `rpc_plain` estate plus a terminal read-family verb
+  (`get`, `list`) is estate-scale evidence the effect classifier could weigh —
+  but mutation→read is a safety LOOSENING and needs the asymmetric evidence
+  bar, not just a grammar verdict.
+
 Every figure below is reproducible with the read-only harness added alongside
 this document:
 

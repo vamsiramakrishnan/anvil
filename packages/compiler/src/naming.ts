@@ -95,7 +95,7 @@ function isVersionLike(segment: string): boolean {
  * list holds only words that name a data operation and essentially never name
  * a collection.
  */
-const CRUD_SEGMENT_WORDS = new Set([
+export const CRUD_SEGMENT_WORDS = new Set([
   "get",
   "list",
   "create",
@@ -134,7 +134,7 @@ const ACTION_VERB_VOCAB = new Set<string>(Object.values(ACTION_VERB_WORDS).flat(
  * segment (`acceptEnterpriseAdminInvitation`) that must stay the resource, and
  * no such field ends in `_many`.
  */
-function isBulkVerbSegment(segment: string): boolean {
+export function isBulkVerbSegment(segment: string): boolean {
   const tokens = snakeCase(segment).split("_").filter(Boolean);
   if (tokens.length < 2) return false;
   const head = tokens[0] as string;
@@ -168,7 +168,7 @@ export interface EstatePathContext {
 }
 
 /** Concrete, version-stripped path segments, cleaned the way naming reads them. */
-function concreteResourceSegments(path: string): string[] {
+export function concreteResourceSegments(path: string): string[] {
   return (path.split("?")[0] as string)
     .split("/")
     .filter((s) => s && !s.startsWith("{"))
@@ -364,7 +364,7 @@ function upsertVerbFromOperationId(operationId: string | undefined): string | un
  * `chat.postMessage` → CLI `slack chat post_message`, tool
  * `slack_chat_post_message`) instead of drifting to `chat.postMessage send`.
  */
-function decomposeSegment(segment: string): { resource: string; rpcAction?: string } {
+export function decomposeSegment(segment: string): { resource: string; rpcAction?: string } {
   const noSuffix = segment.replace(FORMAT_SUFFIX, "");
   // A dotted API-version segment (`v60.0`, `2.0`) is not an RPC dotted method —
   // splitting it would make the version ("v60") the resource and its minor
