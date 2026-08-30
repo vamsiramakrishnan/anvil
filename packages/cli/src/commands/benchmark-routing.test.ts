@@ -151,6 +151,16 @@ describe("the agent router seam", () => {
     const bare = agentRouter(runner('```\n{"tool": "payments_get_payment"}\n```'), "model");
     expect(await bare.route("find my payment", catalog)).toBe("payments_get_payment");
 
+    // A fence is not merely decoration to strip: a model that adds a nested
+    // object alongside its choice ("rationale", "scores") cannot be read by
+    // scanning for a brace pair, because the innermost pair is the nested one.
+    // The fence is what says where the whole answer starts and ends.
+    const nested = agentRouter(
+      runner('```json\n{"tool": "payments_get_payment", "rationale": {"score": 0.9}}\n```'),
+      "model",
+    );
+    expect(await nested.route("find my payment", catalog)).toBe("payments_get_payment");
+
     const chatty = agentRouter(
       runner(
         'Looking at the catalog, the best fit is:\n{"tool": "payments_get_payment"}\nHope that helps!',
