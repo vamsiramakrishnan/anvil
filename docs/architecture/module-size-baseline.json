@@ -87,8 +87,8 @@
       "plan": "One vendor adapter. Per-vendor files are the intended boundary."
     },
     "packages/refinement/src/skills/executor.ts": {
-      "lines": 995,
-      "plan": "Watch."
+      "lines": 1051,
+      "plan": "Grew by the intent-example corroboration filter and its `routingTokens` helper, added after a real 329-tool Zendesk estate showed 12 authored phrases sharing no word with their own operation's names. `routingTokens` is a general 'do two surfaces name the same thing' primitive and does not belong to this executor: when a second caller needs it (a certification check that the skill's phrases and the MCP tool name agree is the obvious next one), lift it into its own module and lower this baseline."
     },
     "packages/compiler/src/disclosure-bom.ts": {
       "lines": 992,

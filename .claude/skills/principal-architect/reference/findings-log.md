@@ -26,10 +26,12 @@ overlap groups:**
   structural-shape matching without any envelope/transport-noise filter
   drowns real signal at real scale. See `design-patterns.md`'s note on this
   — the fix is a cheap statistical pre-filter, not a smarter evidence bar.
-- **Not yet fixed**: `packages/cli/src/capability-composition.ts` has no such
-  pre-filter today. This is a known, evidenced, open item — a good candidate
-  for "worth doing" the next time someone asks what to prioritize in
-  composition.
+- **Fixed since.** `packages/cli/src/capability-composition.ts` now carries the
+  envelope commonality pre-filter (`ENVELOPE_SOURCE_FRACTION` /
+  `ENVELOPE_MIN_SOURCES`): a coordinate present in that fraction of all sources
+  is classified as transport envelope and skipped unless explicitly declared.
+  This entry said "not yet fixed" long after it was — third time this log has
+  been caught stale. Verify against the code before citing it.
 
 ## OBDX validation
 
@@ -65,7 +67,8 @@ Cite these rather than rediscovering them from scratch:
   became `anvil enrich-sources`; the old spelling stays as a hidden, working
   alias that prints where to go, so nothing broke. Executed once the operator
   gave a broad close-the-debt go-ahead.
-- **`packages/cli/src/commands/estate.ts` is 3,327 lines.** The
+- **`packages/cli/src/commands/estate.ts` is 2,373 lines** (was 3,327; it now
+  lives in `commands/estate/` alongside its bug-bash split-outs). The
   `commands/estate/` and `commands/capability/` subdirectory split
   (bug-bash retro fix) intentionally did not touch this — splitting
   `estate.ts`'s internals is a separate, larger piece of work, not covered
@@ -111,6 +114,9 @@ WSDL) with zero crashes. Findings, in leverage order:
 - **Compile produces empty intentExamples**, so `anvil benchmark` has no
   tasks to derive on a raw compile — intent generation is enrichment work,
   but the benchmark's usefulness depends on it; sequence accordingly.
+  (Confirmed exactly, on the Zendesk estate run below: 640 operations compiled
+  with zero intent examples, and `refine run --skill author-intent-examples`
+  is a mandatory step before the benchmark has anything to measure.)
 
 ## Industry-estate round (TM Forum, Coda, Zendesk, Zuora, Temenos, Coupa, Workday REST, Freshworks, ServiceNow, Notion, Veeva, Zoho, Amadeus — 315 operations)
 
@@ -206,3 +212,34 @@ the file is complete on disk).
   review_required with a one-line manifest. (Zoho's mirror spec has an
   unresolvable external `Common.json` ref — a corpus artifact, same auth
   shape as Workday.)
+
+## Routing at estate scale (Zendesk, full untrimmed spec — the first real benchmark run)
+
+Full write-up: `docs/backtesting/routing-at-scale.md`. The short version, because
+this is the first demand-side measurement Anvil has ever taken:
+
+- **640 operations compiled; 329 reads approved; 657 routing tasks.** Nothing is
+  approved on compile and nothing has intent examples on compile — both steps
+  are load-bearing prerequisites to measuring anything.
+- **Accuracy is dominated by catalog SIZE, not catalog quality.** Same estate,
+  same router, slices of the catalog: 90.0% at 10 tools → 58.6% at 329. A
+  31-point fall. Cite this whenever someone proposes exposing a whole estate;
+  it is the quantitative case for capabilities and the disclosure budget, and
+  it replaces an argument that used to be made from intuition.
+- **Compilation's routing uplift was +2.0 pts at 329 tools** (+10.0 at 10).
+  Zendesk publishes good operationIds, so the bare baseline is strong. This is
+  an honest, unflattering number: on a well-named estate, compiling does not buy
+  discovery — it buys the safety gate, the parameter contracts, and cross-surface
+  agreement. Do not let anyone quote the benchmark as a naming-quality claim.
+- **The `--agent` arm had never worked.** It demanded that the router command's
+  whole stdout parse as JSON; real model CLIs fence their answers, so the first
+  real run scored 0/20 on tasks the model had routed correctly. Fixed (tolerant
+  extraction, unchanged catalog gate) → 20/20 with a real model on the same
+  slice. Lesson, again: a feature that has only ever run against its own test
+  double has not run.
+- **12 of 1277 authored intent phrases named a different operation than their
+  own tool name** ("list the mes" for `show_current_user`). Two Anvil surfaces
+  disagreeing about an operation's name is the exact failure the product exists
+  to prevent, and no gate caught it. `author-intent-examples` now requires the
+  operation's own names to corroborate a phrasing, and proposes nothing when
+  none survives.

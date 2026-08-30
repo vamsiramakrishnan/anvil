@@ -6,6 +6,7 @@ import {
   bareCatalog,
   benchmarkOperations,
   curatedCatalog,
+  extractRoutedTool,
   lexicalRouter,
   routeAndScore,
 } from "./benchmark-routing.js";
@@ -136,6 +137,44 @@ describe("the agent router seam", () => {
 
   it("refuses a name the model invented — a hallucinated tool is a failed route", async () => {
     const router = agentRouter(runner('{"tool": "payments_delete_everything"}'), "model");
+    expect(await router.route("find my payment", catalog)).toBeUndefined();
+  });
+
+  it("reads the fenced JSON real model CLIs actually print", async () => {
+    // Regression: the first version demanded that stdout parse as JSON whole,
+    // and scored 0/20 against a real model that had routed every task
+    // correctly — it fenced its answers. The measurement was wrong, not the
+    // model.
+    const fenced = agentRouter(runner('```json\n{"tool": "payments_get_payment"}\n```'), "model");
+    expect(await fenced.route("find my payment", catalog)).toBe("payments_get_payment");
+
+    const bare = agentRouter(runner('```\n{"tool": "payments_get_payment"}\n```'), "model");
+    expect(await bare.route("find my payment", catalog)).toBe("payments_get_payment");
+
+    const chatty = agentRouter(
+      runner(
+        'Looking at the catalog, the best fit is:\n{"tool": "payments_get_payment"}\nHope that helps!',
+      ),
+      "model",
+    );
+    expect(await chatty.route("find my payment", catalog)).toBe("payments_get_payment");
+  });
+
+  it("extracts nothing from output that names no tool object", () => {
+    expect(extractRoutedTool("")).toBeUndefined();
+    expect(extractRoutedTool("I think you want get_payment")).toBeUndefined();
+    expect(extractRoutedTool('{"choice": "payments_get_payment"}')).toBeUndefined();
+    expect(extractRoutedTool('{"tool": ""}')).toBeUndefined();
+    expect(extractRoutedTool('{"tool": 7}')).toBeUndefined();
+  });
+
+  it("keeps the catalog gate strict even when the syntax is loose", async () => {
+    // Tolerance is about how the answer is written, never about which tools
+    // exist: a fenced hallucination is still a hallucination.
+    const router = agentRouter(
+      runner('```json\n{"tool": "payments_delete_everything"}\n```'),
+      "model",
+    );
     expect(await router.route("find my payment", catalog)).toBeUndefined();
   });
 

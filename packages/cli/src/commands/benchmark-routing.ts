@@ -181,6 +181,48 @@ export function lexicalRouter(): TaskRouter {
  * runner failure is a failed route too: fail closed, exactly like the LLM
  * enrichment agent.
  */
+/**
+ * Pull the routing answer out of whatever a model actually printed.
+ *
+ * The first version of this demanded that the command's entire stdout parse as
+ * JSON. Pointed at a real model CLI for the first time, that scored 0/20 on a
+ * catalog the model had in fact routed correctly every time: models fence their
+ * JSON (```json ... ```) and sometimes say a sentence around it. Refusing those
+ * answers is not caution, it is a broken measurement — the reading was wrong
+ * about the thing it claimed to measure.
+ *
+ * So the parse is tolerant and the GATE stays strict: this only finds a
+ * candidate name, and the caller still refuses any name the served catalog does
+ * not contain. Tolerance about syntax, none about which tools exist.
+ */
+export function extractRoutedTool(stdout: string): string | undefined {
+  const text = stdout.trim();
+  if (text === "") return undefined;
+  // Fenced first (the common case), then the raw text, then the first embedded
+  // object — a model that explains itself still names its choice exactly once.
+  const candidates: string[] = [];
+  for (const match of text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)) {
+    const body = match[1]?.trim();
+    if (body) candidates.push(body);
+  }
+  candidates.push(text);
+  for (const match of text.matchAll(/\{[^{}]*\}/g)) candidates.push(match[0]);
+
+  for (const candidate of candidates) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+    if (typeof parsed === "object" && parsed !== null && "tool" in parsed) {
+      const name = (parsed as { tool: unknown }).tool;
+      if (typeof name === "string" && name.trim() !== "") return name.trim();
+    }
+  }
+  return undefined;
+}
+
 export function agentRouter(
   runner: AgentProcessRunner,
   command: string,
@@ -208,12 +250,8 @@ export function agentRouter(
           timeoutMs,
         });
         if (result.timedOut || result.canceled || result.exitCode !== 0) return undefined;
-        const parsed: unknown = JSON.parse(result.stdout.trim());
-        const name =
-          typeof parsed === "object" && parsed !== null && "tool" in parsed
-            ? (parsed as { tool: unknown }).tool
-            : undefined;
-        if (typeof name !== "string") return undefined;
+        const name = extractRoutedTool(result.stdout);
+        if (name === undefined) return undefined;
         return tools.some((t) => t.name === name) ? name : undefined;
       } catch {
         return undefined;

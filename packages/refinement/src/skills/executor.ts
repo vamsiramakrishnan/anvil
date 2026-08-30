@@ -113,6 +113,47 @@ function exampleFromSchema(field: FieldContext): { value: JsonValue; ref: string
  * never invent business meaning. It is the executor the harness falls back to and
  * the fixture every richer executor is measured against.
  */
+/**
+ * Content words of a name or phrase, plural-insensitive, for asking whether two
+ * surfaces are talking about the same operation. Generic connectives are
+ * dropped: they are shared by every phrase, so keeping them would make the
+ * comparison always succeed and prove nothing.
+ */
+const ROUTING_STOPWORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "of",
+  "for",
+  "to",
+  "by",
+  "in",
+  "on",
+  "and",
+  "with",
+  "from",
+  "all",
+  "new",
+  "existing",
+  "matching",
+  "filter",
+  "id",
+]);
+
+export function routingTokens(text: string): string[] {
+  return String(text)
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
+    .map((word) => word.toLowerCase())
+    .filter((word) => word.length > 1 && !ROUTING_STOPWORDS.has(word))
+    .map((word) => {
+      if (word.endsWith("ies")) return `${word.slice(0, -3)}y`;
+      if (word.endsWith("ses")) return word.slice(0, -2);
+      if (word.endsWith("s") && word.length > 3) return word.slice(0, -1);
+      return word;
+    });
+}
+
 export class HeuristicSkillExecutor implements SkillExecutor {
   readonly name = "heuristic";
 
@@ -502,7 +543,33 @@ export class HeuristicSkillExecutor implements SkillExecutor {
     else if (resource && action) phrases.push(`${action.replace(/_/g, " ")} ${resource}`);
     if (display) phrases.push(display.toLowerCase());
 
-    const intents = [...new Set(phrases.filter((p) => p.trim().length > 0))];
+    // Keep only phrasings this operation's own names corroborate. `effect.resource`
+    // is a path segment, and for RPC-ish segments the path and the operation's
+    // name disagree outright: `GET /subdomains/available` templates "list the
+    // availables" for an operation named `verify_subdomain_availability`, and
+    // `GET /users/me` templates "list the mes" for `show_current_user`. A phrase
+    // sharing no word with the tool name puts two Anvil surfaces — the skill's
+    // routing phrases and the MCP tool name — in disagreement about what the
+    // operation is called, which is the one thing this compiler exists to prevent.
+    // Measured on a real 329-tool Zendesk estate: 12 of 1277 authored phrases.
+    // An intent nobody would say is worse than no intent, because the skill
+    // teaches it AND the deficiency stops being reported.
+    //
+    // This is a floor, not a grammar check. It cannot catch a phrase that is
+    // merely awkward while still sharing vocabulary — `GET /views/count_many`
+    // templates "list the count manies" and keeps it, because `get_view_counts`
+    // really does say "count". Naming that segment correctly is a compiler-side
+    // fix; this rule only refuses the phrases that are provably about something
+    // else.
+    const vocabulary = new Set([
+      ...routingTokens(op.canonicalName),
+      ...routingTokens(op.displayName),
+    ]);
+    const corroborated = phrases.filter((phrase) =>
+      routingTokens(phrase).some((token) => vocabulary.has(token)),
+    );
+
+    const intents = [...new Set(corroborated.filter((p) => p.trim().length > 0))];
     if (intents.length === 0) return null;
 
     const claim: Claim = {

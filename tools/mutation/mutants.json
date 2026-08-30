@@ -700,6 +700,26 @@
       "tests": [
         "packages/cli/src/commands/pack.test.ts"
       ]
+    },
+    {
+      "id": "benchmark/agent-answers-are-read-not-demanded",
+      "file": "packages/cli/src/commands/benchmark-routing.ts",
+      "control": "Real model CLIs fence their JSON. Demanding that stdout parse whole scored 0/20 against a model that had in fact routed every task correctly — a measurement that silently reports failure for answers it was given is worse than no measurement, because a benchmark is believed.",
+      "find": "  for (const match of text.matchAll(/```(?:json)?\\s*([\\s\\S]*?)```/g)) {",
+      "replace": "  for (const match of [] as RegExpMatchArray[]) {",
+      "tests": [
+        "packages/cli/src/commands/benchmark-routing.test.ts"
+      ]
+    },
+    {
+      "id": "intents/skill-and-tool-name-must-agree",
+      "file": "packages/refinement/src/skills/executor.ts",
+      "control": "An intent example sharing no word with its own operation's names teaches the skill to route by a vocabulary the MCP tool name does not have. Delete the corroboration filter and Anvil ships two surfaces that disagree about what an operation is called — the one failure this compiler exists to prevent.",
+      "find": "    const corroborated = phrases.filter((phrase) =>\n      routingTokens(phrase).some((token) => vocabulary.has(token)),\n    );",
+      "replace": "    const corroborated = phrases;",
+      "tests": [
+        "packages/refinement/src/skills/skills.test.ts"
+      ]
     }
   ]
 }

@@ -244,6 +244,42 @@ describe("author-intent-examples", () => {
     const result = validateProposal(skill, proposal!, ctx);
     expect(result.status).toBe("validated");
   });
+
+  it("drops a phrasing the operation's own names do not corroborate", async () => {
+    // `GET /subdomains/available` classifies to resource `available`, which
+    // templates "list the availables" — while the same operation is named
+    // `verify_subdomain_availability`. The two share no word, so the skill and
+    // the MCP tool name would disagree about what this operation is called.
+    // Only the corroborated phrasing survives.
+    const air = doc();
+    const op = air.operations[0];
+    if (!op) throw new Error("fixture has no operation");
+    op.skill.intentExamples = [];
+    op.effect.resource = "available";
+    op.effect.action = "list";
+    op.canonicalName = "verify_subdomain_availability";
+    op.displayName = "Verify Subdomain Availability";
+    const ctx = contextFor(air, (code) => code === "operation_lacks_intent_examples");
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set.intent_examples).toEqual(["verify subdomain availability"]);
+  });
+
+  it("proposes nothing rather than a phrase nobody would say", async () => {
+    // When no phrasing survives corroboration there is no honest proposal to
+    // make: the deficiency stays open for a human instead of being closed with
+    // an intent that would mis-route. Measured on a 329-tool Zendesk estate,
+    // this is what stops "list the mes" from being taught for `show_current_user`.
+    const air = doc();
+    const op = air.operations[0];
+    if (!op) throw new Error("fixture has no operation");
+    op.skill.intentExamples = [];
+    op.effect.resource = "me";
+    op.effect.action = "list";
+    op.canonicalName = "show_current_user";
+    op.displayName = "";
+    const ctx = contextFor(air, (code) => code === "operation_lacks_intent_examples");
+    expect(await executor.execute(skill, ctx)).toBeNull();
+  });
 });
 
 describe("review-query-passthrough", () => {
