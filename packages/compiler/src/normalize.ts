@@ -9,6 +9,8 @@ import type {
   Operation,
   Param,
   ParamLocation,
+  PathGrammar,
+  PathGrammarClassification,
   RequestBody,
 } from "@anvil/air";
 import { resolveAsyncContract, StreamContractSchema, snakeCase, WireBinding } from "@anvil/air";
@@ -28,6 +30,11 @@ import {
 import { materializeSchema } from "./decycle.js";
 import { deriveNames, estatePathContext, singularize } from "./naming.js";
 import type { OpenApiDocument, ParsedSpec, SecurityScheme } from "./parse.js";
+import {
+  classifyPathGrammar,
+  estateContextEnabled,
+  type PathGrammarOperationShape,
+} from "./path-grammar.js";
 import {
   callbackWebhookLink,
   WEBHOOK_ARCHETYPE_EXTENSION,
@@ -674,10 +681,21 @@ function resolveSingleRequirement(
 export interface NormalizeResult {
   operations: Operation[];
   diagnostics: Diagnostic[];
+  /** The estate's path grammar — classification, basis, and evidence counts. */
+  pathGrammar: PathGrammar;
+}
+
+export interface NormalizeOptions {
+  /** An explicit manifest `path_grammar` declaration; wins over the evidence. */
+  pathGrammarOverride?: Exclude<PathGrammarClassification, "ambiguous">;
 }
 
 /** Normalize a parsed OpenAPI document into AIR operations (classifier applied). */
-export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResult {
+export function normalize(
+  serviceId: string,
+  parsed: ParsedSpec,
+  options: NormalizeOptions = {},
+): NormalizeResult {
   const doc = parsed.document;
   // OpenAPI 3.1's `webhooks:` map is structurally identical to `paths:` (see
   // `protocols/webhooks.ts`), so it is merged straight into the loop below
@@ -703,22 +721,25 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
   // `asyncDetections` is: ids are not yet unique at this point.
   const rawCallbacks = new Map<Operation, unknown>();
 
-  // Estate-wide path knowledge for the naming pass: the bare-CRUD-verb rule in
-  // `deriveNames` must know which words the estate uses as real collections
-  // (non-terminal segments) before it may treat a trailing verb word as a
-  // method. Built once, from every path that carries at least one operation —
-  // and ONLY for source kinds whose paths follow resource grammar. An
-  // adapter-lowered RPC kind (WSDL/GraphQL/protobuf/MCP) writes synthetic
-  // `/<Wrapper>/<methodName>` paths where a bare CRUD method name (NetSuite's
-  // `get`, `add`) must stay the resource; without the context, `deriveNames`
-  // keeps its hands off (see `EstatePathContext`).
-  const RESOURCE_PATH_KINDS = new Set(["openapi", "swagger", "discovery", "postman", "odata"]);
-  const estate = RESOURCE_PATH_KINDS.has(parsed.kind)
-    ? estatePathContext(
-        Object.entries(paths)
-          .filter(([, item]) => HTTP_METHODS.some((m) => item[m]))
-          .map(([p]) => p),
-      )
+  // The estate's path grammar, classified ONCE from cheap estate-wide evidence
+  // (see path-grammar.ts). It decides whether the naming pass gets the
+  // estate-wide path context that arms the trailing-method re-homing rules:
+  // resource and plain-RPC grammars read a trailing CRUD verb as a method; a
+  // dotted-RPC or adapter-lowered grammar must not — NetSuite's WSDL lowers to
+  // `/NetSuitePortType/get`, where `get` IS the operation's identity — and an
+  // ambiguous estate declines with a diagnostic and keeps the source kind's
+  // pre-classifier behavior. The verdict travels to `service.source.pathGrammar`
+  // so `anvil inspect` can show why the estate was read the way it was.
+  const grammarShapes: PathGrammarOperationShape[] = [];
+  for (const [path, pathItem] of Object.entries(paths)) {
+    for (const method of HTTP_METHODS) {
+      if (pathItem[method]) grammarShapes.push({ method, path });
+    }
+  }
+  const grammar = classifyPathGrammar(parsed.kind, grammarShapes, options.pathGrammarOverride);
+  diagnostics.push(...grammar.diagnostics);
+  const estate = estateContextEnabled(grammar.grammar, parsed.kind)
+    ? estatePathContext(grammarShapes.map((shape) => shape.path))
     : undefined;
 
   for (const [path, pathItem] of Object.entries(paths)) {
@@ -977,5 +998,5 @@ export function normalize(serviceId: string, parsed: ParsedSpec): NormalizeResul
   attachAsyncContracts(operations, asyncDetections);
   attachWebhookLinks(operations, rawCallbacks, doc.webhooks);
 
-  return { operations, diagnostics };
+  return { operations, diagnostics, pathGrammar: grammar.grammar };
 }

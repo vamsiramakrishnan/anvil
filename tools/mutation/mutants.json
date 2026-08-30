@@ -772,6 +772,16 @@
       "tests": [
         "packages/compiler/src/naming.test.ts"
       ]
+    },
+    {
+      "id": "path-grammar/ambiguous-never-silently-selects",
+      "file": "packages/compiler/src/path-grammar.ts",
+      "control": "An ambiguous path grammar never silently selects a grammar: when the estate's RPC and REST signals BOTH commit, the classifier must return `ambiguous` with a diagnostic naming both candidate grammars and fall back to the source kind's pre-classifier behavior — never let whichever side carries more votes win quietly. Delete the split-vote branch and a GET-heavy verb-terminal estate silently classifies rpc_plain with no warning.",
+      "find": "  if (votes.rpc.length > 0 && votes.rest.length > 0) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/compiler/src/path-grammar.test.ts"
+      ]
     }
   ]
 }

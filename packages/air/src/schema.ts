@@ -1283,6 +1283,69 @@ export const Server = z.object({
 export type Server = z.infer<typeof Server>;
 
 /**
+ * How the estate's URL paths carry meaning — the compiled answer to "are these
+ * paths nouns (REST) or verbs (RPC)?":
+ *   resource_grammar — nouns in the path, HTTP methods carry the verb.
+ *   rpc_plain        — verbs as plain terminal segments, method mix collapsed
+ *                      onto POST (Plaid's `POST /transactions/get`).
+ *   rpc_dotted       — dotted RPC method segments (Slack's `/chat.postMessage`).
+ *   adapter_lowered  — a protocol adapter (WSDL/GraphQL/protobuf/MCP) wrote the
+ *                      paths itself; the shape is declared, not evidenced.
+ *   ambiguous        — the estate-wide evidence genuinely splits; the compiler
+ *                      declines to pick and falls back to the source kind's
+ *                      default reading.
+ */
+export const PathGrammarClassification = z.enum([
+  "resource_grammar",
+  "rpc_plain",
+  "rpc_dotted",
+  "adapter_lowered",
+  "ambiguous",
+]);
+export type PathGrammarClassification = z.infer<typeof PathGrammarClassification>;
+
+/**
+ * The counts behind a path-grammar classification — deliberately counts, not
+ * adjectives, so `anvil inspect` can show an operator the same numbers the
+ * compiler read. All are computed in one deterministic pass over the estate's
+ * operations; no network, no model.
+ */
+export const PathGrammarEvidence = z.object({
+  /** Operations examined (the denominator for every count below). */
+  operations: z.number().int().nonnegative(),
+  /** Operations whose wire method is GET/HEAD — REST spreads its verb across methods. */
+  readMethodOperations: z.number().int().nonnegative(),
+  /** Operations whose path carries a `{param}` segment — REST addresses items in the path. */
+  parameterizedPathOperations: z.number().int().nonnegative(),
+  /** Operations whose terminal concrete segment is a bare or bulk CRUD/action verb. */
+  verbTerminalOperations: z.number().int().nonnegative(),
+  /** Operations whose terminal concrete segment is a dotted RPC method (`chat.postMessage`). */
+  dottedTerminalOperations: z.number().int().nonnegative(),
+  /** Distinct terminal verb words that recur under two or more distinct parent paths. */
+  repeatedVerbWords: z.number().int().nonnegative(),
+});
+export type PathGrammarEvidence = z.infer<typeof PathGrammarEvidence>;
+
+/** What decided the classification: the estate-wide counts, the source kind
+ *  itself (adapter-lowered paths are declared, not measured), or an explicit
+ *  manifest `path_grammar` declaration. */
+export const PathGrammarBasis = z.enum(["estate_evidence", "source_kind", "manifest"]);
+export type PathGrammarBasis = z.infer<typeof PathGrammarBasis>;
+
+/**
+ * The estate's path grammar as a first-class compiled fact: what was decided,
+ * what decided it, and the counts it was decided from. Optional and never
+ * defaulted, so an `air.yaml` written before the field existed round-trips
+ * byte-identically (the same discipline as `Workflow.supersedes`).
+ */
+export const PathGrammar = z.object({
+  classification: PathGrammarClassification,
+  basis: PathGrammarBasis,
+  evidence: PathGrammarEvidence,
+});
+export type PathGrammar = z.infer<typeof PathGrammar>;
+
+/**
  * Canonical service identifier. It is safe as one path/CLI segment; generators
  * project it into stricter provider-specific slugs (npm, Skills, GCP) without
  * changing this identity, because changing an established id breaks overlays,
@@ -1315,6 +1378,8 @@ export const Service = z.object({
     origin: z.object({ kind: z.string(), uri: z.string() }).optional(),
     /** The snapshot-relative path of the compiled entrypoint. */
     entrypoint: z.string().optional(),
+    /** The estate's path grammar, classified at compile time (see PathGrammar). */
+    pathGrammar: PathGrammar.optional(),
   }),
   auth: AuthRequirement.default({
     type: "none",
