@@ -206,3 +206,38 @@ the file is complete on disk).
   review_required with a one-line manifest. (Zoho's mirror spec has an
   unresolvable external `Common.json` ref — a corpus artifact, same auth
   shape as Workday.)
+
+## Resource derivation + tool-name stutter fix landed (2026-08-30, six untrimmed estates)
+
+`docs/design/resource-derivation-and-tool-name-stutter.md` implemented against
+`a9cfd63` after owner approval of the id break: singularize over-strip fix
+(both mirrored copies, drift-guarded by `packages/compiler/src/naming.test.ts`),
+rules A (bulk-qualified verb segments) + C (bare CRUD-verb terminal segments,
+resource-only, estate-wide non-terminal guard), the disambiguation-suffix
+stutter skip, and a `service_prefix_stutter` compile warning. Rule B stays
+rejected as a compiler rule. Measured with `tools/naming-audit/run.mjs` before
+and after, per estate (re-homed resources = predicted exactly):
+
+| estate | ops | re-homed (predicted → measured) | disamb. stutters before → after | spec-authored (untouched) |
+|---|---:|---|---|---|
+| plaid | 351 | 252 → **252** | 0 → 26 (rule-C collisions where the only distinguishing word is the op's own trailing verb — the structural floor of resource-only re-homing on an RPC estate) | 0 |
+| zendesk (untrimmed) | 640 | 70 → **70** | 44 → **0** | 0 |
+| github | 1222 | 13 → **13** | 61 → **2** (`/user/issues`, `/user/repos`: the only distinguishing word is the operationId's own tail) | 13 |
+| stripe | 594 | 3 → **3** | 2 → **0** | 2 |
+| bigquery | 42 | 2 → **2** | 0 → 0 (42 `service_prefix_join` untouched, now warned) | 0 |
+| slack | 174 | 0 → **0** | 0 → 0 | 0 |
+
+`effect.action` changed on **zero** operations (resource-only re-homing held).
+Plaid's resource catalogue went from 71 values topped by
+`get(114) create(53) list(39)` to 146 values topped by `transaction(14)`,
+with no CRUD verb left as any operation's resource. Singularize moved 29
+github resources (the doc's hand table said 26 — it missed `dispatche`(2),
+`marketplace_purchas`(1)) and 4 zendesk ones, all to real words; the brief's
+literal sibilant class `(ch|sh|x|z|ss)es` had to be narrowed (`z` → `zz`, plus
+a small `-che` stem list) because it minted new non-words on GitHub's real
+estate (`caches → cach`, `machine-sizes → machine-siz`).
+
+The one-line lesson: a rule measured against real estates before it ships
+lands exactly on its prediction — and the two places it drifted (three
+missed singulars, the sibilant class) were both places where a hand count or
+a spelled-out regex had NOT been machine-checked against the estates first.
