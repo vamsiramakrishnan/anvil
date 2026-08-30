@@ -87,8 +87,8 @@
       "plan": "One vendor adapter. Per-vendor files are the intended boundary."
     },
     "packages/refinement/src/skills/executor.ts": {
-      "lines": 995,
-      "plan": "Watch."
+      "lines": 1002,
+      "plan": "Watch. +7 for the singularize over-strip fix (releases no longer becomes releas): the function is a byte-identical mirror of the compiler's — naming.test.ts asserts the two bodies stay identical — so the compiler-side fix had to land here too, comments and all."
     },
     "packages/compiler/src/disclosure-bom.ts": {
       "lines": 992,
@@ -123,8 +123,12 @@
       "plan": "Raised deliberately from 886 for async-events Phase 6: the long-running skill section Phase 0 deferred lands here — webhookAsyncSurfaces() resolves webhook-only completions the way asyncSurfaces() resolves poll ones, and reference/long-running.md now renders a section for each instead of silently omitting them. This closes a real agent-facing bug the deferral left behind: without it, a webhook-only operation fell through operationsRef()'s generic longRunning flag and told the agent to \"poll for status\" for an operation with no poll operation to poll. Previously raised from 883 for Phase 0. Watch. Then +23 for wireProtocolSection: when a service speaks a protocol this runtime cannot, the skill says so and tells the agent not to treat the refusal as transient. It renders nothing for an HTTP/JSON service, so it costs the common case no tokens. The words themselves come from @anvil/air, not from here — this file decides only that an agent needs to be told."
     },
     "packages/compiler/src/normalize.ts": {
-      "lines": 957,
-      "plan": "Raised deliberately from 814 for async-events Phase 1: merges webhookPathItems(doc) into the paths loop and adds attachWebhookLinks, which records a callbacks:-derived webhooks: link as an evidence claim rather than writing AsyncContract.webhook directly (see manifest.ts's async_contract key for why). Watch. Then +20 to carry x-anvil-wire-binding into sourceRef.binding: the extension is parsed rather than trusted, because it arrives as unknown off a lowered document and an adapter that recorded a malformed binding must produce no binding at all rather than a half-built one the codec would read. Then +9 to parse the stream contract off the lowered document and pass its presence to the archetype classifier. Same shape as the wire binding two lines above it — parsed rather than trusted, because the extension arrives as `unknown` — and it stays here because this file already owns turning adapter extensions into AIR facts."
+      "lines": 973,
+      "plan": "Raised deliberately from 814 for async-events Phase 1: merges webhookPathItems(doc) into the paths loop and adds attachWebhookLinks, which records a callbacks:-derived webhooks: link as an evidence claim rather than writing AsyncContract.webhook directly (see manifest.ts's async_contract key for why). Watch. Then +20 to carry x-anvil-wire-binding into sourceRef.binding: the extension is parsed rather than trusted, because it arrives as unknown off a lowered document and an adapter that recorded a malformed binding must produce no binding at all rather than a half-built one the codec would read. Then +9 to parse the stream contract off the lowered document and pass its presence to the archetype classifier. Same shape as the wire binding two lines above it — parsed rather than trusted, because the extension arrives as `unknown` — and it stays here because this file already owns turning adapter extensions into AIR facts. Then +16 to build the estate-wide path context (estatePathContext) once per document and hand it to deriveNames: the bare-CRUD-verb re-homing rule's non-terminal guard needs every path in the estate, and this loop is the one place that sees them all."
+    },
+    "packages/compiler/src/naming.ts": {
+      "lines": 927,
+      "plan": "Crossed the threshold implementing docs/design/resource-derivation-and-tool-name-stutter.md: rules A/C (bulk-qualified and bare-CRUD trailing segments re-home the resource, with the estate-wide non-terminal guard), the singularize over-strip fix, the stutter-aware collision-suffix choice, and the service-prefix stutter warning. All of it is naming semantics with one owner, deliberately NOT split — deriveNames, the collision resolver, and singularize must share one vocabulary or the surfaces drift. If it grows again, the candidate split is the collision resolver (resolveNameCollisions + token choice, ~250 lines) into naming-collisions.ts."
     },
     "packages/mcp-runtime/src/server.ts": {
       "lines": 1059,

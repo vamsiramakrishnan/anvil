@@ -1,6 +1,11 @@
 import type { Diagnostic, HttpMethod, NameWeakness, Operation } from "@anvil/air";
 import { nameWeaknesses, snakeCase } from "@anvil/air";
-import { actionHasReadIntent, actionVerbFor, isReadIntentWriteMethod } from "./classify.js";
+import {
+  ACTION_VERB_WORDS,
+  actionHasReadIntent,
+  actionVerbFor,
+  isReadIntentWriteMethod,
+} from "./classify.js";
 
 /**
  * The naming pass. Operation names are the agent-facing surface — a CLI that
@@ -27,10 +32,23 @@ export interface DerivedNames {
 
 export const singularize = (s: string): string => {
   if (/ies$/.test(s)) return s.replace(/ies$/, "y");
-  if (/ses$/.test(s)) return s.replace(/ses$/, "s");
-  // Singular nouns ending in `-us` (status, bus, virus) must retain the final
-  // `s`. Their regular plurals (`statuses`, `buses`, `viruses`) are already
-  // handled by the `-ses` branch above.
+  // `-ches` words whose stem really ends in `-che` (GitHub's actions caches):
+  // stripping the whole `es` would mint a non-word, the exact defect this
+  // function exists to avoid, so these few known stems lose only the `s`.
+  if (/(?:caches|niches|headaches|mustaches|avalanches)$/.test(s)) return s.replace(/s$/, "");
+  // Sibilant stems take `-es`; stripping it restores the stem whole
+  // (searches→search, branches→branch, boxes→box, addresses→address). A single
+  // `z` is deliberately NOT in the class — `sizes`/`prizes` are `-e` stems and
+  // a true z-sibilant plural doubles the z (`quizzes`).
+  if (/(?:ch|sh|x|zz|ss)es$/.test(s)) return s.replace(/es$/, "");
+  // Singular nouns ending in `-us` (status, bus, virus) pluralize to `-uses`;
+  // strip the `es` so the singular keeps its final `s`.
+  if (/uses$/.test(s)) return s.replace(/es$/, "");
+  // Every other `-ses` is a `-se` stem plus a plural `s` (releases, databases,
+  // cases, licenses): strip only the final `s`. The old blanket `-ses → -s`
+  // branch over-stripped these to non-words (`releas`, `databas`) that no
+  // operation's own name text can ever corroborate.
+  if (/ses$/.test(s)) return s.replace(/s$/, "");
   if (/s$/.test(s) && !/(?:ss|us)$/.test(s)) return s.replace(/s$/, "");
   return s;
 };
@@ -64,6 +82,152 @@ export function projectRoutingNames(
 /** An API-version path segment: `v1`, `v60`, `v60.0`, `2.0`. Never a resource. */
 function isVersionLike(segment: string): boolean {
   return /^v?\d+(\.\d+)*$/i.test(segment);
+}
+
+/**
+ * CRUD/method verbs that RPC-over-HTTP estates write as bare trailing path
+ * segments: Plaid's `POST /transactions/get`, Zendesk's `GET /views/count`.
+ * Deliberately NOT `ACTION_VERB_WORDS`: that vocabulary's words (trigger,
+ * status, filter, query, report, message, lock) are real REST collections on
+ * real estates, and disqualifying them as resources regresses more operations
+ * than it repairs — measured in
+ * docs/design/resource-derivation-and-tool-name-stutter.md §6. This closed
+ * list holds only words that name a data operation and essentially never name
+ * a collection.
+ */
+const CRUD_SEGMENT_WORDS = new Set([
+  "get",
+  "list",
+  "create",
+  "update",
+  "delete",
+  "remove",
+  "destroy",
+  "show",
+  "insert",
+  "count",
+  "sync",
+  "refresh",
+  "upsert",
+  "replace",
+  "add",
+  "set",
+  "new",
+  "restore",
+  "recover",
+]);
+
+/** Quantity qualifiers that turn a verb segment into a bulk RPC method: `count_many`. */
+const BULK_QUALIFIERS = new Set(["many", "all", "bulk", "batch", "multiple"]);
+
+/** The flat action-verb vocabulary, for recognizing a verb-headed bulk segment. */
+const ACTION_VERB_VOCAB = new Set<string>(Object.values(ACTION_VERB_WORDS).flat());
+
+/**
+ * A bulk-qualified RPC method segment (rule A of the resource-derivation design
+ * doc): a multi-token segment whose head is a verb — from the shared action
+ * vocabulary or the CRUD list above — and whose EVERY remaining token is a
+ * quantity qualifier (`count_many`, `show_many`, `destroy_many`). This is a
+ * strict generalisation of the bare-trailing-verb rule in `deriveNames`,
+ * relaxing its single-word guard for this one closed shape only: the guard
+ * exists because GraphQL/gRPC lower every operation to a multi-word field
+ * segment (`acceptEnterpriseAdminInvitation`) that must stay the resource, and
+ * no such field ends in `_many`.
+ */
+function isBulkVerbSegment(segment: string): boolean {
+  const tokens = snakeCase(segment).split("_").filter(Boolean);
+  if (tokens.length < 2) return false;
+  const head = tokens[0] as string;
+  return (
+    (ACTION_VERB_VOCAB.has(singularize(head)) || CRUD_SEGMENT_WORDS.has(head)) &&
+    tokens.slice(1).every((t) => BULK_QUALIFIERS.has(t))
+  );
+}
+
+/**
+ * Estate-wide path knowledge for `deriveNames`: which concrete words appear as
+ * a NON-terminal path segment somewhere in the estate. A verb word that also
+ * names a real collection here (`/reports/{id}/lines` makes `reports` one) must
+ * never be re-homed off a path that merely ends in it — this is the cheap
+ * statistical pre-filter applied BEFORE the bare-CRUD-verb rule, insurance
+ * against the one shape that rule could misread. It fired zero times on all six
+ * estates the design doc measured; it exists so the seventh estate is safe too.
+ */
+export interface EstatePathContext {
+  /** Lower-cased concrete non-terminal segments across every path in the estate. */
+  nonTerminalSegments: ReadonlySet<string>;
+}
+
+/** Concrete, version-stripped path segments, cleaned the way naming reads them. */
+function concreteResourceSegments(path: string): string[] {
+  return (path.split("?")[0] as string)
+    .split("/")
+    .filter((s) => s && !s.startsWith("{"))
+    .map((s) => s.replace(FORMAT_SUFFIX, "").replace(/\(.*\)$/, ""))
+    .filter((s) => s && !isVersionLike(s));
+}
+
+/** Build the estate-wide context from every path the compile will name. */
+export function estatePathContext(paths: Iterable<string>): EstatePathContext {
+  const nonTerminalSegments = new Set<string>();
+  for (const path of paths) {
+    const segments = concreteResourceSegments(path);
+    for (let i = 0; i < segments.length - 1; i++) {
+      nonTerminalSegments.add((segments[i] as string).toLowerCase());
+    }
+  }
+  return { nonTerminalSegments };
+}
+
+/**
+ * Re-home a resource that is really a trailing method segment (rules A and C of
+ * docs/design/resource-derivation-and-tool-name-stutter.md): walk left from the
+ * segment that produced the resource while it is a bulk-qualified verb (rule A)
+ * or a bare CRUD verb the estate never uses as a collection (rule C), and name
+ * the first real segment instead — `POST /transactions/get` is an operation on
+ * `transactions`, not on a resource called `get`.
+ *
+ * Resource-ONLY by design: `effect.action` stays whatever the HTTP method (or
+ * an explicit verb) produced. `OperationAction` has no `count`/`show`/`sync`
+ * member, and colliding results (`/activities` and `/activities/count` both
+ * landing on `activities.list`) are separated by the collision resolver's own
+ * distinguishing-token logic — the honest name for "a count of activities" is
+ * a variant of the activities read, which is exactly what that produces.
+ *
+ * Rule C runs only with estate-wide path knowledge (`estate`), because its
+ * guard needs to see every path; without the context the rule stays off rather
+ * than running unguarded.
+ */
+function rehomeMethodSegments(
+  resource: string,
+  path: string,
+  estate: EstatePathContext | undefined,
+): string {
+  const segments = concreteResourceSegments(path);
+  // Anchor on the segment that actually produced the resource (rightmost
+  // match), so the walk is a delta on real behaviour — the same anchoring the
+  // design doc's measurements used.
+  let i = -1;
+  for (let k = segments.length - 1; k >= 0; k--) {
+    if (singularize(decomposeSegment(segments[k] as string).resource) === singularize(resource)) {
+      i = k;
+      break;
+    }
+  }
+  if (i < 0) return resource;
+  const start = i;
+  // Rule A: bulk-qualified verb segments are methods.
+  while (i > 0 && isBulkVerbSegment(segments[i] as string)) i--;
+  // Rule C: bare CRUD-verb segments are methods — unless the word names a real
+  // collection somewhere in this estate (the non-terminal guard).
+  if (estate) {
+    while (i > 0) {
+      const word = (segments[i] as string).toLowerCase();
+      if (!CRUD_SEGMENT_WORDS.has(word) || estate.nonTerminalSegments.has(word)) break;
+      i--;
+    }
+  }
+  return i === start ? resource : decomposeSegment(segments[i] as string).resource;
 }
 
 /**
@@ -229,6 +393,7 @@ export function deriveNames(
   path: string,
   method: HttpMethod,
   raw: RawForNaming,
+  estate?: EstatePathContext,
 ): DerivedNames {
   // A coordinate may carry query text an adapter compiled into it — an OData v2
   // function import is addressed as `/ActivateProduct?ProductID='{id}'`. That
@@ -315,12 +480,19 @@ export function deriveNames(
     !isReadIntentWriteMethod(method, semanticSignal, declaredIntentSignals)
       ? undefined
       : trailingVerb;
-  const resource =
+  const segmentResource =
     effectiveTrailingVerb && concrete.length > 1
       ? decomposeSegment(concrete[concrete.length - 2] as string).resource
       : hasResource
         ? (lastConcrete as string)
-        : serviceId;
+        : undefined;
+  // A trailing method segment (bulk-qualified verb, or bare CRUD verb — rules
+  // A/C) names an operation, not a thing; re-home the resource onto the real
+  // segment before it. Resource-only: the action below is untouched.
+  const resource =
+    segmentResource !== undefined
+      ? rehomeMethodSegments(segmentResource, custom.path, estate)
+      : serviceId;
   // The path addresses a single item when it ends in a `/{param}` segment or an
   // OData key predicate (`Set('id')`) — either way the action is get/update/
   // delete, not list.
@@ -520,9 +692,25 @@ function resolveSurfaceCollisions(
     group.sort(byStableIdentity);
     const usedTokens = new Set<string>();
     for (const [index, op] of group.entries()) {
+      // A candidate the operation's own canonicalName already ends with would
+      // stutter at the join (`count_activities` + `activities` →
+      // `…_count_activities_activities`), so take the next candidate instead:
+      // first non-stuttering distinguishing token, then a non-stuttering subset
+      // fallback (its stuttering lead word elided, if the elision is still
+      // free in this group). Only when EVERY meaningful token stutters is the
+      // original stuttering choice kept — a doubled word still beats the
+      // meaningless method/index fallbacks, and beats a numbered blank.
+      const candidates = distinguishingTokenCandidates(op, group);
+      const fallback = subsetFallbackToken(op, group);
+      const fallbackStutters = fallback !== undefined && suffixStutters(op, fallback);
+      const elided =
+        fallback !== undefined && fallbackStutters ? elideStutter(op, fallback) : undefined;
       let token =
-        distinguishingToken(op, group) ??
-        subsetFallbackToken(op, group) ??
+        candidates.find((candidate) => !suffixStutters(op, candidate)) ??
+        (fallback !== undefined && !fallbackStutters ? fallback : undefined) ??
+        (elided !== undefined && !usedTokens.has(elided) ? elided : undefined) ??
+        candidates[0] ??
+        fallback ??
         op.sourceRef.method ??
         String(index + 1);
       let candidate = token;
@@ -586,14 +774,16 @@ function cleanPathTokens(path: string | undefined): string[] {
 }
 
 /**
- * The globally-minimal token that distinguishes `op` from the rest of its
- * collision group: among ALL of the operation's own cleaned path tokens that no
- * other group member's path contains, pick the shortest (ties break
- * lexicographically) — not the first-in-path-order one, which on real specs
- * drags in long prefix segments (`administrative_gateway`) when a short unique
- * token (`v2`) exists further along. If no single token distinguishes, the
- * shortest distinguishing PAIR of own tokens (joined `_`, kept in path order)
- * is tried before the caller falls back to the HTTP method / stable index.
+ * The globally-minimal tokens that distinguish `op` from the rest of its
+ * collision group, in preference order: among ALL of the operation's own
+ * cleaned path tokens that no other group member's path contains, shortest
+ * first (ties break lexicographically) — not first-in-path-order, which on
+ * real specs drags in long prefix segments (`administrative_gateway`) when a
+ * short unique token (`v2`) exists further along. Single tokens come before
+ * distinguishing PAIRS of own tokens (joined `_`, kept in path order); an
+ * empty result sends the caller to the HTTP method / stable index fallbacks.
+ * Returned as an ordered list so the caller can skip a candidate that would
+ * stutter against the operation's own name (`suffixStutters`).
  */
 /** Path parameter names as `by_<name>` pseudo-tokens (`/refunds/{refund}` →
  * `by_refund`). Concrete tokens alone cannot distinguish routes that differ
@@ -608,17 +798,16 @@ function paramTokens(path: string | undefined): string[] {
     .map((s) => `by_${snakeCase(s.slice(1, -1))}`);
 }
 
-function distinguishingToken(op: Operation, group: Operation[]): string | undefined {
+function distinguishingTokenCandidates(op: Operation, group: Operation[]): string[] {
   const mine = [...cleanPathTokens(op.sourceRef.path), ...paramTokens(op.sourceRef.path)];
   const others = group
     .filter((o) => o !== op)
     .map((o) => new Set([...cleanPathTokens(o.sourceRef.path), ...paramTokens(o.sourceRef.path)]));
 
   const unique = [...new Set(mine.filter((seg) => others.every((set) => !set.has(seg))))];
-  if (unique.length > 0) return unique.sort(byShortestThenLex)[0];
 
-  // No single token distinguishes: try pairs of own tokens (in path order) that
-  // no other member's path contains in full.
+  // Pairs of own tokens (in path order) that no other member's path contains in
+  // full — the recourse when no single token distinguishes.
   const pairs: string[] = [];
   for (let i = 0; i < mine.length; i++) {
     for (let j = i + 1; j < mine.length; j++) {
@@ -628,8 +817,89 @@ function distinguishingToken(op: Operation, group: Operation[]): string | undefi
       if (others.every((set) => !(set.has(a) && set.has(b)))) pairs.push(`${a}_${b}`);
     }
   }
-  if (pairs.length > 0) return [...new Set(pairs)].sort(byShortestThenLex)[0];
-  return undefined;
+  return [...unique.sort(byShortestThenLex), ...[...new Set(pairs)].sort(byShortestThenLex)];
+}
+
+/**
+ * Whether appending `token` to the operation's canonicalName would stutter,
+ * compared word-by-word singularized. Two shapes qualify: an adjacent repeat at
+ * the join (`count_activities` + `activities`,
+ * `apps_get_webhook_config_for_app` + `app`), and a token the canonicalName
+ * already ENDS with (`asset_report_create` + the pair `asset_report_create`,
+ * which would double the whole phrase). Only the operation's own name is
+ * checked — a repeat the vendor wrote into its operationId
+ * (`copilot/copilot-…`) is the vendor's name and is never rewritten here.
+ */
+function suffixStutters(op: Operation, token: string): boolean {
+  const nameWords = op.canonicalName.split("_").filter(Boolean).map(singularize);
+  const tokenWords = snakeCase(token).split("_").filter(Boolean).map(singularize);
+  const last = nameWords[nameWords.length - 1];
+  if (last === undefined || tokenWords.length === 0) return false;
+  if (tokenWords[0] === last) return true;
+  if (tokenWords.length <= nameWords.length) {
+    const tail = nameWords.slice(nameWords.length - tokenWords.length);
+    if (tail.every((word, i) => word === tokenWords[i])) return true;
+  }
+  return false;
+}
+
+/**
+ * A composite token (the subset fallback's `<distinctive>_direct`) with its
+ * stuttering lead word(s) dropped: `get_direct` after `transactions_get` →
+ * `direct`. Undefined when nothing survives the elision — the caller then
+ * decides between the stuttering original and its other candidates.
+ */
+function elideStutter(op: Operation, token: string): string | undefined {
+  const nameWords = op.canonicalName.split("_").filter(Boolean);
+  const last = nameWords[nameWords.length - 1];
+  if (last === undefined) return undefined;
+  const words = snakeCase(token).split("_").filter(Boolean);
+  while (words.length > 0 && singularize(words[0] as string) === singularize(last)) words.shift();
+  return words.length > 0 ? words.join("_") : undefined;
+}
+
+/** An immediately repeated word anywhere in a snake_cased name. */
+function hasAdjacentRepeat(name: string): boolean {
+  const words = name.split("_").filter(Boolean);
+  return words.some((word, i) => i > 0 && word === words[i - 1]);
+}
+
+/**
+ * A compile-time warning when the operator's chosen service id duplicates the
+ * leading word of the spec's own operationIds, so the
+ * `${serviceId}_${canonicalName}` tool-name join stutters. The join itself is
+ * deliberately left alone: the operationId is the vendor's declared name and
+ * the service id is the operator's choice — rewriting either would be exactly
+ * the guessing Anvil exists to stop, so the operator gets a loud signal
+ * instead. The measured case is BigQuery under `--service bigquery` over
+ * Discovery operationIds like `bigquery.models.get`: 42 of 42 tool names
+ * stutter (`bigquery_bigquery_models_get`), and zero do when the service id is
+ * left to be derived (`big_query_api`).
+ */
+export function servicePrefixStutterDiagnostic(
+  serviceId: string,
+  operations: readonly Operation[],
+): Diagnostic | undefined {
+  const stuttering = operations.filter((op) => {
+    const operationId = op.sourceRef.operationId;
+    if (!operationId) return false;
+    const canonical = snakeCase(operationId);
+    // Only a repeat the JOIN introduces counts — a repeat already inside the
+    // vendor's own operationId is the vendor's name, not the operator's choice.
+    return !hasAdjacentRepeat(canonical) && hasAdjacentRepeat(`${serviceId}_${canonical}`);
+  });
+  if (stuttering.length === 0) return undefined;
+  const example = stuttering[0] as Operation;
+  return {
+    level: "warning",
+    code: "service_prefix_stutter",
+    message:
+      `Service id "${serviceId}" duplicates the leading word of ${stuttering.length} ` +
+      `operationId${stuttering.length === 1 ? "" : "s"} ` +
+      `(e.g. "${example.sourceRef.operationId}"), so every affected MCP tool name stutters ` +
+      `("${example.mcp.toolName}"). The vendor's operationIds are kept verbatim; pick a ` +
+      `different service id, or omit it to let Anvil derive one from the spec title.`,
+  };
 }
 
 /**

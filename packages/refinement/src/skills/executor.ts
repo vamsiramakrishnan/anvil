@@ -64,13 +64,31 @@ function pluralize(noun: string): string {
  * compiler → refinement, never back), so importing it here would ship a package
  * with an undeclared runtime dependency. Kept byte-compatible so a name this
  * skill proposes is the name the compiler would have derived for the same
- * (resource, action) pair.
+ * (resource, action) pair — `naming.test.ts` (compiler) asserts the two
+ * function bodies are literally identical, so a change to one that misses the
+ * other fails the suite instead of drifting silently.
  */
-function singularize(noun: string): string {
-  if (/ies$/.test(noun)) return noun.replace(/ies$/, "y");
-  if (/ses$/.test(noun)) return noun.replace(/ses$/, "s");
-  if (/s$/.test(noun) && !/(?:ss|us)$/.test(noun)) return noun.replace(/s$/, "");
-  return noun;
+function singularize(s: string): string {
+  if (/ies$/.test(s)) return s.replace(/ies$/, "y");
+  // `-ches` words whose stem really ends in `-che` (GitHub's actions caches):
+  // stripping the whole `es` would mint a non-word, the exact defect this
+  // function exists to avoid, so these few known stems lose only the `s`.
+  if (/(?:caches|niches|headaches|mustaches|avalanches)$/.test(s)) return s.replace(/s$/, "");
+  // Sibilant stems take `-es`; stripping it restores the stem whole
+  // (searches→search, branches→branch, boxes→box, addresses→address). A single
+  // `z` is deliberately NOT in the class — `sizes`/`prizes` are `-e` stems and
+  // a true z-sibilant plural doubles the z (`quizzes`).
+  if (/(?:ch|sh|x|zz|ss)es$/.test(s)) return s.replace(/es$/, "");
+  // Singular nouns ending in `-us` (status, bus, virus) pluralize to `-uses`;
+  // strip the `es` so the singular keeps its final `s`.
+  if (/uses$/.test(s)) return s.replace(/es$/, "");
+  // Every other `-ses` is a `-se` stem plus a plural `s` (releases, databases,
+  // cases, licenses): strip only the final `s`. The old blanket `-ses → -s`
+  // branch over-stripped these to non-words (`releas`, `databas`) that no
+  // operation's own name text can ever corroborate.
+  if (/ses$/.test(s)) return s.replace(/s$/, "");
+  if (/s$/.test(s) && !/(?:ss|us)$/.test(s)) return s.replace(/s$/, "");
+  return s;
 }
 
 /** "a", "a and b", "a, b, and c" — a readable list with a deterministic order. */
