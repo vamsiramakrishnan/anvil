@@ -792,6 +792,16 @@
       "tests": [
         "packages/compiler/src/path-grammar.test.ts"
       ]
+    },
+    {
+      "id": "refinement/ungrounded-resource-refused",
+      "file": "packages/refinement/src/skills/validate.ts",
+      "control": "A harness proposal naming a routing resource absent from the operation's own path and name vocabulary is refused by the resource_grounded_in_contract check.",
+      "find": "    if (ungrounded.length > 0) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/refinement/src/protocol/rehome-resource.test.ts"
+      ]
     }
   ]
 }

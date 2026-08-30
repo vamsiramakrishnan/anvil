@@ -435,6 +435,8 @@ const CHECK_DOC: Record<ValidationCheckId, string> = {
     "a proposed idempotency mode/mechanism/key resolves cleanly against the operation (the same check the compiler runs)",
   pagination_binding_resolves:
     "when pagination style is cursor/page/offset, the cursor param names an existing input parameter, and pagination_items_field is a non-empty string",
+  resource_grounded_in_contract:
+    "a proposed routing resource is a word the operation's own path or name text states (plural-insensitive); an invented word is refused",
 };
 
 const FAMILY_DOC: Record<EvalFamily, string> = {

@@ -47,7 +47,7 @@
       "plan": "Raised deliberately from 1554 for `--require`, which turns the verdict this module already computes into an exit code. status owns nextSafeAction, so the gate belongs here rather than in a new module; putting it elsewhere would have split the verdict from its consumer. Still queued: separate lane-freshness computation (domain) from the rendering, and share the certification-reading logic certify.ts duplicates."
     },
     "packages/cli/src/self-skill.ts": {
-      "lines": 1575,
+      "lines": 1573,
       "plan": "Must stay derived from the command registry. Separate registry metadata from document projection; no manually maintained parallel command description."
     },
     "packages/cli/src/tool-cli.ts": {
@@ -111,7 +111,7 @@
       "plan": "New entry. The Java client's request builder and retry loop. Longer than its siblings because Java's HttpRequest builder and the DOM API are both verbose, not because it does more; the decisions it encodes are the same ones. Extract per-protocol branches alongside the other cores when a fourth protocol arrives. Then +16 for the graphql_sse-before-facade refusal, same defect and same fix as typescript-core.ts."
     },
     "packages/generators/src/sdk/soap.ts": {
-      "lines": 1024,
+      "lines": 991,
       "plan": "New entry. The SOAP envelope specified once and emitted four times — the generated clients do not share the runtime's codec, so four independent implementations is four chances to qualify a namespace or quote a SOAPAction differently. Long because it holds four languages' transcriptions of one algorithm, which is the point: they are meant to be read side by side and diffed. sdk-soap.test.ts proves they agree byte-for-byte across four real toolchains. Split per language only if a second non-REST protocol arrives and this file would hold eight."
     },
     "packages/generators/src/sdk/typescript-core.ts": {
@@ -131,11 +131,11 @@
       "plan": "New entry for async-events Phase 3: buildMcpServer's per-operation handler now wraps its ExecuteContext.ledger with ledgerWithJobIndexing (async-completion.ts) and, when `op` is a status operation some other operation's AsyncContract names, checks the ledger before falling back to its existing upstream call (the hybrid handler). Two new registration passes follow the main operation loop: synthetic (webhook-only, sourceRef-less) status tools, and job-answer tools for approved humanApproval mutations. All three are additive registration/handler logic for the one mechanism this phase adds, not unrelated concerns — cohesive with the rest of this file's existing per-operation tool-building loop. Watch; a fourth async-completion concern arriving here would be the signal to split registration passes into their own module."
     },
     "packages/refinement/src/detect.ts": {
-      "lines": 948,
+      "lines": 917,
       "plan": "Deterministic deficiency detection over AIR; cohesive. Watch."
     },
     "packages/refinement/src/skills/executor.ts": {
-      "lines": 1069,
+      "lines": 978,
       "plan": "1069 is the union of two independently-recorded growths that merged: the intent-example corroboration filter with routingTokens (recorded at 1051) and the widened singularize body mirrored from the compiler (recorded at 1002 pre-filter). Both additions carry the same exit: routingTokens is a general two-surfaces-name-the-same-thing primitive and singularize is documented as a byte-identical mirror of naming.ts — when either gains a second caller, lift it into a shared module and lower this baseline."
     },
     "packages/runtime/src/executor.ts": {

@@ -55,7 +55,8 @@ export type ValidationCheckId =
   | "agent_field_name_valid"
   | "response_projection_valid"
   | "idempotency_carrier_resolves"
-  | "pagination_binding_resolves";
+  | "pagination_binding_resolves"
+  | "resource_grounded_in_contract";
 
 /**
  * The minimal view of a frozen evidence artifact the `evidence_meets_verification`

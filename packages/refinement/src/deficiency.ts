@@ -42,6 +42,7 @@ export type DeficiencyCode =
   | "undocumented_pagination"
   // agent usability
   | "weak_operation_name"
+  | "resource_contradicted_by_own_name"
   | "weak_field_name"
   | "unit_ambiguous_field"
   | "indistinct_operation_descriptions"
@@ -224,6 +225,24 @@ export const DEFICIENCY_CATALOG: Record<DeficiencyCode, DeficiencyDef> = {
     "weak operation name",
     "refinementRequired",
     "the agent cannot infer intent from the name and may route wrongly",
+  ),
+  // "Rule B" from the resource-derivation design doc, in its measured-safe form:
+  // the derived `effect.resource` and the operation's own name share no
+  // vocabulary. The detector proves that structural fact and nothing more —
+  // GitHub's paths say `hooks` where its names say "webhook", so re-homing on
+  // this signal alone was hand-audited at ~15/28 semantically WRONG and
+  // rejected as a compiler rule. Closable by a narrow skill (the reviewed
+  // manifest `name: { resource }` override), hence refinementRequired — but the
+  // approval policy routes every `resource` patch to review unconditionally
+  // (approval.ts), the same key-level guard shape as idempotency.
+  resource_contradicted_by_own_name: def(
+    "resource_contradicted_by_own_name",
+    "usability",
+    "medium",
+    "rehome-resource",
+    "derived resource contradicted by the operation's own name",
+    "refinementRequired",
+    "the agent routes on a resource the operation's own name never mentions",
   ),
   weak_field_name: def(
     "weak_field_name",

@@ -16,6 +16,12 @@ import {
   WEAK_VERBS,
 } from "@anvil/air";
 import type { SqlDialect } from "@anvil/grammar";
+import {
+  concretePathSegments,
+  pluralize,
+  projectRoutingNames,
+  singularize,
+} from "../vocabulary.js";
 import { proposeFieldBinding, proposeUiProjection } from "./agent-semantics.js";
 import type {
   FieldContext,
@@ -26,6 +32,7 @@ import type {
   VerifiableArtifact,
 } from "./contract.js";
 import { claimsAsserting, claimsFor, proposal, strongestValue } from "./proposal-helpers.js";
+import { proposeResourceRehome } from "./rehome.js";
 
 /**
  * A **skill executor** turns a skill's context into a proposal. It is deliberately
@@ -49,47 +56,11 @@ export interface SkillExecutor {
   evidenceArtifactsFor?(proposal: SkillProposal): VerifiableArtifact[] | undefined;
 }
 
-/** English plural good enough for spec nouns: category→categories, box→boxes, doc→docs. */
-function pluralize(noun: string): string {
-  if (noun.length === 0) return noun;
-  if (/[^aeiou]y$/.test(noun)) return `${noun.slice(0, -1)}ies`;
-  if (/(s|x|z|ch|sh)$/.test(noun)) return `${noun}es`;
-  return `${noun}s`;
-}
-
-/**
- * The inverse, character-for-character identical to the compiler's `singularize`
- * (naming.ts). Duplicated rather than imported: `@anvil/compiler` is a *dev*
- * dependency of this package (the runtime dependency graph runs
- * compiler → refinement, never back), so importing it here would ship a package
- * with an undeclared runtime dependency. Kept byte-compatible so a name this
- * skill proposes is the name the compiler would have derived for the same
- * (resource, action) pair — `naming.test.ts` (compiler) asserts the two
- * function bodies are literally identical, so a change to one that misses the
- * other fails the suite instead of drifting silently.
- */
-function singularize(s: string): string {
-  if (/ies$/.test(s)) return s.replace(/ies$/, "y");
-  // `-ches` words whose stem really ends in `-che` (GitHub's actions caches):
-  // stripping the whole `es` would mint a non-word, the exact defect this
-  // function exists to avoid, so these few known stems lose only the `s`.
-  if (/(?:caches|niches|headaches|mustaches|avalanches)$/.test(s)) return s.replace(/s$/, "");
-  // Sibilant stems take `-es`; stripping it restores the stem whole
-  // (searches→search, branches→branch, boxes→box, addresses→address). A single
-  // `z` is deliberately NOT in the class — `sizes`/`prizes` are `-e` stems and
-  // a true z-sibilant plural doubles the z (`quizzes`).
-  if (/(?:ch|sh|x|zz|ss)es$/.test(s)) return s.replace(/es$/, "");
-  // Singular nouns ending in `-us` (status, bus, virus) pluralize to `-uses`;
-  // strip the `es` so the singular keeps its final `s`.
-  if (/uses$/.test(s)) return s.replace(/es$/, "");
-  // Every other `-ses` is a `-se` stem plus a plural `s` (releases, databases,
-  // cases, licenses): strip only the final `s`. The old blanket `-ses → -s`
-  // branch over-stripped these to non-words (`releas`, `databas`) that no
-  // operation's own name text can ever corroborate.
-  if (/ses$/.test(s)) return s.replace(/s$/, "");
-  if (/s$/.test(s) && !/(?:ss|us)$/.test(s)) return s.replace(/s$/, "");
-  return s;
-}
+// `pluralize`, `singularize` (the compiler-mirrored copy — see vocabulary.ts for
+// why it is mirrored rather than imported), `projectRoutingNames`,
+// `concretePathSegments`, and the tokenizers all live in ../vocabulary.js now,
+// shared with the resource-contradiction detector and the grounding validation
+// check so every surface measures vocabulary the same way.
 
 /** "a", "a and b", "a, b, and c" — a readable list with a deterministic order. */
 function sentenceList(items: string[]): string {
@@ -131,46 +102,10 @@ function exampleFromSchema(field: FieldContext): { value: JsonValue; ref: string
  * never invent business meaning. It is the executor the harness falls back to and
  * the fixture every richer executor is measured against.
  */
-/**
- * Content words of a name or phrase, plural-insensitive, for asking whether two
- * surfaces are talking about the same operation. Generic connectives are
- * dropped: they are shared by every phrase, so keeping them would make the
- * comparison always succeed and prove nothing.
- */
-const ROUTING_STOPWORDS = new Set([
-  "a",
-  "an",
-  "the",
-  "of",
-  "for",
-  "to",
-  "by",
-  "in",
-  "on",
-  "and",
-  "with",
-  "from",
-  "all",
-  "new",
-  "existing",
-  "matching",
-  "filter",
-  "id",
-]);
-
-export function routingTokens(text: string): string[] {
-  return String(text)
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[^A-Za-z0-9]+/)
-    .map((word) => word.toLowerCase())
-    .filter((word) => word.length > 1 && !ROUTING_STOPWORDS.has(word))
-    .map((word) => {
-      if (word.endsWith("ies")) return `${word.slice(0, -3)}y`;
-      if (word.endsWith("ses")) return word.slice(0, -2);
-      if (word.endsWith("s") && word.length > 3) return word.slice(0, -1);
-      return word;
-    });
-}
+// The corroboration tokenizer lives in ../vocabulary.js (one home for every
+// surface that asks "do these two names speak the same vocabulary"); re-exported
+// here because this module is where its first caller and its tests grew up.
+export { routingTokens } from "../vocabulary.js";
 
 export class HeuristicSkillExecutor implements SkillExecutor {
   readonly name = "heuristic";
@@ -200,6 +135,10 @@ export class HeuristicSkillExecutor implements SkillExecutor {
         return this.reviewQueryPassthrough(skill, context);
       case "rename-operation":
         return this.renameOperation(skill, context);
+      case "rehome-resource":
+        // The trivially-safe subset only (the singularizer over-strip repair);
+        // every grey area honestly proposes nothing — see rehome.ts.
+        return proposeResourceRehome(skill, context);
       case "disambiguate-operations":
         return this.disambiguateOperations(skill, context);
       case "describe-capability":
@@ -807,36 +746,6 @@ function passthroughQueryParam(op: SkillContext["operation"]): string | undefine
 interface Derived {
   value: string;
   ref: string;
-}
-
-/**
- * The ONE projection from (service, resource, action) to the three routing
- * surfaces, mirroring the compiler's `projectRoutingNames` exactly (see
- * `singularize` for why it is mirrored rather than imported). Keeping the
- * canonical name singular and the CLI segment as-written is what makes a
- * proposed rename indistinguishable from a compiled one.
- */
-function projectRoutingNames(
-  serviceId: string,
-  resource: string,
-  action: string,
-): { canonicalName: string; cliCommand: string; toolName: string } {
-  const canonicalName = `${action}_${singularize(resource)}`;
-  return {
-    canonicalName,
-    cliCommand: `${serviceId} ${snakeCase(resource)} ${action}`,
-    toolName: `${serviceId}_${canonicalName}`,
-  };
-}
-
-/** The concrete (non-templated) segments of a REST path, cleaned of format suffixes. */
-function concretePathSegments(path: string | undefined): string[] {
-  if (!path) return [];
-  return path
-    .split("/")
-    .filter((segment) => segment.length > 0 && !segment.startsWith("{"))
-    .map((segment) => segment.replace(/\.(json|xml|csv|ya?ml|txt|html?|proto)$/i, ""))
-    .filter((segment) => segment.length > 0 && !/^v?\d+(\.\d+)*$/i.test(segment));
 }
 
 /**

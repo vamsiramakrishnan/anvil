@@ -55,7 +55,7 @@ describe("singularize", () => {
     // must never drift: extract each function body from source and compare.
     const here = readFileSync(fileURLToPath(new URL("./naming.ts", import.meta.url)), "utf8");
     const mirror = readFileSync(
-      fileURLToPath(new URL("../../refinement/src/skills/executor.ts", import.meta.url)),
+      fileURLToPath(new URL("../../refinement/src/vocabulary.ts", import.meta.url)),
       "utf8",
     );
     const bodyOf = (source: string, file: string): string => {
@@ -65,7 +65,7 @@ describe("singularize", () => {
       if (!match) throw new Error(`singularize not found in ${file}`);
       return match[1] as string;
     };
-    expect(bodyOf(mirror, "executor.ts")).toBe(bodyOf(here, "naming.ts"));
+    expect(bodyOf(mirror, "vocabulary.ts")).toBe(bodyOf(here, "naming.ts"));
   });
 });
 

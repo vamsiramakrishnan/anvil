@@ -601,3 +601,45 @@ A+C fired zero times, measured, so the names cannot move.
 Plaid's 26 residual `…get_get` stutters but changes ids and `OperationAction`),
 and weighing an `rpc_plain` verdict in read classification (safety loosening —
 needs the asymmetric evidence bar, not a grammar verdict).
+
+## Rule B lands as a detector, not a compiler rule (2026-08-30)
+
+`resource_contradicted_by_own_name` (packages/refinement/src/detectors/
+resource-name.ts) is the measured-safe home of rule B from
+docs/design/resource-derivation-and-tool-name-stutter.md §6: a deterministic
+detector that fires when `effect.resource` shares no content-token stem
+(camel/snake split, stopwords, plural-insensitive — `routingTokens` in
+src/vocabulary.ts, one tokenizer shared by detector, heuristic, and
+validation) with the operation's own `canonicalName`/`displayName`. It is
+closed through the existing detect → export-task → harness →
+import-proposal → review → apply-pack rails by the `rehome-resource` skill,
+whose output boundary is the one axis the manifest `name: { resource }`
+override already projects end to end (compiler manifest.ts →
+projectRoutingNames).
+
+Measured on the test suite's fixture estates (deterministic, from
+`runDetectors` over the checked-in fixtures): the GitHub-shaped
+hook/webhook estate in
+packages/refinement/src/protocol/rehome-resource.test.ts — **3 of 4
+operations fire** (`github.hooks.get` and `github.hooks.list`, both the
+audited `hook`-path/"webhook"-name synonym case, plus `github.releas.get`,
+the singularize over-strip victim); the corroborated control
+(`github.repos.list`, resource `repo` vs name `list_org_repos`) does not
+fire. **No pre-existing fixture in the refinement or CLI suites started
+firing**: every suite that asserts exact deficiency sets, plan counts, or
+pack summaries for its fixture estates passed unchanged (the only test
+edits were the two skill-roster lists that enumerate implemented skills by
+name) — pre-existing fixtures whose resources are derived from the same
+words their names use are untouched, which is the detector precision the
+design doc's audit demanded.
+
+Two boundaries make an unreliable harness safe here, both deterministic:
+`resource_grounded_in_contract` (validate.ts) refuses any proposed resource
+that is not a word the operation's own path or name text states (mutation
+gate: `refinement/ungrounded-resource-refused`), and approval.ts routes
+every `resource` patch to review on the FIELD, like the idempotency guard —
+a valid proposal from verified authoritative evidence still lands at review.
+The heuristic executor proposes ONLY the singularize over-strip repair
+(`releas` → `release`, the vendor's own word read off the vendor's own
+name); every synonym case honestly proposes nothing and flows to the
+harness seam.
