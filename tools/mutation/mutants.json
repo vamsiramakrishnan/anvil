@@ -700,6 +700,16 @@
       "tests": [
         "packages/cli/src/commands/pack.test.ts"
       ]
+    },
+    {
+      "id": "workflow-surface/only-an-eligible-workflow-supersedes",
+      "file": "packages/mcp-runtime/src/workflow-surface.ts",
+      "control": "Only a workflow that will actually register as a composite tool may supersede operation tools. Delete the gate and a SKIPPED workflow — unapproved, an unapproved step, a malformed binding, a later step demanding the caller's one idempotency key — silently deletes its members from tools/list and registers nothing in their place. The agent loses the operations and the thing that was supposed to stand in for them.",
+      "find": "    if (registration.skipReason !== undefined) continue;",
+      "replace": "    if (false) continue;",
+      "tests": [
+        "packages/mcp-runtime/src/server.supersede.test.ts"
+      ]
     }
   ]
 }
