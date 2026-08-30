@@ -248,3 +248,31 @@ describe("disambiguation-suffix stutter", () => {
     expect(enterprise?.mcp.toolName).not.toMatch(/enterprise_enterprises$/);
   });
 });
+
+describe("service_prefix_stutter warning", () => {
+  // BigQuery's shape: Discovery operationIds lead with the service name, so an
+  // operator passing `--service bigquery` makes every tool name stutter
+  // (`bigquery_bigquery_models_get`). The join is the vendor's name plus the
+  // operator's choice — neither is rewritten; the choice gets a loud warning.
+  const spec = specOf(`  /projects/{projectId}/models:
+    get:
+      operationId: bigquery.models.list
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+`);
+
+  it("warns when the operator's service id duplicates the operationIds' leading word", async () => {
+    const air = await compile({ spec, serviceId: "bigquery" });
+    const warning = air.diagnostics.find((d) => d.code === "service_prefix_stutter");
+    expect(warning?.level).toBe("warning");
+    expect(warning?.message).toContain('"bigquery"');
+    // The join itself is untouched: the vendor's operationId stays verbatim.
+    expect(air.operations[0]?.mcp.toolName).toBe("bigquery_bigquery_models_list");
+  });
+
+  it("stays silent when the service id is derived rather than operator-chosen", async () => {
+    const air = await compile({ spec });
+    expect(air.diagnostics.some((d) => d.code === "service_prefix_stutter")).toBe(false);
+  });
+});
