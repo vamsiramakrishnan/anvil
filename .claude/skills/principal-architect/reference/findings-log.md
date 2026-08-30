@@ -206,3 +206,144 @@ the file is complete on disk).
   review_required with a one-line manifest. (Zoho's mirror spec has an
   unresolvable external `Common.json` ref — a corpus artifact, same auth
   shape as Workday.)
+
+## 2026-08-30 — Resource derivation and MCP tool-name stutter (six untrimmed estates, 3,023 operations)
+
+Measured against `a9cfd63`. **Analysis only — no naming, classification or
+disambiguation behaviour was changed.** Full write-up:
+`docs/design/resource-derivation-and-tool-name-stutter.md`.
+
+**Verify these numbers yourself** (this is the point of the entry — the log has
+gone stale three times, so it ships with its own harness):
+
+```bash
+pnpm install && pnpm build
+node tools/naming-audit/run.mjs --fetch zendesk --service zendeskfull
+node tools/naming-audit/run.mjs --fetch plaid   --service plaid
+NAMING_AUDIT_RULES=AC node tools/naming-audit/run.mjs --fetch github --service github
+```
+
+`--fetch` compiles the UNTRIMMED vendor spec from `systems.tsv`. Do **not** use
+`reproduce.sh <system>` for this: its curated list cuts Zendesk to 9 operations
+(verified — "Wrote …: 5 paths, 9 operations"), which cannot measure a rate.
+
+### Per estate — never blend these; the defect rate ranges 0%–72%
+
+| Estate | Style | Ops | Reads | resource contradicted by its own name text | bulk-RPC segment resource (`count_many`) | bare CRUD segment resource (`/x/get`) | tool-name stutter (spec-authored / service-prefix / disambiguation) |
+|---|---|---:|---:|---:|---:|---:|---|
+| zendesk untrimmed | tag-rich REST, RPC verbs in paths | 640 | 336 | 50 | 44 | 26 | 44 (0 / 0 / **44**) |
+| github | tag-rich REST | 1222 | 638 | 154 | 0 | 13 | 74 (13 / 0 / **61**) |
+| stripe | REST, path-encoded operationIds | 594 | 265 | 0 | 0 | 3 | 4 (2 / 0 / 2) |
+| slack | RPC-over-HTTP, dotted segments | 174 | 80 | 0 | 0 | 0 | **0** |
+| bigquery | Google Discovery | 42 | 18 | 0 | 1 | 1 | 42 (0 / **42** / 0) |
+| plaid | RPC-over-HTTP, plain segments | 351 | 8 | 1 | 0 | **252** | **0** |
+
+The brief's facts all reproduce exactly (640 operations; `count_many`/`show_many`/
+`active`/`me` resources; 44 stutters). **One correction**: the `available` case is
+`GET /api/v2/accounts/available`, not `/subdomains/available` — "subdomain" comes
+from the displayName, which is itself the point.
+
+### Read-variant collapse headroom — the naive number is 65–70% contamination
+
+Reads keyed on `(resource, action)`; "tools saved" = members − clusters; gated on
+same-OpenAPI-tag coherence (the spec's own answer to "are these one thing").
+
+| Estate | naive today | tag-coherent today | naive after A+C | tag-coherent after A+C |
+|---|---:|---:|---:|---:|
+| zendesk | 104 | **31** | 109 | **58** |
+| github | 282 | **100** | 284 | **102** |
+| slack | 27 | **27** | 27 | **27** |
+| stripe / bigquery | 48 / 1 | n/a (0 tagged) | 48 / 1 | n/a |
+| plaid | 0 | 0 | 0 | 0 |
+
+Zendesk's largest apparent cluster, `count|list(21)`, is 21 counts of 21
+*different* resources spanning **13 different tags**. The 13 reads under
+`/api/v2/views/` split across seven `effect.resource` values — today's derivation
+over-clusters (`count` gathers 22 unrelated ops) *and* under-clusters (the four
+`views` list variants the feature exists to collapse land in four clusters).
+
+### Three things that were not in the brief
+
+1. **The 44 stutters are three defects.** Only `disambiguation_suffix`
+   (`naming.ts:534-539`) is Anvil's. GitHub's 13 are the vendor's own
+   operationId (`copilot/copilot-enterprise-…`) and must NOT be "fixed".
+   BigQuery's 42 are `${serviceId}_${canonicalName}` where the operator passed
+   `--service bigquery` against Discovery operationIds `bigquery.models.get` —
+   with Anvil's derived id (`big_query_api`) the same spec stutters zero times.
+2. **`singularize` (`naming.ts:28-36`) over-strips.** `releases→releas`,
+   `databases→databas`, `searches→searche`, `branches→branche`, `cases→cas`,
+   `licenses→licens`. Hand-verified: github 26 ops, zendesk 4. It corrupts
+   `effect.resource` on its own AND sabotages any name-corroboration repair,
+   because a non-word can never corroborate. Mirrored verbatim at
+   `packages/refinement/src/skills/executor.ts:69`.
+3. **`tools/corpus/expected/plaid.json` is ALREADY stale on `a9cfd63`** —
+   `node tools/corpus/run.mjs quick --systems plaid` fails
+   `naming-differential`: expects `plaid_asset_report_remove_post`, gets
+   `plaid_asset_report_remove_asset_report_direct`. Quick mode needs network so
+   it is not in `pnpm test`. Left unfixed on purpose (see the design doc §7).
+
+### Rules: what to accept, what to reject, and why — measured
+
+| Rule | zendesk | github | stripe | slack | bigquery | plaid |
+|---|---:|---:|---:|---:|---:|---:|
+| A bulk-RPC segment (`<verb>_many`) | 44 | 0 | 0 | 0 | 1 | 0 |
+| B name corroboration | 32 | 137 | 0 | 0 | 0 | 1 |
+| C bare CRUD segment, resource-only | 26 | 13 | 3 | 0 | 1 | 252 |
+| **A+C (recommended)** | **70** | **13** | **3** | **0** | **2** | **252** |
+
+- **Accept A and C.** 45 A-changes across 3,023 ops with zero corroboration
+  lost; C needs no `OperationAction` enum change because it re-homes the
+  resource only and lets the existing collision resolver name the variant.
+- **Reject "a segment matching `ACTION_VERB_WORDS` is an action".** Simulated:
+  88 Zendesk changes, 15 corroboration gained, **16 lost**. `trigger`, `status`,
+  `filter`, `query`, `report`, `message`, `lock` are vocabulary words *and* real
+  REST collections (Zendesk has 13 ops on `trigger` alone). The existing narrow
+  bare-single-word use at `naming.ts:293-299` is as far as that table can go.
+- **Reject B as a compiler rule.** It scores 137/137 "corroboration gained" on
+  GitHub and a hand audit of every 5th change (28 sampled) found ~15 outright
+  **wrong** (`hook→org`, `content→repo`, `subscription→user`, `releas→repo`).
+  Corroboration measures agreement with the operation's own name text, not
+  truth; GitHub's operationIds use synonyms of the path. It also buys nothing:
+  A+C alone reaches GitHub's 102 tag-coherent headroom, and on Zendesk B makes
+  it *worse* (58 → 57). Its right home is a `detect.ts` deficiency closed by a
+  manifest `name: { resource: … }` override — machinery
+  `manifest.ts:770` + `projectRoutingNames` already provide end to end.
+- **A+C do not fix**: adjectival selectors (`active`, `compact`, `assignable`,
+  `available`), pronoun/one-off RPC segments (`me`, `logout`, `apply`,
+  `display`, `order`), generic sub-resource over-clustering (`definition`, 10
+  ops across three parents), or synonym mismatch. Said out loud rather than
+  glossed.
+
+### Blast radius (all id-bound surfaces read, not assumed)
+
+- `contractHash` hashes the WHOLE AIR document (`packages/air/src/hash.ts:38`),
+  so *any* `effect.resource` change moves it — there is no "resource is
+  metadata" escape. It cascades to `contractDigest`
+  (`compiler/src/contract/digest.ts:70`), `bundle.json`'s
+  `contractHash`/`capabilityHash` (`generators/src/capability-view.ts:359-360`),
+  `packDigest` (`system-pack/src/digest.ts`), and every stored refinement
+  assessment (`refinement/src/assess.ts:299`).
+- `diffSurfaceSignature` (`compiler/src/capability/signature.ts:161`) and
+  `diffContracts` (`compiler/src/drift.ts:461-499`) have **no rename lane**: a
+  re-homed approved operation emits `operation_removed` at *blocking* severity
+  plus `operation_added`. Every affected estate's drift check goes red.
+- `approveOperations` (`compiler/src/compile.ts:494`) and `anvil approve`
+  (`cli/src/commands/approve.ts:66` (`<operation-ids...>`)) match `op.id` exactly. State lives in the
+  bundle's `air.yaml`, so a recompile regenerates it — but literal-id runbooks
+  break.
+- **Manifests are largely safe, measured**: `operationMatchesKey`
+  (`compiler/src/manifest.ts:646-648`) accepts id OR canonicalName OR
+  `sourceRef.operationId`, and **0 of 231** operation entries across all 18
+  `docs/backtesting/reproduce/manifests/*.yaml` are AIR-id-keyed (gmail's 11
+  dotted keys are Discovery operationIds).
+- Fixtures: `compiler/src/gateway/golden/expected/*.json` (5 files, literal AIR
+  ids, all `/refunds` paths — unaffected); `tools/corpus/expected/*.json` (21
+  files, operationId-keyed, `toolName`-asserting — `plaid.json` affected, and
+  already stale); `compiler.test.ts:598-599` is the only unit assertion in the
+  rules' blast zone and A/C leave it alone.
+- **There is no safe automatic migration.** No id-alias or rename concept exists
+  anywhere in AIR, the contract layer, or the pack; every id-keyed comparison is
+  exact-match and treats a miss as removal. A mechanical old→new map is
+  derivable at compile time, but consuming it means teaching every id-keyed
+  surface a second lookup and inventing a rename compatibility class. Land
+  behind a default-off flag; flip only in a release declared id-breaking.
