@@ -159,6 +159,13 @@ The capability review lifecycle. `propose` re-runs discovery and prints each gro
 
 (Re)run discovery; print proposals with provenance and budget findings.
 
+Two grounds for a grouping, one at a time. By default this re-runs spec discovery: groupings come from OpenAPI tags and the resource heuristic — a vendor's REFERENCE taxonomy, organised by resource, which real tasks routinely cut across. OBSERVED TRAFFIC (--from-records <dir>): instead reads the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server) and groups operations that were used inside the same traceId — a task observed rather than guessed, carried as recorded_traffic evidence stating the trace count rather than a confidence nobody could defend. An operation appearing in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so it is filtered out statistically before any grouping is formed and named in the report; a shape seen fewer than 5 times is an anecdote and is not proposed. Read-only and propose-only: it never writes AIR, approves, or builds, and --out must be outside the bundle.
+
+Options:
+- `--from-records <dir>` — group by co-occurrence in a serving-path record spool (ANVIL_RECORDS_DIR) instead of by spec
+- `--out <file>` — write the observed-capability report here (--from-records only)
+- `--json` — emit the proposals as JSON
+
 #### `anvil capability list`
 `anvil capability list [options] <path>`
 

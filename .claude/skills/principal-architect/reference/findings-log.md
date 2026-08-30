@@ -26,12 +26,15 @@ overlap groups:**
   structural-shape matching without any envelope/transport-noise filter
   drowns real signal at real scale. See `design-patterns.md`'s note on this
   — the fix is a cheap statistical pre-filter, not a smarter evidence bar.
-- **Fixed since.** `packages/cli/src/capability-composition.ts` now carries the
-  envelope commonality pre-filter (`ENVELOPE_SOURCE_FRACTION` /
-  `ENVELOPE_MIN_SOURCES`): a coordinate present in that fraction of all sources
-  is classified as transport envelope and skipped unless explicitly declared.
-  This entry said "not yet fixed" long after it was — third time this log has
-  been caught stale. Verify against the code before citing it.
+- **Fixed — this entry had gone stale.** It read "not yet fixed" long after the
+  filter landed. `packages/cli/src/capability-composition.ts:18-22` declares
+  `ENVELOPE_SOURCE_FRACTION = 0.8` / `ENVELOPE_MIN_SOURCES = 3`, and lines
+  1258-1331 exclude a coordinate meeting both from `structural_leaf_overlap`
+  candidate generation, recording it in `suppressedEnvelopeCoordinates` so the
+  suppression is reviewable rather than invisible. An explicitly declared
+  `x-anvil-data-point` id is exempt: a declaration is not noise. The lesson the
+  rest of this file already states applies to this file too — verify against the
+  code before citing it.
 
 ## OBDX validation
 
@@ -258,3 +261,59 @@ this is the first demand-side measurement Anvil has ever taken:
   to prevent, and no gate caught it. `author-intent-examples` now requires the
   operation's own names to corroborate a phrasing, and proposes nothing when
   none survives.
+
+## Observed capability groupings (real Zendesk estate, 640 operations)
+
+Compiled the real published Zendesk OAS (`https://developer.zendesk.com/zendesk/oas.yaml`,
+1.8 MB) end to end: **640 operations**, 741 bundle files, 122 review_required.
+
+**The tag taxonomy, measured.** `anvil capability propose` returned **90
+groupings, 100% of them `source: "tag"` at confidence 0.90** — median 6 tools,
+max 35. That is the vendor's REFERENCE taxonomy (organised by resource:
+"Attachments", "Brands", "Custom Object Fields"), so narrowing the served
+catalog by capability moves the routing problem up a level rather than solving
+it: pick 1 of 90 servers instead of 1 of 329 tools.
+
+**The behavioural lane.** `packages/harness/src/trace-capabilities.ts` +
+`anvil capability propose --from-records <spool>` group operations by
+co-occurrence within one `traceId`. Driven against a synthesized-but-realistic
+spool written through the runtime's own `JsonlRecordSpool` (2,550 records, 347
+interleaved traces, 8 distinct shapes, retries and rate-limit errors mixed in),
+over the real 640-operation AIR:
+
+- 4 groupings proposed, all four **cutting across 3-4 of Zendesk's own tag
+  capabilities** — e.g. the 140-trace triage task spans `zendesk.tickets`,
+  `zendesk.ticket_comments`, `zendesk.users`, `zendesk.macros`. This is the
+  disagreement between the reference taxonomy and real usage, measured rather
+  than argued.
+- 4 one-off shapes (3 traces each) proposed nothing: below the 5-trace floor,
+  which is `MIN_SAMPLES_FOR_CLAIM`'s number and judgement.
+- Two ubiquitous operations (`zendesk.current.list.oauth`,
+  `zendesk.current.list.locales` — the session bootstrap) were filtered out
+  statistically before any grouping formed: present in 8 of 8 trace shapes.
+
+**The pre-filter, quantified — the behavioural form of the FLEXCUBE finding.**
+Same spool, filter disabled: 25 grouping members of which **8 (32%) were pure
+session-bootstrap noise**, and the co-occurrence pair table more than doubles
+(31 → 68). With the filter: 17 members, 0% noise. The filter is a pre-filter,
+not a smarter evidence bar afterwards, for the reason `design-patterns.md`
+gives.
+
+**One design note worth carrying forward**: ubiquity is measured over distinct
+trace *shapes*, not trace instances — the structural analogue of the envelope
+filter counting *sources*, not occurrences. Counting instances breaks twice:
+one very hot task repeated ten thousand times makes its own members look
+ubiquitous, and a spool that only ever saw one task suppresses every operation
+in it and proposes nothing.
+
+**Open, evidenced gap (not closed here).** A traffic-observed grouping has no
+consumer. `CapabilitySource` includes `"manifest"`
+(`packages/air/src/schema.ts:1132`) but **nothing in the workspace ever sets
+it** — `CapabilityReviewManifest` (`packages/compiler/src/manifest.ts:463`) can
+only approve or reject a grouping discovery already produced, never author a
+new one. So an accepted observed grouping cannot yet reach `anvil build`,
+which narrows to a stored capability's operations
+(`packages/cli/src/commands/build.ts`). This is another instance of the
+"schema field exists, nothing populates it" pattern in `design-patterns.md`,
+and it is the next piece of work if observed groupings are to pay off in
+routing accuracy.

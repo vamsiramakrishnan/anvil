@@ -730,6 +730,28 @@
       "tests": [
         "packages/mcp-runtime/src/server.supersede.test.ts"
       ]
+    },
+    {
+      "id": "trace-capabilities/ubiquity-pre-filter",
+      "file": "packages/harness/src/trace-capabilities.ts",
+      "control": "A ubiquitous operation never becomes a grouping member. An operation present in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so without this pre-filter it joins every grouping and the observed tasks collapse into one undifferentiated blob — the behavioural form of the FLEXCUBE /fcubsWarningResp candidate that was 64% of every candidate member in that report.",
+      "find": "    if (shapes >= UBIQUITY_MIN_SHAPES && shapeFraction >= UBIQUITY_SHAPE_FRACTION) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/harness/src/trace-capabilities.test.ts",
+        "packages/cli/src/cmd-capability.test.ts"
+      ]
+    },
+    {
+      "id": "trace-capabilities/minimum-samples-floor",
+      "file": "packages/harness/src/trace-capabilities.ts",
+      "control": "A trace shape seen a handful of times is an anecdote, not evidence. Delete the floor and every one-off session becomes a proposed capability, which is exactly the unfalsifiable taxonomy this lane exists to avoid producing.",
+      "find": "    if (group.traces < MIN_TRACES_FOR_GROUPING) continue;",
+      "replace": "    if (false) continue;",
+      "tests": [
+        "packages/harness/src/trace-capabilities.test.ts",
+        "packages/cli/src/cmd-capability.test.ts"
+      ]
     }
   ]
 }
