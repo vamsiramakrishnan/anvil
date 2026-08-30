@@ -237,6 +237,21 @@ this is the first demand-side measurement Anvil has ever taken:
   extraction, unchanged catalog gate) → 20/20 with a real model on the same
   slice. Lesson, again: a feature that has only ever run against its own test
   double has not run.
+- **A real model does NOT route the curated catalog better than the bare one.**
+  At 50 tools: model 88/100 curated vs 89/100 bare (83 both, 5 curated-only, 6
+  bare-only) — noise, i.e. no measurable uplift, where the lexical floor showed
+  +8.0. The model degrades on the same size curve (100.0% at 10 tools → 88.0% at
+  50), so the size finding is not an artifact of a dumb router, but the *naming*
+  half of the uplift story does not survive contact with a capable one. Never
+  cite this benchmark as evidence that compiling improves discovery. What it
+  cannot see is what compiling actually buys: the approval gate, idempotency and
+  confirmation semantics, parameter contracts, and cross-surface agreement.
+- **Open: 44 of 640 generated tool names repeat a word** —
+  `count_activities_activities`, `list_active_automations_automations`. The
+  disambiguation suffix is appended without checking whether the name already
+  ends in it. Deliberately not fixed in the benchmarking PR: changing name
+  disambiguation changes operation ids in every compiled bundle, which is a
+  contract change.
 - **12 of 1277 authored intent phrases named a different operation than their
   own tool name** ("list the mes" for `show_current_user`). Two Anvil surfaces
   disagreeing about an operation's name is the exact failure the product exists

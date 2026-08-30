@@ -75,12 +75,32 @@ believed. The parse is now tolerant of fences and surrounding prose; the gate
 that refuses any tool name absent from the served catalog is unchanged — loose
 about syntax, strict about which tools exist.
 
-With that fixed, the same 10-tool slice, routed by a real model:
+With that fixed, the same slices routed by a real model:
 
-| Router | Curated | Bare | Uplift | Pass rate |
-| --- | ---: | ---: | ---: | ---: |
-| Lexical (deterministic floor) | 18/20 | 16/20 | +10.0 pts | 90.0% |
-| Model | 20/20 | 19/20 | +5.0 pts | **100.0%** |
+| Tools | Router | Curated | Bare | Uplift | Pass rate |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 10 | Lexical (deterministic floor) | 18/20 | 16/20 | +10.0 pts | 90.0% |
+| 10 | Model | 20/20 | 19/20 | +5.0 pts | **100.0%** |
+| 50 | Lexical (deterministic floor) | 81/100 | 73/100 | +8.0 pts | 81.0% |
+| 50 | Model | 88/100 | 89/100 | **−1.0 pts** | **88.0%** |
+
+Two things follow, and the second one is uncomfortable.
+
+**Catalog size hurts a real model too.** 100.0% → 88.0% across the same range
+where the floor goes 90.0% → 81.0%. The model is better everywhere, as a floor
+implies it should be, but it degrades on the same curve. The headline finding is
+not an artifact of a dumb router.
+
+**Compilation's routing uplift is router-dependent, and for a capable model it
+is not there.** At 50 tools the model routed the bare catalog *marginally better*
+than the curated one: 83 tasks both catalogs got right, 5 only curated, 6 only
+bare. That difference is noise, and the honest reading of it is that a model
+reading Zendesk's own operationIds does not need Anvil's names. Anyone quoting
+this benchmark as evidence that compiling improves discovery is quoting it
+wrongly. What compilation buys on this estate is the approval gate, the
+parameter contracts, the idempotency and confirmation semantics, and the fact
+that the CLI, the MCP server, the skill and the SDKs cannot disagree — none of
+which a routing score can see.
 
 **12 authored intent phrases named something other than their own operation.**
 `effect.resource` is a path segment, so `GET /subdomains/available` templated
@@ -99,6 +119,19 @@ The filter is a floor, not a grammar check. `GET /views/count_many` still
 templates "list the count manies", because `get_view_counts` really does say
 "count" — naming that path segment correctly is a compiler-side fix, and this
 rule only refuses phrases that are provably about something else.
+
+## Open finding: 44 curated tool names stutter
+
+Turned up while reading the model's mis-routes, not yet fixed:
+**44 of 640 generated tool names repeat a word immediately** —
+`zendeskfull_count_activities_activities`,
+`zendeskfull_list_active_automations_automations`,
+`zendeskfull_reorder_custom_object_fields_fields`. The disambiguation suffix is
+appended without checking whether the name already ends in that word.
+
+It is left alone here deliberately. Changing how names disambiguate changes
+operation ids across every compiled bundle, which is a contract change and not
+something to slip into a benchmarking PR. Filed as its own piece of work.
 
 ## Reproducing
 
