@@ -22,113 +22,93 @@
   "threshold": 800,
   "slack": 100,
   "modules": {
-    "packages/cli/src/commands/estate/estate.ts": {
-      "lines": 2373,
-      "plan": "Decomposing — see docs/architecture/estate-decomposition.md. Steps 0-1 done: -552 to estate-bundle-install.ts, -63 to estate-import-policy.ts, -214 to estate-contract-attestation.ts. Then -106 from routing every refusal through envelope.ts instead of building a JSON literal at each call site; that one is ownership, not just size — the envelope shape now has one owner. Remaining: the renderer, acquisition, the service, and runVerify. Its siblings estate-audit.ts and estate-adoption.ts are already pure domain with rendering split out; this is the un-migrated residue."
-    },
-    "packages/cli/src/capability-composition.ts": {
-      "lines": 2163,
-      "plan": "Split graph construction / coordinate resolution / overlap analysis / policy / report projection. Composition stays audit-only. Queued behind estate."
-    },
-    "packages/generators/src/deploy.ts": {
-      "lines": 1699,
-      "plan": "Raised deliberately from 1630 for async-events Phase 3: deploy/README.md now documents the generated /webhooks/<service>/<opId> receiver routes (webhookReadmeSection) and the plain-env convention their signature-verification refs resolve through, mirroring how credential_secret_refs is already documented here. The route generation itself lives in entrypoints.ts (resolvedWebhookRoutes/generateRuntimeServer) — this file only reads that same function to describe it to an operator, one more fact about the artifact this file already owns describing, not new deploy-plan logic. Split provider-neutral deploy-plan validation from Cloud Run projection so a second target does not fork the file. Queued."
-    },
-    "packages/cli/src/self-skill.ts": {
-      "lines": 1575,
-      "plan": "Must stay derived from the command registry. Separate registry metadata from document projection; no manually maintained parallel command description."
-    },
-    "packages/cli/src/commands/status.ts": {
-      "lines": 1601,
-      "plan": "Raised deliberately from 1554 for `--require`, which turns the verdict this module already computes into an exit code. status owns nextSafeAction, so the gate belongs here rather than in a new module; putting it elsewhere would have split the verdict from its consumer. Still queued: separate lane-freshness computation (domain) from the rendering, and share the certification-reading logic certify.ts duplicates."
-    },
-    "packages/generators/src/certify.ts": {
-      "lines": 1478,
-      "plan": "Raised deliberately from 1427 to certify the generated client SDKs as a surface: contract.surfaces-agree now includes sdk/manifest.json, safety.sdk-gates-match refuses a manifest whose confirmation/idempotency/retry flags differ from AIR, and runtime.sdk-present requires a buildable tree per language. Only the three call sites live here — what an SDK must prove about itself is SDK knowledge and lives in packages/generators/src/sdk/certify.ts, so this file stays the place gates are assembled rather than the place every surface's semantics accumulate. Split the four gates into per-gate modules behind one assembler; queued. Then +3 to register observe.report.json as a derived record, so `anvil observe` cannot invalidate the bundle hash the evidence it produces is about. Then +19 for safety.protocol-runtime-executable, the gate that refuses to certify a bundle whose wire protocol the runtime cannot speak. Only the call site lives here — what a protocol IS belongs to @anvil/air's wire.ts, which @anvil/certification reads too so the two engines cannot reach opposite verdicts; this file stays the place gates are assembled. Then +3 as the benchmark evidence schema moved to v2 — the first version whose score measures anything, so a v1 always-pass report reads as corrupt, never fresh. Then +3 registering traffic.report.json in DERIVED_RECORD_FILES — a record about the bundle must never enter its identity, the exact lesson the benchmark report taught."
-    },
-    "packages/cli/src/tool-cli.ts": {
-      "lines": 1433,
-      "plan": "The shared generated-CLI engine. Separate argument decoding from execution and rendering. Queued. Raised deliberately from 1425 for --protocol-facade: the generated CLI shares the runtime's transport gate, so it needs the same one declaration the generated servers take from ANVIL_PROTOCOL_FACADE. Three lines (a flag name, its resolution, its place in ExecuteContext) beside --base-url, which it qualifies; separating them would put the claim about a base URL in a different module from the base URL."
-    },
-    "packages/runtime/src/executor.ts": {
-      "lines": 1378,
-      "plan": "Deliberately NOT queued for decomposition. execute() is a strictly ordered safety gauntlet; splitting it into stages trades a readable sequence for a reorderable pipeline. The control here is an ordering test, not a file split. Raised deliberately from 1322 for the transport gate at step 0b: an operation whose wire protocol this runtime cannot speak is refused before a request is built, so no surface can route around it. The refusal's construction lives in wire-gate.ts; what stays here is its position in the gauntlet, which is exactly the thing this entry says must not be split out. Then +47 for the wire codec seam and the fault gate: buildRequest now dispatches to a codec instead of hardcoding JSON assembly, and a protocol-level fault (a soap:Fault arrives inside a 200 as readily as a 500) is handled on exactly the same terms as a non-2xx rather than as a second copy of the retry and ledger rules. The codecs themselves live in codec.ts and codec-soap.ts; what stays here is their position in the gauntlet, which is the thing this entry says must not be split out."
-    },
-    "packages/cli/src/commands/estate/estate-adoption.ts": {
-      "lines": 1264,
-      "plan": "Already pure domain with rendering separated — the shape estate.ts is being moved toward. Long, but not misowned; revisit only if it grows."
-    },
-    "packages/compiler/src/classify.ts": {
-      "lines": 1129,
-      "plan": "Raised deliberately from 1116 for async-events Phase 1: classifyArchetype takes an isWebhookReceiver param (checked first, unconditionally — structurally certain from provenance), and findJobHandleField/findStateField are exported for reuse against webhook payloads. Cohesive: one inference pass over AIR. Watch for growth rather than split speculatively. Then +9 for the stream_source archetype rule, which is four lines of logic and five of why: like isWebhookReceiver beside it, it is never inferred from shape — a bounded subscription window looks exactly like a list read, so guessing would guess wrong in both directions."
-    },
-    "packages/compiler/src/gateway/support-contract.ts": {
-      "lines": 1098,
-      "plan": "Cohesive vendor-support surface. Watch."
-    },
-    "packages/compiler/src/protocols/postman.ts": {
-      "lines": 1163,
-      "plan": "One parser, one format. Splitting parsers by size would not improve ownership. Raised deliberately from 1084 to stop a silent loss: requests colliding on one (path, method) were dropped with no diagnostic, so an RPC-over-HTTP collection (Moodle's ~800 wsfunction requests) compiled to a single operation and exited zero. The added lines are the diagnostic and the sink that carries it out to ParsedSpec. Then +48 to name each script-bearing request in a postman_script_untranslated diagnostic instead of a bare count: a pre-request script is often the auth flow itself, and a bundle that looks complete and cannot authenticate was this adapter's remaining silent failure."
-    },
     "packages/air/src/schema.ts": {
       "lines": 1353,
       "plan": "Raised deliberately from 1081 for async-events Phase 0: AsyncContractSchema gained an optional webhook field and WebhookContractSchema/WebhookSignatureVerificationSchema (the Zod mirror of async-contract.ts's WebhookContract/WebhookSignatureVerification) were added alongside it, same file, same reason the two must stay structurally identical. The canonical model definition. Length is inherent to being the single source of truth; splitting it would scatter the authority. Raised deliberately from 1126 for WireBinding: what a call to a non-HTTP/JSON source needs on the wire, written only by an adapter and never by a manifest. That restriction is a safety property — soapAction becomes a header value no agent supplies, and keeping it compiler-owned means it is a fact read out of a WSDL rather than a channel for injecting arbitrary headers. Optional and never defaulted, so contractHash is unchanged when absent (asserted in wire.test.ts). Then +24 to make WireBinding a discriminated union as GraphQL arrived: a SOAP envelope and a GraphQL document are different facts, and a shared bag of optional fields would let a consumer read one as the other. The discriminator is what lets each codec narrow instead of guessing. Then +24 for GrpcWireBinding, whose `transport: json_transcoded` records a claim about the deployment rather than the source — the assumption grpc.ts had made in a comment since it was written. Then +6 as GrpcWireBinding.transport became an enum: `http_rule` records that the proto method carried google.api.http and declared its own verb and path, which is a fact the source document states rather than one an operator asserts about a deployment. The two values are not interchangeable and the difference decides executability, so each carries its own reasoning here rather than a shared line that would blur them. Then +64 for GraphqlSseBinding and StreamContractSchema — a subscription's bounded observation window. Both belong here for the same reason the rest does: the bound is what makes a stream a call, so it is a fact about what an operation MEANS rather than about how any surface implements it. Splitting the wire types out is the standing idea for this file, and these two would move with them. Then +8 for the window's absolute ceilings (STREAM_MAX_EVENTS_CEILING / STREAM_MAX_SECONDS_CEILING) on StreamContractSchema itself — bounded because AIR refuses to represent unbounded, so neither a manifest nor a hand-edited document can smuggle a window past what a manifest would be refused. Then +63 for Workflow.supersedes and the refinement that bounds it: a workflow may only replace operations it actually performs (its own step operations), never one it merely names, and may not name itself or repeat an id. The rule lives here rather than in the MCP runtime because it is a fact about what a workflow IS — a hand-edited air.yaml has to be refused on the same terms a compiled one is, and a serving path that re-derived the rule could reach a different answer than the document it was handed."
-    },
-    "packages/compiler/src/manifest.ts": {
-      "lines": 1425,
-      "plan": "Raised deliberately from 1077 for async-events Phase 1: a new async_contract manifest key (mirroring the existing idempotency key's pattern) lets a human hand-supply a complete AsyncContract.webhook — including its full signature_verification sub-block — for the common real-world case (Stripe, GitHub, Twilio, per the design doc's own vendor evidence) where no spec expresses this and the compiler must not guess it. Cohesive: manifest parsing plus enrichment application. Watch. Then +42 for the stream manifest key: resize a subscription's observation window (ceilings only — transport, delivery, and the bound's existence stay compiler-owned), following async_contract's exact merge-or-decline-with-a-note shape. Then +8 for intent_examples on the operation manifest — workflows could always declare routing phrases and operations could not, and the benchmark needs tasks an operator can author. Then +65 for the pagination manifest field — the one enrichable fact a manifest could not declare — with carrier params validated against the operation's real inputs. The manifest surface is now feature-complete against AIR's enrichable facts; the standing decomposition idea (parsing vs application) is the next move if this file grows again. Then +49 for the workflow supersedes key and its resolution in buildWorkflows: an entry that names no operation, or a real operation the workflow does not run, blocks the workflow with a diagnostic exactly the way an unresolved step already does. It sits beside the step resolution it is checked against — splitting them would put the reference and the set it must belong to in different files."
-    },
-    "packages/compiler/src/gateway/receipt.ts": {
-      "lines": 1060,
-      "plan": "Cohesive: receipt identity, digests, verification. Safety-adjacent; prefer tests over splitting."
-    },
-    "packages/compiler/src/gateway/wso2/adapter.ts": {
-      "lines": 1048,
-      "plan": "One vendor adapter. Per-vendor files are the intended boundary."
-    },
-    "packages/refinement/src/skills/executor.ts": {
-      "lines": 1051,
-      "plan": "Grew by the intent-example corroboration filter and its `routingTokens` helper, added after a real 329-tool Zendesk estate showed 12 authored phrases sharing no word with their own operation's names. `routingTokens` is a general 'do two surfaces name the same thing' primitive and does not belong to this executor: when a second caller needs it (a certification check that the skill's phrases and the MCP tool name agree is the obvious next one), lift it into its own module and lower this baseline."
-    },
-    "packages/compiler/src/disclosure-bom.ts": {
-      "lines": 992,
-      "plan": "Watch."
-    },
-    "packages/runtime/src/idempotency.ts": {
-      "lines": 1212,
-      "plan": "Raised deliberately from 979 for async-events Phase 2, Decision A: the job-handle index (LedgerEntry.jobId, complete()'s new optional secondaryKey param, findBySecondaryKey) needed in both InMemoryLedger and FirestoreLedger, the latter backed by its own sibling Firestore collection with the same create/verify/reconcile rigor the rest of the class already applies. Safety-critical. Prefer tests over splitting, as with executor.ts. Previously raised from 977 for a comment explaining why InMemoryLedger.durable is annotated `boolean` rather than inferred as the literal `false` — the class implements an interface that permits either, and the literal type prevented a durable test double from subclassing it."
-    },
-    "packages/harness/src/conformance.ts": {
-      "lines": 985,
-      "plan": "Watch. Raised deliberately from 974 to declare, in words, the protocol facade this lane has always silently relied on: the generated mock is built from the same synthesized coordinates the bundle sends to, which is why a SOAP bundle passed here while being unable to make a real call. Both the MCP child env and the CLI spawn env carry it, because wire-agreement compares the two and a refusal on one side is not a disagreement."
-    },
-    "packages/refinement/src/detect.ts": {
-      "lines": 948,
-      "plan": "Deterministic deficiency detection over AIR; cohesive. Watch."
-    },
-    "packages/compiler/src/decycle.ts": {
-      "lines": 922,
-      "plan": "Watch."
-    },
-    "packages/targets/src/agent-registry.ts": {
-      "lines": 894,
-      "plan": "Watch."
     },
     "packages/certification/src/checks.ts": {
       "lines": 1107,
       "plan": "Raised deliberately from 892 for async-events Phase 4: three new static checks (async_completion_source_present, webhook_signature_refs_resolve, webhook_remote_verify_host_allowed) plus the new CertificationDeployTarget seam they resolve refs against. Previously raised from 884 for Phase 0's optional-statusOperationId guards. Expected to grow if certification truth consolidates here; raise deliberately with that change, not incidentally. Then +15 for static/transport_executable, mirroring safety.protocol-runtime-executable from @anvil/generators. Mirrored rather than owned: both read unexecutableWireFailures from @anvil/air, so neither engine restates what a protocol means and the two verdicts cannot drift."
     },
-    "packages/generators/src/skill.ts": {
-      "lines": 984,
-      "plan": "Raised deliberately from 886 for async-events Phase 6: the long-running skill section Phase 0 deferred lands here — webhookAsyncSurfaces() resolves webhook-only completions the way asyncSurfaces() resolves poll ones, and reference/long-running.md now renders a section for each instead of silently omitting them. This closes a real agent-facing bug the deferral left behind: without it, a webhook-only operation fell through operationsRef()'s generic longRunning flag and told the agent to \"poll for status\" for an operation with no poll operation to poll. Previously raised from 883 for Phase 0. Watch. Then +23 for wireProtocolSection: when a service speaks a protocol this runtime cannot, the skill says so and tells the agent not to treat the refusal as transient. It renders nothing for an HTTP/JSON service, so it costs the common case no tokens. The words themselves come from @anvil/air, not from here — this file decides only that an agent needs to be told."
+    "packages/cli/src/capability-composition.ts": {
+      "lines": 2163,
+      "plan": "Split graph construction / coordinate resolution / overlap analysis / policy / report projection. Composition stays audit-only. Queued behind estate."
+    },
+    "packages/cli/src/commands/estate/estate-adoption.ts": {
+      "lines": 1264,
+      "plan": "Already pure domain with rendering separated — the shape estate.ts is being moved toward. Long, but not misowned; revisit only if it grows."
+    },
+    "packages/cli/src/commands/estate/estate.ts": {
+      "lines": 2373,
+      "plan": "Decomposing — see docs/architecture/estate-decomposition.md. Steps 0-1 done: -552 to estate-bundle-install.ts, -63 to estate-import-policy.ts, -214 to estate-contract-attestation.ts. Then -106 from routing every refusal through envelope.ts instead of building a JSON literal at each call site; that one is ownership, not just size — the envelope shape now has one owner. Remaining: the renderer, acquisition, the service, and runVerify. Its siblings estate-audit.ts and estate-adoption.ts are already pure domain with rendering split out; this is the un-migrated residue."
+    },
+    "packages/cli/src/commands/status.ts": {
+      "lines": 1601,
+      "plan": "Raised deliberately from 1554 for `--require`, which turns the verdict this module already computes into an exit code. status owns nextSafeAction, so the gate belongs here rather than in a new module; putting it elsewhere would have split the verdict from its consumer. Still queued: separate lane-freshness computation (domain) from the rendering, and share the certification-reading logic certify.ts duplicates."
+    },
+    "packages/cli/src/self-skill.ts": {
+      "lines": 1575,
+      "plan": "Must stay derived from the command registry. Separate registry metadata from document projection; no manually maintained parallel command description."
+    },
+    "packages/cli/src/tool-cli.ts": {
+      "lines": 1433,
+      "plan": "The shared generated-CLI engine. Separate argument decoding from execution and rendering. Queued. Raised deliberately from 1425 for --protocol-facade: the generated CLI shares the runtime's transport gate, so it needs the same one declaration the generated servers take from ANVIL_PROTOCOL_FACADE. Three lines (a flag name, its resolution, its place in ExecuteContext) beside --base-url, which it qualifies; separating them would put the claim about a base URL in a different module from the base URL."
+    },
+    "packages/compiler/src/classify.ts": {
+      "lines": 1129,
+      "plan": "Raised deliberately from 1116 for async-events Phase 1: classifyArchetype takes an isWebhookReceiver param (checked first, unconditionally — structurally certain from provenance), and findJobHandleField/findStateField are exported for reuse against webhook payloads. Cohesive: one inference pass over AIR. Watch for growth rather than split speculatively. Then +9 for the stream_source archetype rule, which is four lines of logic and five of why: like isWebhookReceiver beside it, it is never inferred from shape — a bounded subscription window looks exactly like a list read, so guessing would guess wrong in both directions."
+    },
+    "packages/compiler/src/decycle.ts": {
+      "lines": 922,
+      "plan": "Watch."
+    },
+    "packages/compiler/src/disclosure-bom.ts": {
+      "lines": 992,
+      "plan": "Watch."
+    },
+    "packages/compiler/src/gateway/receipt.ts": {
+      "lines": 1060,
+      "plan": "Cohesive: receipt identity, digests, verification. Safety-adjacent; prefer tests over splitting."
+    },
+    "packages/compiler/src/gateway/support-contract.ts": {
+      "lines": 1098,
+      "plan": "Cohesive vendor-support surface. Watch."
+    },
+    "packages/compiler/src/gateway/wso2/adapter.ts": {
+      "lines": 1048,
+      "plan": "One vendor adapter. Per-vendor files are the intended boundary."
+    },
+    "packages/compiler/src/manifest.ts": {
+      "lines": 1425,
+      "plan": "Raised deliberately from 1077 for async-events Phase 1: a new async_contract manifest key (mirroring the existing idempotency key's pattern) lets a human hand-supply a complete AsyncContract.webhook — including its full signature_verification sub-block — for the common real-world case (Stripe, GitHub, Twilio, per the design doc's own vendor evidence) where no spec expresses this and the compiler must not guess it. Cohesive: manifest parsing plus enrichment application. Watch. Then +42 for the stream manifest key: resize a subscription's observation window (ceilings only — transport, delivery, and the bound's existence stay compiler-owned), following async_contract's exact merge-or-decline-with-a-note shape. Then +8 for intent_examples on the operation manifest — workflows could always declare routing phrases and operations could not, and the benchmark needs tasks an operator can author. Then +65 for the pagination manifest field — the one enrichable fact a manifest could not declare — with carrier params validated against the operation's real inputs. The manifest surface is now feature-complete against AIR's enrichable facts; the standing decomposition idea (parsing vs application) is the next move if this file grows again. Then +49 for the workflow supersedes key and its resolution in buildWorkflows: an entry that names no operation, or a real operation the workflow does not run, blocks the workflow with a diagnostic exactly the way an unresolved step already does. It sits beside the step resolution it is checked against — splitting them would put the reference and the set it must belong to in different files."
+    },
+    "packages/compiler/src/naming.ts": {
+      "lines": 938,
+      "plan": "Crossed the threshold implementing docs/design/resource-derivation-and-tool-name-stutter.md: rules A/C (bulk-qualified and bare-CRUD trailing segments re-home the resource, with the estate-wide non-terminal guard), the singularize over-strip fix, the stutter-aware collision-suffix choice, and the service-prefix stutter warning. All of it is naming semantics with one owner, deliberately NOT split — deriveNames, the collision resolver, and singularize must share one vocabulary or the surfaces drift. If it grows again, the candidate split is the collision resolver (resolveNameCollisions + token choice, ~250 lines) into naming-collisions.ts."
     },
     "packages/compiler/src/normalize.ts": {
-      "lines": 957,
-      "plan": "Raised deliberately from 814 for async-events Phase 1: merges webhookPathItems(doc) into the paths loop and adds attachWebhookLinks, which records a callbacks:-derived webhooks: link as an evidence claim rather than writing AsyncContract.webhook directly (see manifest.ts's async_contract key for why). Watch. Then +20 to carry x-anvil-wire-binding into sourceRef.binding: the extension is parsed rather than trusted, because it arrives as unknown off a lowered document and an adapter that recorded a malformed binding must produce no binding at all rather than a half-built one the codec would read. Then +9 to parse the stream contract off the lowered document and pass its presence to the archetype classifier. Same shape as the wire binding two lines above it — parsed rather than trusted, because the extension arrives as `unknown` — and it stays here because this file already owns turning adapter extensions into AIR facts."
+      "lines": 981,
+      "plan": "Raised deliberately from 814 for async-events Phase 1: merges webhookPathItems(doc) into the paths loop and adds attachWebhookLinks, which records a callbacks:-derived webhooks: link as an evidence claim rather than writing AsyncContract.webhook directly (see manifest.ts's async_contract key for why). Watch. Then +20 to carry x-anvil-wire-binding into sourceRef.binding: the extension is parsed rather than trusted, because it arrives as unknown off a lowered document and an adapter that recorded a malformed binding must produce no binding at all rather than a half-built one the codec would read. Then +9 to parse the stream contract off the lowered document and pass its presence to the archetype classifier. Same shape as the wire binding two lines above it — parsed rather than trusted, because the extension arrives as `unknown` — and it stays here because this file already owns turning adapter extensions into AIR facts. Then +16 to build the estate-wide path context (estatePathContext) once per document and hand it to deriveNames: the bare-CRUD-verb re-homing rule's non-terminal guard needs every path in the estate, and this loop is the one place that sees them all."
     },
-    "packages/mcp-runtime/src/server.ts": {
-      "lines": 1042,
-      "plan": "New entry for async-events Phase 3: buildMcpServer's per-operation handler now wraps its ExecuteContext.ledger with ledgerWithJobIndexing (async-completion.ts) and, when `op` is a status operation some other operation's AsyncContract names, checks the ledger before falling back to its existing upstream call (the hybrid handler). Two new registration passes follow the main operation loop: synthetic (webhook-only, sourceRef-less) status tools, and job-answer tools for approved humanApproval mutations. All three are additive registration/handler logic for the one mechanism this phase adds, not unrelated concerns — cohesive with the rest of this file's existing per-operation tool-building loop. Watch; a fourth async-completion concern arriving here would be the signal to split registration passes into their own module. Then -17: the workflow eligibility checks and the new supersession decision moved out to workflow-surface.ts, which is what let composition become subtractive without this file growing. That module owns one question — which workflows register and which operation tools they replace — and the two halves must stay welded: an ineligible workflow that could still suppress would delete tools and register no composite in their place."
+    "packages/compiler/src/protocols/postman.ts": {
+      "lines": 1163,
+      "plan": "One parser, one format. Splitting parsers by size would not improve ownership. Raised deliberately from 1084 to stop a silent loss: requests colliding on one (path, method) were dropped with no diagnostic, so an RPC-over-HTTP collection (Moodle's ~800 wsfunction requests) compiled to a single operation and exited zero. The added lines are the diagnostic and the sink that carries it out to ParsedSpec. Then +48 to name each script-bearing request in a postman_script_untranslated diagnostic instead of a bare count: a pre-request script is often the auth flow itself, and a bundle that looks complete and cannot authenticate was this adapter's remaining silent failure."
+    },
+    "packages/generators/src/certify.ts": {
+      "lines": 1478,
+      "plan": "Raised deliberately from 1427 to certify the generated client SDKs as a surface: contract.surfaces-agree now includes sdk/manifest.json, safety.sdk-gates-match refuses a manifest whose confirmation/idempotency/retry flags differ from AIR, and runtime.sdk-present requires a buildable tree per language. Only the three call sites live here — what an SDK must prove about itself is SDK knowledge and lives in packages/generators/src/sdk/certify.ts, so this file stays the place gates are assembled rather than the place every surface's semantics accumulate. Split the four gates into per-gate modules behind one assembler; queued. Then +3 to register observe.report.json as a derived record, so `anvil observe` cannot invalidate the bundle hash the evidence it produces is about. Then +19 for safety.protocol-runtime-executable, the gate that refuses to certify a bundle whose wire protocol the runtime cannot speak. Only the call site lives here — what a protocol IS belongs to @anvil/air's wire.ts, which @anvil/certification reads too so the two engines cannot reach opposite verdicts; this file stays the place gates are assembled. Then +3 as the benchmark evidence schema moved to v2 — the first version whose score measures anything, so a v1 always-pass report reads as corrupt, never fresh. Then +3 registering traffic.report.json in DERIVED_RECORD_FILES — a record about the bundle must never enter its identity, the exact lesson the benchmark report taught."
+    },
+    "packages/generators/src/deploy.ts": {
+      "lines": 1699,
+      "plan": "Raised deliberately from 1630 for async-events Phase 3: deploy/README.md now documents the generated /webhooks/<service>/<opId> receiver routes (webhookReadmeSection) and the plain-env convention their signature-verification refs resolve through, mirroring how credential_secret_refs is already documented here. The route generation itself lives in entrypoints.ts (resolvedWebhookRoutes/generateRuntimeServer) — this file only reads that same function to describe it to an operator, one more fact about the artifact this file already owns describing, not new deploy-plan logic. Split provider-neutral deploy-plan validation from Cloud Run projection so a second target does not fork the file. Queued."
+    },
+    "packages/generators/src/sdk/go-invoke.ts": {
+      "lines": 819,
+      "plan": "New entry. The Go client's request builder and retry loop, crossed the threshold when the SOAP and GraphQL branches landed. Same shape and same fate as typescript-core.ts: cohesive today, and the signal to extract a per-protocol codec table when a fourth protocol arrives. Then +14 for the graphql_sse-before-facade refusal, same defect and same fix as typescript-core.ts."
+    },
+    "packages/generators/src/sdk/java-invoke.ts": {
+      "lines": 867,
+      "plan": "New entry. The Java client's request builder and retry loop. Longer than its siblings because Java's HttpRequest builder and the DOM API are both verbose, not because it does more; the decisions it encodes are the same ones. Extract per-protocol branches alongside the other cores when a fourth protocol arrives. Then +16 for the graphql_sse-before-facade refusal, same defect and same fix as typescript-core.ts."
     },
     "packages/generators/src/sdk/soap.ts": {
       "lines": 1024,
@@ -138,13 +118,37 @@
       "lines": 939,
       "plan": "New entry. The TypeScript client's decision core — the gates, the request builder, and the retry loop the four SDKs each carry a copy of. Crossed the threshold when the SOAP branches were added to the request builder and the response loop. Cohesive: one language's copy of one contract. Watch; if a third protocol lands, split the per-protocol branches into a codec table the way the runtime did. Then +59 for the GraphQL branches. This is now the third protocol in one request builder and one response loop, which is the signal the entry already named: the next protocol should arrive as a codec table rather than a fourth pair of branches. Then +18 for the graphql_sse refusal placed BEFORE the facade short-circuit: a facade declares coordinates, not framing, and letting one route a subscription through the JSON path made the same operation answer an object here and an array in the runtime."
     },
-    "packages/generators/src/sdk/go-invoke.ts": {
-      "lines": 819,
-      "plan": "New entry. The Go client's request builder and retry loop, crossed the threshold when the SOAP and GraphQL branches landed. Same shape and same fate as typescript-core.ts: cohesive today, and the signal to extract a per-protocol codec table when a fourth protocol arrives. Then +14 for the graphql_sse-before-facade refusal, same defect and same fix as typescript-core.ts."
+    "packages/generators/src/skill.ts": {
+      "lines": 984,
+      "plan": "Raised deliberately from 886 for async-events Phase 6: the long-running skill section Phase 0 deferred lands here — webhookAsyncSurfaces() resolves webhook-only completions the way asyncSurfaces() resolves poll ones, and reference/long-running.md now renders a section for each instead of silently omitting them. This closes a real agent-facing bug the deferral left behind: without it, a webhook-only operation fell through operationsRef()'s generic longRunning flag and told the agent to \"poll for status\" for an operation with no poll operation to poll. Previously raised from 883 for Phase 0. Watch. Then +23 for wireProtocolSection: when a service speaks a protocol this runtime cannot, the skill says so and tells the agent not to treat the refusal as transient. It renders nothing for an HTTP/JSON service, so it costs the common case no tokens. The words themselves come from @anvil/air, not from here — this file decides only that an agent needs to be told."
     },
-    "packages/generators/src/sdk/java-invoke.ts": {
-      "lines": 867,
-      "plan": "New entry. The Java client's request builder and retry loop. Longer than its siblings because Java's HttpRequest builder and the DOM API are both verbose, not because it does more; the decisions it encodes are the same ones. Extract per-protocol branches alongside the other cores when a fourth protocol arrives. Then +16 for the graphql_sse-before-facade refusal, same defect and same fix as typescript-core.ts."
+    "packages/harness/src/conformance.ts": {
+      "lines": 985,
+      "plan": "Watch. Raised deliberately from 974 to declare, in words, the protocol facade this lane has always silently relied on: the generated mock is built from the same synthesized coordinates the bundle sends to, which is why a SOAP bundle passed here while being unable to make a real call. Both the MCP child env and the CLI spawn env carry it, because wire-agreement compares the two and a refusal on one side is not a disagreement."
+    },
+    "packages/mcp-runtime/src/server.ts": {
+      "lines": 1040,
+      "plan": "New entry for async-events Phase 3: buildMcpServer's per-operation handler now wraps its ExecuteContext.ledger with ledgerWithJobIndexing (async-completion.ts) and, when `op` is a status operation some other operation's AsyncContract names, checks the ledger before falling back to its existing upstream call (the hybrid handler). Two new registration passes follow the main operation loop: synthetic (webhook-only, sourceRef-less) status tools, and job-answer tools for approved humanApproval mutations. All three are additive registration/handler logic for the one mechanism this phase adds, not unrelated concerns — cohesive with the rest of this file's existing per-operation tool-building loop. Watch; a fourth async-completion concern arriving here would be the signal to split registration passes into their own module."
+    },
+    "packages/refinement/src/detect.ts": {
+      "lines": 948,
+      "plan": "Deterministic deficiency detection over AIR; cohesive. Watch."
+    },
+    "packages/refinement/src/skills/executor.ts": {
+      "lines": 1069,
+      "plan": "1069 is the union of two independently-recorded growths that merged: the intent-example corroboration filter with routingTokens (recorded at 1051) and the widened singularize body mirrored from the compiler (recorded at 1002 pre-filter). Both additions carry the same exit: routingTokens is a general two-surfaces-name-the-same-thing primitive and singularize is documented as a byte-identical mirror of naming.ts — when either gains a second caller, lift it into a shared module and lower this baseline."
+    },
+    "packages/runtime/src/executor.ts": {
+      "lines": 1378,
+      "plan": "Deliberately NOT queued for decomposition. execute() is a strictly ordered safety gauntlet; splitting it into stages trades a readable sequence for a reorderable pipeline. The control here is an ordering test, not a file split. Raised deliberately from 1322 for the transport gate at step 0b: an operation whose wire protocol this runtime cannot speak is refused before a request is built, so no surface can route around it. The refusal's construction lives in wire-gate.ts; what stays here is its position in the gauntlet, which is exactly the thing this entry says must not be split out. Then +47 for the wire codec seam and the fault gate: buildRequest now dispatches to a codec instead of hardcoding JSON assembly, and a protocol-level fault (a soap:Fault arrives inside a 200 as readily as a 500) is handled on exactly the same terms as a non-2xx rather than as a second copy of the retry and ledger rules. The codecs themselves live in codec.ts and codec-soap.ts; what stays here is their position in the gauntlet, which is the thing this entry says must not be split out."
+    },
+    "packages/runtime/src/idempotency.ts": {
+      "lines": 1212,
+      "plan": "Raised deliberately from 979 for async-events Phase 2, Decision A: the job-handle index (LedgerEntry.jobId, complete()'s new optional secondaryKey param, findBySecondaryKey) needed in both InMemoryLedger and FirestoreLedger, the latter backed by its own sibling Firestore collection with the same create/verify/reconcile rigor the rest of the class already applies. Safety-critical. Prefer tests over splitting, as with executor.ts. Previously raised from 977 for a comment explaining why InMemoryLedger.durable is annotated `boolean` rather than inferred as the literal `false` — the class implements an interface that permits either, and the literal type prevented a durable test double from subclassing it."
+    },
+    "packages/targets/src/agent-registry.ts": {
+      "lines": 894,
+      "plan": "Watch."
     }
   }
 }

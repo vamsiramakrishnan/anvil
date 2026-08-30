@@ -1,10 +1,52 @@
 # Resource derivation and tool-name stutter
 
-Status: design / proposal only (measured 2026-08-30 against `a9cfd63`). **Nothing
-in this document is implemented.** Every rule here changes operation ids on real
-estates and therefore needs the repo owner's explicit approval before anyone
-writes a line of it; §7 states the blast radius so that decision can be made on
-numbers instead of instinct.
+Status: **implemented** (approved by the repo owner as an id-breaking change;
+measured 2026-08-30 against `a9cfd63`, implemented on top of the same commit).
+What landed, and what deliberately did not:
+
+- **Implemented**: the `singularize` over-strip fix (§5, both mirrored copies);
+  rules **A** (bulk-qualified verb segments) and **C** (bare CRUD-verb terminal
+  segments, resource-only, with the estate-wide non-terminal guard) in
+  `deriveNames`; the disambiguation-suffix stutter skip in
+  `resolveNameCollisions`; and a `service_prefix_stutter` compile **warning**
+  when an operator-chosen service id duplicates the operationIds' leading word
+  (the toolName join itself is untouched).
+- **One gate this document missed, found by the corpus**: rules A and C run
+  only for source kinds whose paths follow resource grammar (OpenAPI/Swagger,
+  Discovery, Postman, OData). The six measured estates never exercised an
+  adapter-lowered RPC kind; NetSuite's WSDL — lowered to
+  `/NetSuitePortType/<methodName>` — has operations literally named `get`,
+  `add`, `getAll`, and unguarded rule C (and rule A, via `getAll`) collapsed
+  them onto the synthetic port-type wrapper as their resource, the exact
+  failure mode §6 documents for GraphQL's single-word guard. `normalize` now
+  passes the estate path context only for resource-grammar kinds, and
+  `deriveNames` re-homes nothing without it.
+- **Still rejected / not implemented**: rule B as a compiler rule (§6 stands);
+  rewriting `spec_authored` stutters; using `ACTION_VERB_WORDS` to disqualify
+  segments; the "last NOUN-ish segment" idea; everything in §"What A+C do not
+  fix". No default-off flag was used — the owner approved the id break
+  directly, so the rules are unconditional.
+- **Measured after implementation** (same harness, same six estates): id churn
+  matched the §7 prediction exactly — plaid **252**, zendesk **70**, github
+  **13**, stripe **3**, bigquery **2**, slack **0** re-homed resources, with
+  `effect.action` unchanged on every single operation. Disambiguation-suffix
+  stutters: zendesk 44 → **0**, stripe 2 → **0**, github 61 → **2**
+  (`/user/issues` and `/user/repos`, where the ONLY distinguishing path word is
+  the word the vendor's own operationId ends with — every alternative is a
+  numbered blank, which is worse). `spec_authored` unchanged (github 13,
+  stripe 2); bigquery's 42 `service_prefix_join` unchanged and now warned
+  about. Rule C's new collisions handed plaid **26** stutters the resolver
+  cannot avoid (`plaid_asset_report_get_get`): when `/asset_report/get`,
+  `/asset_report/refresh` and `/asset_report/remove` all land on
+  `asset_report.create`, the only distinguishing path word each op has IS its
+  own trailing verb, which the vendor's operationId already ends with. This is
+  the structural floor of resource-only re-homing on an RPC estate — the
+  alternative was extending `OperationAction`, which §6 rejects. The stutter
+  skip does hand the group's first member the elided `direct` token
+  (`plaid_asset_report_create_direct`), so only the later siblings pay. One
+  correction to §5's arithmetic: the fix moved **29** github resources, not
+  26 — the hand-verified table missed `dispatche`(2) and
+  `marketplace_purchas`(1).
 
 Every figure below is reproducible with the read-only harness added alongside
 this document:

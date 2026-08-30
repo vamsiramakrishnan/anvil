@@ -831,10 +831,13 @@ paths:
 `;
     const air = await compile({ spec: clashing, serviceId: "hub" });
     const commands = air.operations.map((o) => o.cli.command).sort();
+    // `/…/items/sync` re-homes the resource onto `items` (a bare CRUD-verb
+    // trailing segment is a method, not a resource); the pair fallback under
+    // test is unaffected.
     expect(commands).toEqual([
-      "hub sync create alpha_beta",
-      "hub sync create alpha_gamma",
-      "hub sync create beta_gamma",
+      "hub items create alpha_beta",
+      "hub items create alpha_gamma",
+      "hub items create beta_gamma",
     ]);
     expect(air.diagnostics.filter((d) => d.code === "naming_collision_resolved")).toHaveLength(3);
   });

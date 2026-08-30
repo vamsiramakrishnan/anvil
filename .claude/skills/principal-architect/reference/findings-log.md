@@ -458,3 +458,50 @@ over-clusters (`count` gathers 22 unrelated ops) *and* under-clusters (the four
   derivable at compile time, but consuming it means teaching every id-keyed
   surface a second lookup and inventing a rename compatibility class. Land
   behind a default-off flag; flip only in a release declared id-breaking.
+
+## Resource derivation + tool-name stutter fix landed (2026-08-30, six untrimmed estates)
+
+`docs/design/resource-derivation-and-tool-name-stutter.md` implemented against
+`a9cfd63` after owner approval of the id break: singularize over-strip fix
+(both mirrored copies, drift-guarded by `packages/compiler/src/naming.test.ts`),
+rules A (bulk-qualified verb segments) + C (bare CRUD-verb terminal segments,
+resource-only, estate-wide non-terminal guard), the disambiguation-suffix
+stutter skip, and a `service_prefix_stutter` compile warning. Rule B stays
+rejected as a compiler rule. Measured with `tools/naming-audit/run.mjs` before
+and after, per estate (re-homed resources = predicted exactly):
+
+| estate | ops | re-homed (predicted → measured) | disamb. stutters before → after | spec-authored (untouched) |
+|---|---:|---|---|---|
+| plaid | 351 | 252 → **252** | 0 → 26 (rule-C collisions where the only distinguishing word is the op's own trailing verb — the structural floor of resource-only re-homing on an RPC estate) | 0 |
+| zendesk (untrimmed) | 640 | 70 → **70** | 44 → **0** | 0 |
+| github | 1222 | 13 → **13** | 61 → **2** (`/user/issues`, `/user/repos`: the only distinguishing word is the operationId's own tail) | 13 |
+| stripe | 594 | 3 → **3** | 2 → **0** | 2 |
+| bigquery | 42 | 2 → **2** | 0 → 0 (42 `service_prefix_join` untouched, now warned) | 0 |
+| slack | 174 | 0 → **0** | 0 → 0 | 0 |
+
+`effect.action` changed on **zero** operations (resource-only re-homing held).
+Plaid's resource catalogue went from 71 values topped by
+`get(114) create(53) list(39)` to 146 values topped by `transaction(14)`,
+with no CRUD verb left as any operation's resource. Singularize moved 29
+github resources (the doc's hand table said 26 — it missed `dispatche`(2),
+`marketplace_purchas`(1)) and 4 zendesk ones, all to real words; the brief's
+literal sibilant class `(ch|sh|x|z|ss)es` had to be narrowed (`z` → `zz`, plus
+a small `-che` stem list) because it minted new non-words on GitHub's real
+estate (`caches → cach`, `machine-sizes → machine-siz`).
+
+The corpus caught what the six measured estates could not: NetSuite's WSDL
+lowers to `/NetSuitePortType/get|add|getAll`, and unguarded rules A/C
+collapsed those bare-CRUD method names onto the synthetic wrapper as their
+resource — the same failure mode the trailing-verb rule's single-word guard
+documents for GraphQL. Fix: `normalize` hands `deriveNames` the estate path
+context only for resource-grammar source kinds (openapi/swagger/discovery/
+postman/odata); without it the rules stay off. Also found stale-at-base:
+`tools/corpus/expected/{box,adyen,adobe_aem}.json` pinned pre-subsetFallback
+collision tokens (verified identical under the base compiler) — refreshed
+alongside plaid's deliberately-left-stale pin.
+
+The one-line lesson: a rule measured against real estates before it ships
+lands exactly on its prediction — and every place it drifted (three missed
+singulars, the sibilant class, the WSDL wrapper) was a place where a hand
+count, a spelled-out regex, or an unmeasured source kind had NOT been
+machine-checked against real estates first.

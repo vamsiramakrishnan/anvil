@@ -27,7 +27,7 @@ import {
   manifestAuthProviderToAir,
   parseManifest,
 } from "./manifest.js";
-import { critiqueNames, resolveNameCollisions } from "./naming.js";
+import { critiqueNames, resolveNameCollisions, servicePrefixStutterDiagnostic } from "./naming.js";
 import { normalize } from "./normalize.js";
 import { type ParsedSpec, parseSource } from "./parse.js";
 import { type CompilerSource, ephemeralCompilerSource } from "./source/compiler-source.js";
@@ -300,6 +300,15 @@ async function buildAir(
   // Naming pass: resolve any name collisions coherently across id/CLI/tool with
   // meaningful tokens (never a silent `_2`) before enrichment or validation.
   const namingDiagnostics = resolveNameCollisions(operations);
+
+  // An OPERATOR-chosen service id that duplicates the operationIds' leading
+  // word makes every tool name stutter (BigQuery's `--service bigquery` over
+  // `bigquery.models.get`). A derived id never warns — the operator made no
+  // choice to reconsider.
+  if (options.serviceId ?? manifest.service?.name) {
+    const prefixStutter = servicePrefixStutterDiagnostic(serviceId, operations);
+    if (prefixStutter) namingDiagnostics.push(prefixStutter);
+  }
 
   // Whole-spec dialect inference: classify the corpus's naming house style ONCE
   // and fold it into every `name.quality` claim's confidence. Never changes a
