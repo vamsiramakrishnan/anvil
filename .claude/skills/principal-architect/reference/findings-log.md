@@ -505,3 +505,50 @@ lands exactly on its prediction — and every place it drifted (three missed
 singulars, the sibilant class, the WSDL wrapper) was a place where a hand
 count, a spelled-out regex, or an unmeasured source kind had NOT been
 machine-checked against real estates first.
+
+## 2026-08-30 — Naming conformance becomes an always-on ratchet (corpus lanes)
+
+The naming audit that found the six defects above is a hand-run,
+network-needing tool — which is why the defects sat unnoticed for months. The
+corpus now gates the audit's counters continuously
+(`tools/corpus/naming-conformance.mjs`, semantics copied from
+`tools/naming-audit/run.mjs`, which stays the source of truth): per estate,
+(a) `effect.resource` values sharing zero content tokens with their own
+canonicalName/displayName, (b) tool-name stutter split spec_authored /
+service_prefix_join / disambiguation_suffix, (c) singularize-over-strip
+candidate resources. The ratchet FAILS on any counter growth (no recorded-plan
+escape — unlike the module-size ratchet, there is never a good reason for more
+semantic contradictions); shrinkage passes loudly and must be banked with
+`--update-naming-baseline`. Offline estates lane gates every PR via ci.yml;
+the network systems gate nightly via corpus.yml. Growth-trip is pinned by
+`tools/corpus/naming-conformance.test.ts` and armed as mutation
+`corpus/naming-ratchet-fails-on-growth`.
+
+Recorded baselines (produced by running the oracle, 2026-08-30). Offline
+estates (also now covered by expected/<estate>.json naming pins, generated
+from a green run): kong-refunds 0/0-0-0/1, kong-reporting 0/0-0-0/1,
+apigee-payments 0/0-0-0/1, wso2-orders 0/3-0-0/0, mulesoft-customer 0/0-0-0/0,
+apiconnect-claims 0/2-0-0/1 (zeroOverlap / stutters spec-join-disamb /
+overStripped). The wso2/apiconnect `spec_authored` stutters
+(`order_service_get_orders_orders`) are the gateway adapters' own synthesized
+operationIds — real signal the estates lane had never measured.
+
+Network systems (20 of 34 recorded): plaid 1/0-0-26/15 (the 26 is the
+post-A+C structural floor the design doc predicted, now pinned so it cannot
+grow), bigquery 0/0-42-0/0 and gmail 0/0-11-0/0 (the `--service`-choice
+prefix join, pinned), box 0/24-0-0/9, adobe_aem 20/0-0-0/0, etcd 6/0-0-0/0,
+hubspot 0/6-0-0/0, temporal 0/0-0-0/6; the rest small or zero.
+
+**Live confirmation of the invisibility hole while recording**: 13 of 34
+quick-mode systems (github, stripe, twilio, zendesk, intercom, docusign,
+github_gql, linear, odata_trippin, okta, datadog, xero, shopware) currently
+fail AT COMPILE — `anvil compile` exits 1 on error-level diagnostics
+(`auth/service_oauth2_ambiguous`, `duplicate_agent_input_name`,
+`query_language_passthrough`), all of which predate the merge base — and
+oracle_ords's vendor spec URL now 404s. The scheduled quick lane is red today
+and nobody had noticed, which is the exact failure mode this work exists to
+end: corpus.yml's gate job now opens/updates a `corpus-regression` issue on
+failure and closes it when green, so a scheduled red lands in the tracker
+instead of a run list nobody reads. Those 13+1 systems have no naming
+baseline yet; once their compile reds are fixed, the oracle fails with the
+exact record command until one is recorded (reviewed).

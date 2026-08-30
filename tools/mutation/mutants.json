@@ -772,6 +772,16 @@
       "tests": [
         "packages/compiler/src/naming.test.ts"
       ]
+    },
+    {
+      "id": "corpus/naming-ratchet-fails-on-growth",
+      "file": "tools/corpus/naming-conformance.mjs",
+      "control": "The naming-conformance ratchet fails on ANY counter growth. Delete the comparison and a new semantic contradiction — a resource its own name text denies, a stuttering tool name — rides through the corpus lanes green, which is exactly how six naming defects sat unnoticed for months before the naming audit found them by hand.",
+      "find": "    if (cur > base) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "tools/corpus/naming-conformance.test.ts"
+      ]
     }
   ]
 }

@@ -1,0 +1,14 @@
+{
+  "operations": {
+    "claims_api_get_claims_claims": {
+      "toolName": "claims-api-unscoped-2-1-0-059411b3f97a3e49_claims_api_get_claims_claims",
+      "effect": "read",
+      "risk": "none"
+    },
+    "claims_api_post_claims_claims": {
+      "toolName": "claims-api-unscoped-2-1-0-059411b3f97a3e49_claims_api_post_claims_claims",
+      "effect": "mutation",
+      "risk": "medium"
+    }
+  }
+}

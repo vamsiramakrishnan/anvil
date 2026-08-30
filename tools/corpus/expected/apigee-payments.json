@@ -1,0 +1,14 @@
+{
+  "operations": {
+    "payments_proxy_get_payments_refunds": {
+      "toolName": "payments-proxy-prod-12-18f68f8facf6bff6_payments_proxy_get_payments_refunds",
+      "effect": "read",
+      "risk": "none"
+    },
+    "payments_proxy_post_payments_refunds": {
+      "toolName": "payments-proxy-prod-12-18f68f8facf6bff6_payments_proxy_post_payments_refunds",
+      "effect": "mutation",
+      "risk": "financial"
+    }
+  }
+}

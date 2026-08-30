@@ -1,0 +1,14 @@
+{
+  "operations": {
+    "customer_api_get_customers": {
+      "toolName": "customer-api-prod-v1-e7dfc7ff786d4cf2_customer_api_get_customers",
+      "effect": "read",
+      "risk": "none"
+    },
+    "customer_api_post_customers": {
+      "toolName": "customer-api-prod-v1-e7dfc7ff786d4cf2_customer_api_post_customers",
+      "effect": "mutation",
+      "risk": "medium"
+    }
+  }
+}

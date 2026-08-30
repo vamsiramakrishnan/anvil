@@ -25,7 +25,11 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["packages/**/*.test.ts"],
+    // tools/corpus is included so the naming-conformance ratchet's logic is a
+    // vitest-testable module — the mutation gate (tools/mutation) kills its
+    // mutants by running vitest test sets, which only works for files the
+    // runner can collect.
+    include: ["packages/**/*.test.ts", "tools/corpus/**/*.test.ts"],
     environment: "node",
     globals: false,
     /**

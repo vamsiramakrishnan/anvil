@@ -1,0 +1,66 @@
+{
+  "updatedAt": "2026-08-30T23:07:06.567Z",
+  "note": "Per-estate naming-conformance counters (ratchet: growth fails). Regenerate with: node tools/corpus/run.mjs estates --update-naming-baseline",
+  "estates": {
+    "kong-refunds": {
+      "operations": 3,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    },
+    "kong-reporting": {
+      "operations": 1,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    },
+    "apigee-payments": {
+      "operations": 2,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    },
+    "wso2-orders": {
+      "operations": 3,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 3,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "mulesoft-customer": {
+      "operations": 2,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "apiconnect-claims": {
+      "operations": 2,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 2,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    }
+  }
+}

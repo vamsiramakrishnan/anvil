@@ -1,0 +1,19 @@
+{
+  "operations": {
+    "refunds_get_refunds": {
+      "toolName": "refunds-unscoped-unversioned-ac3a48be8522ba7c_refunds_get_refunds",
+      "effect": "read",
+      "risk": "none"
+    },
+    "refunds_post_refunds": {
+      "toolName": "refunds-unscoped-unversioned-ac3a48be8522ba7c_refunds_post_refunds",
+      "effect": "mutation",
+      "risk": "financial"
+    },
+    "refunds_get_refunds_id": {
+      "toolName": "refunds-unscoped-unversioned-ac3a48be8522ba7c_refunds_get_refunds_id",
+      "effect": "read",
+      "risk": "none"
+    }
+  }
+}

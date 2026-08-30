@@ -1,0 +1,19 @@
+{
+  "operations": {
+    "order_service_get_orders_orders": {
+      "toolName": "orderservice-unscoped-1-0-0-27fef686df251e28_order_service_get_orders_orders",
+      "effect": "read",
+      "risk": "none"
+    },
+    "order_service_post_orders_orders": {
+      "toolName": "orderservice-unscoped-1-0-0-27fef686df251e28_order_service_post_orders_orders",
+      "effect": "mutation",
+      "risk": "medium"
+    },
+    "order_service_delete_orders_orders_id": {
+      "toolName": "orderservice-unscoped-1-0-0-27fef686df251e28_order_service_delete_orders_orders_id",
+      "effect": "mutation",
+      "risk": "destructive"
+    }
+  }
+}
