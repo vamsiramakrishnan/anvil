@@ -22,3 +22,4 @@ export * from "./resolve.js";
 export * from "./schema.js";
 export * from "./serialize.js";
 export * from "./wire.js";
+export * from "./workflow-surface.js";

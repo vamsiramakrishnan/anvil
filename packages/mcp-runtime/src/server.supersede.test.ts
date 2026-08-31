@@ -271,6 +271,78 @@ describe("workflow supersession — the served MCP surface", () => {
     );
   });
 
+  it("iterates refusals to a fixed point across an async chain (A→B→C)", async () => {
+    // op1 submits and polls op2; op2 itself submits and polls op3. The workflow
+    // proposes suppressing BOTH op2 and op3, listed in the order that defeats a
+    // single refusal round: op3 is judged while op2 still looks suppressed.
+    // Refusing op2 (op1 serves and names it) puts op2 back on the surface — and
+    // op2 names op3, so that suppression must fall too. One round would serve
+    // op2 whose `anvil/async_status_tool` points at the absent op3.
+    const jobOutput = { schema: { type: "object", properties: { job_id: { type: "string" } } } };
+    const jobParam = {
+      params: [
+        {
+          name: "job_id",
+          in: "query" as const,
+          required: true,
+          schema: { type: "string" },
+          inferred: false,
+        },
+      ],
+    };
+    const submit = op("test.op1", "op1", {
+      asyncContract: {
+        statusOperationId: "test.op2",
+        jobIdField: "job_id",
+        statusJobIdParam: "job_id",
+        terminalStates: ["done"],
+        pendingStates: [],
+      },
+      output: jobOutput,
+    });
+    const middle = op("test.op2", "op2", {
+      asyncContract: {
+        statusOperationId: "test.op3",
+        jobIdField: "job_id",
+        statusJobIdParam: "job_id",
+        terminalStates: ["done"],
+        pendingStates: [],
+      },
+      output: jobOutput,
+      input: jobParam,
+    });
+    const tail = op("test.op3", "op3", { input: jobParam });
+    const onRefuseSupersede = vi.fn();
+    const names = await toolNames(
+      documentWith(
+        workflow({
+          steps: [
+            { operationId: "test.op1", description: "", optional: false, bindings: {} },
+            { operationId: "test.op2", description: "", optional: false, bindings: {} },
+            { operationId: "test.op3", description: "", optional: false, bindings: {} },
+          ],
+          supersedes: ["test.op3", "test.op2"],
+        }),
+        [submit, middle, tail],
+      ),
+      { onRefuseSupersede },
+    );
+    // The final surface serves B AND C — the whole chain survives.
+    expect(names).toContain("op2");
+    expect(names).toContain("op3");
+    expect(onRefuseSupersede).toHaveBeenCalledTimes(2);
+    expect(onRefuseSupersede).toHaveBeenCalledWith(
+      "test.op2",
+      "test.workflow.compose",
+      expect.stringContaining("async status operation"),
+    );
+    expect(onRefuseSupersede).toHaveBeenCalledWith(
+      "test.op3",
+      "test.workflow.compose",
+      expect.stringContaining("async status operation"),
+    );
+  });
+
   it("still executes a superseded operation through the composite", async () => {
     const calls: string[] = [];
     const recording: Transport = {

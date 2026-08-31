@@ -6,12 +6,15 @@ import {
   asyncContractSentence,
   DEFAULT_RESPONSE_BUDGET_TOKENS,
   estimateTokens,
+  extractFieldName,
   mcpToolAnnotations,
   mcpToolDescription,
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
+  planWorkflowSurface,
   resolveAsyncContract,
+  type WorkflowSurfacePlan,
 } from "@anvil/air";
 import {
   type ExecuteContext,
@@ -36,7 +39,6 @@ import {
   validateProjection,
 } from "./projection.js";
 import { type ResultBudget, truncateResultText } from "./truncation.js";
-import { extractFieldName, planWorkflowSurface } from "./workflow-surface.js";
 import { MCP_RESERVED, operationZodShape, reservedSafetyShape } from "./zodshape.js";
 
 /**
@@ -238,13 +240,13 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
   const allOpsById = new Map(air.operations.map((operation) => [operation.id, operation]));
 
   // ORDERING IS LOAD-BEARING: the workflow surface is planned HERE, before the
-  // first tool registers, because a suppression may only be read off a workflow
-  // that has already been found registrable. Deciding eligibility later — inside
-  // the registration loop, where it used to live — would mean an unapproved or
-  // malformed workflow had already removed its members from this loop's input,
-  // deleting tools and putting no composite in their place. The plan is pure and
-  // is reported below in the same pass that registers the workflows, so the
-  // `onSkipWorkflow` call order an observer sees is unchanged.
+  // first tool registers — a suppression may only be read off a workflow already
+  // found registrable, or a skipped workflow would delete its members' tools and
+  // register nothing in their place. The planner lives in `@anvil/air` (see
+  // `planWorkflowSurface`'s module doc) so the compiler's capability disclosure
+  // budget discounts exactly what this server suppresses. The plan is pure and
+  // is reported below in the same pass that registers the workflows, keeping the
+  // `onSkipWorkflow` call order an observer sees unchanged.
   const workflowSurface = planWorkflowSurface(air.workflows, opsById, allOpsById);
   for (const [operationId, workflowId] of workflowSurface.superseded) {
     options.onSupersedeOperation?.(operationId, workflowId);
@@ -253,8 +255,8 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
     options.onRefuseSupersede?.(operationId, workflowId, reason);
   }
   // The served surface: approved operations minus the ones an approved workflow
-  // now performs on their behalf. `opsById` deliberately keeps them — the
-  // workflow's own steps still have to resolve, and the ladder still reads the
+  // now performs on their behalf. `opsById` deliberately keeps them — a
+  // workflow's own steps must still resolve, and the ladder still reads the
   // grouping from the document, not from what happened to register.
   const servedOps = ops.filter((op) => !workflowSurface.superseded.has(op.id));
 
@@ -931,10 +933,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /** The operation ids one workflow actually removed from this server's surface. */
-function supersededByThisWorkflow(
-  plan: { superseded: ReadonlyMap<string, string> },
-  workflowId: string,
-): string[] {
+function supersededByThisWorkflow(plan: WorkflowSurfacePlan, workflowId: string): string[] {
   return [...plan.superseded]
     .filter(([, owner]) => owner === workflowId)
     .map(([operationId]) => operationId);

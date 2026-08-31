@@ -1,4 +1,5 @@
-import { type Operation, resolveAsyncContract, type Workflow } from "@anvil/air";
+import { resolveAsyncContract } from "./async-contract.js";
+import type { Operation, Workflow } from "./schema.js";
 
 /**
  * Which workflows register as composite tools, and which operation tools they
@@ -17,6 +18,16 @@ import { type Operation, resolveAsyncContract, type Workflow } from "@anvil/air"
  * put nothing in their place: the agent loses the operations *and* the composite
  * that was supposed to stand in for them. So a suppression is only ever read off
  * a workflow that this same pass has already decided will register.
+ *
+ * This lives in `@anvil/air` — not in the serving runtime — because two surfaces
+ * consume the same plan and must never disagree about it. `@anvil/mcp-runtime`
+ * serves exactly this plan; the compiler's capability disclosure budget
+ * (`capabilityDisclosureBudget`) discounts exactly the operations this plan
+ * suppresses and charges exactly the composites it registers. When the two
+ * computed supersession independently, a workflow the runtime refused to
+ * register could still buy the capability a budget discount, and the capability
+ * passed the hard approval limit while the truly served surface was larger than
+ * what was reviewed — the budget's one job, violated.
  *
  * Everything here is pure: same document, same plan, every time. It decides only
  * what is *listed*. Whether an operation may be called, under what confirmation,
@@ -51,7 +62,7 @@ export function extractFieldName(binding: string): string {
  * reach `firstStepOp` on a workflow that was skipped — the guard is the type,
  * not a re-check the registration loop used to have to repeat.
  */
-type WorkflowRegistration =
+export type WorkflowRegistration =
   | {
       workflow: Workflow;
       /** The `onSkipWorkflow` reason. Present exactly when nothing registers. */
@@ -69,13 +80,13 @@ type WorkflowRegistration =
     };
 
 /** One operation removed from the tool surface, and the workflow that replaced it. */
-interface AppliedSupersession {
+export interface AppliedSupersession {
   operationId: string;
   workflowId: string;
 }
 
 /** One suppression this pass declined to apply, and why it declined. */
-interface RefusedSupersession extends AppliedSupersession {
+export interface RefusedSupersession extends AppliedSupersession {
   reason: string;
 }
 
@@ -129,19 +140,38 @@ export function planWorkflowSurface(
   // `asyncContractMeta` refuses to create by any other route. Keeping the tool is
   // the conservative direction — the surface stays as large as it was, which is
   // never a safety regression — so the suppression yields, not the contract.
+  //
+  // Refusals are iterated to a FIXED POINT against the evolving suppression set,
+  // never judged once against the proposed one. A refusal changes the served
+  // surface: the operation it keeps is a tool again, and if that tool's own
+  // async contract names a third operation, *that* suppression must now be
+  // refused too, however long the chain runs. Judged against the static
+  // proposal — as a single pass once did — the chain A(serves)→B(status)→C
+  // ended with B kept but C still suppressed, so the final surface served B
+  // whose `anvil/async_status_tool` pointed at the absent C.
+  //
+  // Termination is monotone: a round either refuses at least one suppression —
+  // strictly shrinking `superseded`, which starts finite and is never added
+  // to — or refuses none and the loop exits. So the loop runs at most
+  // |proposed| + 1 rounds.
   const refused: RefusedSupersession[] = [];
   const superseded = new Map(proposed);
-  for (const [operationId, workflowId] of proposed) {
-    const submitter = servedSubmitterOf(operationId, opsById, allOpsById, proposed);
-    if (!submitter) continue;
-    superseded.delete(operationId);
-    refused.push({
-      operationId,
-      workflowId,
-      reason:
-        `operation '${submitter}' is still served and names '${operationId}' as its async status ` +
-        "operation; suppressing it would advertise poll coordinates for a tool that is not listed",
-    });
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [operationId, workflowId] of superseded) {
+      const submitter = servedSubmitterOf(operationId, opsById, allOpsById, superseded);
+      if (!submitter) continue;
+      superseded.delete(operationId);
+      changed = true;
+      refused.push({
+        operationId,
+        workflowId,
+        reason:
+          `operation '${submitter}' is still served and names '${operationId}' as its async status ` +
+          "operation; suppressing it would advertise poll coordinates for a tool that is not listed",
+      });
+    }
   }
 
   return { registrations, superseded, refused };
@@ -151,17 +181,19 @@ export function planWorkflowSurface(
  * The id of a still-served operation whose resolved async contract names
  * `operationId` as its status operation, or undefined when none does. A
  * submitter that is itself being superseded does not count: its own coordinates
- * are leaving the surface with it.
+ * are leaving the surface with it — but only for as long as it actually is;
+ * the fixed-point loop above re-asks this question whenever a refusal returns
+ * a submitter to the surface.
  */
 function servedSubmitterOf(
   operationId: string,
   opsById: ReadonlyMap<string, Operation>,
   allOpsById: ReadonlyMap<string, Operation>,
-  proposed: ReadonlyMap<string, string>,
+  superseded: ReadonlyMap<string, string>,
 ): string | undefined {
   for (const candidate of opsById.values()) {
     if (candidate.id === operationId) continue;
-    if (proposed.has(candidate.id)) continue;
+    if (superseded.has(candidate.id)) continue;
     const resolution = resolveAsyncContract(candidate, allOpsById);
     if (!resolution.ok) continue;
     if (resolution.statusOperation?.id === operationId) return candidate.id;

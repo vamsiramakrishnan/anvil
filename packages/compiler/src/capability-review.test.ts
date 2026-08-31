@@ -550,6 +550,72 @@ ${extra}    steps:
     expect(budget.workflowTools).toBe(1);
   });
 
+  it("a workflow the runtime will not register buys no discount (malformed binding)", async () => {
+    const air = await compile({
+      spec: twoOpSpec,
+      serviceId: "things",
+      manifest: workflowManifest("    supersedes:\n      - listThings\n      - getThing\n"),
+    });
+    // An approved workflow whose binding the runtime cannot parse: the server
+    // skips it, registers no composite, and suppresses nothing. The budget must
+    // read the SAME verdict from the same planner — `state === "approved"`
+    // alone once bought this workflow a two-tool discount the served surface
+    // never honoured, letting a capability pass the hard limit while serving
+    // more than was reviewed.
+    const step = air.workflows[0]?.steps[1];
+    if (!step) throw new Error("expected a two-step workflow");
+    step.bindings = { id: "$.steps.listThings.id" };
+    const budget = capabilityDisclosureBudget(air, "things.things");
+    expect(budget.toolCount).toBe(2);
+    expect(budget.supersededOperations).toBe(0);
+    expect(budget.workflowTools).toBe(0);
+  });
+
+  it("a workflow the runtime will not register buys no discount (later step demands the caller's key)", async () => {
+    const air = await compile({
+      spec: twoOpSpec,
+      serviceId: "things",
+      manifest: workflowManifest("    supersedes:\n      - listThings\n      - getThing\n"),
+    });
+    const later = air.operations.find((op) => op.sourceRef.operationId === "getThing");
+    if (!later) throw new Error("expected getThing");
+    later.idempotency = { ...later.idempotency, mode: "required" };
+    const budget = capabilityDisclosureBudget(air, "things.things");
+    expect(budget.toolCount).toBe(2);
+    expect(budget.supersededOperations).toBe(0);
+    expect(budget.workflowTools).toBe(0);
+  });
+
+  it("a suppression the runtime refuses (async-status orphan) buys no discount", async () => {
+    const air = await compile({
+      spec: twoOpSpec,
+      serviceId: "things",
+      manifest: workflowManifest("    supersedes:\n      - getThing\n"),
+    });
+    // listThings submits a job and names getThing as its status operation. The
+    // runtime refuses to suppress getThing while listThings is still served —
+    // the tool stays listed — so the budget must keep charging for it. The
+    // status operation's approval is hypothesized, as every member's is: the
+    // discount must not appear or vanish with the order operations get approved
+    // in.
+    const submit = air.operations.find((op) => op.sourceRef.operationId === "listThings");
+    const status = air.operations.find((op) => op.sourceRef.operationId === "getThing");
+    if (!submit || !status) throw new Error("expected both operations");
+    submit.asyncContract = {
+      statusOperationId: status.id,
+      jobIdField: "job_id",
+      statusJobIdParam: "id",
+      terminalStates: ["done"],
+      pendingStates: [],
+    };
+    const budget = capabilityDisclosureBudget(air, "things.things");
+    // The workflow still registers (+1 composite); the refused suppression
+    // keeps both operation tools on the surface.
+    expect(budget.toolCount).toBe(3);
+    expect(budget.supersededOperations).toBe(0);
+    expect(budget.workflowTools).toBe(1);
+  });
+
   it("an UNapproved workflow discounts nothing — it supersedes nothing at runtime", async () => {
     const air = await compile({
       spec: twoOpSpec,

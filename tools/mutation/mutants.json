@@ -723,11 +723,22 @@
     },
     {
       "id": "workflow-surface/only-an-eligible-workflow-supersedes",
-      "file": "packages/mcp-runtime/src/workflow-surface.ts",
+      "file": "packages/air/src/workflow-surface.ts",
       "control": "Only a workflow that will actually register as a composite tool may supersede operation tools. Delete the gate and a SKIPPED workflow — unapproved, an unapproved step, a malformed binding, a later step demanding the caller's one idempotency key — silently deletes its members from tools/list and registers nothing in their place. The agent loses the operations and the thing that was supposed to stand in for them.",
       "find": "    if (registration.skipReason !== undefined) continue;",
       "replace": "    if (false) continue;",
       "tests": [
+        "packages/mcp-runtime/src/server.supersede.test.ts"
+      ]
+    },
+    {
+      "id": "workflow-surface/refusals-reach-a-fixed-point",
+      "file": "packages/air/src/workflow-surface.ts",
+      "control": "Async-status refusals must iterate to a fixed point against the evolving suppression set. Collapse the loop to one round and a chain — A serves and polls B, B polls C, both B and C proposed for suppression — ends with B refused (kept) but C still suppressed: the served surface lists B whose anvil/async_status_tool names a tool absent from tools/list, the exact half-contract the refusal exists to prevent.",
+      "find": "  while (changed) {",
+      "replace": "  if (changed) {",
+      "tests": [
+        "packages/air/src/workflow-surface.test.ts",
         "packages/mcp-runtime/src/server.supersede.test.ts"
       ]
     },
