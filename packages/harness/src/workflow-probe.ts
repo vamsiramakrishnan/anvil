@@ -82,6 +82,14 @@ export interface WorkflowDecision {
  * proposes an `approved` workflow: same "authored or enriched, never guessed"
  * discipline the AIR schema itself declares, just enforced at the one place that
  * could otherwise slip past it.
+ *
+ * That single rule is also what makes carrying `supersedes` here safe. The entry
+ * names the tools the composite would replace, so a reviewer sees the whole
+ * trade in one place — but `review_required` is not `approved`, and
+ * `@anvil/mcp-runtime` suppresses nothing for an unapproved workflow. No
+ * strength of evidence changes that: the same reason `reconcileWorkflow` cannot
+ * propose `approved` at all is the reason it cannot make a suppression take
+ * effect.
  */
 export function reconcileWorkflow(
   candidate: WorkflowCandidate,
@@ -105,6 +113,8 @@ export function reconcileWorkflow(
     description: `Candidate discovered by enrichment: call ${fromOp.canonicalName}, then ${toOp.canonicalName} using its output.`,
     capability: fromOp.capabilityId,
     state: "review_required",
+    // Proposed, never applied — `review_required` gates it (see above).
+    ...(candidate.supersedes.length > 0 ? { supersedes: candidate.supersedes } : {}),
     steps: [
       { operation: fromOp.canonicalName, description: fromOp.description || fromOp.displayName },
       {

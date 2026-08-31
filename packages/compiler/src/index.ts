@@ -7,6 +7,7 @@
 export * from "./adopt/index.js";
 export * from "./capabilities.js";
 export * from "./capability/index.js";
+export * from "./capability-authoring.js";
 export * from "./capability-review.js";
 export * from "./classify.js";
 export * from "./compile.js";
@@ -21,6 +22,7 @@ export * from "./manifest.js";
 export * from "./naming.js";
 export * from "./normalize.js";
 export * from "./parse.js";
+export * from "./path-grammar.js";
 export * from "./protocols/index.js";
 export * from "./source/index.js";
 export * from "./validate.js";

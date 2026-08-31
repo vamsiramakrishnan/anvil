@@ -1,0 +1,9 @@
+{
+  "operations": {
+    "reporting_get_reports": {
+      "toolName": "reporting-unscoped-unversioned-8e1ed365e7029602_reporting_get_reports",
+      "effect": "read",
+      "risk": "none"
+    }
+  }
+}

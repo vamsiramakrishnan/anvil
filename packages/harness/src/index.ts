@@ -23,5 +23,6 @@ export * from "./reconcile.js";
 export * from "./records.js";
 export * from "./sources.js";
 export * from "./sources-init.js";
+export * from "./trace-capabilities.js";
 export * from "./workflow-candidates.js";
 export * from "./workflow-probe.js";

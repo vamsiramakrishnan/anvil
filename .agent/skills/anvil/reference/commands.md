@@ -152,12 +152,20 @@ Options:
 
 Review capability groupings: propose, inspect, approve, reject, or diff.
 
-The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. `approve`/`reject` persist the review decision to the AIR file. Approval enforces the effective disclosure budget (direct members plus authored workflow dependencies): more than 20 tools is blocked without --allow-large and an audit note; more than 15 warns. Only an approved capability can be built with `anvil build`.
+The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. `approve`/`reject` persist the review decision to the AIR file. Approval enforces the effective disclosure budget — the surface actually served: direct members plus authored workflow dependencies, minus operations an approved workflow supersedes, plus one tool per approved workflow. More than 20 tools is blocked without --allow-large and an audit note; more than 15 warns. Composing a workflow that supersedes its own steps therefore LOWERS what a capability spends. Only an approved capability can be built with `anvil build`.
 
 #### `anvil capability propose`
 `anvil capability propose [options] <path>`
 
 (Re)run discovery; print proposals with provenance and budget findings.
+
+Two grounds for a grouping, one at a time. By default this re-runs spec discovery: groupings come from OpenAPI tags and the resource heuristic — a vendor's REFERENCE taxonomy, organised by resource, which real tasks routinely cut across. OBSERVED TRAFFIC (--from-records <dir>): instead reads the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server) and groups operations that were used inside the same traceId — a task observed rather than guessed, carried as recorded_traffic evidence stating the trace count rather than a confidence nobody could defend. An operation appearing in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so it is filtered out statistically before any grouping is formed and named in the report; a shape seen fewer than 5 times is an anecdote and is not proposed. Each grouping carries a ready-to-review manifest snippet (manifestSnippet in the report; --snippet <grouping-id> prints one) — copy it into the estate's anvil.yaml `capabilities:` section to author the grouping as a manifest-sourced capability, then recompile and review it through the ordinary approve gate. Read-only and propose-only: it never writes AIR, a manifest, an approval, or a build, and --out must be outside the bundle.
+
+Options:
+- `--from-records <dir>` — group by co-occurrence in a serving-path record spool (ANVIL_RECORDS_DIR) instead of by spec
+- `--out <file>` — write the observed-capability report here (--from-records only)
+- `--snippet <grouping-id>` — print the chosen grouping's ready-to-review manifest snippet, verbatim (--from-records only)
+- `--json` — emit the proposals as JSON
 
 #### `anvil capability list`
 `anvil capability list [options] <path>`
@@ -896,7 +904,7 @@ Options:
 
 Route each intent example over the served tool catalog and score whether the agent reaches the right tool.
 
-Agent-task benchmark. For each approved operation's skill.intentExamples entry, routes the intent over (a) the curated catalog the generated MCP server serves and (b) the bare catalog the source document supplies on its own, then checks required parameters are satisfiable from surface examples. A task passes when the curated route reaches the right tool and its params are satisfiable; the bare score is the baseline that shows what compilation bought. Routing is deterministic (lexical) by default; pass --agent <command> to route with a real model over stdin/stdout. Writes benchmark.report.json. Exit 0 only when the score meets --check.
+Agent-task benchmark. For each approved operation's skill.intentExamples entry, routes the intent over (a) the curated catalog the generated MCP server serves and (b) the bare catalog the source document supplies on its own, then checks required parameters are satisfiable from surface examples. A task passes when the curated route reaches the right tool and its params are satisfiable; the bare score is the baseline that shows what compilation bought. Routing is deterministic (lexical) by default; pass --agent <command> to route with a real model over stdin/stdout. Writes benchmark.report.json, including deterministic mis-route clustering: confusable tool families with their evidence, and routing hubs reported apart — candidates for composition or collapse, never decisions. Exit 0 only when the score meets --check.
 
 Options:
 - `--check <threshold>` — exit non-zero if score < threshold (0..1)

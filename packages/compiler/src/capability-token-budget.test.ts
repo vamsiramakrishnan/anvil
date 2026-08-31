@@ -244,6 +244,39 @@ describe("measured tool size, which the count band could not see", () => {
     expect(codes).toContain(BUDGET_TOKEN_WAIVED_CODE);
   });
 
+  it("a composite workflow tool is an unmeasured entry, never a free one", async () => {
+    const air = await compile({
+      spec: specWithOps(8),
+      serviceId: "things",
+      manifest: `workflows:
+  pair:
+    capability: things.things
+    state: approved
+    steps:
+      - operation: getThing0
+      - operation: getThing1
+`,
+    });
+    stampCost(air, 2_500);
+    const check = capabilityDisclosureBudget(air, onlyCapability(air));
+
+    // The composite raises the count dimension (+1 tool) AND enters the token
+    // dimension as an unmeasured tool: every member is measured, yet the
+    // measurement no longer claims completeness, because the workflow tool the
+    // wrapping created has a real disclosure cost nothing has priced. Counted
+    // at zero it was free context — a capability could wrap its largest
+    // operations and report a complete low figure while the served workflow
+    // tools pushed the surface over the band.
+    expect(check.toolCount).toBe(9);
+    expect(check.workflowTools).toBe(1);
+    expect(check.measuredOperations).toBe(8);
+    expect(check.unmeasuredOperations).toBe(1);
+    expect(check.disclosureTokens).toBe(20_000);
+    expect(check.verdict).toBe("warning");
+    expect(check.tokenDiagnostic?.message).toContain("measured 8 of 9 disclosed tools");
+    expect(check.tokenDiagnostic?.message).toContain("the real figure is higher");
+  });
+
   it("annotates proposals with the same measured figure", async () => {
     const air = await compile({ spec: specWithOps(8), serviceId: "things" });
     stampCost(air, 2_500);

@@ -127,6 +127,71 @@ operations:
 Anvil reprojects the canonical name, CLI command, MCP tool, and skill reference
 together while preserving the operation's stable identity.
 
+## Settle the estate's path grammar
+
+The compiler classifies whether the estate's URL paths are nouns (REST) or
+verbs (RPC-over-HTTP) from estate-wide evidence and records the verdict, with
+its counts, in `service.source.pathGrammar` (see
+[SOURCE_FORMATS.md](./SOURCE_FORMATS.md#path-grammar-classification)). When the
+evidence genuinely splits, the compile emits a `path_grammar_ambiguous` warning
+and keeps the source kind's default reading. A top-level manifest key settles
+it:
+
+```yaml
+path_grammar: rpc_plain
+```
+
+Accepted values are `resource_grammar`, `rpc_plain`, `rpc_dotted`, and
+`adapter_lowered` — never `ambiguous`, because a declaration must settle the
+question, not un-settle it. The declaration always applies; if it contradicts a
+definite measured verdict, the compile records a
+`path_grammar_override_contradicts_evidence` warning so the disagreement is
+reviewable rather than silent.
+
+### When the derived resource contradicts the operation's own name
+
+`anvil refine plan` raises `resource_contradicted_by_own_name` when an
+operation's path-derived routing resource never appears in its own name text —
+GitHub's `/orgs/{org}/hooks/{hook_id}` derives resource `hook` while the
+vendor's name says "webhook". This is deliberately a **detector, not a compiler
+rewrite**: vendors use synonyms, so absence from the name proves nothing (a
+measured audit of the automatic rule found more than half of its "fixes"
+semantically wrong). What is deterministic runs in code; the grey area is
+handed, with evidence, to a decision-maker:
+
+```bash
+# 1. Detect — deterministic, read-only.
+anvil refine plan generated/service
+
+# 2. Export one hash-bound task for the contradicted operation. Its facts carry
+#    the path, method, segments, operationId, name text, derived resource and
+#    action, the sibling operations on the same path, and the estate's naming
+#    style — everything a coding harness needs to decide.
+anvil refine export-task generated/service "operation:<id>" \
+  --skill rehome-resource --out task.json
+
+# 3. Any coding harness investigates and returns one submission JSON.
+
+# 4. Import: deterministic validation re-runs before anything can reach review.
+#    A proposed resource that is not a word the operation's own path or name
+#    text states is REFUSED (`resource_grounded_in_contract`); a valid proposal
+#    ALWAYS lands at review tier — never auto.
+anvil refine import-proposal generated/service task.json submission.json --out pack/
+
+# 5. A person decides, and only the reviewed bytes apply.
+anvil refine review pack/
+anvil refine approve pack/ <refinement-id> --reviewer you@example.com --reason "..."
+anvil refine apply-pack generated/service pack/
+```
+
+The durable closure is this manifest's `name: { resource }` override: record
+the decided resource here and recompile, and every routing surface reprojects
+together. The heuristic executor (`anvil refine run --skill rehome-resource`)
+proposes only the trivially safe subset — a non-word stem the old singularizer
+produced (`releas`) whose real word the operation's own name spells
+(`release`); every synonym question (`hook` vs `webhook`) goes to the harness
+and then to a reviewer.
+
 ## Auth without secrets
 
 The manifest describes how credentials are resolved; it must not contain
@@ -175,6 +240,43 @@ Unknown operation references block the workflow. An unapproved mutation step
 also prevents an executable workflow. This is deliberate: a valid sequence
 cannot grant authority to an invalid step.
 
+### Make composition subtractive with `supersedes`
+
+A workflow that only ever *adds* a tool makes the surface an agent routes over
+bigger — the opposite of what composing one is for. `supersedes` names the
+operations the composite replaces on the MCP tool surface:
+
+```yaml
+workflows:
+  refund_customer:
+    capability: refunds
+    state: approved
+    supersedes:
+      - createRefund
+    steps:
+      - operation: getPayment
+      - operation: createRefund
+        bindings:
+          payment_id: $.output.id
+```
+
+Three rules, all enforced rather than advised:
+
+- **Only what it performs.** Every entry must resolve to an operation this
+  workflow already names as a step. A reference to anything else — or to no
+  operation at all — blocks the workflow with a diagnostic.
+- **Only when approved.** `@anvil/mcp-runtime` suppresses nothing for a workflow
+  it will not register: unapproved, an unapproved step, a malformed binding, a
+  later step needing the caller's idempotency key. A skipped workflow can never
+  silently delete a tool.
+- **Only the MCP surface.** A superseded operation is still in AIR, still
+  generated into the CLI and all four client SDKs, and still callable there
+  under exactly the same safety contract. Only `tools/list` shrinks.
+
+Because `anvil capability approve` budgets the surface that is actually served,
+superseding an operation *lowers* what the capability spends, while the
+composite itself costs one tool.
+
 ## Record capability review decisions
 
 Capabilities are discovered deterministically and reviewed separately from
@@ -190,6 +292,47 @@ You may persist the reviewed decision in the manifest so recompilation is
 reproducible. Use the exact AIR capability id as the key. Large capabilities
 require an explicit allowance and audit note; do not use that escape hatch to
 avoid decomposing an incoherent surface.
+
+### Author a capability discovery cannot produce
+
+Discovery groups by the spec's own taxonomy (tags, resources); the task-shaped
+groupings that routing accuracy depends on routinely cut across it. A
+`capabilities:` entry with an `operations` list AUTHORS a new capability: the
+key becomes its id, and members resolve by AIR id, canonical name, or the
+source operationId, like every other manifest operation reference.
+
+```yaml
+capabilities:
+  payments.refund_support:
+    display_name: Refund support
+    description: Look a payment up and refund it — the observed support task.
+    intent_examples:
+      - refund a customer end to end
+    operations:
+      - getPayment
+      - createRefund
+```
+
+Authoring is a declaration, not an approval. The capability compiles in with
+`source: manifest` and `lifecycle: proposed`, and reaches `approved` only
+through the same review gate as a discovered grouping — `anvil capability
+approve`, or `state: approved` on the same entry — including the same
+disclosure budget (`allow_large` plus a note above the hard limit). Authoring
+also grants nothing to the member operations: an authored capability whose
+members are unapproved still builds nothing (`capability_empty`).
+
+Validation is hard: an empty `operations` list is refused, a member that
+resolves to no operation is a structured error
+(`capability_author_member_unresolved`), and an id colliding with an existing
+grouping is a structured error (`capability_author_id_collision`), never a
+merge. `anvil capability diff` knows an authored capability has no discovery
+counterpart by definition and checks its members against the document instead
+of reporting phantom drift.
+
+The observed-traffic loop feeds this section: `anvil capability propose
+--from-records <spool>` emits a ready-to-review snippet per grouping
+(`manifestSnippet` in the report, or `--snippet <grouping-id>` on the command)
+that you copy here, review, and recompile — Anvil never writes it for you.
 
 ## Constrain query passthroughs
 

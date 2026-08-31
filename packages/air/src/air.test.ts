@@ -382,3 +382,121 @@ describe("mcpToolDescription interaction-shape lines", () => {
     expect(text).not.toContain("Narrow with filters");
   });
 });
+
+describe("Workflow.supersedes", () => {
+  /** A workflow whose steps are two operations, with an overridable `supersedes`. */
+  const workflowWith = (supersedes: string[] | undefined) => ({
+    id: "payments.refunds.refund_customer",
+    capabilityId: "payments.refunds",
+    displayName: "Refund a customer",
+    steps: [{ operationId: "payments.payment.get" }, { operationId: "payments.refund.create" }],
+    ...(supersedes ? { supersedes } : {}),
+  });
+
+  const parse = (supersedes: string[] | undefined) =>
+    loadAirDocument({
+      service: { id: "payments", version: "1.0.0", source: { kind: "openapi" } },
+      operations: [],
+      workflows: [workflowWith(supersedes)],
+    });
+
+  it("is absent, not empty, when unspecified — an older air.yaml round-trips unchanged", () => {
+    const air = parse(undefined);
+    expect(air.workflows[0]?.supersedes).toBeUndefined();
+    expect(airToYaml(air)).not.toContain("supersedes");
+  });
+
+  it("accepts a workflow's own step operations", () => {
+    const air = parse(["payments.refund.create"]);
+    expect(air.workflows[0]?.supersedes).toEqual(["payments.refund.create"]);
+  });
+
+  it("refuses an operation the workflow does not perform", () => {
+    // The load-bearing rule: a workflow may not delete a tool it cannot stand
+    // in for. `payments.payment.list` may be a real operation elsewhere; it is
+    // not a step here, and that is the whole objection.
+    expect(() => parse(["payments.payment.list"])).toThrowError(
+      /not one of this workflow's own step operations/,
+    );
+  });
+
+  it("refuses a self-reference", () => {
+    expect(() => parse(["payments.refunds.refund_customer"])).toThrowError(
+      /may not supersede itself/,
+    );
+  });
+
+  it("refuses a duplicate", () => {
+    expect(() => parse(["payments.refund.create", "payments.refund.create"])).toThrowError(
+      /duplicate superseded operation/,
+    );
+  });
+});
+
+describe("service source path grammar", () => {
+  // Same additive-field discipline as Workflow.supersedes above: optional and
+  // never defaulted, so a document written before the field existed round-trips
+  // byte-identically.
+  it("is absent, not defaulted, when unspecified — an older air.yaml round-trips unchanged", () => {
+    const air = loadAirDocument({
+      service: { id: "payments", version: "1.0.0", source: { kind: "openapi" } },
+      operations: [],
+    });
+    expect(air.service.source.pathGrammar).toBeUndefined();
+    expect(airToYaml(air)).not.toContain("pathGrammar");
+  });
+
+  it("carries a classification with its basis and evidence counts", () => {
+    const air = loadAirDocument({
+      service: {
+        id: "plaid",
+        version: "1.0.0",
+        source: {
+          kind: "openapi",
+          pathGrammar: {
+            classification: "rpc_plain",
+            basis: "estate_evidence",
+            evidence: {
+              operations: 351,
+              readMethodOperations: 5,
+              parameterizedPathOperations: 4,
+              verbTerminalOperations: 252,
+              dottedTerminalOperations: 0,
+              repeatedVerbWords: 7,
+            },
+          },
+        },
+      },
+      operations: [],
+    });
+    expect(air.service.source.pathGrammar?.classification).toBe("rpc_plain");
+    expect(air.service.source.pathGrammar?.evidence.verbTerminalOperations).toBe(252);
+  });
+
+  it("refuses an unknown classification", () => {
+    expect(() =>
+      loadAirDocument({
+        service: {
+          id: "svc",
+          version: "1.0.0",
+          source: {
+            kind: "openapi",
+            pathGrammar: {
+              classification: "vibes",
+              basis: "estate_evidence",
+              evidence: {
+                operations: 0,
+                readMethodOperations: 0,
+                parameterizedPathOperations: 0,
+                verbTerminalOperations: 0,
+                dottedTerminalOperations: 0,
+                repeatedVerbWords: 0,
+              },
+            },
+          },
+        },
+        operations: [],
+      }),
+    ).toThrowError();
+  });
+});

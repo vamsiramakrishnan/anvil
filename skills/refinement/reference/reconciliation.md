@@ -24,6 +24,7 @@ A proposal is rejected unless every check its skill declares passes.
 - `response_projection_valid` — the response view only selects, excludes, or renames existing fields within an object
 - `idempotency_carrier_resolves` — a proposed idempotency mode/mechanism/key resolves cleanly against the operation (the same check the compiler runs)
 - `pagination_binding_resolves` — when pagination style is cursor/page/offset, the cursor param names an existing input parameter, and pagination_items_field is a non-empty string
+- `resource_grounded_in_contract` — a proposed routing resource is a word the operation's own path or name text states (plural-insensitive); an invented word is refused
 
 ## Eval families (the measurement)
 For a refinement we score ONLY the families it affects, before and after applying

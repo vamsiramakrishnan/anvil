@@ -10,7 +10,7 @@ Three modes, one runner (plain Node ESM, no build step):
 ```bash
 node tools/corpus/run.mjs quick                      # 34 known systems, all oracles, gates CI
 node tools/corpus/run.mjs sweep --limit 150 --seed 42  # random slice of apis.guru, invariants only
-node tools/corpus/run.mjs estates                    # gateway estates, policy accounting, gates CI (offline)
+node tools/corpus/run.mjs estates                    # gateway estates, policy accounting + naming gates, gates CI (offline)
 node tools/corpus/run.mjs conformance                # tri-surface CLI==MCP==skill, one per format, gates CI
 ```
 
@@ -64,11 +64,13 @@ This complements the golden unit test (which pins the *projection*): here the
 |---|---|---|
 | `import-completes` | exit 0 and a non-empty bundle (`files > 0`) | the floor: an estate that imported yesterday must import today |
 | `determinism` | the two runs' `--json` reports are identical bar the out dir | reproducible imports are the basis for diffing a gateway estate over time |
+| `naming-differential` | `expected/<estate>.json` pins `operationId → mcp.toolName` and `effect.kind`/`effect.risk` | the offline twin of quick mode's fixture check — possible here because the estates' specs are **local fixtures**, so exact-name drift on the gateway path goes red per PR instead of nightly |
+| `naming-conformance` | the ratcheted semantic-naming counters vs `estates-naming-baseline.json` (below) | six naming defects shipped unnoticed because nothing measured semantic conformance continuously |
 | `opaque-accounting` | the opaque-policy count equals the pinned baseline | a **drop** means a gateway rewrite silently stopped being flagged — the exact failure the honesty invariant forbids; a rise is drift to review |
 | `operations-accounting` | `{total, approved, review_required}` equals baseline | a shift means the approval/safety posture moved without a reviewed baseline change |
 
 Useful flags: `--systems kong-refunds,apigee-payments` (subset), `--work <dir>`,
-`--update-baseline` (below).
+`--update-baseline`, `--update-naming-baseline` (below).
 
 ## Conformance mode
 
@@ -127,7 +129,8 @@ than being lumped into `ok` or `crash`.)
 | `round-trip` | `airFromYaml(airToYaml(doc))` parses and its `contractHash` equals the original's | AIR is the canonical model; if YAML round-trip changes the contract, every downstream artifact silently disagrees |
 | `determinism` | compiling the same **locked source** twice yields byte-identical `air.json` | reproducible builds are the basis for contract hashing and diffing. No volatile-field normalization is currently needed — verified byte-stable across all 18 systems at baseline time. If a volatile field is ever introduced, normalize it in `determinism()` and document it here. |
 | `lint` | `anvil lint <bundle>` exits 0 (warnings allowed) | the generated bundle must satisfy Anvil's own consistency rules |
-| `naming-differential` | quick only: fixtures in `expected/<system>.json` pin `operationId → mcp.toolName` and `effect.kind`/`effect.risk` for twenty-one systems (slack, twilio, jira, github_gql, temporal; the enterprise systems netsuite (SOAP), odata_trippin (OData v4), odata_northwind (OData v2), etcd (gRPC), okta (identity), docusign_clm (CLM), bigquery (Google Discovery), datadog (OpenAPI); linear (GraphQL) — pinning the naming-collision resolutions described below; and the public web-found enterprise specs xero (accounting), box (content), adyen (payments), oracle_ords (Oracle DB REST, OpenAPI 3.1), shopware (e-commerce, OpenAPI 3.1), adobe_aem (content), plaid (fintech)) | tool naming and effect/risk classification are the semantics agents route on; these fixtures were validated in the manual backtests and must never drift silently |
+| `naming-conformance` | quick + estates: the ratcheted semantic-naming counters against `naming-baseline.json` / `estates-naming-baseline.json` — **any counter growth fails**; see the section below | tool naming is the semantics agents route on, and its defects are the quietest kind — nothing crashes, the agent just starts guessing |
+| `naming-differential` | quick + estates: fixtures in `expected/<system>.json` pin `operationId → mcp.toolName` and `effect.kind`/`effect.risk` — for the six offline gateway estates and for twenty-one network systems (slack, twilio, jira, github_gql, temporal; the enterprise systems netsuite (SOAP), odata_trippin (OData v4), odata_northwind (OData v2), etcd (gRPC), okta (identity), docusign_clm (CLM), bigquery (Google Discovery), datadog (OpenAPI); linear (GraphQL) — pinning the naming-collision resolutions described below; and the public web-found enterprise specs xero (accounting), box (content), adyen (payments), oracle_ords (Oracle DB REST, OpenAPI 3.1), shopware (e-commerce, OpenAPI 3.1), adobe_aem (content), plaid (fintech)) | tool naming and effect/risk classification are the semantics agents route on; these fixtures were validated in the manual backtests and must never drift silently |
 | `op-count` | quick only: operation count vs baseline. **Decrease ⇒ fail** (operations silently dropped); increase ⇒ warning (vendor added ops — drift, not a bug) | dropping operations is one of the quietest possible compiler failures |
 
 ## `baseline.json`
@@ -152,6 +155,68 @@ Note on timing baselines: `compileMs` was recorded on one machine and CI runs
 on another; the 2× tolerance absorbs that. If CI hardware is persistently
 slower and time-budget flaps, refresh the baseline from a CI run.
 
+## Naming-conformance ratchet (`naming-conformance.mjs`)
+
+Six naming defects — resources contradicted by their own operation names,
+stuttering MCP tool names, over-stripped singulars — shipped and sat unnoticed
+for months, because the only thing measuring semantic conformance
+(`tools/naming-audit/run.mjs`) is a hand-run, network-needing harness. This
+oracle is the audit's counters made always-on. Per estate/system it measures:
+
+- **`zeroOverlapResource`** — operations whose `effect.resource` shares **no**
+  content token with their own `canonicalName`/`displayName` (compared through
+  the compiler's own `singularize`, so `view` matches `views`). The resource
+  outright contradicts the operation's own name text.
+- **`stutters`** — MCP tool names with an immediately repeated word, split by
+  cause exactly as the audit splits them: `spec_authored` (the vendor's own
+  operationId repeats — never Anvil's to fix), `service_prefix_join` (the
+  service id duplicates the operationId's leading token), and
+  `disambiguation_suffix` (the collision resolver appended a token the name
+  already ended with).
+- **`overStrippedResources`** — distinct resources with the
+  singularize-over-strip shape (`releases → releas`): the last token appears
+  nowhere in the estate's own name text while a token one or two letters longer
+  starts with it. A **candidate** count (it includes legitimate singulars a
+  spec only writes in the plural — `refund` vs `refunds` in the kong fixture),
+  which is fine on a ratchet: only its *growth* gates.
+
+The tokenizer/corroboration/stutter semantics are **copied** from
+`tools/naming-audit/run.mjs`, which is the source of truth for what these
+counters mean; if the audit's semantics change, change both together.
+
+**The ratchet**: each counter is compared per-estate against the pinned
+baseline — `estates-naming-baseline.json` (offline, gates every PR via the
+`estates` lane in `ci.yml`) and `naming-baseline.json` (network systems, gates
+the nightly `quick` lane in `corpus.yml`).
+
+- **Growth fails.** Unlike the module-size ratchet
+  (`docs/architecture/module-size-baseline.json`), there is no recorded-plan
+  escape: there is never a good reason for *more* semantic contradictions.
+- **Shrinkage passes, loudly.** The run prints
+  `naming-conformance IMPROVED (…) — re-record the baseline` and records a
+  warning in the summary. Bank the improvement so the ratchet holds the better
+  floor.
+- **A missing baseline entry fails** — the pin must be an intentional,
+  reviewed record, like every other baseline here.
+
+**To re-record after an intentional naming change** (the worked example: the
+rules A+C / stutter-skip wave of
+`docs/design/resource-derivation-and-tool-name-stutter.md` changed stutter and
+zero-overlap counts on real estates by design — a change like that must
+re-record, in the same commit that explains it):
+
+```bash
+pnpm build
+node tools/corpus/run.mjs estates --update-naming-baseline   # offline half
+node tools/corpus/run.mjs quick --update-naming-baseline     # network half
+git diff tools/corpus/*naming-baseline.json  # every delta should be explainable
+```
+
+Never edit the baseline files by hand — they exist to be *measurements*.
+The ratchet's growth trip is pinned by `naming-conformance.test.ts` and armed
+in the mutation gate (`tools/mutation/mutants.json`,
+`corpus/naming-ratchet-fails-on-growth`).
+
 ## Fixtures (`expected/`)
 
 One JSON file per pinned system:
@@ -162,7 +227,10 @@ One JSON file per pinned system:
 
 `risk` is optional — omit it to assert the effect kind only. Add entries only
 for operations whose classification has been human-validated (these came from
-the manual backtests in `docs/backtesting/`).
+the manual backtests in `docs/backtesting/`). The six gateway-estate fixtures
+(`kong-refunds.json` … `apiconnect-claims.json`) pin every operation of their
+(tiny) estates and are regenerated from a green `estates` run's bundles, never
+typed by hand.
 
 ## Resolved naming-collision class (was: linear #23, datadog id-collision)
 

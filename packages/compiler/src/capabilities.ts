@@ -85,8 +85,12 @@ function groupFor(
   return { key: serviceId, source: "service", label: serviceId };
 }
 
-/** A capability's state summarizes its members: approved if any member is live. */
-function capabilityState(ops: Operation[]): Capability["state"] {
+/**
+ * A capability's state summarizes its members: approved if any member is live.
+ * Exported so manifest capability authoring derives the summary with exactly
+ * the same rule discovery uses — never a review decision, in either caller.
+ */
+export function capabilityState(ops: Operation[]): Capability["state"] {
   if (ops.some((o) => o.state === "approved")) return "approved";
   if (ops.every((o) => o.state === "blocked")) return "blocked";
   if (ops.some((o) => o.state === "review_required")) return "review_required";

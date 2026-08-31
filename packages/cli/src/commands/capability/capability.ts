@@ -1,3 +1,5 @@
+import { existsSync, statSync, writeFileSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { AirDocument, Capability, Diagnostic } from "@anvil/air";
 import { evidenceConfidence } from "@anvil/air";
 import {
@@ -9,12 +11,14 @@ import {
   proposeCapabilities,
   rejectCapability,
 } from "@anvil/compiler";
+import { runTraceCapabilities, type TraceCapabilityReport } from "@anvil/harness";
 import { type Command, Option } from "commander";
+import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
 import { reportPreservedStaleArtifacts, reprojectBundleAtomically } from "../approve.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
-import { loadAir } from "../shared.js";
+import { loadAir, resolveAirPath } from "../shared.js";
 import { registerCapabilityCompose } from "./capability-compose.js";
 
 /**
@@ -34,7 +38,7 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
       .summary("Review capability groupings: propose, inspect, approve, reject, or diff.")
       .description(
         "The capability review lifecycle. `propose` re-runs discovery and prints each grouping with its provenance and tool-budget verdict (read-only); `list` and `show` inspect stored capabilities (small summaries by default; add --operations/--auth/--evidence/--json for detail); `diff` reports drift between a stored capability and fresh discovery. " +
-          "`approve`/`reject` persist the review decision to the AIR file. Approval enforces the effective disclosure budget (direct members plus authored workflow dependencies): more than 20 tools is blocked without --allow-large and an audit note; more than 15 warns. Only an approved capability can be built with `anvil build`.",
+          "`approve`/`reject` persist the review decision to the AIR file. Approval enforces the effective disclosure budget — the surface actually served: direct members plus authored workflow dependencies, minus operations an approved workflow supersedes, plus one tool per approved workflow. More than 20 tools is blocked without --allow-large and an audit note; more than 15 warns. Composing a workflow that supersedes its own steps therefore LOWERS what a capability spends. Only an approved capability can be built with `anvil build`.",
       ),
     { mutates: true },
   );
@@ -42,9 +46,25 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
   capability
     .command("propose")
     .summary("(Re)run discovery; print proposals with provenance and budget findings.")
+    .description(
+      "Two grounds for a grouping, one at a time. By default this re-runs spec discovery: groupings come from OpenAPI tags and the resource heuristic — a vendor's REFERENCE taxonomy, organised by resource, which real tasks routinely cut across. " +
+        "OBSERVED TRAFFIC (--from-records <dir>): instead reads the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server) and groups operations that were used inside the same traceId — a task observed rather than guessed, carried as recorded_traffic evidence stating the trace count rather than a confidence nobody could defend. An operation appearing in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so it is filtered out statistically before any grouping is formed and named in the report; a shape seen fewer than 5 times is an anecdote and is not proposed. Each grouping carries a ready-to-review manifest snippet (manifestSnippet in the report; --snippet <grouping-id> prints one) — copy it into the estate's anvil.yaml `capabilities:` section to author the grouping as a manifest-sourced capability, then recompile and review it through the ordinary approve gate. Read-only and propose-only: it never writes AIR, a manifest, an approval, or a build, and --out must be outside the bundle.",
+    )
     .argument("<path>", "generated bundle directory or air.yaml")
-    .action((path: string) => {
-      ctx.code = runPropose(path, ctx.io);
+    .option(
+      "--from-records <dir>",
+      "group by co-occurrence in a serving-path record spool (ANVIL_RECORDS_DIR) instead of by spec",
+    )
+    .option("--out <file>", "write the observed-capability report here (--from-records only)")
+    .addOption(
+      new Option(
+        "--snippet <grouping-id>",
+        "print the chosen grouping's ready-to-review manifest snippet, verbatim (--from-records only)",
+      ).conflicts(["json"]),
+    )
+    .option("--json", "emit the proposals as JSON")
+    .action((path: string, opts: ProposeOptions) => {
+      ctx.code = runPropose(path, opts, ctx.io);
     });
 
   capability
@@ -116,10 +136,57 @@ interface ShowOptions {
   json?: boolean;
 }
 
+interface ProposeOptions {
+  fromRecords?: string;
+  out?: string;
+  snippet?: string;
+  json?: boolean;
+}
+
+const PROPOSE_ERROR = "anvil.capability-propose-error";
+
 /** `anvil capability propose` — (re)run discovery; print proposals + budget findings. */
-function runPropose(path: string, io: CliIO): number {
+function runPropose(path: string, opts: ProposeOptions, io: CliIO): number {
+  if (opts.fromRecords !== undefined) return runProposeFromRecords(path, opts, io);
+  if (opts.out !== undefined) {
+    return emitRefusal(io, opts.json, {
+      reportType: PROPOSE_ERROR,
+      code: "capability_propose_out_without_records",
+      message:
+        "--out writes the observed-capability report and is meaningful only with --from-records. " +
+        "Spec discovery's groupings are already stored in AIR; read them with `anvil capability list`.",
+    });
+  }
+  if (opts.snippet !== undefined) {
+    return emitRefusal(io, opts.json, {
+      reportType: PROPOSE_ERROR,
+      code: "capability_propose_snippet_without_records",
+      message:
+        "--snippet prints an observed grouping's manifest authoring snippet and is meaningful " +
+        "only with --from-records. Spec discovery's groupings are already stored in AIR and " +
+        "need no authoring entry.",
+    });
+  }
+
   const air = loadAir(path);
   const proposals = proposeCapabilities(air);
+  if (opts.json === true) {
+    io.out(
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          reportType: "anvil.capability-proposals",
+          service: air.service.id,
+          version: air.service.version,
+          basis: "spec_discovery",
+          proposals,
+        },
+        null,
+        2,
+      ),
+    );
+    return 0;
+  }
   if (proposals.length === 0) {
     io.out("No capabilities discovered — the document has no operations to group.");
     return 0;
@@ -143,6 +210,147 @@ function runPropose(path: string, io: CliIO): number {
     "\nRead-only. Review with `anvil capability show`, then `anvil capability approve|reject`.",
   );
   return 0;
+}
+
+/**
+ * `anvil capability propose --from-records` — group by observed co-occurrence.
+ *
+ * The spec-discovery mode above answers "what does the vendor's documentation
+ * say these operations are about". This one answers "what were they actually
+ * used together to do", which is the question routing accuracy turns on. Both
+ * stop in the same place: a grouping a human reviews.
+ */
+function runProposeFromRecords(path: string, opts: ProposeOptions, io: CliIO): number {
+  const spool = resolve(opts.fromRecords as string);
+  if (!existsSync(spool) || !statSync(spool).isDirectory()) {
+    return emitRefusal(io, opts.json, {
+      reportType: PROPOSE_ERROR,
+      code: "capability_propose_records_missing",
+      message: `No record spool directory at ${spool}. Point --from-records at the directory ANVIL_RECORDS_DIR wrote to.`,
+    });
+  }
+
+  let air: AirDocument;
+  let bundleDir: string;
+  try {
+    // The bundle is whatever directory holds the AIR file, whether the operator
+    // named the directory or the file inside it.
+    bundleDir = resolve(resolveAirPath(path), "..");
+    air = loadAir(path);
+  } catch (error) {
+    return emitRefusal(io, opts.json, {
+      reportType: PROPOSE_ERROR,
+      code: "capability_propose_air_unreadable",
+      message: `Cannot read AIR at '${path}': ${error instanceof Error ? error.message : String(error)}`,
+    });
+  }
+
+  // A report written inside the bundle would join the bytes that define the
+  // bundle's identity hash unless it were registered in DERIVED_RECORD_FILES,
+  // silently staling every other lane's hash-bound evidence. That bug has
+  // shipped here twice. Refusing the path is the version of the fix that cannot
+  // rot: this lane owns no bundle byte at all.
+  const out = opts.out === undefined ? undefined : resolve(opts.out);
+  if (out !== undefined && within(bundleDir, out)) {
+    return emitRefusal(io, opts.json, {
+      reportType: PROPOSE_ERROR,
+      code: "capability_propose_out_inside_bundle",
+      message: `--out '${out}' is inside the bundle '${bundleDir}'. Observation evidence must not contaminate compiler-owned bundle bytes; write it outside.`,
+    });
+  }
+
+  const report = runTraceCapabilities({ air, dir: spool });
+  if (out !== undefined) writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+  // The copy-paste half of the propose→author bridge: print ONE grouping's
+  // authoring snippet, verbatim, and nothing else on stdout — so
+  // `anvil capability propose … --snippet observed.xxx >> anvil.yaml` pastes
+  // cleanly. Still propose-only: the operator places, reads, and compiles it.
+  if (opts.snippet !== undefined) {
+    const grouping = report.groupings.find((candidate) => candidate.id === opts.snippet);
+    if (!grouping) {
+      return emitRefusal(io, opts.json, {
+        reportType: PROPOSE_ERROR,
+        code: "capability_propose_snippet_unknown_grouping",
+        message:
+          `No observed grouping '${opts.snippet}' in this spool. ` +
+          `Groupings: ${report.groupings.map((candidate) => candidate.id).join(", ") || "(none)"}.`,
+      });
+    }
+    io.out(grouping.manifestSnippet);
+    return 0;
+  }
+
+  if (opts.json === true) {
+    io.out(JSON.stringify(report, null, 2));
+    return report.ok ? 0 : 1;
+  }
+  renderObserved(report, out, io);
+  return report.ok ? 0 : 1;
+}
+
+function renderObserved(report: TraceCapabilityReport, out: string | undefined, io: CliIO): void {
+  io.out(`${report.service} — capability groupings observed in traffic from ${report.source}`);
+  io.out(
+    `  ${report.summary.traces} trace(s), ${report.summary.traceShapes} distinct shape(s), ` +
+      `${report.summary.operationsObserved} operation(s) observed.`,
+  );
+  io.out("");
+
+  if (report.suppressedUbiquitousOperations.length > 0) {
+    io.out("Filtered before grouping — present in nearly every trace shape, so they carry no");
+    io.out("information about which task is underway:");
+    for (const s of report.suppressedUbiquitousOperations) {
+      io.out(
+        `  ${s.operationId.padEnd(40)} ${s.shapes} shape(s) (${(s.shapeFraction * 100).toFixed(0)}%), ${s.traces} trace(s)`,
+      );
+    }
+    io.out("");
+  }
+
+  if (report.groupings.length === 0) {
+    io.out(
+      `No grouping reached ${report.summary.minTracesForGrouping} trace(s). A shape seen fewer ` +
+        "times is an anecdote, not evidence.",
+    );
+  } else {
+    io.out(`${report.groupings.length} observed grouping(s):`);
+    for (const g of report.groupings) {
+      io.out(`  ${g.id}  ${g.traces} trace(s), ${g.operationIds.length} operation(s)`);
+      io.out(`    ${g.dominantOrder.join(" -> ")}`);
+      io.out(
+        `    order: ${g.dominantOrderTraces}/${g.traces} trace(s) in this order, ` +
+          `${g.distinctOrders} distinct order(s)`,
+      );
+      io.out(
+        g.crossesExistingCapabilities
+          ? `    CUTS ACROSS ${g.spansCapabilities.length} existing capability(ies): ${g.spansCapabilities.join(", ")}`
+          : `    within ${g.spansCapabilities.join(", ") || "no stored capability"}`,
+      );
+    }
+  }
+
+  io.out("");
+  if (report.groupings.length > 0) {
+    io.out(
+      "To adopt a grouping: `--snippet <grouping-id>` prints its ready-to-review manifest " +
+        "snippet (also in the report as manifestSnippet). Copy it into the estate's anvil.yaml " +
+        "`capabilities:` section, review the members, and recompile.",
+    );
+  }
+  if (report.unknownOperationIds.length > 0) {
+    io.out(`In traffic but not in this AIR (ignored): ${report.unknownOperationIds.join(", ")}`);
+  }
+  io.out(`Propose-only: ${report.boundary.reason}`);
+  io.out(`Next: ${report.boundary.nextGate}`);
+  if (out !== undefined) io.out(`Wrote ${out}.`);
+  io.out(report.detail);
+}
+
+/** True when `candidate` is `root` or lives beneath it. */
+function within(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 /** `anvil capability list` — the stored capabilities and their review lifecycle. */
@@ -304,6 +512,24 @@ function runDiff(path: string, id: string, io: CliIO): number {
     }
     throw err;
   }
+  // A manifest-authored capability has no discovery counterpart BY DEFINITION,
+  // so it is never compared against rediscovery — its drift check is whether
+  // the declared members still exist in the document. Saying so out loud is
+  // the point: silence here would read as "discovery agrees", which it cannot.
+  if (diff.authored) {
+    if (diff.unchanged) {
+      io.out(
+        `No drift. '${id}' is manifest-authored (not expected in discovery); ` +
+          "every declared member operation is still in the document.",
+      );
+      return 0;
+    }
+    io.out(`Capability '${id}' is manifest-authored (not expected in discovery), and has drifted:`);
+    for (const op of diff.removedOperations)
+      io.out(`  - operation ${op} no longer in the document`);
+    io.out("\nRe-review before building: the authored grouping names operations that are gone.");
+    return 0;
+  }
   if (diff.unchanged) {
     io.out(`No drift. '${id}' matches what discovery proposes today.`);
     return 0;
@@ -322,11 +548,18 @@ function runDiff(path: string, id: string, io: CliIO): number {
 
 /* --------------------------------- helpers -------------------------------- */
 
-/** One-line rendering of the tool-budget verdict for the summary view. */
+/**
+ * One-line rendering of the tool-budget verdict for the summary view. Names what
+ * composition took off the count, because a number that dropped for a reason the
+ * operator cannot see reads as a bug in the budget rather than a win.
+ */
 function budgetLine(budget: CapabilityBudgetCheck): string {
+  const composed = budget.supersededOperations
+    ? `, ${budget.supersededOperations} superseded by workflow`
+    : "";
   if (budget.verdict === "ok")
-    return `ok (${budget.toolCount} tool(s); default disclosure is 5–15)`;
-  return `${budget.verdict} — ${budget.diagnostic?.message ?? ""}`;
+    return `ok (${budget.toolCount} tool(s)${composed}; default disclosure is 5–15)`;
+  return `${budget.verdict}${composed} — ${budget.diagnostic?.message ?? ""}`;
 }
 
 /** Render a typed diagnostic the same way `anvil lint` does. */

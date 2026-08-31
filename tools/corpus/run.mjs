@@ -3,8 +3,10 @@
 //
 //   node tools/corpus/run.mjs quick
 //     Compile all systems from docs/backtesting/reproduce/systems.tsv, apply
-//     every oracle, compare against tools/corpus/baseline.json. Exits non-zero
-//     on any regression. Flags: --systems a,b  --work <dir>  --update-baseline
+//     every oracle, compare against tools/corpus/baseline.json (metrics) and
+//     tools/corpus/naming-baseline.json (naming-conformance ratchet). Exits
+//     non-zero on any regression.
+//     Flags: --systems a,b  --work <dir>  --update-baseline  --update-naming-baseline
 //
 //   node tools/corpus/run.mjs sweep --limit N --seed S
 //     Deterministic seeded sample of N specs from apis.guru, compiled raw (no
@@ -18,7 +20,8 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statS
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { measureNamingConformance, namingConformanceOracle } from "./naming-conformance.mjs";
 import {
   ANVIL,
   ROOT,
@@ -42,8 +45,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPRODUCE_DIR = join(ROOT, "docs", "backtesting", "reproduce");
 const REPRODUCE_SH = join(REPRODUCE_DIR, "reproduce.sh");
 const BASELINE_PATH = join(HERE, "baseline.json");
+const NAMING_BASELINE_PATH = join(HERE, "naming-baseline.json");
 const ESTATES_TSV = join(HERE, "estates.tsv");
 const ESTATES_BASELINE_PATH = join(HERE, "estates-baseline.json");
+const ESTATES_NAMING_BASELINE_PATH = join(HERE, "estates-naming-baseline.json");
 const EXPECTED_DIR = join(HERE, "expected");
 const REPORT_DIR = join(HERE, "report");
 const APIS_GURU_LIST = "https://api.apis.guru/v2/list.json";
@@ -51,7 +56,15 @@ const QUICK_COMPILE_CAP_MS = 300_000; // generous ceiling; the real gate is 2x b
 
 function parseArgs(argv) {
   const [mode, ...rest] = argv;
-  const args = { mode, limit: 25, seed: 42, systems: null, work: null, updateBaseline: false };
+  const args = {
+    mode,
+    limit: 25,
+    seed: 42,
+    systems: null,
+    work: null,
+    updateBaseline: false,
+    updateNamingBaseline: false,
+  };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--limit") args.limit = Number(rest[++i]);
@@ -59,6 +72,7 @@ function parseArgs(argv) {
     else if (a === "--systems") args.systems = rest[++i].split(",");
     else if (a === "--work") args.work = rest[++i];
     else if (a === "--update-baseline") args.updateBaseline = true;
+    else if (a === "--update-naming-baseline") args.updateNamingBaseline = true;
     else throw new Error(`unknown flag: ${a}`);
   }
   return args;
@@ -135,6 +149,62 @@ function writeSummary(lines) {
 
 function fmtOracles(oracles) {
   return oracles.map((o) => `${o.ok ? "PASS" : "FAIL"} ${o.name}`).join(", ");
+}
+
+// --- naming-conformance ratchet (see naming-conformance.mjs) ------------------
+
+let namingDepsPromise;
+/** The compiler's own singularize + air's own snakeCase, from the built dist —
+ * the same functions that produced the names being measured. */
+function namingDeps() {
+  namingDepsPromise ??= (async () => {
+    const compiler = await import(
+      pathToFileURL(join(ROOT, "packages", "compiler", "dist", "index.js")).href
+    );
+    const airPkg = await import(pathToFileURL(join(ROOT, "packages", "air", "dist", "index.js")).href);
+    return { singularize: compiler.singularize, snakeCase: airPkg.snakeCase };
+  })();
+  return namingDepsPromise;
+}
+
+/**
+ * Measure + ratchet one compiled bundle's naming conformance. Never throws for
+ * a finding; a measurement failure is reported as a failed oracle. Returns
+ * { oracle, naming } so the caller can record the measured counters.
+ */
+async function namingConformance(bundleDir, baselineEntry, recordCommand) {
+  try {
+    const deps = await namingDeps();
+    const air = JSON.parse(readFileSync(join(bundleDir, "air.json"), "utf8"));
+    const naming = measureNamingConformance(air, deps);
+    return { oracle: namingConformanceOracle(naming, baselineEntry, recordCommand), naming };
+  } catch (err) {
+    return {
+      oracle: { name: "naming-conformance", ok: false, detail: `measurement threw: ${err.message}` },
+      naming: null,
+    };
+  }
+}
+
+/** An improvement passes the gate but must be banked, loudly. */
+function reportNamingImprovements(oracles, recordCommand) {
+  const conformance = oracles.find((o) => o.name === "naming-conformance");
+  if (!conformance?.improvements?.length) return null;
+  const note = `naming-conformance IMPROVED (${conformance.improvements.join("; ")}) — re-record the baseline so the ratchet holds the better floor: ${recordCommand}`;
+  process.stderr.write(`  ${note}\n`);
+  return note;
+}
+
+function writeNamingBaseline(path, groupKey, prior, entries, recordCommand) {
+  const next = {
+    updatedAt: new Date().toISOString(),
+    note: `Per-${groupKey === "estates" ? "estate" : "system"} naming-conformance counters (ratchet: growth fails). Regenerate with: ${recordCommand}`,
+    [groupKey]: { ...(prior[groupKey] ?? {}), ...entries },
+  };
+  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`);
+  process.stderr.write(
+    `\n${path.split("/").pop()} updated (${Object.keys(entries).length} ${groupKey})\n`,
+  );
 }
 
 // --- shared compile step ------------------------------------------------------
@@ -224,6 +294,10 @@ async function quick(args) {
   const baseline = existsSync(BASELINE_PATH)
     ? JSON.parse(readFileSync(BASELINE_PATH, "utf8"))
     : { systems: {} };
+  const namingBaseline = existsSync(NAMING_BASELINE_PATH)
+    ? JSON.parse(readFileSync(NAMING_BASELINE_PATH, "utf8"))
+    : { systems: {} };
+  const namingRecordCommand = "node tools/corpus/run.mjs quick --update-naming-baseline";
   const work = args.work ?? mkdtempSync(join(tmpdir(), "anvil-corpus-quick-"));
   mkdirSync(work, { recursive: true });
   initReport();
@@ -280,15 +354,26 @@ async function quick(args) {
     record.opCount = res.opCount;
 
     const base = baseline.systems?.[sys.name];
+    // Naming-conformance ratchet: the always-on form of tools/naming-audit.
+    // Fixture-based naming-differential pins exact names for hand-validated
+    // operations; this gates the aggregate defect counters for the whole
+    // system, so a semantic regression on ANY operation goes red.
+    const conformance = await namingConformance(
+      res.bundleDir,
+      namingBaseline.systems?.[sys.name],
+      namingRecordCommand,
+    );
     const oracles = [
       ...res.oracles,
       timeBudget(res.compileMs, base?.compileMs),
       sizeBudget(res.airBytes, base?.airBytes),
       namingDifferential(res.bundleDir, join(EXPECTED_DIR, `${sys.name}.json`)),
+      conformance.oracle,
       // Loopback: the bundle's own mock + MCP server prove wire fidelity and
       // the safety gates for every operation the reproduce manifest approves.
       selftestPasses(res.bundleDir),
     ];
+    if (conformance.naming) record.naming = conformance.naming;
     // Op-count differential: a *decrease* against baseline means operations
     // were silently dropped — gate on it. An increase is vendor drift: warn.
     if (base?.opCount != null && res.opCount != null) {
@@ -310,6 +395,8 @@ async function quick(args) {
       `${record.status.toUpperCase()} compile=${res.compileMs}ms air=${res.airBytes}B ops=${res.opCount} [${fmtOracles(oracles)}]\n`,
     );
     for (const o of oracles.filter((o) => !o.ok)) process.stderr.write(`  FAIL ${o.name}: ${o.detail}\n`);
+    const improved = reportNamingImprovements(oracles, namingRecordCommand);
+    if (improved) record.warn = record.warn ? `${record.warn}; ${improved}` : improved;
   }
 
   // Baseline update (intentional, explicit).
@@ -325,6 +412,11 @@ async function quick(args) {
     };
     writeFileSync(BASELINE_PATH, `${JSON.stringify(next, null, 2)}\n`);
     process.stderr.write(`\nbaseline.json updated (${Object.keys(systemsOut).length} systems)\n`);
+  }
+  if (args.updateNamingBaseline) {
+    const entries = {};
+    for (const r of results.filter((r) => r.naming)) entries[r.system] = r.naming;
+    writeNamingBaseline(NAMING_BASELINE_PATH, "systems", namingBaseline, entries, namingRecordCommand);
   }
 
   // Summary.
@@ -474,6 +566,15 @@ async function sweep(args) {
 //                      flagged (the exact failure the honesty invariant forbids);
 //   operations-accounting  total/approved/review_required match baseline — a
 //                      shift means the safety posture moved without review.
+//   naming-differential  exact operationId -> toolName / effect pins from
+//                      expected/<estate>.json — the offline twin of quick
+//                      mode's fixture check, possible here because the
+//                      estates' specs are local fixtures;
+//   naming-conformance  the ratcheted semantic-naming counters (zero-overlap
+//                      resources, tool-name stutter by cause, over-stripped
+//                      singulars) against estates-naming-baseline.json — any
+//                      GROWTH fails; shrinkage passes loudly and must be
+//                      banked with --update-naming-baseline.
 // This is complementary to the golden unit test (which pins the projection):
 // here the whole pipeline runs, archive harness through bundle emission.
 
@@ -535,6 +636,10 @@ async function estates(args) {
   const baseline = existsSync(ESTATES_BASELINE_PATH)
     ? JSON.parse(readFileSync(ESTATES_BASELINE_PATH, "utf8"))
     : { estates: {} };
+  const namingBaseline = existsSync(ESTATES_NAMING_BASELINE_PATH)
+    ? JSON.parse(readFileSync(ESTATES_NAMING_BASELINE_PATH, "utf8"))
+    : { estates: {} };
+  const namingRecordCommand = "node tools/corpus/run.mjs estates --update-naming-baseline";
   const work = args.work ?? mkdtempSync(join(tmpdir(), "anvil-corpus-estates-"));
   mkdirSync(work, { recursive: true });
   initReport();
@@ -573,6 +678,16 @@ async function estates(args) {
     const second = importEstate(est, outB);
 
     const base = baseline.estates?.[est.name];
+    const bundleDir = join(outA, "bundle");
+    // Offline naming gates. The estates lane's inputs are local fixtures, so
+    // the same differential quick mode runs against the network systems runs
+    // here on every PR: exact-name pins from expected/<estate>.json, and the
+    // ratcheted conformance counters from estates-naming-baseline.json.
+    const conformance = await namingConformance(
+      bundleDir,
+      namingBaseline.estates?.[est.name],
+      namingRecordCommand,
+    );
     const oracles = [
       { name: "import-completes", ok: report.files > 0, detail: `${report.files} file(s), api=${report.api}` },
       {
@@ -580,6 +695,8 @@ async function estates(args) {
         ok: second.ok && reportsMatch(report, second.report, outA, outB),
         detail: second.ok ? "two runs identical" : `second run failed (${second.classification})`,
       },
+      namingDifferential(bundleDir, join(EXPECTED_DIR, `${est.name}.json`)),
+      conformance.oracle,
     ];
     if (base) {
       // opaque-accounting: a DROP is a regression (a policy silently stopped
@@ -606,6 +723,7 @@ async function estates(args) {
     record.files = report.files;
     record.operations = report.operations;
     record.opaque = report.opaque.length;
+    if (conformance.naming) record.naming = conformance.naming;
     record.oracles = oracles;
     record.status = oracles.every((o) => o.ok) ? "green" : "regression";
     baselineOut[est.name] = {
@@ -619,6 +737,8 @@ async function estates(args) {
       `${record.status.toUpperCase()} files=${report.files} ops=${JSON.stringify(report.operations)} opaque=${report.opaque.length} [${fmtOracles(oracles)}]\n`,
     );
     for (const o of oracles.filter((o) => !o.ok)) process.stderr.write(`  FAIL ${o.name}: ${o.detail}\n`);
+    const improved = reportNamingImprovements(oracles, namingRecordCommand);
+    if (improved) record.warn = improved;
   }
 
   if (args.updateBaseline) {
@@ -629,6 +749,11 @@ async function estates(args) {
     };
     writeFileSync(ESTATES_BASELINE_PATH, `${JSON.stringify(next, null, 2)}\n`);
     process.stderr.write(`\nestates-baseline.json updated (${Object.keys(baselineOut).length} estates)\n`);
+  }
+  if (args.updateNamingBaseline) {
+    const entries = {};
+    for (const r of results.filter((r) => r.naming)) entries[r.estate] = r.naming;
+    writeNamingBaseline(ESTATES_NAMING_BASELINE_PATH, "estates", namingBaseline, entries, namingRecordCommand);
   }
 
   const lines = [
@@ -647,6 +772,10 @@ async function estates(args) {
       return `| ${r.estate} | ${r.vendor} | ${r.status} | ${r.files ?? "-"} | ${ops} | ${r.opaque ?? "-"} | ${failing} |`;
     }),
   ];
+  const warns = results.filter((r) => r.warn);
+  if (warns.length) {
+    lines.push("", "## Warnings", "", ...warns.map((r) => `- ${r.estate}: ${r.warn}`));
+  }
   writeSummary(lines);
   process.stderr.write(`\nreport: ${join(REPORT_DIR, "report.jsonl")}\nsummary: ${join(REPORT_DIR, "summary.md")}\n`);
 
@@ -848,7 +977,7 @@ else if (args.mode === "estates") await estates(args);
 else if (args.mode === "conformance") await conformance(args);
 else {
   console.error(
-    "usage: run.mjs quick [--systems a,b] [--update-baseline]\n     | sweep --limit N --seed S\n     | estates [--systems a,b] [--update-baseline]\n     | conformance [--systems a,b]",
+    "usage: run.mjs quick [--systems a,b] [--update-baseline] [--update-naming-baseline]\n     | sweep --limit N --seed S\n     | estates [--systems a,b] [--update-baseline] [--update-naming-baseline]\n     | conformance [--systems a,b]",
   );
   process.exit(2);
 }

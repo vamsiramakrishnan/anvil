@@ -496,6 +496,60 @@ const renameOperation: RefinementSkill = {
 };
 
 /**
+ * Decide the routing resource of an operation whose derived `effect.resource`
+ * contradicts its own name — "rule B" of the resource-derivation design doc,
+ * wired through the detect → contract → proposal → validate → review rails
+ * instead of the compiler (where a hand audit measured it ~15/28 wrong,
+ * because vendors use synonyms: GitHub's `hooks` path vs "webhook" name).
+ *
+ * The output boundary is ONE field: `resource`, the same axis the reviewed
+ * manifest `name: { resource }` override closes end to end
+ * (packages/compiler/src/manifest.ts applies it through `projectRoutingNames`
+ * in packages/compiler/src/naming.ts, moving canonical/CLI/MCP names in
+ * lockstep at the next compile). Deliberately NOT in the boundary: the three
+ * routing names themselves (the vendor's own name is the evidence here, not
+ * the defect) and the stable operation `id` (re-homing it is a migration).
+ *
+ * What makes an unreliable executor safe on this skill is the deterministic
+ * grounding check: a proposed resource must be a word the operation's own path
+ * or name text actually states (`resource_grounded_in_contract`). And the
+ * approval policy routes every `resource` patch to review unconditionally —
+ * checked on the FIELD, like the idempotency guard — because corroboration
+ * measures agreement with name text, not truth: only a person may decide
+ * between `hook` and `webhook`.
+ */
+const rehomeResource: RefinementSkill = {
+  name: "rehome-resource",
+  version: 1,
+  triggers: ["resource_contradicted_by_own_name"],
+  targetKind: "operation",
+  context: ["parent_operation", "capability", "source_evidence"],
+  evidence: {
+    allowed: ["spec", "source_impl", "test_fixture", "doc_example", "postman"],
+    // `single` for the same reason as `rename-operation`: the proposal is a
+    // word read off the operation's own contract; a second source can only
+    // restate the spec, never independently corroborate it.
+    minimumStrength: "single",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["operation.resource"],
+    supportingPredicates: ["operation.resource_candidates", "operation.name_vocabulary"],
+    fields: ["resource"],
+  },
+  constraints: ["do_not_loosen_safety", "do_not_invent_business_rules", "preserve_domain_terms"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+    "resource_grounded_in_contract",
+  ],
+};
+
+/**
  * Give two siblings that describe themselves identically a description that says
  * which is which.
  *
@@ -650,6 +704,7 @@ export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   authorRoutingPhrases,
   reviewQueryPassthrough,
   renameOperation,
+  rehomeResource,
   disambiguateOperations,
   describeCapability,
   reduceSchemaDisclosure,

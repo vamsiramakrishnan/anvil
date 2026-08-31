@@ -198,6 +198,7 @@ describe("deficiency catalog", () => {
       "author-routing-phrases",
       "review-query-passthrough",
       "rename-operation",
+      "rehome-resource",
       "disambiguate-operations",
       "describe-capability",
       "reduce-schema-disclosure",

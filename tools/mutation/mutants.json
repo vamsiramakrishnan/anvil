@@ -700,6 +700,139 @@
       "tests": [
         "packages/cli/src/commands/pack.test.ts"
       ]
+    },
+    {
+      "id": "benchmark/agent-answers-are-read-not-demanded",
+      "file": "packages/cli/src/commands/benchmark-routing.ts",
+      "control": "Real model CLIs fence their JSON. Demanding that stdout parse whole scored 0/20 against a model that had in fact routed every task correctly — a measurement that silently reports failure for answers it was given is worse than no measurement, because a benchmark is believed.",
+      "find": "  for (const match of text.matchAll(/```(?:json)?\\s*([\\s\\S]*?)```/g)) {",
+      "replace": "  for (const match of [] as RegExpMatchArray[]) {",
+      "tests": [
+        "packages/cli/src/commands/benchmark-routing.test.ts"
+      ]
+    },
+    {
+      "id": "intents/skill-and-tool-name-must-agree",
+      "file": "packages/refinement/src/skills/executor.ts",
+      "control": "An intent example sharing no word with its own operation's names teaches the skill to route by a vocabulary the MCP tool name does not have. Delete the corroboration filter and Anvil ships two surfaces that disagree about what an operation is called — the one failure this compiler exists to prevent.",
+      "find": "    const corroborated = phrases.filter((phrase) =>\n      routingTokens(phrase).some((token) => vocabulary.has(token)),\n    );",
+      "replace": "    const corroborated = phrases;",
+      "tests": [
+        "packages/refinement/src/skills/skills.test.ts"
+      ]
+    },
+    {
+      "id": "workflow-surface/only-an-eligible-workflow-supersedes",
+      "file": "packages/air/src/workflow-surface.ts",
+      "control": "Only a workflow that will actually register as a composite tool may supersede operation tools. Delete the gate and a SKIPPED workflow — unapproved, an unapproved step, a malformed binding, a later step demanding the caller's one idempotency key — silently deletes its members from tools/list and registers nothing in their place. The agent loses the operations and the thing that was supposed to stand in for them.",
+      "find": "    if (registration.skipReason !== undefined) continue;",
+      "replace": "    if (false) continue;",
+      "tests": [
+        "packages/mcp-runtime/src/server.supersede.test.ts"
+      ]
+    },
+    {
+      "id": "workflow-surface/refusals-reach-a-fixed-point",
+      "file": "packages/air/src/workflow-surface.ts",
+      "control": "Async-status refusals must iterate to a fixed point against the evolving suppression set. Collapse the loop to one round and a chain — A serves and polls B, B polls C, both B and C proposed for suppression — ends with B refused (kept) but C still suppressed: the served surface lists B whose anvil/async_status_tool names a tool absent from tools/list, the exact half-contract the refusal exists to prevent.",
+      "find": "  while (changed) {",
+      "replace": "  if (changed) {",
+      "tests": [
+        "packages/air/src/workflow-surface.test.ts",
+        "packages/mcp-runtime/src/server.supersede.test.ts"
+      ]
+    },
+    {
+      "id": "trace-capabilities/ubiquity-pre-filter",
+      "file": "packages/harness/src/trace-capabilities.ts",
+      "control": "A ubiquitous operation never becomes a grouping member. An operation present in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so without this pre-filter it joins every grouping and the observed tasks collapse into one undifferentiated blob — the behavioural form of the FLEXCUBE /fcubsWarningResp candidate that was 64% of every candidate member in that report.",
+      "find": "    if (shapes >= UBIQUITY_MIN_SHAPES && shapeFraction >= UBIQUITY_SHAPE_FRACTION) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/harness/src/trace-capabilities.test.ts",
+        "packages/cli/src/cmd-capability.test.ts"
+      ]
+    },
+    {
+      "id": "trace-capabilities/minimum-samples-floor",
+      "file": "packages/harness/src/trace-capabilities.ts",
+      "control": "A trace shape seen a handful of times is an anecdote, not evidence. Delete the floor and every one-off session becomes a proposed capability, which is exactly the unfalsifiable taxonomy this lane exists to avoid producing.",
+      "find": "    if (group.traces < MIN_TRACES_FOR_GROUPING) continue;",
+      "replace": "    if (false) continue;",
+      "tests": [
+        "packages/harness/src/trace-capabilities.test.ts",
+        "packages/cli/src/cmd-capability.test.ts"
+      ]
+    },
+    {
+      "id": "naming/rehome-non-terminal-guard",
+      "file": "packages/compiler/src/naming.ts",
+      "control": "The bare-CRUD-verb re-homing rule must never claim a verb word the estate itself uses as a real collection (a non-terminal path segment). Delete the guard and an estate with /count/{id}/lines loses its `count` resource to the rule — the exact over-reach the estate-wide pre-filter exists to prevent. It fired zero times on all six measured estates; that makes it insurance, and untested insurance is decoration.",
+      "find": "    if (!CRUD_SEGMENT_WORDS.has(word) || estate.nonTerminalSegments.has(word)) break;",
+      "replace": "    if (!CRUD_SEGMENT_WORDS.has(word)) break;",
+      "tests": [
+        "packages/compiler/src/naming.test.ts"
+      ]
+    },
+    {
+      "id": "naming/disambiguation-suffix-stutter-skip",
+      "file": "packages/compiler/src/naming.ts",
+      "control": "The collision resolver must not append a distinguishing token the operation's canonicalName already ends with (compared singularized) — that is the tool-name stutter (`…_count_activities_activities`) an agent has to read past. Neutralize the check and the resolver reverts to appending the shortest token unconditionally.",
+      "find": "  if (tokenWords[0] === last) return true;",
+      "replace": "  return false;",
+      "tests": [
+        "packages/compiler/src/naming.test.ts"
+      ]
+    },
+    {
+      "id": "corpus/naming-ratchet-fails-on-growth",
+      "file": "tools/corpus/naming-conformance.mjs",
+      "control": "The naming-conformance ratchet fails on ANY counter growth. Delete the comparison and a new semantic contradiction — a resource its own name text denies, a stuttering tool name — rides through the corpus lanes green, which is exactly how six naming defects sat unnoticed for months before the naming audit found them by hand.",
+      "find": "    if (cur > base) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "tools/corpus/naming-conformance.test.ts"
+      ]
+    },
+    {
+      "id": "path-grammar/ambiguous-never-silently-selects",
+      "file": "packages/compiler/src/path-grammar.ts",
+      "control": "An ambiguous path grammar never silently selects a grammar: when the estate's RPC and REST signals BOTH commit, the classifier must return `ambiguous` with a diagnostic naming both candidate grammars and fall back to the source kind's pre-classifier behavior — never let whichever side carries more votes win quietly. Delete the split-vote branch and a GET-heavy verb-terminal estate silently classifies rpc_plain with no warning.",
+      "find": "  if (votes.rpc.length > 0 && votes.rest.length > 0) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/compiler/src/path-grammar.test.ts"
+      ]
+    },
+    {
+      "id": "refinement/ungrounded-resource-refused",
+      "file": "packages/refinement/src/skills/validate.ts",
+      "control": "A harness proposal naming a routing resource absent from the operation's own path and name vocabulary is refused by the resource_grounded_in_contract check.",
+      "find": "    if (ungrounded.length > 0) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/refinement/src/protocol/rehome-resource.test.ts"
+      ]
+    },
+    {
+      "id": "benchmark/hub-never-welds-clusters",
+      "file": "packages/cli/src/commands/benchmark-clusters.ts",
+      "control": "A routing hub's edges never enter confusion-cluster construction, so one catalog-scale sink cannot weld unrelated confusable families into a single blob.",
+      "find": "  const clusterEdges = directed.filter((e) => !hubNames.has(e.intended) && !hubNames.has(e.routed));",
+      "replace": "  const clusterEdges = directed;",
+      "tests": [
+        "packages/cli/src/commands/benchmark-clusters.test.ts"
+      ]
+    },
+    {
+      "id": "capability-authoring/never-born-approved",
+      "file": "packages/compiler/src/capability-authoring.ts",
+      "control": "An authored capability is never born approved: a manifest `capabilities` entry with an `operations` list lands in AIR at lifecycle `proposed`, and can only reach `approved` through the same review gate (and disclosure budget) as a discovered grouping. Set the birth lifecycle to `approved` and a manifest author has silently skipped review — the exact shortcut the propose-only boundary exists to forbid.",
+      "find": "      lifecycle: \"proposed\",",
+      "replace": "      lifecycle: \"approved\",",
+      "tests": [
+        "packages/compiler/src/capability-authoring.test.ts"
+      ]
     }
   ]
 }

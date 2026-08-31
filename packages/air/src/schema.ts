@@ -1190,22 +1190,85 @@ export type WorkflowStep = z.infer<typeof WorkflowStep>;
  * (auto-inference is a staged seam). A generated CLI exposes them as
  * `<service> workflows <name>`.
  */
-export const Workflow = z.object({
-  /** Stable, dotted id, e.g. payments.refunds.refund_customer. */
-  id: z.string(),
-  /** The capability this workflow belongs to. */
-  capabilityId: z.string(),
-  displayName: z.string(),
-  description: z.string().default(""),
-  intentExamples: z.array(z.string()).default([]),
-  steps: z.array(WorkflowStep).default([]),
-  /** Whether the whole workflow needs a human in the loop before running. */
-  humanApproval: z.boolean().default(false),
-  /** How to undo a partially-completed run, if known. */
-  rollbackStrategy: z.string().optional(),
-  state: OperationState.default("generated"),
-  evidence: Evidence.default({ claims: [] }),
-});
+export const Workflow = z
+  .object({
+    /** Stable, dotted id, e.g. payments.refunds.refund_customer. */
+    id: z.string(),
+    /** The capability this workflow belongs to. */
+    capabilityId: z.string(),
+    displayName: z.string(),
+    description: z.string().default(""),
+    intentExamples: z.array(z.string()).default([]),
+    steps: z.array(WorkflowStep).default([]),
+    /** Whether the whole workflow needs a human in the loop before running. */
+    humanApproval: z.boolean().default(false),
+    /** How to undo a partially-completed run, if known. */
+    rollbackStrategy: z.string().optional(),
+    /**
+     * Operation ids this workflow REPLACES on the agent-facing MCP tool surface.
+     *
+     * Composition is meant to be *subtractive*: a higher-order tool that wraps
+     * three calls should cost one slot, not four. Without this field a workflow
+     * only ever added a tool, so the one act that should shrink the surface an
+     * agent routes over made it bigger — the opposite of the incentive routing
+     * accuracy needs.
+     *
+     * Scope is deliberately narrow, and the refinement below enforces it: a
+     * workflow may only supersede operations it actually *performs* (its own
+     * step operations). Letting it suppress anything else would be a workflow
+     * deleting a tool it has no way to stand in for.
+     *
+     * What this changes: whether the operation is LISTED as an MCP tool. What
+     * it never changes: that the operation still exists in AIR, still generates
+     * into the CLI and every client SDK, and is still callable there under the
+     * same safety contract. Suppression is a disclosure decision, not an
+     * approval one — `@anvil/mcp-runtime` applies it only for a workflow that is
+     * approved AND registrable, so a skipped workflow can never silently delete
+     * a tool.
+     *
+     * Absent (rather than empty) on every workflow authored before the field
+     * existed, so an older `air.yaml` round-trips byte-identically.
+     */
+    supersedes: z.array(z.string()).optional(),
+    state: OperationState.default("generated"),
+    evidence: Evidence.default({ claims: [] }),
+  })
+  .superRefine((workflow, ctx) => {
+    if (!workflow.supersedes) return;
+    const stepOperationIds = new Set(workflow.steps.map((step) => step.operationId));
+    const seen = new Set<string>();
+    workflow.supersedes.forEach((operationId, index) => {
+      // A workflow id is not an operation id; naming itself here would be a
+      // workflow suppressing its own composite tool, which leaves nothing.
+      if (operationId === workflow.id) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `workflow '${workflow.id}' may not supersede itself`,
+          path: ["supersedes", index],
+        });
+        return;
+      }
+      if (seen.has(operationId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `duplicate superseded operation '${operationId}'`,
+          path: ["supersedes", index],
+        });
+        return;
+      }
+      seen.add(operationId);
+      // The load-bearing rule: suppress only what you actually perform.
+      if (!stepOperationIds.has(operationId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            `workflow '${workflow.id}' may not supersede '${operationId}': it is not one of ` +
+            "this workflow's own step operations, so the workflow does not perform it",
+          path: ["supersedes", index],
+        });
+      }
+    });
+  });
 export type Workflow = z.infer<typeof Workflow>;
 
 /* -------------------------------------------------------------------------- */
@@ -1218,6 +1281,69 @@ export const Server = z.object({
   environment: z.string().optional(),
 });
 export type Server = z.infer<typeof Server>;
+
+/**
+ * How the estate's URL paths carry meaning — the compiled answer to "are these
+ * paths nouns (REST) or verbs (RPC)?":
+ *   resource_grammar — nouns in the path, HTTP methods carry the verb.
+ *   rpc_plain        — verbs as plain terminal segments, method mix collapsed
+ *                      onto POST (Plaid's `POST /transactions/get`).
+ *   rpc_dotted       — dotted RPC method segments (Slack's `/chat.postMessage`).
+ *   adapter_lowered  — a protocol adapter (WSDL/GraphQL/protobuf/MCP) wrote the
+ *                      paths itself; the shape is declared, not evidenced.
+ *   ambiguous        — the estate-wide evidence genuinely splits; the compiler
+ *                      declines to pick and falls back to the source kind's
+ *                      default reading.
+ */
+export const PathGrammarClassification = z.enum([
+  "resource_grammar",
+  "rpc_plain",
+  "rpc_dotted",
+  "adapter_lowered",
+  "ambiguous",
+]);
+export type PathGrammarClassification = z.infer<typeof PathGrammarClassification>;
+
+/**
+ * The counts behind a path-grammar classification — deliberately counts, not
+ * adjectives, so `anvil inspect` can show an operator the same numbers the
+ * compiler read. All are computed in one deterministic pass over the estate's
+ * operations; no network, no model.
+ */
+export const PathGrammarEvidence = z.object({
+  /** Operations examined (the denominator for every count below). */
+  operations: z.number().int().nonnegative(),
+  /** Operations whose wire method is GET/HEAD — REST spreads its verb across methods. */
+  readMethodOperations: z.number().int().nonnegative(),
+  /** Operations whose path carries a `{param}` segment — REST addresses items in the path. */
+  parameterizedPathOperations: z.number().int().nonnegative(),
+  /** Operations whose terminal concrete segment is a bare or bulk CRUD/action verb. */
+  verbTerminalOperations: z.number().int().nonnegative(),
+  /** Operations whose terminal concrete segment is a dotted RPC method (`chat.postMessage`). */
+  dottedTerminalOperations: z.number().int().nonnegative(),
+  /** Distinct terminal verb words that recur under two or more distinct parent paths. */
+  repeatedVerbWords: z.number().int().nonnegative(),
+});
+export type PathGrammarEvidence = z.infer<typeof PathGrammarEvidence>;
+
+/** What decided the classification: the estate-wide counts, the source kind
+ *  itself (adapter-lowered paths are declared, not measured), or an explicit
+ *  manifest `path_grammar` declaration. */
+export const PathGrammarBasis = z.enum(["estate_evidence", "source_kind", "manifest"]);
+export type PathGrammarBasis = z.infer<typeof PathGrammarBasis>;
+
+/**
+ * The estate's path grammar as a first-class compiled fact: what was decided,
+ * what decided it, and the counts it was decided from. Optional and never
+ * defaulted, so an `air.yaml` written before the field existed round-trips
+ * byte-identically (the same discipline as `Workflow.supersedes`).
+ */
+export const PathGrammar = z.object({
+  classification: PathGrammarClassification,
+  basis: PathGrammarBasis,
+  evidence: PathGrammarEvidence,
+});
+export type PathGrammar = z.infer<typeof PathGrammar>;
 
 /**
  * Canonical service identifier. It is safe as one path/CLI segment; generators
@@ -1252,6 +1378,8 @@ export const Service = z.object({
     origin: z.object({ kind: z.string(), uri: z.string() }).optional(),
     /** The snapshot-relative path of the compiled entrypoint. */
     entrypoint: z.string().optional(),
+    /** The estate's path grammar, classified at compile time (see PathGrammar). */
+    pathGrammar: PathGrammar.optional(),
   }),
   auth: AuthRequirement.default({
     type: "none",

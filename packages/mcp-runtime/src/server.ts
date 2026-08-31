@@ -6,12 +6,15 @@ import {
   asyncContractSentence,
   DEFAULT_RESPONSE_BUDGET_TOKENS,
   estimateTokens,
+  extractFieldName,
   mcpToolAnnotations,
   mcpToolDescription,
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
+  planWorkflowSurface,
   resolveAsyncContract,
+  type WorkflowSurfacePlan,
 } from "@anvil/air";
 import {
   type ExecuteContext,
@@ -98,6 +101,19 @@ export interface McpBuildOptions {
    */
   onSkipWorkflow?: (workflowId: string, reason: string) => void;
   /**
+   * Optional callback for logging an operation removed from `tools/list` because
+   * an approved, registrable workflow supersedes it. The counterpart to
+   * `onSkipWorkflow`: a surface that shrank silently is indistinguishable from
+   * one that lost a tool by accident.
+   */
+  onSupersedeOperation?: (operationId: string, workflowId: string) => void;
+  /**
+   * Optional callback for a supersession this runtime declined to apply, with
+   * why. A refusal is a decision, and an operator who authored `supersedes` and
+   * still sees the tool needs to be told which rule kept it.
+   */
+  onRefuseSupersede?: (operationId: string, workflowId: string, reason: string) => void;
+  /**
    * How the tool surface is disclosed at rest: `auto` (default) follows the
    * ladder projection, `flat` never ladders, `laddered` ladders whenever lanes
    * can be projected. See `lane.ts` — the ladder decides *when* an approved
@@ -111,21 +127,6 @@ export interface McpBuildOptions {
    * measured against the same number.
    */
   surfaceBudgetTokens?: number;
-}
-
-/**
- * Check if a binding value matches the required format: $.output.<fieldName>
- */
-function isValidFieldMapping(binding: string): boolean {
-  return /^\$\.output\.[A-Za-z0-9_]+$/.test(binding);
-}
-
-/**
- * Extract the field name from a binding value like $.output.fieldName
- */
-function extractFieldName(binding: string): string {
-  const match = binding.match(/^\$\.output\.([A-Za-z0-9_]+)$/);
-  return match?.[1] ?? "";
 }
 
 /**
@@ -238,6 +239,27 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
   // one `@anvil/certification` certified from the same function.
   const allOpsById = new Map(air.operations.map((operation) => [operation.id, operation]));
 
+  // ORDERING IS LOAD-BEARING: the workflow surface is planned HERE, before the
+  // first tool registers — a suppression may only be read off a workflow already
+  // found registrable, or a skipped workflow would delete its members' tools and
+  // register nothing in their place. The planner lives in `@anvil/air` (see
+  // `planWorkflowSurface`'s module doc) so the compiler's capability disclosure
+  // budget discounts exactly what this server suppresses. The plan is pure and
+  // is reported below in the same pass that registers the workflows, keeping the
+  // `onSkipWorkflow` call order an observer sees unchanged.
+  const workflowSurface = planWorkflowSurface(air.workflows, opsById, allOpsById);
+  for (const [operationId, workflowId] of workflowSurface.superseded) {
+    options.onSupersedeOperation?.(operationId, workflowId);
+  }
+  for (const { operationId, workflowId, reason } of workflowSurface.refused) {
+    options.onRefuseSupersede?.(operationId, workflowId, reason);
+  }
+  // The served surface: approved operations minus the ones an approved workflow
+  // now performs on their behalf. `opsById` deliberately keeps them — a
+  // workflow's own steps must still resolve, and the ladder still reads the
+  // grouping from the document, not from what happened to register.
+  const servedOps = ops.filter((op) => !workflowSurface.superseded.has(op.id));
+
   // Precomputed in one pass over `ops`, before any tool registers, for three
   // reasons registration itself needs:
   //  - `hybridStatusOperationContracts`: statusOperation.id -> the submitting
@@ -259,7 +281,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
     sentence: string | undefined;
   }> = [];
   let hasAwaitingHumanInput = false;
-  for (const op of ops) {
+  for (const op of servedOps) {
     const resolution = resolveAsyncContract(op, allOpsById);
     if (!resolution.ok) continue;
     if (resolution.contract.pendingStates.includes("awaiting_human_input")) {
@@ -276,7 +298,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
     }
   }
 
-  for (const op of ops) {
+  for (const op of servedOps) {
     // Resolved once, outside the handler: it is a pure function of the document,
     // and the tool surface is what carries it. An agent that has to call the
     // operation to find out how to finish it has already spent the round trip
@@ -537,7 +559,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
   // operation gets its own tool, bound unambiguously to it — never a single
   // generic tool that would need the caller to name the operation itself.
   if (hasAwaitingHumanInput) {
-    for (const decisionOp of ops) {
+    for (const decisionOp of servedOps) {
       if (decisionOp.effect.kind !== "mutation" || decisionOp.confirmation.humanApproval !== true) {
         continue;
       }
@@ -617,74 +639,22 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
     }
   }
 
-  // Register workflows as composite tools.
-  for (const workflow of air.workflows) {
-    // Check eligibility: workflow must be approved
-    if (workflow.state !== "approved") {
-      options.onSkipWorkflow?.(workflow.id, "workflow state is not approved");
+  // Register workflows as composite tools. Eligibility was decided by
+  // `planWorkflowSurface` above — reported here, in document order, so the
+  // sequence of `onSkipWorkflow` calls is exactly what it always was.
+  for (const registration of workflowSurface.registrations) {
+    const { workflow } = registration;
+    if (registration.skipReason !== undefined) {
+      options.onSkipWorkflow?.(workflow.id, registration.skipReason);
       continue;
     }
-
-    // Check eligibility: all steps must exist and be approved
-    let skipReason: string | undefined;
-    const stepOps: Operation[] = [];
-    for (const step of workflow.steps) {
-      const stepOp = opsById.get(step.operationId);
-      if (!stepOp) {
-        skipReason = `step '${step.operationId}' not found or not approved`;
-        break;
-      }
-      stepOps.push(stepOp);
-    }
-    if (skipReason) {
-      options.onSkipWorkflow?.(workflow.id, skipReason);
-      continue;
-    }
-
-    // Check eligibility: all bindings must be valid field mappings
-    for (const step of workflow.steps) {
-      for (const [paramName, bindingValue] of Object.entries(step.bindings)) {
-        if (!isValidFieldMapping(bindingValue)) {
-          skipReason = `step '${step.operationId}' binding for '${paramName}' has invalid format: '${bindingValue}'`;
-          break;
-        }
-      }
-      if (skipReason) break;
-    }
-    if (skipReason) {
-      options.onSkipWorkflow?.(workflow.id, skipReason);
-      continue;
-    }
-
-    // Guard: stepOps should have at least one element (already checked in eligibility loop)
-    if (stepOps.length === 0) {
-      options.onSkipWorkflow?.(workflow.id, "workflow has no steps");
-      continue;
-    }
-
-    // A non-first step that REQUIRES a client idempotency key is ineligible in
-    // v1: forwarding the caller's one key to several mutations would make
-    // distinct writes share a dedup identity, which is exactly the corruption
-    // idempotency keys exist to prevent. (Step 1 receives the caller's input
-    // whole, key included, so it stays eligible.)
-    const keyedLaterStep = stepOps.find((op, i) => i > 0 && op.idempotency.mode === "required");
-    if (keyedLaterStep) {
-      options.onSkipWorkflow?.(
-        workflow.id,
-        `step '${keyedLaterStep.id}' requires a client idempotency key; the composite cannot mint distinct keys`,
-      );
-      continue;
-    }
+    const { stepOps, firstStepOp } = registration;
+    // The operation tools this composite replaced, resolved once for its _meta.
+    const replacedOperationIds = supersededByThisWorkflow(workflowSurface, workflow.id);
 
     // Determine if any step requires confirmation
     const requiresConfirmation = stepOps.some((op) => op.confirmation.required);
 
-    // Get input schema from first step's operation. We know stepOps is non-empty.
-    const firstStepOp = stepOps[0];
-    if (!firstStepOp) {
-      options.onSkipWorkflow?.(workflow.id, "workflow first step operation not found");
-      continue;
-    }
     const { shape: workflowInputShape, confirmKey: compositeConfirmKey } = buildWorkflowInputShape(
       firstStepOp,
       requiresConfirmation,
@@ -705,6 +675,9 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           "anvil/workflow": true,
           "anvil/step_count": workflow.steps.length,
           "anvil/requires_confirmation": requiresConfirmation,
+          // What this composite REPLACED on the surface, so a client can see
+          // that a tool it remembers was subsumed rather than withdrawn.
+          ...(replacedOperationIds.length > 0 ? { "anvil/supersedes": replacedOperationIds } : {}),
         },
       },
       async (args: Record<string, unknown>) => {
@@ -957,6 +930,13 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** The operation ids one workflow actually removed from this server's surface. */
+function supersededByThisWorkflow(plan: WorkflowSurfacePlan, workflowId: string): string[] {
+  return [...plan.superseded]
+    .filter(([, owner]) => owner === workflowId)
+    .map(([operationId]) => operationId);
 }
 
 /**

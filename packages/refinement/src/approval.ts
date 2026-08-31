@@ -159,6 +159,25 @@ export function classifyApproval(input: ApprovalInput): ApprovalDecision {
     };
   }
 
+  // Rule 0d — resource re-homing guard: `effect.resource` is the axis the
+  // manifest `name: { resource }` override projects every routing surface from
+  // at the next compile. The deficiency behind it is detected by name-text
+  // corroboration, and corroboration measures agreement with the operation's
+  // own name, NOT truth — vendors use synonyms (GitHub's `hooks` path vs
+  // "webhook" name), which is exactly why rule B was rejected as a compiler
+  // rule (design doc §6, ~15/28 sampled auto-fixes semantically wrong). So a
+  // resource patch always routes to review, regardless of which skill or
+  // executor produced it and however strong its evidence: checked on the
+  // FIELD, like the idempotency guard above, so a future skill touching this
+  // key cannot slip past by omission.
+  if ("resource" in set) {
+    return {
+      tier: "review",
+      reason:
+        "re-homing an operation's routing resource is always a person's decision, never automatic",
+    };
+  }
+
   // Rule 1 — safety loosening guard: enabling retries reduces safety, so it is
   // never auto-approved on anything less than authoritative evidence.
   if (set.retryable === true && strength !== "authoritative") {

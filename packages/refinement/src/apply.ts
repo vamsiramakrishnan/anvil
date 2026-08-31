@@ -1,6 +1,7 @@
 import type { AirDocument, BodyField, Capability, ErrorSpec, Operation, Param } from "@anvil/air";
 import type { JsonValue, SemanticPatch } from "./skills/contract.js";
 import { describeTarget, type SemanticTarget } from "./target.js";
+import { singularize } from "./vocabulary.js";
 
 /**
  * This module is the ONLY place a refinement proposal touches canonical AIR.
@@ -130,6 +131,21 @@ function applyOne(
       if (key === "tool_name") {
         record(key, op.mcp.toolName, value);
         op.mcp.toolName = String(value);
+        return;
+      }
+      // Sole write path for `rehome-resource` — validated upstream (the
+      // proposed word must be grounded in the operation's own path or name
+      // vocabulary) and ALWAYS review-tier (approval.ts checks the key). The
+      // write mirrors the manifest `name: { resource }` override's
+      // `effect.resource` assignment (compiler manifest.ts, singularized the
+      // same way); the three routing names are deliberately NOT touched here —
+      // in this deficiency the vendor's own name is the evidence, and the
+      // durable, id-projecting closure is the manifest override recompiled
+      // through `projectRoutingNames`.
+      if (key === "resource") {
+        const next = singularize(String(value));
+        record(key, op.effect.resource, next);
+        op.effect.resource = next;
         return;
       }
       // The idempotency carrier and retry-basis keys below are the sole write

@@ -5,6 +5,11 @@ Legacy application-server and broker discovery has its own reproducible
 IBM MQ, Artemis, RabbitMQ, Kafka, and AsyncAPI specimens run twice through the
 public `legacy inventory` CLI.
 
+Whether a compiled catalog actually helps an agent *route* is measured
+separately, on the full untrimmed Zendesk estate:
+[routing at estate scale](routing-at-scale.md) — 329 tools, 657 tasks, and the
+accuracy-versus-catalog-size curve.
+
 ## Method
 
 For each SaaS product below:

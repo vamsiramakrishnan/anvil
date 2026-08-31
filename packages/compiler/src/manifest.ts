@@ -442,6 +442,14 @@ export const WorkflowManifest = z.object({
   human_approval: z.boolean().optional(),
   rollback: z.string().optional(),
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
+  /**
+   * Operation references this workflow REPLACES on the MCP tool surface — the
+   * subtractive half of composition (see `Workflow.supersedes` in `@anvil/air`).
+   * Each entry must resolve to an operation this workflow already names as a
+   * step; `buildWorkflows` blocks the workflow otherwise rather than emitting a
+   * suppression it cannot justify.
+   */
+  supersedes: z.array(z.string()).optional(),
   steps: z
     .array(
       z.object({
@@ -456,26 +464,85 @@ export const WorkflowManifest = z.object({
 export type WorkflowManifest = z.infer<typeof WorkflowManifest>;
 
 /**
- * A review decision for one deterministically discovered capability. Keys in
- * `capabilities` are exact AIR capability ids: review must bind to the grouping
- * that discovery actually produced, never a fuzzy label that could drift.
+ * One entry under `capabilities`, doing either or both of two jobs.
+ *
+ * REVIEW (the original job): keys are exact AIR capability ids; `state` records
+ * the human decision about a grouping deterministic discovery already produced.
+ * Review must bind to the grouping that discovery actually produced, never a
+ * fuzzy label that could drift.
+ *
+ * AUTHOR (`operations` present): declare a capability discovery could not
+ * produce — the consumer for a traffic-observed grouping
+ * (`anvil capability propose --from-records`) or any harness-proposed one. The
+ * entry's key becomes the new capability's id; members resolve by AIR id,
+ * canonicalName, or the source operationId, exactly like every other manifest
+ * operation reference. Authoring is NOT approval: an authored capability lands
+ * in AIR with `source: "manifest"` and `lifecycle: "proposed"`, and goes
+ * through the same review gates — including the disclosure budget — as any
+ * discovered grouping. Add `state: approved` to the same entry to review it in
+ * the same compile, through exactly the same gate. Authoring a capability also
+ * grants nothing to its member operations, which keep their own approval
+ * lifecycle untouched.
  */
 export const CapabilityReviewManifest = z
   .object({
-    state: z.enum(["approved", "rejected"]),
+    state: z.enum(["approved", "rejected"]).optional(),
     note: z.string().optional(),
     /** Deliberate override for approval above the hard tool-disclosure budget. */
     allow_large: z.boolean().optional(),
+    /** Authoring: agent-facing name for the authored capability. */
+    display_name: z.string().optional(),
+    /** Authoring: what the task-shaped unit accomplishes. */
+    description: z.string().optional(),
+    /** Authoring: intent phrases an agent might use to find this capability. */
+    intent_examples: z.array(z.string()).optional(),
+    /**
+     * Authoring marker: the member operation references. Present = this entry
+     * authors a new capability. An empty list is refused — a capability that
+     * exposes nothing is not a capability, and silently creating one would look
+     * like a successful review of nothing.
+     */
+    operations: z
+      .array(z.string())
+      .min(1, "an authored capability must name at least one member operation")
+      .optional(),
   })
-  .superRefine((review, ctx) => {
-    if (review.state !== "approved" && review.allow_large !== undefined) {
+  .superRefine((entry, ctx) => {
+    if (entry.operations === undefined) {
+      if (entry.state === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["state"],
+          message:
+            "a capability entry must review a discovered grouping (state) or author a new one (operations)",
+        });
+      }
+      for (const field of ["display_name", "description", "intent_examples"] as const) {
+        if (entry[field] !== undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: [field],
+            message: `${field} is authoring input and requires the entry to author a grouping (operations); a review cannot rename what discovery produced`,
+          });
+        }
+      }
+    }
+    if (entry.operations !== undefined && entry.state === "rejected") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["state"],
+        message:
+          "authoring a capability and rejecting it in the same entry is a contradiction; remove the entry instead",
+      });
+    }
+    if (entry.state !== "approved" && entry.allow_large !== undefined) {
       ctx.addIssue({
         code: "custom",
         path: ["allow_large"],
         message: "allow_large is valid only for an approved capability review",
       });
     }
-    if (review.allow_large === true && !review.note?.trim()) {
+    if (entry.allow_large === true && !entry.note?.trim()) {
       ctx.addIssue({
         code: "custom",
         path: ["note"],
@@ -603,6 +670,19 @@ export const AnvilManifest = z.object({
     type: z.union([AuthType, z.literal("oauth2")]).optional(),
     scopes: z.array(z.string()).optional(),
   }).optional(),
+  /**
+   * Declare the estate's path grammar outright, overriding the compiler's
+   * evidence-based classification (`service.source.pathGrammar`). The intended
+   * use is settling a `path_grammar_ambiguous` compile warning; a declaration
+   * that contradicts a definite measured verdict still applies — the operator
+   * may know the API better than the counts — but is recorded as a
+   * `path_grammar_override_contradicts_evidence` warning rather than applied
+   * silently. `ambiguous` is deliberately not declarable: an override must
+   * settle the question, not un-settle it.
+   */
+  path_grammar: z
+    .enum(["resource_grammar", "rpc_plain", "rpc_dotted", "adapter_lowered"])
+    .optional(),
   operations: z.record(z.string(), OperationManifest).default({}),
   workflows: z.record(z.string(), WorkflowManifest).default({}),
   capabilities: z.record(z.string(), CapabilityReviewManifest).default({}),
@@ -1146,6 +1226,44 @@ export function buildWorkflows(
       }
     }
 
+    // Resolve what this workflow supersedes, against the operations it actually
+    // performs. Two failure modes, both blocking rather than silently dropped: a
+    // reference that names no operation at all, and one that names a real
+    // operation this workflow does not run. The second is the dangerous one — it
+    // would remove a tool the composite cannot stand in for — so it is refused
+    // here as well as in the AIR schema's own refinement, and the workflow is
+    // blocked exactly the way an unresolved step blocks it.
+    const stepOperationIds = new Set(steps.map((step) => step.operationId));
+    const supersedes: string[] = [];
+    for (const reference of wf.supersedes ?? []) {
+      const target = operations.find((o) => matches(o, reference));
+      if (!target) {
+        const note = `supersedes unknown operation "${reference}"`;
+        blockerNotes.push(note);
+        diagnostics.push({
+          level: "error",
+          code: "workflow_supersedes_unresolved",
+          message: `Workflow "${name}" ${note}; the workflow is blocked until the reference is repaired.`,
+        });
+        continue;
+      }
+      if (!stepOperationIds.has(target.id)) {
+        const note = `supersedes "${reference}" (${target.id}), which is not one of its own steps`;
+        blockerNotes.push(note);
+        diagnostics.push({
+          level: "error",
+          code: "workflow_supersedes_not_a_step",
+          operationId: target.id,
+          message:
+            `Workflow "${name}" ${note}; a workflow may only replace operations it performs. ` +
+            "The workflow is blocked until the reference is removed or the step is added.",
+        });
+        continue;
+      }
+      if (supersedes.includes(target.id)) continue;
+      supersedes.push(target.id);
+    }
+
     // Resolve the owning capability: explicit, else the first step's capability.
     const firstOpCap = steps.length
       ? operations.find((o) => o.id === steps[0]?.operationId)?.capabilityId
@@ -1171,6 +1289,9 @@ export function buildWorkflows(
       steps,
       humanApproval: wf.human_approval ?? false,
       rollbackStrategy: wf.rollback,
+      // Absent, not empty, when nothing is superseded: a workflow authored
+      // before this field existed must serialize byte-identically.
+      ...(supersedes.length > 0 ? { supersedes } : {}),
       state: blocked ? "blocked" : (wf.state ?? "generated"),
       evidence: {
         claims: [

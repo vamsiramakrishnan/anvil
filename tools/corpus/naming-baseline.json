@@ -1,0 +1,206 @@
+{
+  "updatedAt": "2026-08-30T23:15:38.518Z",
+  "note": "Per-system naming-conformance counters (ratchet: growth fails). Regenerate with: node tools/corpus/run.mjs quick --update-naming-baseline",
+  "systems": {
+    "jira": {
+      "operations": 26,
+      "zeroOverlapResource": 1,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 4
+    },
+    "confluence": {
+      "operations": 18,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 4
+    },
+    "slack": {
+      "operations": 14,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 3
+    },
+    "gmail": {
+      "operations": 11,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 11,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "notion": {
+      "operations": 24,
+      "zeroOverlapResource": 1,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    },
+    "asana": {
+      "operations": 12,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 2
+    },
+    "pagerduty": {
+      "operations": 12,
+      "zeroOverlapResource": 1,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    },
+    "zoom": {
+      "operations": 14,
+      "zeroOverlapResource": 1,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    },
+    "hubspot": {
+      "operations": 12,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 6,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "temporal": {
+      "operations": 121,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 6
+    },
+    "amadeus": {
+      "operations": 2,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    },
+    "netsuite": {
+      "operations": 42,
+      "zeroOverlapResource": 1,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 1
+    },
+    "odata_northwind": {
+      "operations": 130,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "etcd": {
+      "operations": 42,
+      "zeroOverlapResource": 6,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "docusign_clm": {
+      "operations": 10,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "bigquery": {
+      "operations": 42,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 42,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "box": {
+      "operations": 294,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 24,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 9
+    },
+    "adyen": {
+      "operations": 28,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 4
+    },
+    "adobe_aem": {
+      "operations": 48,
+      "zeroOverlapResource": 20,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 0
+    },
+    "plaid": {
+      "operations": 351,
+      "zeroOverlapResource": 1,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 26
+      },
+      "overStrippedResources": 15
+    }
+  }
+}

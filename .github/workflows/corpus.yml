@@ -136,7 +136,64 @@ jobs:
     if: always()
     needs: corpus
     runs-on: ubuntu-latest
+    # A red nightly job nobody watches is how four stale expected/*.json
+    # fixtures sat unnoticed: the failure existed but was not VISIBLE. The gate
+    # therefore files (or updates) a labeled issue on regression and closes it
+    # when the corpus is green again, so a scheduled failure lands in the issue
+    # tracker rather than in a run list nobody reads.
+    permissions:
+      issues: write
     steps:
+      - name: Open or update the corpus-regression issue
+        if: needs.corpus.result != 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "corpus-regression";
+            const { owner, repo } = context.repo;
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label });
+            } catch {
+              await github.rest.issues.createLabel({
+                owner, repo, name: label, color: "b60205",
+                description: "The scheduled corpus run regressed",
+              });
+            }
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const body = [
+              `The scheduled corpus run regressed: ${runUrl}`,
+              "",
+              "Per-lane summaries are in that run's job summary; full reports are its",
+              "`corpus-<lane>-*` artifacts. A red lane means a differential oracle",
+              "(naming-differential, naming-conformance ratchet, op-count, accounting,",
+              "invariants) went red on a real estate — treat it as a failing check,",
+              "not background noise. See tools/corpus/README.md for what each oracle",
+              "gates and how to re-record a baseline after an intentional change.",
+            ].join("\n");
+            const open = await github.rest.issues.listForRepo({ owner, repo, state: "open", labels: label });
+            if (open.data.length > 0) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open.data[0].number, body });
+            } else {
+              await github.rest.issues.create({ owner, repo, title: "Scheduled corpus run regressed", labels: [label], body });
+            }
+      - name: Close the corpus-regression issue when green again
+        if: needs.corpus.result == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = "corpus-regression";
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const open = await github.rest.issues.listForRepo({ owner, repo, state: "open", labels: label });
+            for (const issue of open.data) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issue.number,
+                body: `The corpus is green again: ${runUrl}`,
+              });
+              await github.rest.issues.update({
+                owner, repo, issue_number: issue.number, state: "closed", state_reason: "completed",
+              });
+            }
       - name: Require every corpus lane to complete successfully
         env:
           CORPUS_RESULT: ${{ needs.corpus.result }}

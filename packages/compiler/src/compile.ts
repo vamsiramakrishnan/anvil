@@ -11,6 +11,7 @@ import {
   snakeCase,
 } from "@anvil/air";
 import { discoverCapabilities } from "./capabilities.js";
+import { authorCapabilities } from "./capability-authoring.js";
 import { approveCapability, rejectCapability } from "./capability-review.js";
 import { overlayDigest } from "./contract/digest.js";
 import type { AppliedOverlay, PolicyOverlay, SemanticConflict } from "./contract/model.js";
@@ -27,7 +28,7 @@ import {
   manifestAuthProviderToAir,
   parseManifest,
 } from "./manifest.js";
-import { critiqueNames, resolveNameCollisions } from "./naming.js";
+import { critiqueNames, resolveNameCollisions, servicePrefixStutterDiagnostic } from "./naming.js";
 import { normalize } from "./normalize.js";
 import { type ParsedSpec, parseSource } from "./parse.js";
 import { type CompilerSource, ephemeralCompilerSource } from "./source/compiler-source.js";
@@ -294,12 +295,23 @@ async function buildAir(
   const title = (doc.info?.title as string | undefined) ?? "service";
   const serviceId = options.serviceId ?? manifest.service?.name ?? snakeCase(title) ?? "service";
 
-  const normalized = normalize(serviceId, parsed);
+  const normalized = normalize(serviceId, parsed, {
+    pathGrammarOverride: manifest.path_grammar,
+  });
   const serviceAuthDefaults = applyServiceAuthDefaults(normalized.operations, manifest.auth);
   let operations = serviceAuthDefaults.operations;
   // Naming pass: resolve any name collisions coherently across id/CLI/tool with
   // meaningful tokens (never a silent `_2`) before enrichment or validation.
   const namingDiagnostics = resolveNameCollisions(operations);
+
+  // An OPERATOR-chosen service id that duplicates the operationIds' leading
+  // word makes every tool name stutter (BigQuery's `--service bigquery` over
+  // `bigquery.models.get`). A derived id never warns — the operator made no
+  // choice to reconsider.
+  if (options.serviceId ?? manifest.service?.name) {
+    const prefixStutter = servicePrefixStutterDiagnostic(serviceId, operations);
+    if (prefixStutter) namingDiagnostics.push(prefixStutter);
+  }
 
   // Whole-spec dialect inference: classify the corpus's naming house style ONCE
   // and fold it into every `name.quality` claim's confidence. Never changes a
@@ -398,8 +410,14 @@ async function buildAir(
 
   // Group operations into capabilities (the primary abstraction), then attach
   // any authored workflows. Capability discovery stamps `capabilityId` on each
-  // operation in place.
+  // operation in place. Manifest-AUTHORED capabilities (the write path for
+  // `source: "manifest"`) join the model right after discovery — before
+  // workflow attachment, so an authored workflow can name one as its owner —
+  // born `proposed`; the review loop below is a separate decision through the
+  // same gate discovery's groupings go through.
   const capabilities = discoverCapabilities(serviceId, validated);
+  capabilities.push(...authorCapabilities(manifest, validated, capabilities));
+  capabilities.sort((a, b) => a.id.localeCompare(b.id));
   const { workflows, diagnostics: workflowDiagnostics } = buildWorkflows(
     manifest,
     validated,
@@ -444,6 +462,7 @@ async function buildAir(
           sourceHash: provenance.sourceHash,
           origin: { kind: provenance.origin.kind, uri: provenance.origin.uri },
           entrypoint: provenance.entrypoint.path,
+          pathGrammar: normalized.pathGrammar,
         },
         auth: serviceAuth,
         servers: (doc.servers ?? []).map((s) => ({ url: s.url, description: s.description })),
@@ -477,6 +496,10 @@ async function buildAir(
     left.localeCompare(right),
   );
   for (const [capabilityId, review] of capabilityReviews) {
+    // An authoring-only entry (operations, no state) is born proposed above and
+    // reviewed later — `anvil capability approve` or a `state:` added to the
+    // entry — never implicitly here.
+    if (review.state === undefined) continue;
     if (review.state === "approved") {
       approveCapability(reviewedAir, capabilityId, {
         allowLarge: review.allow_large === true,

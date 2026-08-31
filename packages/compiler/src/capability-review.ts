@@ -1,5 +1,5 @@
 import type { AirDocument, Capability, Diagnostic, Operation } from "@anvil/air";
-import { DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS } from "@anvil/air";
+import { DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS, planWorkflowSurface } from "@anvil/air";
 import { discoverCapabilities } from "./capabilities.js";
 
 /**
@@ -85,8 +85,27 @@ export interface CapabilityBudgetCheck {
   disclosureTokens?: number;
   /** How many disclosed operations carried a measurement (0 when unmeasured). */
   measuredOperations?: number;
-  /** How many disclosed operations did not — the slack in the lower bound. */
+  /**
+   * How many disclosed tools did not — member operations nobody measured, plus
+   * composite workflow tools, which carry no measurement of their own. This is
+   * the slack in the lower bound.
+   */
   unmeasuredOperations?: number;
+  /**
+   * Operation tools a registrable workflow REPLACED on the agent-facing surface
+   * (`Workflow.supersedes`, as decided by `planWorkflowSurface` — the same
+   * planner `@anvil/mcp-runtime` serves from). They are not disclosed, so they
+   * are not counted — this is the number that makes a suddenly-smaller
+   * `toolCount` legible rather than mysterious.
+   */
+  supersededOperations?: number;
+  /**
+   * Composite workflow tools counted in `toolCount` — only workflows the shared
+   * planner says will actually register. They also enter the token dimension as
+   * unmeasured entries: a composite is a real tool an agent reads past, and no
+   * measurement pass prices it yet.
+   */
+  workflowTools?: number;
   verdict: CapabilityBudgetVerdict;
   /**
    * The governing finding: whichever dimension produced the worse verdict, with
@@ -116,28 +135,106 @@ export function capabilityToolBudget(
 }
 
 /**
- * Budget the actual surface a capability build can disclose: its direct
- * members plus every operation referenced by an authored workflow it owns.
- * Dependencies count regardless of current operation approval, so approving a
- * dependency later cannot silently expand a grouping beyond what was reviewed.
+ * Budget the actual surface a capability build can disclose — the surface as it
+ * is *served*, after composition has taken its bite out of it.
+ *
+ * Three terms, and the third is the point:
+ *  - its direct members, plus every operation an authored workflow it owns
+ *    references. Dependencies count regardless of current operation approval, so
+ *    approving a dependency later cannot silently expand a grouping beyond what
+ *    was reviewed.
+ *  - MINUS every operation a **registrable** workflow supersedes: those tools
+ *    are not listed by `@anvil/mcp-runtime`, so charging the capability for them
+ *    would budget a surface nobody is served. What counts as registrable is not
+ *    re-decided here — the discount and the composite count both come from
+ *    `planWorkflowSurface` (`@anvil/air`), the SAME planner the runtime serves
+ *    from. `state === "approved"` alone was this function's first draft, and it
+ *    was the bug: the runtime also demands resolvable steps, valid bindings, a
+ *    non-empty step list, no later step requiring the caller's one idempotency
+ *    key, and it refuses any suppression that would orphan a still-served async
+ *    contract. A workflow failing any of those registers nothing and suppresses
+ *    nothing — yet it still bought a discount here, so a capability could pass
+ *    the hard approval limit while the truly served surface was larger than
+ *    what was reviewed.
+ *  - PLUS one tool per registrable workflow the capability owns, because a
+ *    composite IS a tool an agent has to route past.
+ *
+ * That third term is what makes composition pay. Before it, wrapping three
+ * operations in a workflow left the budget at three and added an unbudgeted
+ * fourth tool to the served surface: composing *cost* an operator budget and
+ * bought them nothing. Now wrapping three and superseding all three scores one.
+ * A workflow that supersedes nothing still scores +1 — which is honest, and is
+ * the same signal read from the other end: a purely additive composite really
+ * does make the surface an agent routes over bigger.
  */
 export function capabilityDisclosureBudget(
   air: AirDocument,
   capabilityId: string,
 ): CapabilityBudgetCheck {
   const capability = requireCapability(air, capabilityId);
-  return budgetForOperationIds(capability, disclosedOperationIds(air, capability), air.operations);
+  const plan = planCapabilityWorkflowSurface(air);
+  const superseded = plan.superseded;
+  const registrable = new Set(
+    plan.registrations
+      .filter((registration) => registration.skipReason === undefined)
+      .map((registration) => registration.workflow.id),
+  );
+  const disclosed = disclosedOperationIds(air, capability).filter((id) => !superseded.has(id));
+  const workflowTools = air.workflows.filter(
+    (workflow) => workflow.capabilityId === capability.id && registrable.has(workflow.id),
+  ).length;
+  const supersededOperations = new Set(
+    disclosedOperationIds(air, capability).filter((id) => superseded.has(id)),
+  ).size;
+  return {
+    ...budgetForOperationIds(capability, disclosed, air.operations, workflowTools),
+    supersededOperations,
+    workflowTools,
+  };
+}
+
+/**
+ * The runtime's own surface plan, computed over the surface this review is
+ * pricing. Supersession is a property of the served MCP surface, which spans
+ * the whole document — a workflow in a neighbouring capability that replaces an
+ * operation this one also lists has still removed the tool — so the plan is
+ * document-wide, not per capability.
+ *
+ * One deliberate difference from the serving call: the runtime plans over the
+ * operations that are approved *today*, while this budget prices the surface a
+ * reviewer is approving — its documented stance is that dependencies count
+ * regardless of current operation approval, so approving one later cannot
+ * silently expand a grouping beyond what was reviewed. The same stance has to
+ * hold for the discount, in the conservative direction: a workflow must not
+ * lose its discount (or an async-orphan refusal fail to fire) merely because a
+ * member operation has not been approved *yet*. So the planner is fed the
+ * document's operations hypothesized approved — every other eligibility rule is
+ * the planner's own, shared verbatim with the runtime. Webhook receivers are
+ * excluded exactly as the runtime excludes them: never a listed tool.
+ */
+function planCapabilityWorkflowSurface(air: AirDocument) {
+  const hypothesized = air.operations.map((operation) =>
+    operation.state === "approved" ? operation : { ...operation, state: "approved" as const },
+  );
+  const allOpsById = new Map(hypothesized.map((operation) => [operation.id, operation]));
+  const candidates = new Map(
+    hypothesized
+      .filter((operation) => operation.archetype !== "webhook_receiver")
+      .map((operation) => [operation.id, operation]),
+  );
+  return planWorkflowSurface(air.workflows, candidates, allOpsById);
 }
 
 function budgetForOperationIds(
   capability: Capability,
   operationIds: readonly string[],
   operations: readonly Operation[] = [],
+  extraTools = 0,
 ): CapabilityBudgetCheck {
   const unique = new Set(operationIds);
-  const toolCount = unique.size;
+  const toolCount = unique.size + extraTools;
   const count = countBand(capability.id, toolCount);
-  const tokens = tokenBand(capability.id, unique, operations);
+  const tokens = tokenBand(capability.id, unique, operations, extraTools);
   return {
     capabilityId: capability.id,
     toolCount,
@@ -229,10 +326,22 @@ function tokenBand(
   capabilityId: string,
   operationIds: ReadonlySet<string>,
   operations: readonly Operation[],
+  unmeasuredExtraTools = 0,
 ): TokenBandResult {
   let disclosureTokens = 0;
   let measuredOperations = 0;
-  let unmeasuredOperations = 0;
+  // Composite workflow tools (`extraTools` in the count band) enter this band
+  // as UNMEASURED entries, never as free ones. A composite is a real tool an
+  // agent reads past — a description, the first step's input schema, the
+  // reserved controls — and no measurement pass prices it yet: reusing the
+  // first step's `toolTokens` would price a different description, and an
+  // invented estimate is worse than a declared gap. Counted at zero, a
+  // capability that wrapped its largest operations into workflows reported a
+  // COMPLETE low token measurement and passed while the served workflow tools
+  // pushed the real surface over the band. Unmeasured is the honest state this
+  // band already has for exactly that situation, and it is sound in the same
+  // one direction: the lower bound stays a lower bound.
+  let unmeasuredOperations = unmeasuredExtraTools;
   for (const id of operationIds) {
     const operation = operations.find((candidate) => candidate.id === id);
     const cost = operation?.disclosureCost;
@@ -257,7 +366,7 @@ function tokenBand(
   const measurement = { disclosureTokens, measuredOperations, unmeasuredOperations };
   const partial =
     unmeasuredOperations > 0
-      ? ` (measured ${measuredOperations} of ${measuredOperations + unmeasuredOperations} disclosed operations, so the real figure is higher)`
+      ? ` (measured ${measuredOperations} of ${measuredOperations + unmeasuredOperations} disclosed tools, so the real figure is higher)`
       : "";
 
   if (disclosureTokens > CAPABILITY_TOKEN_BUDGET.blockAbove) {
@@ -295,12 +404,14 @@ function tokenBand(
   return { verdict: "ok", measurement };
 }
 
-/** A structured, typed failure from a capability review action. */
+/** A structured, typed failure from a capability review or authoring action. */
 export class CapabilityReviewError extends Error {
   readonly code:
     | "capability_not_found"
     | "capability_budget_exceeded"
-    | "capability_budget_waiver_note_required";
+    | "capability_budget_waiver_note_required"
+    | "capability_author_id_collision"
+    | "capability_author_member_unresolved";
   /** The budget diagnostic, when the failure is budget-driven. */
   readonly diagnostic?: Diagnostic;
 
@@ -470,6 +581,15 @@ export interface CapabilityDiff {
   capabilityId: string;
   /** False when fresh discovery no longer produces this grouping at all. */
   present: boolean;
+  /**
+   * True for a manifest-authored capability. Discovery has no counterpart for
+   * it BY DEFINITION — the operator declared the grouping precisely because
+   * discovery could not produce it — so its absence from rediscovery is not
+   * drift. Drift for an authored capability is judged against the document
+   * itself: a member operation that no longer exists is real drift; anything
+   * discovery says is not.
+   */
+  authored: boolean;
   addedOperations: string[];
   removedOperations: string[];
   sourceChanged?: { from: Capability["source"]; to: Capability["source"] };
@@ -485,11 +605,30 @@ export interface CapabilityDiff {
  */
 export function diffCapability(air: AirDocument, capabilityId: string): CapabilityDiff {
   const stored = requireCapability(air, capabilityId);
+  if (stored.source === "manifest") {
+    // Manifest-authored: not expected in discovery, so comparing against
+    // rediscovery would report the whole membership as phantom drift. The
+    // honest check is whether the declared members still exist in the document.
+    const missing = stored.operationIds
+      .filter((id) => !air.operations.some((op) => op.id === id))
+      .sort();
+    return {
+      capabilityId,
+      present: true,
+      authored: true,
+      addedOperations: [],
+      removedOperations: missing,
+      addedResources: [],
+      removedResources: [],
+      unchanged: missing.length === 0,
+    };
+  }
   const fresh = rediscover(air).find((c) => c.id === capabilityId);
   if (!fresh) {
     return {
       capabilityId,
       present: false,
+      authored: false,
       addedOperations: [],
       removedOperations: [...stored.operationIds].sort(),
       addedResources: [],
@@ -506,6 +645,7 @@ export function diffCapability(air: AirDocument, capabilityId: string): Capabili
   return {
     capabilityId,
     present: true,
+    authored: false,
     addedOperations: added,
     removedOperations: removed,
     sourceChanged,
