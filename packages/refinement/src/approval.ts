@@ -178,6 +178,23 @@ export function classifyApproval(input: ApprovalInput): ApprovalDecision {
     };
   }
 
+  // Rule 0e — group composition guard: a `workflow` patch changes what the
+  // served MCP surface LISTS (a composite registers, its superseded members
+  // stop being listed), and a `capability` patch declares a new grouping the
+  // capability lifecycle will review. Both reshape the surface an agent routes
+  // over, and the benchmark delta the CLI attaches is EVIDENCE for the
+  // reviewer, never an approval — a measured uplift does not make surface
+  // reshaping automatic, any more than authoritative evidence makes an
+  // idempotency call automatic. Checked on the FIELD, like every guard above,
+  // so a future skill touching these keys cannot slip past by omission.
+  if ("workflow" in set || "capability" in set) {
+    return {
+      tier: "review",
+      reason:
+        "composing or regrouping the served tool surface is always a person's decision, never automatic",
+    };
+  }
+
   // Rule 1 — safety loosening guard: enabling retries reduces safety, so it is
   // never auto-approved on anything less than authoritative evidence.
   if (set.retryable === true && strength !== "authoritative") {

@@ -9,9 +9,12 @@ export type HarnessRejectionCode =
   | "refinement/stale_contract"
   | "refinement/repository_revision_mismatch"
   | "refinement/repository_evidence_invalid"
-  | "refinement/proposal_rejected";
+  | "refinement/proposal_rejected"
+  /** A group proposal whose measured routing delta is negative (the CLI's
+   *  benchmark-scored admission gate refused it before review). */
+  | "refinement/group_delta_regressed";
 
-export type HarnessProtocolStage = "task" | "binding" | "evidence" | "validation";
+export type HarnessProtocolStage = "task" | "binding" | "evidence" | "validation" | "admission";
 
 export interface HarnessRejection {
   code: HarnessRejectionCode;

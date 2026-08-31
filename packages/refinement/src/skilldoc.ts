@@ -437,6 +437,16 @@ const CHECK_DOC: Record<ValidationCheckId, string> = {
     "when pagination style is cursor/page/offset, the cursor param names an existing input parameter, and pagination_items_field is a non-empty string",
   resource_grounded_in_contract:
     "a proposed routing resource is a word the operation's own path or name text states (plural-insensitive); an invented word is refused",
+  group_proposal_shape:
+    "a group patch sets exactly one of workflow/capability, and the payload matches its strict schema",
+  group_grant_respected:
+    "every operation a group proposal references is inside the task's hash-bound grant (cluster members plus explicitly-listed related operations)",
+  group_supersedes_within_steps:
+    "a group workflow's supersedes names only the proposal's own steps — a composite may only replace what it performs",
+  group_workflow_composes:
+    "the composed workflow registers on the shared surface planner and every later step's required input is bound from a field the previous step actually outputs",
+  group_names_grounded:
+    "every proposed group name and intent is grounded in the member operations' own routing vocabulary; an invented word is refused",
 };
 
 const FAMILY_DOC: Record<EvalFamily, string> = {

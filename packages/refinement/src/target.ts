@@ -15,7 +15,15 @@ export type SemanticTarget =
   | { kind: "enum"; operationId: string; path: string }
   /** One declared error of an operation, addressed by its Anvil error code. */
   | { kind: "error"; operationId: string; code: string }
-  | { kind: "workflow"; workflowId: string };
+  | { kind: "workflow"; workflowId: string }
+  /**
+   * A GROUP of operations addressed together — a benchmark-measured confusable
+   * cluster, not any single AIR node. The group id is the benchmark's
+   * deterministic cluster id; the member operation ids ride in the deficiency's
+   * facts (hash-bound into the exported task), because the group itself has no
+   * AIR coordinate to resolve against.
+   */
+  | { kind: "group"; groupId: string };
 
 /**
  * A stable, collision-free key for a target — used to dedupe deficiencies and to
@@ -38,6 +46,8 @@ export function targetKey(t: SemanticTarget): string {
       return `error:${t.operationId}#${t.code}`;
     case "workflow":
       return `workflow:${t.workflowId}`;
+    case "group":
+      return `group:${t.groupId}`;
   }
 }
 
@@ -57,6 +67,8 @@ export function describeTarget(t: SemanticTarget): string {
       return `${t.operationId} (${t.code})`;
     case "workflow":
       return t.workflowId;
+    case "group":
+      return t.groupId;
   }
 }
 

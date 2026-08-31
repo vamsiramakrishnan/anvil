@@ -2,6 +2,7 @@ import type { AirDocument, Claim, Operation } from "@anvil/air";
 import type { Deficiency } from "../deficiency.js";
 import { targetKey, targetOperationId } from "../target.js";
 import type { FieldContext, SkillContext } from "./contract.js";
+import { groupGrantOf } from "./group-proposal.js";
 
 /** All surfaced input fields of an operation, as read-only field contexts. */
 function fieldsOf(op: Operation): FieldContext[] {
@@ -80,6 +81,19 @@ export function assembleContext(
 
   if (t.kind === "capability") {
     ctx.capability = air.capabilities.find((c) => c.id === t.capabilityId);
+    return structuredClone(ctx);
+  }
+
+  if (t.kind === "group") {
+    // The grant (member + explicitly-listed related operation ids) rides in the
+    // deficiency's facts, hash-bound into the exported task. The OPERATIONS are
+    // rebuilt from current AIR here — the task's snapshot helps the harness
+    // investigate, but validation only ever grounds against the document.
+    const grant = groupGrantOf(deficiency.facts);
+    const wanted = [...grant.memberOperationIds, ...grant.relatedOperationIds];
+    ctx.groupOperations = wanted
+      .map((id) => air.operations.find((op) => op.id === id))
+      .filter((op): op is Operation => op !== undefined);
     return structuredClone(ctx);
   }
 

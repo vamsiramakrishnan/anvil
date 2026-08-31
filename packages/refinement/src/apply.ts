@@ -1,5 +1,11 @@
 import type { AirDocument, BodyField, Capability, ErrorSpec, Operation, Param } from "@anvil/air";
 import type { JsonValue, SemanticPatch } from "./skills/contract.js";
+import {
+  buildGroupWorkflow,
+  resolveOperationReference,
+  zGroupCapabilityPayload,
+  zGroupWorkflowPayload,
+} from "./skills/group-proposal.js";
 import { describeTarget, type SemanticTarget } from "./target.js";
 import { singularize } from "./vocabulary.js";
 
@@ -323,6 +329,114 @@ function applyOne(
         const recovery = spec.recovery ?? { action: "Review the invalid field and retry." };
         record(key, recovery.fieldPath, value);
         spec.recovery = { ...recovery, fieldPath: String(value) };
+        return;
+      }
+      return;
+    }
+    case "group": {
+      // The sole write path for `resolve-confusable-cluster` — and the ONLY
+      // route by which a group proposal reaches canonical AIR. Both keys are
+      // pinned to the review tier on the FIELD (approval.ts), so this code
+      // only ever runs under `applyReviewed` behind a receipt-bound human
+      // decision (or a test exercising it directly).
+      if (key === "workflow" && value && typeof value === "object") {
+        const payload = zGroupWorkflowPayload.safeParse(value);
+        if (!payload.success) return;
+        // Validation upstream grounded the references against the task's
+        // grant; here they resolve against the whole document so the applied
+        // workflow carries real AIR ids.
+        const build = buildGroupWorkflow(payload.data, air.operations, air.service.id);
+        if (!build.workflow) return;
+        if (air.workflows.some((wf) => wf.id === build.workflow?.id)) return;
+        // `state: "approved"` is the receipt's meaning, not a shortcut: the
+        // reviewer approved exactly this composition, with the measured
+        // routing delta in front of them, and an approved workflow is what
+        // lets `planWorkflowSurface` register the composite and apply its
+        // supersessions — the surface shrink the proposal exists to buy.
+        build.workflow.evidence.claims.push({
+          subject: build.workflow.id,
+          predicate: "authored",
+          value: true,
+          source: "inferred",
+          sourceRef: "anvil-refine-group",
+          method: "group_refinement",
+          note:
+            `Composed from confusable cluster '${describeTarget(target)}' through the ` +
+            "refine rails; applied only under a receipt-bound review decision.",
+          confidence: 0.95,
+          review: "accepted",
+        });
+        record(key, undefined, {
+          id: build.workflow.id,
+          steps: build.workflow.steps.map((step) => step.operationId),
+          supersedes: build.workflow.supersedes ?? [],
+        });
+        air.workflows.push(build.workflow);
+        const owner = air.capabilities.find((c) => c.id === build.workflow?.capabilityId);
+        if (owner && !owner.workflowIds.includes(build.workflow.id)) {
+          owner.workflowIds.push(build.workflow.id);
+        }
+        return;
+      }
+      if (key === "capability" && value && typeof value === "object") {
+        const payload = zGroupCapabilityPayload.safeParse(value);
+        if (!payload.success) return;
+        if (air.capabilities.some((c) => c.id === payload.data.id)) return;
+        const members = payload.data.operations
+          .map((reference) => resolveOperationReference(air.operations, reference))
+          .filter((op): op is Operation => op !== undefined);
+        if (members.length !== payload.data.operations.length) return;
+        const memberIds = [...new Set(members.map((op) => op.id))].sort();
+        // Mirrors `authorCapabilities` (@anvil/compiler capability-authoring.ts)
+        // rather than importing it — the compiler is a dev dependency here (see
+        // vocabulary.ts for the rule). Same posture, deliberately: the receipt
+        // approved DECLARING the grouping; `lifecycle: "proposed"` keeps the
+        // capability's own approval — and its disclosure budget — with
+        // `approveCapability`, exactly where a manifest-authored grouping's is.
+        const capability: Capability = {
+          id: payload.data.id,
+          displayName: payload.data.display_name,
+          description: payload.data.description,
+          source: "manifest",
+          resources: [
+            ...new Set(
+              members.map((op) => op.effect.resource).filter((r): r is string => Boolean(r)),
+            ),
+          ].sort(),
+          operationIds: memberIds,
+          workflowIds: [],
+          intentExamples: payload.data.intent_examples,
+          // Derived member-state summary, the same rule as discovery
+          // (capabilityState in @anvil/compiler) — never a review decision.
+          state: members.some((op) => op.state === "approved")
+            ? "approved"
+            : members.every((op) => op.state === "blocked")
+              ? "blocked"
+              : members.some((op) => op.state === "review_required")
+                ? "review_required"
+                : "generated",
+          lifecycle: "proposed",
+          evidence: {
+            claims: [
+              {
+                subject: payload.data.id,
+                predicate: "grouping",
+                value: "group_refinement",
+                source: "inferred",
+                sourceRef: "anvil-refine-group",
+                method: "group_refinement",
+                note:
+                  `Authored from confusable cluster '${describeTarget(target)}' through the ` +
+                  "refine rails. Authoring is a declaration, not an approval — the grouping " +
+                  "still goes through capability review and its disclosure budget.",
+                confidence: 0.95,
+                review: "accepted",
+              },
+            ],
+          },
+        };
+        record(key, undefined, { id: capability.id, operationIds: memberIds });
+        air.capabilities.push(capability);
         return;
       }
       return;

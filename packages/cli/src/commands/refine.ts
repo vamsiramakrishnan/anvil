@@ -7,6 +7,7 @@ import {
   buildRefinementPlan,
   createRefinementTask,
   createReviewReceipt,
+  type Deficiency,
   discoverSkills,
   generateRefinementSkill,
   HarnessProtocolError,
@@ -26,8 +27,16 @@ import {
 } from "@anvil/refinement";
 import { type Command, Option } from "commander";
 import type { CliIO } from "../io.js";
+import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
+import {
+  admitOrRefuse,
+  clusterDeficiency,
+  GroupAdmissionRefusal,
+  groupDeltaClaim,
+  scoreGroupProposal,
+} from "./refine-group.js";
 import { loadAir, resolveAirPath } from "./shared.js";
 
 /**
@@ -54,6 +63,7 @@ export function registerRefine(parent: Command, ctx: CommandContext): void {
           "`anvil refine skills` lists those skills as typed contracts (trigger, evidence policy, output boundary, validation), whose executor is kept separate from their semantics. " +
           "`anvil refine run` routes each in-scope deficiency to its skill, proposes an evidence-backed semantic patch, validates it, then MEASURES only the eval families it affects — with a safety guard that must never regress — and reconciles the result through an auto-approval policy into a reviewable refinement pack (--severity/--skill/--safe-only/--out). " +
           "`export-task` and `import-proposal` expose those same rails as portable JSON, so any coding harness can investigate without importing Anvil's TypeScript package. " +
+          "They also carry GROUP scope: `export-task <dir> group:<cluster-id>` reads the benchmark report's measured confusion clusters and exports one hash-bound task asking the harness for a higher-order shape — EITHER a workflow whose supersedes (⊆ its own steps) shrinks the served surface, OR an authored capability over the members, OR an honest decline with a reason. On import, a validated group proposal is SCORED before review: the deterministic lexical router re-routes the same intent tasks over the current vs hypothetical served surface; a negative delta is refused with the numbers, and a non-negative delta attaches as evidence (routing-delta.json) on a proposal that still lands at review — the measured uplift is information for the human, never an approval. " +
           "`anvil refine review <pack-dir>` prints the human review. `approve`/`reject` write hash-bound decisions, and `apply-pack` applies those exact reviewed bytes without rerunning investigation. `anvil refine apply` remains the shortcut for auto-approved refinements.",
       ),
     { mutates: true },
@@ -101,11 +111,18 @@ export function registerRefine(parent: Command, ctx: CommandContext): void {
     .command("export-task")
     .summary("Export one hash-bound, process-neutral coding-harness task.")
     .argument("<path>", "generated bundle directory or air.yaml")
-    .argument("<target-key>", "a target key printed by `anvil case list`")
+    .argument(
+      "<target-key>",
+      "a target key printed by `anvil case list`, or `group:<cluster-id>` from `anvil benchmark`",
+    )
     .requiredOption("--out <file>", "write the portable task JSON here")
     .option("--skill <name>", "select a skill when one target has multiple deficiencies")
     .option("--repo-root <dir>", "Git repository the harness may inspect", ".")
     .option("--inspect <paths>", "comma-separated repository-relative inspect scopes")
+    .option(
+      "--traffic-report <file>",
+      "observed-capability report (`anvil capability propose --from-records --out`); its groupings ride into a group task as related-operation context",
+    )
     .action((path: string, key: string, opts: RefineExportTaskOptions) => {
       ctx.code = runExportTask(path, key, opts, ctx.io);
     });
@@ -120,13 +137,13 @@ export function registerRefine(parent: Command, ctx: CommandContext): void {
     .option("--repo-root <dir>", "Git repository named by the task", ".")
     .option("--json", "emit a structured success or rejection envelope")
     .action(
-      (
+      async (
         path: string,
         taskFile: string,
         submissionFile: string,
         opts: RefineImportProposalOptions,
       ) => {
-        ctx.code = runImportProposal(path, taskFile, submissionFile, opts, ctx.io);
+        ctx.code = await runImportProposal(path, taskFile, submissionFile, opts, ctx.io);
       },
     );
 
@@ -218,6 +235,7 @@ interface RefineExportTaskOptions {
   skill?: string;
   repoRoot: string;
   inspect?: string;
+  trafficReport?: string;
 }
 
 interface RefineImportProposalOptions {
@@ -327,6 +345,22 @@ function runExportTask(
 ): number {
   try {
     const air = loadAir(path);
+    // GROUP scope: the deficiency is derived from the benchmark report (a
+    // derived record the pure-over-AIR detectors cannot produce), so the
+    // bridge in refine-group.ts constructs it deterministically and the
+    // ordinary export rails hash-bind it from here on.
+    if (key.startsWith("group:")) {
+      const deficiency = clusterDeficiency(
+        air,
+        resolveBundleDir(path),
+        key.slice("group:".length),
+        opts.trafficReport,
+      );
+      return exportDeficiencyTask(air, deficiency, path, opts, io);
+    }
+    if (opts.trafficReport) {
+      throw new Error("--traffic-report only applies to group targets (group:<cluster-id>).");
+    }
     const plan = buildRefinementPlan(air);
     const candidates = plan.deficiencies.filter((deficiency) => {
       const skill = skillFor(deficiency.code);
@@ -354,23 +388,7 @@ function runExportTask(
     }
     const deficiency = bySkill.values().next().value;
     if (!deficiency) throw new Error(`No deficiency selected for target '${key}'.`);
-    const inspectScopes = opts.inspect
-      ?.split(",")
-      .map((scope) => scope.trim())
-      .filter(Boolean);
-    const task = createRefinementTask(air, deficiency, {
-      repositoryRoot: opts.repoRoot,
-      repositoryRevision: resolveRepositoryRevision(opts.repoRoot),
-      inspectScopes,
-    });
-    writeWithoutReplacingDifferent(opts.out, `${JSON.stringify(task, null, 2)}\n`);
-    io.out(`Exported ${task.taskId} → ${opts.out}`);
-    io.out(`  skill: ${task.skill.name} v${task.skill.version}`);
-    io.out(`  repository: ${task.repository.revision}`);
-    io.out(
-      "Give this JSON to any coding harness; it returns one submission matching expectedSubmission.",
-    );
-    return 0;
+    return exportDeficiencyTask(air, deficiency, path, opts, io);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     io.err(message);
@@ -378,26 +396,86 @@ function runExportTask(
   }
 }
 
+/** The shared export tail: hash-bind one deficiency into a portable task file. */
+function exportDeficiencyTask(
+  air: ReturnType<typeof loadAir>,
+  deficiency: Deficiency,
+  path: string,
+  opts: RefineExportTaskOptions,
+  io: CliIO,
+): number {
+  const inspectScopes = opts.inspect
+    ?.split(",")
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  const task = createRefinementTask(air, deficiency, {
+    repositoryRoot: opts.repoRoot,
+    repositoryRevision: resolveRepositoryRevision(opts.repoRoot),
+    inspectScopes,
+  });
+  writeWithoutReplacingDifferent(opts.out, `${JSON.stringify(task, null, 2)}\n`);
+  io.out(`Exported ${task.taskId} → ${opts.out}`);
+  io.out(`  skill: ${task.skill.name} v${task.skill.version}`);
+  io.out(`  repository: ${task.repository.revision}`);
+  io.out(
+    "Give this JSON to any coding harness; it returns one submission matching expectedSubmission.",
+  );
+  if (deficiency.target.kind === "group") {
+    io.out(
+      `Import with \`anvil refine import-proposal ${path} ${opts.out} <submission.json> --out <pack-dir>\`; ` +
+        "the proposal is benchmark-scored on import and a negative routing delta is refused.",
+    );
+  }
+  return 0;
+}
+
 function readJsonFile(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
 /** `anvil refine import-proposal` — re-enter deterministic validation and measurement. */
-function runImportProposal(
+async function runImportProposal(
   path: string,
   taskFile: string,
   submissionFile: string,
   opts: RefineImportProposalOptions,
   io: CliIO,
-): number {
+): Promise<number> {
   try {
+    const air = loadAir(path);
     const pack = importHarnessSubmission(
-      loadAir(path),
+      air,
       readJsonFile(taskFile),
       readJsonFile(submissionFile),
-      { repositoryRoot: opts.repoRoot },
+      {
+        repositoryRoot: opts.repoRoot,
+      },
     );
+
+    // GROUP admission (Task B): a validated group proposal must measurably not
+    // hurt before it may reach review. Scored HERE — after deterministic
+    // validation, before anything is written — so a refused proposal leaves no
+    // pack behind. The current side is recomputed live (deterministic lexical
+    // router over AIR), never read from a possibly-stale report.
+    const groupRecord = pack.harnessImports?.[0];
+    const groupRefinement = pack.refinements.find(
+      (refinement) =>
+        refinement.target.kind === "group" &&
+        ("workflow" in refinement.proposal.set || "capability" in refinement.proposal.set),
+    );
+    let deltaFile: string | undefined;
+    if (groupRefinement && groupRecord) {
+      const delta = admitOrRefuse(
+        await scoreGroupProposal(air, groupRecord.task.deficiency, groupRefinement.proposal.set),
+      );
+      // The delta is EVIDENCE on the proposal — the reviewer sees the number;
+      // the tier stays review (approval.ts pins the group patch keys).
+      groupRefinement.evidence.push(groupDeltaClaim(delta));
+      deltaFile = `${JSON.stringify(delta, null, 2)}\n`;
+    }
+
     const files = packFiles(pack);
+    if (deltaFile !== undefined) files["routing-delta.json"] = deltaFile;
     for (const [name, contents] of Object.entries(files)) {
       const destination = join(opts.out, name);
       if (existsSync(destination) && readFileSync(destination, "utf8") !== contents) {
@@ -432,10 +510,51 @@ function runImportProposal(
           ? `  harness declined honestly: ${record.submission.status}`
           : `  refinement: ${refinement.status} (${refinement.approval.tier})`,
       );
+      if (deltaFile !== undefined) {
+        const deltaClaim = groupRefinement?.evidence[groupRefinement.evidence.length - 1];
+        io.out(
+          `  routing delta attached as evidence (routing-delta.json): ${deltaClaim?.note ?? ""}`,
+        );
+      }
       io.out(`Review with \`anvil refine review ${opts.out}\`.`);
     }
     return 0;
   } catch (error) {
+    if (error instanceof GroupAdmissionRefusal) {
+      // Same envelope discipline as every other harness rejection: one JSON
+      // document naming its own shape, the numbers in the message and issues.
+      const rejection = {
+        code: "refinement/group_delta_regressed" as const,
+        stage: "admission" as const,
+        message: error.message,
+        issues: [
+          `tasks routed correctly before: ${error.delta.passedBefore}/${error.delta.totalTasks}`,
+          `tasks routed correctly after: ${error.delta.passedAfter}/${error.delta.totalTasks}`,
+          `upliftPts: ${error.delta.upliftPts.toFixed(1)}`,
+          ...error.delta.flippedToFail.map(
+            (flip) => `now mis-routed: "${flip.intent}" (${flip.operationId})`,
+          ),
+        ],
+      };
+      if (opts.json === true) {
+        io.out(
+          JSON.stringify(
+            {
+              schemaVersion: 1,
+              reportType: "anvil.refinement-harness-import-error",
+              ok: false,
+              ...rejection,
+            },
+            null,
+            2,
+          ),
+        );
+      } else {
+        io.err(rejection.message);
+        for (const issue of rejection.issues) io.err(`  - ${issue}`);
+      }
+      return 1;
+    }
     if (error instanceof HarnessProtocolError) {
       if (opts.json === true) {
         io.out(

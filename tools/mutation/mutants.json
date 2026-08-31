@@ -833,6 +833,26 @@
       "tests": [
         "packages/compiler/src/capability-authoring.test.ts"
       ]
+    },
+    {
+      "id": "benchmark-admission/negative-delta-refused",
+      "file": "packages/cli/src/commands/refine-group.ts",
+      "control": "A group proposal whose measured routing delta is NEGATIVE is refused with the numbers before it can reach review. Disable the comparison and a composition that measurably mangles routing sails to a reviewer wearing a benchmark-scored evidence claim — the admission gate reporting success without having gated.",
+      "find": "  if (delta.passedAfter < delta.passedBefore) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/cli/src/commands/refine-group.test.ts"
+      ]
+    },
+    {
+      "id": "refinement/group-supersedes-outside-steps-refused",
+      "file": "packages/refinement/src/skills/group-proposal.ts",
+      "control": "A group workflow's supersedes may only name the proposal's own steps, and the named group_supersedes_within_steps check owns that refusal (the AIR schema's refinement is defense in depth behind it, not a substitute for the named rejection a harness is told to fix).",
+      "find": "    return !op || !stepIds.has(op.id);",
+      "replace": "    return false;",
+      "tests": [
+        "packages/refinement/src/protocol/group-cluster.test.ts"
+      ]
     }
   ]
 }

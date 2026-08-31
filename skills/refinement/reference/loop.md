@@ -50,6 +50,7 @@ it, and whether that skill is implemented today.
 | `query_language_passthrough` | safety | high | review-query-passthrough | yes |
 | `retry_basis_unproven` | safety | high | classify-idempotency | yes |
 | `capability_missing_routing_phrases` | usability | low | author-routing-phrases | yes |
+| `confusable_tool_cluster` | usability | high | resolve-confusable-cluster | yes |
 | `cross_surface_disagreement` | usability | high | align-artifacts | — |
 | `indistinct_operation_descriptions` | usability | medium | disambiguate-operations | yes |
 | `operation_lacks_intent_examples` | usability | low | author-intent-examples | yes |

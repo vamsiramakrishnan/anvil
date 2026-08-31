@@ -1,5 +1,5 @@
 import { resolveAsyncContract } from "./async-contract.js";
-import type { Operation, Workflow } from "./schema.js";
+import type { JsonSchema, Operation, Workflow } from "./schema.js";
 
 /**
  * Which workflows register as composite tools, and which operation tools they
@@ -54,6 +54,36 @@ function isValidFieldMapping(binding: string): boolean {
  */
 export function extractFieldName(binding: string): string {
   return binding.match(FIELD_MAPPING)?.[1] ?? "";
+}
+
+/**
+ * The output fields a `$.output.<field>` binding can address on one operation:
+ * one level of property names from its output schema, descending through a
+ * single array wrapper (a list/search operation's real payload is
+ * `items[].field`, not the envelope itself). Deliberately shallow — a deep walk
+ * would match coincidental nested names, the structural-noise problem the
+ * capability-composition leaf detector already documents.
+ *
+ * Lifted (not rewritten) from `@anvil/harness`'s `detectWorkflowCandidates`, and
+ * homed HERE because this module owns the binding grammar those field names
+ * feed: the serving path extracts `$.output.<field>` with `extractFieldName`
+ * above, the harness detector proposes bindings against these names, and
+ * refinement's group-proposal validation refuses bindings that do not resolve
+ * to one of them. Three consumers, one definition — a validator that accepted a
+ * field the detector could not see would bind `undefined` at serve time.
+ */
+export function bindableOutputFields(schema: JsonSchema | undefined): Set<string> {
+  const out = new Set<string>();
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return out;
+  const properties = schema.properties;
+  if (typeof properties === "object" && properties !== null && !Array.isArray(properties)) {
+    for (const key of Object.keys(properties)) out.add(key);
+    return out;
+  }
+  if (schema.type === "array" && typeof schema.items === "object" && schema.items !== null) {
+    return bindableOutputFields(schema.items as JsonSchema);
+  }
+  return out;
 }
 
 /**

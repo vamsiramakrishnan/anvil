@@ -63,6 +63,7 @@ const PAGES = [
   { src: "docs/adopting-mcp-servers.md", dest: "guides/adopting-mcp-servers.md", order: 6 },
   { src: "docs/wire-protocols.md", dest: "guides/wire-protocols.md", order: 7 },
   { src: "docs/refinement-sdk.md", dest: "guides/refinement-sdk.md", order: 7 },
+  { src: "docs/group-refinement.md", dest: "guides/group-refinement.md", order: 7 },
   { src: "docs/legacy-inventory.md", dest: "guides/legacy-inventory.md", order: 8 },
   { src: "docs/legacy-refinement.md", dest: "guides/legacy-refinement.md", order: 9 },
   { src: "docs/legacy-sdk.md", dest: "guides/legacy-sdk.md", order: 10 },

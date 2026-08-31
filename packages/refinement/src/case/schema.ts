@@ -55,6 +55,11 @@ export const zValidationCheckId = z.enum([
   "idempotency_carrier_resolves",
   "pagination_binding_resolves",
   "resource_grounded_in_contract",
+  "group_proposal_shape",
+  "group_grant_respected",
+  "group_supersedes_within_steps",
+  "group_workflow_composes",
+  "group_names_grounded",
 ]);
 export const zEvalFamily = z.enum([
   "operation_routing",
@@ -113,6 +118,7 @@ export const zSemanticTarget = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("enum"), operationId: z.string(), path: z.string() }),
   z.object({ kind: z.literal("error"), operationId: z.string(), code: z.string() }),
   z.object({ kind: z.literal("workflow"), workflowId: z.string() }),
+  z.object({ kind: z.literal("group"), groupId: z.string() }),
 ]);
 
 /** A target-relative semantic patch. `set` values must be JSON. */

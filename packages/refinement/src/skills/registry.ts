@@ -690,6 +690,62 @@ const reduceSchemaDisclosure: RefinementSkill = {
   ],
 };
 
+/**
+ * Answer a benchmark-measured confusable-tool cluster with a higher-order
+ * shape — the first GROUP-scope skill: its target is K operations at once,
+ * never one node.
+ *
+ * The deficiency is not detectable from AIR alone (detectors are pure over
+ * `AirDocument`); the CLI constructs it deterministically from the benchmark
+ * report's confusion clusters and hash-binds the members, the mis-routed
+ * intents, and the grant into the exported task. The output boundary is the
+ * bounded proposal union in group-proposal.ts: EITHER one composed workflow
+ * (steps ⊆ grant, supersedes ⊆ its own steps, bindings that thread on the
+ * shared planner) OR one authored capability (members ⊆ grant) — and "no
+ * change, with a reason" is the protocol's honest-decline status, never a
+ * patch.
+ *
+ * Three boundaries make an unreliable harness safe here: the deterministic
+ * group checks below; the approval policy routing every `workflow`/`capability`
+ * patch to review on the FIELD (approval.ts); and the CLI's benchmark-scored
+ * admission, which refuses any proposal whose measured routing delta is
+ * negative before a reviewer ever sees it. Evidence bar is `single` for the
+ * same reason as `rename-operation`: the proposal is a projection of surfaces
+ * the task itself carries (the operations' own names, intents, and measured
+ * confusions); a second source could only restate them.
+ */
+const resolveConfusableCluster: RefinementSkill = {
+  name: "resolve-confusable-cluster",
+  version: 1,
+  triggers: ["confusable_tool_cluster"],
+  targetKind: "group",
+  context: ["group_members", "source_evidence"],
+  evidence: {
+    allowed: ["spec", "source_impl", "test_fixture", "doc_example", "postman", "recorded_traffic"],
+    minimumStrength: "single",
+    minimumVerification: "allow_unverified",
+  },
+  output: {
+    predicates: ["group.workflow", "group.capability"],
+    supportingPredicates: ["group.analysis"],
+    fields: ["workflow", "capability"],
+  },
+  constraints: ["do_not_loosen_safety", "do_not_invent_business_rules", "preserve_domain_terms"],
+  validation: [
+    "patch_within_boundary",
+    "no_semantic_schema_change",
+    "claims_from_allowed_sources",
+    "evidence_meets_minimum_strength",
+    "evidence_supports_value",
+    "evidence_meets_verification",
+    "group_proposal_shape",
+    "group_grant_respected",
+    "group_supersedes_within_steps",
+    "group_workflow_composes",
+    "group_names_grounded",
+  ],
+};
+
 /** Every skill Anvil ships today. Executors are separate; these are semantics only. */
 export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   describeField,
@@ -708,6 +764,7 @@ export const REFINEMENT_SKILLS: readonly RefinementSkill[] = [
   disambiguateOperations,
   describeCapability,
   reduceSchemaDisclosure,
+  resolveConfusableCluster,
 ];
 
 /** Discover the available skills (stable order). */

@@ -663,3 +663,79 @@ The heuristic executor proposes ONLY the singularize over-strip repair
 (`releas` → `release`, the vendor's own word read off the vendor's own
 name); every synonym case honestly proposes nothing and flows to the
 harness seam.
+
+## Group-scope refine rails + benchmark-scored admission (2026-08-31)
+
+The last two links of the routing loop, landed as one vertical slice: a
+benchmark confusion cluster can now be handed to a coding harness as a
+GROUP-scope case file, and a validated group proposal is SCORED by the
+routing benchmark before it may reach review.
+
+**Where the pieces live.** The bridge is CLI-side, deliberately —
+`clusterDeficiency` (packages/cli/src/commands/refine-group.ts) reads
+`benchmark.report.json`'s `confusion.clusters` (a DERIVED record any router
+may have produced; refinement's detectors stay pure over AirDocument) and
+constructs a `confusable_tool_cluster` deficiency the ordinary export rails
+hash-bind (`anvil refine export-task <dir> group:<cluster-id>`; clusters now
+carry deterministic `cc_…` ids). Import needs no report: `taskHash` binds the
+cluster and `sourceContractHash` pins the measured document, so the
+plan-lookup still-exists check is replaced by exactly that pair for group
+targets (protocol/import.ts). The proposal union is bounded and zod-strict
+(skills/group-proposal.ts): ONE workflow (steps ⊆ grant, supersedes ⊆ its own
+steps, bindings that thread on the shared planner) XOR one authored
+capability (members ⊆ cluster ∪ explicitly-listed traffic-related ops) XOR
+the protocol's honest-decline statuses — "no change" is a status with a
+reason, never a patch. Validation reuses the one vocabulary
+(`routingTokens`), the one binding-field definition (`bindableOutputFields`,
+lifted from the harness detector into @anvil/air's workflow-surface module),
+and the one surface planner (`planWorkflowSurface`). Approval pins BOTH
+patch keys to review on the FIELD (approval.ts rule 0e); apply
+(refinement/apply.ts `group` case) writes an approved workflow only under a
+receipt, and a capability born `proposed` — the receipt approved declaring
+the grouping, its disclosure budget still gates at `anvil capability
+approve`, mirroring capability-authoring.ts.
+
+**Admission, measured.** `scoreGroupProposal` re-routes the same intent
+tasks (deterministic lexical router, recomputed live — a stale report can
+never flatter a proposal) over current vs hypothetical surface: workflow =
+members superseded per `planWorkflowSurface` + the composite under its real
+served name/description (mcp-runtime's own naming; the proposal's intents do
+NOT enter the served description, so the score measures the surface that
+would actually serve); capability = the member tasks over full vs narrowed
+catalog. Negative delta ⇒ refused with the numbers before any pack is
+written (mutant: `benchmark-admission/negative-delta-refused`); non-negative
+⇒ attached as a `group.routing_delta` evidence claim + `routing-delta.json`,
+tier still review. The chain is validated structurally, not executed —
+`simulated: false` says so in every report (simulator integration judged
+too large for this slice; recorded, not claimed).
+
+**Fixture loop, measured (refine-group.test.ts).** Zendesk-shaped views
+family (4 served tools, 12 tasks, 6 mis-routed → cluster of 3): a
+list→execute composite superseding both steps scored 6→11 of 12 (+41.7 pts)
+with one honest flip-to-fail listed verbatim; approved via receipt, the
+planner then serves 3 tools (4 − 2 + 1). A grounded-but-wrongly-named
+composite superseding only `list` was REFUSED: "this abstraction makes
+routing worse: 6→4 of 12 (−16.7 pts)", per-intent flips in the envelope,
+exit 1, no pack written. A step naming an operation outside the grant was
+refused by `group_grant_respected`, not left for a reviewer.
+
+**Live loop, real compile (helpdesk views OpenAPI, 6 operations).**
+`agentify` → `refine apply --skill author-intent-examples` → approve all 6
+reads → `anvil benchmark`: 7/12 tasks (58.3%), and the benchmark found
+cluster `cc_2b90f6b15dc7` (5 tools, 5 mis-routed) ORGANICALLY — the
+templated intent "list the views" landed on three different operations
+(execute/count/list variants of /views), which is the estate-scale finding
+reproduced in six operations. Export → workflow submission (list→execute,
+supersedes both) → import: delta 7→7, attached honestly as "routing
+unchanged — the composition bought nothing on this dimension"; still landed
+at review; receipt-approved; apply; `tools/list` (real in-memory MCP client)
+went 6 → 5 tools with `helpdesk_views_api_view_list_views_execute_view`
+standing in for the two it replaced. Two lessons said out loud: (a) intra-
+family collisions ("list the views" vs list_active_views) are not fixed by
+composition OR narrowing — they need better intents/names, and the zero
+delta stated that instead of flattering the composite; (b) the first live
+spec enveloped its list response (`{views: [...]}`), and one-level
+`bindableOutputFields` cannot thread `view_id` out of it — the binding
+refusal is pinned by test (group-cluster.test.ts, `$.output.nonexistent`),
+and the envelope-vs-array distinction decides whether the workflow arm is
+even available on an estate.

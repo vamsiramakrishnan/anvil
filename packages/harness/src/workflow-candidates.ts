@@ -1,4 +1,5 @@
-import type { AirDocument, JsonSchema, Operation } from "@anvil/air";
+import type { AirDocument, Operation } from "@anvil/air";
+import { bindableOutputFields } from "@anvil/air";
 
 /**
  * A structural candidate for a `Workflow`: calling `toOperationId` right after
@@ -28,31 +29,6 @@ export interface WorkflowCandidate {
   supersedes: string[];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * One level of leaf field names from a JSON Schema object, descending through a
- * single array wrapper (a list/search operation's real payload is `items[].field`,
- * not the envelope itself). Deliberately shallow: a deep walk would start
- * matching on coincidental nested names, exactly the structural-noise problem
- * `capability compose` already has at the leaf level.
- */
-function leafFieldNames(schema: JsonSchema | undefined): Set<string> {
-  const out = new Set<string>();
-  if (!isRecord(schema)) return out;
-  const properties = isRecord(schema.properties) ? schema.properties : undefined;
-  if (properties) {
-    for (const key of Object.keys(properties)) out.add(key);
-    return out;
-  }
-  if (schema.type === "array" && isRecord(schema.items)) {
-    return leafFieldNames(schema.items as JsonSchema);
-  }
-  return out;
-}
-
 /** toOperation's required, name-matchable input params (path/query only — a body field isn't a simple binding target here). */
 function requiredParamNames(op: Operation): string[] {
   return op.input.params.filter((p) => p.required && p.in !== "header").map((p) => p.name);
@@ -77,7 +53,10 @@ export function detectWorkflowCandidates(air: AirDocument): WorkflowCandidate[] 
   for (const ops of byCapability.values()) {
     for (const fromOp of ops) {
       if (fromOp.effect.kind !== "read") continue;
-      const outputFields = leafFieldNames(fromOp.output.schema);
+      // The binding-addressable field names — one definition, shared with the
+      // serving path's extractor and refinement's group-proposal validation
+      // (see `bindableOutputFields` in @anvil/air's workflow-surface module).
+      const outputFields = bindableOutputFields(fromOp.output.schema);
       if (outputFields.size === 0) continue;
 
       for (const toOp of ops) {
