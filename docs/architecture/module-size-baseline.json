@@ -135,7 +135,7 @@
       "plan": "Deterministic deficiency detection over AIR; cohesive. Watch."
     },
     "packages/refinement/src/skills/executor.ts": {
-      "lines": 978,
+      "lines": 980,
       "plan": "1069 is the union of two independently-recorded growths that merged: the intent-example corroboration filter with routingTokens (recorded at 1051) and the widened singularize body mirrored from the compiler (recorded at 1002 pre-filter). Both additions carry the same exit: routingTokens is a general two-surfaces-name-the-same-thing primitive and singularize is documented as a byte-identical mirror of naming.ts — when either gains a second caller, lift it into a shared module and lower this baseline."
     },
     "packages/runtime/src/executor.ts": {
