@@ -120,6 +120,42 @@ templates "list the count manies", because `get_view_counts` really does say
 "count" — naming that path segment correctly is a compiler-side fix, and this
 rule only refuses phrases that are provably about something else.
 
+## From failures to work items: mis-route clusters and routing hubs
+
+The 272 failures above used to die in the report as 272 `failReason` strings.
+`anvil benchmark` now clusters them deterministically (same report in, same
+clusters out — no model, no network) and writes the result into
+`benchmark.report.json` as a `confusion` section, rendering the top clusters in
+the terminal. The report stays schemaVersion 2: the field is additive, and the
+certify reader validates only the envelope it names.
+
+**What a cluster is.** An edge connects the tool a task belonged to and the tool
+the CURATED catalog actually routed it to; connected components of that graph
+are families of mutually confusable tools — "these K tools, to an agent, blur
+into one" — with the evidence attached: member operation ids, the mis-routed
+intents verbatim, per-direction counts, and the shared vocabulary stems that
+make them collide (`list_views` / `execute_view` collide on "view"). A family
+below five mis-routed tasks is not reported: one crossed intent is an authored
+phrasing being vague, and five is the same floor the harness uses before
+recorded traffic may claim anything (`MIN_SAMPLES_FOR_CLAIM`).
+
+**What a hub is, and why it is reported apart.** A tool confused with more than
+a catalog-scale number of partners (5% of the catalog, and never fewer than 6)
+is not a member of any family — it is a sink, the shape a search endpoint makes
+when every stray intent falls into it. This is the routing-side twin of the
+FLEXCUBE envelope finding: left in the graph, one hub welds every real family
+into a single giant blob, so hubs are pulled out first and listed separately as
+`routing hubs` with their own evidence. The isolation is armed as a mutation
+mutant (`benchmark/hub-never-welds-clusters`).
+
+**What to do with one.** A cluster is a candidate, never a decision — the
+benchmark only proves the confusion exists, not what it should become. The
+honest closings are the existing propose-only rails: compose a workflow that
+`supersedes` the variants, collapse them behind a parameter of one tool via a
+manifest, or narrow the served capability so the confusable siblings are not
+exposed together. A hub usually wants the opposite reading: not composition but
+a look at whether the hub tool's description is doing too much work.
+
 ## Open finding: 44 curated tool names stutter
 
 Turned up while reading the model's mis-routes, not yet fixed:

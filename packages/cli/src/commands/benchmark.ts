@@ -7,6 +7,11 @@ import { NodeAgentProcessRunner } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import {
+  analyzeConfusion,
+  type ConfusionAnalysis,
+  renderConfusionLines,
+} from "./benchmark-clusters.js";
+import {
   agentRouter,
   bareCatalog,
   benchmarkOperations,
@@ -52,7 +57,9 @@ export function registerBenchmark(parent: Command, ctx: CommandContext): void {
           "surface examples. A task passes when the curated route reaches the right tool and its params " +
           "are satisfiable; the bare score is the baseline that shows what compilation bought. Routing is " +
           "deterministic (lexical) by default; pass --agent <command> to route with a real model over " +
-          "stdin/stdout. Writes benchmark.report.json. Exit 0 only when the score meets --check.",
+          "stdin/stdout. Writes benchmark.report.json, including deterministic mis-route clustering: " +
+          "confusable tool families with their evidence, and routing hubs reported apart — candidates " +
+          "for composition or collapse, never decisions. Exit 0 only when the score meets --check.",
       )
       .argument("<dir>", "generated bundle directory (or its air.yaml)")
       .option("--check <threshold>", "exit non-zero if score < threshold (0..1)")
@@ -99,6 +106,15 @@ export interface BenchmarkReport {
    *  1-of-40 are different feats, so the size is part of the result. */
   catalogSize: number;
   operations: BenchmarkOperationResult[];
+  /**
+   * Mis-route clustering over the CURATED-catalog failures: confusable tool
+   * families with their evidence, and routing hubs reported apart (see
+   * benchmark-clusters.ts). An additive field within schemaVersion 2 — the
+   * certify reader (`BenchmarkEvidenceReport` in @anvil/generators) validates
+   * only the envelope it names, so extending the report does not break it.
+   * Always a CANDIDATE signal ("worth asking about"), never a decision.
+   */
+  confusion: ConfusionAnalysis;
   summary: {
     total: number;
     passed: number;
@@ -198,6 +214,7 @@ async function runBenchmark(
     router: router.name,
     catalogSize: curated.length,
     operations,
+    confusion: analyzeConfusion(operations),
     summary: {
       total,
       passed,
@@ -281,6 +298,8 @@ function renderBenchmarkSummary(report: BenchmarkReport, dir: string): string {
       }
     }
   }
+
+  lines.push(...renderConfusionLines(report.confusion));
 
   lines.push("");
   const { total, passed, score, curatedRouted, bareRouted, upliftPts } = report.summary;

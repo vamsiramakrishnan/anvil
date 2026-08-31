@@ -802,6 +802,16 @@
       "tests": [
         "packages/refinement/src/protocol/rehome-resource.test.ts"
       ]
+    },
+    {
+      "id": "benchmark/hub-never-welds-clusters",
+      "file": "packages/cli/src/commands/benchmark-clusters.ts",
+      "control": "A routing hub's edges never enter confusion-cluster construction, so one catalog-scale sink cannot weld unrelated confusable families into a single blob.",
+      "find": "  const clusterEdges = directed.filter((e) => !hubNames.has(e.intended) && !hubNames.has(e.routed));",
+      "replace": "  const clusterEdges = directed;",
+      "tests": [
+        "packages/cli/src/commands/benchmark-clusters.test.ts"
+      ]
     }
   ]
 }

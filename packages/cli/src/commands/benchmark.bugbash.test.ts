@@ -110,6 +110,11 @@ describe("anvil benchmark — command and rendering", () => {
         expect(typeof firstTask.bare.pass).toBe("boolean");
         expect(typeof firstTask.satisfiable).toBe("boolean");
       }
+      // The mis-route clustering rides inside the report — a derived record,
+      // so no new file enters the bundle — and is always a candidate signal.
+      expect(report.confusion.posture).toBe("candidate");
+      expect(Array.isArray(report.confusion.clusters)).toBe(true);
+      expect(Array.isArray(report.confusion.hubs)).toBe(true);
       expect(report.summary).toBeDefined();
       expect(report.summary.curatedRouted).toBeGreaterThanOrEqual(0);
       expect(report.summary.bareRouted).toBeGreaterThanOrEqual(0);
