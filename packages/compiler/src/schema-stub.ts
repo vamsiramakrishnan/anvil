@@ -14,12 +14,28 @@
 /**
  * JSON Schema keywords whose value is a *map of schemas* rather than a schema.
  * Truncation must treat these as containers — see {@link truncateToStub}.
+ *
+ * This must stay exhaustive across the drafts a spec can reach us in, because
+ * a keyword missing here is silently wrong rather than loudly wrong: OpenAPI
+ * 3.0 specs carry draft-04/07 (`definitions`, `dependencies`) and 3.1 carries
+ * 2020-12 (`$defs`, `dependentSchemas` — the rename of the schema half of
+ * `dependencies`). Keywords whose value is an *array* of schemas (`allOf`,
+ * `oneOf`, `prefixItems`, …) do not belong here: the array branch already
+ * preserves their shape. Nor do keywords holding a single schema (`items`,
+ * `not`, `additionalProperties`, `propertyNames`, `if`/`then`/`else`,
+ * `contains`, `unevaluated*`) — those really are schemas.
+ *
+ * `dependencies` is the mixed draft-07 form: each value is a schema *or* an
+ * array of property names. Both are handled — the container truncates to `{}`,
+ * and an array-valued member truncates to `[]` via the array branch.
  */
 export const SCHEMA_MAP_KEYS: ReadonlySet<string> = new Set([
   "properties",
   "patternProperties",
   "$defs",
   "definitions",
+  "dependentSchemas",
+  "dependencies",
 ]);
 
 const TRUNCATION_NOTE =
