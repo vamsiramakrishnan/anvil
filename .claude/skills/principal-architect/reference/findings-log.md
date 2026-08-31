@@ -306,17 +306,37 @@ one very hot task repeated ten thousand times makes its own members look
 ubiquitous, and a spool that only ever saw one task suppresses every operation
 in it and proposes nothing.
 
-**Open, evidenced gap (not closed here).** A traffic-observed grouping has no
-consumer. `CapabilitySource` includes `"manifest"`
-(`packages/air/src/schema.ts:1132`) but **nothing in the workspace ever sets
-it** — `CapabilityReviewManifest` (`packages/compiler/src/manifest.ts:463`) can
-only approve or reject a grouping discovery already produced, never author a
-new one. So an accepted observed grouping cannot yet reach `anvil build`,
-which narrows to a stored capability's operations
-(`packages/cli/src/commands/build.ts`). This is another instance of the
-"schema field exists, nothing populates it" pattern in `design-patterns.md`,
-and it is the next piece of work if observed groupings are to pay off in
-routing accuracy.
+**CLOSED — a manifest can now author a capability.** The gap this entry named
+("`CapabilitySource` includes `\"manifest\"` and nothing in the workspace ever
+sets it; `CapabilityReviewManifest` can only approve/reject what discovery
+produced") is closed end to end. The write path is
+`authorCapabilities` (`packages/compiler/src/capability-authoring.ts:35`),
+which sets `source: "manifest"` at
+`packages/compiler/src/capability-authoring.ts:83` and — the load-bearing line,
+armed as mutation mutant `capability-authoring/never-born-approved` — births
+every authored capability at `lifecycle: "proposed"`
+(`capability-authoring.ts:99`), wired into compile between discovery and
+workflow attachment (`packages/compiler/src/compile.ts:419`). The manifest
+schema gained the authoring fields on the same `capabilities:` entry the
+review path always used (`CapabilityReviewManifest`,
+`packages/compiler/src/manifest.ts:487`): `operations` (the authoring marker;
+empty refused), `display_name`, `description`, `intent_examples`. Validation
+is hard and structured: `capability_author_member_unresolved`,
+`capability_author_id_collision` (never a silent merge). Approval flows
+through the SAME `approveCapability` disclosure budget as a discovered
+grouping — a 21-member authored capability is refused without
+`allow_large` + note, verified at compile level. `anvil build` of an approved
+authored capability works unchanged, and an authored capability whose members
+are all unapproved still builds nothing (`capability_empty`) — authoring
+grants no approval to members. `anvil capability diff` reports an authored
+capability truthfully ("manifest-authored; not expected in discovery",
+members checked against the document) instead of phantom drift
+(`diffCapability`, `packages/compiler/src/capability-review.ts:543`). The
+traffic loop is closed propose-only: each observed grouping now carries a
+ready-to-review `manifestSnippet` (`packages/harness/src/trace-capabilities.ts`),
+and `anvil capability propose --from-records --snippet <grouping-id>` prints
+it verbatim for the operator to paste, review, and compile — Anvil never
+writes the manifest file.
 
 ## 2026-08-30 — Resource derivation and MCP tool-name stutter (six untrimmed estates, 3,023 operations)
 

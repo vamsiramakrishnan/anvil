@@ -160,6 +160,23 @@ describe("anvil capability", () => {
     expect(drift.text()).toContain("- operation payments.refunds.create");
   });
 
+  it("diff reports a manifest-authored capability truthfully instead of phantom drift", async () => {
+    const air = await compile({
+      spec: read("openapi.yaml"),
+      manifest: `${read("anvil.yaml")}\ncapabilities:\n  payments.support:\n    operations: [getCustomer, getPayment]\n`,
+      serviceId: "payments",
+    });
+    writeBundle(dir, generateBundle(air));
+
+    const io = bufferIO();
+    expect(await runAnvilCli(["capability", "diff", dir, "payments.support"], { io })).toBe(0);
+    // The honest report: not expected in discovery, members checked against the
+    // document — never "discovery no longer proposes this grouping".
+    expect(io.text()).toContain("manifest-authored (not expected in discovery)");
+    expect(io.text()).toContain("No drift");
+    expect(io.text()).not.toContain("no longer proposes");
+  });
+
   it("blocks approving an over-budget capability without --allow-large", async () => {
     const air = await compile({ spec: specWithOps(21), serviceId: "things" });
     writeBundle(dir, generateBundle(air));
@@ -335,6 +352,118 @@ describe("anvil capability propose --from-records", () => {
     expect(io.text()).toContain("Propose-only");
   });
 
+  it("closes the traffic loop: snippet out, manifest in, authored capability approved and built", async () => {
+    const air = await writePaymentsAir();
+    const id = (canonical: string) =>
+      air.operations.find((op) => op.canonicalName === canonical)?.id as string;
+    const spoolDir = join(dir, "..", "loop-spool");
+    mkdirSync(spoolDir, { recursive: true });
+    const spool = new JsonlRecordSpool(spoolDir);
+    spoolTraces(spool, "refunding", [id("get_payment"), id("create_refund")], 6);
+
+    // The report carries a ready-to-review authoring snippet per grouping…
+    const out = join(dir, "..", "loop-report.json");
+    expect(
+      await runAnvilCli(["capability", "propose", dir, "--from-records", spoolDir, "--out", out], {
+        io: bufferIO(),
+      }),
+    ).toBe(0);
+    const report = JSON.parse(readFileSync(out, "utf8"));
+    const grouping = report.groupings[0];
+    expect(grouping.manifestSnippet).toContain("capabilities:");
+    expect(grouping.manifestSnippet).toContain("operations:");
+
+    // …and --snippet prints exactly that snippet, alone, for copy-paste.
+    const snippetIO = bufferIO();
+    expect(
+      await runAnvilCli(
+        ["capability", "propose", dir, "--from-records", spoolDir, "--snippet", grouping.id],
+        { io: snippetIO },
+      ),
+    ).toBe(0);
+    const snippet = snippetIO.text().trimEnd();
+    expect(snippet).toBe(grouping.manifestSnippet);
+
+    // Propose-only boundary: nothing wrote the manifest — the OPERATOR pastes
+    // the snippet into anvil.yaml and recompiles. Do exactly that.
+    const authoredId = `payments.${grouping.id.replace("observed.", "observed_")}`;
+    const authoredAir = await compile({
+      spec: read("openapi.yaml"),
+      manifest: `${read("anvil.yaml")}\n${snippet}\n`,
+      serviceId: "payments",
+    });
+    const loopDir = join(dir, "..", "loop-bundle-src");
+    mkdirSync(loopDir, { recursive: true });
+    writeBundle(loopDir, generateBundle(authoredAir));
+    const authored = authoredAir.capabilities.find((c) => c.id === authoredId);
+    expect(authored).toMatchObject({
+      source: "manifest",
+      lifecycle: "proposed",
+      operationIds: grouping.operationIds,
+    });
+
+    // Authored ≠ approved: the build gate refuses until the grouping is reviewed.
+    const refusedIO = bufferIO();
+    expect(await runAnvilCli(["build", loopDir, authoredId], { io: refusedIO })).toBe(1);
+    expect(refusedIO.text()).toContain("capability_not_approved");
+
+    expect(
+      await runAnvilCli(["capability", "approve", loopDir, authoredId], { io: bufferIO() }),
+    ).toBe(0);
+    const built = join(loopDir, "authored-bundle");
+    expect(
+      await runAnvilCli(["build", loopDir, authoredId, "--out", built], { io: bufferIO() }),
+    ).toBe(0);
+
+    // The built MCP catalog is exactly the observed members' tools — no more.
+    const manifest = JSON.parse(readFileSync(join(built, "bundle.json"), "utf8"));
+    const memberTools = grouping.operationIds
+      .map(
+        (opId: string) =>
+          authoredAir.operations.find((op) => op.id === opId)?.mcp.toolName as string,
+      )
+      .sort();
+    expect(manifest.surfaces.mcp.operations).toEqual(memberTools);
+    expect(manifest.surfaces.mcp.operations).not.toContain("payments_get_customer");
+    expect(manifest.surfaces.mcp.operations).not.toContain("payments_capture_payment");
+  });
+
+  it("refuses --snippet without --from-records, and an unknown grouping id, with structured codes", async () => {
+    await writePaymentsAir();
+    const withoutRecords = bufferIO();
+    expect(
+      await runAnvilCli(["capability", "propose", dir, "--snippet", "observed.abc"], {
+        io: withoutRecords,
+      }),
+    ).toBe(1);
+    expect(withoutRecords.text()).toContain("capability_propose_snippet_without_records");
+
+    const spoolDir = join(dir, "..", "snippet-spool");
+    mkdirSync(spoolDir, { recursive: true });
+    new JsonlRecordSpool(spoolDir).onRecord({
+      traceId: "t-0",
+      operationId: "payments.payments.get",
+      effect: "read",
+      outcome: "success",
+      latencyMs: 1,
+      retryCount: 0,
+      idempotencyKeyPresent: false,
+      requestBytes: 0,
+      responseBytes: 8,
+      policyDecisions: [],
+      confirmationRequired: false,
+      confirmed: false,
+    });
+    const unknown = bufferIO();
+    expect(
+      await runAnvilCli(
+        ["capability", "propose", dir, "--from-records", spoolDir, "--snippet", "observed.nope"],
+        { io: unknown },
+      ),
+    ).toBe(1);
+    expect(unknown.text()).toContain("capability_propose_snippet_unknown_grouping");
+  });
+
   it("proposes nothing from a spool whose shapes never reach the floor", async () => {
     const air = await writePaymentsAir();
     const ids = air.operations.map((op) => op.id);
@@ -463,6 +592,25 @@ describe("anvil build", () => {
     expect(await runAnvilCli(["build", dir, "payments.refunds"], { io })).toBe(1);
     expect(io.text()).toContain("capability_not_approved");
     expect(io.text()).toContain("anvil capability approve");
+  });
+
+  it("builds nothing from an approved AUTHORED capability whose members are all unapproved", async () => {
+    // Authoring grants no approval to members, and approving the GROUPING does
+    // not either — the same member gate a discovered capability builds through.
+    const air = await compile({
+      spec: specWithOps(3),
+      serviceId: "things",
+      manifest: "capabilities:\n  things.subset:\n    operations: [getThing0, getThing1]\n",
+    });
+    writeBundle(dir, generateBundle(air));
+    expect(
+      await runAnvilCli(["capability", "approve", dir, "things.subset"], { io: bufferIO() }),
+    ).toBe(0);
+
+    const io = bufferIO();
+    expect(await runAnvilCli(["build", dir, "things.subset"], { io })).toBe(1);
+    expect(io.text()).toContain("capability_empty");
+    expect(io.text()).toContain("anvil approve");
   });
 
   it("rejects missing arguments with a usage error", async () => {

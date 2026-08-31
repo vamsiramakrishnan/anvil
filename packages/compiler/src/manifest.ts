@@ -464,26 +464,85 @@ export const WorkflowManifest = z.object({
 export type WorkflowManifest = z.infer<typeof WorkflowManifest>;
 
 /**
- * A review decision for one deterministically discovered capability. Keys in
- * `capabilities` are exact AIR capability ids: review must bind to the grouping
- * that discovery actually produced, never a fuzzy label that could drift.
+ * One entry under `capabilities`, doing either or both of two jobs.
+ *
+ * REVIEW (the original job): keys are exact AIR capability ids; `state` records
+ * the human decision about a grouping deterministic discovery already produced.
+ * Review must bind to the grouping that discovery actually produced, never a
+ * fuzzy label that could drift.
+ *
+ * AUTHOR (`operations` present): declare a capability discovery could not
+ * produce — the consumer for a traffic-observed grouping
+ * (`anvil capability propose --from-records`) or any harness-proposed one. The
+ * entry's key becomes the new capability's id; members resolve by AIR id,
+ * canonicalName, or the source operationId, exactly like every other manifest
+ * operation reference. Authoring is NOT approval: an authored capability lands
+ * in AIR with `source: "manifest"` and `lifecycle: "proposed"`, and goes
+ * through the same review gates — including the disclosure budget — as any
+ * discovered grouping. Add `state: approved` to the same entry to review it in
+ * the same compile, through exactly the same gate. Authoring a capability also
+ * grants nothing to its member operations, which keep their own approval
+ * lifecycle untouched.
  */
 export const CapabilityReviewManifest = z
   .object({
-    state: z.enum(["approved", "rejected"]),
+    state: z.enum(["approved", "rejected"]).optional(),
     note: z.string().optional(),
     /** Deliberate override for approval above the hard tool-disclosure budget. */
     allow_large: z.boolean().optional(),
+    /** Authoring: agent-facing name for the authored capability. */
+    display_name: z.string().optional(),
+    /** Authoring: what the task-shaped unit accomplishes. */
+    description: z.string().optional(),
+    /** Authoring: intent phrases an agent might use to find this capability. */
+    intent_examples: z.array(z.string()).optional(),
+    /**
+     * Authoring marker: the member operation references. Present = this entry
+     * authors a new capability. An empty list is refused — a capability that
+     * exposes nothing is not a capability, and silently creating one would look
+     * like a successful review of nothing.
+     */
+    operations: z
+      .array(z.string())
+      .min(1, "an authored capability must name at least one member operation")
+      .optional(),
   })
-  .superRefine((review, ctx) => {
-    if (review.state !== "approved" && review.allow_large !== undefined) {
+  .superRefine((entry, ctx) => {
+    if (entry.operations === undefined) {
+      if (entry.state === undefined) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["state"],
+          message:
+            "a capability entry must review a discovered grouping (state) or author a new one (operations)",
+        });
+      }
+      for (const field of ["display_name", "description", "intent_examples"] as const) {
+        if (entry[field] !== undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: [field],
+            message: `${field} is authoring input and requires the entry to author a grouping (operations); a review cannot rename what discovery produced`,
+          });
+        }
+      }
+    }
+    if (entry.operations !== undefined && entry.state === "rejected") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["state"],
+        message:
+          "authoring a capability and rejecting it in the same entry is a contradiction; remove the entry instead",
+      });
+    }
+    if (entry.state !== "approved" && entry.allow_large !== undefined) {
       ctx.addIssue({
         code: "custom",
         path: ["allow_large"],
         message: "allow_large is valid only for an approved capability review",
       });
     }
-    if (review.allow_large === true && !review.note?.trim()) {
+    if (entry.allow_large === true && !entry.note?.trim()) {
       ctx.addIssue({
         code: "custom",
         path: ["note"],

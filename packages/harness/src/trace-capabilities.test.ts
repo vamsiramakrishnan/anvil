@@ -225,6 +225,37 @@ describe("grouping derivation", () => {
     expect(once[0]?.id).toMatch(/^observed\.[0-9a-f]{12}$/);
   });
 
+  it("carries a ready-to-review manifest snippet per grouping — the bridge to authoring, byte for byte", () => {
+    const air = airWith(op("zendesk.tickets.get"), op("zendesk.users.get"));
+    const traces = Array.from({ length: 5 }, (_, i) =>
+      trace(`t-${i}`, ["zendesk.tickets.get", "zendesk.users.get"]),
+    );
+    const grouping = deriveGroupings({
+      traces,
+      suppressed: new Set(),
+      air,
+      sourceRef: "records:/spool",
+    })[0];
+    if (!grouping) throw new Error("expected a grouping");
+    const suffix = grouping.id.replace("observed.", "observed_");
+    // Exact bytes: this string is what an operator pastes into anvil.yaml, so
+    // its shape IS the contract with the compiler's `capabilities:` authoring
+    // entry (id key, display_name, description, operations list).
+    expect(grouping.manifestSnippet).toBe(
+      [
+        "capabilities:",
+        `  zendesk.${suffix}:`,
+        `    display_name: "Observed task ${suffix}"`,
+        '    description: "Observed as the complete operation set of 5 of 5 recorded trace(s). ' +
+          "Rename this capability after the task it accomplishes and review the members before " +
+          'approving."',
+        "    operations:",
+        '      - "zendesk.tickets.get"',
+        '      - "zendesk.users.get"',
+      ].join("\n"),
+    );
+  });
+
   it("never admits a suppressed operation as a member", () => {
     const traces = Array.from({ length: 5 }, (_, i) => trace(`t-${i}`, ["auth", "a", "b"]));
     const [grouping] = deriveGroupings({
@@ -316,13 +347,24 @@ describe("the lane end to end", () => {
       "zendesk.users",
     ]);
 
+    // Every grouping carries its authoring snippet, naming exactly its members.
+    for (const grouping of report.groupings) {
+      const suffix = grouping.id.replace("observed.", "observed_");
+      expect(grouping.manifestSnippet).toContain(`  zendesk.${suffix}:`);
+      for (const memberId of grouping.operationIds) {
+        expect(grouping.manifestSnippet).toContain(`- ${JSON.stringify(memberId)}`);
+      }
+    }
+    expect(report.boundary.nextGate).toContain("manifestSnippet");
+
     // Propose-only, baked into the report the way `capability compose` bakes it.
     expect(report.boundary).toMatchObject({
       autoApproved: false,
       writesAir: false,
       buildReady: false,
     });
-    // AIR is untouched: nothing here writes a capability.
+    // AIR is untouched: nothing here writes a capability — the snippet is text
+    // the operator places, reads, and compiles.
     expect(air.capabilities).toEqual([]);
   });
 

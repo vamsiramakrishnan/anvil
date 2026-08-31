@@ -293,6 +293,47 @@ reproducible. Use the exact AIR capability id as the key. Large capabilities
 require an explicit allowance and audit note; do not use that escape hatch to
 avoid decomposing an incoherent surface.
 
+### Author a capability discovery cannot produce
+
+Discovery groups by the spec's own taxonomy (tags, resources); the task-shaped
+groupings that routing accuracy depends on routinely cut across it. A
+`capabilities:` entry with an `operations` list AUTHORS a new capability: the
+key becomes its id, and members resolve by AIR id, canonical name, or the
+source operationId, like every other manifest operation reference.
+
+```yaml
+capabilities:
+  payments.refund_support:
+    display_name: Refund support
+    description: Look a payment up and refund it — the observed support task.
+    intent_examples:
+      - refund a customer end to end
+    operations:
+      - getPayment
+      - createRefund
+```
+
+Authoring is a declaration, not an approval. The capability compiles in with
+`source: manifest` and `lifecycle: proposed`, and reaches `approved` only
+through the same review gate as a discovered grouping — `anvil capability
+approve`, or `state: approved` on the same entry — including the same
+disclosure budget (`allow_large` plus a note above the hard limit). Authoring
+also grants nothing to the member operations: an authored capability whose
+members are unapproved still builds nothing (`capability_empty`).
+
+Validation is hard: an empty `operations` list is refused, a member that
+resolves to no operation is a structured error
+(`capability_author_member_unresolved`), and an id colliding with an existing
+grouping is a structured error (`capability_author_id_collision`), never a
+merge. `anvil capability diff` knows an authored capability has no discovery
+counterpart by definition and checks its members against the document instead
+of reporting phantom drift.
+
+The observed-traffic loop feeds this section: `anvil capability propose
+--from-records <spool>` emits a ready-to-review snippet per grouping
+(`manifestSnippet` in the report, or `--snippet <grouping-id>` on the command)
+that you copy here, review, and recompile — Anvil never writes it for you.
+
 ## Constrain query passthroughs
 
 Raw SQL or query-language endpoints are blocked until a machine-enforced policy

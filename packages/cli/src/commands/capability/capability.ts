@@ -48,7 +48,7 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
     .summary("(Re)run discovery; print proposals with provenance and budget findings.")
     .description(
       "Two grounds for a grouping, one at a time. By default this re-runs spec discovery: groupings come from OpenAPI tags and the resource heuristic — a vendor's REFERENCE taxonomy, organised by resource, which real tasks routinely cut across. " +
-        "OBSERVED TRAFFIC (--from-records <dir>): instead reads the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server) and groups operations that were used inside the same traceId — a task observed rather than guessed, carried as recorded_traffic evidence stating the trace count rather than a confidence nobody could defend. An operation appearing in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so it is filtered out statistically before any grouping is formed and named in the report; a shape seen fewer than 5 times is an anecdote and is not proposed. Read-only and propose-only: it never writes AIR, approves, or builds, and --out must be outside the bundle.",
+        "OBSERVED TRAFFIC (--from-records <dir>): instead reads the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server) and groups operations that were used inside the same traceId — a task observed rather than guessed, carried as recorded_traffic evidence stating the trace count rather than a confidence nobody could defend. An operation appearing in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so it is filtered out statistically before any grouping is formed and named in the report; a shape seen fewer than 5 times is an anecdote and is not proposed. Each grouping carries a ready-to-review manifest snippet (manifestSnippet in the report; --snippet <grouping-id> prints one) — copy it into the estate's anvil.yaml `capabilities:` section to author the grouping as a manifest-sourced capability, then recompile and review it through the ordinary approve gate. Read-only and propose-only: it never writes AIR, a manifest, an approval, or a build, and --out must be outside the bundle.",
     )
     .argument("<path>", "generated bundle directory or air.yaml")
     .option(
@@ -56,6 +56,12 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
       "group by co-occurrence in a serving-path record spool (ANVIL_RECORDS_DIR) instead of by spec",
     )
     .option("--out <file>", "write the observed-capability report here (--from-records only)")
+    .addOption(
+      new Option(
+        "--snippet <grouping-id>",
+        "print the chosen grouping's ready-to-review manifest snippet, verbatim (--from-records only)",
+      ).conflicts(["json"]),
+    )
     .option("--json", "emit the proposals as JSON")
     .action((path: string, opts: ProposeOptions) => {
       ctx.code = runPropose(path, opts, ctx.io);
@@ -133,6 +139,7 @@ interface ShowOptions {
 interface ProposeOptions {
   fromRecords?: string;
   out?: string;
+  snippet?: string;
   json?: boolean;
 }
 
@@ -148,6 +155,16 @@ function runPropose(path: string, opts: ProposeOptions, io: CliIO): number {
       message:
         "--out writes the observed-capability report and is meaningful only with --from-records. " +
         "Spec discovery's groupings are already stored in AIR; read them with `anvil capability list`.",
+    });
+  }
+  if (opts.snippet !== undefined) {
+    return emitRefusal(io, opts.json, {
+      reportType: PROPOSE_ERROR,
+      code: "capability_propose_snippet_without_records",
+      message:
+        "--snippet prints an observed grouping's manifest authoring snippet and is meaningful " +
+        "only with --from-records. Spec discovery's groupings are already stored in AIR and " +
+        "need no authoring entry.",
     });
   }
 
@@ -245,6 +262,25 @@ function runProposeFromRecords(path: string, opts: ProposeOptions, io: CliIO): n
   const report = runTraceCapabilities({ air, dir: spool });
   if (out !== undefined) writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
+  // The copy-paste half of the propose→author bridge: print ONE grouping's
+  // authoring snippet, verbatim, and nothing else on stdout — so
+  // `anvil capability propose … --snippet observed.xxx >> anvil.yaml` pastes
+  // cleanly. Still propose-only: the operator places, reads, and compiles it.
+  if (opts.snippet !== undefined) {
+    const grouping = report.groupings.find((candidate) => candidate.id === opts.snippet);
+    if (!grouping) {
+      return emitRefusal(io, opts.json, {
+        reportType: PROPOSE_ERROR,
+        code: "capability_propose_snippet_unknown_grouping",
+        message:
+          `No observed grouping '${opts.snippet}' in this spool. ` +
+          `Groupings: ${report.groupings.map((candidate) => candidate.id).join(", ") || "(none)"}.`,
+      });
+    }
+    io.out(grouping.manifestSnippet);
+    return 0;
+  }
+
   if (opts.json === true) {
     io.out(JSON.stringify(report, null, 2));
     return report.ok ? 0 : 1;
@@ -295,6 +331,13 @@ function renderObserved(report: TraceCapabilityReport, out: string | undefined, 
   }
 
   io.out("");
+  if (report.groupings.length > 0) {
+    io.out(
+      "To adopt a grouping: `--snippet <grouping-id>` prints its ready-to-review manifest " +
+        "snippet (also in the report as manifestSnippet). Copy it into the estate's anvil.yaml " +
+        "`capabilities:` section, review the members, and recompile.",
+    );
+  }
   if (report.unknownOperationIds.length > 0) {
     io.out(`In traffic but not in this AIR (ignored): ${report.unknownOperationIds.join(", ")}`);
   }
@@ -468,6 +511,24 @@ function runDiff(path: string, id: string, io: CliIO): number {
       return 1;
     }
     throw err;
+  }
+  // A manifest-authored capability has no discovery counterpart BY DEFINITION,
+  // so it is never compared against rediscovery — its drift check is whether
+  // the declared members still exist in the document. Saying so out loud is
+  // the point: silence here would read as "discovery agrees", which it cannot.
+  if (diff.authored) {
+    if (diff.unchanged) {
+      io.out(
+        `No drift. '${id}' is manifest-authored (not expected in discovery); ` +
+          "every declared member operation is still in the document.",
+      );
+      return 0;
+    }
+    io.out(`Capability '${id}' is manifest-authored (not expected in discovery), and has drifted:`);
+    for (const op of diff.removedOperations)
+      io.out(`  - operation ${op} no longer in the document`);
+    io.out("\nRe-review before building: the authored grouping names operations that are gone.");
+    return 0;
   }
   if (diff.unchanged) {
     io.out(`No drift. '${id}' matches what discovery proposes today.`);

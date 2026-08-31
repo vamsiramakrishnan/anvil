@@ -11,6 +11,7 @@ import {
   snakeCase,
 } from "@anvil/air";
 import { discoverCapabilities } from "./capabilities.js";
+import { authorCapabilities } from "./capability-authoring.js";
 import { approveCapability, rejectCapability } from "./capability-review.js";
 import { overlayDigest } from "./contract/digest.js";
 import type { AppliedOverlay, PolicyOverlay, SemanticConflict } from "./contract/model.js";
@@ -409,8 +410,14 @@ async function buildAir(
 
   // Group operations into capabilities (the primary abstraction), then attach
   // any authored workflows. Capability discovery stamps `capabilityId` on each
-  // operation in place.
+  // operation in place. Manifest-AUTHORED capabilities (the write path for
+  // `source: "manifest"`) join the model right after discovery — before
+  // workflow attachment, so an authored workflow can name one as its owner —
+  // born `proposed`; the review loop below is a separate decision through the
+  // same gate discovery's groupings go through.
   const capabilities = discoverCapabilities(serviceId, validated);
+  capabilities.push(...authorCapabilities(manifest, validated, capabilities));
+  capabilities.sort((a, b) => a.id.localeCompare(b.id));
   const { workflows, diagnostics: workflowDiagnostics } = buildWorkflows(
     manifest,
     validated,
@@ -489,6 +496,10 @@ async function buildAir(
     left.localeCompare(right),
   );
   for (const [capabilityId, review] of capabilityReviews) {
+    // An authoring-only entry (operations, no state) is born proposed above and
+    // reviewed later — `anvil capability approve` or a `state:` added to the
+    // entry — never implicitly here.
+    if (review.state === undefined) continue;
     if (review.state === "approved") {
       approveCapability(reviewedAir, capabilityId, {
         allowLarge: review.allow_large === true,
