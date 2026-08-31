@@ -54,6 +54,22 @@ function schemaSlotValues(
   return out;
 }
 
+/** Every value found under `keyword` anywhere in the tree. */
+function collectAt(node: unknown, keyword: string, out: unknown[] = []): unknown[] {
+  if (Array.isArray(node)) {
+    node.forEach((v) => {
+      collectAt(v, keyword, out);
+    });
+    return out;
+  }
+  if (node === null || typeof node !== "object") return out;
+  for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+    if (k === keyword && v !== null && typeof v === "object" && !Array.isArray(v)) out.push(v);
+    collectAt(v, keyword, out);
+  }
+  return out;
+}
+
 describe("truncateToStub", () => {
   it("keeps a schema a schema", () => {
     expect(truncateToStub({ type: "object", properties: {} })).toMatchObject({ type: "object" });
@@ -151,9 +167,15 @@ describe("truncation never emits a non-schema where a schema belongs", () => {
     };
     for (let maxDepth = 1; maxDepth <= 6; maxDepth++) {
       const { document } = bundleDocument(doc, maxDepth);
-      const dep = (document as Record<string, never>).paths["/t"].get.responses["200"].schema
-        ?.dependencies?.card;
-      if (dep !== undefined) expect(Array.isArray(dep), `maxDepth=${maxDepth}`).toBe(true);
+      // Find the `dependencies` map wherever the walk left it, rather than
+      // indexing a path the types cannot vouch for.
+      const members = collectAt(document, "dependencies");
+      for (const member of members) {
+        const card = (member as Record<string, unknown>).card;
+        if (card !== undefined) {
+          expect(Array.isArray(card), `maxDepth=${maxDepth}: card stayed an array`).toBe(true);
+        }
+      }
     }
   });
 });
