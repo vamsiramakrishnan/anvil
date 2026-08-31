@@ -101,7 +101,7 @@ export interface ConfusionOperation {
 
 /** One directed confusion: tasks belonging to `intended` that the curated
  *  catalog routed to `routed`, with the mis-routed intents verbatim. */
-export interface ConfusionEdge {
+interface ConfusionEdge {
   intended: string;
   routed: string;
   count: number;
@@ -112,13 +112,13 @@ export interface ConfusionEdge {
   sharedTokens: string[];
 }
 
-export interface ClusterMember {
+interface ClusterMember {
   operationId: string;
   toolName: string;
 }
 
 /** K mutually confusable tools, with the evidence that makes them so. */
-export interface ConfusionCluster {
+interface ConfusionCluster {
   members: ClusterMember[];
   /** Total mis-routed tasks inside the cluster — the evidence weight. */
   taskCount: number;
@@ -129,7 +129,7 @@ export interface ConfusionCluster {
 
 /** A tool confused with a catalog-scale number of partners — the FLEXCUBE
  *  envelope-noise shape. Reported apart so it cannot weld clusters. */
-export interface RoutingHub {
+interface RoutingHub {
   operationId: string;
   toolName: string;
   /** Distinct tools this one was confused with, in either direction. */
