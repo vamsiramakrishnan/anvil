@@ -48,6 +48,7 @@ export type DeficiencyCode =
   | "indistinct_operation_descriptions"
   | "capability_missing_routing_phrases"
   | "operation_lacks_intent_examples"
+  | "confusable_tool_cluster"
   | "schema_too_large_for_disclosure"
   | "unpaginated_large_response"
   | "ui_projection_contract"
@@ -288,6 +289,28 @@ export const DEFICIENCY_CATALOG: Record<DeficiencyCode, DeficiencyDef> = {
     "operation lacks intent examples",
     "refinementRequired",
     "the agent has no example phrasings to match a request to this operation",
+  ),
+  // The GROUP deficiency: the routing benchmark measured K served tools eating
+  // each other's tasks (a confusable cluster — see the CLI's
+  // benchmark-clusters module). Not raised by an AIR detector, deliberately:
+  // detectors are pure over AirDocument, and this gap is only provable from
+  // the benchmark's derived record, so the CLI bridge
+  // (`anvil refine export-task <dir> group:<cluster-id>`) constructs it
+  // deterministically from benchmark.report.json and hash-binds the evidence
+  // into the exported task. refinementRequired because a narrow skill can
+  // close it — a composed workflow that supersedes its steps, or an authored
+  // capability — but the approval policy routes every group patch to review
+  // unconditionally (approval.ts, checked on the field), and admission
+  // additionally demands a non-negative measured routing delta (the CLI's
+  // benchmark-scored gate) before a human ever sees it.
+  confusable_tool_cluster: def(
+    "confusable_tool_cluster",
+    "usability",
+    "high",
+    "resolve-confusable-cluster",
+    "benchmark-measured confusable tool family",
+    "refinementRequired",
+    "the agent cannot tell these sibling tools apart and routes their tasks to the wrong one",
   ),
   // This was info/none on the reasoning that "a large surface costs context, but
   // nothing is wrong or unsafe" — which treated the agent's context as free. It

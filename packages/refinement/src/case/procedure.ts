@@ -36,6 +36,8 @@ function targetNoun(target: SemanticTarget): string {
       return target.operationId;
     case "capability":
       return target.capabilityId;
+    case "group":
+      return `confusable tool cluster \`${target.groupId}\``;
     default:
       return "this target";
   }
@@ -287,6 +289,55 @@ const rehomeResource: InvestigationProcedure = {
   ],
 };
 
+const resolveConfusableCluster: InvestigationProcedure = {
+  skill: "resolve-confusable-cluster",
+  question: (t) =>
+    `Decide the higher-order shape for ${targetNoun(t)}: the routing benchmark measured these tools eating each other's tasks. Compose a workflow that supersedes its own steps, author a capability over the members, or honestly propose no change.`,
+  searchHints: [
+    "the task's own facts: member operations in full routing detail, the mis-routed intents verbatim, shared vocabulary tokens",
+    "the estate's traffic groupings in the task facts, if a spool report was present at export",
+    "the vendor's docs for the members: is the family one task performed in sequence, or true alternatives an agent must pick between?",
+    "sibling estates or implementation code showing the members called together in one flow",
+  ],
+  steps: [
+    {
+      phase: "research",
+      instruction:
+        "Read every member's name, description, params, and intent examples, and the mis-routed intents verbatim. Establish WHY the agent confuses them: variants of one read, steps of one task, or genuinely distinct operations with colliding vocabulary.",
+    },
+    {
+      phase: "research",
+      instruction:
+        "If the members form a sequence (one's output feeds the next's required input), sketch the workflow: steps in order, each later step's required params bound as $.output.<field> of the previous step's real output schema.",
+    },
+    {
+      phase: "research",
+      instruction:
+        "If the members are one task-shaped family rather than a sequence, sketch the capability: the member set (grant only), a name and intents in the members' own vocabulary.",
+    },
+    {
+      phase: "extract",
+      instruction:
+        "Record claims naming the chosen shape, each tied to a source; keep the evidence for sequences (docs describing the flow, traffic groupings) separate from vocabulary facts.",
+    },
+    {
+      phase: "synthesize",
+      instruction:
+        "Propose EXACTLY ONE of `workflow` or `capability`, with every operation reference inside the task's grant, supersedes only naming the proposal's own steps, and every name/intent grounded in the members' own vocabulary. When neither shape is real, decline honestly (insufficient_evidence) and say why in the summary — a decline is a first-class answer.",
+    },
+    {
+      phase: "critique",
+      instruction:
+        "Try to falsify the composition: a binding whose field the previous step does not output, a superseded tool the composite cannot stand in for, a name that only relabels the confusion. Anvil will re-run the routing benchmark over your proposal and refuse a negative delta with the numbers.",
+    },
+    {
+      phase: "test",
+      instruction:
+        "Record which mis-routed intents your shape should flip to passing; the import's scored admission attaches the measured delta as evidence for the reviewer.",
+    },
+  ],
+};
+
 const PROCEDURES: Record<string, InvestigationProcedure> = {
   "describe-field": describeField,
   "describe-operation": describeOperation,
@@ -294,6 +345,7 @@ const PROCEDURES: Record<string, InvestigationProcedure> = {
   "enrich-errors": enrichErrors,
   "investigate-ui-projection": investigateUiProjection,
   "rehome-resource": rehomeResource,
+  "resolve-confusable-cluster": resolveConfusableCluster,
 };
 
 /**

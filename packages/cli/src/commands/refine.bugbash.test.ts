@@ -236,6 +236,7 @@ describe("anvil refine skills", () => {
       "disambiguate-operations",
       "describe-capability",
       "reduce-schema-disclosure",
+      "resolve-confusable-cluster",
     ]);
 
     const textResult = await refine("skills");

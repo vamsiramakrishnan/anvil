@@ -41,6 +41,8 @@ function claimSubject(task: RefinementTask): string {
       return target.code;
     case "workflow":
       return target.workflowId;
+    case "group":
+      return target.groupId;
   }
 }
 
@@ -188,12 +190,22 @@ export function importHarnessSubmission(
   assertSubmissionPolicy(task, submission);
 
   const plan = buildRefinementPlan(air);
-  const currentDeficiency = plan.deficiencies.find(
-    (candidate) =>
-      candidate.code === task.deficiency.code &&
-      targetKey(candidate.target) === targetKey(task.deficiency.target),
-  );
-  if (!currentDeficiency) {
+  // A GROUP task's deficiency is derived from the benchmark report — a derived
+  // record the pure-over-AIR detectors cannot re-derive — so the plan lookup
+  // that guards every node-scoped task cannot apply. Its still-exists check is
+  // the pair the task already carries: `taskHash` binds the cluster's members
+  // and evidence, and `sourceContractHash` (verified above) pins the exact AIR
+  // document the benchmark measured, so a document change invalidates the task
+  // through the same stale-contract gate a plan change would have.
+  const currentDeficiency =
+    task.deficiency.target.kind === "group"
+      ? undefined
+      : plan.deficiencies.find(
+          (candidate) =>
+            candidate.code === task.deficiency.code &&
+            targetKey(candidate.target) === targetKey(task.deficiency.target),
+        );
+  if (!currentDeficiency && task.deficiency.target.kind !== "group") {
     rejectHarness(
       "refinement/stale_contract",
       "binding",

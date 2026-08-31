@@ -23,8 +23,8 @@
   "slack": 100,
   "modules": {
     "packages/air/src/workflow-surface.ts": {
-      "lines": 256,
-      "plan": "Recorded below the threshold on purpose: this is the ONE workflow-surface planner, moved verbatim from @anvil/mcp-runtime (plus the async-refusal fixed-point loop) so the serving path and the compiler's capability disclosure budget can never disagree about which workflows register and which operation tools they suppress. Its whole value is being one small shared decision; growth here should be a new eligibility rule both consumers need, and anything else — reporting, budgeting, tool building — belongs in the consumer that wants it. Raise deliberately if a rule lands; do not let convenience helpers accrete."
+      "lines": 286,
+      "plan": "Recorded below the threshold on purpose: this is the ONE workflow-surface planner, moved verbatim from @anvil/mcp-runtime (plus the async-refusal fixed-point loop) so the serving path and the compiler's capability disclosure budget can never disagree about which workflows register and which operation tools they suppress. Its whole value is being one small shared decision; growth here should be a new eligibility rule both consumers need, and anything else — reporting, budgeting, tool building — belongs in the consumer that wants it. Raise deliberately if a rule lands; do not let convenience helpers accrete. Raised 256→286 for exactly that kind of landing: `bindableOutputFields` — the one definition of which output fields a `$.output.<field>` binding can address — lifted here from @anvil/harness's workflow-candidate detector so the serving-path extractor, the harness detector, and refinement's group-proposal binding validation all read the same field set instead of three drifting copies."
     },
     "packages/air/src/schema.ts": {
       "lines": 1418,

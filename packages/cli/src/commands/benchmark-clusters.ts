@@ -1,3 +1,4 @@
+import { hashCanonical } from "@anvil/air";
 import { routingTokens } from "@anvil/refinement";
 
 /**
@@ -119,6 +120,13 @@ interface ClusterMember {
 
 /** K mutually confusable tools, with the evidence that makes them so. */
 interface ConfusionCluster {
+  /**
+   * Deterministic cluster id (`cc_` + 12 hex of the sorted member tool names'
+   * canonical hash): the coordinate `anvil refine export-task <dir> group:<id>`
+   * uses to hand this cluster to a coding harness. A pure function of the
+   * membership, so the same confusions name the same cluster across runs.
+   */
+  id: string;
   members: ClusterMember[];
   /** Total mis-routed tasks inside the cluster — the evidence weight. */
   taskCount: number;
@@ -307,6 +315,7 @@ export function analyzeConfusion(operations: readonly ConfusionOperation[]): Con
             a.routed.localeCompare(b.routed),
         );
       return {
+        id: `cc_${hashCanonical(members).slice(0, 12)}`,
         members: members.map((toolName) => ({ operationId: opId(toolName), toolName })),
         taskCount: componentEdges.reduce((n, e) => n + e.count, 0),
         edges: componentEdges,
@@ -356,7 +365,7 @@ export function renderConfusionLines(confusion: ConfusionAnalysis): string[] {
           ? ` — shared vocabulary: ${cluster.sharedTokens.join(", ")}`
           : "";
       lines.push(
-        `  ${cluster.members.length} tools, ${cluster.taskCount} mis-routed tasks${vocabulary}`,
+        `  ${cluster.id}: ${cluster.members.length} tools, ${cluster.taskCount} mis-routed tasks${vocabulary}`,
       );
       lines.push(`    ${cluster.members.map((m) => m.toolName).join(", ")}`);
       const intents = cluster.edges.flatMap((edge) =>
@@ -374,6 +383,9 @@ export function renderConfusionLines(confusion: ConfusionAnalysis): string[] {
         `  … and ${confusion.clusters.length - MAX_RENDERED_CLUSTERS} more clusters in the report.`,
       );
     }
+    lines.push(
+      "  Hand a cluster to a coding harness: `anvil refine export-task <dir> group:<cluster-id> --out task.json`.",
+    );
   }
 
   if (confusion.hubs.length > 0) {

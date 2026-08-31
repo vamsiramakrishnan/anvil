@@ -202,6 +202,7 @@ describe("deficiency catalog", () => {
       "disambiguate-operations",
       "describe-capability",
       "reduce-schema-disclosure",
+      "resolve-confusable-cluster",
     ]);
     expect(implemented).toEqual(expectedImplemented);
     for (const def of Object.values(DEFICIENCY_CATALOG)) {

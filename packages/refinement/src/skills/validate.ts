@@ -26,6 +26,17 @@ import {
   type ValidationEvidenceContext,
   type VerifiableArtifact,
 } from "./contract.js";
+import {
+  buildGroupWorkflow,
+  groupGrantOf,
+  groupNameIssues,
+  groupPatchReferences,
+  parseGroupPatch,
+  resolveOperationReference,
+  supersedesOutsideSteps,
+  workflowBindingIssues,
+  workflowComposeIssues,
+} from "./group-proposal.js";
 
 /* -------------------------------------------------------------------------- */
 /* Evidence strength                                                          */
@@ -618,6 +629,86 @@ const CHECKS: Record<ValidationCheckId, Check> = {
       "resource_grounded_in_contract",
       "every proposed resource word is grounded in the operation's own path or name vocabulary",
     );
+  },
+
+  /* ---------------------- group (confusable-cluster) checks ---------------------- */
+  // The deterministic boundary that makes an unreliable harness safe on a whole
+  // CLUSTER: the proposal union is closed (exactly one of workflow/capability,
+  // strict zod shapes), every referenced operation stays inside the task's
+  // hash-bound grant, `supersedes` never leaves the payload's own steps, the
+  // composed workflow must register on the SHARED surface planner with bindings
+  // that actually thread, and every proposed name/intent is the member
+  // operations' own vocabulary. All of it delegates to group-proposal.ts so the
+  // apply path and the CLI's benchmark-scored admission read the same code.
+
+  group_proposal_shape(_skill, proposal) {
+    const parsed = parseGroupPatch(proposal.patch.set);
+    return parsed.issues.length === 0
+      ? ok("group_proposal_shape", "the patch is exactly one well-formed group proposal")
+      : fail("group_proposal_shape", parsed.issues.join("; "));
+  },
+
+  group_grant_respected(_skill, proposal, context) {
+    const parsed = parseGroupPatch(proposal.patch.set);
+    if (parsed.issues.length > 0)
+      return ok("group_grant_respected", "no parsable payload to check");
+    const grant = groupGrantOf(context.deficiency.facts);
+    const grantedIds = new Set([...grant.memberOperationIds, ...grant.relatedOperationIds]);
+    const grantOps = (context.groupOperations ?? []).filter((op) => grantedIds.has(op.id));
+    const outside = groupPatchReferences(parsed).filter((reference) => {
+      const op = resolveOperationReference(grantOps, reference);
+      return op === undefined;
+    });
+    return outside.length === 0
+      ? ok("group_grant_respected", "every referenced operation is inside the task's grant")
+      : fail(
+          "group_grant_respected",
+          `operation reference(s) outside the task's grant: ${[...new Set(outside)].join(", ")}`,
+        );
+  },
+
+  group_supersedes_within_steps(_skill, proposal, context) {
+    const parsed = parseGroupPatch(proposal.patch.set);
+    if (!parsed.workflow) {
+      return ok("group_supersedes_within_steps", "patch proposes no workflow");
+    }
+    const outside = supersedesOutsideSteps(parsed.workflow, context.groupOperations ?? []);
+    return outside.length === 0
+      ? ok("group_supersedes_within_steps", "supersedes names only the proposal's own steps")
+      : fail(
+          "group_supersedes_within_steps",
+          `supersedes may only name the proposal's own steps; outside: ${outside.join(", ")}`,
+        );
+  },
+
+  group_workflow_composes(_skill, proposal, context) {
+    const parsed = parseGroupPatch(proposal.patch.set);
+    if (!parsed.workflow) return ok("group_workflow_composes", "patch proposes no workflow");
+    const grantOps = context.groupOperations ?? [];
+    const build = buildGroupWorkflow(parsed.workflow, grantOps, "group");
+    if (!build.workflow) return fail("group_workflow_composes", build.issues.join("; "));
+    const issues = [
+      ...workflowComposeIssues(build.workflow, grantOps),
+      ...workflowBindingIssues(parsed.workflow, grantOps),
+    ];
+    return issues.length === 0
+      ? ok(
+          "group_workflow_composes",
+          "the shared surface planner registers the composite and its bindings thread",
+        )
+      : fail("group_workflow_composes", issues.join("; "));
+  },
+
+  group_names_grounded(_skill, proposal, context) {
+    const parsed = parseGroupPatch(proposal.patch.set);
+    if (parsed.issues.length > 0) return ok("group_names_grounded", "no parsable payload to check");
+    const issues = groupNameIssues(parsed, context.groupOperations ?? []);
+    return issues.length === 0
+      ? ok(
+          "group_names_grounded",
+          "every proposed name and intent is grounded in the members' own vocabulary",
+        )
+      : fail("group_names_grounded", issues.join("; "));
   },
 };
 

@@ -30,7 +30,8 @@ export type ContextNeed =
   | "sibling_fields"
   | "source_evidence"
   | "declared_error"
-  | "capability";
+  | "capability"
+  | "group_members";
 
 /** An invariant a skill must not violate. Enforced by validation, never trusted. */
 export type SkillConstraint =
@@ -56,7 +57,12 @@ export type ValidationCheckId =
   | "response_projection_valid"
   | "idempotency_carrier_resolves"
   | "pagination_binding_resolves"
-  | "resource_grounded_in_contract";
+  | "resource_grounded_in_contract"
+  | "group_proposal_shape"
+  | "group_grant_respected"
+  | "group_supersedes_within_steps"
+  | "group_workflow_composes"
+  | "group_names_grounded";
 
 /**
  * The minimal view of a frozen evidence artifact the `evidence_meets_verification`
@@ -160,6 +166,12 @@ export interface SkillContext {
   field?: FieldContext;
   siblingFields?: FieldContext[];
   errorSpec?: ErrorSpec;
+  /**
+   * For a `group` target: the member operations, rebuilt authoritatively from
+   * AIR at validation time (never trusted from the task's snapshot), in the
+   * member order the deficiency's facts declare.
+   */
+  groupOperations?: Operation[];
   /** Claim-scoped evidence gathered for this target (may be empty). */
   evidence: Claim[];
 }

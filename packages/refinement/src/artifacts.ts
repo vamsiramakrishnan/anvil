@@ -16,6 +16,9 @@ const KINDS_BY_TARGET_KIND: Record<SemanticTarget["kind"], ArtifactKind[]> = {
   capability: ["skill_reference", "cli_help"],
   service: ["skill_reference"],
   workflow: ["skill_reference"],
+  // A group proposal lands a workflow (a new MCP composite tool plus the
+  // suppressions it applies) or a capability (a skill/CLI-level grouping).
+  group: ["mcp_tool", "skill_reference", "cli_help"],
 };
 
 /** A short, human-readable pointer to one artifact kind's ref for `target`/`op`. */
