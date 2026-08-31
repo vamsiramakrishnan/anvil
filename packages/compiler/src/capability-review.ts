@@ -341,12 +341,14 @@ function tokenBand(
   return { verdict: "ok", measurement };
 }
 
-/** A structured, typed failure from a capability review action. */
+/** A structured, typed failure from a capability review or authoring action. */
 export class CapabilityReviewError extends Error {
   readonly code:
     | "capability_not_found"
     | "capability_budget_exceeded"
-    | "capability_budget_waiver_note_required";
+    | "capability_budget_waiver_note_required"
+    | "capability_author_id_collision"
+    | "capability_author_member_unresolved";
   /** The budget diagnostic, when the failure is budget-driven. */
   readonly diagnostic?: Diagnostic;
 
@@ -516,6 +518,15 @@ export interface CapabilityDiff {
   capabilityId: string;
   /** False when fresh discovery no longer produces this grouping at all. */
   present: boolean;
+  /**
+   * True for a manifest-authored capability. Discovery has no counterpart for
+   * it BY DEFINITION — the operator declared the grouping precisely because
+   * discovery could not produce it — so its absence from rediscovery is not
+   * drift. Drift for an authored capability is judged against the document
+   * itself: a member operation that no longer exists is real drift; anything
+   * discovery says is not.
+   */
+  authored: boolean;
   addedOperations: string[];
   removedOperations: string[];
   sourceChanged?: { from: Capability["source"]; to: Capability["source"] };
@@ -531,11 +542,30 @@ export interface CapabilityDiff {
  */
 export function diffCapability(air: AirDocument, capabilityId: string): CapabilityDiff {
   const stored = requireCapability(air, capabilityId);
+  if (stored.source === "manifest") {
+    // Manifest-authored: not expected in discovery, so comparing against
+    // rediscovery would report the whole membership as phantom drift. The
+    // honest check is whether the declared members still exist in the document.
+    const missing = stored.operationIds
+      .filter((id) => !air.operations.some((op) => op.id === id))
+      .sort();
+    return {
+      capabilityId,
+      present: true,
+      authored: true,
+      addedOperations: [],
+      removedOperations: missing,
+      addedResources: [],
+      removedResources: [],
+      unchanged: missing.length === 0,
+    };
+  }
   const fresh = rediscover(air).find((c) => c.id === capabilityId);
   if (!fresh) {
     return {
       capabilityId,
       present: false,
+      authored: false,
       addedOperations: [],
       removedOperations: [...stored.operationIds].sort(),
       addedResources: [],
@@ -552,6 +582,7 @@ export function diffCapability(air: AirDocument, capabilityId: string): Capabili
   return {
     capabilityId,
     present: true,
+    authored: false,
     addedOperations: added,
     removedOperations: removed,
     sourceChanged,

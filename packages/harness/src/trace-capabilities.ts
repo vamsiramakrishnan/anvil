@@ -139,6 +139,15 @@ export interface ObservedGrouping {
   firstAt?: string;
   lastAt?: string;
   evidence: Claim[];
+  /**
+   * A ready-to-review manifest snippet: paste it into the estate's anvil.yaml
+   * `capabilities:` section to AUTHOR this grouping as a capability
+   * (`source: "manifest"`, born `lifecycle: "proposed"`), then recompile and
+   * review it through the ordinary gates. Emitting text the operator must copy,
+   * read, and compile — instead of writing the manifest file — IS the
+   * propose-only boundary: the reviewed bytes are the ones a human placed.
+   */
+  manifestSnippet: string;
 }
 
 export interface TraceCapabilityReport {
@@ -350,6 +359,42 @@ function groupingEvidence(input: {
 }
 
 /**
+ * The bridge from an observed grouping to the manifest authoring path
+ * (`capabilities:` entries with an `operations` list — see
+ * `CapabilityReviewManifest` in `@anvil/compiler`). Every scalar is
+ * JSON-quoted, which is valid YAML, so an id or description can never break
+ * the snippet's structure. The suggested capability id is deterministic
+ * (service + the grouping's content-derived suffix) and the operator is
+ * expected to rename it to the task's real name — the placeholder display
+ * name says so out loud.
+ */
+function groupingManifestSnippet(input: {
+  serviceId: string;
+  groupingId: string;
+  operationIds: readonly string[];
+  traces: number;
+  totalTraces: number;
+  firstAt?: string;
+  lastAt?: string;
+}): string {
+  const suffix = input.groupingId.replace(/^observed\./, "observed_");
+  const window =
+    input.firstAt && input.lastAt ? ` between ${input.firstAt} and ${input.lastAt}` : "";
+  const description =
+    `Observed as the complete operation set of ${input.traces} of ${input.totalTraces} recorded ` +
+    `trace(s)${window}. Rename this capability after the task it accomplishes and review the ` +
+    `members before approving.`;
+  return [
+    "capabilities:",
+    `  ${input.serviceId}.${suffix}:`,
+    `    display_name: ${JSON.stringify(`Observed task ${suffix}`)}`,
+    `    description: ${JSON.stringify(description)}`,
+    "    operations:",
+    ...input.operationIds.map((id) => `      - ${JSON.stringify(id)}`),
+  ].join("\n");
+}
+
+/**
  * Group traces by their exact post-filter operation set.
  *
  * Exact-set matching is chosen over any similarity clustering on purpose. A
@@ -421,6 +466,15 @@ export function deriveGroupings(input: {
       crossesExistingCapabilities: spansCapabilities.length > 1,
       ...(group.firstAt ? { firstAt: group.firstAt } : {}),
       ...(group.lastAt ? { lastAt: group.lastAt } : {}),
+      manifestSnippet: groupingManifestSnippet({
+        serviceId: input.air.service.id,
+        groupingId: id,
+        operationIds: group.operationIds,
+        traces: group.traces,
+        totalTraces: input.traces.length,
+        ...(group.firstAt ? { firstAt: group.firstAt } : {}),
+        ...(group.lastAt ? { lastAt: group.lastAt } : {}),
+      }),
       evidence: groupingEvidence({
         id,
         operationIds: group.operationIds,
@@ -516,9 +570,11 @@ export function runTraceCapabilities({ air, dir }: TraceCapabilityOptions): Trac
         "Co-occurrence proves operations were used together. It does not prove they are one " +
         "unit of work, which is a business judgement Anvil does not make from usage alone.",
       nextGate:
-        "Review each grouping against the estate. A grouping a reviewer accepts becomes a " +
-        "capability through the existing grouping-review gates (`anvil capability show`, " +
-        "`approve`), never from this report.",
+        "Review each grouping against the estate. To adopt one, copy its manifestSnippet into " +
+        "the estate's anvil.yaml `capabilities:` section (authoring — the capability compiles " +
+        'in with source "manifest", born proposed), recompile, then review it through the ' +
+        "existing grouping-review gates (`anvil capability show`, `approve`), never from this " +
+        "report.",
     },
     ok,
     detail: ok

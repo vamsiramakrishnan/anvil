@@ -802,6 +802,16 @@
       "tests": [
         "packages/refinement/src/protocol/rehome-resource.test.ts"
       ]
+    },
+    {
+      "id": "capability-authoring/never-born-approved",
+      "file": "packages/compiler/src/capability-authoring.ts",
+      "control": "An authored capability is never born approved: a manifest `capabilities` entry with an `operations` list lands in AIR at lifecycle `proposed`, and can only reach `approved` through the same review gate (and disclosure budget) as a discovered grouping. Set the birth lifecycle to `approved` and a manifest author has silently skipped review — the exact shortcut the propose-only boundary exists to forbid.",
+      "find": "      lifecycle: \"proposed\",",
+      "replace": "      lifecycle: \"approved\",",
+      "tests": [
+        "packages/compiler/src/capability-authoring.test.ts"
+      ]
     }
   ]
 }

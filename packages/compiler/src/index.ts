@@ -7,6 +7,7 @@
 export * from "./adopt/index.js";
 export * from "./capabilities.js";
 export * from "./capability/index.js";
+export * from "./capability-authoring.js";
 export * from "./capability-review.js";
 export * from "./classify.js";
 export * from "./compile.js";
