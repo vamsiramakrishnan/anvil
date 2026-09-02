@@ -389,6 +389,15 @@ td {
 
 .table-wrap {
   overflow-x: auto;
+  max-width: 100%;
+}
+
+/* The claims table sits in the narrow detail pane: the note column wraps
+ * instead of pushing the table past the pane, and the pane scrolls rather
+ * than the page if a value still cannot wrap. */
+.claims td:last-child {
+  min-width: 14rem;
+  overflow-wrap: anywhere;
 }
 
 dl.kv {

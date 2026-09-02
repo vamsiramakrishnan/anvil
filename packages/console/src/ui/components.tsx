@@ -125,35 +125,37 @@ export function Claims({ claims }: { claims: DecisionItem["evidence"] }) {
     );
   }
   return (
-    <table>
-      <thead>
-        <tr>
-          <th>predicate</th>
-          <th>value</th>
-          <th>source</th>
-          <th>conf.</th>
-          <th>note</th>
-        </tr>
-      </thead>
-      <tbody>
-        {claims.map((claim, index) => (
-          <tr key={claim.id ?? `${claim.predicate}:${index}`}>
-            <td>
-              <code>{claim.predicate}</code>
-            </td>
-            <td>
-              <code>{show(claim.value)}</code>
-            </td>
-            <td>
-              <Tag>{claim.source}</Tag>
-              {claim.sourceRef ? <div className="row-id">{claim.sourceRef}</div> : null}
-            </td>
-            <td className="mono">{claim.confidence.toFixed(2)}</td>
-            <td>{claim.note ?? ""}</td>
+    <div className="table-wrap claims">
+      <table>
+        <thead>
+          <tr>
+            <th>predicate</th>
+            <th>value</th>
+            <th>source</th>
+            <th>conf.</th>
+            <th>note</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {claims.map((claim, index) => (
+            <tr key={claim.id ?? `${claim.predicate}:${index}`}>
+              <td>
+                <code>{claim.predicate}</code>
+              </td>
+              <td>
+                <code>{show(claim.value)}</code>
+              </td>
+              <td>
+                <Tag>{claim.source}</Tag>
+                {claim.sourceRef ? <div className="row-id">{claim.sourceRef}</div> : null}
+              </td>
+              <td className="mono">{claim.confidence.toFixed(2)}</td>
+              <td>{claim.note ?? ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

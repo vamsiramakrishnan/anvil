@@ -447,6 +447,53 @@ paths:
   });
 });
 
+describe("manifest state override", () => {
+  const readSpec = `openapi: 3.0.3
+info: { title: Payments, version: 1.0.0 }
+paths:
+  /payments/{id}:
+    get:
+      operationId: getPayment
+      summary: Get a payment
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses: { "200": { description: ok } }
+`;
+
+  it("records why an operation sits in review when the manifest put it there", async () => {
+    // A manifest-set state is a reviewer's decision. Every surface that shows
+    // the operation — inspect, the skill, the console's decision queue — must
+    // be able to say so, or the queue shows an unexplained review_required.
+    const air = await compile({
+      spec: readSpec,
+      serviceId: "payments",
+      manifest: `operations:
+  getPayment:
+    state: review_required
+`,
+    });
+    const op = air.operations[0];
+    expect(op?.state).toBe("review_required");
+    expect(op?.reviewNotes).toContain(
+      "State set to review_required by the Anvil manifest (operations.payments.payments.get.state).",
+    );
+  });
+
+  it("adds no note when the manifest approves — approval leaves the queue", async () => {
+    const air = await compile({
+      spec: readSpec,
+      serviceId: "payments",
+      manifest: `operations:
+  getPayment:
+    state: approved
+`,
+    });
+    const op = air.operations[0];
+    expect(op?.state).toBe("approved");
+    expect(op?.reviewNotes.some((n) => n.includes("by the Anvil manifest"))).toBe(false);
+  });
+});
+
 describe("compile pipeline (with manifest enrichment)", () => {
   it("makes the refund idempotent, retry-safe, and approved", async () => {
     const air = await compile({ spec, manifest, serviceId: "payments" });

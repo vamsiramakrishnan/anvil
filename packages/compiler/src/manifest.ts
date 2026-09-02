@@ -1127,7 +1127,17 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     }
   }
 
-  if (m.state) op.state = m.state;
+  if (m.state) {
+    // A manifest-set state is a reviewer's decision, and every surface that
+    // shows the operation (inspect, the skill, the console's decision queue)
+    // must be able to say so; an unexplained review_required is a decision
+    // nobody can audit. `approved` needs no note: it leaves the queue.
+    if (m.state !== op.state && m.state !== "approved") {
+      const note = `State set to ${m.state} by the Anvil manifest (operations.${op.id}.state).`;
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    }
+    op.state = m.state;
+  }
 
   const authIssues = authCoherenceIssues(op.auth);
   if (
