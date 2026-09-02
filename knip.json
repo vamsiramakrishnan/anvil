@@ -9,7 +9,7 @@
       "entry": ["src/shims/*.js", "scripts/*.mjs"]
     },
     "packages/console": {
-      "entry": ["src/server/index.ts", "src/ui/main.tsx", "vite.config.ts"]
+      "entry": ["src/server/index.ts"]
     },
     "packages/design": {
       "entry": ["src/index.ts", "scripts/*.mjs"]
