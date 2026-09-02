@@ -13,6 +13,10 @@
     },
     "clean": {
       "cache": false
+    },
+    "test:e2e": {
+      "dependsOn": ["^build", "build", "@anvil/cli#build"],
+      "cache": false
     }
   }
 }

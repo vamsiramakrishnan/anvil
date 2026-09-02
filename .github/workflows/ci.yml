@@ -68,3 +68,51 @@ jobs:
       # gate. Network-backed corpora stay in corpus.yml.
       - name: Gateway-estate differential gate
         run: node tools/corpus/run.mjs estates
+
+  e2e:
+    name: Console end-to-end
+    runs-on: ubuntu-latest
+    needs: verify
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The browser build is the one @playwright/test's pinned version expects;
+      # the e2e config itself never installs a browser.
+      - name: Install Chromium for Playwright
+        run: pnpm --filter @anvil/console exec playwright install --with-deps chromium
+
+      # The proof drives the REAL built page served by the REAL `anvil console`
+      # process over a workspace the built CLI compiles, so everything builds first.
+      - name: Build
+        run: pnpm build
+
+      # A separate turbo task, deliberately outside `pnpm test`, so the unit
+      # suite and the mutation runner never depend on a browser.
+      - name: Console end-to-end
+        run: pnpm test:e2e
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-playwright-report
+          path: |
+            packages/console/playwright-report
+            packages/console/test-results
+          retention-days: 7

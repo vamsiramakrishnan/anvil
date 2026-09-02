@@ -19,3 +19,7 @@ gen/
 # coverage output
 coverage-report/
 coverage-baseline/
+
+# console end-to-end output (packages/console/e2e, `pnpm test:e2e`)
+packages/console/test-results/
+packages/console/playwright-report/
