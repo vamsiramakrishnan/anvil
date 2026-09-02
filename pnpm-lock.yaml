@@ -109,6 +109,9 @@ importers:
       '@anvil/compiler':
         specifier: workspace:*
         version: link:../compiler
+      '@anvil/console':
+        specifier: workspace:*
+        version: link:../console
       '@anvil/generators':
         specifier: workspace:*
         version: link:../generators

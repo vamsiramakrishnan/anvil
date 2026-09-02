@@ -845,6 +845,46 @@
       ]
     },
     {
+      "id": "console/mutation-requires-token",
+      "file": "packages/console/src/server/http.ts",
+      "control": "Every non-GET request must carry the per-process token as X-Anvil-Console-Token, verbatim, or it is refused 403 before the body is read. Delete the check and any page open in the reviewer's browser can drive an approval through the console with a plain fetch.",
+      "find": "  if (!tokenMatches(opts.token, req.headers[TOKEN_HEADER])) throw forbidden();",
+      "replace": "  if (false) throw forbidden();",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "console/mutation-requires-same-origin",
+      "file": "packages/console/src/server/http.ts",
+      "control": "Every non-GET request must carry an Origin equal to the server's own origin, or it is refused 403. Delete the check and a token that leaked once (a shared screenshot, a pasted page source) is enough for any other origin to mutate approval state.",
+      "find": "  if (header(req, \"origin\") !== opts.origin()) throw forbidden();",
+      "replace": "  if (false) throw forbidden();",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "console/sec-fetch-site-cross-site-refused",
+      "file": "packages/console/src/server/http.ts",
+      "control": "A Sec-Fetch-Site the browser stamps as cross-site or same-site is refused even when the Origin header matches, so a request the browser itself says came from elsewhere never reaches a mutation.",
+      "find": "  if (site !== undefined && site !== \"same-origin\" && site !== \"none\") throw forbidden();",
+      "replace": "  if (false) throw forbidden();",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "console/request-paths-stay-inside-root",
+      "file": "packages/console/src/server/workspace.ts",
+      "control": "Every path a request body names (task, submission, pack out dir, receipt files, repository root) must resolve inside the workspace root, lexically and through symlinks, or it is refused 400 console/path_outside_root. Delete the check and the console reads and writes anywhere the reviewer's account can.",
+      "find": "  if (escapes) throw pathOutsideRoot(path);",
+      "replace": "  if (false) throw pathOutsideRoot(path);",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
       "id": "refinement/group-supersedes-outside-steps-refused",
       "file": "packages/refinement/src/skills/group-proposal.ts",
       "control": "A group workflow's supersedes may only name the proposal's own steps, and the named group_supersedes_within_steps check owns that refusal (the AIR schema's refinement is defense in depth behind it, not a substitute for the named rejection a harness is told to fix).",

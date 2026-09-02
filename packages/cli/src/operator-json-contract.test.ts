@@ -722,6 +722,20 @@ describe("anvil capability propose speaks the operator envelope", () => {
  * refusals the ones most likely to be hit unattended — an endpoint that moved,
  * a token that expired. They speak the envelope.
  */
+describe("anvil console speaks the operator envelope", () => {
+  it("refuses a missing workspace as a document, not as prose on stderr", async () => {
+    const result = await run(["console", join(work, "absent"), "--json"]);
+    const envelope = expectRefusalContract(result, "console missing root --json");
+    expect(envelope.code).toBe("console/root_not_found");
+  });
+
+  it("refuses an unparseable --port as a document", async () => {
+    const result = await run(["console", work, "--port", "eighty", "--json"]);
+    const envelope = expectRefusalContract(result, "console --port eighty --json");
+    expect(envelope.code).toBe("console/invalid_port");
+  });
+});
+
 describe("anvil adopt speaks the operator envelope", () => {
   it("refuses an unknown mode as a document, not as prose on stderr", async () => {
     const result = await run(["adopt", "http://127.0.0.1:1/mcp", "--mode", "absorb", "--json"]);

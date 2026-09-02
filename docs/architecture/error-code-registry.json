@@ -25,8 +25,8 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 385,
-  "asserted": 274,
+  "total": 396,
+  "asserted": 285,
   "unasserted": 111,
   "codes": {
     "apiconnect/empty_export": {
@@ -380,6 +380,72 @@
     "composition/unknown_review_candidate": {
       "packages": [
         "cli"
+      ],
+      "asserted": true
+    },
+    "console/forbidden": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/invalid_json": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/invalid_port": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "console/invalid_request": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/listen_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "console/not_found": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/path_outside_root": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/payload_too_large": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/refused": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/root_not_found": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "console/unsupported_media_type": {
+      "packages": [
+        "console"
       ],
       "asserted": true
     },

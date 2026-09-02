@@ -7,6 +7,9 @@
     },
     "apps/docs": {
       "entry": ["src/shims/*.js", "scripts/*.mjs"]
+    },
+    "packages/console": {
+      "entry": ["src/server/index.ts"]
     }
   },
   "ignoreDependencies": ["@fontsource/hanken-grotesk", "@fontsource/jetbrains-mono"],
