@@ -16,7 +16,9 @@
     },
     "test:e2e": {
       "dependsOn": ["^build", "build", "@anvil/cli#build"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["PLAYWRIGHT_BROWSERS_PATH", "ANVIL_E2E_CHROMIUM"],
+      "env": ["CI"]
     }
   }
 }
