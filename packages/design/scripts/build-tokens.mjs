@@ -1,0 +1,180 @@
+#!/usr/bin/env node
+/**
+ * Generates `src/tokens.css` from `src/palette.mjs` and `src/status-ramp.mjs`.
+ *
+ *   node scripts/build-tokens.mjs           # rewrite src/tokens.css
+ *   node scripts/build-tokens.mjs --print   # emit to stdout (what the test diffs)
+ *
+ * The two .mjs files are the only truth: `tokens.test.ts` fails when the
+ * committed tokens.css is not byte-identical to this script's output, so a
+ * colour can only change in one place.
+ *
+ * Dark is the default `:root`; light is `:root[data-theme="light"]` — the
+ * same convention the docs site uses, so one `data-theme` attribute drives
+ * every surface.
+ */
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { palette } from "../src/palette.mjs";
+import { statusRamp } from "../src/status-ramp.mjs";
+
+const OUT = new URL("../src/tokens.css", import.meta.url);
+
+/**
+ * Non-colour tokens: type, the 4px module, the Braun radius scale, the micro-label.
+ * @type {Array<[string, string]>}
+ */
+const SCALE = [
+  ["--anvil-display-font", '"Hanken Grotesk", ui-sans-serif, system-ui, sans-serif'],
+  ["--anvil-mono-font", '"JetBrains Mono", ui-monospace, menlo, consolas, monospace'],
+  ["--anvil-space-1", "0.25rem"],
+  ["--anvil-space-2", "0.5rem"],
+  ["--anvil-space-3", "0.75rem"],
+  ["--anvil-space-4", "1rem"],
+  ["--anvil-space-5", "1.5rem"],
+  ["--anvil-space-6", "2rem"],
+  ["--anvil-space-7", "3rem"],
+  ["--anvil-radius-sm", "0.125rem"],
+  ["--anvil-radius", "0.25rem"],
+  ["--anvil-radius-md", "0.375rem"],
+  ["--anvil-radius-lg", "0.5rem"],
+  ["--anvil-radius-xl", "0.75rem"],
+  ["--anvil-label-size", "0.625rem"],
+  ["--anvil-label-weight", "600"],
+  ["--anvil-label-tracking", "0.1em"],
+  ["--anvil-label-transform", "uppercase"],
+  ["--anvil-label-font", "var(--anvil-mono-font)"],
+];
+
+/**
+ * How much of the base hue survives in the dark-theme small-text shade
+ * (lightened towards white so it stays AA on slate) — the docs' rungs.
+ */
+const DARK_TEXT_MIX = { queued: 45, running: 52 };
+
+/** @param {string} status */
+function darkTextMix(status) {
+  return DARK_TEXT_MIX[/** @type {keyof typeof DARK_TEXT_MIX} */ (status)] ?? 55;
+}
+
+const { light, dark } = palette;
+
+/** @param {number} index */
+function slate(index) {
+  const hex = dark.slate[index];
+  if (hex === undefined) throw new Error(`palette.dark.slate has no rung ${index}`);
+  return hex;
+}
+const page = slate(0);
+const panel = slate(1);
+const raised = slate(2);
+const hairline = slate(3);
+const muted = slate(4);
+const secondary = slate(5);
+const ink = slate(6);
+const inkStrong = slate(7);
+
+/** @type {Array<[string, string]>} */
+const DARK_CHROME = [
+  ["--anvil-color-bg", page],
+  ["--anvil-color-surface", panel],
+  ["--anvil-color-surface-raised", raised],
+  ["--anvil-color-hairline", raised],
+  ["--anvil-color-hairline-strong", hairline],
+  ["--anvil-color-text-muted", muted],
+  ["--anvil-color-text-secondary", secondary],
+  ["--anvil-color-text", ink],
+  ["--anvil-color-text-strong", inkStrong],
+  ["--anvil-color-accent", dark.accent],
+  ["--anvil-color-accent-low", dark.accentLow],
+  ["--anvil-color-accent-high", dark.accentHigh],
+  ["--anvil-color-text-accent", dark.textAccent],
+  ["--anvil-color-on-accent", inkStrong],
+  ["--anvil-color-positive-low", dark.accentLow],
+];
+
+/** @type {Array<[string, string]>} */
+const LIGHT_CHROME = [
+  ["--anvil-color-bg", light.surface],
+  ["--anvil-color-surface", light.surfaceContainerLow],
+  ["--anvil-color-surface-raised", light.surfaceContainer],
+  ["--anvil-color-hairline", light.outlineVariant],
+  ["--anvil-color-hairline-strong", light.outline],
+  ["--anvil-color-text-muted", light.secondary],
+  ["--anvil-color-text-secondary", light.secondaryInk],
+  ["--anvil-color-text", light.inkHigh],
+  ["--anvil-color-text-strong", light.onSurface],
+  ["--anvil-color-accent", light.primary],
+  ["--anvil-color-accent-low", light.secondaryContainer],
+  ["--anvil-color-accent-high", light.primaryDeep],
+  ["--anvil-color-text-accent", light.primary],
+  ["--anvil-color-on-accent", light.surface],
+  ["--anvil-color-positive-low", light.tertiaryContainer],
+];
+
+/** @param {"dark" | "light"} theme */
+function statusTokens(theme) {
+  /** @type {Array<[string, string]>} */
+  const rows = [];
+  for (const [status, { base, ink: inkShade }] of Object.entries(statusRamp)) {
+    rows.push([`--anvil-status-${status}`, base]);
+    rows.push([`--anvil-status-${status}-ink`, inkShade]);
+    rows.push([
+      `--anvil-status-${status}-text`,
+      theme === "dark" ? `color-mix(in srgb, ${base} ${darkTextMix(status)}%, white)` : inkShade,
+    ]);
+    rows.push([`--anvil-status-${status}-tint`, `color-mix(in srgb, ${base} 14%, transparent)`]);
+  }
+  return rows;
+}
+
+/** @param {Array<[string, string]>} rows */
+function block(rows) {
+  return rows.map(([name, value]) => `  ${name}: ${value};`).join("\n");
+}
+
+export function renderTokensCss() {
+  return [
+    "/* GENERATED by packages/design/scripts/build-tokens.mjs from src/palette.mjs and",
+    " * src/status-ramp.mjs — do not edit; change the .mjs files and run `pnpm build:tokens`.",
+    " *",
+    ' * Dark is the default; light is :root[data-theme="light"]. */',
+    "",
+    ":root {",
+    block(SCALE),
+    "",
+    "  /* chrome — dark slate (default) */",
+    block(DARK_CHROME),
+    "",
+    "  /* status ramp — base for dots/borders/fills, ink for text on tint, text for small type, tint for chips */",
+    block(statusTokens("dark")),
+    "}",
+    "",
+    ':root[data-theme="light"] {',
+    "  /* chrome — light (Material --color-* names) */",
+    block(LIGHT_CHROME),
+    "",
+    block(statusTokens("light")),
+    "}",
+    "",
+  ].join("\n");
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const css = renderTokensCss();
+  if (process.argv.includes("--print")) {
+    process.stdout.write(css);
+  } else {
+    const previous = (() => {
+      try {
+        return readFileSync(OUT, "utf8");
+      } catch {
+        return undefined;
+      }
+    })();
+    writeFileSync(OUT, css, "utf8");
+    process.stderr.write(
+      `${previous === css ? "unchanged" : "wrote"} ${fileURLToPath(OUT)} (${css.length} bytes)\n`,
+    );
+  }
+}

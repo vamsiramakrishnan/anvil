@@ -1,0 +1,24 @@
+{
+  "name": "@anvil/design",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Anvil's design tokens — the Modernist Functionalism palette and the status ramp, the one source every surface (docs, console, TTY) derives its colours from.",
+  "type": "module",
+  "exports": {
+    "./palette.mjs": "./src/palette.mjs",
+    "./status-ramp.mjs": "./src/status-ramp.mjs",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "build:tokens": "node scripts/build-tokens.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/design/src"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

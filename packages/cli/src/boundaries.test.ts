@@ -137,6 +137,10 @@ const GRAPH = new Map(PACKAGES.map((pkg) => [pkg, declaredDeps(pkg)]));
 const ALLOWED_EDGES: Record<string, readonly string[]> = {
   air: [],
   grammar: [],
+  // Design tokens: two dependency-free .mjs modules and the CSS generated from
+  // them. Imports nothing — a colour source that could reach any other package
+  // would be a colour source that can drift with it.
+  design: [],
   "system-pack": ["air"],
   compiler: ["air", "grammar"],
   refinement: ["air", "grammar"],
@@ -156,8 +160,9 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
   // is the launch edge; console never imports cli), and may reach the same
   // library packages the CLI reaches for reading and deciding — never the
   // serving path, never targets. Listed edges are the allowed set; the package
-  // declares only those it imports today.
-  console: ["air", "compiler", "generators", "harness", "refinement", "system-pack"],
+  // declares only those it imports today. `design` is the UI's token source
+  // (tokens.css) — the console consumes colours from it and nowhere else.
+  console: ["air", "compiler", "design", "generators", "harness", "refinement", "system-pack"],
   cli: [
     "air",
     "certification",
