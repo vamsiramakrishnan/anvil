@@ -1,5 +1,6 @@
 import { hashCanonical } from "@anvil/air";
-import { routingTokens } from "@anvil/refinement";
+import { routingTokens } from "../vocabulary.js";
+import type { ConfusionAnalysis, ConfusionCluster, ConfusionEdge, RoutingHub } from "./report.js";
 
 /**
  * Mis-route clustering: the benchmark's failures, turned into work items.
@@ -41,18 +42,20 @@ import { routingTokens } from "@anvil/refinement";
  *
  * ## Tokenizer choice
  *
- * Shared-vocabulary evidence uses `routingTokens` from `@anvil/refinement`
- * (packages/refinement/src/vocabulary.ts) — the one tokenizer home shared by
- * the resource-contradiction detector, the heuristic executor, and proposal
- * validation — rather than the lexical router's private `tokens()` in
- * benchmark-routing.ts. Both were candidates and neither adds a package
- * dependency (`@anvil/cli` already depends on `@anvil/refinement` for the
- * benchmark's agent seam), so the tie broke on semantics: the router's
- * tokenizer is deliberately plural-SENSITIVE scoring machinery (`views` and
- * `view` are different tokens to it), while explaining why tools collide
- * needs the plural-INSENSITIVE corroboration floor — `list_views` and
- * `execute_view` collide on the word "view" as any human reads it, and
- * `routingTokens`' singularizing stems say exactly that.
+ * Shared-vocabulary evidence uses `routingTokens` (../vocabulary.ts) — the
+ * one tokenizer home shared by the resource-contradiction detector, the
+ * heuristic executor, and proposal validation — rather than the lexical
+ * router's private `tokens()` in routing.ts. Both were candidates and the tie
+ * broke on semantics: the router's tokenizer is deliberately plural-SENSITIVE
+ * scoring machinery (`views` and `view` are different tokens to it), while
+ * explaining why tools collide needs the plural-INSENSITIVE corroboration
+ * floor — `list_views` and `execute_view` collide on the word "view" as any
+ * human reads it, and `routingTokens`' singularizing stems say exactly that.
+ *
+ * The result shapes (`ConfusionAnalysis`, `ConfusionCluster`, `RoutingHub`)
+ * are declared once, as zod, in report.ts — the same schema a reader of
+ * `benchmark.report.json` parses — so what this module builds and what the
+ * file carries cannot drift apart.
  */
 
 /* ------------------------------- thresholds ------------------------------- */
@@ -96,81 +99,14 @@ export interface ConfusionOperation {
   toolName: string;
   tasks: ReadonlyArray<{
     intent: string;
-    curated: { routed: string | undefined; pass: boolean };
+    curated: { routed?: string | undefined; pass: boolean };
   }>;
-}
-
-/** One directed confusion: tasks belonging to `intended` that the curated
- *  catalog routed to `routed`, with the mis-routed intents verbatim. */
-interface ConfusionEdge {
-  intended: string;
-  routed: string;
-  count: number;
-  intents: string[];
-  /** Routing-token stems the two tool names share — the collision vocabulary.
-   *  Tokens carried by half the catalog or more (the service prefix) are
-   *  excluded: a word every tool says explains no particular collision. */
-  sharedTokens: string[];
-}
-
-interface ClusterMember {
-  operationId: string;
-  toolName: string;
-}
-
-/** K mutually confusable tools, with the evidence that makes them so. */
-interface ConfusionCluster {
-  /**
-   * Deterministic cluster id (`cc_` + 12 hex of the sorted member tool names'
-   * canonical hash): the coordinate `anvil refine export-task <dir> group:<id>`
-   * uses to hand this cluster to a coding harness. A pure function of the
-   * membership, so the same confusions name the same cluster across runs.
-   */
-  id: string;
-  members: ClusterMember[];
-  /** Total mis-routed tasks inside the cluster — the evidence weight. */
-  taskCount: number;
-  edges: ConfusionEdge[];
-  /** Union of the per-edge shared vocabulary, sorted. */
-  sharedTokens: string[];
-}
-
-/** A tool confused with a catalog-scale number of partners — the FLEXCUBE
- *  envelope-noise shape. Reported apart so it cannot weld clusters. */
-interface RoutingHub {
-  operationId: string;
-  toolName: string;
-  /** Distinct tools this one was confused with, in either direction. */
-  distinctPartners: number;
-  /** Mis-routed tasks touching this tool (into it, or out of it). */
-  taskCount: number;
-  /** The mis-routed intents, verbatim. */
-  intents: string[];
-}
-
-export interface ConfusionAnalysis {
-  /**
-   * What this analysis is allowed to mean: each cluster is a CANDIDATE for
-   * composition or collapse — worth asking about — never a decision. The
-   * literal rides in the report so downstream readers cannot mistake a
-   * structural signal for an approved grouping.
-   */
-  posture: "candidate";
-  minClusterEvidence: number;
-  hubPartnerFraction: number;
-  hubMinPartners: number;
-  hubs: RoutingHub[];
-  clusters: ConfusionCluster[];
 }
 
 /* -------------------------------- analysis -------------------------------- */
 
-interface DirectedEdge {
-  intended: string;
-  routed: string;
-  count: number;
-  intents: string[];
-}
+/** A confusion edge before its shared vocabulary is attached. */
+type DirectedEdge = Omit<ConfusionEdge, "sharedTokens">;
 
 /**
  * Build the confusion analysis from the benchmark's per-operation results.

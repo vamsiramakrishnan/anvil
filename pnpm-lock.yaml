@@ -208,6 +208,34 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.27.7)(jiti@2.7.0)(yaml@2.9.0))
 
+  packages/console:
+    dependencies:
+      '@anvil/air':
+        specifier: workspace:*
+        version: link:../air
+      '@anvil/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+      '@anvil/generators':
+        specifier: workspace:*
+        version: link:../generators
+      '@anvil/refinement':
+        specifier: workspace:*
+        version: link:../refinement
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.16)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@24.13.3)(@vitest/coverage-v8@4.1.10)(vite@8.1.4(@types/node@24.13.3)(esbuild@0.27.7)(jiti@2.7.0)(yaml@2.9.0))
+
   packages/generators:
     dependencies:
       '@anvil/air':

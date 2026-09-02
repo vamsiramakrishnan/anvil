@@ -25,8 +25,8 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 384,
-  "asserted": 273,
+  "total": 385,
+  "asserted": 274,
   "unasserted": 111,
   "codes": {
     "apiconnect/empty_export": {
@@ -1579,6 +1579,12 @@
         "compiler"
       ],
       "asserted": false
+    },
+    "refinement/group_delta_regressed": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
     },
     "refinement/import_failed": {
       "packages": [

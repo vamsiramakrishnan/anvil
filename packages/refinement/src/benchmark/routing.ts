@@ -1,6 +1,6 @@
 import type { AirDocument, Operation } from "@anvil/air";
 import { mcpToolDescription } from "@anvil/air";
-import { type AgentProcessRunner, allowlistedEnv } from "@anvil/refinement";
+import { type AgentProcessRunner, allowlistedEnv } from "../case/process-runner.js";
 
 /**
  * The routing half of the benchmark: given a natural-language task and a tool

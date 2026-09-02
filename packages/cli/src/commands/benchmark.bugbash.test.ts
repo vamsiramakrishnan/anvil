@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compile } from "@anvil/compiler";
 import { generateBundle, writeBundle } from "@anvil/generators";
+import type { BenchmarkOperationResult, BenchmarkReport, BenchmarkTask } from "@anvil/refinement";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { runAnvilCli } from "../anvil-cli.js";
 import { bufferIO } from "../io.js";
-import type { BenchmarkOperationResult, BenchmarkReport, BenchmarkTask } from "./benchmark.js";
 import { runBenchmarkCommand } from "./benchmark.js";
 
 const read = (rel: string) =>

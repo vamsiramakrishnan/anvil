@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bundleHash, REVIEW_REPORT_FILE, readBundleDir } from "@anvil/generators";
+import { bundleHash, REVIEW_REPORT_FILE, readBundleDir, resolveBundleDir } from "@anvil/generators";
 import {
   type AgentDriver,
   haikuReviewDriver,
@@ -13,7 +13,6 @@ import {
 } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
-import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 

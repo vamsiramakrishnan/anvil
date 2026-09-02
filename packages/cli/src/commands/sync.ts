@@ -17,10 +17,9 @@ import {
   type SourceSnapshotStore,
   snapshotFromImport,
 } from "@anvil/compiler";
-import { Certification, readBundleDir } from "@anvil/generators";
+import { Certification, loadBundleAir, readBundleDir, resolveBundleDir } from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
-import { loadBundleAir, resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 import { printDiagnostics } from "./source.js";

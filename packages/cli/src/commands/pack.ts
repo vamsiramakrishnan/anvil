@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { contractHash } from "@anvil/air";
-import { bundleHash, isDerivedRecordFile, readBundleDir } from "@anvil/generators";
+import {
+  bundleHash,
+  isDerivedRecordFile,
+  loadBundleAir,
+  readBundleDir,
+  resolveBundleDir,
+} from "@anvil/generators";
 import {
   type AgentSystemPack,
   archivePack,
@@ -14,7 +20,6 @@ import {
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import { VERSION } from "../program.js";
-import { loadBundleAir, resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 

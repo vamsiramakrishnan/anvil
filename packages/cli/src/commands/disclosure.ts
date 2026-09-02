@@ -16,12 +16,13 @@ import {
 import type { ExecutableEvidenceState } from "@anvil/generators";
 import {
   executableEvidenceStatuses,
+  loadBundleAir,
   readBundleDir,
+  resolveBundleDir,
   type SIMULATION_REPORT_FILE,
 } from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
-import { loadBundleAir, resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 

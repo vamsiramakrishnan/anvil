@@ -4,12 +4,17 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type AirDocument, airFromYaml, airToYaml } from "@anvil/air";
 import { approveOperations, compile } from "@anvil/compiler";
-import { generateBundle, readBundleDir, writeBundle } from "@anvil/generators";
+import {
+  generateBundle,
+  readBundleDir,
+  reprojectBundleAtomically,
+  writeBundle,
+} from "@anvil/generators";
+import { loadAir } from "@anvil/refinement";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAnvilCli } from "../anvil-cli.js";
 import { bufferIO } from "../io.js";
-import { reprojectBundleAtomically, runApprove } from "./approve.js";
-import { loadAir } from "./shared.js";
+import { runApprove } from "./approve.js";
 
 /**
  * `anvil approve` — targeted coverage of packages/cli/src/commands/approve.ts

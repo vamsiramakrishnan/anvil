@@ -5,15 +5,16 @@ import {
   type ExecutableEvidenceStatuses,
   executableEvidenceReady,
   executableEvidenceStatuses,
+  loadBundleAir,
   PUBLICATION_FILE,
   type PublicationExecutableEvidence,
   type PublicationRecord,
   readBundleDir,
+  resolveBundleDir,
   verifyCertification,
 } from "@anvil/generators";
 import { type Command, Option } from "commander";
 import type { CliIO } from "../io.js";
-import { loadBundleAir, resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { printCloudRunPlan } from "./deploy.js";
 import { annotate } from "./meta.js";

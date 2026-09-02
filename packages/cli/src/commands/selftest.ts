@@ -1,10 +1,14 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bundleHash, readBundleDir, SELFTEST_REPORT_FILE } from "@anvil/generators";
+import {
+  bundleHash,
+  readBundleDir,
+  resolveBundleDir,
+  SELFTEST_REPORT_FILE,
+} from "@anvil/generators";
 import type { LoopbackCheck, LoopbackReport } from "@anvil/harness";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
-import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 

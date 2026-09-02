@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import {
   distill,
   distillToEnrichmentPlan,
+  loadAir,
   renderDistillation,
   renderEnrichmentPlan,
   runDetectors,
@@ -10,7 +11,6 @@ import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /**
  * `anvil distill` — Stage 1 of stripping a bloated surface to its eigenbasis.

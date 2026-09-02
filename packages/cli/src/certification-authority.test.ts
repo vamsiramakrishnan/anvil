@@ -7,12 +7,13 @@ import { compile } from "@anvil/compiler";
 import {
   certifyBundle,
   generateBundle,
+  loadBundleAir,
   readBundleDir,
   verifyCertification,
   writeBundle,
 } from "@anvil/generators";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadBundleAir, runCertify } from "./commands/certify.js";
+import { runCertify } from "./commands/certify.js";
 import { bufferIO } from "./io.js";
 
 /**
@@ -154,7 +155,9 @@ describe("certifyBundle call sites do not agree on what certification means", ()
    */
   it("only the certify command applies the bridge and the target-kit check", () => {
     const callers = [
-      "packages/cli/src/commands/approve.ts",
+      // The atomic reprojection (once commands/approve.ts) lives in generators
+      // now; it is still the approval path's call site of certifyBundle.
+      "packages/generators/src/bundle-reproject.ts",
       "packages/cli/src/commands/capability/capability-compose.ts",
       "packages/cli/src/commands/idempotency-store.ts",
     ];

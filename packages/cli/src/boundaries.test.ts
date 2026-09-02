@@ -150,6 +150,14 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
   certification: ["air", "compiler", "runtime", "simulator", "system-pack"],
   generators: ["air", "compiler", "mcp-runtime", "refinement", "runtime"],
   harness: ["air", "compiler", "generators", "mcp-runtime", "refinement", "runtime"],
+  // The review console is a pure projection: it reads bundles, packs, and
+  // reports from disk and writes only through the library functions the CLI
+  // itself calls. It sits beside the CLI, below it in the graph (cli -> console
+  // is the launch edge; console never imports cli), and may reach the same
+  // library packages the CLI reaches for reading and deciding — never the
+  // serving path, never targets. Listed edges are the allowed set; the package
+  // declares only those it imports today.
+  console: ["air", "compiler", "generators", "harness", "refinement", "system-pack"],
   cli: [
     "air",
     "certification",
@@ -162,6 +170,9 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
     // content-addressed packs. Same direction certification already points.
     "system-pack",
     "targets",
+    // `anvil console` launches the review console; the console never imports
+    // the CLI, so this edge cannot close a cycle.
+    "console",
   ],
 };
 
@@ -286,6 +297,7 @@ describe("package public API boundaries", () => {
  * transitively, which is the form that actually holds the line.
  */
 const BUILD_TIME_PACKAGES = [
+  "console",
   "compiler",
   "generators",
   "harness",

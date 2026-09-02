@@ -6,10 +6,15 @@ import {
   type MutantResult,
   runMutationBattery,
 } from "@anvil/certification";
-import { bundleHash, readBundleDir, SIMULATION_REPORT_FILE } from "@anvil/generators";
+import {
+  bundleHash,
+  loadBundleAir,
+  readBundleDir,
+  resolveBundleDir,
+  SIMULATION_REPORT_FILE,
+} from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
-import { loadBundleAir, resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 

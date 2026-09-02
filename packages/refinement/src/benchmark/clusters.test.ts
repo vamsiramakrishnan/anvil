@@ -1,23 +1,33 @@
-import { BENCHMARK_REPORT_FILE, benchmarkEvidenceStatus, bundleHash } from "@anvil/generators";
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import type { BenchmarkOperationResult, BenchmarkReport, BenchmarkTask } from "./benchmark.js";
 import {
   analyzeConfusion,
   HUB_MIN_PARTNERS,
   HUB_PARTNER_FRACTION,
   MIN_CLUSTER_EVIDENCE,
   renderConfusionLines,
-} from "./benchmark-clusters.js";
+} from "./clusters.js";
+import {
+  type BenchmarkOperationResult,
+  type BenchmarkReport,
+  type BenchmarkTask,
+  parseBenchmarkReport,
+} from "./report.js";
 
 /**
  * Mis-route clustering, tested pure: report in, clusters out.
  *
  * The fixtures are built as full `BenchmarkReport` values and validated
- * through the REAL certify reader (`benchmarkEvidenceStatus`, which parses
- * the `BenchmarkEvidenceReport` zod in @anvil/generators), so a fixture that
- * drifts from the schema the rest of the toolchain reads fails here rather
- * than silently testing an imaginary shape.
+ * through the REAL report parser (`parseBenchmarkReport`, the zod schema
+ * `anvil benchmark` writes against), so a fixture that drifts from the schema
+ * the rest of the toolchain reads fails here rather than silently testing an
+ * imaginary shape. That the certify reader in @anvil/generators accepts the
+ * same full shape is asserted on its side (benchmark-evidence.test.ts), where
+ * the dependency direction allows it.
  */
+
+/** The digest of an empty bundle — a fixture is measured against nothing. */
+const EMPTY_BUNDLE_DIGEST = createHash("sha256").digest("hex");
 
 /** A task the way the benchmark writes it: mis-routed when `routed` names a
  *  different tool than the operation's own. */
@@ -61,7 +71,7 @@ function reportOf(operations: BenchmarkOperationResult[]): BenchmarkReport {
       bareRouted,
       upliftPts: 0,
     },
-    bundleHash: bundleHash({}),
+    bundleHash: EMPTY_BUNDLE_DIGEST,
   };
 }
 
@@ -144,13 +154,14 @@ function hubEstate(): BenchmarkOperationResult[] {
 }
 
 describe("fixtures hold the real report schema", () => {
-  it("both estates serialize to reports the certify reader accepts as fresh", () => {
+  it("both estates serialize to reports the full report parser accepts verbatim", () => {
     for (const operations of [viewsEstate(), hubEstate()]) {
       const report = reportOf(operations);
-      const files = { [BENCHMARK_REPORT_FILE]: JSON.stringify(report) };
-      // benchmarkEvidenceStatus parses through the BenchmarkEvidenceReport
-      // zod; "fresh" means the fixture matched the schema AND the digest.
-      expect(benchmarkEvidenceStatus(files).state).toBe("fresh");
+      // Through JSON, the way the file is read: `routed: undefined` must drop
+      // cleanly and every field the analysis emits must be one the schema names.
+      expect(parseBenchmarkReport(JSON.parse(JSON.stringify(report)))).toEqual(
+        JSON.parse(JSON.stringify(report)),
+      );
     }
   });
 });

@@ -6,10 +6,9 @@ import {
   type HumanApprovalPolicy,
   type SourceDiagnostic,
 } from "@anvil/compiler";
-import { generateBundle } from "@anvil/generators";
+import { generateBundle, installGeneratedBundle } from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
-import { installGeneratedBundle } from "./bundle-transaction.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 import { printDiagnostics, sourceService } from "./source.js";

@@ -703,12 +703,12 @@
     },
     {
       "id": "benchmark/agent-answers-are-read-not-demanded",
-      "file": "packages/cli/src/commands/benchmark-routing.ts",
+      "file": "packages/refinement/src/benchmark/routing.ts",
       "control": "Real model CLIs fence their JSON. Demanding that stdout parse whole scored 0/20 against a model that had in fact routed every task correctly — a measurement that silently reports failure for answers it was given is worse than no measurement, because a benchmark is believed.",
       "find": "  for (const match of text.matchAll(/```(?:json)?\\s*([\\s\\S]*?)```/g)) {",
       "replace": "  for (const match of [] as RegExpMatchArray[]) {",
       "tests": [
-        "packages/cli/src/commands/benchmark-routing.test.ts"
+        "packages/refinement/src/benchmark/routing.test.ts"
       ]
     },
     {
@@ -816,12 +816,12 @@
     },
     {
       "id": "benchmark/hub-never-welds-clusters",
-      "file": "packages/cli/src/commands/benchmark-clusters.ts",
+      "file": "packages/refinement/src/benchmark/clusters.ts",
       "control": "A routing hub's edges never enter confusion-cluster construction, so one catalog-scale sink cannot weld unrelated confusable families into a single blob.",
       "find": "  const clusterEdges = directed.filter((e) => !hubNames.has(e.intended) && !hubNames.has(e.routed));",
       "replace": "  const clusterEdges = directed;",
       "tests": [
-        "packages/cli/src/commands/benchmark-clusters.test.ts"
+        "packages/refinement/src/benchmark/clusters.test.ts"
       ]
     },
     {
@@ -836,7 +836,7 @@
     },
     {
       "id": "benchmark-admission/negative-delta-refused",
-      "file": "packages/cli/src/commands/refine-group.ts",
+      "file": "packages/refinement/src/protocol/group.ts",
       "control": "A group proposal whose measured routing delta is NEGATIVE is refused with the numbers before it can reach review. Disable the comparison and a composition that measurably mangles routing sails to a reviewer wearing a benchmark-scored evidence claim — the admission gate reporting success without having gated.",
       "find": "  if (delta.passedAfter < delta.passedBefore) {",
       "replace": "  if (false) {",

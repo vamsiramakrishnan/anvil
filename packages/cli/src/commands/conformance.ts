@@ -6,11 +6,11 @@ import {
   CONFORMANCE_REPORT_FILE,
   LIVE_CONFORMANCE_REPORT_FILE,
   readBundleDir,
+  resolveBundleDir,
 } from "@anvil/generators";
 import type { ConformanceCheck, ConformanceReport, LiveCheck, LiveReport } from "@anvil/harness";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
-import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 

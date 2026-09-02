@@ -9,6 +9,7 @@ import {
   type EffectivenessMetrics,
   type EffectivenessRow,
   effectivenessMetrics,
+  loadAir,
   runBattery,
   runEffectivenessCase,
   skillFor,
@@ -18,7 +19,6 @@ import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /**
  * `anvil case <subcommand>` — the investigation framework. `open`/`list` operate on

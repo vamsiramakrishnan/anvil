@@ -1,4 +1,5 @@
 import type { AirDocument, Operation } from "@anvil/air";
+import { loadAir } from "@anvil/refinement";
 import {
   allowedHostsFor,
   type ExecuteContext,
@@ -14,7 +15,6 @@ import type { CliIO } from "../io.js";
 import { exitCodeFor } from "../tool-cli.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /**
  * `anvil job answer <dir> <job_id> --operation <opId> --decision approve|reject [--note ...]`

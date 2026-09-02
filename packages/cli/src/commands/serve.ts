@@ -1,8 +1,8 @@
+import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /** `anvil serve mcp <dir>` — boot the generated MCP server over stdio. */
 export function registerServe(parent: Command, ctx: CommandContext): void {

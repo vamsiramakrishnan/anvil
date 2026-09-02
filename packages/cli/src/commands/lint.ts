@@ -1,8 +1,8 @@
+import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /** `anvil lint` — print safety diagnostics; exit non-zero on errors. */
 export function registerLint(parent: Command, ctx: CommandContext): void {

@@ -1,6 +1,6 @@
-import { existsSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { airFromJson, airFromYaml } from "@anvil/air";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { AirDocument } from "@anvil/air";
 import { certify as assessStaticContract } from "@anvil/certification";
 import {
   CERTIFICATION_FILE,
@@ -9,7 +9,9 @@ import {
   type CertificationGate,
   type Clock,
   certifyBundle,
+  loadBundleAir,
   readBundleDir,
+  resolveBundleDir,
 } from "@anvil/generators";
 import { GEMINI_ENTERPRISE_PROFILE, verifyTargetKit } from "@anvil/targets";
 import type { Command } from "commander";
@@ -95,7 +97,7 @@ export function runCertify(
 
 function targetCertificationChecks(
   files: Record<string, string>,
-  air: ReturnType<typeof loadBundleAir>,
+  air: AirDocument,
 ): CertificationCheck[] {
   const prefix = `targets/${GEMINI_ENTERPRISE_PROFILE.id}/`;
   if (!Object.keys(files).some((path) => path.startsWith(prefix))) return [];
@@ -136,19 +138,4 @@ function renderCertificationSummary(cert: Certification, dir: string): string {
       : `STATIC FAILED — wrote ${join(dir, CERTIFICATION_FILE)}. Fix the gates above and re-run static assurance.`,
   );
   return lines.join("\n");
-}
-
-/** Accept a bundle directory or a path to its air.yaml/air.json. */
-export function resolveBundleDir(path: string): string {
-  if (!existsSync(path)) throw new Error(`No such bundle: ${path}`);
-  return statSync(path).isDirectory() ? path : dirname(path);
-}
-
-/** Load the canonical AIR from the already-read bundle files. */
-export function loadBundleAir(dir: string, files: Record<string, string>) {
-  const yaml = files["air.yaml"];
-  if (yaml !== undefined) return airFromYaml(yaml);
-  const json = files["air.json"];
-  if (json !== undefined) return airFromJson(json);
-  throw new Error(`No air.yaml or air.json in ${dir}. Run \`anvil compile\` first.`);
 }

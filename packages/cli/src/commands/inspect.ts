@@ -1,10 +1,10 @@
 import { exampleInput, operationCatalog } from "@anvil/generators";
 import { cliFlagsFor } from "@anvil/harness";
+import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /** `anvil inspect <dir|air.yaml>` — the operation catalog and safety posture. */
 export function registerInspect(parent: Command, ctx: CommandContext): void {

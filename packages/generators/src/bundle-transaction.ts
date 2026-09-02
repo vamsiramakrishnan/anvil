@@ -12,10 +12,10 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
   GENERATION_METADATA_FILE,
   type GeneratedBundle,
-  readBundleDir,
   resourceOptionsFromGenerationMetadata,
   writeBundle,
-} from "@anvil/generators";
+} from "./bundle.js";
+import { readBundleDir } from "./certify.js";
 
 export interface BundleInstallDeps {
   installStage?: (stageDir: string, destination: string) => void;

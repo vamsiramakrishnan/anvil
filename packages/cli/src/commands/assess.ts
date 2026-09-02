@@ -2,6 +2,7 @@ import { resolveOperation } from "@anvil/air";
 import {
   assessReadiness,
   type Disposition,
+  loadAir,
   renderOperationReadiness,
   SEVERITIES,
   type Severity,
@@ -12,7 +13,6 @@ import { type Command, Option } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /** The `--fail-on` thresholds, each naming the dispositions that fail the check. */
 const FAIL_ON: Record<string, readonly Disposition[]> = {

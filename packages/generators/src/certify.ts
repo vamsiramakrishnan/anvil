@@ -14,7 +14,10 @@ import {
   verifyGatewayImportIdentity,
   verifyGatewayImportOutputManifest,
 } from "@anvil/compiler";
-import { runDetectors, targetOperationId } from "@anvil/refinement";
+// The benchmark report's file name and full shape live with the routing
+// benchmark in @anvil/refinement; this reader validates only the envelope
+// (digest + summary) it needs for freshness.
+import { BENCHMARK_REPORT_FILE, runDetectors, targetOperationId } from "@anvil/refinement";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
@@ -112,9 +115,6 @@ export const REVIEW_REPORT_FILE = "review.report.json";
 export const OBSERVE_REPORT_FILE = "observe.report.json";
 /** Where `anvil observe --from-records` writes the recorded-traffic report. */
 export const GENERATED_TRAFFIC_REPORT_FILE = "traffic.report.json";
-/** Where `anvil benchmark` writes deterministic agent-task benchmark results. */
-export const BENCHMARK_REPORT_FILE = "benchmark.report.json";
-
 /** Injectable clock so assurance/deployment-plan records are testable. */
 export type Clock = () => string;
 const systemClock: Clock = () => new Date().toISOString();

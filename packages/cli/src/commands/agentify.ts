@@ -6,14 +6,12 @@ import {
   compileSource,
   proposeCapabilities,
 } from "@anvil/compiler";
-import { generateBundle } from "@anvil/generators";
-import { assessReadiness, type ReadinessAssessment } from "@anvil/refinement";
+import { generateBundle, installGeneratedBundle } from "@anvil/generators";
+import { assessReadiness, loadAir, type ReadinessAssessment } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
-import { installGeneratedBundle } from "./bundle-transaction.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 import { printDiagnostics, sourceService } from "./source.js";
 
 /**

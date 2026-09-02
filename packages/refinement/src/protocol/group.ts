@@ -2,41 +2,44 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AirDocument, Claim, Operation } from "@anvil/air";
 import { planWorkflowSurface } from "@anvil/air";
-import { BENCHMARK_REPORT_FILE } from "@anvil/generators";
-import type { Deficiency, GroupCapabilityPayload, GroupWorkflowPayload } from "@anvil/refinement";
-import {
-  buildGroupWorkflow,
-  groupGrantOf,
-  makeDeficiency,
-  resolveOperationReference,
-  zGroupCapabilityPayload,
-  zGroupWorkflowPayload,
-} from "@anvil/refinement";
 import { z } from "zod";
+import { BENCHMARK_REPORT_FILE } from "../benchmark/report.js";
 import {
   benchmarkOperations,
   curatedCatalog,
   lexicalRouter,
   type RoutableTool,
-} from "./benchmark-routing.js";
+} from "../benchmark/routing.js";
+import { type Deficiency, makeDeficiency } from "../deficiency.js";
+import {
+  buildGroupWorkflow,
+  type GroupCapabilityPayload,
+  type GroupWorkflowPayload,
+  groupGrantOf,
+  resolveOperationReference,
+  zGroupCapabilityPayload,
+  zGroupWorkflowPayload,
+} from "../skills/group-proposal.js";
+import { HarnessProtocolError, type HarnessRejection } from "./errors.js";
 
 /**
- * The GROUP bridge and the benchmark-scored admission gate — the two CLI-side
- * halves of asking a coding harness about a whole confusable-tool cluster.
+ * The GROUP bridge and the benchmark-scored admission gate — the two halves of
+ * asking a coding harness about a whole confusable-tool cluster.
  *
- * ## Why the bridge lives HERE and not in a refinement detector
+ * ## Why the bridge is not a refinement detector
  *
  * Refinement's detectors are pure functions over `AirDocument` — that purity is
  * load-bearing (same document, same plan, everywhere). A confusion cluster is
  * not derivable from AIR: it is measured by the routing benchmark and recorded
  * in `benchmark.report.json`, a DERIVED record that may have been produced by
  * any router (including a real model via `--agent`). So the honest shape is a
- * deterministic CLI bridge: `anvil refine export-task <dir> group:<cluster-id>`
- * reads the report next to the bundle, resolves the cluster's members against
- * current AIR, and constructs the deficiency the ordinary export rails then
- * hash-bind into a portable task. Import needs no report at all — the task's
- * own `taskHash` carries the cluster and `sourceContractHash` pins the exact
- * document the benchmark measured.
+ * deterministic bridge beside the protocol rails rather than a detector:
+ * `anvil refine export-task <dir> group:<cluster-id>` reads the report next to
+ * the bundle, resolves the cluster's members against current AIR, and
+ * constructs the deficiency the ordinary export rails then hash-bind into a
+ * portable task. Import needs no report at all — the task's own `taskHash`
+ * carries the cluster and `sourceContractHash` pins the exact document the
+ * benchmark measured.
  *
  * ## The admission gate (Task B)
  *
@@ -99,7 +102,12 @@ const zTrafficReportSlice = z
   })
   .loose();
 
-/** Read and minimally validate the benchmark report next to a bundle. */
+/**
+ * Read and minimally validate the benchmark report next to a bundle. This is
+ * deliberately the SLICE the bridge needs (clusters, router, catalog size)
+ * read leniently, not the full `parseBenchmarkReport`: a report an older or
+ * foreign router wrote may still name a cluster worth exporting.
+ */
 function readBenchmarkReportSlice(bundleDir: string) {
   const path = join(bundleDir, BENCHMARK_REPORT_FILE);
   if (!existsSync(path)) {
@@ -286,19 +294,41 @@ export interface GroupRoutingDelta {
   simulationNote: string;
 }
 
-/** A group proposal whose measured routing delta is negative. Refused, with the numbers. */
-export class GroupAdmissionRefusal extends Error {
+/** The rejection envelope a negative delta produces: the numbers, then the introduced mis-routes. */
+function groupAdmissionRejection(delta: GroupRoutingDelta): HarnessRejection {
+  return {
+    code: "refinement/group_delta_regressed",
+    stage: "admission",
+    message:
+      `this abstraction makes routing worse: ${delta.passedBefore}→${delta.passedAfter} of ` +
+      `${delta.totalTasks} tasks routed correctly (${delta.upliftPts.toFixed(1)} pts). ` +
+      `Refused before review. Mis-routes it introduces: ` +
+      (delta.flippedToFail
+        .slice(0, 5)
+        .map((flip) => `"${flip.intent}"`)
+        .join(", ") || "(none listed)"),
+    issues: [
+      `tasks routed correctly before: ${delta.passedBefore}/${delta.totalTasks}`,
+      `tasks routed correctly after: ${delta.passedAfter}/${delta.totalTasks}`,
+      `upliftPts: ${delta.upliftPts.toFixed(1)}`,
+      ...delta.flippedToFail.map(
+        (flip) => `now mis-routed: "${flip.intent}" (${flip.operationId})`,
+      ),
+    ],
+  };
+}
+
+/**
+ * A group proposal whose measured routing delta is negative. Refused, with the
+ * numbers. It is a `HarnessProtocolError`, so every caller that already renders
+ * a harness rejection envelope (the CLI's `--json`, a console) renders this one
+ * the same way; the measured delta rides along for readers that want the numbers
+ * structured rather than in prose.
+ */
+export class GroupAdmissionRefusal extends HarnessProtocolError {
   readonly delta: GroupRoutingDelta;
   constructor(delta: GroupRoutingDelta) {
-    super(
-      `this abstraction makes routing worse: ${delta.passedBefore}→${delta.passedAfter} of ` +
-        `${delta.totalTasks} tasks routed correctly (${delta.upliftPts.toFixed(1)} pts). ` +
-        `Refused before review. Mis-routes it introduces: ` +
-        (delta.flippedToFail
-          .slice(0, 5)
-          .map((flip) => `"${flip.intent}"`)
-          .join(", ") || "(none listed)"),
-    );
+    super(groupAdmissionRejection(delta));
     this.name = "GroupAdmissionRefusal";
     this.delta = delta;
   }

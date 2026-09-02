@@ -22,6 +22,7 @@ export default defineConfig({
       "@anvil/simulator": pkg("simulator"),
       "@anvil/certification": pkg("certification"),
       "@anvil/targets": pkg("targets"),
+      "@anvil/console": pkg("console"),
     },
   },
   test: {

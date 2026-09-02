@@ -1,6 +1,6 @@
 import { type Operation, Operation as OperationSchema } from "@anvil/air";
-import type { AgentProcessRunner } from "@anvil/refinement";
 import { describe, expect, it } from "vitest";
+import type { AgentProcessRunner } from "../case/process-runner.js";
 import {
   agentRouter,
   bareCatalog,
@@ -9,7 +9,7 @@ import {
   extractRoutedTool,
   lexicalRouter,
   routeAndScore,
-} from "./benchmark-routing.js";
+} from "./routing.js";
 
 /**
  * The routing core, tested pure: catalogs in, tool name out, no bundle on
