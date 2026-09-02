@@ -3,22 +3,21 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { AirDocument, Capability, Diagnostic } from "@anvil/air";
 import { evidenceConfidence } from "@anvil/air";
 import {
-  approveCapability,
   type CapabilityBudgetCheck,
   CapabilityReviewError,
   capabilityDisclosureBudget,
   diffCapability,
   proposeCapabilities,
-  rejectCapability,
 } from "@anvil/compiler";
+import { approveCapabilityInBundle, rejectCapabilityInBundle } from "@anvil/generators";
 import { runTraceCapabilities, type TraceCapabilityReport } from "@anvil/harness";
+import { loadAir, resolveAirPath } from "@anvil/refinement";
 import { type Command, Option } from "commander";
 import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
-import { reportPreservedStaleArtifacts, reprojectBundleAtomically } from "../approve.js";
+import { reportPreservedStaleArtifacts } from "../approve.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
-import { loadAir, resolveAirPath } from "../shared.js";
 import { registerCapabilityCompose } from "./capability-compose.js";
 
 /**
@@ -434,13 +433,13 @@ function runApprove(
   opts: { allowLarge?: boolean; note?: string },
   io: CliIO,
 ): number {
-  const air = loadAir(path);
   let budget: CapabilityBudgetCheck;
+  let result: ReturnType<typeof approveCapabilityInBundle>["reprojection"];
   try {
-    budget = approveCapability(air, id, {
+    ({ budget, reprojection: result } = approveCapabilityInBundle(path, id, {
       allowLarge: opts.allowLarge === true,
       note: opts.note,
-    });
+    }));
   } catch (err) {
     if (err instanceof CapabilityReviewError) {
       if (err.diagnostic) io.err(formatDiagnostic(err.diagnostic));
@@ -450,7 +449,6 @@ function runApprove(
     throw err;
   }
   if (budget.diagnostic) io.out(formatDiagnostic(budget.diagnostic));
-  const result = reprojectBundleAtomically(path, air);
   io.out(
     `Approved capability '${id}' (${budget.toolCount} tool(s)) and atomically regenerated ${result.generatedFileCount} bundle files in ${result.bundleDir}.`,
   );
@@ -471,9 +469,9 @@ function runApprove(
 
 /** `anvil capability reject` — record why the grouping is not the right unit. */
 function runReject(path: string, id: string, opts: { reason?: string }, io: CliIO): number {
-  const air = loadAir(path);
+  let result: ReturnType<typeof rejectCapabilityInBundle>;
   try {
-    rejectCapability(air, id, opts.reason);
+    result = rejectCapabilityInBundle(path, id, opts.reason);
   } catch (err) {
     if (err instanceof CapabilityReviewError) {
       io.err(`error ${err.code}: ${err.message}`);
@@ -481,7 +479,6 @@ function runReject(path: string, id: string, opts: { reason?: string }, io: CliI
     }
     throw err;
   }
-  const result = reprojectBundleAtomically(path, air);
   io.out(
     `Rejected capability '${id}' and atomically regenerated ${result.generatedFileCount} bundle files in ${result.bundleDir}.`,
   );

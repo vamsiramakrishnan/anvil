@@ -10,6 +10,7 @@ import { registerCase } from "./commands/case.js";
 import { registerCertify } from "./commands/certify.js";
 import { registerCompile } from "./commands/compile.js";
 import { registerConformance } from "./commands/conformance.js";
+import { registerConsole } from "./commands/console.js";
 import type { AnvilCliDeps, CommandContext } from "./commands/context.js";
 import { registerDeploy } from "./commands/deploy.js";
 import { registerDisclosure } from "./commands/disclosure.js";
@@ -98,6 +99,9 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerLegacy(program, ctx);
   registerSources(program, ctx);
   registerApprove(program, ctx);
+  // The console is the browser form of the review step just above it: it
+  // approves through the same functions `approve` and `capability` call.
+  registerConsole(program, ctx);
   registerLint(program, ctx);
   registerBuild(program, ctx);
   registerSdk(program, ctx);

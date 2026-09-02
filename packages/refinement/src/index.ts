@@ -20,10 +20,12 @@
  * loop. A `RefinementPack` is the reviewable, serialisable output unit.
  */
 
+export * from "./air-file.js";
 export * from "./apply.js";
 export * from "./approval.js";
 export * from "./artifacts.js";
 export * from "./assess.js";
+export * from "./benchmark/index.js";
 export * from "./case/index.js";
 export * from "./deficiency.js";
 export * from "./detect.js";
@@ -32,6 +34,7 @@ export * from "./enrich-plan.js";
 export * from "./evals/index.js";
 export * from "./model.js";
 export * from "./pack.js";
+export * from "./pack-io.js";
 export * from "./pack-schema.js";
 export * from "./plan.js";
 export * from "./protocol/index.js";

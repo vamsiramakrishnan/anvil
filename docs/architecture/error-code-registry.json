@@ -25,9 +25,9 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 384,
-  "asserted": 273,
-  "unasserted": 111,
+  "total": 400,
+  "asserted": 286,
+  "unasserted": 114,
   "codes": {
     "apiconnect/empty_export": {
       "packages": [
@@ -380,6 +380,96 @@
     "composition/unknown_review_candidate": {
       "packages": [
         "cli"
+      ],
+      "asserted": true
+    },
+    "console/contract_violation": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/forbidden": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/invalid_json": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/invalid_port": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "console/invalid_request": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/listen_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "console/malformed_error": {
+      "packages": [
+        "console"
+      ],
+      "asserted": false
+    },
+    "console/network": {
+      "packages": [
+        "console"
+      ],
+      "asserted": false
+    },
+    "console/not_found": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/path_outside_root": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/payload_too_large": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/refused": {
+      "packages": [
+        "console"
+      ],
+      "asserted": true
+    },
+    "console/root_not_found": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "console/unparseable_response": {
+      "packages": [
+        "console"
+      ],
+      "asserted": false
+    },
+    "console/unsupported_media_type": {
+      "packages": [
+        "console"
       ],
       "asserted": true
     },
@@ -1579,6 +1669,12 @@
         "compiler"
       ],
       "asserted": false
+    },
+    "refinement/group_delta_regressed": {
+      "packages": [
+        "refinement"
+      ],
+      "asserted": true
     },
     "refinement/import_failed": {
       "packages": [

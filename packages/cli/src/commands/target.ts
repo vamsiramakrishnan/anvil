@@ -14,6 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { loadAir, resolveAirPath } from "@anvil/refinement";
 import {
   type AgentPlatformTargetProfile,
   buildConnectorPlan,
@@ -40,7 +41,6 @@ import { type Command, Option } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir, resolveAirPath } from "./shared.js";
 
 /** The target platforms Anvil can generate a connector kit for. */
 const PROFILES: Record<string, AgentPlatformTargetProfile> = {

@@ -7,12 +7,13 @@ import { compile } from "@anvil/compiler";
 import {
   certifyBundle,
   generateBundle,
+  loadBundleAir,
   readBundleDir,
   verifyCertification,
   writeBundle,
 } from "@anvil/generators";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadBundleAir, runCertify } from "./commands/certify.js";
+import { runCertify } from "./commands/certify.js";
 import { bufferIO } from "./io.js";
 
 /**
@@ -153,8 +154,16 @@ describe("certifyBundle call sites do not agree on what certification means", ()
    * "is this bundle contract-clean?" should not depend on which command asks.
    */
   it("only the certify command applies the bridge and the target-kit check", () => {
+    // `anvil approve` delegates to the atomic reprojection in generators, which
+    // certifies every staged bundle before the swap — the one place every
+    // reviewer surface (CLI, console) approves through. Pin both halves: the
+    // command delegates, and the delegate still certifies.
+    const approveCommand = readFileSync(join(root, "packages/cli/src/commands/approve.ts"), "utf8");
+    expect(approveCommand, "anvil approve routes through the shared reprojection").toContain(
+      "approveOperationsInBundle(",
+    );
     const callers = [
-      "packages/cli/src/commands/approve.ts",
+      "packages/generators/src/bundle-reproject.ts",
       "packages/cli/src/commands/capability/capability-compose.ts",
       "packages/cli/src/commands/idempotency-store.ts",
     ];

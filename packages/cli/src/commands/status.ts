@@ -16,10 +16,12 @@ import {
   compiledOperations,
   type ExecutableEvidenceStatus,
   executableEvidenceStatuses,
+  locateGatewayWorkspace,
   operationCatalog,
   PUBLICATION_FILE,
   PublicationRecord,
   readBundleDir,
+  resolveBundleDir,
   verifyCertification,
 } from "@anvil/generators";
 import {
@@ -30,9 +32,7 @@ import {
 import type { Command } from "commander";
 import { recommendsExplicitIdempotencyKey, requiresExplicitIdempotencyKey } from "../explain.js";
 import type { CliIO } from "../io.js";
-import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
-import { locateGatewayWorkspace } from "./estate/gateway-workspace.js";
 import { inspectIdempotencyStore } from "./idempotency-store.js";
 import { annotate } from "./meta.js";
 import { sourceService } from "./source.js";

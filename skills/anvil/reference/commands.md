@@ -734,6 +734,18 @@ Approve operations so they are exposed by the generated artifacts.
 
 Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together. Receipt-bound gateway imports refuse in-place approval and provide the exact manifest re-import command so import-to-approval lineage stays immutable.
 
+### `anvil console`  *(mutates)*
+`anvil console [options] [path]`
+
+Open the local review console over a workspace of compiled bundles.
+
+Serves a browser page on 127.0.0.1 that projects every bundle beneath the workspace root — the decision queue, the inspector, packs, benchmark confusion, and drift — and lets a reviewer approve operations, approve or reject capabilities, record and apply pack decisions, and export or import harness tasks. Every decision calls the same library function the CLI command calls and produces the same receipt: `anvil approve`, `anvil capability approve|reject`, `anvil refine approve|reject|apply-pack|export-task|import-proposal`. Mutations require a per-process token the served page carries and a same-origin request; nothing outside the workspace root is read or written.
+
+Options:
+- `--port <n>` — port on 127.0.0.1 (default: a free port)
+- `--open` — open the console in the default browser
+- `--json` — print one { url, port, root } document, then keep serving
+
 ### `anvil lint`
 `anvil lint [options] <path>`
 

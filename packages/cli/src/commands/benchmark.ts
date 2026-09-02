@@ -2,27 +2,32 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AirDocument, Operation } from "@anvil/air";
 import { agentPropKey } from "@anvil/air";
-import { BENCHMARK_REPORT_FILE, bundleHash, exampleInput, readBundleDir } from "@anvil/generators";
-import { NodeAgentProcessRunner } from "@anvil/refinement";
-import type { Command } from "commander";
-import type { CliIO } from "../io.js";
 import {
-  analyzeConfusion,
-  type ConfusionAnalysis,
-  renderConfusionLines,
-} from "./benchmark-clusters.js";
+  bundleHash,
+  exampleInput,
+  loadBundleAir,
+  readBundleDir,
+  resolveBundleDir,
+} from "@anvil/generators";
 import {
   agentRouter,
+  analyzeConfusion,
+  BENCHMARK_REPORT_FILE,
+  type BenchmarkOperationResult,
+  type BenchmarkReport,
+  type BenchmarkTask,
   bareCatalog,
   benchmarkOperations,
   curatedCatalog,
   lexicalRouter,
+  NodeAgentProcessRunner,
   type RoutableTool,
-  type RoutingOutcome,
+  renderConfusionLines,
   routeAndScore,
   type TaskRouter,
-} from "./benchmark-routing.js";
-import { loadBundleAir, resolveBundleDir } from "./certify.js";
+} from "@anvil/refinement";
+import type { Command } from "commander";
+import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 
@@ -79,56 +84,9 @@ export interface BenchmarkCliOptions {
   agent?: string;
 }
 
-export interface BenchmarkTask {
-  intent: string;
-  /** Routing over the catalog the generated MCP server serves. */
-  curated: RoutingOutcome;
-  /** Routing over the source document's own names, nothing Anvil authored. */
-  bare: RoutingOutcome;
-  /** Required params satisfiable from the surface's own examples. */
-  satisfiable: boolean;
-  /** curated.pass && satisfiable — the score `--check` gates on. */
-  pass: boolean;
-  failReason?: string;
-}
-
-export interface BenchmarkOperationResult {
-  operationId: string;
-  toolName: string;
-  tasks: BenchmarkTask[];
-  score: number; // passed / total tasks
-}
-
-export interface BenchmarkReport {
-  schemaVersion: 2;
-  router: string;
-  /** How many tools the router had to choose among — routing 1-of-2 and
-   *  1-of-40 are different feats, so the size is part of the result. */
-  catalogSize: number;
-  operations: BenchmarkOperationResult[];
-  /**
-   * Mis-route clustering over the CURATED-catalog failures: confusable tool
-   * families with their evidence, and routing hubs reported apart (see
-   * benchmark-clusters.ts). An additive field within schemaVersion 2 — the
-   * certify reader (`BenchmarkEvidenceReport` in @anvil/generators) validates
-   * only the envelope it names, so extending the report does not break it.
-   * Always a CANDIDATE signal ("worth asking about"), never a decision.
-   */
-  confusion: ConfusionAnalysis;
-  summary: {
-    total: number;
-    passed: number;
-    /** passed/total on the curated surface — what `--check` gates. */
-    score: number;
-    /** Tasks the curated catalog routed correctly. */
-    curatedRouted: number;
-    /** Tasks the bare catalog routed correctly — the baseline. */
-    bareRouted: number;
-    /** curated score minus bare score, in points of task share. */
-    upliftPts: number;
-  };
-  bundleHash: string;
-}
+// The report shape (`BenchmarkReport`, `BenchmarkTask`, `BenchmarkOperationResult`)
+// is declared once, as zod, in `@anvil/refinement` — the same schema any reader
+// of `benchmark.report.json` parses. This command only fills it in.
 
 export async function runBenchmarkCommand(
   path: string,

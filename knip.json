@@ -7,6 +7,12 @@
     },
     "apps/docs": {
       "entry": ["src/shims/*.js", "scripts/*.mjs"]
+    },
+    "packages/console": {
+      "entry": ["src/server/index.ts", "src/ui/main.tsx", "e2e/global-setup.ts", "e2e/*.spec.ts"]
+    },
+    "packages/design": {
+      "entry": ["src/index.ts", "scripts/*.mjs"]
     }
   },
   "ignoreDependencies": ["@fontsource/hanken-grotesk", "@fontsource/jetbrains-mono"],

@@ -22,6 +22,7 @@ export default defineConfig({
       "@anvil/simulator": pkg("simulator"),
       "@anvil/certification": pkg("certification"),
       "@anvil/targets": pkg("targets"),
+      "@anvil/console": pkg("console"),
     },
   },
   test: {
@@ -29,7 +30,8 @@ export default defineConfig({
     // vitest-testable module — the mutation gate (tools/mutation) kills its
     // mutants by running vitest test sets, which only works for files the
     // runner can collect.
-    include: ["packages/**/*.test.ts", "tools/corpus/**/*.test.ts"],
+    // `*.test.tsx` is the console UI's React tests (jsdom, opted in per file).
+    include: ["packages/**/*.test.ts", "packages/**/*.test.tsx", "tools/corpus/**/*.test.ts"],
     environment: "node",
     globals: false,
     /**

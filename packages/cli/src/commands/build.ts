@@ -5,15 +5,15 @@ import {
   CapabilityBuildError,
   GENERATION_METADATA_FILE,
   generateCapabilityBundle,
+  installGeneratedBundle,
+  resolveBundleDir,
   resourceOptionsFromGenerationMetadata,
 } from "@anvil/generators";
+import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
-import { installGeneratedBundle } from "./bundle-transaction.js";
-import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /**
  * `anvil build <dir|air.yaml> <capability-id>` — compile ONE approved

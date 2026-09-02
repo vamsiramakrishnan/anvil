@@ -6,6 +6,9 @@
  */
 
 export * from "./bundle.js";
+export * from "./bundle-io.js";
+export * from "./bundle-reproject.js";
+export * from "./bundle-transaction.js";
 export * from "./capability-view.js";
 export * from "./catalog.js";
 export * from "./certify.js";
@@ -14,6 +17,7 @@ export * from "./deploy.js";
 export * from "./docs.js";
 export * from "./entrypoints.js";
 export * from "./evals.js";
+export * from "./gateway-workspace.js";
 export * from "./mcp.js";
 export * from "./mock.js";
 export * from "./plugins.js";

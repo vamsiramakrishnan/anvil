@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { installGeneratedBundle } from "./commands/bundle-transaction.js";
+import { installGeneratedBundle } from "./bundle-transaction.js";
 
 describe("generated bundle transaction", () => {
   it("replaces the exact file set so stale generated files cannot survive", () => {

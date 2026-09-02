@@ -7,12 +7,12 @@ import {
   sdkManifest,
   sdkPlan,
 } from "@anvil/generators";
+import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import { emitRefusal } from "../envelope.js";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /**
  * `anvil sdk <dir|air.yaml>` — the client SDKs, as a first-class surface.

@@ -1,12 +1,12 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { GENERATION_METADATA_FILE, resourceOptionsFromGenerationMetadata } from "@anvil/generators";
+import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { registerDeployLedger } from "./idempotency-store.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /** `anvil deploy cloud-run <dir>` — print the Cloud Run deployment plan. */
 export function registerDeploy(parent: Command, ctx: CommandContext): void {

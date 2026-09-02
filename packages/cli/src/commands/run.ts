@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { loadAir, resolveAirPath } from "@anvil/refinement";
 import type { Command } from "commander";
 import { runToolCli } from "../tool-cli.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir, resolveAirPath } from "./shared.js";
 
 /**
  * `anvil run <dir> <resource> <action> [tool flags...]` — invoke an operation

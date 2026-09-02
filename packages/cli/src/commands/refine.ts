@@ -1,43 +1,32 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { airToJson, airToYaml } from "@anvil/air";
+import { resolveBundleDir } from "@anvil/generators";
 import {
   applyApproved,
-  applyReviewed,
+  applyPackToBundle,
   buildRefinementPlan,
-  createRefinementTask,
-  createReviewReceipt,
   type Deficiency,
   discoverSkills,
+  exportRefinementTask,
   generateRefinementSkill,
   HarnessProtocolError,
-  importHarnessSubmission,
+  importRefinementSubmission,
+  loadAir,
   packFiles,
-  parseRefinementPack,
-  parseRefinementReviewReceipt,
-  type RefinementPack,
-  resolveRepositoryRevision,
+  recordPackDecision,
+  resolveAirPath,
   runRefinements,
   SEVERITIES,
   type Severity,
+  selectTaskDeficiency,
   semanticDiff,
-  skillFor,
   summarizeRefinementPlan,
-  targetKey,
+  writeAir,
 } from "@anvil/refinement";
 import { type Command, Option } from "commander";
 import type { CliIO } from "../io.js";
-import { resolveBundleDir } from "./certify.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import {
-  admitOrRefuse,
-  clusterDeficiency,
-  GroupAdmissionRefusal,
-  groupDeltaClaim,
-  scoreGroupProposal,
-} from "./refine-group.js";
-import { loadAir, resolveAirPath } from "./shared.js";
 
 /**
  * `anvil refine <subcommand>` — the quality flywheel.
@@ -324,18 +313,6 @@ async function runRun(path: string, opts: RefineRunOptions, io: CliIO): Promise<
   return 0;
 }
 
-function writeWithoutReplacingDifferent(path: string, contents: string): void {
-  if (existsSync(path)) {
-    const current = readFileSync(path, "utf8");
-    if (current !== contents) {
-      throw new Error(`Refusing to replace existing '${path}' with different content.`);
-    }
-    return;
-  }
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, contents, "utf8");
-}
-
 /** `anvil refine export-task` — one deterministic JSON job, no harness dependency. */
 function runExportTask(
   path: string,
@@ -345,49 +322,15 @@ function runExportTask(
 ): number {
   try {
     const air = loadAir(path);
-    // GROUP scope: the deficiency is derived from the benchmark report (a
-    // derived record the pure-over-AIR detectors cannot produce), so the
-    // bridge in refine-group.ts constructs it deterministically and the
-    // ordinary export rails hash-bind it from here on.
-    if (key.startsWith("group:")) {
-      const deficiency = clusterDeficiency(
-        air,
-        resolveBundleDir(path),
-        key.slice("group:".length),
-        opts.trafficReport,
-      );
-      return exportDeficiencyTask(air, deficiency, path, opts, io);
-    }
-    if (opts.trafficReport) {
-      throw new Error("--traffic-report only applies to group targets (group:<cluster-id>).");
-    }
-    const plan = buildRefinementPlan(air);
-    const candidates = plan.deficiencies.filter((deficiency) => {
-      const skill = skillFor(deficiency.code);
-      return (
-        targetKey(deficiency.target) === key &&
-        skill !== undefined &&
-        (opts.skill === undefined || skill.name === opts.skill)
-      );
+    // GROUP scope is derived from the benchmark report beside the bundle (a
+    // derived record the pure-over-AIR detectors cannot produce); every other
+    // key is looked up in the plan. Both resolve in @anvil/refinement so the
+    // CLI and any other exporter hand a harness the same hash-bound task.
+    const deficiency = selectTaskDeficiency(air, resolveBundleDir(path), key, {
+      skill: opts.skill,
+      trafficReportPath: opts.trafficReport,
+      displayPath: path,
     });
-    const bySkill = new Map(
-      candidates.flatMap((deficiency) => {
-        const skill = skillFor(deficiency.code);
-        return skill ? ([[skill.name, deficiency]] as const) : [];
-      }),
-    );
-    if (bySkill.size === 0) {
-      throw new Error(
-        `No investigable deficiency at target '${key}'${opts.skill ? ` for skill '${opts.skill}'` : ""}. Run \`anvil case list ${path}\`.`,
-      );
-    }
-    if (bySkill.size > 1) {
-      throw new Error(
-        `Target '${key}' has multiple skills (${[...bySkill.keys()].join(", ")}); select one with --skill.`,
-      );
-    }
-    const deficiency = bySkill.values().next().value;
-    if (!deficiency) throw new Error(`No deficiency selected for target '${key}'.`);
     return exportDeficiencyTask(air, deficiency, path, opts, io);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -408,12 +351,10 @@ function exportDeficiencyTask(
     ?.split(",")
     .map((scope) => scope.trim())
     .filter(Boolean);
-  const task = createRefinementTask(air, deficiency, {
+  const task = exportRefinementTask(air, deficiency, opts.out, {
     repositoryRoot: opts.repoRoot,
-    repositoryRevision: resolveRepositoryRevision(opts.repoRoot),
     inspectScopes,
   });
-  writeWithoutReplacingDifferent(opts.out, `${JSON.stringify(task, null, 2)}\n`);
   io.out(`Exported ${task.taskId} → ${opts.out}`);
   io.out(`  skill: ${task.skill.name} v${task.skill.version}`);
   io.out(`  repository: ${task.repository.revision}`);
@@ -443,48 +384,17 @@ async function runImportProposal(
 ): Promise<number> {
   try {
     const air = loadAir(path);
-    const pack = importHarnessSubmission(
+    // GROUP admission (Task B) happens inside importRefinementSubmission —
+    // after deterministic validation, before anything is written — so a
+    // refused proposal leaves no pack behind and surfaces here as a
+    // HarnessProtocolError (GroupAdmissionRefusal) carrying the numbers.
+    const { pack, delta } = await importRefinementSubmission(
       air,
       readJsonFile(taskFile),
       readJsonFile(submissionFile),
-      {
-        repositoryRoot: opts.repoRoot,
-      },
+      opts.out,
+      { repositoryRoot: opts.repoRoot },
     );
-
-    // GROUP admission (Task B): a validated group proposal must measurably not
-    // hurt before it may reach review. Scored HERE — after deterministic
-    // validation, before anything is written — so a refused proposal leaves no
-    // pack behind. The current side is recomputed live (deterministic lexical
-    // router over AIR), never read from a possibly-stale report.
-    const groupRecord = pack.harnessImports?.[0];
-    const groupRefinement = pack.refinements.find(
-      (refinement) =>
-        refinement.target.kind === "group" &&
-        ("workflow" in refinement.proposal.set || "capability" in refinement.proposal.set),
-    );
-    let deltaFile: string | undefined;
-    if (groupRefinement && groupRecord) {
-      const delta = admitOrRefuse(
-        await scoreGroupProposal(air, groupRecord.task.deficiency, groupRefinement.proposal.set),
-      );
-      // The delta is EVIDENCE on the proposal — the reviewer sees the number;
-      // the tier stays review (approval.ts pins the group patch keys).
-      groupRefinement.evidence.push(groupDeltaClaim(delta));
-      deltaFile = `${JSON.stringify(delta, null, 2)}\n`;
-    }
-
-    const files = packFiles(pack);
-    if (deltaFile !== undefined) files["routing-delta.json"] = deltaFile;
-    for (const [name, contents] of Object.entries(files)) {
-      const destination = join(opts.out, name);
-      if (existsSync(destination) && readFileSync(destination, "utf8") !== contents) {
-        throw new Error(`Refusing to replace existing '${destination}' with different content.`);
-      }
-    }
-    for (const [name, contents] of Object.entries(files)) {
-      writeWithoutReplacingDifferent(join(opts.out, name), contents);
-    }
     const record = pack.harnessImports?.[0];
     if (!record) throw new Error("Imported pack is missing its harness provenance record.");
     const refinement = pack.refinements[0];
@@ -510,7 +420,10 @@ async function runImportProposal(
           ? `  harness declined honestly: ${record.submission.status}`
           : `  refinement: ${refinement.status} (${refinement.approval.tier})`,
       );
-      if (deltaFile !== undefined) {
+      if (delta !== undefined) {
+        const groupRefinement = pack.refinements.find(
+          (candidate) => candidate.target.kind === "group",
+        );
         const deltaClaim = groupRefinement?.evidence[groupRefinement.evidence.length - 1];
         io.out(
           `  routing delta attached as evidence (routing-delta.json): ${deltaClaim?.note ?? ""}`,
@@ -520,42 +433,10 @@ async function runImportProposal(
     }
     return 0;
   } catch (error) {
-    if (error instanceof GroupAdmissionRefusal) {
-      // Same envelope discipline as every other harness rejection: one JSON
-      // document naming its own shape, the numbers in the message and issues.
-      const rejection = {
-        code: "refinement/group_delta_regressed" as const,
-        stage: "admission" as const,
-        message: error.message,
-        issues: [
-          `tasks routed correctly before: ${error.delta.passedBefore}/${error.delta.totalTasks}`,
-          `tasks routed correctly after: ${error.delta.passedAfter}/${error.delta.totalTasks}`,
-          `upliftPts: ${error.delta.upliftPts.toFixed(1)}`,
-          ...error.delta.flippedToFail.map(
-            (flip) => `now mis-routed: "${flip.intent}" (${flip.operationId})`,
-          ),
-        ],
-      };
-      if (opts.json === true) {
-        io.out(
-          JSON.stringify(
-            {
-              schemaVersion: 1,
-              reportType: "anvil.refinement-harness-import-error",
-              ok: false,
-              ...rejection,
-            },
-            null,
-            2,
-          ),
-        );
-      } else {
-        io.err(rejection.message);
-        for (const issue of rejection.issues) io.err(`  - ${issue}`);
-      }
-      return 1;
-    }
     if (error instanceof HarnessProtocolError) {
+      // One envelope discipline for every harness rejection, the group
+      // admission refusal included: a JSON document naming its own shape, the
+      // numbers in the message and issues.
       if (opts.json === true) {
         io.out(
           JSON.stringify(
@@ -610,14 +491,6 @@ function runReview(dir: string, io: CliIO): number {
   return 0;
 }
 
-function readPack(dir: string): RefinementPack {
-  const path = join(dir, "pack.json");
-  if (!existsSync(path)) {
-    throw new Error(`No pack.json in ${dir}. Run \`anvil refine run --out ${dir}\` first.`);
-  }
-  return parseRefinementPack(JSON.parse(readFileSync(path, "utf8")));
-}
-
 function runDecision(
   dir: string,
   ids: string[],
@@ -626,23 +499,9 @@ function runDecision(
   io: CliIO,
 ): number {
   try {
-    const pack = readPack(dir);
-    const receiptsDir = join(dir, "receipts");
-    const pending = ids.map((id) => {
-      const receipt = createReviewReceipt(pack, id, decision, opts.reviewer, opts.reason);
-      const safeId = id.replace(/[^A-Za-z0-9._-]+/g, "_");
-      const path = join(receiptsDir, `${safeId}.${decision}.json`);
-      if (existsSync(path)) {
-        throw new Error(
-          `Receipt already exists: ${path}. Remove it deliberately before replacing a decision.`,
-        );
-      }
-      return { id, path, receipt };
-    });
-    mkdirSync(receiptsDir, { recursive: true });
-    for (const { id, path, receipt } of pending) {
-      writeFileSync(path, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
-      io.out(`${decision === "approved" ? "Approved" : "Rejected"} ${id} → ${path}`);
+    const records = recordPackDecision(dir, decision, ids, opts.reviewer, opts.reason);
+    for (const { refinementId, path } of records) {
+      io.out(`${decision === "approved" ? "Approved" : "Rejected"} ${refinementId} → ${path}`);
     }
     return 0;
   } catch (error) {
@@ -658,36 +517,21 @@ function runApplyPack(
   io: CliIO,
 ): number {
   try {
-    const airPath = resolveAirPath(path);
-    const air = loadAir(path);
-    const pack = readPack(dir);
-    const receiptPaths: string[] = [];
-    const receiptsDir = join(dir, "receipts");
-    if (existsSync(receiptsDir)) {
-      receiptPaths.push(
-        ...readdirSync(receiptsDir)
-          .filter((name) => name.endsWith(".json"))
-          .sort()
-          .map((name) => join(receiptsDir, name)),
-      );
-    }
-    receiptPaths.push(...opts.receipt);
-    const receipts = [...new Set(receiptPaths)].map((receiptPath) =>
-      parseRefinementReviewReceipt(JSON.parse(readFileSync(receiptPath, "utf8"))),
-    );
-    const { air: next, applied, changes } = applyReviewed(air, pack, receipts);
-    if (applied.length === 0) {
+    const result = applyPackToBundle(path, dir, {
+      receiptFiles: opts.receipt,
+      dryRun: opts.dryRun === true,
+    });
+    if (result.applied.length === 0) {
       io.out("No approved refinements in this pack.");
       return 0;
     }
-    io.out(`Applying ${applied.length} refinement(s) from the reviewed pack:`);
-    io.out(semanticDiff(changes));
+    io.out(`Applying ${result.applied.length} refinement(s) from the reviewed pack:`);
+    io.out(semanticDiff(result.changes));
     if (opts.dryRun === true) {
       io.out("\n(dry run — AIR was not written)");
       return 0;
     }
-    writeFileSync(airPath, airPath.endsWith(".json") ? airToJson(next) : airToYaml(next), "utf8");
-    io.out(`\nWrote ${airPath}. Regenerate the bundle with \`anvil compile\`.`);
+    io.out(`\nWrote ${result.airPath}. Regenerate the bundle with \`anvil compile\`.`);
     return 0;
   } catch (error) {
     io.err(error instanceof Error ? error.message : String(error));
@@ -718,10 +562,9 @@ async function runApply(path: string, opts: RefineApplyOptions, io: CliIO): Prom
     io.out("\n(dry run — AIR was not written)");
     return 0;
   }
-  // Write back in whatever format the resolved AIR path names — loadAir reads by
-  // this same extension (shared.ts), so the write path must agree with it instead
-  // of always serializing YAML (which would corrupt an air.json target).
-  writeFileSync(airPath, airPath.endsWith(".json") ? airToJson(next) : airToYaml(next), "utf8");
+  // writeAir writes in whatever format the resolved AIR path names — loadAir
+  // reads by that same extension, so the two cannot disagree.
+  writeAir(airPath, next);
   io.out(
     `\nWrote ${airPath}. Regenerate the bundle with \`anvil compile\` to reproject the change.`,
   );

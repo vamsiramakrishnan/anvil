@@ -60,6 +60,7 @@ const PAGES = [
   { src: "skills/anvil/reference/workflow.md", dest: "guides/enrich-approve-workflow.md", order: 3 },
   { src: "docs/client-sdks.md", dest: "guides/client-sdks.md", order: 4 },
   { src: "docs/observing-running-apps.md", dest: "guides/observing-running-apps.md", order: 5 },
+  { src: "docs/console.md", dest: "guides/review-console.md", order: 5 },
   { src: "docs/adopting-mcp-servers.md", dest: "guides/adopting-mcp-servers.md", order: 6 },
   { src: "docs/wire-protocols.md", dest: "guides/wire-protocols.md", order: 7 },
   { src: "docs/refinement-sdk.md", dest: "guides/refinement-sdk.md", order: 7 },

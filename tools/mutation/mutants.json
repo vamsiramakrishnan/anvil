@@ -703,12 +703,12 @@
     },
     {
       "id": "benchmark/agent-answers-are-read-not-demanded",
-      "file": "packages/cli/src/commands/benchmark-routing.ts",
+      "file": "packages/refinement/src/benchmark/routing.ts",
       "control": "Real model CLIs fence their JSON. Demanding that stdout parse whole scored 0/20 against a model that had in fact routed every task correctly — a measurement that silently reports failure for answers it was given is worse than no measurement, because a benchmark is believed.",
       "find": "  for (const match of text.matchAll(/```(?:json)?\\s*([\\s\\S]*?)```/g)) {",
       "replace": "  for (const match of [] as RegExpMatchArray[]) {",
       "tests": [
-        "packages/cli/src/commands/benchmark-routing.test.ts"
+        "packages/refinement/src/benchmark/routing.test.ts"
       ]
     },
     {
@@ -816,12 +816,12 @@
     },
     {
       "id": "benchmark/hub-never-welds-clusters",
-      "file": "packages/cli/src/commands/benchmark-clusters.ts",
+      "file": "packages/refinement/src/benchmark/clusters.ts",
       "control": "A routing hub's edges never enter confusion-cluster construction, so one catalog-scale sink cannot weld unrelated confusable families into a single blob.",
       "find": "  const clusterEdges = directed.filter((e) => !hubNames.has(e.intended) && !hubNames.has(e.routed));",
       "replace": "  const clusterEdges = directed;",
       "tests": [
-        "packages/cli/src/commands/benchmark-clusters.test.ts"
+        "packages/refinement/src/benchmark/clusters.test.ts"
       ]
     },
     {
@@ -836,12 +836,62 @@
     },
     {
       "id": "benchmark-admission/negative-delta-refused",
-      "file": "packages/cli/src/commands/refine-group.ts",
+      "file": "packages/refinement/src/protocol/group.ts",
       "control": "A group proposal whose measured routing delta is NEGATIVE is refused with the numbers before it can reach review. Disable the comparison and a composition that measurably mangles routing sails to a reviewer wearing a benchmark-scored evidence claim — the admission gate reporting success without having gated.",
       "find": "  if (delta.passedAfter < delta.passedBefore) {",
       "replace": "  if (false) {",
       "tests": [
         "packages/cli/src/commands/refine-group.test.ts"
+      ]
+    },
+    {
+      "id": "console/mutation-requires-token",
+      "file": "packages/console/src/server/http.ts",
+      "control": "Every non-GET request must carry the per-process token as X-Anvil-Console-Token, verbatim, or it is refused 403 before the body is read. Delete the check and any page open in the reviewer's browser can drive an approval through the console with a plain fetch.",
+      "find": "  if (!tokenMatches(opts.token, req.headers[TOKEN_HEADER])) throw forbidden();",
+      "replace": "  if (false) throw forbidden();",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "console/mutation-requires-same-origin",
+      "file": "packages/console/src/server/http.ts",
+      "control": "Every non-GET request must carry an Origin equal to the server's own origin, or it is refused 403. Delete the check and a token that leaked once (a shared screenshot, a pasted page source) is enough for any other origin to mutate approval state.",
+      "find": "  if (header(req, \"origin\") !== opts.origin()) throw forbidden();",
+      "replace": "  if (false) throw forbidden();",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "console/sec-fetch-site-cross-site-refused",
+      "file": "packages/console/src/server/http.ts",
+      "control": "A Sec-Fetch-Site the browser stamps as cross-site or same-site is refused even when the Origin header matches, so a request the browser itself says came from elsewhere never reaches a mutation.",
+      "find": "  if (site !== undefined && site !== \"same-origin\" && site !== \"none\") throw forbidden();",
+      "replace": "  if (false) throw forbidden();",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "console/request-paths-stay-inside-root",
+      "file": "packages/console/src/server/workspace.ts",
+      "control": "Every path a request body names (task, submission, pack out dir, receipt files, repository root) must resolve inside the workspace root, lexically and through symlinks, or it is refused 400 console/path_outside_root. Delete the check and the console reads and writes anywhere the reviewer's account can.",
+      "find": "  if (escapes) throw pathOutsideRoot(path);",
+      "replace": "  if (false) throw pathOutsideRoot(path);",
+      "tests": [
+        "packages/console/src/server/security.test.ts"
+      ]
+    },
+    {
+      "id": "console/bulk-policy-cannot-reach-barred-rows",
+      "file": "packages/console/src/ui/model.ts",
+      "control": "A bulk policy selects only rows the barrier lets through: non-idempotent, destructive, irreversible, confirmation-gated, and blocked operations, over-budget capabilities, and pack refinements without a positive measured delta are barred BEFORE any policy predicate runs, so a policy can only narrow the set, never widen it. Delete the barrier and a policy whose predicate says \"everything\" bulk-approves a non-idempotent financial mutation from the console.",
+      "find": "  return rows.filter((row) => bulkBarrier(row) === undefined && policy.selects(row));",
+      "replace": "  return rows.filter((row) => policy.selects(row));",
+      "tests": [
+        "packages/console/src/ui/model.test.ts"
       ]
     },
     {

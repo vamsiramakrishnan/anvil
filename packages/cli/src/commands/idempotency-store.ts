@@ -17,12 +17,12 @@ import {
   readBundleDir,
   resourceOptionsFromGenerationMetadata,
 } from "@anvil/generators";
+import { loadAir } from "@anvil/refinement";
 import { DEFAULT_LEDGER_RESULT_TTL_SECONDS } from "@anvil/runtime";
 import type { Command } from "commander";
 import { recommendsExplicitIdempotencyKey, requiresExplicitIdempotencyKey } from "../explain.js";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
-import { loadAir } from "./shared.js";
 
 type IdempotencyStoreContractState = "fresh" | "missing" | "corrupt" | "stale";
 

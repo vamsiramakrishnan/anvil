@@ -1,0 +1,52 @@
+{
+  "name": "@anvil/console",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Anvil's local review console — a pure projection of bundles, packs, and reports; every decision goes through the same library functions the CLI calls.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup && vite build",
+    "build:ui": "vite build",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/ui/tsconfig.json && tsc --noEmit -p e2e/tsconfig.json",
+    "test": "vitest run --root ../.. packages/console/src",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@anvil/air": "workspace:*",
+    "@anvil/compiler": "workspace:*",
+    "@anvil/design": "workspace:*",
+    "@anvil/generators": "workspace:*",
+    "@anvil/refinement": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@fontsource/hanken-grotesk": "5.2.8",
+    "@fontsource/jetbrains-mono": "5.2.8",
+    "@playwright/test": "1.56.0",
+    "@testing-library/react": "16.3.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@vitejs/plugin-react": "6.1.1",
+    "jsdom": "30.0.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vite": "8.2.2",
+    "vitest": "^4.1.10"
+  }
+}

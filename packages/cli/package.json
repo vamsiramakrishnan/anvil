@@ -31,6 +31,7 @@
     "@anvil/air": "workspace:*",
     "@anvil/certification": "workspace:*",
     "@anvil/compiler": "workspace:*",
+    "@anvil/console": "workspace:*",
     "@anvil/generators": "workspace:*",
     "@anvil/harness": "workspace:*",
     "@anvil/refinement": "workspace:*",

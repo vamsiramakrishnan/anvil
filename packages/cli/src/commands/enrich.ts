@@ -1,13 +1,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { HarnessAgent } from "@anvil/harness";
 import { AgentCliHarnessAgent, parseSources, runEnrichment } from "@anvil/harness";
-import { parseEnrichmentPlan } from "@anvil/refinement";
+import { loadAir, parseEnrichmentPlan } from "@anvil/refinement";
 import type { Command } from "commander";
 import { stringify as toYaml } from "yaml";
 import type { CliIO } from "../io.js";
 import type { AnvilCliDeps, CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { loadAir } from "./shared.js";
 
 /** `anvil enrich` — gather MCP evidence and propose a manifest patch (never touches AIR). */
 export function registerEnrich(parent: Command, ctx: CommandContext): void {
