@@ -5,13 +5,13 @@
     "decorative or untested, and both are worth knowing.",
     "",
     "Why this exists as a gate rather than an exercise: this repository's recurring",
-    "defect is a check that reports success without having run \u2014 an assertion behind",
+    "defect is a check that reports success without having run — an assertion behind",
     "a swallowed TypeError, a test whose guard skipped it, a mutation whose search",
     "string the shell expanded to nothing. Coverage cannot see any of them. Killing",
     "a mutant can.",
     "",
     "Adding a control here is cheap and the right instinct. `find` must appear",
-    "exactly once in the file, so a mutant cannot silently stop applying \u2014 the",
+    "exactly once in the file, so a mutant cannot silently stop applying — the",
     "failure mode that made one of these look like it survived when it had never",
     "been applied at all.",
     "",
@@ -270,7 +270,7 @@
     {
       "id": "adopt/conservative-classification",
       "file": "packages/compiler/src/adopt/air.ts",
-      "control": "An adopted MCP tool without a readOnlyHint is a non-idempotent mutation that confirms \u2014 unknown side effect beats assumed safety.",
+      "control": "An adopted MCP tool without a readOnlyHint is a non-idempotent mutation that confirms — unknown side effect beats assumed safety.",
       "find": "  if (a.readOnlyHint) {",
       "replace": "  if (a.readOnlyHint !== false) {",
       "tests": [
@@ -280,7 +280,7 @@
     {
       "id": "wire/runtime-transport-gate",
       "file": "packages/runtime/src/wire-gate.ts",
-      "control": "The runtime refuses an operation whose wire protocol it cannot speak. Without it a SOAP/GraphQL/gRPC operation is posted as JSON to a coordinate Anvil invented \u2014 a well-formed lie, indistinguishable on the wire from a real request.",
+      "control": "The runtime refuses an operation whose wire protocol it cannot speak. Without it a SOAP/GraphQL/gRPC operation is posted as JSON to a coordinate Anvil invented — a well-formed lie, indistinguishable on the wire from a real request.",
       "find": "  if (verdict.ok) return undefined;\n  // A facade declares that the base URL serves the synthesized *coordinates*",
       "replace": "  if (true) return undefined;\n  // A facade declares that the base URL serves the synthesized *coordinates*",
       "tests": [
@@ -362,7 +362,7 @@
     {
       "id": "observe/empty-contract-is-not-a-contract",
       "file": "packages/harness/src/observe.ts",
-      "control": "A document that compiles to no operations is not the application's contract. Accepting one turns an auth wall or a wrong path into a successful acquisition whose diff reports every operation as removed \u2014 a wall of false blocking drift that reads like a real emergency.",
+      "control": "A document that compiles to no operations is not the application's contract. Accepting one turns an auth wall or a wrong path into a successful acquisition whose diff reports every operation as removed — a wall of false blocking drift that reads like a real emergency.",
       "find": "  if (fresh.operations.length === 0) {",
       "replace": "  if (false) {",
       "tests": [
@@ -422,7 +422,7 @@
     {
       "id": "soap/fault-is-not-a-result",
       "file": "packages/runtime/src/executor.ts",
-      "control": "A soap:Fault is refused rather than returned as a result. Servers deliver one with HTTP 200 as readily as 500, so the status is not the answer \u2014 and reporting one as success would record a failed mutation in the idempotency ledger as completed.",
+      "control": "A soap:Fault is refused rather than returned as a result. Servers deliver one with HTTP 200 as readily as 500, so the status is not the answer — and reporting one as success would record a failed mutation in the idempotency ledger as completed.",
       "find": "        const fault = isFaultAware(codec) ? codec.faultIn(op, res) : undefined;",
       "replace": "        const fault = undefined;",
       "tests": [
@@ -432,7 +432,7 @@
     {
       "id": "soap/client-fault-never-retried",
       "file": "packages/runtime/src/codec-soap.ts",
-      "control": "Only a transport-layer Server fault is transient. An application fault \u2014 a rejected transfer, an unknown account \u2014 fails identically on retry, and retrying a mutation on one is exactly what the safety contract forbids.",
+      "control": "Only a transport-layer Server fault is transient. An application fault — a rejected transfer, an unknown account — fails identically on retry, and retrying a mutation on one is exactly what the safety contract forbids.",
       "find": "    const retryable = localName(code).toLowerCase() === \"server\";",
       "replace": "    const retryable = true;",
       "tests": [
@@ -492,7 +492,7 @@
     {
       "id": "graphql/arguments-are-variables",
       "file": "packages/compiler/src/protocols/graphql-binding.ts",
-      "control": "Every argument becomes a declared GraphQL variable, so no caller value is ever interpolated into query text. A value spliced into a statement is a value that can rewrite the statement \u2014 the same rule the SQL query policy enforces one layer over.",
+      "control": "Every argument becomes a declared GraphQL variable, so no caller value is ever interpolated into query text. A value spliced into a statement is a value that can rewrite the statement — the same rule the SQL query policy enforces one layer over.",
       "find": "    .map((arg: GraphQLArgument) => `$${arg.name}: ${arg.type.toString()}`)",
       "replace": "    .map((arg: GraphQLArgument) => `$${arg.name}: String`)",
       "tests": [
@@ -502,7 +502,7 @@
     {
       "id": "graphql/errors-are-not-results",
       "file": "packages/runtime/src/codec-graphql.ts",
-      "control": "GraphQL reports failures inside a 200 with an errors array. Reported as a result, a failed mutation would be recorded in the idempotency ledger as completed \u2014 and a partial response is still a failure, since AIR's output contract describes one shape.",
+      "control": "GraphQL reports failures inside a 200 with an errors array. Reported as a result, a failed mutation would be recorded in the idempotency ledger as completed — and a partial response is still a failure, since AIR's output contract describes one shape.",
       "find": "    if (!Array.isArray(errors) || errors.length === 0) return undefined;",
       "replace": "    return undefined;",
       "tests": [
@@ -532,7 +532,7 @@
     {
       "id": "grpc/needs-a-declared-transcoder",
       "file": "packages/air/src/wire.ts",
-      "control": "gRPC is refused until an operator declares a transcoder. Its path is real, which makes the temptation to just call it strong \u2014 and a native gRPC server rejects JSON over HTTP/1.1, so calling it anyway is the original bug.",
+      "control": "gRPC is refused until an operator declares a transcoder. Its path is real, which makes the temptation to just call it strong — and a native gRPC server rejects JSON over HTTP/1.1, so calling it anyway is the original bug.",
       "find": "  if (protocol === \"graphql\" && op.sourceRef.binding?.protocol === \"graphql\") return { ok: true };",
       "replace": "  if (protocol === \"graphql\" || protocol === \"grpc\") return { ok: true };",
       "tests": [
@@ -543,7 +543,7 @@
     {
       "id": "grpc/http-rule-multi-segment-refused",
       "file": "packages/compiler/src/protocols/grpc-http-rule.ts",
-      "control": "A path template whose pattern spans more than one path segment is refused. The runtime percent-encodes a path parameter, so a slash-bearing value would address a DIFFERENT resource and succeed against it \u2014 the worst shape of failure, since nothing errors.",
+      "control": "A path template whose pattern spans more than one path segment is refused. The runtime percent-encodes a path parameter, so a slash-bearing value would address a DIFFERENT resource and succeed against it — the worst shape of failure, since nothing errors.",
       "find": "    if (pattern !== \"*\") {",
       "replace": "    if (false) {",
       "tests": [
@@ -593,7 +593,7 @@
     {
       "id": "odata/unstated-verb-is-a-mutation",
       "file": "packages/compiler/src/protocols/odata-operations.ts",
-      "control": "An OData v2 FunctionImport that declares no m:HttpMethod is treated as a mutation. Defaulting it to GET would expose a write as a safe, auto-retryable read \u2014 the exact direction the asymmetric-trust rule forbids guessing in.",
+      "control": "An OData v2 FunctionImport that declares no m:HttpMethod is treated as a mutation. Defaulting it to GET would expose a write as a safe, auto-retryable read — the exact direction the asymmetric-trust rule forbids guessing in.",
       "find": "          const verb = declaredVerb === \"GET\" ? \"get\" : \"post\";",
       "replace": "          const verb = declaredVerb === \"POST\" ? \"post\" : \"get\";",
       "tests": [
@@ -613,7 +613,7 @@
     {
       "id": "stream/event-bound-applies-to-the-bytes",
       "file": "packages/runtime/src/transport.ts",
-      "control": "The event bound is applied to the bytes that leave the transport, not only to the loop condition. A burst delivers hundreds of events in ONE socket read, so by the time the counter is re-checked the buffer already holds them all \u2014 this is the bug that reached a live run.",
+      "control": "The event bound is applied to the bytes that leave the transport, not only to the loop condition. A burst delivers hundreds of events in ONE socket read, so by the time the counter is re-checked the buffer already holds them all — this is the bug that reached a live run.",
       "find": "  return truncateToEvents(text, bound.maxEvents);",
       "replace": "  return text;",
       "tests": [
@@ -633,7 +633,7 @@
     {
       "id": "stream/window-outlives-the-request-timeout",
       "file": "packages/runtime/src/transport.ts",
-      "control": "A stream's own window is its deadline; the request timeout is only the backstop behind it. Left at the ordinary value the abort fires first, turning a subscription that legitimately saw nothing into a timeout \u2014 and then retrying it, because a read is retry-safe.",
+      "control": "A stream's own window is its deadline; the request timeout is only the backstop behind it. Left at the ordinary value the abort fires first, turning a subscription that legitimately saw nothing into a timeout — and then retrying it, because a read is retry-safe.",
       "find": "    const timeoutMs = Math.max(req.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS, streamCeilingMs);",
       "replace": "    const timeoutMs = req.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;",
       "tests": [
@@ -643,7 +643,7 @@
     {
       "id": "stream/unterminated-frame-is-not-an-event",
       "file": "packages/runtime/src/codec-graphql-sse.ts",
-      "control": "A frame Anvil never saw the end of is not reported, and that must depend on the missing boundary rather than on its JSON failing to parse \u2014 a frame cut just after its closing brace parses perfectly and is still an event that was never completed.",
+      "control": "A frame Anvil never saw the end of is not reported, and that must depend on the missing boundary rather than on its JSON failing to parse — a frame cut just after its closing brace parses perfectly and is still an event that was never completed.",
       "find": "  if (!text.endsWith(\"\\n\\n\")) parts.pop();",
       "replace": "  if (false) parts.pop();",
       "tests": [
@@ -664,7 +664,7 @@
     {
       "id": "stream/facade-does-not-change-the-framing",
       "file": "packages/runtime/src/codec.ts",
-      "control": "A protocol facade declares coordinates, not framing. If it re-routed a subscription through the JSON codec, the call would lose `accept: text/event-stream` and its stream bound, and answer with one object where every other configuration answers with an array \u2014 one operation, two meanings, selected by an environment variable.",
+      "control": "A protocol facade declares coordinates, not framing. If it re-routed a subscription through the JSON codec, the call would lose `accept: text/event-stream` and its stream bound, and answer with one object where every other configuration answers with an array — one operation, two meanings, selected by an environment variable.",
       "find": "  const protocol = wireProtocolFor(op.sourceRef);\n  if (protocol === \"graphql_sse\") return graphqlSseCodec;\n  if (facadeDeclared) return httpJsonCodec;\n  return CODECS.get(protocol);",
       "replace": "  if (facadeDeclared) return httpJsonCodec;\n  return CODECS.get(wireProtocolFor(op.sourceRef));",
       "tests": [
@@ -684,7 +684,7 @@
     {
       "id": "records/traffic-never-deprecates-a-living-operation",
       "file": "packages/harness/src/records.ts",
-      "control": "Recorded traffic's one patch-bearing claim is deprecation, and only when NO observed call succeeded. Delete the check and an operation with live successes beside stale 404s gets proposed as deprecated \u2014 high-reliability evidence laundering a wrong conclusion.",
+      "control": "Recorded traffic's one patch-bearing claim is deprecation, and only when NO observed call succeeded. Delete the check and an operation with live successes beside stale 404s gets proposed as deprecated — high-reliability evidence laundering a wrong conclusion.",
       "find": "    summary.errors === summary.calls &&",
       "replace": "    true &&",
       "tests": [
@@ -694,7 +694,7 @@
     {
       "id": "pack/install-gates-on-certification",
       "file": "packages/cli/src/commands/pack.ts",
-      "control": "Digests prove the bytes are the builder's bytes; the certification says whether those bytes ever passed the gates. Delete the gate and an uncertified or failed-certification pack installs silently \u2014 distribution without the trust that makes it safe to distribute.",
+      "control": "Digests prove the bytes are the builder's bytes; the certification says whether those bytes ever passed the gates. Delete the gate and an uncertified or failed-certification pack installs silently — distribution without the trust that makes it safe to distribute.",
       "find": "  if (status !== \"certified\" && opts.allowUncertified !== true) {",
       "replace": "  if (false) {",
       "tests": [
@@ -704,7 +704,7 @@
     {
       "id": "benchmark/agent-answers-are-read-not-demanded",
       "file": "packages/refinement/src/benchmark/routing.ts",
-      "control": "Real model CLIs fence their JSON. Demanding that stdout parse whole scored 0/20 against a model that had in fact routed every task correctly \u2014 a measurement that silently reports failure for answers it was given is worse than no measurement, because a benchmark is believed.",
+      "control": "Real model CLIs fence their JSON. Demanding that stdout parse whole scored 0/20 against a model that had in fact routed every task correctly — a measurement that silently reports failure for answers it was given is worse than no measurement, because a benchmark is believed.",
       "find": "  for (const match of text.matchAll(/```(?:json)?\\s*([\\s\\S]*?)```/g)) {",
       "replace": "  for (const match of [] as RegExpMatchArray[]) {",
       "tests": [
@@ -714,7 +714,7 @@
     {
       "id": "intents/skill-and-tool-name-must-agree",
       "file": "packages/refinement/src/skills/executor.ts",
-      "control": "An intent example sharing no word with its own operation's names teaches the skill to route by a vocabulary the MCP tool name does not have. Delete the corroboration filter and Anvil ships two surfaces that disagree about what an operation is called \u2014 the one failure this compiler exists to prevent.",
+      "control": "An intent example sharing no word with its own operation's names teaches the skill to route by a vocabulary the MCP tool name does not have. Delete the corroboration filter and Anvil ships two surfaces that disagree about what an operation is called — the one failure this compiler exists to prevent.",
       "find": "    const corroborated = phrases.filter((phrase) =>\n      routingTokens(phrase).some((token) => vocabulary.has(token)),\n    );",
       "replace": "    const corroborated = phrases;",
       "tests": [
@@ -724,7 +724,7 @@
     {
       "id": "workflow-surface/only-an-eligible-workflow-supersedes",
       "file": "packages/air/src/workflow-surface.ts",
-      "control": "Only a workflow that will actually register as a composite tool may supersede operation tools. Delete the gate and a SKIPPED workflow \u2014 unapproved, an unapproved step, a malformed binding, a later step demanding the caller's one idempotency key \u2014 silently deletes its members from tools/list and registers nothing in their place. The agent loses the operations and the thing that was supposed to stand in for them.",
+      "control": "Only a workflow that will actually register as a composite tool may supersede operation tools. Delete the gate and a SKIPPED workflow — unapproved, an unapproved step, a malformed binding, a later step demanding the caller's one idempotency key — silently deletes its members from tools/list and registers nothing in their place. The agent loses the operations and the thing that was supposed to stand in for them.",
       "find": "    if (registration.skipReason !== undefined) continue;",
       "replace": "    if (false) continue;",
       "tests": [
@@ -734,7 +734,7 @@
     {
       "id": "workflow-surface/refusals-reach-a-fixed-point",
       "file": "packages/air/src/workflow-surface.ts",
-      "control": "Async-status refusals must iterate to a fixed point against the evolving suppression set. Collapse the loop to one round and a chain \u2014 A serves and polls B, B polls C, both B and C proposed for suppression \u2014 ends with B refused (kept) but C still suppressed: the served surface lists B whose anvil/async_status_tool names a tool absent from tools/list, the exact half-contract the refusal exists to prevent.",
+      "control": "Async-status refusals must iterate to a fixed point against the evolving suppression set. Collapse the loop to one round and a chain — A serves and polls B, B polls C, both B and C proposed for suppression — ends with B refused (kept) but C still suppressed: the served surface lists B whose anvil/async_status_tool names a tool absent from tools/list, the exact half-contract the refusal exists to prevent.",
       "find": "  while (changed) {",
       "replace": "  if (changed) {",
       "tests": [
@@ -745,7 +745,7 @@
     {
       "id": "trace-capabilities/ubiquity-pre-filter",
       "file": "packages/harness/src/trace-capabilities.ts",
-      "control": "A ubiquitous operation never becomes a grouping member. An operation present in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so without this pre-filter it joins every grouping and the observed tasks collapse into one undifferentiated blob \u2014 the behavioural form of the FLEXCUBE /fcubsWarningResp candidate that was 64% of every candidate member in that report.",
+      "control": "A ubiquitous operation never becomes a grouping member. An operation present in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so without this pre-filter it joins every grouping and the observed tasks collapse into one undifferentiated blob — the behavioural form of the FLEXCUBE /fcubsWarningResp candidate that was 64% of every candidate member in that report.",
       "find": "    if (shapes >= UBIQUITY_MIN_SHAPES && shapeFraction >= UBIQUITY_SHAPE_FRACTION) {",
       "replace": "    if (false) {",
       "tests": [
@@ -767,7 +767,7 @@
     {
       "id": "naming/rehome-non-terminal-guard",
       "file": "packages/compiler/src/naming.ts",
-      "control": "The bare-CRUD-verb re-homing rule must never claim a verb word the estate itself uses as a real collection (a non-terminal path segment). Delete the guard and an estate with /count/{id}/lines loses its `count` resource to the rule \u2014 the exact over-reach the estate-wide pre-filter exists to prevent. It fired zero times on all six measured estates; that makes it insurance, and untested insurance is decoration.",
+      "control": "The bare-CRUD-verb re-homing rule must never claim a verb word the estate itself uses as a real collection (a non-terminal path segment). Delete the guard and an estate with /count/{id}/lines loses its `count` resource to the rule — the exact over-reach the estate-wide pre-filter exists to prevent. It fired zero times on all six measured estates; that makes it insurance, and untested insurance is decoration.",
       "find": "    if (!CRUD_SEGMENT_WORDS.has(word) || estate.nonTerminalSegments.has(word)) break;",
       "replace": "    if (!CRUD_SEGMENT_WORDS.has(word)) break;",
       "tests": [
@@ -777,7 +777,7 @@
     {
       "id": "naming/disambiguation-suffix-stutter-skip",
       "file": "packages/compiler/src/naming.ts",
-      "control": "The collision resolver must not append a distinguishing token the operation's canonicalName already ends with (compared singularized) \u2014 that is the tool-name stutter (`\u2026_count_activities_activities`) an agent has to read past. Neutralize the check and the resolver reverts to appending the shortest token unconditionally.",
+      "control": "The collision resolver must not append a distinguishing token the operation's canonicalName already ends with (compared singularized) — that is the tool-name stutter (`…_count_activities_activities`) an agent has to read past. Neutralize the check and the resolver reverts to appending the shortest token unconditionally.",
       "find": "  if (tokenWords[0] === last) return true;",
       "replace": "  return false;",
       "tests": [
@@ -787,7 +787,7 @@
     {
       "id": "corpus/naming-ratchet-fails-on-growth",
       "file": "tools/corpus/naming-conformance.mjs",
-      "control": "The naming-conformance ratchet fails on ANY counter growth. Delete the comparison and a new semantic contradiction \u2014 a resource its own name text denies, a stuttering tool name \u2014 rides through the corpus lanes green, which is exactly how six naming defects sat unnoticed for months before the naming audit found them by hand.",
+      "control": "The naming-conformance ratchet fails on ANY counter growth. Delete the comparison and a new semantic contradiction — a resource its own name text denies, a stuttering tool name — rides through the corpus lanes green, which is exactly how six naming defects sat unnoticed for months before the naming audit found them by hand.",
       "find": "    if (cur > base) {",
       "replace": "    if (false) {",
       "tests": [
@@ -797,7 +797,7 @@
     {
       "id": "path-grammar/ambiguous-never-silently-selects",
       "file": "packages/compiler/src/path-grammar.ts",
-      "control": "An ambiguous path grammar never silently selects a grammar: when the estate's RPC and REST signals BOTH commit, the classifier must return `ambiguous` with a diagnostic naming both candidate grammars and fall back to the source kind's pre-classifier behavior \u2014 never let whichever side carries more votes win quietly. Delete the split-vote branch and a GET-heavy verb-terminal estate silently classifies rpc_plain with no warning.",
+      "control": "An ambiguous path grammar never silently selects a grammar: when the estate's RPC and REST signals BOTH commit, the classifier must return `ambiguous` with a diagnostic naming both candidate grammars and fall back to the source kind's pre-classifier behavior — never let whichever side carries more votes win quietly. Delete the split-vote branch and a GET-heavy verb-terminal estate silently classifies rpc_plain with no warning.",
       "find": "  if (votes.rpc.length > 0 && votes.rest.length > 0) {",
       "replace": "  if (false) {",
       "tests": [
@@ -827,7 +827,7 @@
     {
       "id": "capability-authoring/never-born-approved",
       "file": "packages/compiler/src/capability-authoring.ts",
-      "control": "An authored capability is never born approved: a manifest `capabilities` entry with an `operations` list lands in AIR at lifecycle `proposed`, and can only reach `approved` through the same review gate (and disclosure budget) as a discovered grouping. Set the birth lifecycle to `approved` and a manifest author has silently skipped review \u2014 the exact shortcut the propose-only boundary exists to forbid.",
+      "control": "An authored capability is never born approved: a manifest `capabilities` entry with an `operations` list lands in AIR at lifecycle `proposed`, and can only reach `approved` through the same review gate (and disclosure budget) as a discovered grouping. Set the birth lifecycle to `approved` and a manifest author has silently skipped review — the exact shortcut the propose-only boundary exists to forbid.",
       "find": "      lifecycle: \"proposed\",",
       "replace": "      lifecycle: \"approved\",",
       "tests": [
@@ -837,7 +837,7 @@
     {
       "id": "benchmark-admission/negative-delta-refused",
       "file": "packages/refinement/src/protocol/group.ts",
-      "control": "A group proposal whose measured routing delta is NEGATIVE is refused with the numbers before it can reach review. Disable the comparison and a composition that measurably mangles routing sails to a reviewer wearing a benchmark-scored evidence claim \u2014 the admission gate reporting success without having gated.",
+      "control": "A group proposal whose measured routing delta is NEGATIVE is refused with the numbers before it can reach review. Disable the comparison and a composition that measurably mangles routing sails to a reviewer wearing a benchmark-scored evidence claim — the admission gate reporting success without having gated.",
       "find": "  if (delta.passedAfter < delta.passedBefore) {",
       "replace": "  if (false) {",
       "tests": [

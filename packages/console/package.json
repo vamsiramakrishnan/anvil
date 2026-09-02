@@ -2,7 +2,7 @@
   "name": "@anvil/console",
   "version": "0.1.0",
   "private": true,
-  "description": "Anvil's local review console \u2014 a pure projection of bundles, packs, and reports; every decision goes through the same library functions the CLI calls.",
+  "description": "Anvil's local review console — a pure projection of bundles, packs, and reports; every decision goes through the same library functions the CLI calls.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
