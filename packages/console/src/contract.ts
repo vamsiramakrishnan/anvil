@@ -9,6 +9,7 @@ import {
   OperationState,
   PathGrammar,
   type RefusedSupersession,
+  RetryPolicy,
   Service,
   Workflow,
 } from "@anvil/air";
@@ -57,8 +58,9 @@ import { z } from "zod";
  *      Inject it into the served page (a meta tag or inline bootstrap, never a
  *      query string) and require it verbatim as the `X-Anvil-Console-Token`
  *      header on EVERY non-GET request. A missing or mismatched token is
- *      `403` with `{ error: { code: "console/forbidden" } }`, before any body
- *      is read.
+ *      `403` with the error envelope below — `{ error: { code:
+ *      "console/forbidden", message } }`, the message naming no particular
+ *      failed check — before any body is read.
  *   3. Reject any non-GET request whose `Origin` header is absent or differs
  *      from the server's own origin (`http://127.0.0.1:<port>`). Same `403`.
  *   4. Never emit CORS headers. No `Access-Control-Allow-*`, no preflight
@@ -68,17 +70,60 @@ import { z } from "zod";
  *      size cap, and are validated against the request schema below before
  *      any library function runs (`400` with `issues[]` otherwise).
  *   6. GET routes are read-only projections and must not write, even
- *      incidentally (no report regeneration, no cache files inside a bundle).
+ *      incidentally (no report regeneration, no cache files inside a bundle,
+ *      and no `<root>/.anvil/console` scratch directory — see "Where the
+ *      console writes" below; `server.test.ts` guards both).
  *
  * These are the only defenses between a drive-by page and an approval, so a
  * change to any of them is a safety change and is reviewed as one.
+ *
+ * ## Where the console writes
+ *
+ * A mutation writes only where its library function writes (the bundle, the
+ * pack's `receipts/`) or where the request body names a path — and every such
+ * path must resolve inside the workspace root or the request is refused
+ * (`console/path_outside_root`). When a request names no path for a file the
+ * console must create, the default is a scratch directory under the root:
+ *
+ *   `<root>/.anvil/console/tasks/<bundle-id>/<cluster-id>.task.json`  (export-task)
+ *   `<root>/.anvil/console/packs/<task-id>/`                          (tasks/import)
+ *
+ * with ids made filename-safe (`[^A-Za-z0-9._-]` → `_`). The directory is
+ * created by the first mutation that needs it and never by a GET.
+ *
+ * ## Client-side error codes
+ *
+ * The UI's fetch client (`src/ui/api.ts`) raises four codes of its own that
+ * no server response ever carries: `console/network` (the request never got
+ * an answer), `console/unparseable_response` (a non-JSON body),
+ * `console/malformed_error` (a non-2xx without this envelope), and
+ * `console/contract_violation` (a 2xx whose body fails the route's response
+ * schema). They are registered in the error-code registry as the client's,
+ * and they are deliberately not part of this server contract.
  */
 
 /* -------------------------------------------------------------------------- */
 /* Shared building blocks                                                      */
 /* -------------------------------------------------------------------------- */
 
-/** How a bundle is addressed in every route: a stable id the workspace assigns. */
+/**
+ * How a bundle is addressed in every route: its workspace-relative path.
+ *
+ * The workspace root is walked (skipping `node_modules`, `.git`, `dist`, and
+ * dot-directories other than `.anvil`, never following symlinks, at most
+ * eight levels deep) and every directory carrying an `air.yaml` or `air.json`
+ * is a bundle. Its id is its path relative to the root with `/` separators —
+ * `payments`, `gen/payments-next` — which is the one stable name the
+ * filesystem already gave it; when the root itself is a bundle, the id is the
+ * root's directory name. A route parameter is URL-encoded, so the nested id
+ * travels as `/api/bundles/gen%2Fpayments-next`.
+ *
+ * Refinement packs are discovered the same way: every directory under the
+ * root carrying a valid `pack.json` whose `service.id` matches the bundle's
+ * is one of the bundle's packs (`GET /api/bundles/:id/packs`), addressed by
+ * its content hash (`refinementPackHash`). Both are re-read on every request;
+ * there is no index to go stale.
+ */
 export const zBundleId = z.string().min(1);
 
 const zServiceIdentity = z.object({
@@ -160,12 +205,20 @@ export const zGroupRoutingDelta = z.object({
 /** The pack schema's refinement element — the one zod shape of a refinement and its target. */
 const zRefinement = zRefinementPack.shape.refinements.element;
 
+/**
+ * A semantic change on the wire. The library leaves the absent side of an
+ * addition (`before`) or a removal (`after`) `undefined`, and JSON drops an
+ * undefined key, so both sides are optional here — the honest wire form of
+ * `SemanticChange`, whose two sides are typed `unknown`.
+ */
 const zSemanticChange = z.object({
   target: zRefinement.shape.target,
   key: z.string(),
-  before: z.unknown(),
-  after: z.unknown(),
-}) satisfies z.ZodType<SemanticChange>;
+  before: z.unknown().optional(),
+  after: z.unknown().optional(),
+}) satisfies z.ZodType<
+  Omit<SemanticChange, "before" | "after"> & { before?: unknown; after?: unknown }
+>;
 
 /* -------------------------------------------------------------------------- */
 /* Errors                                                                      */
@@ -244,16 +297,18 @@ export const zCapabilityRow = z.object({
   budget: zCapabilityBudget,
 });
 
+/** The shared planner's verdict (`planWorkflowSurface`): registrable, or why not. */
+const zPlanVerdict = z.object({
+  registrable: z.boolean(),
+  skipReason: z.string().optional(),
+});
+
 export const zWorkflowRow = z.object({
   id: Workflow.shape.id,
   state: Workflow.shape.state,
   steps: Workflow.shape.steps,
   supersedes: Workflow.shape.supersedes,
-  /** The shared planner's verdict (`planWorkflowSurface`): registrable, or why not. */
-  plan: z.object({
-    registrable: z.boolean(),
-    skipReason: z.string().optional(),
-  }),
+  plan: zPlanVerdict,
   refusals: z.array(zRefusedSupersession),
 });
 
@@ -279,10 +334,77 @@ export type BundleInspector = z.infer<typeof zBundleInspector>;
 /* GET /api/bundles/:id/queue — the decision queue                             */
 /* -------------------------------------------------------------------------- */
 
-export const zDecisionKind = z.enum(["operation", "capability", "workflow", "refinement"]);
+/**
+ * Every grey decision a bundle holds, in one list. The six kinds are the six
+ * things a reviewer decides (or is told to recompile for), and each item
+ * carries a `subject` with exactly what its decision needs — the mutation's
+ * arguments and the fields the bulk barrier reads — so the queue never joins
+ * against the inspector, the pack list, or the benchmark. All six are
+ * projected from the same files those views read (`air.yaml`, `pack.json` +
+ * `receipts/`, `benchmark.report.json`); this is the same projection in one
+ * list, not a new truth.
+ */
+export const zDecisionKind = z.enum([
+  "operation",
+  "capability",
+  "workflow",
+  "refinement",
+  "pack",
+  "cluster",
+]);
 
-export const zDecisionItem = z.object({
-  kind: zDecisionKind,
+/** A not-yet-approved operation: what `operations/approve` takes, and the retry/confirm posture. */
+export const zOperationSubject = z.object({
+  operationId: Operation.shape.id,
+  effect: Operation.shape.effect,
+  idempotency: z.object({ mode: Idempotency.shape.mode }),
+  retries: z.object({ mode: RetryPolicy.shape.mode }),
+  confirmation: z.object({ required: Confirmation.shape.required }),
+});
+
+/** A `proposed` capability: what `capabilities/:capId/{approve|reject}` takes, and its budget verdict. */
+export const zCapabilitySubject = z.object({
+  capabilityId: Capability.shape.id,
+  budget: zCapabilityBudget,
+});
+
+/** A workflow the planner refuses or that is not approved: no route decides it — recompile. */
+export const zWorkflowSubject = z.object({
+  workflowId: Workflow.shape.id,
+  plan: zPlanVerdict,
+});
+
+/**
+ * A deficiency the deterministic plan reports: `deficiencyId` is the target
+ * coordinate `anvil refine export-task <dir> <key>` and `anvil case open`
+ * take (`operation:<id>`, `field:<id>#<path>`, …), `skill` the narrow skill
+ * that would close it.
+ */
+export const zRefinementSubject = z.object({
+  deficiencyId: z.string().min(1),
+  skill: z.string().min(1),
+});
+
+/** A review-tier refinement awaiting a receipt: what `packs/:hash/decisions` takes, plus the delta as evidence. */
+export const zPackSubject = z.object({
+  packHash: zRefinementReviewReceipt.shape.packHash,
+  refinementId: zRefinement.shape.id,
+  tier: zRefinement.shape.approval.shape.tier,
+  delta: zGroupRoutingDelta.optional(),
+});
+
+/** The benchmark's confusion-cluster schema — the one zod shape of a cluster and its edges. */
+const zConfusionCluster = zBenchmarkReport.shape.confusion.shape.clusters.element;
+
+/** A confusable-tool cluster: what `clusters/:clusterId/export-task` takes, and the mis-routes as evidence. */
+export const zClusterSubject = z.object({
+  clusterId: zConfusionCluster.shape.id,
+  memberOperationIds: z.array(zConfusionCluster.shape.members.element.shape.operationId),
+  /** The directed confusions, with the mis-routed intents verbatim. */
+  evidence: zConfusionCluster.shape.edges,
+});
+
+const zDecisionBase = {
   id: z.string().min(1),
   title: z.string(),
   reasons: z.array(z.string()),
@@ -290,7 +412,24 @@ export const zDecisionItem = z.object({
   evidence: z.array(Claim),
   suggestedAction: z.string(),
   blocking: z.boolean(),
-});
+};
+
+function decision<K extends z.infer<typeof zDecisionKind>, S extends z.ZodType>(
+  kind: K,
+  subject: S,
+) {
+  return z.object({ kind: z.literal(kind), ...zDecisionBase, subject });
+}
+
+export const zDecisionItem = z.discriminatedUnion("kind", [
+  decision("operation", zOperationSubject),
+  decision("capability", zCapabilitySubject),
+  decision("workflow", zWorkflowSubject),
+  decision("refinement", zRefinementSubject),
+  decision("pack", zPackSubject),
+  decision("cluster", zClusterSubject),
+]);
+export type DecisionItem = z.infer<typeof zDecisionItem>;
 
 export const zDecisionQueue = z.object({
   bundleId: zBundleId,
@@ -312,6 +451,8 @@ export const zPackItem = z.object({
   patchSummary: z.string(),
   claims: zRefinement.shape.evidence,
   delta: zGroupRoutingDelta.optional(),
+  /** The receipt files under the pack's `receipts/` that bind a decision to this refinement. */
+  receiptPaths: z.array(z.string()),
 });
 
 export const zPackView = z.object({
@@ -438,8 +579,12 @@ export const zApplyPackRequest = z.object({
 });
 
 /**
- * `applyPackToBundle` writes AIR only; the projections are regenerated by a
- * following reprojection, reported here when the server performed one.
+ * `applyPackToBundle` writes AIR only, and so does the console: exactly as
+ * `anvil refine apply-pack` ends with "Regenerate the bundle with `anvil
+ * compile`", the console has no reproject-after-apply route by design, and
+ * its post-apply state tells the reviewer to recompile. `reprojection` is
+ * therefore absent today; it is kept for a server that deliberately performs
+ * one, never inferred.
  */
 export const zApplyPackResponse = z.object({
   airPath: z.string(),

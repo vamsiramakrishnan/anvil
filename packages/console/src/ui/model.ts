@@ -1,10 +1,12 @@
 import type { ConsoleResponse } from "../contract.js";
 
 /**
- * The UI's pure model: hash routing, theme, redaction, and the decision-queue
- * join. Nothing here computes truth — counts, verdicts, deltas, and budgets
- * come from the contract's read models; this file only joins them by id and
- * decides what a reviewer may select in bulk (a narrowing, never a widening).
+ * The UI's pure model: hash routing, theme, redaction, and the bulk barrier.
+ * Nothing here computes truth — counts, verdicts, deltas, and budgets come
+ * from the contract's read models, and the decision queue's items arrive
+ * with their `subject` already attached by the server; this file only keys
+ * them and decides what a reviewer may select in bulk (a narrowing, never a
+ * widening).
  */
 
 /* ------------------------------- routing --------------------------------- */
@@ -72,140 +74,58 @@ export function show(value: unknown): string {
   return JSON.stringify(safe, null, 2);
 }
 
-/* --------------------------- the decision join --------------------------- */
+/* ---------------------------- the read models ---------------------------- */
 
 export type Inspector = ConsoleResponse<"bundle">;
-type OperationRow = Inspector["operations"][number];
-type CapabilityRow = Inspector["capabilities"][number];
-type WorkflowRow = Inspector["workflows"][number];
 export type Queue = ConsoleResponse<"queue">;
 export type DecisionItem = Queue["items"][number];
 export type PackList = ConsoleResponse<"packs">;
-type PackView = PackList[number];
-export type PackItem = PackView["items"][number];
 export type Benchmark = ConsoleResponse<"benchmark">;
 export type Cluster = NonNullable<Benchmark>["confusion"]["clusters"][number];
-export type RoutingDelta = NonNullable<PackItem["delta"]>;
+export type RoutingDelta = NonNullable<PackList[number]["items"][number]["delta"]>;
 
-export type DecisionRow =
-  | {
-      kind: "operation";
-      key: string;
-      id: string;
-      title: string;
-      item: DecisionItem;
-      op?: OperationRow;
-    }
-  | {
-      kind: "capability";
-      key: string;
-      id: string;
-      title: string;
-      item: DecisionItem;
-      cap?: CapabilityRow;
-    }
-  | {
-      kind: "workflow";
-      key: string;
-      id: string;
-      title: string;
-      item: DecisionItem;
-      wf?: WorkflowRow;
-    }
-  | { kind: "refinement"; key: string; id: string; title: string; item: DecisionItem }
-  | { kind: "pack"; key: string; id: string; title: string; pack: PackView; refinement: PackItem }
-  | { kind: "cluster"; key: string; id: string; title: string; cluster: Cluster };
+/** A queue item plus the key the list, the selection, and the row's DOM id use. */
+export type DecisionRow = DecisionItem & { key: string };
 
-export function buildRows(
-  queue: Queue,
-  inspector: Inspector,
-  packs: PackList,
-  benchmark: Benchmark,
-): DecisionRow[] {
-  const ops = new Map(inspector.operations.map((op) => [op.id, op]));
-  const caps = new Map(inspector.capabilities.map((cap) => [cap.id, cap]));
-  const wfs = new Map(inspector.workflows.map((wf) => [wf.id, wf]));
-  const rows: DecisionRow[] = queue.items.map((item): DecisionRow => {
-    const base = { key: `${item.kind}:${item.id}`, id: item.id, title: item.title, item };
-    if (item.kind === "operation") return { kind: "operation", ...base, op: ops.get(item.id) };
-    if (item.kind === "capability") return { kind: "capability", ...base, cap: caps.get(item.id) };
-    if (item.kind === "workflow") return { kind: "workflow", ...base, wf: wfs.get(item.id) };
-    return { kind: "refinement", ...base };
-  });
-  for (const pack of packs) {
-    const decided = new Set(pack.receipts.map((r) => r.refinementId));
-    for (const refinement of pack.items) {
-      if (decided.has(refinement.refinementId)) continue;
-      if (refinement.status === "approved" || refinement.status === "rejected") continue;
-      rows.push({
-        kind: "pack",
-        key: `pack:${pack.hash}:${refinement.refinementId}`,
-        id: refinement.refinementId,
-        title: `${refinement.skill} → ${targetLabel(refinement.target)}`,
-        pack,
-        refinement,
-      });
-    }
-  }
-  for (const cluster of benchmark?.confusion.clusters ?? []) {
-    rows.push({
-      kind: "cluster",
-      key: `cluster:${cluster.id}`,
-      id: cluster.id,
-      title: `${cluster.members.length} confusable tools, ${cluster.taskCount} tasks`,
-      cluster,
-    });
-  }
-  return rows;
+/** One key per decision: a refinement id can recur across packs, so a pack row keys on its pack too. */
+export function rowKey(item: DecisionItem): string {
+  return item.kind === "pack"
+    ? `pack:${item.subject.packHash}:${item.id}`
+    : `${item.kind}:${item.id}`;
 }
 
-export function targetLabel(target: PackItem["target"]): string {
-  switch (target.kind) {
-    case "service":
-      return "service";
-    case "capability":
-      return `capability ${target.capabilityId}`;
-    case "operation":
-      return target.operationId;
-    case "field":
-    case "enum":
-      return `${target.operationId}#${target.path}`;
-    case "error":
-      return `${target.operationId} error ${target.code}`;
-    case "workflow":
-      return `workflow ${target.workflowId}`;
-    case "group":
-      return `group ${target.groupId}`;
-  }
+export function toRows(queue: Queue): DecisionRow[] {
+  return queue.items.map((item) => ({ ...item, key: rowKey(item) }));
 }
+
+/* ----------------------------- the bulk barrier -------------------------- */
 
 /**
  * Why a row can never be picked up by a bulk policy. Anything non-idempotent
  * or destructive is barred here, before any predicate runs — a policy can
- * only narrow this set, never reach past it.
+ * only narrow this set, never reach past it. Every field read is on the
+ * item's own `subject`; the barrier never joins against another view.
  */
-export function bulkBarrier(row: DecisionRow): string | undefined {
+export function bulkBarrier(row: DecisionItem): string | undefined {
   switch (row.kind) {
     case "operation": {
-      const op = row.op;
-      if (!op) return "not present in the inspector";
-      if (op.state === "blocked") return "blocked — resolve its diagnostics and recompile";
-      if (op.effect.kind === "mutation" && op.idempotency.mode === "none") {
+      const { effect, idempotency, confirmation } = row.subject;
+      if (row.blocking) return "blocked — resolve its diagnostics and recompile";
+      if (effect.kind === "mutation" && idempotency.mode === "none") {
         return "non-idempotent mutation — one at a time, with --confirm";
       }
-      if (op.effect.risk === "destructive" || op.effect.action === "delete") {
+      if (effect.risk === "destructive" || effect.action === "delete") {
         return "destructive — never bulk-approved";
       }
-      if (op.effect.kind === "mutation" && !op.effect.reversible) {
+      if (effect.kind === "mutation" && !effect.reversible) {
         return "irreversible mutation — never bulk-approved";
       }
-      if (op.confirmation.required) return "requires confirmation — decide it individually";
+      if (confirmation.required) return "requires confirmation — decide it individually";
       return undefined;
     }
     case "capability":
-      if (!row.cap) return "not present in the inspector";
-      if (row.cap.budget.verdict !== "ok") {
-        return `budget ${row.cap.budget.verdict} — needs an individual decision`;
+      if (row.subject.budget.verdict !== "ok") {
+        return `budget ${row.subject.budget.verdict} — needs an individual decision`;
       }
       return undefined;
     case "workflow":
@@ -213,9 +133,9 @@ export function bulkBarrier(row: DecisionRow): string | undefined {
     case "refinement":
       return "a deficiency is resolved by `anvil refine run`, not approved";
     case "pack":
-      if (row.refinement.tier === "reject") return "tier reject — the pack itself refuses it";
-      if (row.refinement.delta && row.refinement.delta.upliftPts <= 0) {
-        return `measured delta ${row.refinement.delta.upliftPts} pts — never bulk-approved`;
+      if (row.subject.tier !== "review") return `tier ${row.subject.tier} — not awaiting a receipt`;
+      if (row.subject.delta && row.subject.delta.upliftPts <= 0) {
+        return `measured delta ${row.subject.delta.upliftPts} pts — never bulk-approved`;
       }
       return undefined;
     case "cluster":
@@ -226,7 +146,7 @@ export function bulkBarrier(row: DecisionRow): string | undefined {
 export interface Policy {
   id: string;
   label: string;
-  selects: (row: DecisionRow) => boolean;
+  selects: (row: DecisionItem) => boolean;
 }
 
 const evidenceBacked = (item: DecisionItem) =>
@@ -238,22 +158,20 @@ export const POLICIES: readonly Policy[] = [
     label: "reads · naturally idempotent · evidence-backed",
     selects: (row) =>
       row.kind === "operation" &&
-      row.op?.effect.kind === "read" &&
-      row.op.idempotency.mode === "natural" &&
-      evidenceBacked(row.item),
+      row.subject.effect.kind === "read" &&
+      row.subject.idempotency.mode === "natural" &&
+      evidenceBacked(row),
   },
   {
     id: "positive-delta",
     label: "positive measured delta",
     selects: (row) =>
-      row.kind === "pack" &&
-      row.refinement.delta !== undefined &&
-      row.refinement.delta.upliftPts > 0,
+      row.kind === "pack" && row.subject.delta !== undefined && row.subject.delta.upliftPts > 0,
   },
   {
     id: "budget-ok",
     label: "capabilities within budget",
-    selects: (row) => row.kind === "capability" && row.cap?.budget.verdict === "ok",
+    selects: (row) => row.kind === "capability" && row.subject.budget.verdict === "ok",
   },
 ];
 

@@ -1,4 +1,5 @@
 import type { ConsoleResponse } from "../../contract.js";
+import { HEX64, paymentsBenchmark, paymentsDrift } from "./fixtures-reports.js";
 
 /**
  * Fixtures for the contract mock — hand-written, but typed as the contract's
@@ -24,9 +25,6 @@ export interface WorkspaceFixture {
 
 type OperationRow = ConsoleResponse<"bundle">["operations"][number];
 type Claim = ConsoleResponse<"queue">["items"][number]["evidence"][number];
-
-const HEX64 = "3f1a9c7d2b8e4f60a1c5d9e7b3a2f4c6d8e0b1a3c5d7e9f1a3b5c7d9e1f3a5b7";
-const HEX64_B = "9b7e5c3a1f0d2e4c6a8b0d2f4e6c8a0b2d4f6e8c0a2b4d6f8e0c2a4b6d8f0e2c";
 
 /**
  * Compiler diagnostic codes the fixtures cite (`@anvil/compiler` owns them;
@@ -413,11 +411,55 @@ function paymentsInspector(): ConsoleResponse<"bundle"> {
   };
 }
 
-function paymentsQueue(): ConsoleResponse<"queue"> {
+type PackTarget = ConsoleResponse<"packs">[number]["items"][number]["target"];
+
+/** `describeTarget` as the mock renders it — the server uses the library's. */
+function targetLabel(target: PackTarget): string {
+  switch (target.kind) {
+    case "service":
+      return "service";
+    case "capability":
+      return target.capabilityId;
+    case "operation":
+      return target.operationId;
+    case "field":
+    case "enum":
+      return `${target.operationId} ${target.path}`;
+    case "error":
+      return `${target.operationId} (${target.code})`;
+    case "workflow":
+      return target.workflowId;
+    case "group":
+      return target.groupId;
+  }
+}
+
+const capabilityReasons: Record<string, string[]> = {
+  payments: ["resource grouping awaiting review"],
+  customers: ["resource grouping awaiting review"],
+  everything: ["service grouping awaiting review", "23 tools exceed the 20-tool budget"],
+};
+
+const capabilityEvidence: Record<string, Claim[]> = {
+  payments: [inferred("payments", "capability.cohesion", 0.81, "shared `payment` resource")],
+  customers: [spec("customers", "capability.members", ["getCustomer"], "one resource, one tool")],
+  everything: [],
+};
+
+/**
+ * The decision queue, projected from the same fixtures the inspector, the pack
+ * list, and the benchmark answer with — the way the server projects it from
+ * the same files — so every item's `subject` agrees with the view it came from.
+ */
+function paymentsQueue(
+  inspector: ConsoleResponse<"bundle">,
+  packs: ConsoleResponse<"packs">,
+  benchmark: ConsoleResponse<"benchmark">,
+): ConsoleResponse<"queue"> {
   return {
     bundleId: "payments",
     items: [
-      ...operations
+      ...inspector.operations
         .filter((row) => row.state !== "approved")
         .map((row) => ({
           kind: "operation" as const,
@@ -427,54 +469,95 @@ function paymentsQueue(): ConsoleResponse<"queue"> {
           evidence: evidenceFor[row.id] ?? [],
           suggestedAction: suggestion(row),
           blocking: row.state === "blocked",
+          subject: {
+            operationId: row.id,
+            effect: row.effect,
+            idempotency: row.idempotency,
+            // AIR's rule, mirrored: no proven idempotency, no auto-retry.
+            retries: {
+              mode: row.idempotency.mode === "none" ? ("none" as const) : ("safe" as const),
+            },
+            confirmation: row.confirmation,
+          },
+        })),
+      ...inspector.capabilities
+        .filter((cap) => cap.lifecycle === "proposed")
+        .map((cap) => ({
+          kind: "capability" as const,
+          id: cap.id,
+          title: cap.displayName,
+          reasons: capabilityReasons[cap.id] ?? [`${cap.source} grouping awaiting review`],
+          evidence: capabilityEvidence[cap.id] ?? [],
+          suggestedAction: "approve or reject the grouping",
+          blocking: false,
+          subject: { capabilityId: cap.id, budget: cap.budget },
+        })),
+      ...inspector.workflows
+        .filter((wf) => !wf.plan.registrable || wf.state !== "approved")
+        .map((wf) => ({
+          kind: "workflow" as const,
+          id: wf.id,
+          title: "Reconcile a statement",
+          reasons: [`planner refuses registration: ${wf.plan.skipReason ?? "not registrable"}`],
+          evidence: [],
+          suggestedAction: "unblock exportStatement, then recompile",
+          blocking: true,
+          subject: { workflowId: wf.id, plan: wf.plan },
         })),
       {
-        kind: "capability",
-        id: "payments",
-        title: "Payments",
-        reasons: ["resource grouping awaiting review"],
-        evidence: [inferred("payments", "capability.cohesion", 0.81, "shared `payment` resource")],
-        suggestedAction: "approve or reject the grouping",
-        blocking: false,
-      },
-      {
-        kind: "capability",
-        id: "customers",
-        title: "Customers",
-        reasons: ["resource grouping awaiting review"],
-        evidence: [
-          spec("customers", "capability.members", ["getCustomer"], "one resource, one tool"),
-        ],
-        suggestedAction: "approve or reject the grouping",
-        blocking: false,
-      },
-      {
-        kind: "capability",
-        id: "everything",
-        title: "Everything",
-        reasons: ["service grouping awaiting review", "23 tools exceed the 20-tool budget"],
-        evidence: [],
-        suggestedAction: "approve or reject the grouping",
-        blocking: false,
-      },
-      {
-        kind: "workflow",
-        id: "reconcile_statement",
-        title: "Reconcile a statement",
-        reasons: ["planner refuses registration: step exportStatement is blocked"],
-        evidence: [],
-        suggestedAction: "unblock exportStatement, then recompile",
-        blocking: true,
-      },
-      {
         kind: "refinement",
-        id: 'missing_operation_description:{"kind":"operation","operationId":"sendReceipt"}',
+        id: "missing_operation_description:operation:sendReceipt",
         title: "Operation sendReceipt has no description",
         reasons: ["missing_operation_description"],
         evidence: [],
         suggestedAction: "describe-operation",
         blocking: false,
+        subject: { deficiencyId: "operation:sendReceipt", skill: "describe-operation" },
       },
+      ...packs.flatMap((pack) =>
+        pack.items
+          .filter(
+            (item) =>
+              item.tier === "review" &&
+              (item.status === "improved" || item.status === "neutral") &&
+              item.receiptPaths.length === 0,
+          )
+          .map((item) => ({
+            kind: "pack" as const,
+            id: item.refinementId,
+            title: `${item.skill} → ${targetLabel(item.target)}`,
+            reasons: [
+              "measured clean; a person decides",
+              `proposes ${item.patchSummary}`,
+              `pack ${pack.hash.slice(0, 12)} at ${pack.dir}`,
+            ],
+            evidence: item.claims,
+            suggestedAction: "approve or reject with a receipt (anvil refine approve|reject)",
+            blocking: false,
+            subject: {
+              packHash: pack.hash,
+              refinementId: item.refinementId,
+              tier: item.tier,
+              ...(item.delta ? { delta: item.delta } : {}),
+            },
+          })),
+      ),
+      ...(benchmark?.confusion.clusters ?? []).map((cluster) => ({
+        kind: "cluster" as const,
+        id: cluster.id,
+        title: `${cluster.members.length} confusable tools, ${cluster.taskCount} mis-routed tasks`,
+        reasons: cluster.edges.map(
+          (edge) => `${edge.intended} routed to ${edge.routed} ×${edge.count}`,
+        ),
+        evidence: [],
+        suggestedAction: `export a case file (anvil refine export-task … group:${cluster.id})`,
+        blocking: false,
+        subject: {
+          clusterId: cluster.id,
+          memberOperationIds: cluster.members.map((member) => member.operationId),
+          evidence: cluster.edges,
+        },
+      })),
     ],
   };
 }
@@ -518,10 +601,11 @@ function paymentsPacks(): ConsoleResponse<"packs"> {
       summary: { proposed: 3, approved: 0, review: 2, rejected: 0, regressed: 1, skipped: 0 },
       items: [
         {
+          receiptPaths: [],
           refinementId: "rf_describe_sendReceipt",
           skill: "describe-operation",
           target: { kind: "operation", operationId: "sendReceipt" },
-          status: "validated",
+          status: "neutral",
           tier: "review",
           patchSummary:
             'description="Send the receipt for a captured payment to the customer\'s e-mail address."',
@@ -537,6 +621,7 @@ function paymentsPacks(): ConsoleResponse<"packs"> {
           ],
         },
         {
+          receiptPaths: [],
           refinementId: "rf_group_lookup_payment",
           skill: "group-proposal",
           target: { kind: "group", groupId: "cluster_payment_lookup" },
@@ -555,6 +640,7 @@ function paymentsPacks(): ConsoleResponse<"packs"> {
           delta: delta("cluster_payment_lookup", 11, 13, []),
         },
         {
+          receiptPaths: [],
           refinementId: "rf_group_money_moves",
           skill: "group-proposal",
           target: { kind: "group", groupId: "cluster_money_moves" },
@@ -571,115 +657,6 @@ function paymentsPacks(): ConsoleResponse<"packs"> {
       receipts: [],
     },
   ];
-}
-
-function paymentsBenchmark(): ConsoleResponse<"benchmark"> {
-  return {
-    router: "lexical",
-    catalogSize: 9,
-    bundleHash: HEX64_B,
-    fresh: true,
-    summary: {
-      total: 27,
-      passed: 21,
-      score: 0.78,
-      curatedRouted: 21,
-      bareRouted: 14,
-      upliftPts: 25.9,
-    },
-    confusion: {
-      posture: "candidate",
-      minClusterEvidence: 2,
-      hubPartnerFraction: 0.5,
-      hubMinPartners: 2,
-      hubs: [
-        {
-          operationId: "getPayment",
-          toolName: "payments_get",
-          distinctPartners: 3,
-          taskCount: 5,
-          intents: ["show me the payment for order 8813", "what did the customer pay last week"],
-        },
-      ],
-      clusters: [
-        {
-          id: "cluster_payment_lookup",
-          members: [
-            { operationId: "getPayment", toolName: "payments_get" },
-            { operationId: "listPayments", toolName: "payments_list" },
-            { operationId: "searchPayments", toolName: "payments_search" },
-          ],
-          taskCount: 9,
-          edges: [
-            {
-              intended: "searchPayments",
-              routed: "getPayment",
-              count: 3,
-              intents: ["find the payment for order 8813", "which payment matches invoice 77"],
-              sharedTokens: ["payment", "find"],
-            },
-            {
-              intended: "listPayments",
-              routed: "getPayment",
-              count: 2,
-              intents: ["what did the customer pay last week"],
-              sharedTokens: ["payment"],
-            },
-          ],
-          sharedTokens: ["payment"],
-        },
-        {
-          id: "cluster_money_moves",
-          members: [
-            { operationId: "createRefund", toolName: "refunds_create" },
-            { operationId: "capturePayment", toolName: "payments_capture" },
-          ],
-          taskCount: 6,
-          edges: [
-            {
-              intended: "createRefund",
-              routed: "capturePayment",
-              count: 1,
-              intents: ["give the money back for the cancelled order"],
-              sharedTokens: ["money"],
-            },
-          ],
-          sharedTokens: ["money", "amount"],
-        },
-      ],
-    },
-  };
-}
-
-function paymentsDrift(): Record<string, ConsoleResponse<"drift">> {
-  return {
-    "payments-next": {
-      bundleId: "payments",
-      against: "payments-next",
-      items: [
-        {
-          id: "drift_01",
-          kind: "idempotency_changed",
-          severity: "high",
-          operationId: "createRefund",
-          coordinate: "operations.createRefund.idempotency.mode",
-          message: "idempotency mode changed from required to key_supported",
-          facts: { before: "required", after: "key_supported" },
-          affectedCapabilityIds: ["refunds"],
-        },
-        {
-          id: "drift_02",
-          kind: "docs_changed",
-          severity: "info",
-          operationId: "getPayment",
-          coordinate: "operations.getPayment.description",
-          message: "description changed",
-          facts: {},
-          affectedCapabilityIds: ["refunds", "payments"],
-        },
-      ],
-    },
-  };
 }
 
 function ledgerInspector(): ConsoleResponse<"bundle"> {
@@ -726,14 +703,17 @@ function ledgerInspector(): ConsoleResponse<"bundle"> {
 
 /** A fresh, independently mutable copy of the whole fixture workspace. */
 export function fixtureWorkspace(): WorkspaceFixture {
+  const inspector = paymentsInspector();
+  const packs = paymentsPacks();
+  const benchmark = paymentsBenchmark();
   return {
     root: "/work/estate",
     bundles: {
       payments: {
-        inspector: paymentsInspector(),
-        queue: paymentsQueue(),
-        packs: paymentsPacks(),
-        benchmark: paymentsBenchmark(),
+        inspector,
+        queue: paymentsQueue(inspector, packs, benchmark),
+        packs,
+        benchmark,
         drift: paymentsDrift(),
       },
       ledger: {
@@ -744,47 +724,5 @@ export function fixtureWorkspace(): WorkspaceFixture {
         drift: {},
       },
     },
-  };
-}
-
-/** A contract-valid harness task, for the export-task mock. */
-export function fixtureTask(clusterId: string): ConsoleResponse<"exportTask">["task"] {
-  return {
-    schemaVersion: 1,
-    taskId: "rt_0123456789abcdef01234567",
-    taskHash: HEX64,
-    service: { id: "payments", version: "2026-06" },
-    sourceContractHash: HEX64_B,
-    repository: {
-      revision: "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
-      inspectScopes: ["src/payments"],
-    },
-    skill: { name: "group-proposal", version: 1, contractHash: HEX64 },
-    deficiency: {
-      code: "missing_operation_description",
-      severity: "medium",
-      target: { kind: "group", groupId: clusterId },
-      message: `intents are mis-routed between the members of ${clusterId}`,
-      facts: { clusterId },
-    },
-    context: { clusterId },
-    policy: {
-      allowedSources: ["spec", "source_impl"],
-      minimumStrength: "corroborated",
-      writablePredicates: [],
-      supportingPredicates: [],
-      writableFields: ["description"],
-      constraints: ["do_not_loosen_safety"],
-      mustNot: ["invent an operation the service does not expose"],
-      minimumVerification: "verified",
-    },
-    procedure: {
-      skill: "group-proposal",
-      question: "which composite tool would route these intents unambiguously?",
-      searchHints: ["payment", "lookup"],
-      steps: [{ phase: "research", instruction: "read the members' handlers" }],
-    },
-    mustNot: ["invent an operation the service does not expose"],
-    expectedSubmission: {},
   };
 }

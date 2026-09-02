@@ -1,4 +1,12 @@
-import { cpSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readBundleDir } from "@anvil/generators";
@@ -126,6 +134,9 @@ describe("GET routes are pure projections", () => {
       expect(reply.headers.get("access-control-allow-origin")).toBeNull();
     }
     expect(snapshot(ws.root)).toEqual(before);
+    // The scratch directory a mutation may create is never created by a read.
+    expect(existsSync(join(ws.root, ".anvil", "console"))).toBe(false);
+    expect(existsSync(join(ws.root, ".anvil"))).toBe(false);
   });
 
   it("discovers both bundles, the nested one by its relative path", async () => {
@@ -155,14 +166,58 @@ describe("GET routes are pure projections", () => {
     const queue = CONSOLE_ROUTES.queue.response.parse(
       (await client.get("/api/bundles/payments/queue")).json,
     );
-    expect(queue.items.some((item) => item.kind === "operation")).toBe(true);
-    expect(queue.items.some((item) => item.kind === "capability")).toBe(true);
+    // Every item carries the subject its decision needs, read off the same
+    // files the inspector, the pack list, and the benchmark project.
+    const operations = queue.items.filter((item) => item.kind === "operation");
+    expect(operations.map((item) => item.id).sort()).toEqual(
+      ws.air.operations
+        .filter((op) => op.state !== "approved")
+        .map((op) => op.id)
+        .sort(),
+    );
+    for (const item of operations) {
+      const op = bundle.operations.find((row) => row.id === item.id);
+      expect(item.subject.operationId).toBe(item.id);
+      expect(item.subject.effect).toEqual(op?.effect);
+      expect(item.subject.idempotency).toEqual(op?.idempotency);
+      expect(item.subject.confirmation).toEqual(op?.confirmation);
+      expect(["none", "safe", "unsafe"]).toContain(item.subject.retries.mode);
+    }
+    const nonIdempotent = operations.filter(
+      (item) => item.subject.effect.kind === "mutation" && item.subject.idempotency.mode === "none",
+    );
+    expect(nonIdempotent.length).toBeGreaterThan(0);
+    for (const item of nonIdempotent) expect(item.subject.retries.mode).toBe("none");
+    const capabilities = queue.items.filter((item) => item.kind === "capability");
+    expect(capabilities.map((item) => item.id).sort()).toEqual(
+      ws.air.capabilities.map((cap) => cap.id).sort(),
+    );
+    for (const item of capabilities) {
+      expect(item.subject.budget).toEqual(
+        bundle.capabilities.find((cap) => cap.id === item.id)?.budget,
+      );
+    }
+    for (const item of queue.items) {
+      if (item.kind === "refinement") {
+        expect(item.id.endsWith(`:${item.subject.deficiencyId}`)).toBe(true);
+        expect(item.subject.deficiencyId).toMatch(
+          /^(operation|field|enum|error|capability|service)/,
+        );
+      }
+    }
+    // The payments pack holds only auto-approved refinements: none awaits a
+    // receipt, so none is a decision (admission.test.ts projects a real one).
+    expect(queue.items.filter((item) => item.kind === "pack")).toEqual([]);
+    expect(queue.items.filter((item) => item.kind === "cluster").map((item) => item.id)).toEqual(
+      readBenchmarkReport(ws.bundleDir)?.confusion.clusters.map((cluster) => cluster.id),
+    );
 
     const packs = CONSOLE_ROUTES.packs.response.parse(
       (await client.get("/api/bundles/payments/packs")).json,
     );
     expect(packs.map((p) => p.hash)).toEqual([packHash]);
     expect(packs[0]?.receipts).toEqual([]);
+    expect(packs[0]?.items.every((item) => item.receiptPaths.length === 0)).toBe(true);
 
     const benchmark = CONSOLE_ROUTES.benchmark.response.parse(
       (await client.get("/api/bundles/payments/benchmark")).json,

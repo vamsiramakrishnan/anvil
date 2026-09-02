@@ -16,6 +16,7 @@ import {
 } from "@anvil/generators";
 import {
   analyzeConfusion,
+  applyPackToBundle,
   BENCHMARK_REPORT_FILE,
   type BenchmarkOperationResult,
   bareCatalog,
@@ -35,15 +36,19 @@ import {
   routeAndScore,
   runRefinements,
   selectTaskDeficiency,
+  targetKey,
 } from "@anvil/refinement";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   CONSOLE_ROUTES,
   type ConsoleResponse,
+  zApplyPackResponse,
   zApproveCapabilityResponse,
   zApproveOperationsResponse,
   zBenchmarkView,
   zBundleInspector,
+  zDecisionItem,
+  zDecisionKind,
   zDecisionQueue,
   zDriftView,
   zErrorEnvelope,
@@ -66,6 +71,7 @@ const read = (rel: string) => readFileSync(join(examples, rel), "utf8");
 
 let root: string;
 let bundleDir: string;
+let packDir: string;
 let air: AirDocument;
 
 beforeAll(async () => {
@@ -84,6 +90,19 @@ beforeAll(async () => {
   execFileSync("git", ["config", "user.name", "Anvil Test"], { cwd: root });
   execFileSync("git", ["add", "."], { cwd: root });
   execFileSync("git", ["commit", "-qm", "fixture"], { cwd: root });
+  // A refinement pack where `anvil refine run --out` puts one, and a benchmark
+  // report beside the bundle, both from the library: the queue projects both.
+  packDir = join(root, "packs", "first");
+  mkdirSync(packDir, { recursive: true });
+  const pack = await runRefinements(air, { safeOnly: false });
+  for (const [name, contents] of Object.entries(packFiles(pack))) {
+    writeFileSync(join(packDir, name), contents, "utf8");
+  }
+  writeFileSync(
+    join(bundleDir, BENCHMARK_REPORT_FILE),
+    JSON.stringify(await benchmark(air)),
+    "utf8",
+  );
 });
 
 afterAll(() => {
@@ -232,8 +251,15 @@ describe("the console contract parses what the library produces", () => {
     expect(parsed.servedSurface.before.length).toBeGreaterThan(0);
   });
 
-  it("GET /api/bundles/:id/queue — the decision queue", () => {
-    const plan = buildRefinementPlan(air);
+  it("GET /api/bundles/:id/queue — every kind of decision, each with its subject", () => {
+    const opsById = new Map(air.operations.map((op) => [op.id, op]));
+    const approved = new Map([...opsById].filter(([, op]) => op.state === "approved"));
+    const plan = planWorkflowSurface(air.workflows, approved, opsById);
+    const refinementPlan = buildRefinementPlan(air);
+    const stored = readPackDir(packDir);
+    const decided = new Set(readPackReceipts(packDir).map((r) => r.refinementId));
+    const report = readBenchmarkReport(bundleDir);
+    if (!report) throw new Error("the benchmark report was not written");
     const view: ConsoleResponse<"queue"> = {
       bundleId: "payments",
       items: [
@@ -248,6 +274,13 @@ describe("the console contract parses what the library produces", () => {
             suggestedAction:
               op.state === "blocked" ? "resolve blocking diagnostics and recompile" : "approve",
             blocking: op.state === "blocked",
+            subject: {
+              operationId: op.id,
+              effect: op.effect,
+              idempotency: { mode: op.idempotency.mode },
+              retries: { mode: op.retries.mode },
+              confirmation: { required: op.confirmation.required },
+            },
           })),
         ...air.capabilities
           .filter((cap) => cap.lifecycle === "proposed")
@@ -259,29 +292,120 @@ describe("the console contract parses what the library produces", () => {
             evidence: cap.evidence.claims,
             suggestedAction: "approve or reject the grouping",
             blocking: false,
+            subject: { capabilityId: cap.id, budget: capabilityDisclosureBudget(air, cap.id) },
           })),
-        ...plan.deficiencies.map((deficiency) => ({
+        ...air.workflows.map((wf) => {
+          const skipReason = plan.registrations.find((r) => r.workflow.id === wf.id)?.skipReason;
+          return {
+            kind: "workflow" as const,
+            id: wf.id,
+            title: wf.id,
+            reasons: skipReason !== undefined ? [skipReason] : [`workflow is ${wf.state}`],
+            evidence: wf.evidence.claims,
+            suggestedAction: "revise the workflow's steps or supersedes and recompile",
+            blocking: false,
+            subject: {
+              workflowId: wf.id,
+              plan: { registrable: skipReason === undefined, skipReason },
+            },
+          };
+        }),
+        ...refinementPlan.deficiencies.map((deficiency) => ({
           kind: "refinement" as const,
-          id: `${deficiency.code}:${JSON.stringify(deficiency.target)}`,
+          id: `${deficiency.code}:${targetKey(deficiency.target)}`,
           title: deficiency.message,
           reasons: [deficiency.code],
           evidence: [],
           suggestedAction: deficiency.suggestedSkill,
           blocking: deficiency.severity === "blocking",
+          subject: {
+            deficiencyId: targetKey(deficiency.target),
+            skill: deficiency.suggestedSkill,
+          },
+        })),
+        ...stored.refinements
+          .filter(
+            (r) =>
+              r.approval.tier === "review" &&
+              (r.status === "improved" || r.status === "neutral") &&
+              !decided.has(r.id),
+          )
+          .map((r) => ({
+            kind: "pack" as const,
+            id: r.id,
+            title: `${r.skill} → ${r.id}`,
+            reasons: [r.approval.reason],
+            evidence: r.evidence,
+            suggestedAction: "approve or reject with a receipt (anvil refine approve|reject)",
+            blocking: false,
+            subject: {
+              packHash: refinementPackHash(stored),
+              refinementId: r.id,
+              tier: r.approval.tier,
+            },
+          })),
+        ...report.confusion.clusters.map((cluster) => ({
+          kind: "cluster" as const,
+          id: cluster.id,
+          title: `${cluster.members.length} confusable tools, ${cluster.taskCount} mis-routed tasks`,
+          reasons: cluster.edges.map(
+            (edge) => `${edge.intended} routed to ${edge.routed} ×${edge.count}`,
+          ),
+          evidence: [],
+          suggestedAction: `export a case file (anvil refine export-task … group:${cluster.id})`,
+          blocking: false,
+          subject: {
+            clusterId: cluster.id,
+            memberOperationIds: cluster.members.map((member) => member.operationId),
+            evidence: cluster.edges,
+          },
         })),
       ],
     };
     const parsed = zDecisionQueue.parse(view);
-    expect(parsed.items.length).toBeGreaterThan(0);
-  });
-
-  it("GET /api/bundles/:id/packs", async () => {
-    const pack = await runRefinements(air, { safeOnly: false });
-    const packDir = join(root, "packs", "first");
-    mkdirSync(packDir, { recursive: true });
-    for (const [name, contents] of Object.entries(packFiles(pack))) {
-      writeFileSync(join(packDir, name), contents, "utf8");
+    expect(parsed.items.filter((item) => item.kind === "operation").length).toBe(
+      air.operations.filter((op) => op.state !== "approved").length,
+    );
+    expect(parsed.items.some((item) => item.kind === "refinement")).toBe(true);
+    expect(parsed.items.some((item) => item.kind === "workflow")).toBe(true);
+    for (const item of parsed.items) {
+      if (item.kind === "operation") expect(item.subject.operationId).toBe(item.id);
+      if (item.kind === "capability") expect(item.subject.capabilityId).toBe(item.id);
+      if (item.kind === "refinement") expect(item.subject.deficiencyId).toMatch(/^[a-z]+:/);
     }
+    // The payments pack's refinements are all auto-tier — the deterministic
+    // executor grounds every one — so the projection lists none as a decision.
+    // The pack subject is still parsed over the real pack's identity.
+    const first = stored.refinements[0];
+    if (!first) throw new Error("the payments pack is empty");
+    expect(parsed.items.filter((item) => item.kind === "pack")).toEqual([]);
+    const packItem = zDecisionItem.parse({
+      kind: "pack",
+      id: first.id,
+      title: first.skill,
+      reasons: [first.approval.reason],
+      evidence: first.evidence,
+      suggestedAction: "approve or reject with a receipt (anvil refine approve|reject)",
+      blocking: false,
+      subject: {
+        packHash: refinementPackHash(stored),
+        refinementId: first.id,
+        tier: first.approval.tier,
+      },
+    });
+    expect(packItem.kind === "pack" && packItem.subject.packHash).toMatch(/^[0-9a-f]{64}$/);
+    // The kind enum and the discriminated union name the same six kinds, in order.
+    expect(zDecisionKind.options).toEqual(zDecisionItem.options.map((o) => o.shape.kind.value));
+    expect(zDecisionKind.options).toEqual([
+      "operation",
+      "capability",
+      "workflow",
+      "refinement",
+      "pack",
+      "cluster",
+    ]);
+  });
+  it("GET /api/bundles/:id/packs", () => {
     const stored = readPackDir(packDir);
     const view: ConsoleResponse<"packs"> = [
       {
@@ -299,16 +423,14 @@ describe("the console contract parses what the library produces", () => {
             .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
             .join(" "),
           claims: refinement.evidence,
+          receiptPaths: [],
         })),
         receipts: readPackReceipts(packDir),
       },
     ];
     expect(zPackList.parse(view)).toEqual(view);
   });
-
-  it("GET /api/bundles/:id/benchmark", async () => {
-    const report = await benchmark(air);
-    writeFileSync(join(bundleDir, BENCHMARK_REPORT_FILE), JSON.stringify(report), "utf8");
+  it("GET /api/bundles/:id/benchmark", () => {
     const stored = readBenchmarkReport(bundleDir);
     expect(stored).toBeDefined();
     if (!stored) throw new Error("unreachable");
@@ -324,7 +446,6 @@ describe("the console contract parses what the library produces", () => {
     expect(zBenchmarkView.parse(null)).toBeNull();
     expect(view?.fresh).toBe(true);
   });
-
   it("GET /api/bundles/:id/drift?against=", () => {
     const later = structuredClone(air);
     const first = later.operations[0];
@@ -338,6 +459,27 @@ describe("the console contract parses what the library produces", () => {
     };
     const parsed = zDriftView.parse(view);
     expect(parsed.items.length).toBeGreaterThan(0);
+  });
+
+  it("POST /api/bundles/:id/packs/:hash/apply — the wire form drops an undefined side", () => {
+    const result = applyPackToBundle(bundleDir, packDir, { dryRun: true });
+    const view: ConsoleResponse<"applyPack"> = {
+      airPath: result.airPath,
+      applied: result.applied.map((refinement) => refinement.id),
+      changes: result.changes,
+      written: result.written,
+    };
+    expect(view.applied.length).toBeGreaterThan(0);
+    const wire = JSON.parse(JSON.stringify(view));
+    expect(zApplyPackResponse.parse(wire)).toEqual(wire);
+    // A change that adds a node has no `before`; JSON drops the key and the
+    // contract parses it absent rather than coerced to null.
+    const added = { ...view.changes[0], before: undefined };
+    const parsed = zApplyPackResponse.parse(
+      JSON.parse(JSON.stringify({ ...view, changes: [added] })),
+    );
+    expect(parsed.changes[0]).not.toHaveProperty("before");
+    expect(parsed.changes[0]?.after).toEqual(view.changes[0]?.after);
   });
 
   it("POST /api/bundles/:id/operations/approve", () => {

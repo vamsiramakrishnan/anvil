@@ -56,9 +56,20 @@ the server lane implements and the review reads against.
 ## Three views
 
 - **Decision queue** — `GET /api/bundles/:id/queue`: every grey decision in one
-  list (operation, capability, workflow, refinement), each with its reasons,
-  its AIR claims (source, confidence, note), the suggested action, and whether
-  it blocks. Deciding an item calls the matching mutation route.
+  list, six kinds: an **operation** not yet approved, a **capability** born
+  `proposed`, a **workflow** the planner refuses (or that is not approved), a
+  **refinement** the deterministic plan reports as a deficiency, a **pack**
+  refinement at the review tier awaiting a receipt, and a benchmark
+  **cluster** of confusable tools. Each item carries its reasons, its AIR
+  claims (source, confidence, note), the suggested action, whether it blocks,
+  and a `subject` with exactly what its decision needs — the operation's
+  effect, idempotency, retry, and confirmation posture; the capability's
+  budget verdict; the workflow's planner verdict; the deficiency's target key
+  and skill; the pack hash, refinement id, tier, and measured delta; the
+  cluster's members and mis-routes. The queue is projected from the same
+  files the other views read, so the UI consumes items directly and joins
+  against nothing; the bulk barrier reads the subject alone. Deciding an item
+  calls the matching mutation route.
 - **Inspector** — `GET /api/bundles/:id`: the bundle as AIR sees it — service,
   source and path grammar, diagnostics, every operation with its effect,
   state, idempotency mode and confirmation requirement, capabilities with
@@ -68,6 +79,13 @@ the server lane implements and the review reads against.
   confusable-tool clusters and routing hubs, with the mis-routed intents
   verbatim; a cluster exports a harness task and a submission imports back
   through the scored admission gate.
+
+The pack list (`GET /api/bundles/:id/packs`) names, per refinement, the
+receipt files under the pack's `receipts/` that bind a decision to it, and
+carries every receipt the pack holds — what `anvil refine apply-pack` loads.
+Applying a reviewed pack writes AIR only, exactly as the CLI does; the console
+then tells the reviewer to recompile, because it has no reproject-after-apply
+route by design.
 
 ## Layout
 
@@ -81,5 +99,10 @@ src/ui/              lane 3: the React UI (vite)
 
 ## Running
 
-`anvil console [path]` — to be added by the server lane. `path` is a workspace
-root (bundles are discovered beneath it) or a single bundle directory.
+`anvil console [path]` serves the console on `127.0.0.1`. `path` is a workspace
+root (bundles are discovered beneath it) or a single bundle directory;
+`--json` prints `{ url, port, root }` and keeps serving, `--port` pins the
+port, `--open` opens a browser. The end-to-end proof lives in `e2e/`
+(`pnpm test:e2e`): Playwright drives the built page against a real
+`anvil console` process over the real payments bundle and asserts every
+decision on disk. See `docs/console.md`.

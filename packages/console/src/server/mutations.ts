@@ -147,12 +147,8 @@ export function applyPack(
     airPath: result.airPath,
     applied: result.applied.map((refinement) => refinement.id),
     // A semantic change that adds (or removes) a node has no `before` (or
-    // `after`); JSON cannot carry `undefined`, so the absent side is `null`.
-    changes: result.changes.map((change) => ({
-      ...change,
-      before: change.before ?? null,
-      after: change.after ?? null,
-    })),
+    // `after`); JSON drops the undefined side and the contract types it optional.
+    changes: result.changes,
     written: result.written,
   };
 }

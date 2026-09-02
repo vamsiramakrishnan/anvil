@@ -268,6 +268,25 @@ describe("group export and scored import through the console", () => {
     if (!pack) throw new Error("imported pack not discovered");
 
     const refinementId = pack.items[0]?.refinementId ?? "";
+    // The queue lists the review-tier refinement as a pack decision, with the
+    // pack hash the decision route takes and the measured delta as evidence —
+    // and the cluster it came from, with its mis-routes — from the same files.
+    const pending = CONSOLE_ROUTES.queue.response.parse(
+      (await client.get("/api/bundles/bundle/queue")).json,
+    );
+    const decision = pending.items.find((item) => item.kind === "pack");
+    if (decision?.kind !== "pack") throw new Error("no pack decision in the queue");
+    expect(decision.id).toBe(refinementId);
+    expect(decision.subject).toMatchObject({ packHash: pack.hash, refinementId, tier: "review" });
+    expect(decision.subject.delta?.clusterId).toBe(clusterId);
+    expect(decision.evidence).toEqual(pack.items[0]?.claims);
+    const cluster = pending.items.find((item) => item.kind === "cluster");
+    if (cluster?.kind !== "cluster") throw new Error("no cluster in the queue");
+    expect(cluster.id).toBe(clusterId);
+    expect(cluster.subject.clusterId).toBe(clusterId);
+    expect(cluster.subject.memberOperationIds.length).toBeGreaterThan(1);
+    expect(cluster.subject.evidence.length).toBeGreaterThan(0);
+    expect(cluster.subject.evidence[0]?.intents.length).toBeGreaterThan(0);
     const decided = await client.post(`/api/bundles/bundle/packs/${pack.hash}/decisions`, {
       decision: "approve",
       refinementIds: [refinementId],
@@ -275,11 +294,11 @@ describe("group export and scored import through the console", () => {
       reason: "the measured delta is non-negative and the chain is real",
     });
     expect(decided.status, decided.text).toBe(200);
-    const decision = CONSOLE_ROUTES.packDecision.response.parse(decided.json);
-    expect(decision.receipts.map((r) => r.refinementId)).toEqual([refinementId]);
-    expect(decision.receipts[0]?.receipt.decision).toBe("approved");
-    expect(decision.receipts[0]?.receipt.packHash).toBe(pack.hash);
-    expect(existsSync(decision.receipts[0]?.path ?? "")).toBe(true);
+    const recorded = CONSOLE_ROUTES.packDecision.response.parse(decided.json);
+    expect(recorded.receipts.map((r) => r.refinementId)).toEqual([refinementId]);
+    expect(recorded.receipts[0]?.receipt.decision).toBe("approved");
+    expect(recorded.receipts[0]?.receipt.packHash).toBe(pack.hash);
+    expect(existsSync(recorded.receipts[0]?.path ?? "")).toBe(true);
 
     // The same decision again is refused, never silently replaced (exactly as
     // `anvil refine approve` refuses: the receipt file already exists).
@@ -295,6 +314,15 @@ describe("group export and scored import through the console", () => {
       (await client.get("/api/bundles/bundle/packs")).json,
     );
     expect(listed.find((p) => p.hash === pack.hash)?.receipts).toHaveLength(1);
+    expect(listed.find((p) => p.hash === pack.hash)?.items[0]?.receiptPaths).toEqual([
+      recorded.receipts[0]?.path,
+    ]);
+    // Decided, the refinement is no longer a decision; the cluster still is.
+    const after = CONSOLE_ROUTES.queue.response.parse(
+      (await client.get("/api/bundles/bundle/queue")).json,
+    );
+    expect(after.items.filter((item) => item.kind === "pack")).toEqual([]);
+    expect(after.items.some((item) => item.kind === "cluster" && item.id === clusterId)).toBe(true);
 
     const dry = await client.post(`/api/bundles/bundle/packs/${pack.hash}/apply`, {
       dryRun: true,

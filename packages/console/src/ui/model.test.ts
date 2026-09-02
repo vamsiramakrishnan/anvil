@@ -1,27 +1,37 @@
 import { describe, expect, it } from "vitest";
 import { fixtureWorkspace } from "./dev/fixtures.js";
 import {
-  buildRows,
   bulkBarrier,
+  type DecisionRow,
   href,
   initialTheme,
   POLICIES,
+  type Policy,
   parseHash,
   REDACTED,
   redact,
+  rowKey,
   selectByPolicy,
+  toRows,
 } from "./model.js";
 
 /**
  * The bulk-policy invariant: no policy — present or future — can select a
  * non-idempotent or destructive row, because `selectByPolicy` filters through
- * `bulkBarrier` before any predicate runs.
+ * `bulkBarrier` before any predicate runs. Every field the barrier reads is on
+ * the item's own `subject`; nothing here joins against another view.
  */
 
 function rows() {
   const { payments } = fixtureWorkspace().bundles;
   if (!payments) throw new Error("fixture has no payments bundle");
-  return buildRows(payments.queue, payments.inspector, payments.packs, payments.benchmark);
+  return toRows(payments.queue);
+}
+
+function packRow(all: DecisionRow[], id: string): Extract<DecisionRow, { kind: "pack" }> {
+  const row = all.find((r) => r.kind === "pack" && r.id === id);
+  if (row?.kind !== "pack") throw new Error(`no pack row ${id}`);
+  return row;
 }
 
 describe("bulk policies", () => {
@@ -31,10 +41,10 @@ describe("bulk policies", () => {
     const forbidden = all.filter(
       (row) =>
         row.kind === "operation" &&
-        (row.op?.idempotency.mode === "none" ||
-          row.op?.effect.risk === "destructive" ||
-          row.op?.effect.action === "delete" ||
-          row.op?.state === "blocked"),
+        (row.subject.idempotency.mode === "none" ||
+          row.subject.effect.risk === "destructive" ||
+          row.subject.effect.action === "delete" ||
+          row.blocking),
     );
     expect(forbidden.map((row) => row.id).sort()).toEqual([
       "deletePaymentMethod",
@@ -54,14 +64,51 @@ describe("bulk policies", () => {
     }
   });
 
-  it("says why each barred row is barred", () => {
+  it("says why each barred row is barred, reading the subject alone", () => {
     const byId = new Map(all.map((row) => [row.id, row]));
     expect(bulkBarrier(byId.get("sendReceipt") as never)).toMatch(/non-idempotent/);
     expect(bulkBarrier(byId.get("deletePaymentMethod") as never)).toMatch(/destructive/);
     expect(bulkBarrier(byId.get("createRefund") as never)).toMatch(/irreversible/);
     expect(bulkBarrier(byId.get("exportStatement") as never)).toMatch(/blocked/);
-    expect(bulkBarrier(byId.get("rf_group_money_moves") as never)).toMatch(/tier reject/);
     expect(bulkBarrier(byId.get("reconcile_statement") as never)).toMatch(/no approve route/);
+    expect(bulkBarrier(byId.get("cluster_payment_lookup") as never)).toMatch(/exported/);
+    // A pack row the receipt binding would refuse, or whose measured delta is
+    // not positive, is barred even if a server ever listed it.
+    const lookup = packRow(all, "rf_group_lookup_payment");
+    expect(bulkBarrier(lookup)).toBeUndefined();
+    expect(bulkBarrier({ ...lookup, subject: { ...lookup.subject, tier: "reject" } })).toMatch(
+      /tier reject/,
+    );
+    const delta = lookup.subject.delta;
+    if (!delta) throw new Error("fixture delta missing");
+    expect(
+      bulkBarrier({
+        ...lookup,
+        subject: { ...lookup.subject, delta: { ...delta, upliftPts: -12.5 } },
+      }),
+    ).toMatch(/never bulk-approved/);
+  });
+
+  it("keeps a policy inside the un-barred set whatever its predicate claims", () => {
+    // The shipped policies are narrow; the barrier is what stops the next one
+    // from being wide. A policy that selects everything still gets nothing barred.
+    const everything: Policy = { id: "everything", label: "everything", selects: () => true };
+    const chosen = selectByPolicy(all, everything);
+    expect(chosen.length).toBeGreaterThan(0);
+    expect(chosen.length).toBeLessThan(all.length);
+    for (const row of chosen) expect(bulkBarrier(row), row.key).toBeUndefined();
+    const ids = chosen.map((row) => row.id);
+    for (const barred of [
+      "sendReceipt",
+      "deletePaymentMethod",
+      "createRefund",
+      "exportStatement",
+      "everything",
+      "reconcile_statement",
+      "cluster_payment_lookup",
+    ]) {
+      expect(ids, barred).not.toContain(barred);
+    }
   });
 
   it("'safe reads' selects exactly the evidence-backed naturally idempotent reads", () => {
@@ -86,9 +133,20 @@ describe("bulk policies", () => {
     expect(selectByPolicy(all, policy).map((row) => row.id)).toEqual(["customers"]);
   });
 
-  it("joins packs and clusters into the queue as their own kinds", () => {
-    expect(all.filter((row) => row.kind === "pack").length).toBe(3);
+  it("carries packs awaiting a receipt and benchmark clusters as their own kinds, from the server", () => {
+    // The regressed, tier-reject refinement is not a decision: no receipt can bind it.
+    expect(all.filter((row) => row.kind === "pack").map((row) => row.id)).toEqual([
+      "rf_describe_sendReceipt",
+      "rf_group_lookup_payment",
+    ]);
     expect(all.filter((row) => row.kind === "cluster").length).toBe(2);
+  });
+
+  it("keys every row uniquely, a pack row on its pack as well as its refinement", () => {
+    expect(new Set(all.map((row) => row.key)).size).toBe(all.length);
+    const lookup = packRow(all, "rf_group_lookup_payment");
+    expect(rowKey(lookup)).toBe(`pack:${lookup.subject.packHash}:rf_group_lookup_payment`);
+    expect(rowKey(all[0] as DecisionRow)).toBe(`${all[0]?.kind}:${all[0]?.id}`);
   });
 });
 

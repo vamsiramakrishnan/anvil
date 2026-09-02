@@ -6,7 +6,8 @@ import {
   type ErrorEnvelope,
 } from "../../contract.js";
 import type { Fetcher } from "../api.js";
-import { fixtureTask, fixtureWorkspace, type WorkspaceFixture } from "./fixtures.js";
+import { fixtureWorkspace, type WorkspaceFixture } from "./fixtures.js";
+import { fixtureTask } from "./fixtures-reports.js";
 
 /**
  * An in-process mock of the console contract — NOT of lane 2's server.
@@ -252,11 +253,10 @@ export function createMockConsole(
           ...pack.receipts.filter((r) => r.refinementId !== item.refinementId),
           receipt,
         ];
-        receipts.push({
-          refinementId: item.refinementId,
-          path: `${pack.dir}/receipts/${item.refinementId}.json`,
-          receipt,
-        });
+        const path = `${pack.dir}/receipts/${item.refinementId}.json`;
+        item.receiptPaths = [path];
+        dropQueueItem(id, "pack", item.refinementId);
+        receipts.push({ refinementId: item.refinementId, path, receipt });
       }
       pack.summary = {
         ...pack.summary,
@@ -277,17 +277,17 @@ export function createMockConsole(
       if (applied.length === 0) {
         throw refuse(409, "console/refused", "no approved refinement carries a receipt");
       }
+      // AIR only, exactly like the server: no reprojection follows a pack apply.
+      // A patched field that did not exist before has no `before` side at all.
       return {
         airPath: `${b.inspector.path}/air.yaml`,
         applied: applied.map((item) => item.refinementId),
         changes: applied.map((item) => ({
           target: item.target,
           key: item.patchSummary.split("=")[0] ?? "description",
-          before: undefined,
           after: item.patchSummary.slice(item.patchSummary.indexOf("=") + 1),
         })),
         written: !dryRun,
-        reprojection: dryRun ? undefined : reprojection(b.inspector.path),
       };
     },
 

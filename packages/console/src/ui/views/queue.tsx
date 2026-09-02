@@ -3,19 +3,22 @@ import { type ConsoleApi, ConsoleApiError } from "../api.js";
 import type { BundleData } from "../app.js";
 import { Chip, Empty, ErrorBox, Label, Panel, Receipt, Tag } from "../components.js";
 import {
-  buildRows,
   bulkBarrier,
   type DecisionRow,
+  type PackList,
   POLICIES,
   REVIEWER_KEY,
   selectByPolicy,
+  toRows,
 } from "../model.js";
 import { Actions, Detail, RowEvidence } from "./queue-detail.js";
 
 /**
  * `#/b/:id/queue` — every pending decision in one list, the evidence beside
- * it, and the contract's mutation for each kind. Bulk approval is by policy
- * only, and a policy can never reach a non-idempotent or destructive row.
+ * it, and the contract's mutation for each kind. The list is the contract's
+ * queue, consumed item by item — the server attaches each item's `subject` —
+ * and bulk approval is by policy only: a policy can never reach a
+ * non-idempotent or destructive row.
  */
 
 interface Props {
@@ -42,11 +45,14 @@ function readReviewer(): string {
 const stale = (r: { reprojection: { stale: { records: string[]; targetFiles: string[] } } }) =>
   [...r.reprojection.stale.records, ...r.reprojection.stale.targetFiles].join(", ");
 
+/** What `anvil refine apply-pack` ends with; the console has no reproject route by design. */
+const RECOMPILE_AFTER_APPLY =
+  "AIR was written; recompile the bundle (anvil compile) to regenerate its projections — the console does not reproject after a pack is applied";
+
+type PackRow = Extract<DecisionRow, { kind: "pack" }>;
+
 export function QueueView({ api, bundleId, data, reload }: Props) {
-  const rows = useMemo(
-    () => buildRows(data.queue, data.inspector, data.packs, data.benchmark),
-    [data],
-  );
+  const rows = useMemo(() => toRows(data.queue), [data.queue]);
   const [filter, setFilter] = useState("");
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -100,13 +106,13 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
   const approve = (row: DecisionRow) => {
     switch (row.kind) {
       case "operation":
-        if (row.item.blocking) return;
+        if (row.blocking) return;
         return settle(async () => {
           const result = await api.approveOperations(bundleId, { ids: [row.id] });
           return `approved ${result.approved.join(", ") || "nothing new"} · reprojected ${result.reprojection.bundleDir} (${result.regeneratedFiles} files)${stale(result) ? ` · stale: ${stale(result)}` : ""}`;
         });
       case "capability": {
-        const blocked = row.cap?.budget.verdict === "blocked";
+        const blocked = row.subject.budget.verdict === "blocked";
         if (blocked && !allowLarge) return noteRef.current?.focus();
         if (allowLarge && !note.trim()) return noteRef.current?.focus();
         return settle(async () => {
@@ -123,7 +129,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
         if (!reviewer.trim()) return reviewerRef.current?.focus();
         if (!reason.trim()) return reasonRef.current?.focus();
         return settle(async () => {
-          const result = await api.packDecision(bundleId, row.pack.hash, {
+          const result = await api.packDecision(bundleId, row.subject.packHash, {
             decision: "approve",
             refinementIds: [row.id],
             reviewer: reviewer.trim(),
@@ -158,7 +164,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
       if (!reviewer.trim()) return reviewerRef.current?.focus();
       if (!reason.trim()) return reasonRef.current?.focus();
       return settle(async () => {
-        const result = await api.packDecision(bundleId, row.pack.hash, {
+        const result = await api.packDecision(bundleId, row.subject.packHash, {
           decision: "reject",
           refinementIds: [row.id],
           reviewer: reviewer.trim(),
@@ -169,10 +175,11 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
     }
   };
 
-  const applyPack = (row: Extract<DecisionRow, { kind: "pack" }>) =>
+  const applyPack = (pack: PackList[number]) =>
     settle(async () => {
-      const result = await api.applyPack(bundleId, row.pack.hash, {});
-      return `${result.written ? "applied" : "dry run:"} ${result.applied.join(", ")} → ${result.airPath}${result.reprojection ? ` · reprojected (${result.reprojection.generatedFileCount} files)` : ""}`;
+      const result = await api.applyPack(bundleId, pack.hash, {});
+      if (!result.written) return `dry run: ${result.applied.join(", ")} → ${result.airPath}`;
+      return `applied ${result.applied.join(", ") || "nothing"} → ${result.airPath} · ${RECOMPILE_AFTER_APPLY}${result.reprojection ? ` · reprojected (${result.reprojection.generatedFileCount} files)` : ""}`;
     });
 
   const applyPolicy = (id: string) => {
@@ -199,9 +206,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
   };
 
   const chosen = rows.filter((row) => selected.has(row.key) && bulkBarrier(row) === undefined);
-  const chosenPacks = chosen.filter(
-    (row): row is Extract<DecisionRow, { kind: "pack" }> => row.kind === "pack",
-  );
+  const chosenPacks = chosen.filter((row): row is PackRow => row.kind === "pack");
   const bulkNeedsReviewer = chosenPacks.length > 0 && (!reviewer.trim() || !reason.trim());
 
   const runBulk = async () => {
@@ -246,9 +251,9 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
         });
       }
     }
-    const byPack = new Map<string, Extract<DecisionRow, { kind: "pack" }>[]>();
+    const byPack = new Map<string, PackRow[]>();
     for (const row of chosenPacks)
-      byPack.set(row.pack.hash, [...(byPack.get(row.pack.hash) ?? []), row]);
+      byPack.set(row.subject.packHash, [...(byPack.get(row.subject.packHash) ?? []), row]);
     for (const [hash, packRows] of byPack) {
       const refinementIds = packRows.map((row) => row.id);
       try {
@@ -319,6 +324,35 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const reviewedPacks = data.packs.filter((pack) => pack.receipts.length > 0);
+  const packsPanel =
+    reviewedPacks.length > 0 ? (
+      <Panel title="reviewed packs" aside={<Tag>{reviewedPacks.length}</Tag>}>
+        <ul className="progress">
+          {reviewedPacks.map((pack) => (
+            <li key={pack.hash}>
+              <Chip value="review" label={`${pack.receipts.length} receipts`} />
+              <span>
+                <code>{pack.hash.slice(0, 12)}</code> · {pack.dir} · approved{" "}
+                {pack.receipts.filter((r) => r.decision === "approved").length}, rejected{" "}
+                {pack.receipts.filter((r) => r.decision === "rejected").length}{" "}
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={busy}
+                  onClick={() => void applyPack(pack)}
+                  title="applyPackToBundle over the receipts already written — what `anvil refine apply-pack` does"
+                >
+                  apply reviewed pack
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+        {receipt && !current ? <Receipt>{receipt}</Receipt> : null}
+      </Panel>
+    ) : null;
+
   if (rows.length === 0) {
     return (
       <div>
@@ -334,6 +368,9 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
           <code>anvil capability propose</code> groups the estate, or a refinement pack is written
           for review.
         </Empty>
+        {packsPanel}
+        {receipt ? <Receipt>{receipt}</Receipt> : null}
+        {error ? <ErrorBox error={error} /> : null}
       </div>
     );
   }
@@ -416,7 +453,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
                         ? "warning"
                         : row.kind === "pack"
                           ? "review"
-                          : row.item.blocking
+                          : row.blocking
                             ? "blocked"
                             : "review_required"
                     }
@@ -428,9 +465,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
                     <RowEvidence row={row} />
                     {barrier ? <div className="barrier">not bulk-selectable: {barrier}</div> : null}
                   </div>
-                  <div className="chips">
-                    {"item" in row && row.item.blocking ? <Chip value="blocked" /> : null}
-                  </div>
+                  <div className="chips">{row.blocking ? <Chip value="blocked" /> : null}</div>
                 </div>
               );
             })}
@@ -440,7 +475,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
           {current ? (
             <Panel title={current.title} aside={<Tag>{current.kind}</Tag>}>
               <Detail row={current} bundleId={bundleId} />
-              {current.kind === "capability" && current.cap?.budget.verdict === "blocked" ? (
+              {current.kind === "capability" && current.subject.budget.verdict === "blocked" ? (
                 <label className="field">
                   <input
                     type="checkbox"
@@ -500,20 +535,20 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
                   canCapApprove={
                     !(
                       current.kind === "capability" &&
-                      current.cap?.budget.verdict === "blocked" &&
+                      current.subject.budget.verdict === "blocked" &&
                       !allowLarge
                     ) && !(allowLarge && !note.trim())
                   }
                   canCapReject={reason.trim().length > 0}
                   onApprove={() => void approve(current)}
                   onReject={() => void reject(current)}
-                  onApply={current.kind === "pack" ? () => void applyPack(current) : undefined}
                 />
               </div>
               {receipt ? <Receipt>{receipt}</Receipt> : null}
               {error ? <ErrorBox error={error} /> : null}
             </Panel>
           ) : null}
+          {packsPanel}
           {outcomes.length > 0 ? (
             <Panel
               title="bulk result"

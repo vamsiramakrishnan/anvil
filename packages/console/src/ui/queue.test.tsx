@@ -55,6 +55,7 @@ describe("the decision queue", () => {
     const row = await rowFor("createRefund");
     expect(row.textContent).toMatch(/mutation · create/);
     expect(row.textContent).toMatch(/idempotency required/);
+    expect(row.textContent).toMatch(/retries safe/);
     expect(row.textContent).toMatch(/confirm required/);
     expect(row.textContent).toMatch(/irreversible/);
     expect((await rowFor("rf_group_lookup_payment")).textContent).toMatch(/delta \+12\.5 pts/);
@@ -108,6 +109,31 @@ describe("the decision queue", () => {
     fireEvent.click(approve);
     await screen.findByText(/receipts\/rf_describe_sendReceipt\.json/);
     expect(localStorage.getItem("anvil-console-reviewer")).toBe("vamsi");
+    // Decided, it leaves the queue; the pack that now carries a receipt can be applied.
+    await waitFor(() =>
+      expect(screen.queryByLabelText("select rf_describe_sendReceipt")).toBeNull(),
+    );
+    expect(screen.getByText(/1 receipts/)).toBeTruthy();
+  });
+
+  it("applying a reviewed pack writes AIR only and tells the reviewer to recompile", async () => {
+    const { mock } = mount();
+    fireEvent.click(await rowFor("rf_describe_sendReceipt"));
+    fireEvent.change(screen.getByLabelText(/reviewer/), { target: { value: "vamsi" } });
+    fireEvent.change(screen.getByLabelText(/^reason$/), { target: { value: "grounded" } });
+    fireEvent.click(await button(/^approve a$/));
+    const apply = await button(/apply reviewed pack/);
+    fireEvent.click(apply);
+    const notice = await screen.findByText(/recompile the bundle \(anvil compile\)/);
+    expect(notice.textContent).toMatch(
+      /applied rf_describe_sendReceipt → \/work\/estate\/payments\/air\.yaml/,
+    );
+    expect(notice.textContent).toMatch(/does not reproject/);
+    expect(notice.textContent).not.toMatch(/reprojected/);
+    const pack = mock.state.bundles.payments?.packs[0];
+    expect(
+      pack?.items.find((i) => i.refinementId === "rf_describe_sendReceipt")?.receiptPaths,
+    ).toEqual(["/work/estate/packs/payments-2026-06-12/receipts/rf_describe_sendReceipt.json"]);
   });
 
   it("a budget-blocked capability needs allow-large plus a note; a reject needs a reason", async () => {

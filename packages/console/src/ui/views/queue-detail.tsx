@@ -1,78 +1,77 @@
 import { Chip, Claims, Delta, KV, Label, Tag } from "../components.js";
-import { type DecisionRow, href, type RoutingDelta, show, targetLabel } from "../model.js";
+import { type DecisionRow, href, type RoutingDelta, show } from "../model.js";
 
 /**
  * The decision queue's row evidence, detail pane, and per-kind actions —
  * presentational pieces of `queue.tsx`, which owns the state and the calls.
+ * Everything rendered here is read off the item's own `subject`; the queue
+ * consumes the contract's items directly and joins against nothing.
  */
 
 export function RowEvidence({ row }: { row: DecisionRow }) {
   switch (row.kind) {
     case "operation": {
-      const op = row.op;
-      if (!op) return null;
+      const { effect, idempotency, retries, confirmation } = row.subject;
       return (
         <div className="chips">
           <Chip
-            value={op.effect.kind === "read" ? "passed" : "warning"}
-            label={`${op.effect.kind} · ${op.effect.action}`}
+            value={effect.kind === "read" ? "passed" : "warning"}
+            label={`${effect.kind} · ${effect.action}`}
           />
-          <Tag>idempotency {op.idempotency.mode}</Tag>
-          <Tag>{op.confirmation.required ? "confirm required" : "no confirm"}</Tag>
-          <Tag>risk {op.effect.risk}</Tag>
-          <Tag>{op.effect.reversible ? "reversible" : "irreversible"}</Tag>
-          <Tag>{row.item.evidence.length} claims</Tag>
+          <Tag>idempotency {idempotency.mode}</Tag>
+          <Tag>retries {retries.mode}</Tag>
+          <Tag>{confirmation.required ? "confirm required" : "no confirm"}</Tag>
+          <Tag>risk {effect.risk}</Tag>
+          <Tag>{effect.reversible ? "reversible" : "irreversible"}</Tag>
+          <Tag>{row.evidence.length} claims</Tag>
         </div>
       );
     }
     case "capability":
-      return row.cap ? (
+      return (
         <div className="chips">
-          <Chip value={row.cap.budget.verdict} label={`budget ${row.cap.budget.verdict}`} />
-          <Tag>{row.cap.budget.toolCount} tools</Tag>
-          <Tag>{row.cap.members.length} members</Tag>
-          <Tag>{row.cap.source}</Tag>
+          <Chip value={row.subject.budget.verdict} label={`budget ${row.subject.budget.verdict}`} />
+          <Tag>{row.subject.budget.toolCount} tools</Tag>
         </div>
-      ) : null;
+      );
     case "workflow":
-      return row.wf ? (
+      return (
         <div className="chips">
           <Chip
-            value={row.wf.plan.registrable ? "approved" : "blocked"}
-            label={row.wf.plan.registrable ? "registrable" : "refused"}
+            value={row.subject.plan.registrable ? "approved" : "blocked"}
+            label={row.subject.plan.registrable ? "registrable" : "refused"}
           />
-          <Tag>{row.wf.steps.length} steps</Tag>
         </div>
-      ) : null;
+      );
     case "pack":
       return (
         <div className="chips">
-          <Chip value={row.refinement.tier} label={`tier ${row.refinement.tier}`} />
-          <Chip value={row.refinement.status} />
-          {row.refinement.delta ? (
+          <Chip value={row.subject.tier} label={`tier ${row.subject.tier}`} />
+          {row.subject.delta ? (
             <Chip
-              value={row.refinement.delta.upliftPts > 0 ? "passed" : "failed"}
-              label={`delta ${row.refinement.delta.upliftPts > 0 ? "+" : ""}${row.refinement.delta.upliftPts} pts`}
+              value={row.subject.delta.upliftPts > 0 ? "passed" : "failed"}
+              label={`delta ${row.subject.delta.upliftPts > 0 ? "+" : ""}${row.subject.delta.upliftPts} pts`}
             />
           ) : (
             <Tag>no measured delta</Tag>
           )}
-          <Tag>{row.refinement.claims.length} claims</Tag>
+          <Tag>{row.evidence.length} claims</Tag>
         </div>
       );
     case "refinement":
       return (
         <div className="chips">
-          {row.item.reasons.map((r) => (
+          {row.reasons.map((r) => (
             <Tag key={r}>{r}</Tag>
           ))}
+          <Tag>{row.subject.skill}</Tag>
         </div>
       );
     case "cluster":
       return (
         <div className="chips">
-          <Tag>{row.cluster.edges.reduce((n, e) => n + e.count, 0)} mis-routes</Tag>
-          <Tag>{row.cluster.sharedTokens.join(" ")}</Tag>
+          <Tag>{row.subject.evidence.reduce((n, e) => n + e.count, 0)} mis-routes</Tag>
+          <Tag>{row.subject.memberOperationIds.length} members</Tag>
         </div>
       );
   }
@@ -80,97 +79,87 @@ export function RowEvidence({ row }: { row: DecisionRow }) {
 
 export function Detail({ row, bundleId }: { row: DecisionRow; bundleId: string }) {
   switch (row.kind) {
-    case "operation":
+    case "operation": {
+      const { effect, idempotency, retries, confirmation } = row.subject;
       return (
         <div className="stack">
-          {row.op ? (
-            <KV
-              rows={[
-                ["state", <Chip key="s" value={row.op.state} />],
-                [
-                  "effect",
-                  `${row.op.effect.kind} · ${row.op.effect.action} · ${row.op.effect.resource ?? "—"}`,
-                ],
-                [
-                  "risk",
-                  `${row.op.effect.risk}${row.op.effect.reversible ? "" : " · irreversible"}`,
-                ],
-                ["idempotency", row.op.idempotency.mode],
-                ["confirmation", row.op.confirmation.required ? "required" : "not required"],
-                ["mcp tool", <code key="m">{row.op.mcp.toolName}</code>],
-                ["cli", <code key="c">{row.op.cli.command}</code>],
-                ["diagnostics", String(row.op.diagnosticCount)],
-              ]}
-            />
-          ) : null}
-          <Reasons reasons={row.item.reasons} suggested={row.item.suggestedAction} />
-          <Claims claims={row.item.evidence} />
+          <KV
+            rows={[
+              ["operation", <code key="o">{row.subject.operationId}</code>],
+              ["state", <Chip key="s" value={row.blocking ? "blocked" : "review_required"} />],
+              ["effect", `${effect.kind} · ${effect.action} · ${effect.resource ?? "—"}`],
+              ["risk", `${effect.risk}${effect.reversible ? "" : " · irreversible"}`],
+              ["idempotency", idempotency.mode],
+              ["retries", retries.mode],
+              ["confirmation", confirmation.required ? "required" : "not required"],
+            ]}
+          />
+          <Reasons reasons={row.reasons} suggested={row.suggestedAction} />
+          <Claims claims={row.evidence} />
+          <InspectorLink bundleId={bundleId} />
         </div>
       );
-    case "capability":
+    }
+    case "capability": {
+      const { budget } = row.subject;
       return (
         <div className="stack">
-          {row.cap ? (
-            <KV
-              rows={[
-                ["lifecycle", <Chip key="l" value={row.cap.lifecycle} />],
-                ["source", row.cap.source],
-                ["members", <code key="m">{row.cap.members.join(", ")}</code>],
-                [
-                  "budget",
-                  <Chip
-                    key="b"
-                    value={row.cap.budget.verdict}
-                    label={`${row.cap.budget.verdict} · ${row.cap.budget.toolCount} tools · ${row.cap.budget.disclosureTokens ?? "?"} tokens`}
-                  />,
-                ],
-                ["verdict", row.cap.budget.diagnostic?.message ?? "within budget"],
-              ]}
-            />
-          ) : null}
-          <Reasons reasons={row.item.reasons} suggested={row.item.suggestedAction} />
-          <Claims claims={row.item.evidence} />
+          <KV
+            rows={[
+              ["capability", <code key="c">{row.subject.capabilityId}</code>],
+              [
+                "budget",
+                <Chip
+                  key="b"
+                  value={budget.verdict}
+                  label={`${budget.verdict} · ${budget.toolCount} tools · ${budget.disclosureTokens ?? "?"} tokens`}
+                />,
+              ],
+              ["verdict", budget.diagnostic?.message ?? "within budget"],
+            ]}
+          />
+          <Reasons reasons={row.reasons} suggested={row.suggestedAction} />
+          <Claims claims={row.evidence} />
+          <InspectorLink bundleId={bundleId} />
         </div>
       );
+    }
     case "workflow":
       return (
         <div className="stack">
-          {row.wf ? (
-            <KV
-              rows={[
-                ["state", <Chip key="s" value={row.wf.state} />],
-                [
-                  "planner",
-                  row.wf.plan.registrable
-                    ? "registrable"
-                    : `refused: ${row.wf.plan.skipReason ?? ""}`,
-                ],
-                [
-                  "steps",
-                  <code key="st">{row.wf.steps.map((s) => s.operationId).join(" → ")}</code>,
-                ],
-                ["supersedes", <code key="su">{row.wf.supersedes?.join(", ") ?? "—"}</code>],
-                [
-                  "refusals",
-                  row.wf.refusals.map((r) => `${r.operationId}: ${r.reason}`).join("; ") || "none",
-                ],
-              ]}
-            />
-          ) : null}
-          <Reasons reasons={row.item.reasons} suggested={row.item.suggestedAction} />
+          <KV
+            rows={[
+              [
+                "planner",
+                row.subject.plan.registrable
+                  ? "registrable"
+                  : `refused: ${row.subject.plan.skipReason ?? ""}`,
+              ],
+            ]}
+          />
+          <Reasons reasons={row.reasons} suggested={row.suggestedAction} />
           <p className="mono">
             the contract has no workflow mutation: recompile after fixing the refused step (
             <code>anvil compile</code>).
           </p>
+          <InspectorLink bundleId={bundleId} />
         </div>
       );
     case "refinement":
       return (
         <div className="stack">
-          <Reasons reasons={row.item.reasons} suggested={row.item.suggestedAction} />
+          <KV
+            rows={[
+              ["target", <code key="t">{row.subject.deficiencyId}</code>],
+              ["skill", row.subject.skill],
+            ]}
+          />
+          <Reasons reasons={row.reasons} suggested={row.suggestedAction} />
           <p className="mono">
             produce a pack for review with{" "}
-            <code>anvil refine run {bundleId} --out &lt;pack-dir&gt;</code>
+            <code>
+              anvil refine run {bundleId} --skill {row.subject.skill} --out &lt;pack-dir&gt;
+            </code>
           </p>
         </div>
       );
@@ -179,32 +168,17 @@ export function Detail({ row, bundleId }: { row: DecisionRow; bundleId: string }
         <div className="stack">
           <KV
             rows={[
-              [
-                "pack",
-                <code key="p">
-                  {row.pack.hash.slice(0, 16)}… · {row.pack.dir}
-                </code>,
-              ],
-              ["skill", row.refinement.skill],
-              ["target", targetLabel(row.refinement.target)],
-              ["status", <Chip key="s" value={row.refinement.status} />],
+              ["pack", <code key="p">{row.subject.packHash.slice(0, 16)}…</code>],
+              ["refinement", <code key="r">{row.subject.refinementId}</code>],
               [
                 "tier",
-                <Chip key="t" value={row.refinement.tier} label={`tier ${row.refinement.tier}`} />,
+                <Chip key="t" value={row.subject.tier} label={`tier ${row.subject.tier}`} />,
               ],
             ]}
           />
-          <div>
-            <Label>proposed patch</Label>
-            <pre>
-              {row.refinement.patchSummary
-                .split(/\s(?=[a-zA-Z_.]+=)/)
-                .map((line) => `+ ${line}`)
-                .join("\n")}
-            </pre>
-          </div>
-          {row.refinement.delta ? <MeasuredDelta delta={row.refinement.delta} /> : null}
-          <Claims claims={row.refinement.claims} />
+          <Reasons reasons={row.reasons} suggested={row.suggestedAction} />
+          {row.subject.delta ? <MeasuredDelta delta={row.subject.delta} /> : null}
+          <Claims claims={row.evidence} />
         </div>
       );
     case "cluster":
@@ -212,16 +186,12 @@ export function Detail({ row, bundleId }: { row: DecisionRow; bundleId: string }
         <div className="stack">
           <KV
             rows={[
-              [
-                "members",
-                <code key="m">{row.cluster.members.map((m) => m.toolName).join(", ")}</code>,
-              ],
-              ["tasks", String(row.cluster.taskCount)],
-              ["shared tokens", row.cluster.sharedTokens.join(", ")],
+              ["members", <code key="m">{row.subject.memberOperationIds.join(", ")}</code>],
+              ["cluster", <code key="c">{row.subject.clusterId}</code>],
             ]}
           />
           <ul>
-            {row.cluster.edges.map((edge) => (
+            {row.subject.evidence.map((edge) => (
               <li key={`${edge.intended}>${edge.routed}`}>
                 <code>{edge.intended}</code> routed to <code>{edge.routed}</code> ×{edge.count}: “
                 {edge.intents[0] ?? ""}”
@@ -234,6 +204,10 @@ export function Detail({ row, bundleId }: { row: DecisionRow; bundleId: string }
         </div>
       );
   }
+}
+
+function InspectorLink({ bundleId }: { bundleId: string }) {
+  return <a href={href(bundleId, "inspect")}>open the estate inspector →</a>;
 }
 
 function MeasuredDelta({ delta }: { delta: RoutingDelta }) {
@@ -267,7 +241,6 @@ export function Actions({
   canCapReject,
   onApprove,
   onReject,
-  onApply,
 }: {
   row: DecisionRow;
   busy: boolean;
@@ -276,7 +249,6 @@ export function Actions({
   canCapReject: boolean;
   onApprove: () => void;
   onReject: () => void;
-  onApply?: () => void;
 }) {
   switch (row.kind) {
     case "operation":
@@ -284,9 +256,9 @@ export function Actions({
         <button
           type="button"
           className="btn btn-primary"
-          disabled={busy || row.item.blocking}
+          disabled={busy || row.blocking}
           onClick={onApprove}
-          title={row.item.blocking ? "blocked: resolve diagnostics and recompile" : undefined}
+          title={row.blocking ? "blocked: resolve diagnostics and recompile" : undefined}
         >
           approve <kbd>a</kbd>
         </button>
@@ -331,17 +303,6 @@ export function Actions({
           >
             reject <kbd>r</kbd>
           </button>
-          {onApply ? (
-            <button
-              type="button"
-              className="btn"
-              disabled={busy}
-              onClick={onApply}
-              title="applyPackToBundle over the receipts already written"
-            >
-              apply reviewed pack
-            </button>
-          ) : null}
         </>
       );
     default:
