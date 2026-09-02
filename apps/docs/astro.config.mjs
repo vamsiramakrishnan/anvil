@@ -119,6 +119,7 @@ export default defineConfig({
           label: "Operate",
           items: [
             { label: "Operating Anvil", slug: "guides/operating-anvil" },
+            { label: "Review in the console", slug: "guides/review-console" },
             { label: "Run Anvil in CI", slug: "guides/ci" },
             { label: "Observe running apps", slug: "guides/observing-running-apps" },
             { label: "Troubleshooting", slug: "guides/troubleshooting" },
