@@ -7,9 +7,6 @@
     },
     "apps/docs": {
       "entry": ["src/shims/*.js", "scripts/*.mjs"]
-    },
-    "packages/console": {
-      "entry": ["src/index.ts", "src/server/index.ts", "src/ui/main.tsx", "vite.config.ts"]
     }
   },
   "ignoreDependencies": ["@fontsource/hanken-grotesk", "@fontsource/jetbrains-mono"],
