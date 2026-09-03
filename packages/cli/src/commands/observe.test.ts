@@ -84,7 +84,7 @@ function workspace(): { root: string; bundle: string; spool: string } {
   const jsonlSpool = new JsonlRecordSpool(spool);
   jsonlSpool.onRecord(record());
   jsonlSpool.onRecord(record());
-  jsonlSpool.onRecord(record({ outcome: "error", errorCode: "conflict" }));
+  jsonlSpool.onRecord(record({ outcome: "error", errorCode: "conflict", ledger: "replay" }));
   return { root, bundle, spool };
 }
 
