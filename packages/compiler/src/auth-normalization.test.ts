@@ -660,12 +660,17 @@ operations:
     expect(air.operations[0]?.state).toBe("generated");
   });
 
-  it("lifts a previously-blocked op to review_required once a manifest supplies mtls material", async () => {
+  it("supplying coherent mtls material does not itself lift an unrelated block", async () => {
     // Two OR alternatives that disagree in principal (service vs end_user) —
     // AIR refuses to guess between them, so this compiles custom_header/blocked
     // with an `auth/alternatives_unmodeled` diagnostic, same as the dedicated
     // alternatives tests above. The manifest then REPLACES the whole contract
-    // with a coherent mtls one.
+    // with a coherent mtls one — but a manifest's `state` and `auth` can be
+    // merged from unrelated sources (a gateway-identity-contradiction guard
+    // overlay sets `state: blocked` in the very same resolved manifest a
+    // coherent auth patch rides in on), so a clean auth coherence result says
+    // only "auth is not what's blocking it," never "nothing is." The operator
+    // must lift the block explicitly (see the next test).
     const air = await compile({
       spec: spec(
         {
@@ -691,6 +696,32 @@ operations:
       principal: "service",
       tls: { clientCertRef: "ANVIL_BANK_CLIENT_CERT", clientKeyRef: "ANVIL_BANK_CLIENT_KEY" },
     });
+    expect(op?.state).toBe("blocked");
+  });
+
+  it("lets an operator explicitly lift the block once mtls material is supplied", async () => {
+    const air = await compile({
+      spec: spec(
+        {
+          apiKeyScheme: { type: "apiKey", in: "header", name: "X-API-Key" },
+          oidc: { type: "openIdConnect", openIdConnectUrl: "https://idp.example.com/.well-known" },
+        },
+        [{ apiKeyScheme: [] }, { oidc: [] }],
+      ),
+      manifest: `
+operations:
+  listItems:
+    auth:
+      type: mtls
+      tls:
+        client_cert_ref: ANVIL_BANK_CLIENT_CERT
+        client_key_ref: ANVIL_BANK_CLIENT_KEY
+    state: review_required
+`,
+      serviceId: "auth-api",
+    });
+    const op = air.operations[0];
+    expect(op?.auth).toMatchObject({ type: "mtls" });
     expect(op?.state).toBe("review_required");
   });
 

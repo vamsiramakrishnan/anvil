@@ -1215,12 +1215,14 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
       "never a material-completeness one. Run `anvil auth login <bundle> --profile <profile>` " +
       "to complete the interactive PKCE step and store a refresh token, then approve explicitly.";
     if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
-  } else if (m.auth && op.state === "blocked") {
-    // This same manifest patch just supplied the missing mtls/custom_header
-    // material and the contract is now coherent — lift the block so a human
-    // still signs off before exposure, mirroring query_policy's unblock above.
-    op.state = "review_required";
   }
+  // Deliberately no query_policy-style unblock-lift here: `m.state` and
+  // `m.auth` can both be present in one merged manifest for UNRELATED
+  // reasons (a gateway-identity-contradiction guard overlay sets `state:
+  // blocked` in the very same resolved manifest a coherent auth patch rides
+  // in on — packages/cli/src/estate-identity.test.ts's real regression). A
+  // clean coherence result says only "this auth is not what's blocking it,"
+  // never "nothing is."
 
   op.evidence.claims.push({
     subject: op.id,
