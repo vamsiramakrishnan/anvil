@@ -169,20 +169,132 @@ It is left alone here deliberately. Changing how names disambiguate changes
 operation ids across every compiled bundle, which is a contract change and not
 something to slip into a benchmarking PR. Filed as its own piece of work.
 
+## Result 3 — the disclosure ladder, measured
+
+The MCP server has served a two-stage disclosure ladder since before this
+benchmark existed (`@anvil/air`'s `ladderPlan`, served by `@anvil/mcp-runtime`'s
+`lane.ts`): stage 1 lists one entry card per capability instead of every tool,
+and stage 2 discloses a lane's own tools once an agent opens it. Nobody had
+ever routed a task over it — `anvil benchmark` only ever measured the flat
+catalog. `ladderedCatalog`/`stagedRoute` (`@anvil/refinement`) and
+`anvil benchmark --catalog flat|laddered|both` close that gap: stage 1 picks a
+lane over `RoutableTool`s built from `laneEntryToolName`/`laneEntryDescription`,
+stage 2 routes within *only* the lane the router said it opened, and a task
+passes iff the tool it reaches is the intent's own operation — the exact
+`TaskRouter` contract the flat benchmark already used, unmodified.
+
+This estate compiled slightly differently on this run — the vendor spec moved
+since the original measurement above, consistent with this document's own
+note that a later revision would shift the numbers: **641 operations** (was
+640) and **330 read operations** that compiled clean and approve without a
+`review_required` block (was 329). Three independent bundles were built from
+the same compiled-and-intent-authored AIR by approving the first 50, 100, and
+all 330 of those read operations (sorted by operation id), then each was run
+through `anvil benchmark <dir> --catalog both` with the deterministic lexical
+router — the same floor Result 1 used.
+
+### Laddered underperforms flat at every size — first pass
+
+| Tools | Flat pass rate | Laddered pass rate | Gap |
+| ---: | ---: | ---: | ---: |
+| 50 | 65.3% (64/98) | 42.9% (42/98) | −22.4 pts |
+| 100 | 63.3% (124/196) | 35.7% (70/196) | −27.6 pts |
+| 330 | 58.9% (385/654) | 31.5% (206/654) | −27.4 pts |
+
+A breakdown of the 50-tool run's 56 laddered failures against a diagnostic that
+classifies each one by which stage lost it: **37 "no route" (stage 1 matched no
+entry card at all)**, 12 "wrong lane" (stage 1 entered a different capability
+than the target's own), and 7 "right lane, wrong tool" (the ordinary
+same-family confusion Result 1 already describes, just relocated inside a
+lane). Two-thirds of the laddered loss was stage 1 finding *nothing to route
+to*, not routing to the wrong thing.
+
+The cause was legible from the entry cards themselves. A discovered
+capability's `description` and `intentExamples` are compiler-templated —
+`"Views capability for zendesk."`, `"work with views"`, `"manage views"` — and
+share no vocabulary with how the benchmark's own intents actually ask:
+`"list the views"`, `"get a view by id"`, `"create a new view"`. The entry
+card built from that capability carried none of the words a router could
+match against.
+
+### The lever: fold member verbs/resources into the card
+
+`laneEntryDescription` (`packages/air/src/ladder.ts`) now carries a
+`memberVocabulary` field: `${effect.action} ${effect.resource}` for up to 8
+deduplicated member operations, in sorted-id order — "list view, get view,
+create view, delete view, …" — appended to the card as `Covers: …`. Every
+lane already carries this information regardless of how its capability was
+authored or named, so it costs nothing to add and needs no new evidence
+source; the ladder stays a pure projection (no embeddings, no runtime search).
+The per-card token cost stays capped at the per-operation budget exactly as
+before (`entryCardTokens`), so a large lane cannot inflate the surface by
+listing every member — the cap simply now spends its allotment on real
+routing vocabulary instead of an empty margin.
+
+Re-measured on the same three bundles, nothing else changed:
+
+| Tools | Flat pass rate | Laddered before | Laddered after | Recovered |
+| ---: | ---: | ---: | ---: | ---: |
+| 50 | 65.3% | 42.9% (42/98) | 57.1% (56/98) | +14.2 pts |
+| 100 | 63.3% | 35.7% (70/196) | 48.0% (94/196) | +12.3 pts |
+| 330 | 58.9% | 31.5% (206/654) | 47.7% (312/654) | +16.2 pts |
+
+The same 50-tool failure breakdown after the change: **2** "no route" (was
+37), **31** "wrong lane" (was 12), **9** "right lane, wrong tool" (was 7). The
+fix did almost exactly what the vocabulary gap predicted — stage 1 now finds
+*some* lane on all but 2 of 98 tasks — and moved the residual loss from "no
+match at all" to "matched the wrong one of 25 small, similarly-generic lanes"
+(Zendesk's discovered capabilities average two operations each at this
+catalog size, so many entry cards now share a lot of the same verbs). That
+residual is a real, different problem — closer to Result 1's catalog-size
+finding one level up, now applied to lanes instead of tools — and is left
+open rather than folded into this change, per the "at most one move" scope
+here.
+
+**The improvement is real and it is kept**, because it clears the only bar
+that matters for this kind of change: the benchmark got better, on every
+size measured, without touching what any operation means, what is approved,
+or what the ladder projection is allowed to decide (`lane.ts:21-26` — the
+ladder still only changes *when* a schema is disclosed, never *whether* an
+operation may be called). Laddered routing still trails flat by 8–15 points
+at every size after the fix — this is an honest number, not a claim that the
+ladder now wins.
+
+### The trade-off the numbers actually support
+
+| Tools | Flat tokens at rest | Laddered tokens at rest | Laddered tokens/task (rest + avg opened lane) | Reduction |
+| ---: | ---: | ---: | ---: | ---: |
+| 50 | 26,632 | 1,390 | 2,764 (1,390 + 1,374) | 9.6× |
+| 100 | 48,745 | 2,405 | 3,869 (2,405 + 1,464) | 12.6× |
+| 330 | 164,152 | 5,363 | 7,738 (5,363 + 2,375) | 21.2× |
+
+Read together, the two tables say the ladder is not free accuracy — it is a
+real trade, and the trade gets more favorable as the catalog grows. At 330
+tools an agent using the flat catalog reads **164,152** measured tool-surface
+tokens before it can route anywhere; the same agent on the ladder reads about
+**7,738** tokens for the task it actually runs, a **21×** reduction, while
+landing 11 points lower on accuracy (58.9% → 47.7%) than the flat catalog it
+replaced. Whether that trade is worth taking is an operator decision this
+benchmark exists to inform, not one it makes — a latency- or cost-sensitive
+deployment over a catalog this large may prefer it; one where every routing
+point matters may not. What this run adds is that the trade is now a
+measured, reproducible one instead of an assumption on either side.
+
 ## Reproducing
 
 ```bash
 pnpm build
 WORK=/tmp/zendesk docs/backtesting/reproduce/reproduce.sh zendesk   # fetch
 # the trimmed bundle is the curated backtest; for the full estate compile
-# $WORK/zendesk.spec.json.tmp (the untrimmed conversion) instead:
-anvil source add  $WORK/zendesk.spec.json.tmp --root $WORK
-anvil compile     --source <src-id> --root $WORK --service zendesk --out $WORK/bundle
+# $WORK/zendesk.spec.json.tmp (the untrimmed conversion) directly — no
+# `anvil source add` snapshot needed for a one-off compile:
+anvil compile     $WORK/zendesk.spec.json.tmp --service zendesk --out $WORK/bundle
 anvil refine run  $WORK/bundle --skill author-intent-examples --out $WORK/pack
-anvil refine apply $WORK/bundle
+anvil refine apply $WORK/bundle --skill author-intent-examples
 anvil approve     $WORK/bundle <the read operation ids>
-anvil benchmark   $WORK/bundle                    # deterministic floor
-anvil benchmark   $WORK/bundle --agent ./router.sh  # a real model
+anvil benchmark   $WORK/bundle                             # deterministic floor, flat catalog (today's default)
+anvil benchmark   $WORK/bundle --agent ./router.sh          # a real model, flat catalog
+anvil benchmark   $WORK/bundle --catalog both                # + the disclosure-ladder comparison above
 ```
 
 `router.sh` is any command that reads the routing prompt on stdin and prints
