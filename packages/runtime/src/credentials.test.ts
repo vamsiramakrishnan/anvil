@@ -1,4 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type AuthRequirement, AuthRequirement as AuthSchema } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import type { RuntimeConfig } from "./config.js";
@@ -790,15 +792,63 @@ describe("resolveCredentials — fail-closed routing", () => {
     expect(calls).toEqual([]);
   });
 
-  it.each([
-    "mtls",
-    "custom_header",
-    "oauth2_authorization_code",
-  ] as const)("fails closed for unmodeled %s instead of leaking a bearer", async (type) => {
-    const r = resolveCredentials(runtimeConfig("dev"), {
-      env: { ANVIL_DEF_TOKEN: "must-not-leak" },
+  it.each(["mtls", "custom_header"] as const)(
+    "fails closed for %s with no declared material instead of leaking a bearer",
+    async (type) => {
+      const r = resolveCredentials(runtimeConfig("dev"), {
+        env: { ANVIL_DEF_TOKEN: "must-not-leak" },
+      });
+      expect(await r.resolve("def", auth({ type }))).toBeNull();
+    },
+  );
+
+  describe("default resolver (ANVIL_CREDENTIALS unset) delegates executable auth schemes (Codex review PR #43, finding 1)", () => {
+    // Constructed exactly the way resolveCredentials constructs the DEFAULT
+    // resolver: `config.credentials` left undefined, the documented default —
+    // config.ts:107 reads it straight from ANVIL_CREDENTIALS, and
+    // resolveCredentials:725 routes anything other than the literal "env" to
+    // `need("secret_manager")`, i.e. SecretManagerCredentialResolver.
+    const defaultResolver = (env: NodeJS.ProcessEnv) =>
+      resolveCredentials(runtimeConfig("dev"), { env });
+
+    it("resolves a custom_header op, same as EnvCredentialResolver", async () => {
+      const r = defaultResolver({ ANVIL_DEF_HEADER_VALUE: "s3cr3t" });
+      const requirement = auth({
+        type: "custom_header",
+        carrier: { in: "header", name: "X-Vendor-Token" },
+      });
+      expect(await r.resolve("def", requirement)).toEqual({
+        headers: { "X-Vendor-Token": "s3cr3t" },
+      });
     });
-    expect(await r.resolve("def", auth({ type }))).toBeNull();
+
+    it("resolves an mtls op from the checked-in TLS fixtures, same as EnvCredentialResolver", async () => {
+      const fixtures = fileURLToPath(new URL("../test-fixtures/tls/", import.meta.url));
+      const r = defaultResolver({
+        ANVIL_DEF_CERT: join(fixtures, "client-cert.pem"),
+        ANVIL_DEF_KEY: join(fixtures, "client-key.pem"),
+      });
+      const requirement = auth({
+        type: "mtls",
+        tls: { clientCertRef: "ANVIL_DEF_CERT", clientKeyRef: "ANVIL_DEF_KEY" },
+      });
+      const material = await r.resolve("def", requirement);
+      expect(material?.tls?.cert).toContain("BEGIN CERTIFICATE");
+      expect(material?.tls?.key).toMatch(/BEGIN (RSA )?PRIVATE KEY/);
+      expect(material?.headers).toBeUndefined();
+    });
+
+    it("resolves an oauth2_authorization_code op from a stored profile's pre-issued token, same as EnvCredentialResolver", async () => {
+      const r = defaultResolver({ ANVIL_DEF_TOKEN: "stored-profile-access-token" });
+      const requirement = auth({
+        type: "oauth2_authorization_code",
+        principal: "end_user",
+        provider: { tokenEndpoint: "https://idp.example.com/token" },
+      });
+      expect(await r.resolve("def", requirement)).toEqual({
+        headers: { Authorization: "Bearer stored-profile-access-token" },
+      });
+    });
   });
 
   it("throws (fails closed) for an unregistered vault secretSource", () => {

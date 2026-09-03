@@ -232,7 +232,18 @@ export class SecretManagerCredentialResolver implements CredentialResolver {
         case "mtls":
         case "custom_header":
         case "oauth2_authorization_code":
-          return null;
+          // These three schemes have no secret-reference convention of their own
+          // (mtls reads PEM refs directly by name; custom_header and the PKCE
+          // authorization-code flow have no `${prefix}_*_secret-ref` shape to
+          // dereference) — delegate verbatim to the wrapped EnvCredentialResolver,
+          // same as `expectedCredentials` already does at :212. This is the
+          // resolver selected by default (ANVIL_CREDENTIALS unset), so without
+          // this delegation these three schemes fail closed on every deploy that
+          // never sets ANVIL_CREDENTIALS=env, even though they're approved and
+          // certified. If a `secret://`-style reference in e.g. `_HEADER_VALUE`
+          // is needed later, add deref there deliberately — not by widening this
+          // switch back into a no-op passthrough.
+          return this.inner.resolve(profileName, auth);
         default: {
           const token = await this.secrets.deref(this.env[`${prefix}_TOKEN`]);
           return token ? { headers: { Authorization: `Bearer ${token}` } } : null;

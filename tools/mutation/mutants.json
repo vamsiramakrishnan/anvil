@@ -1160,6 +1160,16 @@
         "packages/compiler/src/auth-normalization.test.ts",
         "packages/cli/src/commands/manifest-auth-approval.bugbash.test.ts"
       ]
+    },
+    {
+      "id": "runtime/default-resolver-delegates-executable-auth-schemes",
+      "file": "packages/runtime/src/credentials.ts",
+      "control": "SecretManagerCredentialResolver -- the DEFAULT outbound resolver when ANVIL_CREDENTIALS is unset -- delegates mtls, custom_header, and oauth2_authorization_code to the wrapped EnvCredentialResolver instead of hard-failing them, so an approved, certified operation using one of these three schemes actually resolves credentials on a default-configured deploy instead of failing auth_required on every call (Codex review, PR #43, finding 1).",
+      "find": "          return this.inner.resolve(profileName, auth);",
+      "replace": "          return null;",
+      "tests": [
+        "packages/runtime/src/credentials.test.ts"
+      ]
     }
   ]
 }
