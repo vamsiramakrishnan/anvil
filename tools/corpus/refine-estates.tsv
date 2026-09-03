@@ -1,0 +1,24 @@
+# Direct-spec corpus for refine-loop mode only (tools/corpus/refine-loop.mjs).
+# Not read by run.mjs's quick/sweep/estates/conformance modes and not gated by
+# any of their baselines — this file exists solely to give the refine-loop
+# routing-accuracy ratchet at least one row with real signal.
+#
+# Every row of estates.tsv imports through `anvil estate import` with ZERO
+# approved operations (route-only fidelity — see README.md's Refine-loop mode
+# section), so the routing benchmark has nothing to route there and every
+# catalog's accuracy records 0/0. A row here instead names a bare API contract
+# (not a gateway archive) plus a supplemental Anvil manifest that approves a
+# few of its read operations, and refine-loop.mjs compiles it directly via
+# `anvil compile <spec> --manifest <manifest>` (see compileSpecRow in
+# refine-loop.mjs) rather than `anvil estate import`. Everything downstream —
+# refine run, `benchmark --catalog both`, clusters, export-task, the ratchet —
+# is exactly the same pipeline gateway rows go through.
+#
+# Columns are TAB-separated:
+#
+#   name<TAB>vendor<TAB>spec<TAB>manifest
+#
+# `spec` and `manifest` are repo-relative. The manifest is scoped to this
+# corpus lane only (see its own header) and never approves a mutation — it
+# exists to feed the ratchet, not to grant new authority.
+payments-approved	payments	examples/payments/openapi.yaml	tools/corpus/fixtures/payments-approved.manifest.yaml

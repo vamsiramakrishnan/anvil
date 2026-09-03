@@ -87,6 +87,7 @@ Prefer the source operation id when it is stable and unique.
 | `query_schema` | Add catalog-grounded tables, columns, sensitivity, and examples | Documentation input; runtime does not treat it as enforcement |
 | `stream` | Resize a subscription's observation window (`max_events`, `max_seconds`) | Capped at 10,000 events / 300 seconds by AIR's schema; resizes an existing window, never creates one |
 | `state` | Record lifecycle state | Approval must follow inspection and organizational review |
+| `reviewed_by`, `review_reason` | Name who reviewed this entry's `state` and why | Only `oauth2_authorization_code` gates on them: `state: approved` there is refused unless both are non-empty. Every other auth type accepts them into an informational review note only — they never grant anything |
 
 ## Idempotency strategies
 
@@ -243,8 +244,9 @@ operations:
 # --profile <profile>` completes it once, on a loopback broker, and stores a
 # refresh token the runtime replays/refreshes per call. This type always
 # compiles review_required: end-user authority is a human decision, never a
-# material-completeness one, so no manifest `state:` override moves it to
-# approved directly.
+# material-completeness one, so a bare manifest `state: approved` never moves
+# it to approved. A manifest MAY grant it, but only by naming who decided and
+# why on the same entry:
   startCheckout:
     auth:
       type: oauth2_authorization_code
@@ -253,7 +255,16 @@ operations:
         token_endpoint: https://idp.example.com/token
         redirect_uri: http://127.0.0.1:0/callback   # port 0 = random, broker-assigned
         pkce: true
+    state: approved
+    reviewed_by: jane@example.com
+    review_reason: End-user consented in the onboarding flow; token scope reviewed.
 ```
+
+Both `reviewed_by` and `review_reason` must be non-empty or the entry stays
+`review_required` with a note naming exactly which field is still missing —
+this is the only approval path on a receipt-bound gateway bundle, where
+`anvil approve` refuses in place and a supplemental manifest plus a re-import
+is the review.
 
 Every field here is validated by AIR's `authCoherenceIssues` (mtls material only
 on `mtls`, authorization-code mechanics only on `oauth2_authorization_code`, an
