@@ -1034,6 +1034,17 @@
       "tests": [
         "packages/compiler/src/auth-normalization.test.ts"
       ]
+    },
+    {
+      "id": "auth/manifest-approval-needs-reviewer",
+      "file": "packages/compiler/src/auth-approval.ts",
+      "control": "A manifest's state: approved on an oauth2_authorization_code operation is only granted when BOTH reviewed_by and review_reason are non-empty -- deleting the reviewer/reason guard would let a bare `state: approved`, with neither field named, compile straight to approved with no one on record for delegating the end user's authority.",
+      "find": "  if (hasReviewer && hasReason) {",
+      "replace": "  if (true) {",
+      "tests": [
+        "packages/compiler/src/auth-normalization.test.ts",
+        "packages/cli/src/commands/manifest-auth-approval.bugbash.test.ts"
+      ]
     }
   ]
 }

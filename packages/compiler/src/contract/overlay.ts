@@ -245,6 +245,8 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     if (m.stream) assertions.push(set(ref, "stream", m.stream));
 
     if (m.state) assertions.push(set(ref, "state", m.state));
+    if (m.reviewed_by) assertions.push(set(ref, "reviewedBy", m.reviewed_by));
+    if (m.review_reason) assertions.push(set(ref, "reviewReason", m.review_reason));
   }
   return makeOverlay({ origin: "manifest", assertions });
 }
@@ -367,6 +369,11 @@ export function projectOperationManifest(
 
   const state = v<OperationManifest["state"]>("state");
   if (state) m.state = state;
+
+  const reviewedBy = v<string>("reviewedBy");
+  if (reviewedBy) m.reviewed_by = reviewedBy;
+  const reviewReason = v<string>("reviewReason");
+  if (reviewReason) m.review_reason = reviewReason;
 
   return m;
 }
