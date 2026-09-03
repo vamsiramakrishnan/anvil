@@ -1180,6 +1180,26 @@
         "packages/compiler/src/auth-normalization.test.ts",
         "packages/cli/src/commands/manifest-auth-approval.bugbash.test.ts"
       ]
+    },
+    {
+      "id": "runtime/default-resolver-delegates-executable-auth-schemes",
+      "file": "packages/runtime/src/credentials.ts",
+      "control": "SecretManagerCredentialResolver -- the DEFAULT outbound resolver when ANVIL_CREDENTIALS is unset -- delegates mtls, custom_header, and oauth2_authorization_code to the wrapped EnvCredentialResolver instead of hard-failing them, so an approved, certified operation using one of these three schemes actually resolves credentials on a default-configured deploy instead of failing auth_required on every call (Codex review, PR #43, finding 1).",
+      "find": "          return this.inner.resolve(profileName, auth);",
+      "replace": "          return null;",
+      "tests": [
+        "packages/runtime/src/credentials.test.ts"
+      ]
+    },
+    {
+      "id": "cli/auth-login-preserves-declared-redirect-host",
+      "file": "packages/cli/src/commands/auth.ts",
+      "control": "`anvil auth login` builds redirect_uri from the provider's DECLARED loopback host (127.0.0.1 or localhost, exactly as registered) with only the port substituted, on both the authorize request and the token exchange -- an OAuth server compares redirect_uri byte-for-byte, so silently rewriting a registered `localhost` host to `127.0.0.1` would make a correctly-configured client reject the flow (Codex review, PR #43, finding 2).",
+      "find": "      const redirectUri = `http://${loopback.host}:${actualPort}${loopback.path}${loopback.search}`;",
+      "replace": "      const redirectUri = `http://127.0.0.1:${actualPort}${loopback.path}${loopback.search}`;",
+      "tests": [
+        "packages/cli/src/commands/auth.test.ts"
+      ]
     }
   ]
 }

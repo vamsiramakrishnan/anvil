@@ -49,6 +49,8 @@ function fakeIdp(opts: {
   expectClientSecret?: string;
   refreshToken?: string;
   omitRefreshToken?: boolean;
+  /** Every redirect_uri this IdP was sent, in request order (authorize, then token). */
+  capturedRedirectUris?: string[];
 }): Promise<{ server: Server; base: string }> {
   const codeChallenges = new Map<string, string>();
   return new Promise((resolve) => {
@@ -57,6 +59,7 @@ function fakeIdp(opts: {
       if (url.pathname === "/authorize") {
         const state = url.searchParams.get("state") ?? "";
         const redirectUri = url.searchParams.get("redirect_uri") ?? "";
+        opts.capturedRedirectUris?.push(redirectUri);
         const challenge = url.searchParams.get("code_challenge") ?? "";
         const code = "test-auth-code";
         codeChallenges.set(code, challenge);
@@ -71,6 +74,7 @@ function fakeIdp(opts: {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
         const body = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+        opts.capturedRedirectUris?.push(body.get("redirect_uri") ?? "");
         const code = body.get("code") ?? "";
         const verifier = body.get("code_verifier") ?? "";
         const challenge = codeChallenges.get(code);
@@ -160,6 +164,74 @@ operations:
       // mode 0600 — owner read/write only.
       const mode = statSync(filePath).mode & 0o777;
       expect(mode).toBe(0o600);
+    } finally {
+      idp.server.close();
+    }
+  });
+
+  // Codex review (PR #43, finding 2): a provider that registers
+  // `http://localhost:<port>/callback` must get that exact host back on both
+  // the authorize request and the token exchange — an OAuth server compares
+  // redirect_uri byte-for-byte, so silently rewriting it to 127.0.0.1 would
+  // make a client registered for localhost reject the flow even though the
+  // manifest's redirect_uri passed validation.
+  it("preserves the declared localhost host in the redirect_uri end to end, only substituting the port", async () => {
+    const capturedRedirectUris: string[] = [];
+    const idp = await fakeIdp({
+      expectClientId: "client-1",
+      expectClientSecret: "shh",
+      capturedRedirectUris,
+    });
+    try {
+      const { dir, air } = await compiledBundle(`
+operations:
+  createRefund:
+    auth:
+      type: oauth2_authorization_code
+      credential_profile: end_user_flow
+      provider:
+        authorization_endpoint: ${idp.base}/authorize
+        token_endpoint: ${idp.base}/token
+        redirect_uri: http://localhost:0/callback
+        pkce: true
+`);
+      const op =
+        air.operations.find((o) => o.canonicalName === "create_refund") ?? air.operations[0];
+      if (!op) throw new Error("fixture: no operation compiled");
+      const profileName = credentialProfileName("test", op.auth);
+      const prefix = envPrefix(profileName);
+      process.env[`${prefix}_CLIENT_ID`] = "client-1";
+      process.env[`${prefix}_CLIENT_SECRET`] = "shh";
+      cleanupEnv.push(`${prefix}_CLIENT_ID`, `${prefix}_CLIENT_SECRET`);
+
+      const credDir = freshDir();
+      let printedAuthorizeUrl = "";
+      const io = watchedIO((line) => {
+        const match = /^ {2}(http:\/\/[^\s]+)$/.exec(line);
+        if (match?.[1]) {
+          printedAuthorizeUrl = match[1];
+          void fetch(match[1]);
+        }
+      });
+
+      const code = await runAuthLogin(dir, { profile: "test", timeoutSeconds: "10" }, io, credDir);
+
+      expect(code).toBe(0);
+      // The authorize URL's own redirect_uri param names localhost, not 127.0.0.1.
+      const authorizeRedirectUri = new URL(printedAuthorizeUrl).searchParams.get("redirect_uri");
+      expect(authorizeRedirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/);
+      expect(authorizeRedirectUri).not.toContain("127.0.0.1");
+      // Exactly two redirect_uri sightings at the IdP: the /authorize request
+      // and the /token exchange — both must carry the identical value.
+      expect(capturedRedirectUris).toHaveLength(2);
+      expect(capturedRedirectUris[0]).toBe(authorizeRedirectUri);
+      expect(capturedRedirectUris[1]).toBe(authorizeRedirectUri);
+
+      // The broker still stored a refresh token — the flow actually completed,
+      // proving the loopback listener (bound to 127.0.0.1) answered a request
+      // addressed to "localhost".
+      const filePath = join(credDir, `${profileName}.json`);
+      expect(existsSync(filePath)).toBe(true);
     } finally {
       idp.server.close();
     }

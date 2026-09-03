@@ -119,12 +119,26 @@ describe("SecretManagerCredentialResolver — auth-type branch coverage", () => 
   it.each([
     "mtls",
     "custom_header",
-    "oauth2_authorization_code",
-  ] as const)("fails closed for the unmodeled %s scheme instead of leaking a bearer", async (type) => {
+  ] as const)("fails closed for %s with no declared material instead of leaking a bearer", async (type) => {
     const r = new SecretManagerCredentialResolver({
       env: { ANVIL_PROD_TOKEN: "must-not-leak" },
     });
     expect(await r.resolve("prod", auth({ type }))).toBeNull();
+  });
+
+  // Codex review (PR #43, finding 1): oauth2_authorization_code is a scheme
+  // EnvCredentialResolver already models correctly (a pre-issued ${prefix}_TOKEN
+  // is the documented static-token path — auth.ts:204-205 and
+  // credentialRequirement's `requiredOneOf: [[TOKEN], ...]`). Delegating to it
+  // here is the fix, not a leak: unlike the two cases above, ANVIL_PROD_TOKEN
+  // *is* the correct, scheme-specific credential for oauth2_authorization_code.
+  it("resolves oauth2_authorization_code from a pre-issued token, same as EnvCredentialResolver", async () => {
+    const r = new SecretManagerCredentialResolver({
+      env: { ANVIL_PROD_TOKEN: "pre-issued-access-token" },
+    });
+    expect(await r.resolve("prod", auth({ type: "oauth2_authorization_code" }))).toEqual({
+      headers: { Authorization: "Bearer pre-issued-access-token" },
+    });
   });
 
   it("fails closed for a static bearer scheme when no token is configured", async () => {
