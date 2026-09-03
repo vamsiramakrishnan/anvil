@@ -1004,6 +1004,36 @@
       "tests": [
         "packages/compiler/src/auth-normalization.test.ts"
       ]
+    },
+    {
+      "id": "fleet/scope-denied-before-upstream",
+      "file": "packages/runtime/src/executor.ts",
+      "control": "A named principal missing a scope an operation's auth.scopes requires is refused before any upstream call -- never silently allowed through because the check was skipped.",
+      "find": "    if (missingRequiredScopes.length > 0) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/runtime/src/fleet-safety.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/budget-never-retried",
+      "file": "packages/runtime/src/executor.ts",
+      "control": "A rate-limited or budget-exhausted refusal is never marked retryable -- a caller (SDK, agent, CLI) that respects the envelope must not loop hammering a budget that is already exhausted.",
+      "find": "          retryable: false,\n          safeToRetry: false,",
+      "replace": "          retryable: true,\n          safeToRetry: false,",
+      "tests": [
+        "packages/runtime/src/fleet-safety.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/contradiction-opens-case-never-patches",
+      "file": "packages/harness/src/drift-alarm.ts",
+      "control": "The drift alarm routes an idempotency-replay contradiction through the EXISTING contested_safety_semantic deficiency (classify-idempotency's registered trigger) -- never a made-up code -- so opening a case actually reaches a real, evidence-compatible skill instead of silently finding nothing to open.",
+      "find": "      code: \"contested_safety_semantic\",",
+      "replace": "      code: \"contested_safety_semantic_MUTANT\",",
+      "tests": [
+        "packages/harness/src/drift-alarm.test.ts"
+      ]
     }
   ]
 }
