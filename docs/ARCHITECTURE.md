@@ -195,6 +195,11 @@ supported state.
 
 The deployed unit is the generated MCP server backed by `@anvil/mcp-runtime`
 and `@anvil/runtime`. It does not parse source specifications or run enrichment.
+`anvil serve mcp <dir>` serves one bundle per process; `anvil serve mcp
+<workspace-root> --fleet` mounts every bundle beneath a workspace root onto
+one MCP surface instead, each under a stable per-bundle tool-name prefix,
+composed from independently-built single-bundle servers rather than a second
+serving path — see [fleet.md](fleet.md).
 
 Before an upstream call, the executor evaluates the following controls in a
 deterministic order:
@@ -204,13 +209,15 @@ deterministic order:
 | Input validation | Reject arguments outside the generated schema |
 | Confirmation | Require explicit intent for gated effects |
 | Idempotency | Require and fingerprint deduplication keys where configured |
+| Principal scope | Refuse a caller missing a scope `auth.scopes` requires (fleet runtime; anonymous/every-scope by default) |
+| Rate/spend limits | Refuse a caller over its configured per-principal rate or spend budget (fleet runtime; unlimited by default) |
 | Dry run | Return a redacted request plan after preconditions pass |
 | Host pinning | Restrict upstream egress to reviewed hosts |
 | Auth resolution | Resolve named credential profiles without placing secrets in AIR |
 | Ledger durability | Fail closed when a required durable write ledger is unavailable |
 | Retry policy | Retry only bounded transient conditions when repetition is safe |
 | Response normalization | Produce structured outputs and stable error envelopes |
-| Observation | Emit an OpenTelemetry-shaped execution record |
+| Observation | Emit an OpenTelemetry-shaped execution record, including the calling principal's id (never its credential) |
 
 Runtime policy hooks can deny at defined pre/post phases. They are not the same
 as harness hooks: runtime hooks execute inside the authority boundary, while
