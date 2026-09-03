@@ -1,11 +1,24 @@
 # Design a deployment-local legacy bridge
 
 An approved capability binding can now be compiled into a deterministic bridge
-plan and assessed against a driver descriptor. It still cannot be executed.
+plan and assessed against a driver descriptor. For one transport — a message
+binding whose reply mode is `reply_to` or `fixed_destination` — it can also be
+*served*: `@anvil/legacy-bridge` is a real HTTP facade, proven by
+`anvil legacy bridge conformance` against a deterministic in-process broker
+double. Every other transport family described on this page is still exactly
+what it was: a bridge plan and nothing that executes it.
 
-> **Current status:** Anvil does not generate, package, deploy, load, or run a
-> legacy bridge. Every bridge plan has `executionAllowed: false`. Static driver
-> compatibility is not runtime support.
+> **Current status:** `bridgePlan.executionAllowed` is still `false` for
+> every plan — planning never claims live readiness, for any transport. What
+> changed is narrower: one binding shape now has a real, conformance-tested
+> server behind it, and `anvil legacy bridge conformance` can move that
+> binding's `runtime.status` from `not_implemented` to `conformance_passed`.
+> That status is earned against a double, never against a real broker — see
+> [The first executable bridge](#the-first-executable-bridge-queue-requestreply)
+> below for exactly what it does and does not prove. WebLogic, WebSphere,
+> JBoss remote EJB, WCF, MSMQ, JCA resource adapters, stored procedures, and
+> batch/scheduler jobs remain fully undescribed by any generator, prepared
+> driver, or deployment path.
 
 ## Start with the precise boundary
 
@@ -131,9 +144,91 @@ conformance case, validate generated output, or contact a target. A
 plan.
 
 `LegacyBridgeDriver` currently contains only the descriptor. There is no
-exported `generate`, `prepare`, `invoke`, `health`, or `close` method. This is
-intentional: Anvil can define and assess the contract before exposing a
-runtime it cannot yet secure or test.
+exported `generate`, `prepare`, `invoke`, `health`, or `close` method for the
+transports below this section. This is intentional: Anvil can define and
+assess the contract before exposing a runtime it cannot yet secure or test.
+
+## The first executable bridge: queue request/reply
+
+One shape has a real driver today, and this section is exact about what that
+does and does not mean.
+
+### What exists
+
+`@anvil/air`'s `WireBinding` gained a `queue_request_reply` member: a request
+destination, a reply strategy (`reply_to` or `fixed_destination`) with its
+correlation field, request/response schema pointers, a timeout, and —
+load-bearing — `legacyBindingContentHash`, the exact reviewed
+`LegacyCapabilityBinding` this exchange executes. A bridge with a mismatched
+hash refuses to serve, structurally: it can never silently start answering
+for a different, unreviewed, or since-changed candidate.
+
+`@anvil/legacy-bridge` is a new, deployment-local package that:
+
+- derives that wire binding from a reviewed `LegacyCapabilityBinding`
+  (`buildQueueWireBinding`);
+- serves an HTTP facade (`createLegacyBridgeFacade`) that translates one
+  `POST /invoke` into one queue request/reply exchange, with the caller's
+  idempotency key (or a freshly generated one) as the message correlation
+  value, and makes **exactly one** broker call per HTTP call — there is no
+  retry loop anywhere in the facade;
+- speaks a real STOMP 1.2 client over `node:net`
+  (`packages/legacy-bridge/src/stomp-client.ts`) — chosen, and the choice
+  justified in the file's own header, as the protocol a zero-dependency
+  client can honestly implement (AMQP 0-9-1/1.0 are binary, negotiated
+  protocols with real implementation weight; STOMP is a text protocol most
+  brokers this package's estates use already speak, natively or via a
+  gateway); and
+- runs conformance (`runLegacyBridgeConformance`, `anvil legacy bridge
+  conformance`) against `InProcessBrokerDouble`, a deterministic in-process
+  fake — never a real broker, in this package's own tests or in the CLI
+  command.
+
+This is exactly the "protocol facade" `docs/SOURCE_FORMATS.md` already
+documents for a gRPC JSON transcoder: the runtime's existing HTTP/JSON codec
+calls it once an operator declares `--protocol-facade` /
+`ANVIL_PROTOCOL_FACADE`, so nothing in `packages/runtime` needed a new codec
+or a new retry path for this to be callable — only the new wire-binding shape
+in `@anvil/air`.
+
+### What `conformance_passed` proves, and what it does not
+
+```bash
+anvil legacy bridge conformance bridge-plan.json --binding binding.json \
+  --out conformance.json --emit-binding binding.conformance-passed.json
+```
+
+Drives every required case from the plan plus three fixed safety invariants
+against the double:
+
+- **idempotent replay** — a repeated idempotency key returns the identical
+  cached reply without re-executing the business side;
+- **timeout maps to a structured error** — a broker that never replies
+  produces a `504`/`upstream_timeout`, explicitly `retryable: false`, never a
+  hang and never a false success; and
+- **non-idempotent sends are never auto-retried** — one HTTP call to the
+  facade produces exactly one broker exchange, win or fail, with no retry
+  loop inside the bridge itself. (An *outer* caller, like the runtime, is
+  free to call again under its own reviewed retry policy — that call is safe
+  precisely because replay is a no-op, not because the bridge intervened.)
+
+On a full pass, `runtime.status` moves from `not_implemented` to
+`conformance_passed` on a *new*, re-addressed binding — `bindingId` and
+`contentHash` change because they are derived from the whole record including
+`runtime`; every other reviewed fact and the full inventory → task → proposal
+→ receipt lineage carries over unchanged, and `runtime.conformanceReportHash`
+pins exactly which report earned it.
+
+What it does not prove: that a real broker exists, is reachable, authorizes
+this identity, or would actually deliver a reply — the same
+`unverifiedLiveFacts` every bridge plan already lists. `conformance_passed`
+is a statement about the bridge's own code against a double standing in for
+"any correctly-behaving broker," not a live-readiness claim. See [Build one
+complete vertical slice
+first](#build-one-complete-vertical-slice-first) below — the queue
+request/reply slice is what this section describes, and it stops exactly
+where that section says a first slice should: proven logic, zero live
+connections.
 
 ## Why the bridge belongs near the estate
 
@@ -330,8 +425,12 @@ Depending on its semantics, cases cover:
 - bounded retry; and
 - reply correlation.
 
-These are test specifications, not passing test results. Anvil currently does
-not supply a runner or receipt format for them.
+These are test specifications, not passing test results, for every transport
+this table's adapter families describe. For a message-queue request/reply
+binding specifically, `anvil legacy bridge conformance` is now that runner —
+see [The first executable bridge](#the-first-executable-bridge-queue-requestreply)
+— and `LegacyBridgeConformanceReport` is its receipt format. Every other
+transport still has neither.
 
 ## Adapter families still required
 
@@ -371,6 +470,15 @@ transactions, ambiguous completion, idempotency, retry, secrets,
 observability, packaging, and live readiness. A send-only demo proves
 connectivity while avoiding most of the semantics that justify the review
 protocol.
+
+`@anvil/legacy-bridge` is a narrower cut of exactly this slice, done first
+because it is cheap to make honest: schema mapping (pass-through JSON,
+verified byte-for-byte), correlation, idempotent replay, timeout, and
+non-retry are solved and conformance-tested; transactions, secrets/identity
+resolution, packaging, and — the biggest one — live readiness against a real
+broker are not. It proves the *shape* of a vertical slice is buildable and
+testable without a live connection; it does not shorten the list above for a
+real IBM MQ or JMS deployment.
 
 ## Definition of done for a driver
 
