@@ -165,6 +165,83 @@ describe("stagedRoute", () => {
     expect(outcome.pass).toBe(false);
   });
 
+  it("never lets a stronger match in an unentered lane leak into a pass", async () => {
+    // A direct reproduction of what mutant benchmark-ladder/stage-two-scoped-to-lane
+    // deletes: stage 1 is steered into "alpha" by vocabulary that exists ONLY on
+    // alpha's own entry card, while the intent also carries several tokens that
+    // exist ONLY on beta's tool name — strong enough that scoring the FULL
+    // catalog at stage 2 (the mutant) would pick beta's tool over alpha's, even
+    // though beta's lane was never opened. A real staged server has beta's tool
+    // closed at this point, so the correct answer is a routed miss, not a pass.
+    const alpha = {
+      ...op("alpha.op", "alpha_op_tool", "widget", 6_000),
+      skill: { intentExamples: ["route to alpha please"] },
+    };
+    const beta = {
+      ...op("beta.op", "zzz_marker_special_case_tool", "widget", 6_000),
+      skill: { intentExamples: ["handle beta requests"] },
+    };
+    // A filler lane with more than one member, purely so the projection does
+    // not decline the whole document as "no_grouping_benefit" (every OTHER
+    // lane here is deliberately singleton, to keep the two lanes under test
+    // as small and legible as possible).
+    const filler = [
+      op("filler.a", "filler_tool_a", "filler", 6_000),
+      op("filler.b", "filler_tool_b", "filler", 6_000),
+    ];
+    const air = loadAirDocument({
+      anvilVersion: "0.1.0",
+      service: {
+        id: "svc",
+        version: "1.0.0",
+        displayName: "Svc",
+        source: { kind: "openapi", uri: "spec.yaml" },
+        auth: { type: "none", scopes: [] },
+        servers: [],
+      },
+      operations: [alpha, beta, ...filler],
+      capabilities: [
+        {
+          id: "svc.alpha",
+          displayName: "Alpha",
+          description: "Alpha capability.",
+          operationIds: ["alpha.op"],
+          intentExamples: ["route to alpha please"],
+        },
+        {
+          id: "svc.beta",
+          displayName: "Beta",
+          description: "Beta capability.",
+          operationIds: ["beta.op"],
+          intentExamples: ["handle beta requests"],
+        },
+        {
+          id: "svc.filler",
+          displayName: "Filler",
+          description: "Filler capability.",
+          operationIds: ["filler.a", "filler.b"],
+          intentExamples: ["do filler things"],
+        },
+      ],
+      workflows: [],
+      schemas: {},
+      diagnostics: [],
+    });
+    const ladder = ladderedCatalog(air);
+    expect(ladder.plan.mode).toBe("laddered");
+
+    const router = lexicalRouter();
+    const intent = "route to alpha please zzz marker special case";
+
+    // Confirms the premise: stage 1 genuinely enters alpha's lane, not beta's.
+    const stage1Routed = await router.route(intent, ladder.stage1);
+    expect(stage1Routed).toBe("open_svc_alpha");
+
+    const outcome = await stagedRoute(router, intent, ladder, "beta.op");
+    expect(outcome.enteredLane).toBe("open_svc_alpha");
+    expect(outcome.pass).toBe(false);
+  });
+
   it("falls back to flat scoring when the plan declined", async () => {
     const air = doc(
       [
