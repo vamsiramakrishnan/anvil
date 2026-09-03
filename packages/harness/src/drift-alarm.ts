@@ -97,7 +97,9 @@ function undeclaredErrorCodeContradiction(
 ): DriftContradiction | undefined {
   const declared = new Set<string>(op.errors.map((e) => e.code));
   if (declared.size === 0) return undefined;
-  const observedDeclared = opRecords.some((r) => r.errorCode !== undefined && declared.has(r.errorCode));
+  const observedDeclared = opRecords.some(
+    (r) => r.errorCode !== undefined && declared.has(r.errorCode),
+  );
   if (observedDeclared) return undefined;
   const undeclaredRecords = opRecords.filter(
     (r) => r.errorCode !== undefined && !declared.has(r.errorCode),

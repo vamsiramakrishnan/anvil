@@ -72,11 +72,7 @@ describe("detectDriftContradictions — idempotency replay conflict", () => {
   it("finds a contradiction: a naturally-idempotent op returning conflict on replay", () => {
     const op = naturalReadOp();
     const air = airWith(op);
-    const records = [
-      spooled(),
-      spooled(),
-      spooled({ outcome: "error", errorCode: "conflict" }),
-    ];
+    const records = [spooled(), spooled(), spooled({ outcome: "error", errorCode: "conflict" })];
     const found = detectDriftContradictions(air, records);
     expect(found).toHaveLength(1);
     expect(found[0]).toMatchObject({
@@ -96,7 +92,14 @@ describe("detectDriftContradictions — idempotency replay conflict", () => {
   });
 
   it("does not alarm when idempotency.mode is not natural", () => {
-    const op = naturalReadOp({ idempotency: { mode: "required", mechanism: "header", key: "Idempotency-Key", keyDerivation: "client_supplied" } });
+    const op = naturalReadOp({
+      idempotency: {
+        mode: "required",
+        mechanism: "header",
+        key: "Idempotency-Key",
+        keyDerivation: "client_supplied",
+      },
+    });
     const air = airWith(op);
     const records = [spooled(), spooled(), spooled({ outcome: "error", errorCode: "conflict" })];
     expect(detectDriftContradictions(air, records)).toHaveLength(0);
@@ -153,7 +156,10 @@ describe("runDriftAlarm — opens a case, proposing only", () => {
     const air = airWith(op);
     const records = [spooled(), spooled(), spooled({ outcome: "error", errorCode: "conflict" })];
 
-    const result = await runDriftAlarm(air, records, { root: join(dir, ".refinement"), now: 1_700_000_000_000 });
+    const result = await runDriftAlarm(air, records, {
+      root: join(dir, ".refinement"),
+      now: 1_700_000_000_000,
+    });
 
     expect(result.contradictions).toHaveLength(1);
     expect(result.skipped).toHaveLength(0);

@@ -169,7 +169,7 @@ export async function buildFleetForWorkspace(
   }
 }
 
-export async function runServeFleet(workspaceRoot: string, io: CliIO): Promise<number> {
+async function runServeFleet(workspaceRoot: string, io: CliIO): Promise<number> {
   const built = await buildFleetForWorkspace(workspaceRoot);
   if (!built.ok) {
     io.err(`anvil: ${built.message}.`);
@@ -213,11 +213,7 @@ function readCertification(
       status?: unknown;
     };
     if (typeof parsed.bundleHash !== "string") return undefined;
-    if (
-      parsed.status !== "passed" &&
-      parsed.status !== "failed" &&
-      parsed.status !== "expired"
-    ) {
+    if (parsed.status !== "passed" && parsed.status !== "failed" && parsed.status !== "expired") {
       return undefined;
     }
     return { hash: parsed.bundleHash, status: parsed.status };

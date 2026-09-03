@@ -96,7 +96,8 @@ async function runObserveCommand(dir: string, opts: ObserveOptions, io: CliIO): 
     return emitRefusal(io, opts.json, {
       reportType: "anvil.observe-error",
       code: "observe_alarm_needs_records",
-      message: "--alarm folds spooled records against compiled claims; pass --from-records <dir> too.",
+      message:
+        "--alarm folds spooled records against compiled claims; pass --from-records <dir> too.",
     });
   }
   if (opts.fromRecords !== undefined) {
@@ -200,7 +201,7 @@ async function runFromRecords(
   // Deliberately separate passes: one earns claims, the other raises alarms;
   // conflating them would make a claim-earning read also decide whether a
   // case opens, which is not what either pass is for.
-  const alarm = opts.alarm === true ? await alarmPass(air, dir, opts, io) : undefined;
+  const alarm = opts.alarm === true ? await alarmPass(air, dir, opts) : undefined;
 
   if (opts.json === true) {
     io.out(
@@ -221,7 +222,6 @@ async function alarmPass(
   air: ReturnType<typeof loadAirDocument>,
   spoolDir: string,
   opts: ObserveOptions,
-  io: CliIO,
 ): Promise<DriftAlarmResult> {
   const { records } = readRecordSpool(spoolDir);
   return runDriftAlarm(air, records, { root: opts.caseRoot ?? ".refinement" });

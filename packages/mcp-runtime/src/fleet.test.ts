@@ -3,7 +3,7 @@ import type { Transport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { buildFleetServer, fleetToolName, FleetToolCollisionError } from "./fleet.js";
+import { buildFleetServer, FleetToolCollisionError, fleetToolName } from "./fleet.js";
 
 const mockTransport: Transport = {
   send: async () => ({ status: 200, headers: {}, body: JSON.stringify({ ok: true }) }),
@@ -48,8 +48,28 @@ async function listViaClient(server: Awaited<ReturnType<typeof buildFleetServer>
 
 describe("buildFleetServer", () => {
   it("mounts each bundle's tools under a stable per-bundle prefix", async () => {
-    const bundleA = { id: "billing", air: airFor("billing", op({ mcp: { toolName: "list_invoices" } })), options: { contextFor: () => ({ transport: mockTransport, serviceId: "billing", baseUrl: "http://test" }) } };
-    const bundleB = { id: "shipping", air: airFor("shipping", op({ id: "svc.op2", mcp: { toolName: "list_shipments" } })), options: { contextFor: () => ({ transport: mockTransport, serviceId: "shipping", baseUrl: "http://test" }) } };
+    const bundleA = {
+      id: "billing",
+      air: airFor("billing", op({ mcp: { toolName: "list_invoices" } })),
+      options: {
+        contextFor: () => ({
+          transport: mockTransport,
+          serviceId: "billing",
+          baseUrl: "http://test",
+        }),
+      },
+    };
+    const bundleB = {
+      id: "shipping",
+      air: airFor("shipping", op({ id: "svc.op2", mcp: { toolName: "list_shipments" } })),
+      options: {
+        contextFor: () => ({
+          transport: mockTransport,
+          serviceId: "shipping",
+          baseUrl: "http://test",
+        }),
+      },
+    };
 
     const fleet = await buildFleetServer([bundleA, bundleB]);
     const tools = await listViaClient(fleet);
@@ -67,12 +87,16 @@ describe("buildFleetServer", () => {
     const bundleA = {
       id: "svc",
       air: airFor("svc", op({ mcp: { toolName: "list_things" } })),
-      options: { contextFor: () => ({ transport: mockTransport, serviceId: "svc", baseUrl: "http://test" }) },
+      options: {
+        contextFor: () => ({ transport: mockTransport, serviceId: "svc", baseUrl: "http://test" }),
+      },
     };
     const bundleB = {
       id: "svc!!", // folds to the same prefix "svc" as bundleA
       air: airFor("svc2", op({ mcp: { toolName: "list_things" } })),
-      options: { contextFor: () => ({ transport: mockTransport, serviceId: "svc2", baseUrl: "http://test" }) },
+      options: {
+        contextFor: () => ({ transport: mockTransport, serviceId: "svc2", baseUrl: "http://test" }),
+      },
     };
 
     await expect(buildFleetServer([bundleA, bundleB])).rejects.toThrow(FleetToolCollisionError);
@@ -87,7 +111,9 @@ describe("buildFleetServer", () => {
     const bundle = {
       id: "dup",
       air: airFor("dup", op()),
-      options: { contextFor: () => ({ transport: mockTransport, serviceId: "dup", baseUrl: "http://test" }) },
+      options: {
+        contextFor: () => ({ transport: mockTransport, serviceId: "dup", baseUrl: "http://test" }),
+      },
     };
     await expect(buildFleetServer([bundle, bundle])).rejects.toThrow(/Duplicate bundle id/);
   });
@@ -96,13 +122,25 @@ describe("buildFleetServer", () => {
     const bundleA = {
       id: "billing",
       air: airFor("billing", op({ mcp: { toolName: "list_invoices" } })),
-      options: { contextFor: () => ({ transport: mockTransport, serviceId: "billing", baseUrl: "http://test" }) },
+      options: {
+        contextFor: () => ({
+          transport: mockTransport,
+          serviceId: "billing",
+          baseUrl: "http://test",
+        }),
+      },
       certification: { hash: "sha256:aaa", status: "passed" as const },
     };
     const bundleB = {
       id: "shipping",
       air: airFor("shipping", op({ id: "svc.op2", mcp: { toolName: "list_shipments" } })),
-      options: { contextFor: () => ({ transport: mockTransport, serviceId: "shipping", baseUrl: "http://test" }) },
+      options: {
+        contextFor: () => ({
+          transport: mockTransport,
+          serviceId: "shipping",
+          baseUrl: "http://test",
+        }),
+      },
       // Uncertified — the fleet should still build, but readyz must say so.
     };
 
@@ -110,8 +148,22 @@ describe("buildFleetServer", () => {
     const readyz = fleet.readyz();
     expect(readyz.ready).toBe(false);
     expect(readyz.bundles).toEqual([
-      { id: "billing", serviceId: "billing", toolCount: 1, certifiedHash: "sha256:aaa", certificationStatus: "passed", ready: true },
-      { id: "shipping", serviceId: "shipping", toolCount: 1, certifiedHash: undefined, certificationStatus: undefined, ready: false },
+      {
+        id: "billing",
+        serviceId: "billing",
+        toolCount: 1,
+        certifiedHash: "sha256:aaa",
+        certificationStatus: "passed",
+        ready: true,
+      },
+      {
+        id: "shipping",
+        serviceId: "shipping",
+        toolCount: 1,
+        certifiedHash: undefined,
+        certificationStatus: undefined,
+        ready: false,
+      },
     ]);
     await fleet.close();
   });
@@ -120,7 +172,13 @@ describe("buildFleetServer", () => {
     const bundleA = {
       id: "billing",
       air: airFor("billing", op({ mcp: { toolName: "list_invoices" } })),
-      options: { contextFor: () => ({ transport: mockTransport, serviceId: "billing", baseUrl: "http://test" }) },
+      options: {
+        contextFor: () => ({
+          transport: mockTransport,
+          serviceId: "billing",
+          baseUrl: "http://test",
+        }),
+      },
       certification: { hash: "sha256:aaa", status: "passed" as const },
     };
     const fleet = await buildFleetServer([bundleA]);

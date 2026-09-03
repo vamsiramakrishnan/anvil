@@ -162,7 +162,10 @@ export async function buildFleetServer(
     seenIds.add(bundle.id);
   }
 
-  const fleet = new McpServer({ name: opts.name ?? "anvil-fleet", version: opts.version ?? "0.0.0" });
+  const fleet = new McpServer({
+    name: opts.name ?? "anvil-fleet",
+    version: opts.version ?? "0.0.0",
+  });
   const toolOwners = new Map<string, string>();
   const closers: Array<() => Promise<void>> = [];
   const readiness: FleetBundleReadiness[] = [];
@@ -201,9 +204,9 @@ export async function buildFleetServer(
             "anvil/fleet_tool_name": tool.name,
           },
         },
-        // biome-ignore lint/suspicious/noExplicitAny: forwarding the client's own CallToolResult
-        // shape verbatim — re-typing it here would just restate the SDK's own type.
-        async (args: Record<string, unknown>): Promise<any> => {
+        // Forwards the client's own CallToolResult verbatim — its return type IS
+        // what registerTool's handler wants, so no re-typing (or `any`) is needed.
+        async (args: Record<string, unknown>): ReturnType<typeof client.callTool> => {
           return client.callTool({ name: tool.name, arguments: args });
         },
       );
