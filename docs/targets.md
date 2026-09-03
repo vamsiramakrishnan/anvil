@@ -128,13 +128,33 @@ registry schema before submitting.
   can only ever validate as `"always"`; a mapping that would downgrade it is
   `target/approval_downgraded`.
 
+## Certification and drift
+
+`anvil certify` and `anvil status` prove a persisted target kit hasn't
+drifted from what it claims to be — for **every** registered profile whose
+`targets/<id>/` subtree is present in the bundle, not only Gemini
+Enterprise's. Each one is rebuilt from its own `setup.json` (the only
+regeneration input, never trusted contents) and the bundle's canonical AIR,
+via `verifyTargetKit` in
+[`packages/targets/src/verify.ts`](../packages/targets/src/verify.ts); a
+missing, extra, reformatted, or hand-edited file in the subtree fails the
+check exactly the same way for a Claude or OpenAI kit as it always has for
+Gemini's. `certify` surfaces this as one
+`contract.target-kit-exact.<profile-id>` check per present kit — and the
+whole subtree is already covered by the bundle's certified content hash, so
+tampering it also invalidates that hash independently of the drift check.
+`status` reports the same regeneration as each target's `fresh` / `stale` /
+`corrupt` state and its `integrity.findings`.
+
 ## Adding a platform
 
 A new platform is a new profile module in `packages/targets/src/` (its own
-config type, `generate*TargetKit`, `validate*Target`), one line added to
-`listProfiles()` in `registry.ts`, and one CLI subcommand file under
-`packages/cli/src/commands/target/`. The Gemini Enterprise profile is the
-most fully worked example — a much larger surface (Terraform overlays,
-mutable Agent Gateway state, an atomic-install write path) than a
+config type, `create*TargetConfig`, `generate*TargetKit`, `validate*Target`),
+one line added to `listProfiles()` in `registry.ts`, one CLI subcommand file
+under `packages/cli/src/commands/target/`, and one `KIT_ADAPTERS` entry in
+`verify.ts` wiring those three functions in so `certify`/`status` drift-check
+the new kit the same way as every other profile. The Gemini Enterprise
+profile is the most fully worked example — a much larger surface (Terraform
+overlays, mutable Agent Gateway state, an atomic-install write path) than a
 remote-MCP-only platform needs, but every piece of it stands on the same
 `AgentPlatformTargetProfile` model in `packages/targets/src/model.ts`.

@@ -58,6 +58,22 @@ async function cli(argv: string[], deps: TargetDeps = {}) {
   return { code, io };
 }
 
+/** Minimal, no-auth args for the shared remote-MCP-connector profiles. */
+function connectorArgs(
+  profile: "claude" | "openai" | "mcp-registry",
+  bundleOrAir: string,
+): string[] {
+  return [
+    "target",
+    profile,
+    bundleOrAir,
+    "--endpoint",
+    "https://mcp.example.test/mcp",
+    "--server-auth",
+    "none",
+  ];
+}
+
 function oauthArgs(
   bundleOrAir: string,
   surface: "custom-mcp" | "agent-gateway" | "both" = "custom-mcp",
@@ -608,5 +624,83 @@ describe("anvil target Gemini Enterprise journey", () => {
     );
     expect(existsSync(detached)).toBe(false);
     expect(existsSync(join(bundle, "targets/gemini-enterprise"))).toBe(false);
+  });
+});
+
+/**
+ * Kit drift verification (`verifyTargetKit`) is generalized over every
+ * registered profile (`@anvil/targets`' `listProfiles()`), not hardcoded to
+ * Gemini Enterprise. These prove `certify` and `status` check a Claude or
+ * OpenAI target kit for drift exactly the way they always checked Gemini's.
+ */
+describe("anvil target drift verification across profiles", () => {
+  it("certifies a bundle carrying both a Claude kit and an OpenAI kit", async () => {
+    const bundle = freshBundle();
+    const claude = await cli(connectorArgs("claude", bundle));
+    expect(claude.code, claude.io.text()).toBe(0);
+    const openai = await cli(connectorArgs("openai", bundle));
+    expect(openai.code, openai.io.text()).toBe(0);
+
+    const certified = await cli(["certify", bundle, "--json"]);
+    expect(certified.code, certified.io.text()).toBe(0);
+    const certification = JSON.parse(certified.io.stdout.join("\n")) as {
+      status: string;
+      checks: Array<{ id: string; status: string }>;
+    };
+    expect(certification.status).toBe("passed");
+    expect(certification.checks).toContainEqual(
+      expect.objectContaining({ id: "contract.target-kit-exact.claude", status: "passed" }),
+    );
+    expect(certification.checks).toContainEqual(
+      expect.objectContaining({ id: "contract.target-kit-exact.openai", status: "passed" }),
+    );
+
+    const status = await cli(["status", bundle, "--json"]);
+    expect(status.code, status.io.text()).toBe(0);
+    const report = JSON.parse(status.io.stdout.join("\n")) as {
+      certification: { state: string };
+      targets: Array<{ targetId: string; state: string }>;
+    };
+    expect(report.certification.state).toBe("fresh");
+    expect(report.targets.map((target) => target.targetId).sort()).toEqual(["claude", "openai"]);
+    for (const target of report.targets) expect(target.state).toBe("fresh");
+  });
+
+  it("reports a hand-edited Claude kit file as drift in both certify and status", async () => {
+    const bundle = freshBundle();
+    const targeted = await cli(connectorArgs("claude", bundle));
+    expect(targeted.code, targeted.io.text()).toBe(0);
+    const targetFile = join(bundle, "targets/claude/permissions.json");
+    writeFileSync(targetFile, `${readFileSync(targetFile, "utf8")}tampered\n`, "utf8");
+
+    const certified = await cli(["certify", bundle, "--json"]);
+    expect(certified.code).toBe(1);
+    const certification = JSON.parse(certified.io.stdout.join("\n")) as {
+      status: string;
+      checks: Array<{ id: string; status: string; detail: string }>;
+    };
+    expect(certification.status).toBe("failed");
+    const claudeCheck = certification.checks.find(
+      (check) => check.id === "contract.target-kit-exact.claude",
+    );
+    expect(claudeCheck?.status).toBe("failed");
+    expect(claudeCheck?.detail).toContain("permissions.json");
+
+    const status = await cli(["status", bundle, "--json"]);
+    expect(status.code, status.io.text()).toBe(0);
+    const report = JSON.parse(status.io.stdout.join("\n")) as {
+      certification: { state: string };
+      targets: Array<{
+        targetId: string;
+        state: string;
+        integrity: { findings: Array<{ code: string }> };
+      }>;
+    };
+    expect(report.certification.state).toBe("failed");
+    const claudeTarget = report.targets.find((target) => target.targetId === "claude");
+    expect(claudeTarget?.state).toBe("stale");
+    expect(claudeTarget?.integrity.findings).toContainEqual(
+      expect.objectContaining({ code: "target/file_mismatch" }),
+    );
   });
 });
