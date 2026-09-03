@@ -903,6 +903,16 @@
       "tests": [
         "packages/refinement/src/protocol/group-cluster.test.ts"
       ]
+    },
+    {
+      "id": "targets/approval-never-downgraded",
+      "file": "packages/targets/src/mcp-connector.ts",
+      "control": "The OpenAI require_approval tier for a confirmation-required (or human-approval-gated) operation is always \"always\", never \"never\" — this is the one place that mapping is decided, and every openai target profile validation/generation call goes through it. Delete the mapping and a confirmation-required, irreversible-financial refund tool would be handed to the platform as require_approval: never.",
+      "find": "  return op.confirmation.required || op.confirmation.humanApproval === true ? \"always\" : \"never\";",
+      "replace": "  return \"never\";",
+      "tests": [
+        "packages/targets/src/openai.test.ts"
+      ]
     }
   ]
 }
