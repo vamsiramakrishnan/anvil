@@ -67,6 +67,51 @@ function writeBinding(): string {
   return path;
 }
 
+function writeRequestReplyBinding(): string {
+  const binding = finalizeLegacyCapabilityBindingRecord({
+    schemaVersion: 1,
+    inventoryId: `li_${"1".repeat(64)}`,
+    inventoryContentHash: `sha256:${"2".repeat(64)}`,
+    candidateId: `lc_${"3".repeat(64)}`,
+    candidateHash: `sha256:${"4".repeat(64)}`,
+    taskId: `lrt_${"5".repeat(64)}`,
+    taskHash: `sha256:${"6".repeat(64)}`,
+    proposalId: `lrp_${"7".repeat(64)}`,
+    proposalHash: `sha256:${"8".repeat(64)}`,
+    receiptId: `lrr_${"9".repeat(64)}`,
+    receiptHash: `sha256:${"a".repeat(64)}`,
+    operation: {
+      name: "refunds.submit_refund",
+      summary: "Submit a refund",
+      description: "Submit one refund request.",
+      effect: "create",
+      exposure: "mcp_tool",
+      inputSchema: { type: "object", properties: { refundId: { type: "string" } } },
+      outputSchema: { type: "object", properties: { accepted: { type: "boolean" } } },
+      errors: [],
+    },
+    transport: {
+      kind: "message",
+      protocol: "jms",
+      target: "jms/RefundRequests",
+      direction: "request_reply",
+      payloadEncoding: "json",
+      reply: { mode: "reply_to", correlationField: "JMSCorrelationID" },
+    },
+    semantics: {
+      completion: "application_accepted",
+      timeoutMs: 200,
+      authorization: { mode: "bridge_identity", scopes: [] },
+      idempotency: { mode: "client_key", carrier: "refundId" },
+      retry: { mode: "safe_transient", maxAttempts: 3 },
+    },
+    runtime: { placement: "deployment_local_bridge", status: "not_implemented" },
+  });
+  const path = join(work, "rr-binding.json");
+  writeFileSync(path, `${JSON.stringify(binding)}\n`);
+  return path;
+}
+
 describe("anvil legacy bridge plan", () => {
   it("emits a deterministic non-executable plan", async () => {
     const binding = writeBinding();
@@ -115,5 +160,71 @@ describe("anvil legacy bridge plan", () => {
       supported: false,
       missingCapabilities: expect.arrayContaining(["authorization", "recorded_conformance"]),
     });
+  });
+});
+
+describe("anvil legacy bridge conformance", () => {
+  it("passes against the in-process double and promotes the binding, deterministically", async () => {
+    const binding = writeRequestReplyBinding();
+    const planPath = join(work, "bridge-plan.json");
+    const planResult = await anvil("legacy", "bridge", "plan", binding, "--out", planPath, "--json");
+    expect(planResult.code, planResult.err).toBe(0);
+
+    const reportPath = join(work, "conformance.json");
+    const emitPath = join(work, "promoted-binding.json");
+    const first = await anvil(
+      "legacy",
+      "bridge",
+      "conformance",
+      planPath,
+      "--binding",
+      binding,
+      "--out",
+      reportPath,
+      "--emit-binding",
+      emitPath,
+      "--json",
+    );
+    expect(first.code, first.err).toBe(0);
+    const output = JSON.parse(first.out);
+    expect(output.reportType).toBe("anvil.legacy-bridge-conformance");
+    expect(output.conformance.brokerDouble).toBe("in_process_double");
+    expect(output.conformance.checks.every((c: { status: string }) => c.status === "pass")).toBe(
+      true,
+    );
+    expect(output.promotedBinding.runtime.status).toBe("conformance_passed");
+    expect(JSON.parse(readFileSync(reportPath, "utf8"))).toEqual(output);
+    expect(JSON.parse(readFileSync(emitPath, "utf8"))).toEqual(output.promotedBinding);
+
+    const second = await anvil(
+      "legacy",
+      "bridge",
+      "conformance",
+      planPath,
+      "--binding",
+      binding,
+      "--json",
+    );
+    expect(second.code, second.err).toBe(0);
+    expect(JSON.parse(second.out).conformance.contentHash).toBe(
+      output.conformance.contentHash,
+    );
+  });
+
+  it("refuses a plan report with no plan inside it", async () => {
+    const binding = writeRequestReplyBinding();
+    const emptyPlan = join(work, "empty-plan.json");
+    writeFileSync(emptyPlan, JSON.stringify({ plan: null }));
+    const result = await anvil(
+      "legacy",
+      "bridge",
+      "conformance",
+      emptyPlan,
+      "--binding",
+      binding,
+      "--json",
+    );
+    expect(result.code).toBe(1);
+    expect(JSON.parse(result.out).code).toBe("legacy/bridge_plan_missing");
   });
 });
