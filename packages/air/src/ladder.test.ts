@@ -3,6 +3,7 @@ import {
   type AirDocument,
   DEFAULT_SURFACE_DISCLOSURE_BUDGET_TOKENS,
   ladderPlan,
+  laneEntryDescription,
   laneEntryToolName,
   loadAirDocument,
 } from "./index.js";
@@ -19,13 +20,20 @@ import {
  * every schema default matches what the compiler actually emits.
  */
 
-const op = (id: string, toolName: string, tokens?: number, state = "approved") => ({
+const op = (
+  id: string,
+  toolName: string,
+  tokens?: number,
+  state = "approved",
+  action = "list",
+  resource = "thing",
+) => ({
   id,
   canonicalName: toolName,
   displayName: id,
   description: `Operation ${id}.`,
   sourceRef: { kind: "openapi", path: `/${id}`, method: "get" },
-  effect: { kind: "read", action: "list", resource: "thing", risk: "none" },
+  effect: { kind: "read", action, resource, risk: "none" },
   input: { params: [] },
   idempotency: { mode: "natural", mechanism: "none" },
   retries: { mode: "safe", maxAttempts: 3, backoff: "exponential_jitter", retryOn: ["http_429"] },
@@ -254,5 +262,78 @@ describe("entry cards share a namespace with operation tools", () => {
   it("produces MCP-safe card names from dotted capability ids", () => {
     expect(laneEntryToolName("payments.refunds")).toBe("open_payments_refunds");
     expect(laneEntryToolName("a/b c")).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+});
+
+describe("member vocabulary in entry cards", () => {
+  // Measured on a 640-operation estate (docs/backtesting/routing-at-scale.md):
+  // a discovered capability's own description/intentExamples are frequently a
+  // template ("Views capability for zendesk.", "work with views") that shares
+  // no vocabulary with how an agent actually phrases a request ("list the
+  // views"). Folding each member operation's own action/resource into the
+  // card measurably closed most of that gap.
+  it("folds each member's own verb/resource into the card, deduplicated", () => {
+    // buildLane iterates member operations in sorted-id order, so the ids
+    // themselves (not push order) fix the expected vocabulary order below.
+    const ops = [
+      op("svc.a_list", "tool_list", 15_000, "approved", "list", "widget"),
+      op("svc.b_get", "tool_get", 15_000, "approved", "get", "widget"),
+      // Same action+resource as svc.a_list — must count once, not twice.
+      op("svc.c_list2", "tool_list2", 15_000, "approved", "list", "widget"),
+    ];
+    const plan = ladderPlan(doc(ops, [{ id: "svc.widgets", operationIds: ops.map((o) => o.id) }]));
+    const lane = plan.lanes.find((l) => l.capabilityId === "svc.widgets");
+    expect(lane?.memberVocabulary).toEqual(["list widget", "get widget"]);
+    expect(lane?.summary).toBeDefined();
+  });
+
+  it("caps member vocabulary at a small, bounded sample", () => {
+    // A real, bounded enum of distinct actions — memberVocabulary is capped
+    // well short of it, so cycling through covers plenty of distinct pairs.
+    const actions = [
+      "list",
+      "get",
+      "search",
+      "export",
+      "simulate",
+      "validate",
+      "poll",
+      "create",
+      "update",
+      "replace",
+      "delete",
+      "send",
+      "execute",
+      "approve",
+      "cancel",
+      "reserve",
+    ];
+    const ops = actions.map((action, i) =>
+      op(`svc.op${i}`, `tool_${i}`, 15_000, "approved", action, "widget"),
+    );
+    const plan = ladderPlan(doc(ops, [{ id: "svc.things", operationIds: ops.map((o) => o.id) }]));
+    const lane = plan.lanes.find((l) => l.capabilityId === "svc.things");
+    // 16 distinct member operations, all with distinct verb/resource pairs —
+    // the card stays a routing aid, not a full member listing.
+    expect(lane?.memberVocabulary.length).toBeLessThan(actions.length);
+    expect(lane?.memberVocabulary.length).toBeGreaterThan(0);
+    expect(new Set(lane?.memberVocabulary).size).toBe(lane?.memberVocabulary.length);
+  });
+
+  it("puts the member vocabulary on the served entry-card description", () => {
+    const ops = [
+      op("svc.a_list", "tool_list", 15_000, "approved", "list", "widget"),
+      op("svc.b_get", "tool_get", 15_000, "approved", "get", "widget"),
+    ];
+    const plan = ladderPlan(doc(ops, [{ id: "svc.widgets", operationIds: ops.map((o) => o.id) }]));
+    const lane = plan.lanes.find((l) => l.capabilityId === "svc.widgets");
+    expect(lane).toBeDefined();
+    if (!lane) throw new Error("expected a lane");
+    // laneEntryDescription is exercised through the serving path (lane.ts) and
+    // the benchmark's ladderedCatalog; here it is called directly so the
+    // dependency on `memberVocabulary` — not just `routingPhrases` — is pinned
+    // at the source rather than only through a downstream consumer.
+    const description = laneEntryDescription(lane);
+    expect(description).toContain("Covers: list widget, get widget.");
   });
 });
