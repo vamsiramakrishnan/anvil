@@ -536,12 +536,26 @@ const LegacyCapabilityBindingCore = z
     operation: LegacyBusinessOperation,
     transport: LegacyTransportPlan,
     semantics: LegacyOperationalSemantics,
-    runtime: z
-      .object({
-        placement: z.literal("deployment_local_bridge"),
-        status: z.literal("not_implemented"),
-      })
-      .strict(),
+    runtime: z.discriminatedUnion("status", [
+      z
+        .object({
+          placement: z.literal("deployment_local_bridge"),
+          status: z.literal("not_implemented"),
+        })
+        .strict(),
+      z
+        .object({
+          placement: z.literal("deployment_local_bridge"),
+          status: z.literal("conformance_passed"),
+          /** Content hash of the `LegacyBridgeConformanceReport`
+           *  (`packages/compiler/src/legacy/bridge/model.ts`) whose full pass
+           *  is what moved this binding out of `not_implemented`. Required,
+           *  not optional: `conformance_passed` is a claim about a specific,
+           *  reproducible proof, never a status a caller can assert by hand. */
+          conformanceReportHash: LegacySha256,
+        })
+        .strict(),
+    ]),
   })
   .strict();
 
@@ -575,5 +589,40 @@ export function finalizeLegacyCapabilityBindingRecord(
     ...core,
     bindingId: address.id,
     contentHash: address.hash,
+  });
+}
+
+/**
+ * Promote an approved, `not_implemented` binding to `conformance_passed`.
+ *
+ * This is a new, distinct content-addressed record — deliberately, not a
+ * mutation. `bindingId`/`contentHash` are derived from the whole binding
+ * including `runtime`, so changing `status` always produces a new address;
+ * every other field (operation, transport, semantics, and the full
+ * inventory/task/proposal/receipt lineage) is carried over unchanged, so the
+ * promoted binding is verifiably the same reviewed capability, now proven
+ * conformant rather than a different one. Callers — `@anvil/legacy-bridge`'s
+ * conformance runner is the only one today — supply the report hash; this
+ * function does not run conformance itself, so it cannot be used to assert
+ * the claim without the proof that backs it.
+ */
+export function promoteLegacyCapabilityBindingToConformancePassed(
+  bindingInput: LegacyCapabilityBinding,
+  conformanceReportHash: LegacySha256,
+): LegacyCapabilityBinding {
+  const binding = LegacyCapabilityBinding.parse(bindingInput);
+  if (binding.runtime.status !== "not_implemented") {
+    throw new Error(
+      `legacy capability binding '${binding.bindingId}' is already '${binding.runtime.status}', not 'not_implemented'`,
+    );
+  }
+  const { bindingId: _bindingId, contentHash: _contentHash, ...core } = binding;
+  return finalizeLegacyCapabilityBindingRecord({
+    ...core,
+    runtime: {
+      placement: "deployment_local_bridge",
+      status: "conformance_passed",
+      conformanceReportHash,
+    },
   });
 }
