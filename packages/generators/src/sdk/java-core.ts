@@ -633,11 +633,28 @@ public final class Oauth {
    * runtime's default for the same contract.
    */
   public static Supplier<String> refreshingTokenProvider(
+      String tokenEndpoint, String refreshToken, String clientId, String clientSecret) {
+    // The four-argument call an earlier generation exported, kept compiling.
+    return refreshingTokenProvider(
+        tokenEndpoint, refreshToken, clientId, clientSecret, "client_secret_basic");
+  }
+
+  /**
+   * The same, authenticating to the token endpoint the way {@code clientAuth}
+   * names (RFC 6749 section 2.3.1).
+   */
+  public static Supplier<String> refreshingTokenProvider(
       String tokenEndpoint,
       String refreshToken,
       String clientId,
       String clientSecret,
       String clientAuth) {
+    if ("private_key_jwt".equals(clientAuth)) {
+      // Nothing here mints an RFC 7523 assertion, so a private-key client is
+      // refused rather than sent a client secret it does not have.
+      throw new IllegalArgumentException(
+          "private_key_jwt client authentication is not supported by the refresh helper");
+    }
     HttpClient client = HttpClient.newHttpClient();
     Object[] cache = new Object[] {null, Instant.MIN};
 

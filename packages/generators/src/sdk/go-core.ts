@@ -324,11 +324,16 @@ type refreshedToken struct {
 //
 // clientAuth is how the client authenticates to the token endpoint (RFC 6749
 // section 2.3.1); "client_secret_basic" is the runtime's default for the same
-// contract.
-func NewRefreshingTokenProvider(tokenEndpoint, refreshToken, clientID, clientSecret, clientAuth string) func(context.Context) (string, error) {
+// contract. It is VARIADIC so the four-argument call an earlier generation
+// exported still compiles.
+func NewRefreshingTokenProvider(tokenEndpoint, refreshToken, clientID, clientSecret string, clientAuth ...string) func(context.Context) (string, error) {
 	var mu sync.Mutex
 	var cachedToken string
 	var expiresAt time.Time
+	method := "client_secret_basic"
+	if len(clientAuth) > 0 && clientAuth[0] != "" {
+		method = clientAuth[0]
+	}
 
 	return func(ctx context.Context) (string, error) {
 		mu.Lock()
@@ -339,11 +344,16 @@ func NewRefreshingTokenProvider(tokenEndpoint, refreshToken, clientID, clientSec
 		form := url.Values{}
 		form.Set("grant_type", "refresh_token")
 		form.Set("refresh_token", refreshToken)
+		if method == "private_key_jwt" {
+			// Nothing here mints an RFC 7523 assertion, so a private-key client
+			// is refused rather than sent a client secret it does not have.
+			return "", fmt.Errorf("private_key_jwt client authentication is not supported by the refresh helper")
+		}
 		// Mirrors the runtime resolver exactly: client_secret_basic sends the
 		// credentials as HTTP Basic and keeps client_id out of the form; every
 		// other declared method carries client_id (and the secret, when
 		// present) in the form body.
-		useBasic := clientSecret != "" && clientAuth == "client_secret_basic"
+		useBasic := clientSecret != "" && method == "client_secret_basic"
 		if !useBasic {
 			form.Set("client_id", clientID)
 			if clientSecret != "" {

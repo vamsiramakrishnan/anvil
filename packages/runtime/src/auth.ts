@@ -217,6 +217,11 @@ export class EnvCredentialResolver implements CredentialResolver {
 
     const clientSecret = this.env[`${prefix}_CLIENT_SECRET`];
     const method = auth.provider?.clientAuth ?? "client_secret_basic";
+    // Nothing below mints an RFC 7523 assertion, so a private-key client is
+    // refused here rather than sent a client_secret it does not have. AIR
+    // already refuses the combination as incoherent (auth-mechanics.ts); this
+    // is the serving path's own fail-closed answer if one ever reaches it.
+    if (method === "private_key_jwt") return null;
     const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken });
     const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded" };
     if (clientSecret && method === "client_secret_basic") {

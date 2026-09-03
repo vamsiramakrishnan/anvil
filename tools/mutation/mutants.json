@@ -1261,6 +1261,36 @@
       "tests": [
         "packages/generators/src/sdk-oauth-refresh.test.ts"
       ]
+    },
+    {
+      "id": "auth/auth-code-refuses-assertion-client-auth",
+      "file": "packages/air/src/auth-mechanics.ts",
+      "control": "An authorization-code contract cannot declare private_key_jwt client authentication: neither the runtime's refresh nor any of the four SDK helpers mints an RFC 7523 assertion, so declaring it would promise what no surface keeps and every one of them would fall back to sending a client secret a private-key client does not have. Scoped to this scheme -- the client-credentials and token-exchange resolvers DO implement the method.",
+      "find": "  if (\n    auth.type === \"oauth2_authorization_code\" &&\n    auth.provider?.clientAuth === \"private_key_jwt\"\n  ) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/air/src/air.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/auth-code-refresh-refuses-assertion-client-auth",
+      "file": "packages/runtime/src/auth.ts",
+      "control": "The authorization-code refresh fails closed for private_key_jwt rather than sending a client_secret grant -- without this the serving path would hand a private-key client's secret-post form to a provider that expects a signed assertion, which is both wrong on the wire and a credential the client never declared.",
+      "find": "    if (method === \"private_key_jwt\") return null;",
+      "replace": "    if (false) return null;",
+      "tests": [
+        "packages/runtime/src/auth.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/python-refresh-keeps-positional-order",
+      "file": "packages/generators/src/sdk/python-core.ts",
+      "control": "client_auth is LAST in the Python refresh helper's signature so a caller written against an earlier generation keeps its meaning -- inserting it before expiry_skew_seconds silently rebinds a positional 60.0 into the client-auth slot, selecting the post branch and sending client_id where Basic was intended.",
+      "find": "    client_secret: Optional[str] = None,\n    expiry_skew_seconds: float = 30.0,\n    opener: Any = None,\n    client_auth: str = \"client_secret_basic\",",
+      "replace": "    client_secret: Optional[str] = None,\n    client_auth: str = \"client_secret_basic\",\n    expiry_skew_seconds: float = 30.0,\n    opener: Any = None,",
+      "tests": [
+        "packages/generators/src/sdk-oauth-refresh.test.ts"
+      ]
     }
   ]
 }

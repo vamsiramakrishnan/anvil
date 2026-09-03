@@ -882,9 +882,9 @@ def create_refreshing_token_provider(
     refresh_token: str,
     client_id: str,
     client_secret: Optional[str] = None,
-    client_auth: str = "client_secret_basic",
     expiry_skew_seconds: float = 30.0,
     opener: Any = None,
+    client_auth: str = "client_secret_basic",
 ) -> Callable[[], str]:
     """Build a token provider that exchanges 'refresh_token' at
     'token_endpoint' and caches the access token in memory until shortly
@@ -892,7 +892,16 @@ def create_refreshing_token_provider(
 
     'client_auth' is how the client authenticates to the token endpoint
     (RFC 6749 section 2.3.1), defaulting to 'client_secret_basic' exactly as
-    the runtime resolver does for the same contract."""
+    the runtime resolver does for the same contract. It is LAST in the
+    signature on purpose: callers of an earlier generation may pass
+    'expiry_skew_seconds' and 'opener' positionally, and inserting a parameter
+    before them would silently rebind those arguments on regeneration."""
+    if client_auth == "private_key_jwt":
+        # Nothing here mints an RFC 7523 assertion, so a private-key client is
+        # refused rather than sent a client_secret it does not have.
+        raise RuntimeError(
+            "private_key_jwt client authentication is not supported by the refresh helper"
+        )
     send = opener or urllib.request.urlopen
     cache: Dict[str, Any] = {}
 

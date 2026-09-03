@@ -271,6 +271,39 @@ function expectGrantParity(language: string): void {
   );
 }
 
+/**
+ * What a caller written against the PREVIOUS generation must still get. Go
+ * gained a variadic parameter and Java a four-argument overload rather than a
+ * required fifth argument, and Python's new option is last in the signature —
+ * so an existing call keeps compiling AND keeps meaning `client_secret_basic`,
+ * with `expiry_skew_seconds` still fifth in Python rather than silently
+ * rebound. TypeScript takes an options object and cannot break this way.
+ */
+function expectLegacyCallUnchanged(language: string): void {
+  const legacy = tokenRequest(language, "legacy");
+  expect(legacy, `${language} legacy call never reached the token endpoint`).toBeDefined();
+  expect(legacy?.headers.authorization, `${language} legacy call is still Basic`).toMatch(
+    /^Basic /,
+  );
+  expect(legacy?.body, `${language} legacy call body`).not.toContain("client_id=");
+}
+
+/**
+ * `private_key_jwt` is refused, never silently downgraded: nothing in a refresh
+ * helper mints an RFC 7523 assertion, so sending `client_secret` instead would
+ * hand a private-key client a credential it does not have. AIR refuses the
+ * combination outright (`auth-mechanics.ts`) and the runtime fails closed; this
+ * is the generated code's own answer when a caller passes it by hand.
+ */
+function expectAssertionMethodRefused(language: string, output: string): void {
+  expect(output, `${language} did not refuse private_key_jwt`).toContain("refused:");
+  expect(output, `${language} did not refuse private_key_jwt`).not.toContain("NOT REFUSED");
+  expect(
+    tokenRequest(language, "refused"),
+    `${language} sent a refused private_key_jwt grant anyway`,
+  ).toBeUndefined();
+}
+
 describe.runIf(TOOLCHAIN.typescript)("the TypeScript SDK's refresh grant", () => {
   it("honours the declared client-auth method, and carries the contract's own into the client", () => {
     const root = join(work, "typescript/sdk/typescript");
@@ -288,6 +321,16 @@ for (const [kase, clientAuth] of [["basic", "client_secret_basic"], ["post", "cl
   });
   console.log(kase + ":" + (await provider()));
 }
+try {
+  await createRefreshingTokenProvider(base + "/token?lang=typescript&case=refused", {
+    refreshToken: ${JSON.stringify(CREDS.refreshToken)},
+    clientId: ${JSON.stringify(CREDS.clientId)},
+    clientAuth: "private_key_jwt",
+  })();
+  console.log("NOT REFUSED");
+} catch (error) {
+  console.log("refused:" + (error instanceof Error ? error.message : "wrong-type"));
+}
 const client = new PaymentsClient({ baseUrl: base + "/upstream-typescript" });
 await client.getCustomer({ customer_id: "c 1" });
 console.log("sent");
@@ -298,6 +341,7 @@ console.log("sent");
     expect(output).toContain("basic:minted-token");
     expect(output).toContain("sent");
     expectGrantParity("typescript");
+    expectAssertionMethodRefused("typescript", output);
   }, 180_000);
 });
 
@@ -320,6 +364,26 @@ for case, client_auth in (("basic", "client_secret_basic"), ("post", "client_sec
         client_auth=client_auth,
     )
     print(case + ":" + provider())
+# The positional form an earlier generation accepted: the fifth argument is
+# still expiry_skew_seconds, not the new client_auth.
+legacy = create_refreshing_token_provider(
+    base + "/token?lang=python&case=legacy",
+    ${JSON.stringify(CREDS.refreshToken)},
+    ${JSON.stringify(CREDS.clientId)},
+    ${JSON.stringify(CREDS.clientSecret)},
+    60.0,
+)
+print("legacy:" + legacy())
+try:
+    create_refreshing_token_provider(
+        base + "/token?lang=python&case=refused",
+        ${JSON.stringify(CREDS.refreshToken)},
+        ${JSON.stringify(CREDS.clientId)},
+        client_auth="private_key_jwt",
+    )
+    print("NOT REFUSED")
+except RuntimeError as error:
+    print("refused:" + str(error))
 client = PaymentsClient(base_url=base + "/upstream-python")
 client.get_customer(customer_id="c 1")
 print("sent")
@@ -330,6 +394,8 @@ print("sent")
     expect(output).toContain("basic:minted-token");
     expect(output).toContain("sent");
     expectGrantParity("python");
+    expectLegacyCallUnchanged("python");
+    expectAssertionMethodRefused("python", output);
   }, 120_000);
 });
 
@@ -365,6 +431,27 @@ func main() {
 		}
 		fmt.Println(pair[0] + ":" + token)
 	}
+	// The four-argument form an earlier generation exported still compiles and
+	// still means client_secret_basic.
+	legacy := payments.NewRefreshingTokenProvider(
+		base+"/token?lang=go&case=legacy",
+		${JSON.stringify(CREDS.refreshToken)},
+		${JSON.stringify(CREDS.clientId)},
+		${JSON.stringify(CREDS.clientSecret)},
+	)
+	if _, err := legacy(context.Background()); err != nil {
+		panic(err)
+	}
+	refused := payments.NewRefreshingTokenProvider(
+		base+"/token?lang=go&case=refused",
+		${JSON.stringify(CREDS.refreshToken)},
+		${JSON.stringify(CREDS.clientId)},
+		${JSON.stringify(CREDS.clientSecret)},
+		"private_key_jwt",
+	)
+	if _, err := refused(context.Background()); err != nil {
+		fmt.Println("refused:" + err.Error())
+	}
 	client, err := payments.New(payments.WithBaseURL(base + "/upstream-go"))
 	if err != nil {
 		panic(err)
@@ -381,6 +468,8 @@ func main() {
     expect(output).toContain("basic:minted-token");
     expect(output).toContain("sent");
     expectGrantParity("go");
+    expectLegacyCallUnchanged("go");
+    expectAssertionMethodRefused("go", output);
   }, 180_000);
 });
 
@@ -415,6 +504,25 @@ public class Drive {
               pair[1]);
       System.out.println(pair[0] + ":" + provider.get());
     }
+    // The four-argument overload an earlier generation exported still compiles
+    // and still means client_secret_basic.
+    Oauth.refreshingTokenProvider(
+            base + "/token?lang=java&case=legacy",
+            ${JSON.stringify(CREDS.refreshToken)},
+            ${JSON.stringify(CREDS.clientId)},
+            ${JSON.stringify(CREDS.clientSecret)})
+        .get();
+    try {
+      Oauth.refreshingTokenProvider(
+              base + "/token?lang=java&case=refused",
+              ${JSON.stringify(CREDS.refreshToken)},
+              ${JSON.stringify(CREDS.clientId)},
+              ${JSON.stringify(CREDS.clientSecret)},
+              "private_key_jwt")
+          .get();
+    } catch (IllegalArgumentException expected) {
+      System.out.println("refused:" + expected.getMessage());
+    }
     PaymentsClient client =
         PaymentsClient.builder().baseUrl(base + "/upstream-java").build();
     client.getCustomer(new GetCustomerInput("c 1"));
@@ -429,5 +537,7 @@ public class Drive {
     expect(output).toContain("basic:minted-token");
     expect(output).toContain("sent");
     expectGrantParity("java");
+    expectLegacyCallUnchanged("java");
+    expectAssertionMethodRefused("java", output);
   }, 180_000);
 });

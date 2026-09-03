@@ -49,5 +49,22 @@ export function authMechanicsIssues(auth: AuthRequirement): string[] {
       "authorization-code auth that names an authorization endpoint must name its token endpoint",
     );
   }
+  // The authorization-code REFRESH is a bare RFC 6749 section 6 exchange in the
+  // runtime and in all four SDKs: it can authenticate with a client secret, by
+  // Basic or in the form, and nothing there mints an RFC 7523 assertion. Saying
+  // `private_key_jwt` here would be a promise no surface keeps — every one of
+  // them would fall back to sending a secret a private-key client does not even
+  // have. Refused rather than mis-sent; the client-credentials and
+  // token-exchange resolvers DO implement the method (runtime credentials.ts),
+  // so this rule is scoped to the one scheme whose refresh path cannot.
+  if (
+    auth.type === "oauth2_authorization_code" &&
+    auth.provider?.clientAuth === "private_key_jwt"
+  ) {
+    issues.push(
+      "authorization-code auth cannot use private_key_jwt client authentication: " +
+        "the refresh exchange has no assertion support",
+    );
+  }
   return issues;
 }

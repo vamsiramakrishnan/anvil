@@ -137,12 +137,18 @@ way each language finds convenient:
 | --- | --- |
 | `client_secret_basic` (the default when the contract names none) | HTTP Basic, and **no** `client_id` in the form |
 | `client_secret_post` | `client_id` and `client_secret` in the form, and **no** Basic header |
+| `private_key_jwt` | Nothing — refused. No refresh helper mints an RFC 7523 assertion, so a contract that declares it is refused as incoherent before it can be approved, the runtime fails closed, and the generated helper raises rather than substituting a client secret the caller may not even have. (The client-credentials and token-exchange grants **do** implement the method.) |
 
 An identity provider registered for one method rejects the other, so this is
 not cosmetic: it is the same agreement the CLI and the MCP server make about
 the same operation. `packages/generators/src/sdk-oauth-refresh.test.ts` drives
 each language's real helper against a local token endpoint and asserts the
 exact grant it sends.
+
+The helpers stay source-compatible across regenerations: Go's `clientAuth` is
+variadic, Java keeps a four-argument overload, and Python's `client_auth` is
+last in the signature — so a call written against an earlier generation still
+compiles and still means `client_secret_basic`.
 
 A credential env var that is exported but **empty** is no credential at all —
 the same reading the runtime gives it — so a blank `<SERVICE>_TOKEN` (what a

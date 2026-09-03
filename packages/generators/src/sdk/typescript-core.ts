@@ -1138,6 +1138,13 @@ export function createRefreshingTokenProvider(
     // other declared method carries client_id (and the secret, when present)
     // in the form body.
     const clientAuth = options.clientAuth ?? "client_secret_basic";
+    if (clientAuth === "private_key_jwt") {
+      // Nothing here mints an RFC 7523 assertion, so a private-key client is
+      // refused rather than sent a client_secret it does not have.
+      throw new Error(
+        "private_key_jwt client authentication is not supported by the refresh helper",
+      );
+    }
     if (options.clientSecret && clientAuth === "client_secret_basic") {
       headers.authorization =
         "Basic " + btoa(options.clientId + ":" + options.clientSecret);

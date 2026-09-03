@@ -526,6 +526,29 @@ describe("auth coherence: authorization-code mechanics and mtls material referen
     expect(issues).toContain("api_key auth cannot carry mtls client material references");
   });
 
+  it("refuses private_key_jwt on an authorization-code contract, and keeps it for the grants that implement it", () => {
+    // The refresh exchange mints no RFC 7523 assertion in the runtime or in any
+    // of the four SDKs, so declaring the method would promise what no surface
+    // keeps; the client-credentials resolver DOES implement it.
+    const refused = authCoherenceIssues({
+      ...base,
+      type: "oauth2_authorization_code",
+      principal: "end_user",
+      provider: { tokenEndpoint: "https://idp.example.com/token", clientAuth: "private_key_jwt" },
+    } as never);
+    expect(refused).toContain(
+      "authorization-code auth cannot use private_key_jwt client authentication: " +
+        "the refresh exchange has no assertion support",
+    );
+    const clientCredentials = authCoherenceIssues({
+      ...base,
+      type: "oauth2_client_credentials",
+      principal: "service",
+      provider: { tokenEndpoint: "https://idp.example.com/token", clientAuth: "private_key_jwt" },
+    } as never);
+    expect(clientCredentials.some((issue) => issue.includes("private_key_jwt"))).toBe(false);
+  });
+
   it("ties authorization-code mechanics to the authorization-code type", () => {
     const wrongType = authCoherenceIssues({
       ...base,
