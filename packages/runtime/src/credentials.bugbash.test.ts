@@ -116,15 +116,15 @@ describe("SecretManagerCredentialResolver — auth-type branch coverage", () => 
     expect(await r.resolve("prod", auth({ type: "basic" }))).toBeNull();
   });
 
-  it.each(["mtls", "custom_header"] as const)(
-    "fails closed for %s with no declared material instead of leaking a bearer",
-    async (type) => {
-      const r = new SecretManagerCredentialResolver({
-        env: { ANVIL_PROD_TOKEN: "must-not-leak" },
-      });
-      expect(await r.resolve("prod", auth({ type }))).toBeNull();
-    },
-  );
+  it.each([
+    "mtls",
+    "custom_header",
+  ] as const)("fails closed for %s with no declared material instead of leaking a bearer", async (type) => {
+    const r = new SecretManagerCredentialResolver({
+      env: { ANVIL_PROD_TOKEN: "must-not-leak" },
+    });
+    expect(await r.resolve("prod", auth({ type }))).toBeNull();
+  });
 
   // Codex review (PR #43, finding 1): oauth2_authorization_code is a scheme
   // EnvCredentialResolver already models correctly (a pre-issued ${prefix}_TOKEN

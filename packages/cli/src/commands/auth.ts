@@ -35,7 +35,7 @@ export function registerAuth(parent: Command, ctx: CommandContext): void {
       .command("login")
       .summary("Run the PKCE authorization-code flow once and store a refresh token.")
       .description(
-        "Finds the bundle's oauth2_authorization_code operation (--operation disambiguates when more than one distinct shape is declared), prints the authorization URL (--open launches the default browser), listens on its declared loopback redirect_uri (127.0.0.1, a random port when none is declared), exchanges the returned code at token_endpoint, and writes { refresh_token, obtained_at } to ~/.anvil/credentials/<profile>.json with mode 0600 — never inside the bundle, never printed. The runtime's env resolver reads it back when *_REFRESH_TOKEN is unset. Requires ANVIL_<PROFILE>_CLIENT_ID in the environment (and *_CLIENT_SECRET if the provider needs one); neither is ever echoed.",
+        "Finds the bundle's oauth2_authorization_code operation (--operation disambiguates when more than one distinct shape is declared), prints the authorization URL (--open launches the default browser), listens on its declared loopback redirect_uri (127.0.0.1 or localhost, exactly as registered — a random port when none is declared), exchanges the returned code at token_endpoint, and writes { refresh_token, obtained_at } to ~/.anvil/credentials/<profile>.json with mode 0600 — never inside the bundle, never printed. The runtime's env resolver reads it back when *_REFRESH_TOKEN is unset. Requires ANVIL_<PROFILE>_CLIENT_ID in the environment (and *_CLIENT_SECRET if the provider needs one); neither is ever echoed.",
       )
       .argument("<dir>", "generated bundle directory or air.yaml")
       .requiredOption(
@@ -132,15 +132,40 @@ function findAuthCodeOperation(
   return candidates[0];
 }
 
-/** The loopback the broker listens on: the declared redirect_uri's host/path, its port when named, else a random one. */
-function loopbackTarget(declared: string | undefined): { path: string; port: number } {
+/**
+ * The loopback the broker listens on: the declared redirect_uri's host, path,
+ * and query, plus its port when named (else a random one, substituted below).
+ *
+ * `host` is the value the redirect URI is BUILT with — an OAuth server compares
+ * `redirect_uri` byte-for-byte against what the client registered, so a
+ * provider that registered `http://localhost:<port>/callback` must see
+ * `localhost` back, never a silently-rewritten `127.0.0.1` (Codex review, PR
+ * #43, finding 2). Only the port is ever substituted, and only when the
+ * declared URI names none (or names `0`, an explicit "pick one" signal) — see
+ * the two call sites below, which still honor a fixed declared port unchanged.
+ * The socket this broker actually LISTENS on is a separate concern, pinned to
+ * 127.0.0.1 regardless of `host` (`awaitRedirect`'s `server.listen(port,
+ * "127.0.0.1", ...)`) — `localhost` resolves there, so nothing is exposed
+ * beyond loopback either way.
+ */
+function loopbackTarget(declared: string | undefined): {
+  host: string;
+  path: string;
+  search: string;
+  port: number;
+} {
   const url = new URL(declared ?? "http://127.0.0.1/callback");
   if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost") {
     throw new Error(
       `provider.redirect_uri must be a loopback address (127.0.0.1 or localhost); got "${url.hostname}".`,
     );
   }
-  return { path: url.pathname || "/callback", port: url.port ? Number(url.port) : 0 };
+  return {
+    host: url.hostname,
+    path: url.pathname || "/callback",
+    search: url.search,
+    port: url.port ? Number(url.port) : 0,
+  };
 }
 
 function base64url(buf: Buffer): string {
@@ -295,7 +320,7 @@ export async function runAuthLogin(
   }
   const clientSecret = process.env[`${prefix}_CLIENT_SECRET`];
 
-  let loopback: { path: string; port: number };
+  let loopback: { host: string; path: string; search: string; port: number };
   try {
     loopback = loopbackTarget(provider.redirectUri);
   } catch (err) {
@@ -315,7 +340,10 @@ export async function runAuthLogin(
     state,
     timeoutMs,
     (actualPort) => {
-      const redirectUri = `http://127.0.0.1:${actualPort}${loopback.path}`;
+      // Only the port is dynamic; host/path/query stay exactly what the
+      // provider registered, so this redirect_uri matches byte-for-byte on
+      // both the authorize request below and the token exchange later.
+      const redirectUri = `http://${loopback.host}:${actualPort}${loopback.path}${loopback.search}`;
       redirectUriHolder.value = redirectUri;
       const authorizeUrl = new URL(provider.authorizationEndpoint as string);
       authorizeUrl.searchParams.set("response_type", "code");

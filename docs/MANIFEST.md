@@ -260,6 +260,15 @@ operations:
     review_reason: End-user consented in the onboarding flow; token scope reviewed.
 ```
 
+`redirect_uri`'s host must be `127.0.0.1` or `localhost` (any other host is
+rejected before the broker ever listens) and is carried through byte-for-byte
+on both the authorization request and the token exchange — an IdP compares
+`redirect_uri` exactly, so a client registered for `http://localhost:<port>/callback`
+gets `localhost` back, never a silently-rewritten `127.0.0.1`. Only the port
+substitutes (random when the declared URI names none or names `0`; the broker's
+own listener always binds `127.0.0.1` regardless of the declared host, since
+`localhost` resolves there).
+
 Both `reviewed_by` and `review_reason` must be non-empty or the entry stays
 `review_required` with a note naming exactly which field is still missing —
 this is the only approval path on a receipt-bound gateway bundle, where

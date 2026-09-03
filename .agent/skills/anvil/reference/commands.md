@@ -1165,7 +1165,7 @@ Complete the interactive step for end-user (authorization-code) auth.
 
 Run the PKCE authorization-code flow once and store a refresh token.
 
-Finds the bundle's oauth2_authorization_code operation (--operation disambiguates when more than one distinct shape is declared), prints the authorization URL (--open launches the default browser), listens on its declared loopback redirect_uri (127.0.0.1, a random port when none is declared), exchanges the returned code at token_endpoint, and writes { refresh_token, obtained_at } to ~/.anvil/credentials/<profile>.json with mode 0600 — never inside the bundle, never printed. The runtime's env resolver reads it back when *_REFRESH_TOKEN is unset. Requires ANVIL_<PROFILE>_CLIENT_ID in the environment (and *_CLIENT_SECRET if the provider needs one); neither is ever echoed.
+Finds the bundle's oauth2_authorization_code operation (--operation disambiguates when more than one distinct shape is declared), prints the authorization URL (--open launches the default browser), listens on its declared loopback redirect_uri (127.0.0.1 or localhost, exactly as registered — a random port when none is declared), exchanges the returned code at token_endpoint, and writes { refresh_token, obtained_at } to ~/.anvil/credentials/<profile>.json with mode 0600 — never inside the bundle, never printed. The runtime's env resolver reads it back when *_REFRESH_TOKEN is unset. Requires ANVIL_<PROFILE>_CLIENT_ID in the environment (and *_CLIENT_SECRET if the provider needs one); neither is ever echoed.
 
 Options:
 - `--profile <profile>` — deployment profile (e.g. prod), combined with the operation's credential profile the same way the runtime combines them

@@ -792,15 +792,15 @@ describe("resolveCredentials — fail-closed routing", () => {
     expect(calls).toEqual([]);
   });
 
-  it.each(["mtls", "custom_header"] as const)(
-    "fails closed for %s with no declared material instead of leaking a bearer",
-    async (type) => {
-      const r = resolveCredentials(runtimeConfig("dev"), {
-        env: { ANVIL_DEF_TOKEN: "must-not-leak" },
-      });
-      expect(await r.resolve("def", auth({ type }))).toBeNull();
-    },
-  );
+  it.each([
+    "mtls",
+    "custom_header",
+  ] as const)("fails closed for %s with no declared material instead of leaking a bearer", async (type) => {
+    const r = resolveCredentials(runtimeConfig("dev"), {
+      env: { ANVIL_DEF_TOKEN: "must-not-leak" },
+    });
+    expect(await r.resolve("def", auth({ type }))).toBeNull();
+  });
 
   describe("default resolver (ANVIL_CREDENTIALS unset) delegates executable auth schemes (Codex review PR #43, finding 1)", () => {
     // Constructed exactly the way resolveCredentials constructs the DEFAULT
