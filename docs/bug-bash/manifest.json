@@ -68,6 +68,11 @@
       "categories": ["idempotency-carriers", "deployment-config"]
     },
     {
+      "path": "packages/cli/src/commands/manifest-auth-approval.bugbash.test.ts",
+      "subsystem": "receipt-bound authorization-code approval",
+      "categories": ["identity-and-auth", "gateway-estate-identity"]
+    },
+    {
       "path": "packages/cli/src/commands/refine.bugbash.test.ts",
       "subsystem": "refine",
       "categories": ["risk-classification"]

@@ -756,4 +756,106 @@ operations:
     expect(air.operations[0]?.state).toBe("review_required");
     expect(air.operations[0]?.reviewNotes.join(" ")).toContain("never a material-completeness one");
   });
+
+  it("stays review_required when the manifest asks for approved but names no reviewer or reason", async () => {
+    const air = await compile({
+      spec: spec(
+        {
+          oauth: {
+            type: "oauth2",
+            flows: {
+              authorizationCode: {
+                authorizationUrl: "https://idp.example.com/authorize",
+                tokenUrl: "https://idp.example.com/token",
+                scopes: { "items.read": "read" },
+              },
+            },
+          },
+        },
+        [{ oauth: ["items.read"] }],
+      ),
+      manifest: `
+operations:
+  listItems:
+    state: approved
+    reviewed_by: ""
+`,
+      serviceId: "auth-api",
+    });
+    // reviewed_by is present but empty and review_reason is entirely absent —
+    // both must be non-empty, so the attempt is refused exactly like the bare
+    // "state: approved" case, and the note names what is missing.
+    expect(air.operations[0]?.state).toBe("review_required");
+    const notes = air.operations[0]?.reviewNotes.join(" ") ?? "";
+    expect(notes).toContain("never a material-completeness one");
+    expect(notes).toContain("reviewed_by");
+    expect(notes).toContain("review_reason");
+  });
+
+  it("approves authorization-code by manifest when reviewed_by and review_reason are both named", async () => {
+    const air = await compile({
+      spec: spec(
+        {
+          oauth: {
+            type: "oauth2",
+            flows: {
+              authorizationCode: {
+                authorizationUrl: "https://idp.example.com/authorize",
+                tokenUrl: "https://idp.example.com/token",
+                scopes: { "items.read": "read" },
+              },
+            },
+          },
+        },
+        [{ oauth: ["items.read"] }],
+      ),
+      manifest: `
+operations:
+  listItems:
+    state: approved
+    reviewed_by: security-review@example.com
+    review_reason: Delegation reviewed against the customer's consent screen; scope is read-only.
+`,
+      serviceId: "auth-api",
+    });
+    expect(air.operations[0]?.auth.type).toBe("oauth2_authorization_code");
+    expect(air.operations[0]?.state).toBe("approved");
+    const notes = air.operations[0]?.reviewNotes.join(" ") ?? "";
+    expect(notes).toContain("end-user authority granted by manifest");
+    expect(notes).toContain("security-review@example.com");
+    expect(notes).toContain("consent screen");
+  });
+
+  it("records reviewed_by/review_reason on a non-authorization-code auth type without gating it", async () => {
+    const air = await compile({
+      spec: spec(
+        {
+          oauth: {
+            type: "oauth2",
+            flows: {
+              clientCredentials: {
+                tokenUrl: "https://idp.example.com/token",
+                scopes: { "items.read": "read" },
+              },
+            },
+          },
+        },
+        [{ oauth: ["items.read"] }],
+      ),
+      manifest: `
+operations:
+  listItems:
+    reviewed_by: platform-team
+    review_reason: Service-to-service credential, no end user involved.
+`,
+      serviceId: "auth-api",
+    });
+    // No state override at all — client-credentials was already approvable
+    // and reviewed_by/review_reason change nothing but the note.
+    expect(air.operations[0]?.auth.type).toBe("oauth2_client_credentials");
+    const notes = air.operations[0]?.reviewNotes.join(" ") ?? "";
+    expect(notes).toContain("Manifest review recorded");
+    expect(notes).toContain("platform-team");
+    expect(notes).toContain("this auth type does not require it");
+  });
 });
