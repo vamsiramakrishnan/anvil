@@ -973,11 +973,13 @@ Options:
 
 Compare a bundle against the running application it was compiled from.
 
-Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json. RECORDED TRAFFIC (--from-records <dir>): instead of probing live, folds the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server; records carry outcomes, error codes, retry and ledger behaviour — no secrets, no payloads) into recorded_traffic evidence through the same reconciler. Traffic corroborates freely; the one patch it earns is deprecation, when every one of enough calls answered not_found. Writes traffic.report.json.
+Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json. RECORDED TRAFFIC (--from-records <dir>): instead of probing live, folds the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server; records carry outcomes, error codes, retry and ledger behaviour — no secrets, no payloads) into recorded_traffic evidence through the same reconciler. Traffic corroborates freely; the one patch it earns is deprecation, when every one of enough calls answered not_found. Writes traffic.report.json. DRIFT ALARM (--alarm, with --from-records): folds the same spooled records against compiled safety claims — e.g. an operation compiled `idempotency.mode="natural"` that returned a conflict on replay — and, for a contradiction an existing refinement skill can investigate, opens a real case (`anvil case ...` rails) with the contradicting records attached as recorded_traffic evidence. Proposing only: this never patches AIR, and every opened case still requires the ordinary skill/approval workflow to go anywhere. See docs/fleet.md.
 
 Options:
 - `--config <file>` — JSON config naming the running application
 - `--from-records <dir>` — fold a serving-path record spool (ANVIL_RECORDS_DIR) into evidence instead of probing live
+- `--alarm` — with --from-records: also fold spooled records against compiled safety claims and open a refinement case for any contradiction found (propose-only; see docs/fleet.md)
+- `--case-root <dir>` — case root directory for --alarm
 - `--write <manifest>` — write the proposed manifest here instead of printing it
 - `--capture <file>` — save the contract the application served, to re-capture with `anvil source add`
 - `--json` — emit the full report as JSON
@@ -1179,7 +1181,10 @@ Boots the MCP server for local agent use. The same server deploys to Cloud Run f
 #### `anvil serve mcp`
 `anvil serve mcp [options] <dir>`
 
-Serve the bundle's MCP server on stdio.
+Serve one bundle's MCP server on stdio, or a whole workspace with --fleet.
+
+Options:
+- `--fleet` — treat <dir> as a workspace root and mount every bundle beneath it onto one MCP server, each under a stable per-bundle tool prefix (see docs/fleet.md)
 
 ### `anvil package`  *(mutates)*
 `anvil package [options] [command]`

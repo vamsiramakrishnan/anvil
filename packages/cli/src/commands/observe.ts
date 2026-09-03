@@ -2,9 +2,12 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadAirDocument } from "@anvil/air";
 import {
+  type DriftAlarmResult,
   OBSERVE_REPORT_FILE,
   ObserveConfig,
   type ObserveReport,
+  readRecordSpool,
+  runDriftAlarm,
   runObserve,
   runRecords,
   TRAFFIC_REPORT_FILE,
@@ -34,7 +37,7 @@ export function registerObserve(parent: Command, ctx: CommandContext): void {
       .command("observe")
       .summary("Compare a bundle against the running application it was compiled from.")
       .description(
-        "Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json. RECORDED TRAFFIC (--from-records <dir>): instead of probing live, folds the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server; records carry outcomes, error codes, retry and ledger behaviour — no secrets, no payloads) into recorded_traffic evidence through the same reconciler. Traffic corroborates freely; the one patch it earns is deprecation, when every one of enough calls answered not_found. Writes traffic.report.json.",
+        "Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json. RECORDED TRAFFIC (--from-records <dir>): instead of probing live, folds the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server; records carry outcomes, error codes, retry and ledger behaviour — no secrets, no payloads) into recorded_traffic evidence through the same reconciler. Traffic corroborates freely; the one patch it earns is deprecation, when every one of enough calls answered not_found. Writes traffic.report.json. DRIFT ALARM (--alarm, with --from-records): folds the same spooled records against compiled safety claims — e.g. an operation compiled `idempotency.mode=\"natural\"` that returned a conflict on replay — and, for a contradiction an existing refinement skill can investigate, opens a real case (`anvil case ...` rails) with the contradicting records attached as recorded_traffic evidence. Proposing only: this never patches AIR, and every opened case still requires the ordinary skill/approval workflow to go anywhere. See docs/fleet.md.",
       )
       .argument("<dir>", "generated bundle directory")
       .option("--config <file>", "JSON config naming the running application")
@@ -42,6 +45,11 @@ export function registerObserve(parent: Command, ctx: CommandContext): void {
         "--from-records <dir>",
         "fold a serving-path record spool (ANVIL_RECORDS_DIR) into evidence instead of probing live",
       )
+      .option(
+        "--alarm",
+        "with --from-records: also fold spooled records against compiled safety claims and open a refinement case for any contradiction found (propose-only; see docs/fleet.md)",
+      )
+      .option("--case-root <dir>", "case root directory for --alarm", ".refinement")
       .option("--write <manifest>", "write the proposed manifest here instead of printing it")
       .option(
         "--capture <file>",
@@ -58,6 +66,8 @@ export function registerObserve(parent: Command, ctx: CommandContext): void {
 interface ObserveOptions {
   config?: string;
   fromRecords?: string;
+  alarm?: boolean;
+  caseRoot?: string;
   write?: string;
   capture?: string;
   json?: boolean;
@@ -82,8 +92,15 @@ async function runObserveCommand(dir: string, opts: ObserveOptions, io: CliIO): 
         "Pass either --config (probe the live application) or --from-records (read a spool), not both.",
     });
   }
+  if (opts.alarm === true && opts.fromRecords === undefined) {
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.observe-error",
+      code: "observe_alarm_needs_records",
+      message: "--alarm folds spooled records against compiled claims; pass --from-records <dir> too.",
+    });
+  }
   if (opts.fromRecords !== undefined) {
-    return runFromRecords(bundle, opts.fromRecords, opts, io);
+    return await runFromRecords(bundle, opts.fromRecords, opts, io);
   }
   if (opts.config === undefined) {
     return emitRefusal(io, opts.json, {
@@ -150,7 +167,12 @@ async function runObserveCommand(dir: string, opts: ObserveOptions, io: CliIO): 
   return report.ok ? 0 : 1;
 }
 
-function runFromRecords(bundle: string, spoolDir: string, opts: ObserveOptions, io: CliIO): number {
+async function runFromRecords(
+  bundle: string,
+  spoolDir: string,
+  opts: ObserveOptions,
+  io: CliIO,
+): Promise<number> {
   const dir = resolve(spoolDir);
   if (!existsSync(dir)) {
     return emitRefusal(io, opts.json, {
@@ -170,12 +192,57 @@ function runFromRecords(bundle: string, spoolDir: string, opts: ObserveOptions, 
       "utf8",
     );
   }
+
+  // The drift alarm re-reads the exact same spool `runRecords` just folded
+  // into evidence, then folds it a SECOND way — against compiled safety
+  // claims rather than into `recorded_traffic` claims — and, for a
+  // contradiction an existing skill can investigate, opens a real case.
+  // Deliberately separate passes: one earns claims, the other raises alarms;
+  // conflating them would make a claim-earning read also decide whether a
+  // case opens, which is not what either pass is for.
+  const alarm = opts.alarm === true ? await alarmPass(air, dir, opts, io) : undefined;
+
   if (opts.json === true) {
-    io.out(JSON.stringify({ reportType: "anvil.traffic-report", ...report }, null, 2));
+    io.out(
+      JSON.stringify(
+        { reportType: "anvil.traffic-report", ...report, ...(alarm ? { alarm } : {}) },
+        null,
+        2,
+      ),
+    );
     return report.ok ? 0 : 1;
   }
   renderTraffic(report, opts, io);
+  if (alarm) renderAlarm(alarm, io);
   return report.ok ? 0 : 1;
+}
+
+async function alarmPass(
+  air: ReturnType<typeof loadAirDocument>,
+  spoolDir: string,
+  opts: ObserveOptions,
+  io: CliIO,
+): Promise<DriftAlarmResult> {
+  const { records } = readRecordSpool(spoolDir);
+  return runDriftAlarm(air, records, { root: opts.caseRoot ?? ".refinement" });
+}
+
+function renderAlarm(alarm: DriftAlarmResult, io: CliIO): void {
+  io.out("");
+  if (alarm.contradictions.length === 0) {
+    io.out("Drift alarm: no contradictions — recorded traffic corroborates the compiled claims.");
+    return;
+  }
+  io.out(
+    `Drift alarm: ${alarm.contradictions.length} contradiction(s) found, ` +
+      `${alarm.opened.length} case(s) opened, ${alarm.skipped.length} skipped.`,
+  );
+  for (const opened of alarm.opened) {
+    io.out(`  OPENED ${opened.dir} — ${opened.contradiction.message}`);
+  }
+  for (const skipped of alarm.skipped) {
+    io.out(`  SKIPPED (${skipped.reason}) — ${skipped.contradiction.message}`);
+  }
 }
 
 function renderTraffic(report: TrafficReport, opts: ObserveOptions, io: CliIO): void {
