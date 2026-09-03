@@ -789,10 +789,17 @@ Options:
 - `--allow-degraded-native` — explicitly allow the unsandboxed native reviewer (isolated HOME; host files remain reachable)
 - `--json` — emit the full review report as JSON
 
-### `anvil target`  *(mutates)*
-`anvil target [options] <profile> <dir>`
+### `anvil target`
+`anvil target [options] [command]`
 
-Generate an agent-platform connector kit (e.g. Gemini Enterprise) for a bundle.
+Generate an agent-platform connector kit (Gemini Enterprise, Claude, OpenAI, MCP registry).
+
+Each subcommand is a pure projection of AIR plus its own config — no network calls, ever. Registered platforms: gemini-enterprise, claude, openai, mcp-registry. Validates the contract against the platform's requirements first; no files are written when validation fails.
+
+#### `anvil target gemini-enterprise`  *(mutates)*
+`anvil target gemini-enterprise [options] <dir>`
+
+Generate the Gemini Enterprise connector kit for a bundle.
 
 Validates and generates one explicit Gemini Enterprise registration journey. `custom-mcp` is console-first; its raw setUpDataConnector files are experimental references. `agent-gateway` emits guarded Agent Registry, gateway, engine-binding, and rollback artifacts. `both` is available only when explicitly requested for compatibility. Connector OAuth protects /mcp and is separate from Gemini Enterprise sign-in / Workforce Identity Federation. No files are written when validation fails.
 
@@ -820,6 +827,69 @@ Options:
 - `--gateway-authorization-policy <resource>` — full projects/<project>/locations/<region>/authzPolicies/<policy> resource attached to the gateway
 - `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
 - `--json` — emit the plan + compatibility report as JSON
+
+#### `anvil target claude`  *(mutates)*
+`anvil target claude [options] <dir>`
+
+Generate a Claude MCP config kit (stdio + streamable-http) for a bundle.
+
+Emits an mcpServers config fragment for both the stdio transport (`anvil serve mcp <dir>`) and the streamable-http transport, plus a per-tool permission hint and, when --server-auth oauth, a connector manifest. OAuth client credential flags accept an environment-variable NAME only, never a secret value. No files are written when validation fails.
+
+Options:
+- `--endpoint <url>` — the deployed MCP server's public HTTPS URL (e.g. https://host/mcp)
+- `--server-auth <mode>` — how the platform authenticates to the MCP server
+- `--oauth-authorization-url <url>` — connector OAuth authorization URL
+- `--oauth-token-url <url>` — connector OAuth token URL
+- `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
+- `--inbound-issuer <url>` — issuer the MCP resource server validates
+- `--inbound-audience <audience>` — audience identifying this MCP API
+- `--oauth-client-id-env <name>` — environment-variable NAME the platform's OAuth client id is read from (never a value)
+- `--oauth-client-secret-env <name>` — environment-variable NAME the platform's OAuth client secret is read from (never a value)
+- `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
+- `--json` — emit the compatibility report as JSON
+
+#### `anvil target openai`  *(mutates)*
+`anvil target openai [options] <dir>`
+
+Generate an OpenAI Responses API MCP tool kit for a bundle.
+
+Emits a `type: "mcp"` Responses API tool declaration for the deployed server, with require_approval derived per operation from contract-level confirmation, plus a `type: "function"` fallback (one function per approved operation, schemas from AIR) for clients that cannot attach a remote MCP server. No files are written when validation fails.
+
+Options:
+- `--endpoint <url>` — the deployed MCP server's public HTTPS URL (e.g. https://host/mcp)
+- `--server-auth <mode>` — how the platform authenticates to the MCP server
+- `--oauth-authorization-url <url>` — connector OAuth authorization URL
+- `--oauth-token-url <url>` — connector OAuth token URL
+- `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
+- `--inbound-issuer <url>` — issuer the MCP resource server validates
+- `--inbound-audience <audience>` — audience identifying this MCP API
+- `--oauth-client-id-env <name>` — environment-variable NAME the platform's OAuth client id is read from (never a value)
+- `--oauth-client-secret-env <name>` — environment-variable NAME the platform's OAuth client secret is read from (never a value)
+- `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
+- `--json` — emit the compatibility report as JSON
+
+#### `anvil target mcp-registry`  *(mutates)*
+`anvil target mcp-registry [options] <dir>`
+
+Generate an MCP registry server.json + publish plan for a bundle.
+
+Emits server.json (name, description, version, remotes) and a read-only publish plan for the MCP registry. Anvil holds no registry credentials and never calls the publish endpoint; the plan is guidance for a human operator. No files are written when validation fails.
+
+Options:
+- `--name <name>` — registry server name, e.g. io.github.<owner>/<slug> (defaults from the service id)
+- `--registry-version <version>` — version submitted to the registry (defaults to the AIR service version)
+- `--repository-url <url>` — source repository URL recorded in server.json
+- `--endpoint <url>` — the deployed MCP server's public HTTPS URL (e.g. https://host/mcp)
+- `--server-auth <mode>` — how the platform authenticates to the MCP server
+- `--oauth-authorization-url <url>` — connector OAuth authorization URL
+- `--oauth-token-url <url>` — connector OAuth token URL
+- `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
+- `--inbound-issuer <url>` — issuer the MCP resource server validates
+- `--inbound-audience <audience>` — audience identifying this MCP API
+- `--oauth-client-id-env <name>` — environment-variable NAME the platform's OAuth client id is read from (never a value)
+- `--oauth-client-secret-env <name>` — environment-variable NAME the platform's OAuth client secret is read from (never a value)
+- `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
+- `--json` — emit the compatibility report as JSON
 
 ### `anvil deploy`
 `anvil deploy [options] [command]`
