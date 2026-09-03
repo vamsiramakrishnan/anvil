@@ -24,11 +24,7 @@ import {
   resolveBundleDir,
   verifyCertification,
 } from "@anvil/generators";
-import {
-  GEMINI_ENTERPRISE_PROFILE,
-  type TargetKitIntegrityFinding,
-  verifyTargetKit,
-} from "@anvil/targets";
+import { findProfile, type TargetKitIntegrityFinding, verifyTargetKit } from "@anvil/targets";
 import type { Command } from "commander";
 import { recommendsExplicitIdempotencyKey, requiresExplicitIdempotencyKey } from "../explain.js";
 import type { CliIO } from "../io.js";
@@ -1063,8 +1059,9 @@ function targetStatuses(
       files[relativePath] === undefined
         ? join(bundle, "targets", targetId)
         : join(bundle, relativePath);
-    if (air && targetId === GEMINI_ENTERPRISE_PROFILE.id) {
-      const verification = verifyTargetKit(air, GEMINI_ENTERPRISE_PROFILE, files);
+    const profile = findProfile(targetId);
+    if (air && profile) {
+      const verification = verifyTargetKit(air, profile, files);
       const setup = parseTargetSetup(files[relativePath]);
       const corruptSetup = verification.findings.some(
         (finding) =>

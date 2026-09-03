@@ -13,7 +13,7 @@ import {
   readBundleDir,
   resolveBundleDir,
 } from "@anvil/generators";
-import { GEMINI_ENTERPRISE_PROFILE, verifyTargetKit } from "@anvil/targets";
+import { listProfiles, verifyTargetKit } from "@anvil/targets";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
@@ -95,24 +95,31 @@ export function runCertify(
   return cert.status === "passed" ? 0 : 1;
 }
 
+/**
+ * One drift check per registered profile whose target subtree is present in
+ * the bundle — checked exactly the way Gemini Enterprise's kit always was,
+ * generalized over `listProfiles()` instead of one hardcoded profile.
+ */
 function targetCertificationChecks(
   files: Record<string, string>,
   air: AirDocument,
 ): CertificationCheck[] {
-  const prefix = `targets/${GEMINI_ENTERPRISE_PROFILE.id}/`;
-  if (!Object.keys(files).some((path) => path.startsWith(prefix))) return [];
+  const checks: CertificationCheck[] = [];
+  for (const profile of listProfiles()) {
+    const prefix = `targets/${profile.id}/`;
+    if (!Object.keys(files).some((path) => path.startsWith(prefix))) continue;
 
-  const result = verifyTargetKit(air, GEMINI_ENTERPRISE_PROFILE, files);
-  return [
-    {
-      id: `contract.target-kit-exact.${GEMINI_ENTERPRISE_PROFILE.id}`,
+    const result = verifyTargetKit(air, profile, files);
+    checks.push({
+      id: `contract.target-kit-exact.${profile.id}`,
       gate: "contract",
       status: result.ok ? "passed" : "failed",
       detail: result.ok
-        ? `${GEMINI_ENTERPRISE_PROFILE.id} exactly regenerates from persisted setup config and canonical AIR (${result.expectedFiles.length} files, ${result.expectedDigest?.slice(0, 12)}…).`
+        ? `${profile.id} exactly regenerates from persisted setup config and canonical AIR (${result.expectedFiles.length} files, ${result.expectedDigest?.slice(0, 12)}…).`
         : result.findings.map((finding) => finding.detail).join("; "),
-    },
-  ];
+    });
+  }
+  return checks;
 }
 
 /** The gate-by-gate summary `anvil certify` prints (details live behind --json). */
