@@ -10,6 +10,7 @@ export * from "./agent.js";
 export * from "./bundle-driver.js";
 export * from "./conformance.js";
 export * from "./disclosure-reconcile.js";
+export * from "./drift-alarm.js";
 export * from "./enrich.js";
 export * from "./evidence.js";
 export * from "./live.js";

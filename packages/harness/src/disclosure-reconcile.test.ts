@@ -69,6 +69,7 @@ function record(
     policyDecisions: [],
     confirmationRequired: false,
     confirmed: false,
+    principalId: "anonymous",
     ...overrides,
   };
 }

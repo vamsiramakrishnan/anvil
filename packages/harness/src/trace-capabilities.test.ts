@@ -49,6 +49,7 @@ function record(traceId: string, operationId: string): ExecutionRecord {
     policyDecisions: [],
     confirmationRequired: false,
     confirmed: false,
+    principalId: "anonymous",
   };
 }
 

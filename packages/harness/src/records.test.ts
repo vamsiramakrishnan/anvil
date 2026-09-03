@@ -33,6 +33,7 @@ function record(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
     policyDecisions: [],
     confirmationRequired: false,
     confirmed: false,
+    principalId: "anonymous",
     ...overrides,
   };
 }
