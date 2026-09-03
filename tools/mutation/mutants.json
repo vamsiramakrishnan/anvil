@@ -913,6 +913,27 @@
       "tests": [
         "packages/targets/src/openai.test.ts"
       ]
+    },
+    {
+      "id": "har/observed-never-generated",
+      "file": "packages/compiler/src/har-posture.ts",
+      "control": "Every operation compiled from a HAR (captured-traffic) source is capped at review_required, never generated or approved — a capture is evidence of what happened once, never a declared contract. Delete the cap and a HAR-sourced operation compiles straight to generated, one anvil approve away from exposure with no human ever reviewing what the adapter templated or inferred.",
+      "find": "    if (op.state === \"generated\" || op.state === \"approved\") {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/compiler/src/har-posture.test.ts",
+        "packages/compiler/src/protocols/har.test.ts"
+      ]
+    },
+    {
+      "id": "har/secret-values-never-emitted",
+      "file": "packages/compiler/src/protocols/har.ts",
+      "control": "A HAR capture's Cookie, Set-Cookie, Proxy-Authorization, and any header/query name matching /token|secret|key|password|session/i has its VALUE dropped before anything else in the adapter runs — only the carrier's NAME survives. Delete the drop and the original header (value intact) flows straight into the auth-scheme scan and the compiled document, leaking the real credential (an API key, a session cookie) into AIR the moment a HAR capture is compiled.",
+      "find": "        return { name: h.name };",
+      "replace": "        return h;",
+      "tests": [
+        "packages/compiler/src/protocols/har.test.ts"
+      ]
     }
   ]
 }
