@@ -8,6 +8,7 @@ import type { AirDocument, Operation } from "@anvil/air";
 import { loadAir } from "@anvil/refinement";
 import { credentialProfileName, credentialRequirement, envPrefix } from "@anvil/runtime";
 import type { Command } from "commander";
+import { emitRefusal } from "../envelope.js";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
@@ -399,8 +400,11 @@ export function runAuthStatus(
   try {
     air = loadAir(dir);
   } catch (err) {
-    io.err(err instanceof Error ? err.message : String(err));
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.auth-status-error",
+      code: "auth_status_bundle_invalid",
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
   const seen = new Set<string>();
   const rows: Array<{
@@ -436,7 +440,19 @@ export function runAuthStatus(
   }
 
   if (opts.json === true) {
-    io.out(JSON.stringify({ service: air.service.id, profile: opts.profile, rows }, null, 2));
+    io.out(
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          reportType: "anvil.auth-status",
+          service: air.service.id,
+          profile: opts.profile,
+          rows,
+        },
+        null,
+        2,
+      ),
+    );
     return 0;
   }
   if (rows.length === 0) {
