@@ -1151,6 +1151,16 @@
       ]
     },
     {
+      "id": "harness/drift-alarm-bare-409-is-not-replay-evidence",
+      "file": "packages/harness/src/drift-alarm.ts",
+      "control": "A bare `conflict` error code alone is not evidence of an idempotency-replay contradiction -- an ordinary business conflict (e.g. \"this resource already exists\") returns the same code and can itself be perfectly idempotent to repeat. Only a record carrying the runtime idempotency ledger's own \"replay\" evidence (SpooledRecord.ledger) proves the runtime treated it as a repeat of a specific earlier call. Drop the ledger check and any recorded conflict on a naturally-idempotent operation opens a high-severity case, alarm-fatiguing an operator over routine business conflicts.",
+      "find": "  const conflicting = opRecords.filter((r) => r.errorCode === \"conflict\" && r.ledger === \"replay\");",
+      "replace": "  const conflicting = opRecords.filter((r) => r.errorCode === \"conflict\");",
+      "tests": [
+        "packages/harness/src/drift-alarm.test.ts"
+      ]
+    },
+    {
       "id": "fleet/contradiction-opens-case-never-patches",
       "file": "packages/harness/src/drift-alarm.ts",
       "control": "The drift alarm routes an idempotency-replay contradiction through the EXISTING contested_safety_semantic deficiency (classify-idempotency's registered trigger) -- never a made-up code -- so opening a case actually reaches a real, evidence-compatible skill instead of silently finding nothing to open.",
