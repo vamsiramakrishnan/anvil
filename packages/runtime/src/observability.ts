@@ -17,6 +17,12 @@ export interface ExecutionRecord {
   retryCount: number;
   idempotencyKeyPresent: boolean;
   authProfile?: string;
+  /**
+   * WHO called (fleet runtime): the resolved `Principal.id`, never the
+   * bearer token or `ANVIL_PRINCIPAL` value that resolved it. `"anonymous"`
+   * when no principal directory is configured — the default.
+   */
+  principalId: string;
   errorCode?: ErrorCode;
   requestBytes: number;
   responseBytes: number;

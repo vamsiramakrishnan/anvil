@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   agentPropKey,
+  FLEET_POLICY_CODE,
   type IdempotencyCarrierBinding,
   idempotencyKeyMatchesOperation,
   isModeledIdempotencyCarrierInput,
@@ -35,8 +36,16 @@ import {
   resolveIdempotencyKey,
 } from "./idempotency.js";
 import type { InboundIdentity } from "./inbound-identity.js";
+import { checkLimits, type LimitsGate } from "./limits.js";
 import { type ExecutionRecord, noopObserver, type Observer } from "./observability.js";
-import type { PolicyContext, PolicyHook, PolicyHooks } from "./policy.js";
+import {
+  missingScopes,
+  type PolicyContext,
+  type PolicyHook,
+  type PolicyHooks,
+  type Principal,
+  resolvePrincipal,
+} from "./policy.js";
 import { applyAgentProjection } from "./response-projection.js";
 import {
   computeBackoffMs,
@@ -84,6 +93,17 @@ export interface ExecuteContext {
    */
   inbound?: InboundIdentity;
   policy?: PolicyHooks;
+  /**
+   * WHO is calling this execution, resolved once per MCP session
+   * (`@anvil/mcp-runtime`'s fleet server, or a bearer/`ANVIL_PRINCIPAL`
+   * resolution a single-bundle server opts into). Absent — the default for
+   * every serving path that does not resolve one — is the anonymous,
+   * every-scope principal, so behaviour is byte-identical unless a caller
+   * configures principals.
+   */
+  principal?: Principal;
+  /** Per-principal rate/spend limits (fleet runtime). Absent = unlimited. */
+  limits?: LimitsGate;
   observer?: Observer;
   ledger?: IdempotencyLedger;
   allowedHosts?: string[];
@@ -603,6 +623,11 @@ export async function execute(
   const safetyKeys = operationSafetyInputKeys(op);
   const confirm = args.confirm ?? input[safetyKeys.confirm] === true;
   const policyDecisions: string[] = [];
+  // Resolved once, before anything else: the anonymous/every-scope default
+  // when a serving surface configures no principal (spec: fleet runtime §2),
+  // so every gate below and the record itself see one name for "who is
+  // calling" — never the credential that resolved it.
+  const principal = resolvePrincipal(ctx.principal);
 
   const record: ExecutionRecord = {
     traceId,
@@ -613,6 +638,7 @@ export async function execute(
     retryCount: 0,
     idempotencyKeyPresent: false,
     authProfile: ctx.authProfile,
+    principalId: principal.id,
     requestBytes: 0,
     responseBytes: 0,
     policyDecisions,
@@ -717,6 +743,51 @@ export async function execute(
       );
     }
     const carrier = carrierResolution.binding;
+
+    // 0c. Principal scope gate (fleet runtime) — resolved from the MCP
+    // session BEFORE any upstream call, exactly like the approval and wire
+    // gates above it. An anonymous/every-scope principal (the default) never
+    // trips this; a named principal missing a scope `op.auth.scopes`
+    // requires is refused here, before validation, before auth material is
+    // resolved, before a single byte reaches the upstream host.
+    const missingRequiredScopes = missingScopes(principal, op.auth.scopes);
+    if (missingRequiredScopes.length > 0) {
+      return fail(
+        new AnvilError({
+          code: "policy_denied",
+          message:
+            `Principal '${principal.id}' is missing required scope(s) for '${op.id}': ` +
+            `${missingRequiredScopes.join(", ")}.`,
+          operation: op.id,
+          traceId,
+          retryable: false,
+          details: {
+            code: FLEET_POLICY_CODE.enum["policy/scope_denied"],
+            principalId: principal.id,
+            missing: missingRequiredScopes,
+          },
+        }),
+      );
+    }
+
+    // 0d. Rate/spend limits (fleet runtime) — same "before any upstream call,
+    // never retried" placement as the scope gate. Unconfigured by default
+    // (`ctx.limits` absent), so this is a no-op for every serving path that
+    // does not opt in.
+    const limitCheck = checkLimits(ctx.limits, principal, op, now());
+    if (!limitCheck.ok) {
+      return fail(
+        new AnvilError({
+          code: limitCheck.code === "policy/rate_limited" ? "rate_limited" : "policy_denied",
+          message: limitCheck.message,
+          operation: op.id,
+          traceId,
+          retryable: false,
+          safeToRetry: false,
+          details: limitCheck.details,
+        }),
+      );
+    }
 
     await runHook(ctx.policy?.preValidate);
 

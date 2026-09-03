@@ -12,6 +12,7 @@ export * from "./executor.js";
 export * from "./idempotency.js";
 export * from "./inbound-identity.js";
 export * from "./job-answer.js";
+export * from "./limits.js";
 export * from "./observability.js";
 export * from "./policy.js";
 export * from "./response-projection.js";

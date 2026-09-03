@@ -87,7 +87,14 @@ function stubResolver(material: AuthMaterial | null, withExpected = true) {
 /** A complete RuntimeConfig. Partial literals silently drift from the real
  * shape, which is how these fixtures diverged from what the runtime loads. */
 function runtimeConfig(env: string): RuntimeConfig {
-  return { env, allowedHosts: [], upstreamTimeoutMs: 5_000, ledgerResultTtlSeconds: 604_800 };
+  return {
+    env,
+    allowedHosts: [],
+    upstreamTimeoutMs: 5_000,
+    ledgerResultTtlSeconds: 604_800,
+    principals: {},
+    limits: {},
+  };
 }
 
 describe("SecretManagerCredentialResolver — auth-type branch coverage", () => {
