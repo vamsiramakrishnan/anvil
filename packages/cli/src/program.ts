@@ -38,7 +38,7 @@ import { registerSource } from "./commands/source.js";
 import { registerSources } from "./commands/sources.js";
 import { registerStatus } from "./commands/status.js";
 import { registerSync } from "./commands/sync.js";
-import { registerTarget } from "./commands/target.js";
+import { registerTarget } from "./commands/target/target.js";
 import { processIO } from "./io.js";
 
 export const VERSION = "0.1.0";

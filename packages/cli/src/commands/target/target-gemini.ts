@@ -4,19 +4,14 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
-  rmSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { loadAir, resolveAirPath } from "@anvil/refinement";
 import {
-  type AgentPlatformTargetProfile,
   buildConnectorPlan,
   type ConnectorOAuthProvider,
   createGeminiEnterpriseTargetConfig,
@@ -33,50 +28,31 @@ import {
   MCP_SERVER_AUTH_MODES,
   type McpServerAuthMode,
   renderConnectorPlanText,
-  type TargetKitFile,
   targetStateRelativePath,
   validateTarget,
 } from "@anvil/targets";
 import { type Command, Option } from "commander";
-import type { CliIO } from "../io.js";
-import type { CommandContext } from "./context.js";
-import { annotate } from "./meta.js";
-
-/** The target platforms Anvil can generate a connector kit for. */
-const PROFILES: Record<string, AgentPlatformTargetProfile> = {
-  "gemini-enterprise": GEMINI_ENTERPRISE_PROFILE,
-};
-
-/** Filesystem commit seam used to prove rollback without monkeypatching node:fs. */
-export interface TargetDeps {
-  installStagedTarget?: (stageDir: string, targetDir: string) => void;
-  cleanupTargetBackup?: (backupDir: string) => void;
-  env?: NodeJS.ProcessEnv;
-}
-
-interface TargetWriteResult {
-  targetDir: string;
-  warnings: string[];
-  retainedBackupDir?: string;
-}
+import type { CliIO } from "../../io.js";
+import type { CommandContext } from "../context.js";
+import { annotate } from "../meta.js";
+import { isRecord, type TargetDeps, writeTargetKitAtomically } from "./target-shared.js";
 
 /**
- * `anvil target <profile> <dir>` — generate the connector kit for an agent
- * platform. This is the registration + operations artifacts (profile, setup,
- * inbound-auth env contract, OAuth template, action selection, org-policy
- * checklist, admin runbook, compatibility report) that make a compiled bundle a
- * platform-ready connector. It validates the contract against the platform's
- * requirements and gates (non-zero) on any error.
+ * `anvil target gemini-enterprise <dir>` — generate the Gemini Enterprise
+ * connector kit. This is the registration + operations artifacts (profile,
+ * setup, inbound-auth env contract, OAuth template, action selection,
+ * org-policy checklist, admin runbook, compatibility report) that make a
+ * compiled bundle a platform-ready connector. It validates the contract
+ * against the platform's requirements and gates (non-zero) on any error.
  */
-export function registerTarget(parent: Command, ctx: CommandContext): void {
+export function registerTargetGemini(target: Command, ctx: CommandContext): void {
   annotate(
-    parent
-      .command("target")
-      .summary("Generate an agent-platform connector kit (e.g. Gemini Enterprise) for a bundle.")
+    target
+      .command("gemini-enterprise")
+      .summary("Generate the Gemini Enterprise connector kit for a bundle.")
       .description(
         "Validates and generates one explicit Gemini Enterprise registration journey. `custom-mcp` is console-first; its raw setUpDataConnector files are experimental references. `agent-gateway` emits guarded Agent Registry, gateway, engine-binding, and rollback artifacts. `both` is available only when explicitly requested for compatibility. Connector OAuth protects /mcp and is separate from Gemini Enterprise sign-in / Workforce Identity Federation. No files are written when validation fails.",
       )
-      .argument("<profile>", `target platform: ${Object.keys(PROFILES).join(", ")}`)
       .argument("<dir>", "generated bundle directory or air.yaml")
       .addOption(
         new Option("--surface <surface>", "registration surface")
@@ -154,14 +130,14 @@ export function registerTarget(parent: Command, ctx: CommandContext): void {
         "compatibility flag; must resolve to the bundle root because target kits are certified in place",
       )
       .option("--json", "emit the plan + compatibility report as JSON")
-      .action((profile: string, dir: string, opts: TargetOptions) => {
-        ctx.code = runTarget(profile, dir, opts, ctx.io, ctx.deps as TargetDeps);
+      .action((dir: string, opts: GeminiTargetOptions) => {
+        ctx.code = runGeminiTarget(dir, opts, ctx.io, ctx.deps as TargetDeps);
       }),
     { mutates: true },
   );
 }
 
-interface TargetOptions {
+interface GeminiTargetOptions {
   surface: GeminiRegistrationSurface;
   serverAuth: McpServerAuthMode;
   allowUnauthenticatedMcp?: boolean;
@@ -187,19 +163,13 @@ interface TargetOptions {
   json?: boolean;
 }
 
-function runTarget(
-  profileId: string,
+function runGeminiTarget(
   dir: string,
-  opts: TargetOptions,
+  opts: GeminiTargetOptions,
   io: CliIO,
   deps: TargetDeps = {},
 ): number {
-  const profile = PROFILES[profileId];
-  if (!profile) {
-    io.err(`Unknown target '${profileId}'. Known targets: ${Object.keys(PROFILES).join(", ")}.`);
-    return 1;
-  }
-
+  const profile = GEMINI_ENTERPRISE_PROFILE;
   const config = createGeminiEnterpriseTargetConfig({
     surface: opts.surface,
     serverAuth: opts.serverAuth,
@@ -257,13 +227,15 @@ function runTarget(
     config.surface === "agent-gateway" || config.surface === "both"
       ? targetStateRelativePath(config)
       : undefined;
+  const env = deps.env ?? process.env;
   const writeResult = writeTargetKitAtomically(
     outRoot,
     profile.id,
     kit.files,
     deps,
-    mutableStatePath,
-    deps.env ?? process.env,
+    mutableStatePath
+      ? (targetDir) => migrateLegacyTargetState(targetDir, outRoot, mutableStatePath, env)
+      : undefined,
   );
   const { targetDir } = writeResult;
 
@@ -301,82 +273,6 @@ function runTarget(
   }
 
   return 0;
-}
-
-/**
- * Build the complete target subtree in a hidden sibling, then swap it into
- * place. A failed write leaves the previous generated target intact.
- */
-function writeTargetKitAtomically(
-  outRoot: string,
-  profileId: string,
-  files: TargetKitFile[],
-  deps: TargetDeps,
-  mutableStatePath?: string,
-  env: NodeJS.ProcessEnv = process.env,
-): TargetWriteResult {
-  const targetsRoot = join(outRoot, "targets");
-  const targetDir = join(targetsRoot, profileId);
-  mkdirSync(targetsRoot, { recursive: true });
-  const stageDir = mkdtempSync(join(targetsRoot, `.${profileId}.stage-`));
-  const backupDir = `${stageDir}.previous`;
-  const expectedPrefix = `targets/${profileId}/`;
-  const stageRoot = `${resolve(stageDir)}${sep}`;
-
-  try {
-    for (const file of files) {
-      if (!file.path.startsWith(expectedPrefix)) {
-        throw new Error(`Target kit file escapes ${expectedPrefix}: ${file.path}`);
-      }
-      const dest = resolve(stageDir, file.path.slice(expectedPrefix.length));
-      if (!dest.startsWith(stageRoot)) {
-        throw new Error(`Target kit file escapes its staging directory: ${file.path}`);
-      }
-      mkdirSync(dirname(dest), { recursive: true });
-      writeFileSync(dest, file.bytes);
-    }
-    if (mutableStatePath) {
-      migrateLegacyTargetState(targetDir, outRoot, mutableStatePath, env);
-    }
-  } catch (error) {
-    rmSync(stageDir, { recursive: true, force: true });
-    throw error;
-  }
-
-  const hadPrevious = existsSync(targetDir);
-  try {
-    if (hadPrevious) renameSync(targetDir, backupDir);
-    (deps.installStagedTarget ?? renameSync)(stageDir, targetDir);
-  } catch (error) {
-    if (existsSync(stageDir)) rmSync(stageDir, { recursive: true, force: true });
-    // An injectable/custom installer may have created some or all of targetDir
-    // before throwing. That candidate is never authoritative: remove it before
-    // restoring the exact previous subtree (or leave no target on first install).
-    if (existsSync(targetDir)) rmSync(targetDir, { recursive: true, force: true });
-    if (hadPrevious && existsSync(backupDir)) {
-      renameSync(backupDir, targetDir);
-    }
-    throw error;
-  }
-  const warnings: string[] = [];
-  let retainedBackupDir: string | undefined;
-  if (hadPrevious) {
-    try {
-      (
-        deps.cleanupTargetBackup ??
-        ((path: string) => rmSync(path, { recursive: true, force: true }))
-      )(backupDir);
-    } catch (error) {
-      if (existsSync(backupDir)) retainedBackupDir = backupDir;
-      const detail = error instanceof Error ? error.message : String(error);
-      warnings.push(
-        retainedBackupDir
-          ? `The new target was installed successfully, but the previous target backup could not be removed and was retained at ${retainedBackupDir}: ${detail}`
-          : `The new target was installed successfully, but backup cleanup reported an error: ${detail}`,
-      );
-    }
-  }
-  return { targetDir, warnings, retainedBackupDir };
 }
 
 /** Preserve pre-P0 in-target state without overwriting divergent stable evidence. */
@@ -456,10 +352,6 @@ function resolveExternalStateDirectory(
     throw new Error("ANVIL_STATE_DIR must keep mutable gateway state outside the bundle.");
   }
   return stableStateDir;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function mergeStateDirectory(sourceDir: string, destinationDir: string): void {

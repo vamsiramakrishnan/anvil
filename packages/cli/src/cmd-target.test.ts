@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type AnvilCliDeps, runAnvilCli } from "./anvil-cli.js";
-import type { TargetDeps } from "./commands/target.js";
+import type { TargetDeps } from "./commands/target/target.js";
 import { bufferIO } from "./io.js";
 
 const payments = fileURLToPath(new URL("../../../examples/payments/", import.meta.url));
