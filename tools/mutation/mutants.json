@@ -795,6 +795,16 @@
       ]
     },
     {
+      "id": "corpus/refine-loop-ratchet-fails-on-drop",
+      "file": "tools/corpus/refine-loop.mjs",
+      "control": "The routing-accuracy ratchet fails when an estate's routing accuracy drops beyond the tolerance since the pinned baseline. Neutralize the comparison (always true) and a real routing regression \u2014 a task that used to route correctly and now does not \u2014 rides through the nightly refine-loop job green, exactly the failure mode the naming-conformance ratchet above already guards for a different signal.",
+      "find": "  const ok = deltaPts >= -toleranceDeltaPts;",
+      "replace": "  const ok = true;",
+      "tests": [
+        "tools/corpus/refine-loop.test.ts"
+      ]
+    },
+    {
       "id": "path-grammar/ambiguous-never-silently-selects",
       "file": "packages/compiler/src/path-grammar.ts",
       "control": "An ambiguous path grammar never silently selects a grammar: when the estate's RPC and REST signals BOTH commit, the classifier must return `ambiguous` with a diagnostic naming both candidate grammars and fall back to the source kind's pre-classifier behavior \u2014 never let whichever side carries more votes win quietly. Delete the split-vote branch and a GET-heavy verb-terminal estate silently classifies rpc_plain with no warning.",
@@ -935,6 +945,26 @@
       ]
     },
     {
+      "id": "targets/certify-checks-every-profile",
+      "file": "packages/cli/src/commands/certify.ts",
+      "control": "`anvil certify` runs the target-kit-exact drift check for every registered profile whose subtree is present in the bundle, not only gemini-enterprise — the same regeneration proof Gemini always got. Narrow the loop back to one profile and a hand-tampered Claude, OpenAI, or MCP registry kit certifies clean.",
+      "find": "  for (const profile of listProfiles()) {",
+      "replace": "  for (const profile of listProfiles().filter((p) => p.id === \"gemini-enterprise\")) {",
+      "tests": [
+        "packages/cli/src/cmd-target.test.ts"
+      ]
+    },
+    {
+      "id": "targets/status-drift-checks-every-profile",
+      "file": "packages/cli/src/commands/status.ts",
+      "control": "`anvil status` regenerates and byte-compares the complete target subtree (verifyTargetKit) for any registered profile, not only gemini-enterprise; every other profile falls back to a shallow surfaceSignatureDigest-only freshness check that a tampered non-setup.json file never touches. Restrict the full check back to gemini-enterprise and a hand-edited Claude/OpenAI/MCP-registry kit file reports \"fresh\" with no findings.",
+      "find": "    const profile = findProfile(targetId);",
+      "replace": "    const profile = targetId === \"gemini-enterprise\" ? findProfile(targetId) : undefined;",
+      "tests": [
+        "packages/cli/src/cmd-target.test.ts"
+      ]
+    },
+    {
       "id": "sdk/custom-header-never-bearer",
       "file": "packages/generators/src/sdk/plan.ts",
       "control": "A custom_header auth scheme resolves a carrier with no Bearer/Basic scheme prefix \u2014 the header (or query) value the SDKs send travels exactly as AIR declared, never disguised as a bearer token.",
@@ -973,6 +1003,71 @@
       "replace": "        return h;",
       "tests": [
         "packages/compiler/src/protocols/har.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/wire-binding-coherence-refused",
+      "file": "packages/legacy-bridge/src/wire-binding.ts",
+      "control": "The deployment-local bridge refuses to serve a queue wire binding whose legacyBindingContentHash does not match the reviewed LegacyCapabilityBinding it was handed — the coherence property that stops a bridge from silently serving an unreviewed or since-changed candidate. Delete the check and any wire binding is accepted for any binding, hash mismatch or not.",
+      "find": "  if (wireBinding.legacyBindingContentHash !== binding.contentHash) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/legacy-bridge/src/wire-binding.test.ts",
+        "packages/legacy-bridge/src/facade.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/idempotent-replay-dedup",
+      "file": "packages/legacy-bridge/src/broker-double.ts",
+      "control": "A repeated idempotency key must return the identical cached reply without re-executing the business side — what makes an outer bounded retry safe at all. Delete the cache check and every call re-executes the handler, so a retried call can observe a different outcome than the one that actually happened.",
+      "find": "    if (cached !== undefined) return { body: cached };",
+      "replace": "    if (false) return { body: cached };",
+      "tests": [
+        "packages/legacy-bridge/src/broker-double.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/broker-attempt-accounted",
+      "file": "packages/legacy-bridge/src/broker-double.ts",
+      "control": "Every exchange the double receives increments its attempt counter, which is the only way a caller can prove the bridge made exactly one broker attempt per HTTP call and never retried internally. Delete the increment and a silent internal retry loop would be unobservable.",
+      "find": "    this._sendAttempts += 1;",
+      "replace": "    // MUTANT: attempt not counted",
+      "tests": [
+        "packages/legacy-bridge/src/broker-double.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/timeout-enforced",
+      "file": "packages/legacy-bridge/src/broker.ts",
+      "control": "The reviewed timeout is enforced by racing the broker call against a timer — the one place a hung exchange is ever turned into a failure. Delete the race and a broker that never replies leaves the call pending forever instead of failing closed.",
+      "find": "    return await Promise.race([client.requestReply(options), timeout]);",
+      "replace": "    return await client.requestReply(options);",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/timeout-maps-to-structured-error",
+      "file": "packages/legacy-bridge/src/facade.ts",
+      "control": "A broker timeout must answer with a structured, non-retryable upstream_timeout — never a hang and never a false success. Delete the branch and a timeout falls through to the generic transport-failure response, losing the distinction the runtime's own status-code mapping (packages/runtime/src/errors.ts) depends on.",
+      "find": "      if (err instanceof QueueBrokerTimeoutError) {",
+      "replace": "      if (false) {",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/promotion-requires-not-implemented",
+      "file": "packages/compiler/src/legacy/refinement/model.ts",
+      "control": "A binding may be promoted to conformance_passed only from not_implemented — never a second time, and never from a status this function does not recognize. Delete the guard and an already-promoted binding could be silently re-promoted, an operation with no equivalent to a lower-safety direction.",
+      "find": "  if (binding.runtime.status !== \"not_implemented\") {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/compiler/src/legacy/refinement/model.test.ts"
       ]
     },
     {

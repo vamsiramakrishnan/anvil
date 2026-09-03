@@ -189,26 +189,39 @@ describe("5. JSON bodies only, capped, validated", () => {
         `Origin: ${server.url}\r\nX-Anvil-Console-Token: ${server.token}\r\n` +
         "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n",
     );
+    // The server answers 413 the moment the stream crosses the cap and then
+    // destroys the socket without draining the rest. A destroy with unread
+    // inbound bytes is a TCP reset, and a reset can discard response bytes the
+    // client has not read yet — so the client must stop writing as soon as the
+    // status line arrives and must yield between writes so that read can
+    // happen. Waiting for "close" alone races the reset and reads nothing.
     let response = "";
-    socket.on("data", (chunk: Buffer) => {
-      response += chunk.toString("utf8");
-    });
     const piece = "x".repeat(64 * 1024);
     await new Promise<void>((resolve) => {
+      socket.on("data", (chunk: Buffer) => {
+        response += chunk.toString("utf8");
+        if (/^HTTP\//.test(response)) resolve();
+      });
       socket.on("close", resolve);
       socket.on("error", resolve);
       let sent = 0;
       const pump = (): void => {
-        while (sent < 3 * 1024 * 1024 && socket.writable && !socket.destroyed) {
-          sent += piece.length;
-          if (!socket.write(`${piece.length.toString(16)}\r\n${piece}\r\n`)) {
-            socket.once("drain", pump);
-            return;
-          }
+        if (
+          response.length > 0 ||
+          sent >= 3 * 1024 * 1024 ||
+          !socket.writable ||
+          socket.destroyed
+        ) {
+          return;
         }
+        sent += piece.length;
+        const flushed = socket.write(`${piece.length.toString(16)}\r\n${piece}\r\n`);
+        if (flushed) setImmediate(pump);
+        else socket.once("drain", pump);
       };
       pump();
     });
+    socket.destroy();
     expect(response).toMatch(/^HTTP\/1\.1 413 /);
   });
 

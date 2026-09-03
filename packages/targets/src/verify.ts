@@ -1,13 +1,97 @@
 import { createHash } from "node:crypto";
 import type { AirDocument } from "@anvil/air";
 import {
+  CLAUDE_PROFILE,
+  type ClaudeTargetConfig,
+  type ClaudeTargetConfigInput,
+  createClaudeTargetConfig,
+  generateClaudeTargetKit,
+  validateClaudeTarget,
+} from "./claude.js";
+import {
   createGeminiEnterpriseTargetConfig,
   type GeminiEnterpriseTargetConfig,
   type GeminiEnterpriseTargetConfigInput,
 } from "./config.js";
+import { GEMINI_ENTERPRISE_PROFILE } from "./gemini-enterprise.js";
 import { generateTargetKit } from "./generate.js";
-import type { AgentPlatformTargetProfile } from "./model.js";
+import {
+  createMcpRegistryTargetConfig,
+  generateMcpRegistryTargetKit,
+  MCP_REGISTRY_PROFILE,
+  type McpRegistryTargetConfig,
+  type McpRegistryTargetConfigInput,
+  validateMcpRegistryTarget,
+} from "./mcp-registry.js";
+import type { AgentPlatformTargetProfile, TargetKit, TargetValidationResult } from "./model.js";
+import {
+  createOpenAiTargetConfig,
+  generateOpenAiTargetKit,
+  OPENAI_PROFILE,
+  type OpenAiTargetConfig,
+  type OpenAiTargetConfigInput,
+  validateOpenAiTarget,
+} from "./openai.js";
 import { validateTarget } from "./validate.js";
+
+/** The union of every profile's persisted (secret-free) target config shape. */
+export type TargetKitConfig =
+  | GeminiEnterpriseTargetConfig
+  | ClaudeTargetConfig
+  | OpenAiTargetConfig
+  | McpRegistryTargetConfig;
+
+/**
+ * Per-profile regeneration triad: build a config from a persisted (untrusted)
+ * `setup.json` value, validate it, and regenerate the kit it implies. Every
+ * registered profile plugs in here with its own config shape so
+ * `verifyTargetKit` stays one drift check that works the same way for all of
+ * them, instead of a Gemini-only path the other profiles fall back past.
+ */
+interface KitAdapter {
+  createConfig: (air: AirDocument, rawConfig: unknown) => TargetKitConfig;
+  validate: (
+    air: AirDocument,
+    profile: AgentPlatformTargetProfile,
+    config: TargetKitConfig,
+  ) => TargetValidationResult;
+  generate: (
+    air: AirDocument,
+    profile: AgentPlatformTargetProfile,
+    config: TargetKitConfig,
+  ) => TargetKit;
+}
+
+const KIT_ADAPTERS: Record<string, KitAdapter> = {
+  [GEMINI_ENTERPRISE_PROFILE.id]: {
+    createConfig: (_air, raw) =>
+      createGeminiEnterpriseTargetConfig(raw as GeminiEnterpriseTargetConfigInput),
+    validate: (air, profile, config) =>
+      validateTarget(air, profile, config as GeminiEnterpriseTargetConfig),
+    generate: (air, profile, config) =>
+      generateTargetKit(air, profile, config as GeminiEnterpriseTargetConfig),
+  },
+  [CLAUDE_PROFILE.id]: {
+    createConfig: (_air, raw) => createClaudeTargetConfig(raw as ClaudeTargetConfigInput),
+    validate: (air, _profile, config) => validateClaudeTarget(air, config as ClaudeTargetConfig),
+    generate: (air, profile, config) =>
+      generateClaudeTargetKit(air, profile, config as ClaudeTargetConfig),
+  },
+  [OPENAI_PROFILE.id]: {
+    createConfig: (_air, raw) => createOpenAiTargetConfig(raw as OpenAiTargetConfigInput),
+    validate: (air, _profile, config) => validateOpenAiTarget(air, config as OpenAiTargetConfig),
+    generate: (air, profile, config) =>
+      generateOpenAiTargetKit(air, profile, config as OpenAiTargetConfig),
+  },
+  [MCP_REGISTRY_PROFILE.id]: {
+    createConfig: (air, raw) =>
+      createMcpRegistryTargetConfig(air, raw as McpRegistryTargetConfigInput),
+    validate: (air, _profile, config) =>
+      validateMcpRegistryTarget(air, config as McpRegistryTargetConfig),
+    generate: (air, profile, config) =>
+      generateMcpRegistryTargetKit(air, profile, config as McpRegistryTargetConfig),
+  },
+};
 
 export type TargetKitIntegrityFindingCode =
   | "target/missing_setup"
@@ -27,7 +111,7 @@ export interface TargetKitIntegrityResult {
   targetId: string;
   present: boolean;
   ok: boolean;
-  config: GeminiEnterpriseTargetConfig | null;
+  config: TargetKitConfig | null;
   expectedDigest: string | null;
   actualDigest: string | null;
   expectedFiles: string[];
@@ -48,6 +132,12 @@ export function verifyTargetKit(
   profile: AgentPlatformTargetProfile,
   bundleFiles: Record<string, string>,
 ): TargetKitIntegrityResult {
+  const adapter = KIT_ADAPTERS[profile.id];
+  if (!adapter) {
+    throw new Error(
+      `verifyTargetKit: no drift-verification adapter is registered for profile "${profile.id}". Every profile in listProfiles() needs a KIT_ADAPTERS entry in verify.ts.`,
+    );
+  }
   const prefix = `targets/${profile.id}/`;
   const actualEntries = Object.entries(bundleFiles)
     .filter(([path]) => path.startsWith(prefix))
@@ -99,9 +189,9 @@ export function verifyTargetKit(
     });
   }
 
-  let config: GeminiEnterpriseTargetConfig;
+  let config: TargetKitConfig;
   try {
-    config = createGeminiEnterpriseTargetConfig(setup.config as GeminiEnterpriseTargetConfigInput);
+    config = adapter.createConfig(air, setup.config);
   } catch (error) {
     return failedWithoutExpected(base, {
       code: "target/invalid_setup",
@@ -110,14 +200,15 @@ export function verifyTargetKit(
     });
   }
 
-  const expectedEntries = generateTargetKit(air, profile, config)
+  const expectedEntries = adapter
+    .generate(air, profile, config)
     .files.map((file) => [file.path, new TextDecoder().decode(file.bytes)] as const)
     .sort(([left], [right]) => left.localeCompare(right));
   const expected = Object.fromEntries(expectedEntries);
   const expectedFiles = expectedEntries.map(([path]) => path);
   const findings: TargetKitIntegrityFinding[] = [];
 
-  const validation = validateTarget(air, profile, config);
+  const validation = adapter.validate(air, profile, config);
   if (!validation.ok) {
     findings.push({
       code: "target/invalid_config",

@@ -1,0 +1,33 @@
+{
+  "name": "@anvil/legacy-bridge",
+  "version": "0.1.0",
+  "description": "Anvil legacy bridge — a deployment-local HTTP facade that translates one approved legacy capability binding into one queue request/reply exchange.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/legacy-bridge/src",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@anvil/air": "workspace:*",
+    "@anvil/compiler": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

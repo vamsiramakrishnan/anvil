@@ -1,0 +1,79 @@
+{
+  "updatedAt": "2026-09-03T02:35:48.493Z",
+  "note": "Per-estate, per-catalog routing accuracy (regenerate with: node tools/corpus/refine-loop.mjs --update-routing-baseline). A DROP beyond 1.0 pt fails the refine-loop job and names the estate and flipped operations.",
+  "dropTolerancePts": 1,
+  "estates": {
+    "kong-refunds": {
+      "flat": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      },
+      "laddered": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      }
+    },
+    "kong-reporting": {
+      "flat": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      },
+      "laddered": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      }
+    },
+    "apigee-payments": {
+      "flat": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      },
+      "laddered": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      }
+    },
+    "wso2-orders": {
+      "flat": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      },
+      "laddered": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      }
+    },
+    "mulesoft-customer": {
+      "flat": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      },
+      "laddered": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      }
+    },
+    "apiconnect-claims": {
+      "flat": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      },
+      "laddered": {
+        "accuracy": 0,
+        "total": 0,
+        "tasks": []
+      }
+    }
+  }
+}

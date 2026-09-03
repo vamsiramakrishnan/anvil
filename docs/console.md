@@ -117,6 +117,32 @@ and approving an operation or deciding a capability changes that contract —
 so decide and apply a pack before approving, or run `anvil refine run` again
 afterwards; a stale pack is refused, never silently applied.
 
+### The refinement loop's packs
+
+`tools/corpus/refine-loop.mjs` (see `tools/corpus/README.md`) runs the same
+`anvil refine run --out`/`anvil benchmark`/`anvil refine export-task` sequence
+a human would type, once nightly, over every gateway-estate fixture — so its
+output is not a special case for the console, it is the ordinary case: a
+workspace directory holding `air.yaml` files with `pack.json`s sitting beside
+them. Point the console at that workspace and the loop's packs appear in the
+decision queue exactly like a pack a person ran by hand:
+
+```bash
+node tools/corpus/refine-loop.mjs --work ./refine-loop-workspace
+anvil console ./refine-loop-workspace --open
+```
+
+Nothing routes the loop's findings anywhere else, and nothing new had to be
+built to show them: the "Prefer documenting how the console shows the loop's
+packs over adding a console route" call in the loop's own design is this
+section — the console already walks a workspace for `air.yaml` + `pack.json`
+pairs (above), and `refine-loop.mjs` writes exactly that shape. The loop's own
+`refine-loop.report.json`/`refine-loop-summary.md` (and the "Refinement
+inbox" issue a nightly workflow keeps rolling from it — see
+`.github/workflows/corpus.yml`) are the fast, textual view of the SAME
+backlog; the console is where a human actually decides it, cluster exports
+included.
+
 ## The end-to-end proof
 
 `pnpm test:e2e` (a turbo task deliberately outside `pnpm test`, so the unit

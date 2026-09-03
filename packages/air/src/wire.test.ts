@@ -132,6 +132,35 @@ describe("wire protocol", () => {
     expect(unexecutableWireFailures([bounded])).toEqual([]);
   });
 
+  it("keeps refusing a queue request/reply binding — there is no codec for it, only a facade", () => {
+    // Unlike SOAP or GraphQL, nothing about a queue exchange is HTTP shaped, so
+    // the binding alone never earns `ok: true` — the same posture as a gRPC
+    // method whose transcoder is only assumed.
+    const binding = {
+      protocol: "queue_request_reply",
+      legacyBindingContentHash: `sha256:${"7".repeat(64)}`,
+      requestDestination: "PAY.REFUND.REQUEST",
+      reply: { mode: "reply_to", correlationField: "JMSCorrelationID" },
+      requestSchemaRef: "#/components/schemas/RefundCommand",
+      responseSchemaRef: "#/components/schemas/RefundReply",
+      timeoutMs: 30_000,
+      idempotency: { carrier: "correlation_id" },
+    } as const;
+    const bridged = {
+      kind: "openapi",
+      path: "/bridge/refunds.submit",
+      method: "post",
+      binding,
+    } as const;
+    expect(wireProtocolFor(bridged)).toBe("queue_request_reply");
+    const verdict = wireExecutability(opWith(bridged));
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("expected a refusal");
+    expect(verdict.protocol).toBe("queue_request_reply");
+    expect(verdict.reason).toContain("legacy-bridge");
+    expect(verdict.nextAction).toContain("ANVIL_BASE_URL");
+  });
+
   it("asks only about the surface that is actually exposed", () => {
     // An unapproved operation is already refused by the approval gate; asking
     // about it here would report a problem nobody can reach.

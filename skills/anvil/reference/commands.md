@@ -653,6 +653,19 @@ Options:
 - `--out <file>` — write without overwriting different content
 - `--json` — emit the complete bridge plan
 
+##### `anvil legacy bridge conformance`  *(mutates)*
+`anvil legacy bridge conformance [options] <plan>`
+
+Serve the bridge against an in-process broker double and prove it conformant.
+
+Boots the facade `@anvil/legacy-bridge` builds for one reviewed binding and drives every required conformance case from the plan, plus three fixed safety invariants (idempotent replay returns the same reply; a broker timeout maps to a structured, non-retryable error; a failed exchange is never retried inside the bridge), against a deterministic in-process broker double. Never connects to a real broker. Writes legacy-bridge-conformance.report.json-shaped output; on a full pass, the binding's runtime status moves from not_implemented to conformance_passed and --emit-binding writes the promoted, re-addressed binding.
+
+Options:
+- `--binding <file>` — the approved decision report or LegacyCapabilityBinding JSON the plan was built from
+- `--emit-binding <file>` — write the promoted binding here, only on a full pass
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete conformance report
+
 #### `anvil legacy plan`  *(mutates)*
 `anvil legacy plan [options] <manifest>`
 
