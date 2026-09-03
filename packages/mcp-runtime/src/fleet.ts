@@ -204,10 +204,15 @@ export async function buildFleetServer(
             "anvil/fleet_tool_name": tool.name,
           },
         },
-        // Forwards the client's own CallToolResult verbatim — its return type IS
-        // what registerTool's handler wants, so no re-typing (or `any`) is needed.
-        async (args: Record<string, unknown>): ReturnType<typeof client.callTool> => {
-          return client.callTool({ name: tool.name, arguments: args });
+        // Forwards the client's own CallToolResult verbatim. `callTool`'s return
+        // type is a union across its overloads that does not structurally match
+        // registerTool's handler type byte-for-byte (both are "the same shape
+        // MCP defines", typed two different ways in the SDK) — the cast below is
+        // narrower than a bare `any` return type would be.
+        async (args: Record<string, unknown>) => {
+          const result = await client.callTool({ name: tool.name, arguments: args });
+          // biome-ignore lint/suspicious/noExplicitAny: see the comment above this handler.
+          return result as any;
         },
       );
     }
