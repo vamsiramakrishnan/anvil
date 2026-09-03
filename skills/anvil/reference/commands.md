@@ -1153,6 +1153,35 @@ Options:
 - `--idempotency-key <key>` — caller-supplied idempotency key for the decision call
 - `--json` — emit the full result as JSON
 
+### `anvil auth`
+`anvil auth [options] [command]`
+
+Complete the interactive step for end-user (authorization-code) auth.
+
+#### `anvil auth login`  *(mutates)*
+`anvil auth login [options] <dir>`
+
+Run the PKCE authorization-code flow once and store a refresh token.
+
+Finds the bundle's oauth2_authorization_code operation (--operation disambiguates when more than one distinct shape is declared), prints the authorization URL (--open launches the default browser), listens on its declared loopback redirect_uri (127.0.0.1, a random port when none is declared), exchanges the returned code at token_endpoint, and writes { refresh_token, obtained_at } to ~/.anvil/credentials/<profile>.json with mode 0600 — never inside the bundle, never printed. The runtime's env resolver reads it back when *_REFRESH_TOKEN is unset. Requires ANVIL_<PROFILE>_CLIENT_ID in the environment (and *_CLIENT_SECRET if the provider needs one); neither is ever echoed.
+
+Options:
+- `--profile <profile>` — deployment profile (e.g. prod), combined with the operation's credential profile the same way the runtime combines them
+- `--operation <id>` — which oauth2_authorization_code operation's provider mechanics to use, when the bundle declares more than one distinct shape
+- `--open` — open the authorization URL in the default browser
+- `--timeout-seconds <n>` — how long to wait for the redirect
+
+#### `anvil auth status`
+`anvil auth status [options] <dir>`
+
+List credential profiles in a bundle and whether material is present (names only).
+
+Never prints a credential value — only env var NAMES and whether they (or, for oauth2_authorization_code, a stored refresh token) are present.
+
+Options:
+- `--profile <profile>` — deployment profile to resolve against
+- `--json` — emit the full result as JSON
+
 ### `anvil serve`
 `anvil serve [options] [command]`
 

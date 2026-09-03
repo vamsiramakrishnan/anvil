@@ -504,14 +504,68 @@ describe("certification: SAFETY gate", () => {
   it.each([
     "mtls",
     "custom_header",
-    "oauth2_authorization_code",
-  ] as const)("fails certification for approved but unmodeled %s auth", (type) => {
+  ] as const)("fails certification for approved but unmodeled %s auth (no material declared)", (type) => {
     const unsafe = structuredClone(air);
     const refund = unsafe.operations.find((o) => o.id === "payments.refunds.create");
     if (!refund) throw new Error("fixture: refund operation missing");
     refund.auth.type = type;
     const cert = certifyBundle(generateBundle(unsafe).files, unsafe);
     expect(failedIds(cert)).toContain("safety.auth-runtime-supported");
+  });
+
+  it("passes safety.auth-runtime-supported for an approved mtls op with complete client material", () => {
+    const unsafe = structuredClone(air);
+    const refund = unsafe.operations.find((o) => o.id === "payments.refunds.create");
+    if (!refund) throw new Error("fixture: refund operation missing");
+    refund.auth = {
+      type: "mtls",
+      scopes: [],
+      principal: "service",
+      secretSource: "env",
+      tls: {
+        clientCertRef: "ANVIL_PROD_PAYMENTS_CLIENT_CERT",
+        clientKeyRef: "ANVIL_PROD_PAYMENTS_CLIENT_KEY",
+      },
+    };
+    const cert = certifyBundle(generateBundle(unsafe).files, unsafe);
+    expect(failedIds(cert)).not.toContain("safety.auth-runtime-supported");
+  });
+
+  it("passes safety.auth-runtime-supported for an approved custom_header op with a declared carrier", () => {
+    const unsafe = structuredClone(air);
+    const refund = unsafe.operations.find((o) => o.id === "payments.refunds.create");
+    if (!refund) throw new Error("fixture: refund operation missing");
+    refund.auth = {
+      type: "custom_header",
+      scopes: [],
+      principal: "service",
+      secretSource: "env",
+      carrier: { in: "header", name: "X-Vendor-Token" },
+    };
+    const cert = certifyBundle(generateBundle(unsafe).files, unsafe);
+    expect(failedIds(cert)).not.toContain("safety.auth-runtime-supported");
+  });
+
+  it("passes safety.auth-runtime-supported for oauth2_authorization_code — replay/refresh needs no AIR-declared material", () => {
+    // Unlike mtls/custom_header, this scheme is never structurally
+    // "unsupported": the runtime can always replay a static *_TOKEN even with
+    // zero declared provider mechanics. A hand-edited bundle that marks this
+    // approved without going through `anvil auth login` is still wrong, but
+    // that is a compiler-posture guarantee (never emitted as approved by
+    // compilation — see the auth-normalization tests), not an executability
+    // gap this check exists to catch.
+    const unsafe = structuredClone(air);
+    const refund = unsafe.operations.find((o) => o.id === "payments.refunds.create");
+    if (!refund) throw new Error("fixture: refund operation missing");
+    refund.auth = {
+      type: "oauth2_authorization_code",
+      scopes: [],
+      principal: "end_user",
+      secretSource: "env",
+      provider: { tokenEndpoint: "https://idp.example.com/token" },
+    };
+    const cert = certifyBundle(generateBundle(unsafe).files, unsafe);
+    expect(failedIds(cert)).not.toContain("safety.auth-runtime-supported");
   });
 });
 

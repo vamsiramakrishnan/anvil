@@ -1,6 +1,9 @@
-import { type AuthRequirement, effectiveAuthCarrier } from "@anvil/air";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { type AuthRequirement, effectiveAuthCarrier, type TlsClientMaterialRefs } from "@anvil/air";
 import type { InboundIdentity } from "./inbound-identity.js";
-import type { HttpRequest } from "./transport.js";
+import type { HttpRequest, TlsClientMaterial } from "./transport.js";
 
 /**
  * Resolved auth material. Secrets live here only transiently and are never
@@ -11,6 +14,14 @@ export interface AuthMaterial {
   headers?: Record<string, string>;
   /** Query params to merge (e.g. api_key for query-key APIs). */
   query?: Record<string, string>;
+  /**
+   * Client-certificate material for an `mtls` operation. PEM text, resolved
+   * from the environment by the exact names `auth.tls` declares — never
+   * written to an execution record or log. Carried onto the outbound request
+   * by `applyAuth` so the transport can hand it to `node:https` (Node's global
+   * `fetch` cannot present a client certificate).
+   */
+  tls?: TlsClientMaterial;
 }
 
 /**
@@ -42,13 +53,36 @@ export interface CredentialResolver {
   expectedCredentials?(profileName: string, auth: AuthRequirement): string[];
 }
 
+/** Injectable knobs for {@link EnvCredentialResolver} so tests never hit the network or the clock. */
+export interface EnvCredentialResolverOptions {
+  /** Injectable fetch for the authorization-code refresh grant — defaults to the global. */
+  fetchImpl?: typeof fetch;
+  /** Injectable clock (epoch ms) — defaults to Date.now. */
+  now?: () => number;
+  /** Override the refresh-token store directory (tests only); defaults to `~/.anvil/credentials`. */
+  refreshTokenDir?: string;
+}
+
 /**
  * Default resolver: reads a bearer token / api key from the process
  * environment by convention, e.g. profile `prod` -> ANVIL_PROD_TOKEN. Intended
  * for local dev; production binds Secret Manager behind this same interface.
  */
 export class EnvCredentialResolver implements CredentialResolver {
-  constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
+  private readonly fetchImpl: typeof fetch;
+  private readonly now: () => number;
+  private readonly fileRefreshTokens: FileRefreshTokenSource;
+  /** In-memory cache of tokens acquired via the authorization-code refresh grant. */
+  private readonly authCodeCache = new Map<string, { token: string; expEpochMs: number }>();
+
+  constructor(
+    private readonly env: NodeJS.ProcessEnv = process.env,
+    opts: EnvCredentialResolverOptions = {},
+  ) {
+    this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.now = opts.now ?? Date.now;
+    this.fileRefreshTokens = new FileRefreshTokenSource(opts.refreshTokenDir);
+  }
 
   /** The env var names this resolver reads for a profile — names only, never values. */
   expectedCredentials(profileName: string, auth: AuthRequirement): string[] {
@@ -61,9 +95,20 @@ export class EnvCredentialResolver implements CredentialResolver {
       case "basic":
         return [`${prefix}_USERNAME`, `${prefix}_PASSWORD`];
       case "mtls":
+        return auth.tls
+          ? [
+              auth.tls.clientCertRef,
+              auth.tls.clientKeyRef,
+              ...(auth.tls.caRef ? [auth.tls.caRef] : []),
+            ]
+          : [];
       case "custom_header":
+        return effectiveAuthCarrier(auth) ? [`${prefix}_HEADER_VALUE`] : [];
       case "oauth2_authorization_code":
-        return [];
+        return [
+          `one of: ${prefix}_TOKEN OR (${prefix}_REFRESH_TOKEN + ${prefix}_CLIENT_ID)`,
+          `stored refresh token at ~/.anvil/credentials/${profileName}.json (from 'anvil auth login')`,
+        ];
       default:
         return [`${prefix}_TOKEN`];
     }
@@ -85,16 +130,149 @@ export class EnvCredentialResolver implements CredentialResolver {
         const b64 = Buffer.from(`${user}:${pass}`).toString("base64");
         return { headers: { Authorization: `Basic ${b64}` } };
       }
-      case "mtls":
-      case "custom_header":
+      case "mtls": {
+        if (!auth.tls) return null;
+        const tls = this.resolveTlsMaterial(auth.tls);
+        return tls ? { tls } : null;
+      }
+      case "custom_header": {
+        const carrier = effectiveAuthCarrier(auth);
+        if (!carrier) return null;
+        const value = this.env[`${prefix}_HEADER_VALUE`];
+        if (!value) return null;
+        // Placed verbatim under the DECLARED carrier — a vendor's own header
+        // name and (optional) scheme prefix — never collapsed to a generic
+        // `Authorization: Bearer` the way every OAuth/JWT variant is below.
+        const carried = carrier.scheme ? `${carrier.scheme} ${value}` : value;
+        return carrier.in === "query"
+          ? { query: { [carrier.name]: value } }
+          : { headers: { [carrier.name]: carried } };
+      }
       case "oauth2_authorization_code":
-        // These schemes need explicit transport/carrier models that AIR does
-        // not yet express. Never collapse them into a bearer token.
-        return null;
+        return this.resolveAuthorizationCode(profileName, prefix, auth);
       default:
         // All OAuth2 / JWT / bearer variants use a resolved bearer token here;
         // token acquisition/refresh is the resolver's responsibility upstream.
         return token ? { headers: { Authorization: `Bearer ${token}` } } : null;
+    }
+  }
+
+  /**
+   * Client-certificate material for `mtls`, read by the exact NAMES `auth.tls`
+   * declares. Each name's env value is either the PEM text itself, or — when it
+   * starts with `/` or `./` and the file exists — a path read as PEM. Nothing
+   * here is ever logged; a missing or unreadable reference fails closed (null),
+   * same as every other resolver branch.
+   */
+  private resolveTlsMaterial(tls: TlsClientMaterialRefs): TlsClientMaterial | null {
+    const cert = this.readPemRef(tls.clientCertRef);
+    const key = this.readPemRef(tls.clientKeyRef);
+    if (!cert || !key) return null;
+    if (!tls.caRef) return { cert, key };
+    const ca = this.readPemRef(tls.caRef);
+    return ca ? { cert, key, ca } : null;
+  }
+
+  private readPemRef(envName: string): string | undefined {
+    const value = this.env[envName];
+    if (!value) return undefined;
+    if ((value.startsWith("/") || value.startsWith("./")) && existsSync(value)) {
+      try {
+        return readFileSync(value, "utf8");
+      } catch {
+        return undefined;
+      }
+    }
+    return value;
+  }
+
+  /**
+   * `oauth2_authorization_code`: replay a pre-issued `${prefix}_TOKEN` when
+   * present (a caller-managed access token); otherwise refresh with
+   * `${prefix}_REFRESH_TOKEN` (env, or the file `anvil auth login` wrote) plus
+   * `${prefix}_CLIENT_ID` (+ optional `${prefix}_CLIENT_SECRET`) against
+   * `provider.tokenEndpoint` (RFC 6749 §6). The interactive authorization step
+   * that produced the refresh token never runs here — see the CLI broker
+   * (`anvil auth login`). Acquired access tokens are cached in memory only,
+   * until expiry.
+   */
+  private async resolveAuthorizationCode(
+    profileName: string,
+    prefix: string,
+    auth: AuthRequirement,
+  ): Promise<AuthMaterial | null> {
+    const staticToken = this.env[`${prefix}_TOKEN`];
+    if (staticToken) return { headers: { Authorization: `Bearer ${staticToken}` } };
+
+    const cached = this.authCodeCache.get(profileName);
+    if (cached && cached.expEpochMs > this.now()) {
+      return { headers: { Authorization: `Bearer ${cached.token}` } };
+    }
+
+    const refreshToken =
+      this.env[`${prefix}_REFRESH_TOKEN`] ?? this.fileRefreshTokens.read(profileName);
+    const clientId = this.env[`${prefix}_CLIENT_ID`];
+    const tokenEndpoint = this.env[`${prefix}_TOKEN_ENDPOINT`] ?? auth.provider?.tokenEndpoint;
+    if (!refreshToken || !clientId || !tokenEndpoint) return null;
+
+    const clientSecret = this.env[`${prefix}_CLIENT_SECRET`];
+    const method = auth.provider?.clientAuth ?? "client_secret_basic";
+    const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken });
+    const headers: Record<string, string> = { "content-type": "application/x-www-form-urlencoded" };
+    if (clientSecret && method === "client_secret_basic") {
+      headers.authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
+    } else {
+      body.set("client_id", clientId);
+      if (clientSecret) body.set("client_secret", clientSecret);
+    }
+
+    try {
+      const res = await this.fetchImpl(tokenEndpoint, {
+        method: "POST",
+        headers,
+        body: body.toString(),
+      });
+      if (!res.ok) return null;
+      const json = (await res.json()) as { access_token?: unknown; expires_in?: unknown };
+      if (typeof json.access_token !== "string") return null;
+      const expiresIn = typeof json.expires_in === "number" ? json.expires_in : 3600;
+      this.authCodeCache.set(profileName, {
+        token: json.access_token,
+        expEpochMs: this.now() + Math.max(expiresIn * 1000 - 60_000, 0),
+      });
+      return { headers: { Authorization: `Bearer ${json.access_token}` } };
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * The interactive `anvil auth login` broker writes `{ refresh_token,
+ * obtained_at }` to `~/.anvil/credentials/<profile>.json` (mode 0600) after
+ * completing the PKCE authorization-code exchange once. This resolver-side
+ * seam reads it back as a fallback ONLY when `${prefix}_REFRESH_TOKEN` is
+ * unset — a local-operator convenience, not a requirement: a deployed runtime
+ * with no such directory (or no HOME) simply finds nothing here and falls
+ * through to `auth_required`, exactly like a missing env var. Never throws;
+ * never logs the value it reads.
+ */
+export class FileRefreshTokenSource {
+  private readonly dir: string;
+
+  constructor(dir?: string) {
+    this.dir = dir ?? join(homedir(), ".anvil", "credentials");
+  }
+
+  /** The refresh token stored for `profileName`, or undefined. */
+  read(profileName: string): string | undefined {
+    try {
+      const path = join(this.dir, `${profileName}.json`);
+      if (!existsSync(path)) return undefined;
+      const parsed = JSON.parse(readFileSync(path, "utf8")) as { refresh_token?: unknown };
+      return typeof parsed.refresh_token === "string" ? parsed.refresh_token : undefined;
+    } catch {
+      return undefined;
     }
   }
 }
@@ -226,17 +404,64 @@ export function credentialRequirement(
     return { auth: "none", resolver: "env", required: [], optional: [] };
   }
 
-  if (
-    auth.type === "mtls" ||
-    auth.type === "custom_header" ||
-    auth.type === "oauth2_authorization_code"
-  ) {
+  if (auth.type === "mtls") {
+    if (!auth.tls) {
+      return {
+        auth: "mtls (incomplete)",
+        resolver: "unsupported",
+        required: [],
+        optional: [],
+        note: "mtls must name its client certificate and key references (auth.tls) before the runtime can execute it. Runtime and certification fail closed.",
+      };
+    }
     return {
-      auth: `${auth.type} (unsupported)`,
-      resolver: "unsupported",
-      required: [],
+      auth: "mtls (client certificate)",
+      resolver: "env",
+      required: [
+        auth.tls.clientCertRef,
+        auth.tls.clientKeyRef,
+        ...(auth.tls.caRef ? [auth.tls.caRef] : []),
+      ],
       optional: [],
-      note: "Anvil does not model the required transport or carrier. Runtime and certification fail closed.",
+      note: "Each name is an env var holding PEM text, or a path (starting with / or ./) to a PEM file that exists. The runtime presents the client certificate over a node:https connection (the global fetch cannot).",
+    };
+  }
+
+  if (auth.type === "custom_header") {
+    const carrier = effectiveAuthCarrier(auth);
+    if (!carrier) {
+      return {
+        auth: "custom_header (incomplete)",
+        resolver: "unsupported",
+        required: [],
+        optional: [],
+        note: "custom_header must declare a credential carrier (auth.carrier) before the runtime can execute it. Runtime and certification fail closed.",
+      };
+    }
+    return {
+      auth: `custom_header (${carrier.in} '${carrier.name}')`,
+      resolver: "env",
+      required: [`${p}_HEADER_VALUE`],
+      optional: [],
+      note:
+        `Sent verbatim under the ${carrier.in} '${carrier.name}'` +
+        (carrier.scheme ? ` with the '${carrier.scheme}' scheme prefix` : "") +
+        ", never collapsed to a bearer token.",
+    };
+  }
+
+  if (auth.type === "oauth2_authorization_code") {
+    return {
+      auth: `oauth2_authorization_code (PKCE, token_endpoint=${auth.provider?.tokenEndpoint ?? `${p}_TOKEN_ENDPOINT`})`,
+      resolver: "env",
+      required: [],
+      requiredOneOf: [[`${p}_TOKEN`], [`${p}_REFRESH_TOKEN`, `${p}_CLIENT_ID`]],
+      optional: [`${p}_CLIENT_SECRET`],
+      note:
+        `Run \`anvil auth login <bundle> --profile <profile>\` once to complete the interactive ` +
+        `PKCE step; it stores a refresh token at ~/.anvil/credentials/<profile>.json (mode 0600), ` +
+        `which the runtime reads when ${p}_REFRESH_TOKEN is unset. End-user authority means this ` +
+        "stays review_required regardless of material completeness.",
     };
   }
 
@@ -282,5 +507,5 @@ export function applyAuth(req: HttpRequest, material: AuthMaterial): HttpRequest
     for (const [k, v] of Object.entries(material.query)) u.searchParams.set(k, v);
     url = u.toString();
   }
-  return { ...req, headers, url };
+  return { ...req, headers, url, ...(material.tls ? { tls: material.tls } : {}) };
 }

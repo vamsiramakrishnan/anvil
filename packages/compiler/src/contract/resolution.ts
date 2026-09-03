@@ -143,6 +143,8 @@ function baseValue(op: Operation, predicate: SemanticPredicate): unknown {
       return op.auth.audience;
     case "auth.carrier":
       return op.auth.carrier;
+    case "auth.tls":
+      return op.auth.tls;
     case "auth.secretSource":
       return op.auth.secretSource;
     case "auth.tenant":

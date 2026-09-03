@@ -834,6 +834,11 @@ export function authCoherenceIssues(auth: AuthRequirement): string[] {
       if (!header || scheme !== "basic") {
         issues.push("basic auth requires the Authorization header with the Basic scheme");
       }
+    } else if (auth.type === "custom_header") {
+      // Any header or query name, with or without a scheme prefix (a vendor's
+      // own literal "Token <value>" convention, say) — the whole reason this
+      // type exists is to carry a credential AIR's other carriers cannot
+      // express. authMechanicsIssues below is what refuses a missing one.
     } else if (
       auth.type === "oauth2_client_credentials" ||
       auth.type === "oauth2_authorization_code" ||
