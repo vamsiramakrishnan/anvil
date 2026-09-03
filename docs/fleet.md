@@ -160,8 +160,19 @@ evidence) against the compiled AIR document's own safety claims, looking for
 a **contradiction**:
 
 - an operation compiled `idempotency.mode: "natural"` (repeat calls converge
-  on the same effect) that returned a `conflict` on replay — live traffic
-  says it isn't naturally idempotent after all;
+  on the same effect) where a recorded call carries the runtime idempotency
+  ledger's own `"replay"` evidence (`SpooledRecord.ledger`,
+  `packages/harness/src/records.ts`) alongside a `conflict` outcome — live
+  traffic says it isn't naturally idempotent after all. A bare `conflict`
+  error code alone is **not** evidence: an ordinary business conflict (e.g.
+  "this resource already exists") returns the same code and can itself be
+  perfectly idempotent to repeat, and a payload-free record has no way to
+  prove two calls were "the same logical call" without the ledger's own
+  replay marker. (Today the ledger is only consulted for operations with a
+  resolvable idempotency-key carrier — `idempotency.mode` `"required"` or
+  `"key_supported"` — so a `"natural"`-mode operation's records never
+  actually carry this evidence yet; this alarm stays honest about that
+  rather than alarming on a bare 409.)
 - an operation whose declared error codes never once appear in traffic
   while an undeclared one does (reported, not yet case-opening — see below).
 

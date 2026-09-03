@@ -60,25 +60,58 @@ function groupByOperation(records: readonly SpooledRecord[]): Map<string, Spoole
 }
 
 /**
- * "A naturally idempotent read returns 409 on replay": `op.idempotency.mode`
- * says repeat calls converge on the same effect, so an upstream `conflict`
- * (HTTP 409, Anvil's `conflict` error code) on ANY recorded call is a live
- * contradiction of that compiled claim.
+ * "A naturally idempotent op returns 409 on a proven replay": `op.idempotency.mode`
+ * says repeat calls converge on the same effect, but a bare `conflict`
+ * error code alone is NOT evidence of that — an ordinary business conflict
+ * (e.g. "this resource already exists") returns the same error code and can
+ * itself be perfectly idempotent to repeat. `SpooledRecord` carries no
+ * request payload, so there is no way to compare two calls' inputs and prove
+ * they were "the same logical call" from the error code alone (see this
+ * module's earlier Codex review finding). Do not invent payload comparison
+ * here; the only evidence this detector trusts is the runtime's own
+ * idempotency ledger, which is authoritative about replay because it is the
+ * mechanism that WOULD have produced the divergent outcome.
+ *
+ * `SpooledRecord.ledger` (`packages/harness/src/records.ts`) is the field the
+ * runtime's executor annotates with what actually happened at the ledger.
+ * `"replay"` (`packages/runtime/src/executor.ts`, the `reservation.outcome
+ * === "replay"` branch) is written only when the SAME idempotency key was
+ * reserved before and the ledger is now short-circuiting to the cached
+ * result — genuine proof the runtime treated this as a repeat of a specific
+ * earlier call, not a guess from the error code.
+ *
+ * Caveat this module states rather than hides: the ledger is only consulted
+ * for mutations with a resolvable idempotency-key carrier — i.e.
+ * `idempotency.mode` `"required"` or `"key_supported"`
+ * (`idempotencyModeUsesCarrier`, `packages/air/src/idempotency-carrier.ts`).
+ * For `"natural"` mode — the only mode this detector evaluates — the carrier
+ * never resolves, so the ledger reservation block
+ * (`packages/runtime/src/executor.ts`'s "8. Idempotency ledger" step) never
+ * runs and every record for a natural-mode operation keeps `ledger: "none"`
+ * (its default, set where the record is constructed). So today no record
+ * this function ever sees can carry replay evidence, and this detector
+ * correctly never opens a case — that is the honest state of what live
+ * traffic can prove for a naturally-idempotent operation, not a bug to work
+ * around. It stays written this way (rather than deleted) so a future
+ * runtime change that gives natural-mode calls their own replay evidence
+ * makes this detector live again without a second review of the false-alarm
+ * risk this fixes.
  */
 function idempotencyContradiction(
   op: Operation,
   opRecords: readonly SpooledRecord[],
 ): DriftContradiction | undefined {
   if (op.idempotency.mode !== "natural") return undefined;
-  const conflicting = opRecords.filter((r) => r.errorCode === "conflict");
+  const conflicting = opRecords.filter((r) => r.errorCode === "conflict" && r.ledger === "replay");
   if (conflicting.length === 0) return undefined;
   return {
     operationId: op.id,
     kind: "idempotency_replay_conflict",
     message:
       `'${op.id}' is compiled with idempotency.mode="natural" (repeat calls converge on the ` +
-      `same effect), but ${conflicting.length} of ${opRecords.length} recorded call(s) returned ` +
-      "a conflict on replay — live traffic contradicts the compiled claim.",
+      `same effect), but ${conflicting.length} of ${opRecords.length} recorded call(s) carry ` +
+      'the idempotency ledger\'s own "replay" evidence alongside a conflict outcome — live ' +
+      "traffic contradicts the compiled claim.",
     records: conflicting,
   };
 }

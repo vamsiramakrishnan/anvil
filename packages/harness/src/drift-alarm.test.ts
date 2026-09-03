@@ -69,10 +69,14 @@ function spooled(overrides: Partial<SpooledRecord> = {}): SpooledRecord {
 }
 
 describe("detectDriftContradictions — idempotency replay conflict", () => {
-  it("finds a contradiction: a naturally-idempotent op returning conflict on replay", () => {
+  it("finds a contradiction: a naturally-idempotent op's ledger replays a call that still conflicts", () => {
     const op = naturalReadOp();
     const air = airWith(op);
-    const records = [spooled(), spooled(), spooled({ outcome: "error", errorCode: "conflict" })];
+    const records = [
+      spooled(),
+      spooled(),
+      spooled({ outcome: "error", errorCode: "conflict", ledger: "replay" }),
+    ];
     const found = detectDriftContradictions(air, records);
     expect(found).toHaveLength(1);
     expect(found[0]).toMatchObject({
@@ -82,11 +86,27 @@ describe("detectDriftContradictions — idempotency replay conflict", () => {
     expect(found[0]?.records).toHaveLength(1);
   });
 
+  it("does not alarm on an ordinary business conflict without replay evidence", () => {
+    // A bare `errorCode === "conflict"` proves nothing about idempotent
+    // replay by itself — an everyday business conflict (e.g. "this resource
+    // already exists") returns the same error code and can itself be
+    // perfectly idempotent to repeat. Without the ledger's own "replay"
+    // marker on the record, this must not open a high-severity case.
+    const op = naturalReadOp();
+    const air = airWith(op);
+    const records = [
+      spooled(),
+      spooled(),
+      spooled({ outcome: "error", errorCode: "conflict" }), // no ledger evidence
+    ];
+    expect(detectDriftContradictions(air, records)).toHaveLength(0);
+  });
+
   it("does not alarm below the minimum sample floor (an anecdote, not a pattern)", () => {
     const op = naturalReadOp();
     const air = airWith(op);
     const records = Array.from({ length: MIN_SAMPLES_FOR_ALARM - 1 }, () =>
-      spooled({ outcome: "error", errorCode: "conflict" }),
+      spooled({ outcome: "error", errorCode: "conflict", ledger: "replay" }),
     );
     expect(detectDriftContradictions(air, records)).toHaveLength(0);
   });
@@ -101,7 +121,11 @@ describe("detectDriftContradictions — idempotency replay conflict", () => {
       },
     });
     const air = airWith(op);
-    const records = [spooled(), spooled(), spooled({ outcome: "error", errorCode: "conflict" })];
+    const records = [
+      spooled(),
+      spooled(),
+      spooled({ outcome: "error", errorCode: "conflict", ledger: "replay" }),
+    ];
     expect(detectDriftContradictions(air, records)).toHaveLength(0);
   });
 
@@ -116,9 +140,24 @@ describe("detectDriftContradictions — idempotency replay conflict", () => {
     const op = naturalReadOp();
     const air = airWith(op);
     const records = [
-      spooled({ operationId: "unknown.op", outcome: "error", errorCode: "conflict" }),
-      spooled({ operationId: "unknown.op", outcome: "error", errorCode: "conflict" }),
-      spooled({ operationId: "unknown.op", outcome: "error", errorCode: "conflict" }),
+      spooled({
+        operationId: "unknown.op",
+        outcome: "error",
+        errorCode: "conflict",
+        ledger: "replay",
+      }),
+      spooled({
+        operationId: "unknown.op",
+        outcome: "error",
+        errorCode: "conflict",
+        ledger: "replay",
+      }),
+      spooled({
+        operationId: "unknown.op",
+        outcome: "error",
+        errorCode: "conflict",
+        ledger: "replay",
+      }),
     ];
     expect(detectDriftContradictions(air, records)).toHaveLength(0);
   });
@@ -154,7 +193,11 @@ describe("runDriftAlarm — opens a case, proposing only", () => {
   it("opens a real case for an idempotency-replay contradiction, attaching the contradicting records as evidence", async () => {
     const op = naturalReadOp();
     const air = airWith(op);
-    const records = [spooled(), spooled(), spooled({ outcome: "error", errorCode: "conflict" })];
+    const records = [
+      spooled(),
+      spooled(),
+      spooled({ outcome: "error", errorCode: "conflict", ledger: "replay" }),
+    ];
 
     const result = await runDriftAlarm(air, records, {
       root: join(dir, ".refinement"),
@@ -196,7 +239,11 @@ describe("runDriftAlarm — opens a case, proposing only", () => {
     const op = naturalReadOp();
     const air = airWith(op);
     const before = JSON.stringify(air);
-    const records = [spooled(), spooled(), spooled({ outcome: "error", errorCode: "conflict" })];
+    const records = [
+      spooled(),
+      spooled(),
+      spooled({ outcome: "error", errorCode: "conflict", ledger: "replay" }),
+    ];
     await runDriftAlarm(air, records, { root: join(dir, ".refinement") });
     expect(JSON.stringify(air)).toBe(before);
   });

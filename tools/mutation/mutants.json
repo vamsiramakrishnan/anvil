@@ -1026,6 +1026,16 @@
       ]
     },
     {
+      "id": "legacy-bridge/stomp-content-length-is-bytes",
+      "file": "packages/legacy-bridge/src/stomp-client.ts",
+      "control": "STOMP content-length is a byte count (encodeStompFrame emits Buffer.byteLength(body, \"utf8\")), and the parser must locate the body's NUL terminator by that same byte offset into the raw Buffer. Reintroduce string-length arithmetic — decoding to a string and walking UTF-16 code units instead of bytes — and any reply whose body contains a multibyte UTF-8 character (e.g. an accented name) lands short of the real terminator, so the frame never completes and the caller times out waiting for a reply that already arrived.",
+      "find": "    if (declaredLength !== undefined && /^\\d+$/.test(declaredLength)) {\n      bodyEnd = bodyStart + Number(declaredLength); // byte offset — content-length is bytes\n      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more",
+      "replace": "    if (declaredLength !== undefined && /^\\d+$/.test(declaredLength)) {\n      const decoded = buffer.toString(\"utf8\", bodyStart); // MUTANT: string-length arithmetic reintroduced\n      bodyEnd = bodyStart + decoded.slice(0, Number(declaredLength)).length;\n      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more",
+      "tests": [
+        "packages/legacy-bridge/src/stomp-client.test.ts"
+      ]
+    },
+    {
       "id": "legacy-bridge/wire-binding-coherence-refused",
       "file": "packages/legacy-bridge/src/wire-binding.ts",
       "control": "The deployment-local bridge refuses to serve a queue wire binding whose legacyBindingContentHash does not match the reviewed LegacyCapabilityBinding it was handed — the coherence property that stops a bridge from silently serving an unreviewed or since-changed candidate. Delete the check and any wire binding is accepted for any binding, hash mismatch or not.",
@@ -1138,6 +1148,16 @@
       "replace": "          retryable: true,\n          safeToRetry: false,",
       "tests": [
         "packages/runtime/src/fleet-safety.test.ts"
+      ]
+    },
+    {
+      "id": "harness/drift-alarm-bare-409-is-not-replay-evidence",
+      "file": "packages/harness/src/drift-alarm.ts",
+      "control": "A bare `conflict` error code alone is not evidence of an idempotency-replay contradiction -- an ordinary business conflict (e.g. \"this resource already exists\") returns the same code and can itself be perfectly idempotent to repeat. Only a record carrying the runtime idempotency ledger's own \"replay\" evidence (SpooledRecord.ledger) proves the runtime treated it as a repeat of a specific earlier call. Drop the ledger check and any recorded conflict on a naturally-idempotent operation opens a high-severity case, alarm-fatiguing an operator over routine business conflicts.",
+      "find": "  const conflicting = opRecords.filter((r) => r.errorCode === \"conflict\" && r.ledger === \"replay\");",
+      "replace": "  const conflicting = opRecords.filter((r) => r.errorCode === \"conflict\");",
+      "tests": [
+        "packages/harness/src/drift-alarm.test.ts"
       ]
     },
     {
