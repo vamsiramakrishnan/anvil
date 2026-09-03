@@ -88,6 +88,20 @@ export interface LadderLane {
    * authored, so `laneEntryDescription` folds them into the card.
    */
   memberVocabulary: string[];
+  /**
+   * Up to `MEMBER_INTENT_EXAMPLE_LIMIT` of the member operations' own
+   * `skill.intentExamples`, deduplicated and in `operationIds` order — the
+   * second stage-1 lever measured in `docs/backtesting/routing-at-scale.md`.
+   * `memberVocabulary` gives a router two-word stems ("list view"); an
+   * authored intent example is the full phrase an agent would actually type
+   * ("list the views created this week"), which a lexical or model router
+   * matches more directly than a stem ever can. Every approved operation
+   * already carries this field once `author-intent-examples` has run — it is
+   * the same text the routing benchmark's own tasks are drawn from — so, like
+   * `memberVocabulary`, folding it in costs no new evidence source and keeps
+   * the ladder a pure projection.
+   */
+  memberIntentExamples: string[];
   /** Measured cost of the operations this lane discloses; 0 when unmeasured. */
   laneTokens: number;
 }
@@ -96,6 +110,15 @@ export interface LadderLane {
  *  member listing, so this stays well short of the largest lane's true
  *  member count. */
 const MEMBER_VOCABULARY_LIMIT = 8;
+
+/**
+ * Cap on `LadderLane.memberIntentExamples`. A full intent phrase costs far
+ * more of the card's text budget than a two-word vocabulary stem, so this
+ * stays smaller than `MEMBER_VOCABULARY_LIMIT` — enough for a router to see
+ * real phrasing from several distinct members without one lane's examples
+ * alone approaching `entryCardTokens`' per-card cap.
+ */
+const MEMBER_INTENT_EXAMPLE_LIMIT = 4;
 
 export interface LadderPlan {
   mode: LadderMode;
@@ -151,6 +174,7 @@ export function laneEntryDescription(lane: {
   routingPhrases: readonly string[];
   operationIds: readonly string[];
   memberVocabulary: readonly string[];
+  memberIntentExamples: readonly string[];
 }): string {
   const parts = [
     lane.summary || lane.displayName,
@@ -158,6 +182,11 @@ export function laneEntryDescription(lane: {
   ];
   if (lane.memberVocabulary.length > 0) {
     parts.push(`Covers: ${lane.memberVocabulary.join(", ")}.`);
+  }
+  if (lane.memberIntentExamples.length > 0) {
+    parts.push(
+      `Examples: ${lane.memberIntentExamples.map((example) => `"${example}"`).join("; ")}.`,
+    );
   }
   if (lane.routingPhrases.length > 0) {
     parts.push(`Use for requests like: ${lane.routingPhrases.slice(0, 5).join("; ")}.`);
@@ -341,6 +370,26 @@ function buildLane(
     memberVocabulary.push(phrase);
   }
 
+  // Same dedup-and-cap shape as `memberVocabulary` above, over a different
+  // vocabulary source: the member operations' own authored intent phrases
+  // rather than their action/resource stems. Iterated in the same
+  // `operationIds` order so both fields draw from the same deterministic
+  // walk of the lane's membership.
+  const memberIntentExamples: string[] = [];
+  const seenIntentExamples = new Set<string>();
+  for (const id of operationIds) {
+    if (memberIntentExamples.length >= MEMBER_INTENT_EXAMPLE_LIMIT) break;
+    const operation = byId.get(id);
+    if (!operation) continue;
+    for (const example of operation.skill.intentExamples) {
+      if (memberIntentExamples.length >= MEMBER_INTENT_EXAMPLE_LIMIT) break;
+      const trimmed = example.trim();
+      if (trimmed === "" || seenIntentExamples.has(trimmed)) continue;
+      seenIntentExamples.add(trimmed);
+      memberIntentExamples.push(trimmed);
+    }
+  }
+
   return {
     capabilityId: capability.id,
     entryToolName: laneEntryToolName(capability.id),
@@ -349,6 +398,7 @@ function buildLane(
     routingPhrases: capability.intentExamples,
     operationIds,
     memberVocabulary,
+    memberIntentExamples,
     laneTokens,
   };
 }
