@@ -75,6 +75,10 @@ const RESOURCE_PATH_KINDS: ReadonlySet<SourceKind> = new Set([
   "discovery",
   "postman",
   "odata",
+  // A HAR capture's paths are the real URLs a browser/proxy observed on the
+  // wire — real resource coordinates, exactly like a Postman collection's,
+  // never a synthesized wrapper path an adapter invented.
+  "har",
 ]);
 
 /* ------------------------------------------------------------------ evidence

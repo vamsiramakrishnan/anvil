@@ -15,13 +15,21 @@ import type { OpenApiDocument } from "../parse.js";
 import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
 import { adaptProto, type ProtoImportResolver } from "./grpc.js";
+import { adaptHar, harVersion, isHarCapture } from "./har.js";
 import { adaptOData } from "./odata.js";
 import { adaptPostman, isPostmanCollection, postmanSchemaVersion } from "./postman.js";
 import { callbackWebhookLink, webhookPathItems } from "./webhooks.js";
 import { adaptWsdl, type WsdlImportResolver } from "./wsdl.js";
 
 /** The non-REST source formats Anvil can lower. Aligns with AIR's SourceKind. */
-export type ProtocolFormat = "graphql" | "protobuf" | "wsdl" | "discovery" | "postman" | "odata";
+export type ProtocolFormat =
+  | "graphql"
+  | "protobuf"
+  | "wsdl"
+  | "discovery"
+  | "postman"
+  | "odata"
+  | "har";
 
 export interface DetectedProtocol {
   format: ProtocolFormat;
@@ -35,6 +43,7 @@ const EXT_FORMAT: Record<string, ProtocolFormat> = {
   proto: "protobuf",
   wsdl: "wsdl",
   edmx: "odata",
+  har: "har",
   // Google Discovery and Postman collections are `.json`; detected by content
   // (Postman also honors its `.postman_collection.json` filename convention).
 };
@@ -74,6 +83,7 @@ function versionFor(format: ProtocolFormat, text: string): string {
   if (format === "protobuf") return /proto3/.test(text) ? "proto3" : "proto2";
   if (format === "wsdl") return /wsdl\/2/.test(text) ? "2.0" : "1.1";
   if (format === "odata") return odataVersion(text);
+  if (format === "har") return harVersion(text);
   return "1.0";
 }
 
@@ -93,6 +103,8 @@ function odataVersion(text: string): string {
 /** Content-only detection for sources that arrive without a filename. */
 function sniffContent(text: string): DetectedProtocol | undefined {
   const head = text.slice(0, 4000);
+  // HAR 1.2 capture: identified by the `log.version` + `log.entries` envelope.
+  if (isHarCapture(text)) return { format: "har", version: harVersion(text) };
   // Google API Discovery document: identified by its `kind` discriminator.
   if (isDiscoveryDocument(text)) return { format: "discovery", version: "v1" };
   // Postman Collection v2.x: identified by its `info.schema` discriminator.
@@ -165,6 +177,8 @@ export function adaptProtocol(
       return adaptPostman(text, diagnostics);
     case "odata":
       return adaptOData(text, title, diagnostics);
+    case "har":
+      return adaptHar(text, title, diagnostics);
   }
 }
 
@@ -177,6 +191,7 @@ export type { WsdlImportResolver } from "./wsdl.js";
 export {
   adaptDiscovery,
   adaptGraphql,
+  adaptHar,
   adaptOData,
   adaptPostman,
   adaptProto,
