@@ -67,6 +67,17 @@ export interface Principal {
  */
 export const ANONYMOUS_PRINCIPAL: Principal = { id: "anonymous", scopes: ["*"] };
 
+/**
+ * Record-only placeholder for "a principal directory IS configured for this
+ * session, but this caller's own credential did not resolve to an entry in
+ * it" — absent, mistyped, or simply not listed. `scopes: []` grants nothing;
+ * `execute()` refuses before this value could ever reach a scope check (see
+ * its principal-resolution gate). Distinct from `ANONYMOUS_PRINCIPAL` so an
+ * `ExecutionRecord`'s `principalId` never claims "anonymous" for a call that
+ * was actually refused as a configuration/auth error.
+ */
+export const UNRESOLVED_PRINCIPAL: Principal = { id: "unresolved", scopes: [] };
+
 /** Whether `principal` covers every scope `required` names. `"*"` covers anything. */
 export function principalHasScopes(principal: Principal, required: readonly string[]): boolean {
   if (required.length === 0) return true;

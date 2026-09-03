@@ -1,6 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { join } from "node:path";
+import type { CertificationVerdict } from "@anvil/generators";
 import type { FleetServer } from "@anvil/mcp-runtime";
 import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
@@ -89,11 +88,13 @@ async function runServeMcp(dir: string, io: CliIO): Promise<number> {
  * `@anvil/generators`'s `discoverBundles` — the exact function the console
  * uses to browse a workspace, so the fleet and the console can never
  * disagree about what counts as a bundle. Each discovered bundle's own
- * `certification.json` (when present) is read here, in the CLI, and handed
- * to `buildFleetServer` as plain data — `@anvil/mcp-runtime` never reads the
- * filesystem or depends on `@anvil/generators` (that dependency runs the
- * other way), so certification stays a build-time artifact the serving path
- * only ever consumes.
+ * `certification.json` (when present) is read AND verified against the
+ * bundle's current content hash here, in the CLI (`verifyCertification`,
+ * `@anvil/generators` — the same freshness gate `anvil deploy` checks a plan
+ * against), and handed to `buildFleetServer` as plain data —
+ * `@anvil/mcp-runtime` never reads the filesystem or depends on
+ * `@anvil/generators` (that dependency runs the other way), so certification
+ * stays a build-time artifact the serving path only ever consumes.
  */
 export type BuildFleetResult =
   | { ok: true; fleet: FleetServer; bundleIds: string[] }
@@ -118,8 +119,10 @@ export async function buildFleetForWorkspace(
     };
   }
 
-  const { buildFleetServer } = await import("@anvil/mcp-runtime");
-  const { buildToolResources } = await import("@anvil/generators");
+  const { buildFleetServer, fleetToolPrefix } = await import("@anvil/mcp-runtime");
+  const { buildToolResources, readBundleDir, verifyCertification } = await import(
+    "@anvil/generators"
+  );
   const {
     allowedHostsFor,
     buildLimitsGate,
@@ -141,34 +144,81 @@ export async function buildFleetForWorkspace(
   // Unconfigured (`ANVIL_PRINCIPALS` unset, or `ANVIL_PRINCIPAL` unset/
   // unmatched) resolves to `undefined` here, which `execute()` itself turns
   // into the anonymous, every-scope principal — this call never invents a
-  // fallback of its own.
+  // fallback of its own. `principalDirectoryConfigured` is the OTHER half of
+  // that contract: it tells `execute()` whether `ANVIL_PRINCIPALS` names any
+  // entries at all, so an unresolved `principal` here (mistyped/missing
+  // `ANVIL_PRINCIPAL`, or a token the directory doesn't name) is refused
+  // fail-closed instead of silently reproducing the anonymous default (see
+  // `execute()`'s principal-resolution gate, `@anvil/runtime`).
   const principal = resolvePrincipalForEnv(config.principals, env);
+  const principalDirectoryConfigured = Object.keys(config.principals).length > 0;
   const limits = buildLimitsGate(config.limits);
 
   const fleetInputs = bundles.map((bundle) => {
     const air = loadAir(bundle.dir);
     const baseUrl = air.service.servers[0]?.url ?? "";
     const allowedHosts = allowedHostsFor(config.allowedHosts, baseUrl, false);
+
+    // Read once, reused below for both the benchmarked-ladder decision and
+    // certification-hash verification — the exact same on-disk evidence
+    // `anvil serve mcp` (no --fleet) and `anvil certify`/`anvil deploy`
+    // already consult, so a fleet-mounted bundle can never quietly disagree
+    // with what those commands would say about it. An unreadable bundle (a
+    // disallowed symlink — see `readBundleDir`) is treated as having
+    // neither: the fleet still mounts and serves it, exactly as an
+    // unreadable certification.json already was before this.
+    let files: Record<string, string> | undefined;
+    try {
+      files = readBundleDir(bundle.dir);
+    } catch {
+      files = undefined;
+    }
+
+    // The same measured accuracy delta `anvil serve mcp` (no --fleet) would
+    // derive for this bundle right now (`measuredAccuracyFromReport`), so
+    // `auto` mode's decision here and a standalone serve of the same bundle
+    // can never disagree. A bundle that has never been benchmarked (or whose
+    // report is stale) has no delta to weigh, reproducing `auto`'s
+    // pre-measurement behavior — identical to the single-bundle path.
+    const measuredAccuracy = files ? measuredAccuracyFromReport(bundle.dir, files) : undefined;
+
+    // Credential namespace, mirrored from the tool-naming precedent
+    // (`fleetToolPrefix`): with exactly one bundle mounted there is nothing
+    // to disambiguate, so its authProfile is byte-identical to `anvil serve
+    // mcp` without --fleet. From two bundles on, each bundle's authProfile
+    // is namespaced by its own stable id — `credentialProfileName`
+    // (`@anvil/runtime`) only adds the security-SCHEME suffix on top of
+    // this, so two bundles whose schemes happen to share a name (both
+    // "oauth", say) still resolve distinct `ANVIL_<PROFILE>_*` variables and
+    // one service's credential can never be sent to another's origin (see
+    // docs/fleet.md).
+    const authProfile =
+      bundles.length === 1
+        ? config.authProfile
+        : `${config.authProfile ?? "default"}_${fleetToolPrefix(bundle.id)}`;
+
     return {
       id: bundle.id,
       air,
       options: {
         resources: buildToolResources(air),
+        measuredAccuracy,
         contextFor: () => ({
           transport,
           serviceId: air.service.id,
           credentials,
           ledger,
           baseUrl,
-          authProfile: config.authProfile,
+          authProfile,
           allowedHosts,
           env: config.env,
           timeoutMs: config.upstreamTimeoutMs,
           principal,
+          principalDirectoryConfigured,
           limits,
         }),
       },
-      certification: readCertification(bundle.dir),
+      certification: files ? readCertification(files, verifyCertification) : undefined,
     };
   });
 
@@ -212,27 +262,36 @@ async function runServeFleet(workspaceRoot: string, io: CliIO): Promise<number> 
   return 0;
 }
 
-/** Read a bundle's own `certification.json`, or undefined when it has never been certified. */
+/**
+ * Verify a bundle's own `certification.json` the same way `verifyCertification`
+ * (`@anvil/generators` — the exact hash-freshness gate `anvil deploy` checks a
+ * plan against) does: PASSED status AND a `bundleHash` that still matches the
+ * CURRENT content of `files` — never the status string taken on faith. A
+ * bundle with no certification.json, an unparsable one, one whose status
+ * isn't "passed", or one whose bundleHash no longer matches what's on disk
+ * (a compiler-owned file edited after `anvil certify` ran, or a
+ * certification.json copied in from elsewhere) reports `fresh: false` with
+ * `reason` naming why — readyz never trusts a status it hasn't re-verified.
+ */
 function readCertification(
-  bundleDir: string,
-): { hash: string; status: "passed" | "failed" | "expired" } | undefined {
-  const path = join(bundleDir, "certification.json");
-  if (!existsSync(path)) return undefined;
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as {
-      bundleHash?: unknown;
-      status?: unknown;
-    };
-    if (typeof parsed.bundleHash !== "string") return undefined;
-    if (parsed.status !== "passed" && parsed.status !== "failed" && parsed.status !== "expired") {
-      return undefined;
-    }
-    return { hash: parsed.bundleHash, status: parsed.status };
-  } catch {
-    // An unreadable/malformed certification.json is the same as none: the
-    // fleet still serves the bundle, and readyz honestly reports it uncertified.
-    return undefined;
-  }
+  files: Record<string, string>,
+  verifyCertificationFn: (files: Record<string, string>) => CertificationVerdict,
+):
+  | { hash: string; status: "passed" | "failed" | "expired"; fresh: boolean; reason?: string }
+  | undefined {
+  if (files["certification.json"] === undefined) return undefined;
+  const verdict = verifyCertificationFn(files);
+  // `certification` is absent only when certification.json itself was
+  // missing/unparsable/schema-invalid — the same as never certified.
+  if (!verdict.certification) return undefined;
+  return verdict.ok
+    ? { hash: verdict.certification.bundleHash, status: verdict.certification.status, fresh: true }
+    : {
+        hash: verdict.certification.bundleHash,
+        status: verdict.certification.status,
+        fresh: false,
+        reason: verdict.reason,
+      };
 }
 
 const DEFAULT_READYZ_PORT = 8787;

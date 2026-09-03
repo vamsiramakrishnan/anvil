@@ -56,13 +56,27 @@ export interface FleetBundleInput {
   air: AirDocument;
   options: McpBuildOptions;
   /**
-   * This bundle's own certified state, read by the CALLER from its
-   * `certification.json` (`@anvil/generators`'s `Certification`) — fleet.ts
-   * itself never reads the filesystem or depends on `@anvil/generators`
-   * (that dependency runs the other way). Absent when the bundle has never
-   * been certified.
+   * This bundle's own certified state, read AND verified by the CALLER
+   * against its current content hash (`@anvil/generators`'s
+   * `verifyCertification`) — fleet.ts itself never reads the filesystem or
+   * depends on `@anvil/generators` (that dependency runs the other way).
+   * `fresh` distinguishes "certified, and that certification still describes
+   * what's on disk right now" from "certified, but the bundle has since
+   * changed underneath it (or the record was copied in from elsewhere)" — a
+   * bundle is ready ONLY when both `status === "passed"` AND `fresh`. Absent
+   * `fresh` (older/hand-built inputs, e.g. direct `buildFleetServer` callers
+   * that never verified freshness themselves) is treated as fresh, so this
+   * stays backward compatible with a caller that only ever checked `status`.
+   * Absent `certification` entirely when the bundle has never been
+   * certified.
    */
-  certification?: { hash: string; status: "passed" | "failed" | "expired" };
+  certification?: {
+    hash: string;
+    status: "passed" | "failed" | "expired";
+    fresh?: boolean;
+    /** Present when not ready and a reason is known (e.g. a stale hash). */
+    reason?: string;
+  };
 }
 
 export interface FleetBundleReadiness {
@@ -71,8 +85,14 @@ export interface FleetBundleReadiness {
   toolCount: number;
   certifiedHash?: string;
   certificationStatus?: "passed" | "failed" | "expired";
-  /** True only when this bundle is certified `passed` — the fleet-wide `ready` folds these. */
+  /**
+   * True only when this bundle is certified `passed` AND that certification's
+   * hash still matches the bundle's current content — the fleet-wide `ready`
+   * folds these.
+   */
   ready: boolean;
+  /** Present when `ready` is false and a certification exists: why (e.g. a stale hash). */
+  reason?: string;
 }
 
 export interface FleetReadyz {
@@ -246,13 +266,21 @@ export async function buildFleetServer(
       );
     }
 
+    // A bundle is ready only when its certification is BOTH `passed` and
+    // fresh (still describes what's on disk) — `fresh` absent (a caller that
+    // never verified freshness) is treated as fresh, so a hand-built
+    // `FleetBundleInput` that only ever set `status` keeps working exactly
+    // as before this field existed.
+    const certificationFresh = bundle.certification?.fresh !== false;
+    const ready = bundle.certification?.status === "passed" && certificationFresh;
     readiness.push({
       id: bundle.id,
       serviceId: bundle.air.service.id,
       toolCount: listed.tools.length,
       certifiedHash: bundle.certification?.hash,
       certificationStatus: bundle.certification?.status,
-      ready: bundle.certification?.status === "passed",
+      ready,
+      reason: ready ? undefined : bundle.certification?.reason,
     });
   }
 

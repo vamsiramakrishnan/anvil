@@ -1200,6 +1200,37 @@
       "tests": [
         "packages/cli/src/commands/auth.test.ts"
       ]
+    },
+    {
+      "id": "fleet/unresolved-principal-refused-when-directory-configured",
+      "file": "packages/runtime/src/executor.ts",
+      "control": "When a principal directory IS configured for this session but the caller's own credential did not resolve to an entry in it, execute() refuses fail-closed rather than silently falling back to the anonymous, every-scope principal -- deleting this gate would let a misconfigured/mistyped/unmatched credential grant every scope.",
+      "find": "    if (principalUnresolved) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/runtime/src/fleet-safety.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/credentials-namespaced-per-bundle",
+      "file": "packages/cli/src/commands/serve.ts",
+      "control": "From two bundles on, --fleet namespaces each bundle's authProfile by its own stable id before credentialProfileName adds the security-scheme suffix -- deleting the per-bundle namespace would let two bundles whose schemes share a name (both \"oauth\", say) resolve the SAME ANVIL_<PROFILE>_* variables, so one service's credential could be sent to another's origin.",
+      "find": "      bundles.length === 1\n        ? config.authProfile\n        : `${config.authProfile ?? \"default\"}_${fleetToolPrefix(bundle.id)}`;",
+      "replace": "config.authProfile;",
+      "tests": [
+        "packages/cli/src/commands/serve.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/readyz-verifies-certification-hash",
+      "file": "packages/mcp-runtime/src/fleet.ts",
+      "control": "A bundle is ready only when its certification is BOTH status:\"passed\" AND its hash still matches the bundle's CURRENT content (fresh) -- deleting the freshness half would let a stale, copied, or mismatched certification.json (a compiler-owned file edited after `anvil certify` ran) still report ready:true.",
+      "find": "    const certificationFresh = bundle.certification?.fresh !== false;",
+      "replace": "    const certificationFresh = true;",
+      "tests": [
+        "packages/mcp-runtime/src/fleet.test.ts",
+        "packages/cli/src/commands/serve.test.ts"
+      ]
     }
   ]
 }

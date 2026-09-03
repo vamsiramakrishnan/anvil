@@ -187,6 +187,57 @@ describe("buildFleetServer", () => {
     await fleet.close();
   });
 
+  it("a certified-passed bundle whose certification is NOT fresh reports ready:false with a reason (finding #4)", async () => {
+    const bundleA = {
+      id: "billing",
+      air: airFor("billing", op({ mcp: { toolName: "list_invoices" } })),
+      options: {
+        contextFor: () => ({
+          transport: mockTransport,
+          serviceId: "billing",
+          baseUrl: "http://test",
+        }),
+      },
+      // `status: "passed"` alone used to be enough for readyz to call this
+      // bundle ready — the exact bug finding #4 reports. `fresh: false` is
+      // what the CLI (serve.ts) now sets after re-verifying the certified
+      // hash against the bundle's CURRENT content and finding it stale.
+      certification: {
+        hash: "sha256:aaa",
+        status: "passed" as const,
+        fresh: false,
+        reason:
+          "static assurance is stale: assured sha256:aaa… but the bundle now hashes to sha256:bbb…",
+      },
+    };
+    const fleet = await buildFleetServer([bundleA]);
+    const readyz = fleet.readyz();
+    expect(readyz.ready).toBe(false);
+    expect(readyz.bundles[0]?.ready).toBe(false);
+    expect(readyz.bundles[0]?.certificationStatus).toBe("passed");
+    expect(readyz.bundles[0]?.reason).toMatch(/stale/);
+    await fleet.close();
+  });
+
+  it("`fresh` absent (a caller that never verified freshness) is treated as fresh -- backward compatible with `status`-only certification objects", async () => {
+    const bundleA = {
+      id: "billing",
+      air: airFor("billing", op({ mcp: { toolName: "list_invoices" } })),
+      options: {
+        contextFor: () => ({
+          transport: mockTransport,
+          serviceId: "billing",
+          baseUrl: "http://test",
+        }),
+      },
+      certification: { hash: "sha256:aaa", status: "passed" as const },
+    };
+    const fleet = await buildFleetServer([bundleA]);
+    expect(fleet.readyz().bundles[0]?.ready).toBe(true);
+    expect(fleet.readyz().bundles[0]?.reason).toBeUndefined();
+    await fleet.close();
+  });
+
   it("a call through the fleet reaches the same underlying operation a single-bundle server would", async () => {
     let sawUrl: string | undefined;
     const transport: Transport = {
