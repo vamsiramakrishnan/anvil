@@ -41,11 +41,62 @@ import {
  */
 export type DisclosureMode = "auto" | "flat" | "laddered";
 
+/**
+ * The measured routing trade-off `auto` mode can consult, read from an
+ * `anvil benchmark --catalog both` report for THIS bundle. Deliberately just
+ * two numbers rather than the report type itself: `@anvil/air`'s `ladderPlan`
+ * already measures the token side of the trade from the live document
+ * (`plan.flatTokens`/`plan.restTokens`), so only the side nothing here can
+ * derive — accuracy, which requires actually routing tasks — needs to be
+ * carried in. This keeps `@anvil/mcp-runtime` free of any dependency on
+ * `@anvil/refinement` (which owns `BenchmarkReport`), matching the same
+ * boundary `@anvil/air` already holds (see `ladder.ts`'s header): the CLI/serve
+ * path reads the report and passes the two numbers through, it never reaches
+ * this deep.
+ */
+export interface LadderMeasuredAccuracy {
+  /**
+   * The laddered catalog's routing accuracy minus the flat catalog's, in
+   * points of task share, from the report's `catalogs.laddered.accuracy` /
+   * `catalogs.flat.accuracy` (e.g. `47.7 - 58.9 = -11.2`). Positive means the
+   * ladder routed better than the flat surface it replaces.
+   */
+  ladderedMinusFlatPts: number;
+}
+
 export interface LadderServeOptions {
   disclosure?: DisclosureMode;
   /** Override the at-rest surface budget the projection measures against. */
   surfaceBudgetTokens?: number;
+  /**
+   * A measured accuracy delta for this bundle, when one exists. Only ever
+   * consulted in `auto` mode (`flat` and `laddered` stay operator overrides,
+   * unconditioned on measurement — see `DisclosureMode`'s own doc). Omitting
+   * this — the case for every bundle that has never been benchmarked —
+   * reproduces `auto`'s pre-measurement behavior exactly: ladder whenever the
+   * projection says `over_budget`, unconditioned on accuracy. See
+   * `decideLadder` for the bars this gates.
+   */
+  measuredAccuracy?: LadderMeasuredAccuracy;
 }
+
+/**
+ * Why `laddered` came out the way it did — one level more specific than
+ * `plan.reason`, which only ever describes the *projection*, never an `auto`
+ * override made on top of it.
+ *
+ *  - `"plan"` — this decision follows `plan.reason` unmodified: a `flat`/
+ *    `laddered` operator override, or `auto` with nothing to weigh (no
+ *    accuracy measurement, or the plan itself declined to ladder).
+ *  - `"token_savings_below_floor"` — `auto` would have laddered per the
+ *    projection, but the measured token reduction did not clear
+ *    `MIN_LADDER_TOKEN_SAVINGS_FRACTION`, so this server serves flat.
+ *  - `"accuracy_below_floor"` — `auto` would have laddered per the
+ *    projection and the token bar, but the measured laddered-minus-flat
+ *    accuracy delta fell below `MIN_LADDERED_ACCURACY_DELTA_PTS`, so this
+ *    server serves flat.
+ */
+export type LadderDecisionReason = "plan" | "token_savings_below_floor" | "accuracy_below_floor";
 
 export interface LadderDecision {
   /**
@@ -58,17 +109,47 @@ export interface LadderDecision {
   laddered: boolean;
   /** The lanes to serve; empty unless `laddered`. */
   lanes: readonly LadderLane[];
+  /** Why `laddered` came out the way it did — see `LadderDecisionReason`. */
+  decisionReason: LadderDecisionReason;
 }
 
 /** How much of an operation's own description a lane card carries. */
 const LANE_SUMMARY_CHARS = 200;
 
 /**
+ * The token-savings floor `auto` applies to a laddered plan once a measured
+ * accuracy report exists for the bundle: at-rest tokens must drop by at least
+ * half, or `auto` serves flat regardless of accuracy. `ladderPlan` already
+ * refuses to ladder when the at-rest surface is not STRICTLY cheaper
+ * (`no_token_benefit`), but "cheaper by a sliver" still costs an agent the
+ * extra round trip the header comment describes, and every measured reduction
+ * on the Zendesk estate (`docs/backtesting/routing-at-scale.md`, Result 3) is
+ * 8x-16x — an order of magnitude clear of this bar. Below it, the trade is not
+ * obviously worth an accuracy hit, so this only fires once there is an
+ * accuracy number to weigh against; without one, `auto` still ladders on
+ * `ladderPlan`'s own arithmetic exactly as it always has.
+ */
+export const MIN_LADDER_TOKEN_SAVINGS_FRACTION = 0.5;
+
+/**
+ * The accuracy floor `auto` applies once a measured report exists: a laddered
+ * catalog may trail the flat one by at most this many points of task share.
+ * Drawn directly from the two regimes Result 3 measured on the same estate,
+ * not guessed: the ladder's first pass (generic capability descriptions only)
+ * trailed flat by 8.2-12.8 points at every size and is exactly the surface
+ * this floor should refuse; folding member vocabulary and intent examples
+ * into the entry card (the same document's second pass) cut that gap to
+ * 0-6.8 points and is exactly the surface this floor should allow. -8 sits on
+ * the line between those two measured regimes.
+ */
+export const MIN_LADDERED_ACCURACY_DELTA_PTS = -8;
+
+/**
  * Decide whether this server ladders, and over which lanes.
  *
- * Pure: the same document, budget and mode always produce the same lanes in the
- * same order, which is what lets the served surface be hashed and diffed for
- * drift. Nothing here reads a clock or a random source.
+ * Pure: the same document, budget, mode and measured accuracy always produce
+ * the same lanes in the same order, which is what lets the served surface be
+ * hashed and diffed for drift. Nothing here reads a clock or a random source.
  */
 export function decideLadder(air: AirDocument, options: LadderServeOptions = {}): LadderDecision {
   const mode = options.disclosure ?? "auto";
@@ -82,7 +163,7 @@ export function decideLadder(air: AirDocument, options: LadderServeOptions = {})
   const budget = { surfaceBudgetTokens: options.surfaceBudgetTokens };
 
   const plan = ladderPlan(document, budget);
-  if (mode === "flat") return { plan, laddered: false, lanes: [] };
+  if (mode === "flat") return { plan, laddered: false, lanes: [], decisionReason: "plan" };
 
   if (mode === "laddered" && plan.mode === "flat") {
     // Forcing the ladder lowers the *budget* to zero rather than fabricating
@@ -94,10 +175,32 @@ export function decideLadder(air: AirDocument, options: LadderServeOptions = {})
     // no grouping benefit, or nothing measured: those refusals are structural,
     // and an operator preference is not evidence that they were wrong.
     const forced = ladderPlan(document, { ...budget, surfaceBudgetTokens: 0 });
-    return { plan: forced, laddered: forced.mode === "laddered", lanes: forced.lanes };
+    return {
+      plan: forced,
+      laddered: forced.mode === "laddered",
+      lanes: forced.lanes,
+      decisionReason: "plan",
+    };
   }
 
-  return { plan, laddered: plan.mode === "laddered", lanes: plan.lanes };
+  // `laddered` (already handled above when the plan itself has nothing to
+  // offer) always follows the plan from here — an operator's forced choice is
+  // never conditioned on measurement. Only `auto`, with a measured accuracy
+  // report AND a plan that already says `laddered`, has anything left to
+  // weigh; every other combination falls straight through to the plan's own
+  // verdict, which is what keeps `auto` with no report byte-identical to its
+  // pre-measurement behavior.
+  if (mode === "auto" && plan.mode === "laddered" && options.measuredAccuracy) {
+    const tokenSavingsFraction = plan.flatTokens > 0 ? 1 - plan.restTokens / plan.flatTokens : 0;
+    if (tokenSavingsFraction < MIN_LADDER_TOKEN_SAVINGS_FRACTION) {
+      return { plan, laddered: false, lanes: [], decisionReason: "token_savings_below_floor" };
+    }
+    if (options.measuredAccuracy.ladderedMinusFlatPts < MIN_LADDERED_ACCURACY_DELTA_PTS) {
+      return { plan, laddered: false, lanes: [], decisionReason: "accuracy_below_floor" };
+    }
+  }
+
+  return { plan, laddered: plan.mode === "laddered", lanes: plan.lanes, decisionReason: "plan" };
 }
 
 /**

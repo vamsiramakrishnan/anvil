@@ -13,6 +13,8 @@ import {
   laneMember,
   laneMemberLine,
   laneOpenResult,
+  MIN_LADDERED_ACCURACY_DELTA_PTS,
+  MIN_LADDER_TOKEN_SAVINGS_FRACTION,
 } from "./lane.js";
 
 /**
@@ -89,6 +91,72 @@ function estate(): AirDocument {
     workflows: [],
   });
   return air;
+}
+
+/**
+ * Three lanes, seven approved operations, all measured — the fixture the
+ * measured-accuracy decision tests below want. `estate()` above stays at two
+ * lanes because several existing tests pin its exact lane list; a third
+ * capability here keeps those assertions untouched while giving the new
+ * tests a shape closer to what a real bundle groups into.
+ */
+function estateWithThreeLanes(): AirDocument {
+  const air: AirDocument = loadAirDocument({
+    service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
+    operations: [
+      operation({ id: "billing.invoice.list" }),
+      operation({ id: "billing.invoice.get" }),
+      operation({ id: "billing.invoice.void" }),
+      operation({ id: "users.user.list" }),
+      operation({ id: "users.user.get" }),
+      operation({ id: "reports.report.list" }),
+      operation({ id: "reports.report.get" }),
+    ],
+    capabilities: [
+      capability("billing.invoices", [
+        "billing.invoice.list",
+        "billing.invoice.get",
+        "billing.invoice.void",
+      ]),
+      capability("users.users", ["users.user.list", "users.user.get"]),
+      capability("reports.reports", ["reports.report.list", "reports.report.get"]),
+    ],
+    workflows: [],
+  });
+  return air;
+}
+
+/**
+ * One lane whose entry card costs nearly as much as the flat surface it
+ * would replace: three cheap (100-token) operations under one capability
+ * with a deliberately long description, so the card's own text — capped at
+ * the per-operation budget but otherwise unconstrained — approaches the
+ * total it is meant to be replacing. Measured directly (see the module's own
+ * `MIN_LADDER_TOKEN_SAVINGS_FRACTION` doc): flatTokens 300, restTokens 245,
+ * an 18% reduction — comfortably under the 50% floor.
+ */
+function tinySavingsEstate(): AirDocument {
+  const ops = [
+    operation({ id: "svc.a" }),
+    operation({ id: "svc.b" }),
+    operation({ id: "svc.c" }),
+  ];
+  for (const op of ops) op.disclosureCost = { ...measured, toolTokens: 100 };
+  return loadAirDocument({
+    service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
+    operations: ops,
+    capabilities: [
+      Capability.parse({
+        id: "svc.things",
+        displayName: "svc.things",
+        description: "x".repeat(900),
+        operationIds: ops.map((op) => op.id),
+        intentExamples: [],
+        lifecycle: "approved",
+      }),
+    ],
+    workflows: [],
+  });
 }
 
 interface FakeTool extends DisclosableTool {
@@ -395,5 +463,82 @@ describe("entry card content", () => {
     for (const member of members) expect(text).toContain(member.toolName);
     expect(result.structuredContent.capabilityId).toBe("billing.invoices");
     expect((result.structuredContent.tools as unknown[]).length).toBe(3);
+  });
+});
+
+describe("decideLadder — measured accuracy in 'auto' mode", () => {
+  // Every case here reuses the exact scenario a real `anvil benchmark
+  // --catalog both` + `anvil serve mcp` pairing would produce: a plan that
+  // would ladder on token grounds alone, plus a measured accuracy delta the
+  // CLI/serve path derived from a fresh report and passed in through options.
+
+  it("is byte-identical to pre-measurement 'auto' when no report exists", () => {
+    const withoutOption = decideLadder(estateWithThreeLanes(), { surfaceBudgetTokens: 100 });
+    const withUndefinedAccuracy = decideLadder(estateWithThreeLanes(), {
+      surfaceBudgetTokens: 100,
+      measuredAccuracy: undefined,
+    });
+    expect(withUndefinedAccuracy.laddered).toBe(true);
+    expect(withUndefinedAccuracy.laddered).toBe(withoutOption.laddered);
+    expect(withUndefinedAccuracy.decisionReason).toBe("plan");
+    expect(JSON.stringify(withUndefinedAccuracy.lanes)).toBe(JSON.stringify(withoutOption.lanes));
+  });
+
+  it("ladders when the measured accuracy delta clears the floor", () => {
+    const decision = decideLadder(estateWithThreeLanes(), {
+      surfaceBudgetTokens: 100,
+      measuredAccuracy: { ladderedMinusFlatPts: MIN_LADDERED_ACCURACY_DELTA_PTS + 1 },
+    });
+    expect(decision.laddered).toBe(true);
+    expect(decision.decisionReason).toBe("plan");
+    expect(decision.lanes.length).toBe(3);
+  });
+
+  it("serves flat when the measured accuracy delta falls below the floor", () => {
+    const decision = decideLadder(estateWithThreeLanes(), {
+      surfaceBudgetTokens: 100,
+      measuredAccuracy: { ladderedMinusFlatPts: MIN_LADDERED_ACCURACY_DELTA_PTS - 1 },
+    });
+    expect(decision.laddered).toBe(false);
+    expect(decision.decisionReason).toBe("accuracy_below_floor");
+    expect(decision.lanes).toEqual([]);
+    // What was decided and what was served stay separately readable: the
+    // projection itself still says it would ladder.
+    expect(decision.plan.mode).toBe("laddered");
+    expect(decision.plan.reason).toBe("over_budget");
+  });
+
+  it("serves flat when measured token savings miss the floor, even with a perfect accuracy delta", () => {
+    expect(MIN_LADDER_TOKEN_SAVINGS_FRACTION).toBeGreaterThan(0.18);
+    const decision = decideLadder(tinySavingsEstate(), {
+      surfaceBudgetTokens: 10,
+      measuredAccuracy: { ladderedMinusFlatPts: 0 },
+    });
+    expect(decision.plan.mode).toBe("laddered");
+    expect(decision.laddered).toBe(false);
+    expect(decision.decisionReason).toBe("token_savings_below_floor");
+  });
+
+  it("never weighs measured accuracy for a forced 'laddered' override", () => {
+    // An operator's forced choice is not conditioned on measurement — see
+    // DisclosureMode's own doc. A catastrophic accuracy delta must not
+    // override it.
+    const decision = decideLadder(estateWithThreeLanes(), {
+      disclosure: "laddered",
+      surfaceBudgetTokens: 1_000_000,
+      measuredAccuracy: { ladderedMinusFlatPts: -1000 },
+    });
+    expect(decision.laddered).toBe(true);
+    expect(decision.decisionReason).toBe("plan");
+  });
+
+  it("never weighs measured accuracy when the plan itself declines to ladder", () => {
+    const decision = decideLadder(estateWithThreeLanes(), {
+      surfaceBudgetTokens: 1_000_000, // fits the budget flat
+      measuredAccuracy: { ladderedMinusFlatPts: 1000 },
+    });
+    expect(decision.plan.reason).toBe("fits_budget");
+    expect(decision.laddered).toBe(false);
+    expect(decision.decisionReason).toBe("plan");
   });
 });

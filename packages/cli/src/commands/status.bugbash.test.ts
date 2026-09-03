@@ -747,6 +747,7 @@ function minimalReport(overrides: Partial<StatusReport> = {}): StatusReport {
     operations: null,
     idempotency: null,
     gatewayImport: null,
+    disclosureLadder: null,
     core: { state: "aligned", bundleHash: hash, projections: [], contractChecks: [] },
     certification: {
       state: "fresh",

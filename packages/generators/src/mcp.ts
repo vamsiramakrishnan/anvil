@@ -6,8 +6,15 @@ import type { AirDocument } from "@anvil/air";
 // directly and never pulls in this artifact foundry.
 export {
   buildMcpServer,
+  type DisclosureMode,
+  decideLadder,
+  type LadderDecision,
+  type LadderDecisionReason,
+  type LadderMeasuredAccuracy,
   MCP_RESERVED,
   type McpBuildOptions,
+  MIN_LADDER_TOKEN_SAVINGS_FRACTION,
+  MIN_LADDERED_ACCURACY_DELTA_PTS,
   operationZodShape,
   type ServedResource,
 } from "@anvil/mcp-runtime";

@@ -30,6 +30,7 @@ import { recommendsExplicitIdempotencyKey, requiresExplicitIdempotencyKey } from
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { inspectIdempotencyStore } from "./idempotency-store.js";
+import { ladderStatusSummary } from "./ladder-status.js";
 import { annotate } from "./meta.js";
 import { sourceService } from "./source.js";
 
@@ -174,6 +175,21 @@ export interface StatusReport {
   } | null;
   idempotency: IdempotencyStatus | null;
   gatewayImport: GatewayImportStatus | null;
+  /**
+   * The disclosure ladder's `auto` decision for the surface this bundle would
+   * serve right now — mode, why, and (when a fresh `anvil benchmark --catalog
+   * both` report exists) the measured accuracy delta `auto` weighed. `null`
+   * only when canonical AIR could not be loaded at all, matching every other
+   * AIR-derived field here. See `@anvil/mcp-runtime`'s `lane.ts`.
+   */
+  disclosureLadder: {
+    mode: "flat" | "laddered";
+    planReason: string;
+    decisionReason: "plan" | "token_savings_below_floor" | "accuracy_below_floor";
+    measuredAccuracyFresh: boolean;
+    ladderedMinusFlatPts: number | null;
+    line: string;
+  } | null;
   core: {
     state: "aligned" | "misaligned";
     bundleHash: string;
@@ -445,6 +461,9 @@ export async function buildStatusReport(
   }
 
   const operations = canonical.air ? operationCounts(canonical.air) : null;
+  const disclosureLadder = canonical.air
+    ? disclosureLadderStatus(bundle, files, canonical.air)
+    : null;
   const reportBase = {
     schemaVersion: 1 as const,
     serviceId: canonical.air?.service.id ?? null,
@@ -453,6 +472,7 @@ export async function buildStatusReport(
     operations,
     idempotency,
     gatewayImport,
+    disclosureLadder,
     core: {
       state: coreAligned ? ("aligned" as const) : ("misaligned" as const),
       bundleHash: currentBundleHash,
@@ -665,6 +685,22 @@ function operationCounts(air: AirDocument): NonNullable<StatusReport["operations
     awaitingApproval: air.operations.filter(
       (operation) => operation.state === "generated" || operation.state === "review_required",
     ).length,
+  };
+}
+
+function disclosureLadderStatus(
+  bundle: string,
+  files: Record<string, string>,
+  air: AirDocument,
+): NonNullable<StatusReport["disclosureLadder"]> {
+  const summary = ladderStatusSummary(bundle, files, air);
+  return {
+    mode: summary.decision.laddered ? "laddered" : "flat",
+    planReason: summary.decision.plan.reason,
+    decisionReason: summary.decision.decisionReason,
+    measuredAccuracyFresh: summary.measuredAccuracyFresh,
+    ladderedMinusFlatPts: summary.ladderedMinusFlatPts,
+    line: summary.line,
   };
 }
 
@@ -1532,6 +1568,9 @@ export function renderStatusReport(report: StatusReport): string {
       "Operations",
       `  ${report.operations.generated} generated · ${report.operations.approved} approved · ${report.operations.review_required} review_required · ${report.operations.deprecated} deprecated · ${report.operations.blocked} blocked · ${report.operations.total} total`,
     );
+  }
+  if (report.disclosureLadder) {
+    lines.push("", report.disclosureLadder.line);
   }
   if (report.idempotency) {
     const managedWrites = report.idempotency.writes.filter(
