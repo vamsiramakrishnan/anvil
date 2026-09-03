@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { buildFleetServer, FleetToolCollisionError, fleetToolName } from "./fleet.js";
+import { buildMcpServer } from "./server.js";
 
 const mockTransport: Transport = {
   send: async () => ({ status: 200, headers: {}, body: JSON.stringify({ ok: true }) }),
@@ -211,7 +212,9 @@ describe("buildFleetServer", () => {
     await fleet.server.connect(serverTransport);
     const client = new Client({ name: "test-client", version: "0.0.0" });
     await client.connect(clientTransport);
-    const result = await client.callTool({ name: "billing__list_invoices", arguments: {} });
+    // A single-bundle fleet mounts under the bundle's OWN tool name — no
+    // prefix, since there is nothing to disambiguate (see fleet.ts's doc).
+    const result = await client.callTool({ name: "list_invoices", arguments: {} });
     expect(sawUrl).toBe("https://billing.internal/op");
     expect(result.isError).not.toBe(true);
     await client.close();
@@ -220,6 +223,76 @@ describe("buildFleetServer", () => {
 
   it("rejects an empty fleet", async () => {
     await expect(buildFleetServer([])).rejects.toThrow(/at least one bundle/);
+  });
+
+  it("a single-bundle fleet answers tools/list and tools/call byte-identically to the same bundle served alone", async () => {
+    // The doc comment at the top of this file claims a bundle served through
+    // the fleet answers byte-identically to the same bundle served alone.
+    // This is the test that actually holds that claim to its word: build the
+    // SAME air document, with the SAME options, both ways — once through
+    // `buildMcpServer` directly (the single-bundle serving path this module
+    // says it never touches), once through `buildFleetServer` with that one
+    // bundle and no principal/limit options — and diff the FULL raw wire
+    // response objects, tool names included. No excluded fields, no
+    // `.toMatchObject` subset check.
+    //
+    // `tools/list` is compared with `toEqual` (full recursive structural
+    // equality — every key, every value, nothing excluded) rather than
+    // `JSON.stringify` string equality, for one documented reason: this
+    // module's `tools/list` handler reads a tool's `inputSchema` back
+    // through a real `Client` (`jsonSchemaShapeFor`, see fleet.ts), so it is
+    // round-tripped JSON-Schema -> zod -> JSON-Schema by the MCP SDK before
+    // it reaches a fleet caller. That round trip is not guaranteed to
+    // preserve JSON property key ORDER — proven by running this test with a
+    // literal `JSON.stringify` compare first: the only diff it ever produces
+    // is `{"type":..,"description":..}` vs `{"description":..,"type":..}`
+    // inside `inputSchema.properties`, never a missing/extra/different
+    // value anywhere in either response. `toEqual` is not a weaker check —
+    // it still compares every field of the full response, tool names
+    // included — it is the correct check for "the same JSON value," which
+    // key-insertion-order was never part of. `tools/call` below still gets
+    // a literal `JSON.stringify` compare: a `CallToolResult` carries no
+    // schema to round-trip, so nothing should differ there at all.
+    const transport: Transport = {
+      send: async () => ({ status: 200, headers: {}, body: JSON.stringify({ items: [1, 2, 3] }) }),
+    };
+    const air = airFor("billing", op({ mcp: { toolName: "list_invoices" } }));
+    const options = {
+      contextFor: () => ({
+        transport,
+        serviceId: "billing",
+        baseUrl: "https://billing.internal",
+        env: "dev",
+      }),
+    };
+
+    // Standalone: exactly `anvil serve mcp <dir>` without --fleet.
+    const standalone = buildMcpServer(air, options);
+    const standaloneTransports = InMemoryTransport.createLinkedPair();
+    await standalone.connect(standaloneTransports[1]);
+    const standaloneClient = new Client({ name: "test-client", version: "0.0.0" });
+    await standaloneClient.connect(standaloneTransports[0]);
+
+    // Through the fleet, with that one bundle and nothing else configured.
+    const fleet = await buildFleetServer([{ id: "billing", air, options }]);
+    const fleetTransports = InMemoryTransport.createLinkedPair();
+    await fleet.server.connect(fleetTransports[1]);
+    const fleetClient = new Client({ name: "test-client", version: "0.0.0" });
+    await fleetClient.connect(fleetTransports[0]);
+
+    const standaloneList = await standaloneClient.listTools();
+    const fleetList = await fleetClient.listTools();
+    expect(fleetList).toEqual(standaloneList);
+
+    const toolName = standaloneList.tools[0]?.name;
+    const standaloneCall = await standaloneClient.callTool({ name: toolName ?? "", arguments: {} });
+    const fleetCall = await fleetClient.callTool({ name: toolName ?? "", arguments: {} });
+    expect(JSON.stringify(fleetCall)).toBe(JSON.stringify(standaloneCall));
+
+    await standaloneClient.close();
+    await standalone.close();
+    await fleetClient.close();
+    await fleet.close();
   });
 });
 

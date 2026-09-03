@@ -28,7 +28,7 @@ any directory carrying a canonical `air.yaml`/`air.json`.
 
 Every discovered bundle's tools are mounted onto ONE MCP server, each under
 a stable prefix derived from the bundle's workspace-relative path (its `id`
-from discovery):
+from discovery) — **once there are two or more bundles**:
 
 ```text
 billing/          ->  billing__list_invoices, billing__create_refund, ...
@@ -41,6 +41,19 @@ share a service id across environments. An approved operation's OWN tool
 name (`op.mcp.toolName`, the `anvil/operation_id` in `_meta`) is never
 renamed to make room for a fleet — only the wire name a caller dials gets a
 prefix in front of it.
+
+**With exactly one bundle discovered, nothing is prefixed.** There is
+nothing to disambiguate, so `--fleet` against a workspace root that holds a
+single bundle serves that bundle under its own tool names — the wire name,
+`_meta`, `annotations`, and every `CallToolResult` are the same values the
+bundle would produce served without `--fleet`. This is exactly what "single-
+bundle behavior is unchanged unless you opt in" means for the two-writes-not-
+one case where `--fleet` IS passed against a one-bundle workspace; it is
+proven directly, not just documented, by a test that builds the same bundle
+both ways and diffs the two responses
+([`fleet.test.ts`](../packages/mcp-runtime/src/fleet.test.ts), "a
+single-bundle fleet answers tools/list and tools/call byte-identically to
+the same bundle served alone").
 
 **Collisions are refused, never silently resolved.** If two bundles would
 mount the same prefixed tool name, `buildFleetServer`

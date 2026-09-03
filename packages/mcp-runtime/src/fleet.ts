@@ -13,12 +13,25 @@ import { buildMcpServer, type McpBuildOptions } from "./server.js";
  * tool names, disclosure, or execution semantics; it COMPOSES real,
  * independently-built `McpServer` instances, one per bundle, over an
  * in-process MCP transport pair (`InMemoryTransport.createLinkedPair`) and an
- * internal `Client`. This is the same wire protocol a remote caller uses, so
- * a bundle served through the fleet answers `tools/call` byte-identically to
- * the same bundle served alone — the fleet only adds a stable name prefix in
- * front of what the bundle already decided to expose, and never renames an
- * approved operation's OWN tool name (`op.mcp.toolName`, `anvil/operation_id`
- * in `_meta`) — only the wire name a caller dials.
+ * internal `Client`. This is the same wire protocol a remote caller uses, and
+ * never renames an approved operation's OWN tool name (`op.mcp.toolName`,
+ * `anvil/operation_id` in `_meta`) — only the wire name a caller dials.
+ *
+ * **With exactly one bundle mounted, the fleet does not prefix at all**: the
+ * wire name a caller dials, the tool's `_meta`, `annotations`, `title`, and
+ * `description`, and the `CallToolResult` a call returns, are the same
+ * values the bundle would produce served without --fleet (see the
+ * byte-identity test in fleet.test.ts, which diffs the two responses
+ * directly rather than trusting this comment). The one thing that is NOT
+ * guaranteed identical is the JSON *key order* inside a reconstructed
+ * `inputSchema`: `tools/list` is read back through a real `Client`, so an
+ * input schema is round-tripped JSON-Schema -> zod raw shape
+ * (`jsonSchemaShapeFor`) -> JSON-Schema again by the SDK before it reaches a
+ * fleet caller, and the SDK's own zod-to-JSON-Schema conversion does not
+ * promise to preserve property key order across that round trip. The
+ * *values* are identical (see the test); only their serialized order can
+ * differ. From two bundles on, every tool is mounted under a stable
+ * per-bundle prefix (`fleetToolName`) to disambiguate.
  *
  * Composing through a real client/server pair (rather than reaching into
  * `McpServer`'s private registration table) is deliberate: the SDK exposes no
@@ -145,9 +158,15 @@ export interface FleetServer {
  * `FleetToolCollisionError`) rather than silently dropping or renaming
  * anything — a fleet operator sees exactly which two bundles collided.
  *
- * Single-bundle behaviour is untouched: this never changes what
- * `buildMcpServer` builds for one bundle, only how many of them one process
- * answers `tools/list`/`tools/call` for.
+ * **With exactly one bundle, nothing is prefixed.** Prefixing exists to
+ * disambiguate two bundles that would otherwise collide; with only one
+ * bundle there is nothing to disambiguate, and the fleet mounts its tools
+ * under their own names with no fleet-only `_meta` added — this is what
+ * makes the byte-identity test below hold. From two bundles on, every tool
+ * is mounted under its stable per-bundle prefix, unconditionally (see
+ * `fleetToolName`) — a fleet never renames a bundle's tools just because a
+ * peer bundle happened not to collide with it, which would make a tool's
+ * public name depend on what else is deployed alongside it.
  */
 export async function buildFleetServer(
   bundles: readonly FleetBundleInput[],
@@ -161,6 +180,7 @@ export async function buildFleetServer(
     if (seenIds.has(bundle.id)) throw new FleetDuplicateBundleError(bundle.id);
     seenIds.add(bundle.id);
   }
+  const singleBundle = bundles.length === 1;
 
   const fleet = new McpServer({
     name: opts.name ?? "anvil-fleet",
@@ -183,7 +203,7 @@ export async function buildFleetServer(
 
     const listed = await client.listTools();
     for (const tool of listed.tools) {
-      const finalName = fleetToolName(bundle.id, tool.name);
+      const finalName = singleBundle ? tool.name : fleetToolName(bundle.id, tool.name);
       const existingOwner = toolOwners.get(finalName);
       if (existingOwner) {
         for (const close of closers) await close().catch(() => undefined);
@@ -198,11 +218,20 @@ export async function buildFleetServer(
           description: tool.description ?? "",
           inputSchema: jsonSchemaShapeFor(tool.inputSchema),
           annotations: tool.annotations,
-          _meta: {
-            ...tool._meta,
-            "anvil/fleet_bundle_id": bundle.id,
-            "anvil/fleet_tool_name": tool.name,
-          },
+          // Fleet-only bookkeeping (`fleet_bundle_id`/`fleet_tool_name`) is
+          // added only once there is a fleet decision to record — with a
+          // single bundle, `finalName` already equals `tool.name` and there
+          // is nothing to disambiguate, so `_meta` is forwarded verbatim.
+          // This, together with the unprefixed name above, is what makes a
+          // single-bundle fleet's `tools/list`/`tools/call` responses
+          // byte-identical to the same bundle served without --fleet.
+          _meta: singleBundle
+            ? tool._meta
+            : {
+                ...tool._meta,
+                "anvil/fleet_bundle_id": bundle.id,
+                "anvil/fleet_tool_name": tool.name,
+              },
         },
         // Forwards the client's own CallToolResult verbatim. `callTool`'s return
         // type is a union across its overloads that does not structurally match
