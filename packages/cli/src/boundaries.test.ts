@@ -187,6 +187,10 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
     // `anvil console` launches the review console; the console never imports
     // the CLI, so this edge cannot close a cycle.
     "console",
+    // `anvil serve mcp --fleet` composes the fleet MCP server
+    // (buildFleetServer). Same direction generators already points (cli ->
+    // generators -> mcp-runtime); no cycle.
+    "mcp-runtime",
   ],
 };
 
