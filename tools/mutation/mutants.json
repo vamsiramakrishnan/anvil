@@ -895,6 +895,26 @@
       ]
     },
     {
+      "id": "benchmark-ladder/stage-two-scoped-to-lane",
+      "file": "packages/refinement/src/benchmark/routing-ladder.ts",
+      "control": "A staged route's second hop is scored against ONLY the lane stage 1 entered, never the whole catalog — a real staged server has every other lane's tools closed, so a task whose target sits in a different lane must fail rather than pass through cross-lane leakage.",
+      "find": "  const stage2Outcome = await routeAndScore(router, intent, members, operationId);",
+      "replace": "  const stage2Outcome = await routeAndScore(router, intent, [...ladder.stage2.values()].flat(), operationId);",
+      "tests": [
+        "packages/refinement/src/benchmark/routing-ladder.test.ts"
+      ]
+    },
+    {
+      "id": "benchmark-ladder/flat-default-unchanged",
+      "file": "packages/cli/src/commands/benchmark.ts",
+      "control": "`anvil benchmark` with no --catalog flag stays flat: the default is decided in exactly one place, so the report it writes with no flag at all cannot silently gain the additive catalogs field or change what --check gates on.",
+      "find": "  const catalog: CatalogMode = opts.catalog ?? \"flat\";",
+      "replace": "  const catalog: CatalogMode = opts.catalog ?? \"laddered\";",
+      "tests": [
+        "packages/cli/src/commands/benchmark.bugbash.test.ts"
+      ]
+    },
+    {
       "id": "refinement/group-supersedes-outside-steps-refused",
       "file": "packages/refinement/src/skills/group-proposal.ts",
       "control": "A group workflow's supersedes may only name the proposal's own steps, and the named group_supersedes_within_steps check owns that refusal (the AIR schema's refinement is defense in depth behind it, not a substitute for the named rejection a harness is told to fix).",
