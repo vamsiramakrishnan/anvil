@@ -945,6 +945,26 @@
       ]
     },
     {
+      "id": "targets/certify-checks-every-profile",
+      "file": "packages/cli/src/commands/certify.ts",
+      "control": "`anvil certify` runs the target-kit-exact drift check for every registered profile whose subtree is present in the bundle, not only gemini-enterprise — the same regeneration proof Gemini always got. Narrow the loop back to one profile and a hand-tampered Claude, OpenAI, or MCP registry kit certifies clean.",
+      "find": "  for (const profile of listProfiles()) {",
+      "replace": "  for (const profile of listProfiles().filter((p) => p.id === \"gemini-enterprise\")) {",
+      "tests": [
+        "packages/cli/src/cmd-target.test.ts"
+      ]
+    },
+    {
+      "id": "targets/status-drift-checks-every-profile",
+      "file": "packages/cli/src/commands/status.ts",
+      "control": "`anvil status` regenerates and byte-compares the complete target subtree (verifyTargetKit) for any registered profile, not only gemini-enterprise; every other profile falls back to a shallow surfaceSignatureDigest-only freshness check that a tampered non-setup.json file never touches. Restrict the full check back to gemini-enterprise and a hand-edited Claude/OpenAI/MCP-registry kit file reports \"fresh\" with no findings.",
+      "find": "    const profile = findProfile(targetId);",
+      "replace": "    const profile = targetId === \"gemini-enterprise\" ? findProfile(targetId) : undefined;",
+      "tests": [
+        "packages/cli/src/cmd-target.test.ts"
+      ]
+    },
+    {
       "id": "sdk/custom-header-never-bearer",
       "file": "packages/generators/src/sdk/plan.ts",
       "control": "A custom_header auth scheme resolves a carrier with no Bearer/Basic scheme prefix \u2014 the header (or query) value the SDKs send travels exactly as AIR declared, never disguised as a bearer token.",
