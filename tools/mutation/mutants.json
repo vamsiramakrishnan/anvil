@@ -974,6 +974,71 @@
       "tests": [
         "packages/compiler/src/protocols/har.test.ts"
       ]
+    },
+    {
+      "id": "legacy-bridge/wire-binding-coherence-refused",
+      "file": "packages/legacy-bridge/src/wire-binding.ts",
+      "control": "The deployment-local bridge refuses to serve a queue wire binding whose legacyBindingContentHash does not match the reviewed LegacyCapabilityBinding it was handed — the coherence property that stops a bridge from silently serving an unreviewed or since-changed candidate. Delete the check and any wire binding is accepted for any binding, hash mismatch or not.",
+      "find": "  if (wireBinding.legacyBindingContentHash !== binding.contentHash) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/legacy-bridge/src/wire-binding.test.ts",
+        "packages/legacy-bridge/src/facade.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/idempotent-replay-dedup",
+      "file": "packages/legacy-bridge/src/broker-double.ts",
+      "control": "A repeated idempotency key must return the identical cached reply without re-executing the business side — what makes an outer bounded retry safe at all. Delete the cache check and every call re-executes the handler, so a retried call can observe a different outcome than the one that actually happened.",
+      "find": "    if (cached !== undefined) return { body: cached };",
+      "replace": "    if (false) return { body: cached };",
+      "tests": [
+        "packages/legacy-bridge/src/broker-double.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/broker-attempt-accounted",
+      "file": "packages/legacy-bridge/src/broker-double.ts",
+      "control": "Every exchange the double receives increments its attempt counter, which is the only way a caller can prove the bridge made exactly one broker attempt per HTTP call and never retried internally. Delete the increment and a silent internal retry loop would be unobservable.",
+      "find": "    this._sendAttempts += 1;",
+      "replace": "    // MUTANT: attempt not counted",
+      "tests": [
+        "packages/legacy-bridge/src/broker-double.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/timeout-enforced",
+      "file": "packages/legacy-bridge/src/broker.ts",
+      "control": "The reviewed timeout is enforced by racing the broker call against a timer — the one place a hung exchange is ever turned into a failure. Delete the race and a broker that never replies leaves the call pending forever instead of failing closed.",
+      "find": "    return await Promise.race([client.requestReply(options), timeout]);",
+      "replace": "    return await client.requestReply(options);",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/timeout-maps-to-structured-error",
+      "file": "packages/legacy-bridge/src/facade.ts",
+      "control": "A broker timeout must answer with a structured, non-retryable upstream_timeout — never a hang and never a false success. Delete the branch and a timeout falls through to the generic transport-failure response, losing the distinction the runtime's own status-code mapping (packages/runtime/src/errors.ts) depends on.",
+      "find": "      if (err instanceof QueueBrokerTimeoutError) {",
+      "replace": "      if (false) {",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/promotion-requires-not-implemented",
+      "file": "packages/compiler/src/legacy/refinement/model.ts",
+      "control": "A binding may be promoted to conformance_passed only from not_implemented — never a second time, and never from a status this function does not recognize. Delete the guard and an already-promoted binding could be silently re-promoted, an operation with no equivalent to a lower-safety direction.",
+      "find": "  if (binding.runtime.status !== \"not_implemented\") {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/compiler/src/legacy/refinement/model.test.ts"
+      ]
     }
   ]
 }
