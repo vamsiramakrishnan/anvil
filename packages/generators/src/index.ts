@@ -6,6 +6,7 @@
  */
 
 export * from "./bundle.js";
+export * from "./bundle-discovery.js";
 export * from "./bundle-io.js";
 export * from "./bundle-reproject.js";
 export * from "./bundle-transaction.js";

@@ -1,38 +1,45 @@
 import { type Dirent, existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { discoverBundles, type WorkspaceBundle } from "@anvil/generators";
 import { type RefinementPack, readPackDir, refinementPackHash } from "@anvil/refinement";
 import { notFound, pathOutsideRoot } from "./errors.js";
 
 /**
  * The workspace: a root directory beneath which compiled bundles and
- * refinement packs are DISCOVERED, never registered. A bundle is any
- * directory carrying a canonical `air.yaml`/`air.json`; a pack is any
- * directory carrying a `pack.json`. Both are read fresh on every request —
- * there is no index to go stale — and a bundle's id is its workspace-relative
- * path, which is the one stable name the filesystem already gave it (the
- * root itself, when it is a bundle, is named by its directory name).
+ * refinement packs are DISCOVERED, never registered. A pack is any directory
+ * carrying a `pack.json`, read fresh on every request — there is no index to
+ * go stale. Bundle discovery itself (`discoverBundles`/`WorkspaceBundle`)
+ * lives in `@anvil/generators` and is re-exported here unchanged, so the
+ * console and `anvil serve --fleet` can never disagree about what counts as
+ * a bundle — this module only adds the console's own lookup-by-id error
+ * shape (`ConsoleError` via `notFound`) on top of it.
  *
  * Every path a request body names is resolved through `resolveInsideRoot`:
  * the console has the reviewer's filesystem authority, so the workspace root
  * is the boundary of what it may read or write on their behalf.
  */
 
-const AIR_FILES = ["air.yaml", "air.json"] as const;
-const SKIPPED_DIRS = new Set(["node_modules", ".git", "dist"]);
-const MAX_DEPTH = 8;
+export { discoverBundles, type WorkspaceBundle } from "@anvil/generators";
 
-export interface WorkspaceBundle {
-  id: string;
-  /** Absolute bundle directory. */
-  dir: string;
+export function findBundle(root: string, id: string): WorkspaceBundle {
+  const bundle = discoverBundles(root).find((candidate) => candidate.id === id);
+  if (!bundle) throw notFound(`No bundle '${id}' in workspace ${root}.`);
+  return bundle;
 }
 
-function isBundleDir(dir: string): boolean {
-  return AIR_FILES.some((name) => existsSync(join(dir, name)));
-}
+/**
+ * Pack discovery's own directory walk — separate from bundle discovery
+ * (`@anvil/generators`'s `discoverBundles`), because a pack lives at
+ * `pack.json`, not `air.yaml`/`air.json`, and the two walks stop at
+ * different files. Kept private and duplicated in miniature rather than
+ * shared: the only thing in common is "walk real, non-VCS/install
+ * directories up to a depth", which is not worth a cross-package seam for
+ * two call sites.
+ */
+const PACK_SKIPPED_DIRS = new Set(["node_modules", ".git", "dist"]);
+const PACK_MAX_DEPTH = 8;
 
-/** Directories worth descending into: real (non-symlink), not an install or VCS tree. */
-function childDirs(dir: string): string[] {
+function packChildDirs(dir: string): string[] {
   let entries: Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -42,33 +49,9 @@ function childDirs(dir: string): string[] {
   return entries
     .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
     .map((entry) => entry.name)
-    .filter((name) => !SKIPPED_DIRS.has(name) && (!name.startsWith(".") || name === ".anvil"))
+    .filter((name) => !PACK_SKIPPED_DIRS.has(name) && (!name.startsWith(".") || name === ".anvil"))
     .sort()
     .map((name) => join(dir, name));
-}
-
-/** Every bundle beneath the root (or the root itself), sorted by id. */
-export function discoverBundles(root: string): WorkspaceBundle[] {
-  if (isBundleDir(root)) return [{ id: basename(root), dir: root }];
-  const found: WorkspaceBundle[] = [];
-  const walk = (dir: string, depth: number): void => {
-    if (depth > MAX_DEPTH) return;
-    for (const child of childDirs(dir)) {
-      if (isBundleDir(child)) {
-        found.push({ id: relative(root, child).split(sep).join("/"), dir: child });
-      } else {
-        walk(child, depth + 1);
-      }
-    }
-  };
-  walk(root, 0);
-  return found.sort((a, b) => a.id.localeCompare(b.id));
-}
-
-export function findBundle(root: string, id: string): WorkspaceBundle {
-  const bundle = discoverBundles(root).find((candidate) => candidate.id === id);
-  if (!bundle) throw notFound(`No bundle '${id}' in workspace ${root}.`);
-  return bundle;
 }
 
 export interface DiscoveredPack {
@@ -81,7 +64,7 @@ export interface DiscoveredPack {
 export function discoverPacks(root: string, serviceId: string): DiscoveredPack[] {
   const found: DiscoveredPack[] = [];
   const walk = (dir: string, depth: number): void => {
-    if (depth > MAX_DEPTH) return;
+    if (depth > PACK_MAX_DEPTH) return;
     if (existsSync(join(dir, "pack.json"))) {
       try {
         const pack = readPackDir(dir);
@@ -94,7 +77,7 @@ export function discoverPacks(root: string, serviceId: string): DiscoveredPack[]
       }
       return;
     }
-    for (const child of childDirs(dir)) walk(child, depth + 1);
+    for (const child of packChildDirs(dir)) walk(child, depth + 1);
   };
   walk(root, 0);
   return found.sort((a, b) => a.dir.localeCompare(b.dir));
