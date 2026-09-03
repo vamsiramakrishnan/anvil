@@ -211,6 +211,56 @@ auth:
   secret_source: secret_manager
 ```
 
+### mTLS, custom headers, and end-user authorization-code
+
+Three more auth types the runtime executes, each declared by NAME only —
+never a value:
+
+```yaml
+# Mutual TLS: cert/key/CA read from these env vars (PEM text, or a path
+# starting with / or ./ to a PEM file). mtls without `tls` stays blocked.
+operations:
+  getBalance:
+    auth:
+      type: mtls
+      tls:
+        client_cert_ref: ANVIL_BANK_CLIENT_CERT
+        client_key_ref: ANVIL_BANK_CLIENT_KEY
+        ca_ref: ANVIL_BANK_CA          # optional
+
+# A credential that rides a header AIR's other carriers cannot name — sent
+# verbatim under `carrier`, never collapsed to `Authorization: Bearer`.
+# custom_header without a `carrier` stays blocked.
+  listWidgets:
+    auth:
+      type: custom_header
+      carrier:
+        in: header
+        name: X-Vendor-Token           # any name/scheme the vendor requires
+
+# End-user authorization-code (RFC 6749 §4.1, PKCE per RFC 7636). The
+# interactive step never runs in the serving path — `anvil auth login <bundle>
+# --profile <profile>` completes it once, on a loopback broker, and stores a
+# refresh token the runtime replays/refreshes per call. This type always
+# compiles review_required: end-user authority is a human decision, never a
+# material-completeness one, so no manifest `state:` override moves it to
+# approved directly.
+  startCheckout:
+    auth:
+      type: oauth2_authorization_code
+      provider:
+        authorization_endpoint: https://idp.example.com/authorize
+        token_endpoint: https://idp.example.com/token
+        redirect_uri: http://127.0.0.1:0/callback   # port 0 = random, broker-assigned
+        pkce: true
+```
+
+Every field here is validated by AIR's `authCoherenceIssues` (mtls material only
+on `mtls`, authorization-code mechanics only on `oauth2_authorization_code`, an
+`authorization_endpoint` always paired with `token_endpoint`) — the same rule
+the compiler and certification both enforce, so a manifest can never declare an
+incoherent combination that would only be caught later.
+
 Use `anvil deploy credentials` to inspect the exact environment variable names
 and deployment contract generated for a bundle.
 

@@ -102,6 +102,7 @@ export const CONTRACT_SAFETY_PREDICATES: ReadonlySet<SemanticPredicate> =
     "auth.issuer",
     "auth.audience",
     "auth.carrier",
+    "auth.tls",
     "state",
     // Contested only in the "raise a conflict, never silently pick a winner"
     // sense — `isLoosening` has no case for it (a `set` here is authoring, not
@@ -194,6 +195,7 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     if (m.auth?.issuer) assertions.push(set(ref, "auth.issuer", m.auth.issuer));
     if (m.auth?.audience) assertions.push(set(ref, "auth.audience", m.auth.audience));
     if (m.auth?.carrier) assertions.push(set(ref, "auth.carrier", m.auth.carrier));
+    if (m.auth?.tls) assertions.push(set(ref, "auth.tls", m.auth.tls));
     if (m.auth?.secret_source) assertions.push(set(ref, "auth.secretSource", m.auth.secret_source));
     if (m.auth?.tenant) assertions.push(set(ref, "auth.tenant", m.auth.tenant));
     if (m.auth?.actor) assertions.push(set(ref, "auth.actor", m.auth.actor));
@@ -296,6 +298,8 @@ export function projectOperationManifest(
   if (audience) auth.audience = audience;
   const carrier = v<NonNullable<OperationManifest["auth"]>["carrier"]>("auth.carrier");
   if (carrier) auth.carrier = carrier;
+  const tls = v<NonNullable<OperationManifest["auth"]>["tls"]>("auth.tls");
+  if (tls) auth.tls = tls;
   const secretSource =
     v<NonNullable<OperationManifest["auth"]>["secret_source"]>("auth.secretSource");
   if (secretSource) auth.secret_source = secretSource;

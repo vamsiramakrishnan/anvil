@@ -558,4 +558,30 @@ describe("auth coherence: authorization-code mechanics and mtls material referen
     } as never);
     expect(complete).toEqual([]);
   });
+
+  it("requires custom_header to name its credential carrier", () => {
+    const issues = authCoherenceIssues({
+      ...base,
+      type: "custom_header",
+      principal: "service",
+    } as never);
+    expect(issues).toContain("custom_header auth must name its credential carrier");
+    const ok = authCoherenceIssues({
+      ...base,
+      type: "custom_header",
+      principal: "service",
+      carrier: { in: "header", name: "X-Vendor-Token" },
+    } as never);
+    expect(ok.some((i) => i.includes("credential carrier"))).toBe(false);
+  });
+
+  it("lets custom_header declare a carrier with no bearer/basic scheme restriction", () => {
+    const issues = authCoherenceIssues({
+      ...base,
+      type: "custom_header",
+      principal: "service",
+      carrier: { in: "header", name: "X-Vendor-Token", scheme: "Token" },
+    } as never);
+    expect(issues).toEqual([]);
+  });
 });

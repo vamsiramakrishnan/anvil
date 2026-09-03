@@ -31,6 +31,16 @@ const ManifestAuthProvider = z.object({
   subject_token_type: z.enum(["access_token", "jwt", "id_token"]).optional(),
   requested_token_type: z.enum(["access_token", "jwt", "id_token"]).optional(),
   api_key: z.object({ in: z.enum(["header", "query"]), name: z.string() }).optional(),
+  /**
+   * Authorization-code mechanics (RFC 6749 §4.1, PKCE per RFC 7636). Declaring
+   * these is what lets `anvil auth login` run the interactive step and the
+   * runtime replay/refresh the token it produces — see AuthProvider in
+   * @anvil/air for the coherence rules (authorization_endpoint requires
+   * token_endpoint; both are refused on any other auth type).
+   */
+  authorization_endpoint: z.string().url().optional(),
+  pkce: z.boolean().optional(),
+  redirect_uri: z.string().url().optional(),
 });
 type ManifestAuthProvider = z.infer<typeof ManifestAuthProvider>;
 
@@ -58,6 +68,21 @@ const ManifestOperationAuth = z.object({
   tenant: z.string().optional(),
   actor: z.string().optional(),
   subject: z.string().optional(),
+  /**
+   * Client-certificate material for `mtls`, by environment-variable NAME
+   * only — never a value. Coherence (@anvil/air's authMechanicsIssues)
+   * refuses this on any other type and refuses `mtls` without it.
+   */
+  tls: z
+    .object({
+      client_cert_ref: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
+      client_key_ref: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
+      ca_ref: z
+        .string()
+        .regex(/^[A-Z][A-Z0-9_]*$/)
+        .optional(),
+    })
+    .optional(),
   provider: ManifestAuthProvider.optional(),
 });
 
@@ -70,6 +95,11 @@ export function manifestAuthProviderToAir(provider: ManifestAuthProvider): AuthP
     ...(provider.subject_token_type ? { subjectTokenType: provider.subject_token_type } : {}),
     ...(provider.requested_token_type ? { requestedTokenType: provider.requested_token_type } : {}),
     ...(provider.api_key ? { apiKey: provider.api_key } : {}),
+    ...(provider.authorization_endpoint
+      ? { authorizationEndpoint: provider.authorization_endpoint }
+      : {}),
+    ...(provider.pkce !== undefined ? { pkce: provider.pkce } : {}),
+    ...(provider.redirect_uri ? { redirectUri: provider.redirect_uri } : {}),
   };
 }
 
@@ -82,6 +112,11 @@ export function airAuthProviderToManifest(provider: AuthProvider): ManifestAuthP
     ...(provider.subjectTokenType ? { subject_token_type: provider.subjectTokenType } : {}),
     ...(provider.requestedTokenType ? { requested_token_type: provider.requestedTokenType } : {}),
     ...(provider.apiKey ? { api_key: provider.apiKey } : {}),
+    ...(provider.authorizationEndpoint
+      ? { authorization_endpoint: provider.authorizationEndpoint }
+      : {}),
+    ...(provider.pkce !== undefined ? { pkce: provider.pkce } : {}),
+    ...(provider.redirectUri ? { redirect_uri: provider.redirectUri } : {}),
   };
 }
 
@@ -750,7 +785,16 @@ function providerAfterTypeChange(
         grant: "token_exchange",
       };
     case "oauth2_authorization_code":
-      return current?.tokenEndpoint ? { tokenEndpoint: current.tokenEndpoint } : undefined;
+      return current?.tokenEndpoint
+        ? {
+            tokenEndpoint: current.tokenEndpoint,
+            ...(current.authorizationEndpoint
+              ? { authorizationEndpoint: current.authorizationEndpoint }
+              : {}),
+            ...(current.pkce !== undefined ? { pkce: current.pkce } : {}),
+            ...(current.redirectUri ? { redirectUri: current.redirectUri } : {}),
+          }
+        : undefined;
     case "api_key":
       return current?.apiKey ? { apiKey: current.apiKey } : undefined;
     case "jwt_bearer":
@@ -869,6 +913,7 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
         op.auth.provider = providerAfterTypeChange(op.auth.provider, m.auth.type);
         op.auth.issuer = undefined;
         op.auth.carrier = undefined;
+        op.auth.tls = undefined;
         if (m.auth.type === "none") {
           op.auth.audience = undefined;
           op.auth.delegation = undefined;
@@ -887,6 +932,13 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     if (m.auth.tenant) op.auth.tenant = m.auth.tenant;
     if (m.auth.actor || m.auth.subject) {
       op.auth.delegation = { actor: m.auth.actor, subject: m.auth.subject };
+    }
+    if (m.auth.tls) {
+      op.auth.tls = {
+        clientCertRef: m.auth.tls.client_cert_ref,
+        clientKeyRef: m.auth.tls.client_key_ref,
+        ...(m.auth.tls.ca_ref ? { caRef: m.auth.tls.ca_ref } : {}),
+      };
     }
     if (m.auth.provider) {
       op.auth.provider = {
@@ -1139,20 +1191,35 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     op.state = m.state;
   }
 
+  // mtls and custom_header are executable once their material is coherent
+  // (auth.tls's client cert/key, or a custom_header carrier) — the coherence
+  // check itself is what says so, so the compiler no longer force-blocks
+  // either type outright. oauth2_authorization_code is different: the
+  // runtime CAN now replay or refresh it, but end-user authority is a human
+  // decision, not a material-completeness one, so it never leaves review —
+  // see the branch below rather than another line here.
   const authIssues = authCoherenceIssues(op.auth);
-  if (
-    op.auth.type === "oauth2_authorization_code" ||
-    op.auth.type === "mtls" ||
-    op.auth.type === "custom_header"
-  ) {
-    authIssues.push(`${op.auth.type} is not executable by the current runtime`);
-  }
   if (authIssues.length > 0) {
     op.state = "blocked";
     for (const issue of authIssues) {
       const note = `Auth contract blocked: ${issue}.`;
       if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
     }
+  } else if (op.auth.type === "oauth2_authorization_code") {
+    // Unconditional, and after any `m.state` override above: no manifest may
+    // move this straight to approved, however complete its PKCE/token
+    // mechanics are. The broker is the named, reviewable unblock.
+    op.state = "review_required";
+    const note =
+      "Authorization-code auth stays review_required: end-user authority is a human decision, " +
+      "never a material-completeness one. Run `anvil auth login <bundle> --profile <profile>` " +
+      "to complete the interactive PKCE step and store a refresh token, then approve explicitly.";
+    if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+  } else if (m.auth && op.state === "blocked") {
+    // This same manifest patch just supplied the missing mtls/custom_header
+    // material and the contract is now coherent — lift the block so a human
+    // still signs off before exposure, mirroring query_policy's unblock above.
+    op.state = "review_required";
   }
 
   op.evidence.claims.push({

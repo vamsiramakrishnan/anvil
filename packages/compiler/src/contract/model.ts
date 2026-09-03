@@ -76,6 +76,7 @@ export const SemanticPredicate = z.enum([
   "auth.issuer",
   "auth.audience",
   "auth.carrier",
+  "auth.tls",
   "auth.secretSource",
   "auth.tenant",
   "auth.actor",
