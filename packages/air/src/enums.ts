@@ -201,6 +201,22 @@ export const ErrorCode = z.enum([
   "policy_denied",
   "unknown_upstream_error",
 ]);
+/**
+ * Stable, operator-matchable sub-codes carried in a `policy_denied` /
+ * `rate_limited` error's `details.code` (fleet runtime): a local refusal
+ * that never reached the upstream, never retried. These are NOT members of
+ * `ErrorCode` itself — the wire error taxonomy stays exactly the 16 flat
+ * codes above (every generated SDK mirrors that list verbatim), so a fleet
+ * refusal reuses the closed `policy_denied`/`rate_limited` codes and adds
+ * this narrower reason underneath, in `details.code`, rather than growing
+ * the taxonomy every serving surface and SDK has to keep in sync.
+ */
+export const FLEET_POLICY_CODE = z.enum([
+  "policy/scope_denied",
+  "policy/rate_limited",
+  "policy/budget_exhausted",
+]);
+export type FleetPolicyCode = z.infer<typeof FLEET_POLICY_CODE>;
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
 /** HTTP verbs, as they appear in source specs. */
