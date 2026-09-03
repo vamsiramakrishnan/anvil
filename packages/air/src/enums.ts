@@ -215,6 +215,7 @@ export const FLEET_POLICY_CODE = z.enum([
   "policy/scope_denied",
   "policy/rate_limited",
   "policy/budget_exhausted",
+  "policy/principal_unresolved",
 ]);
 export type FleetPolicyCode = z.infer<typeof FLEET_POLICY_CODE>;
 export type ErrorCode = z.infer<typeof ErrorCode>;

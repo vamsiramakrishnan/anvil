@@ -45,6 +45,7 @@ import {
   type PolicyHooks,
   type Principal,
   resolvePrincipal,
+  UNRESOLVED_PRINCIPAL,
 } from "./policy.js";
 import { applyAgentProjection } from "./response-projection.js";
 import {
@@ -102,6 +103,18 @@ export interface ExecuteContext {
    * configures principals.
    */
   principal?: Principal;
+  /**
+   * True when this serving surface has a non-empty principal directory
+   * configured for the session (`ANVIL_PRINCIPALS`, or an equivalent
+   * streamable-http bearer directory) — set by the caller that resolved
+   * `principal` above, never inferred here. When true and `principal` is
+   * absent (the credential presented, if any, did not resolve to a
+   * directory entry), `execute()` refuses fail-closed rather than falling
+   * back to the anonymous, every-scope principal: an unresolved caller on a
+   * configured directory is a configuration/auth error, not "no policy
+   * configured". Absent/false reproduces the pre-fleet default exactly.
+   */
+  principalDirectoryConfigured?: boolean;
   /** Per-principal rate/spend limits (fleet runtime). Absent = unlimited. */
   limits?: LimitsGate;
   observer?: Observer;
@@ -623,11 +636,17 @@ export async function execute(
   const safetyKeys = operationSafetyInputKeys(op);
   const confirm = args.confirm ?? input[safetyKeys.confirm] === true;
   const policyDecisions: string[] = [];
-  // Resolved once, before anything else: the anonymous/every-scope default
-  // when a serving surface configures no principal (spec: fleet runtime §2),
-  // so every gate below and the record itself see one name for "who is
-  // calling" — never the credential that resolved it.
-  const principal = resolvePrincipal(ctx.principal);
+  // Resolved once, before anything else, so every gate below and the record
+  // itself see one name for "who is calling" — never the credential that
+  // resolved it. The anonymous/every-scope default applies ONLY when this
+  // surface configures no principal directory at all (spec: fleet runtime
+  // §2); with a directory configured but this caller unresolved, the
+  // sentinel below carries NO scopes, and the principal-resolution gate a
+  // few lines into the try block refuses before that sentinel could ever be
+  // checked against an operation's required scopes.
+  const principalUnresolved =
+    ctx.principalDirectoryConfigured === true && ctx.principal === undefined;
+  const principal = principalUnresolved ? UNRESOLVED_PRINCIPAL : resolvePrincipal(ctx.principal);
 
   const record: ExecutionRecord = {
     traceId,
@@ -744,7 +763,35 @@ export async function execute(
     }
     const carrier = carrierResolution.binding;
 
-    // 0c. Principal scope gate (fleet runtime) — resolved from the MCP
+    // 0c. Principal resolution gate (fleet runtime) — resolved from the MCP
+    // session BEFORE any upstream call, exactly like the approval and wire
+    // gates above it. The anonymous, every-scope principal applies ONLY when
+    // this session configures NO principal directory at all — the
+    // byte-identical default for every serving path that never opts in.
+    // When a directory IS configured but the caller's own credential
+    // (bearer / `ANVIL_PRINCIPAL`) did not resolve to an entry in it —
+    // absent, mistyped, or simply not listed — that is a configuration/auth
+    // error, not "no policy configured"; silently granting anonymous's
+    // `scopes: ["*"]` here would hand every scope to an unauthenticated
+    // caller. Refuse fail-closed instead, before validation, before auth
+    // material is resolved, before a single byte reaches the upstream host.
+    if (principalUnresolved) {
+      return fail(
+        new AnvilError({
+          code: "policy_denied",
+          message:
+            `A principal directory is configured for this session, but the caller's credential ` +
+            `did not resolve to a principal for '${op.id}'. Refusing rather than granting the ` +
+            "anonymous, every-scope principal.",
+          operation: op.id,
+          traceId,
+          retryable: false,
+          details: { code: FLEET_POLICY_CODE.enum["policy/principal_unresolved"] },
+        }),
+      );
+    }
+
+    // 0d. Principal scope gate (fleet runtime) — resolved from the MCP
     // session BEFORE any upstream call, exactly like the approval and wire
     // gates above it. An anonymous/every-scope principal (the default) never
     // trips this; a named principal missing a scope `op.auth.scopes`
@@ -770,7 +817,7 @@ export async function execute(
       );
     }
 
-    // 0d. Rate/spend limits (fleet runtime) — same "before any upstream call,
+    // 0e. Rate/spend limits (fleet runtime) — same "before any upstream call,
     // never retried" placement as the scope gate. Unconfigured by default
     // (`ctx.limits` absent), so this is a no-op for every serving path that
     // does not opt in.

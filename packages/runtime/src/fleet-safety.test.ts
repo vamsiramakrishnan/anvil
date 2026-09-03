@@ -97,6 +97,62 @@ describe("principal scope gate", () => {
   });
 });
 
+describe("principal resolution gate (finding #1 — an unresolved caller on a configured directory)", () => {
+  it("refuses fail-closed BEFORE any upstream call when a directory is configured but this caller's credential did not resolve", async () => {
+    const transport = new MockTransport(ok);
+    const res = await execute(
+      op(),
+      { input: {} },
+      { ...baseCtx, transport, principalDirectoryConfigured: true, principal: undefined },
+    );
+    expect(res.outcome).toBe("error");
+    if (res.outcome !== "error") throw new Error("unreachable");
+    expect(res.envelope.error.code).toBe("policy_denied");
+    expect(res.envelope.error.details).toMatchObject({
+      code: "policy/principal_unresolved",
+    });
+    expect(res.envelope.error.retryable).toBe(false);
+    // The load-bearing assertion: refused before any request reached the
+    // transport at all — never a byte sent under a mistaken identity.
+    expect(transport.requests).toHaveLength(0);
+  });
+
+  it("never claims 'anonymous' in the record for a refused, unresolved caller", async () => {
+    const transport = new MockTransport(ok);
+    const res = await execute(
+      op(),
+      { input: {} },
+      { ...baseCtx, transport, principalDirectoryConfigured: true, principal: undefined },
+    );
+    expect(res.record.principalId).toBe("unresolved");
+    expect(res.record.principalId).not.toBe("anonymous");
+  });
+
+  it("still resolves the anonymous, every-scope principal when NO directory is configured at all (principalDirectoryConfigured absent)", async () => {
+    const transport = new MockTransport(ok);
+    const res = await execute(op(), { input: {} }, { ...baseCtx, transport, principal: undefined });
+    expect(res.outcome).toBe("success");
+    expect(res.record.principalId).toBe("anonymous");
+    expect(transport.requests).toHaveLength(1);
+  });
+
+  it("never refuses when the directory IS configured and this caller's credential DID resolve", async () => {
+    const transport = new MockTransport(ok);
+    const res = await execute(
+      op(),
+      { input: {} },
+      {
+        ...baseCtx,
+        transport,
+        principalDirectoryConfigured: true,
+        principal: { id: "alice", scopes: ["orders.read"] },
+      },
+    );
+    expect(res.outcome).toBe("success");
+    expect(res.record.principalId).toBe("alice");
+  });
+});
+
 describe("rate/spend limits", () => {
   it("is unlimited by default (no limits configured)", async () => {
     const transport = new MockTransport(ok);
