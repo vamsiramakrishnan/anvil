@@ -106,7 +106,7 @@ not as a per-PR gate. Exits non-zero if any system is red. Flags: `--systems a,b
 ## Refine-loop mode
 
 ```bash
-node tools/corpus/refine-loop.mjs                          # every estates.tsv row
+node tools/corpus/refine-loop.mjs                          # every estates.tsv + refine-estates.tsv row
 node tools/corpus/refine-loop.mjs --systems kong-refunds    # subset
 node tools/corpus/refine-loop.mjs --work ./workspace        # keep the bundles + packs
 node tools/corpus/refine-loop.mjs --update-routing-baseline # bank routing-accuracy growth
@@ -115,9 +115,13 @@ node tools/corpus/refine-loop.mjs --update-routing-baseline # bank routing-accur
 The quality flywheel — `anvil refine run`, `anvil benchmark`, `anvil refine
 export-task … group:<id>` — is a loop only when someone types the commands.
 `refine-loop.mjs` (see its own header comment for the exact pipeline) is that
-someone: for every row of `estates.tsv` (the same local, offline gateway-estate
-fixtures the `estates` mode above compiles), in a per-run workspace it drives
-the real CLI seam — `estate import` → `refine run --out` → `benchmark
+someone: for every row of two files — `estates.tsv` (the same local, offline
+gateway-estate fixtures the `estates` mode above compiles) and
+`refine-estates.tsv` (bare API contracts compiled directly with a supplemental
+manifest; see below) — in a per-run workspace it acquires a bundle (`estate
+import` for a gateway row, `compile --manifest` for a direct-spec row — see
+`compileSpecRow`/`importEstate` in `refine-loop.mjs`) and then drives the same
+CLI seam over it regardless of source — `refine run --out` → `benchmark
 --catalog both` → read `confusion.clusters` off the written
 `benchmark.report.json` (already floored at `MIN_CLUSTER_EVIDENCE` by
 `@anvil/refinement`'s `analyzeConfusion`) → `refine export-task … group:<id>`
@@ -171,13 +175,37 @@ git diff tools/corpus/routing-baseline.json   # review — every delta should be
 
 As of this writing every `estates.tsv` row imports with **zero approved
 operations** (route-only fidelity — see the `operations-accounting` oracle
-above), so the routing benchmark has nothing to route and every catalog's
-accuracy records `0/0`. This is a real, honest floor, not a placeholder: the
-ratchet holds trivially until an estate is enriched past `blocked` and gains
-approved reads with `skill.intentExamples`. `refine run` itself is NOT
-similarly empty — it operates over every operation regardless of approval
-state, so review-tier refinements and auto-approved ones (documentation,
-intent examples) surface today even though routing does not yet.
+above), so the routing benchmark has nothing to route for those six rows and
+every catalog's accuracy records `0/0`. This is a real, honest floor, not a
+placeholder: the ratchet holds trivially until a gateway estate is enriched
+past `blocked` and gains approved reads with `skill.intentExamples`. `refine
+run` itself is NOT similarly empty — it operates over every operation
+regardless of approval state, so review-tier refinements and auto-approved
+ones (documentation, intent examples) surface today even though routing does
+not yet.
+
+### `refine-estates.tsv`: the one row with real routing signal
+
+The six `estates.tsv` rows stay at `0/0` on purpose — they measure the
+gateway-import *route-only* posture (naming, effect/risk, policy accounting),
+never enrich a fixture past `blocked`, and touching them to manufacture
+routing signal would blur what the `estates` mode above is actually gating.
+`refine-estates.tsv` is a second, narrower row source that exists solely to
+give the routing-accuracy ratchet a row that isn't vacuous: each row names a
+bare API contract (not a gateway archive) plus a supplemental Anvil manifest,
+and `refine-loop.mjs` compiles it directly with `anvil compile <spec>
+--manifest <manifest>` (see `compileSpecRow`) instead of `estate import`. The
+one row today, `payments-approved`, compiles
+[`examples/payments/openapi.yaml`](../../examples/payments/openapi.yaml) with
+[`fixtures/payments-approved.manifest.yaml`](fixtures/payments-approved.manifest.yaml),
+which sets `state: approved` and three `intent_examples` on the two **read**
+operations only (`getPayment`, `getCustomer`) — never on `createRefund` or
+`capturePayment`, which stay `review_required`; this manifest exists to feed
+the ratchet, not to grant new authority, and a mutation is never approved just
+to produce a benchmark task. That row currently measures 100.0% on both the
+flat and laddered catalogs (6/6 tasks; see `routing-baseline.json`'s
+`payments-approved` entry) — real accuracy over a real approved surface, not a
+placeholder number.
 
 ### Outcome taxonomy
 

@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-09-03T02:35:48.493Z",
+  "updatedAt": "2026-09-03T04:15:59.766Z",
   "note": "Per-estate, per-catalog routing accuracy (regenerate with: node tools/corpus/refine-loop.mjs --update-routing-baseline). A DROP beyond 1.0 pt fails the refine-loop job and names the estate and flipped operations.",
   "dropTolerancePts": 1,
   "estates": {
@@ -73,6 +73,80 @@
         "accuracy": 0,
         "total": 0,
         "tasks": []
+      }
+    },
+    "payments-approved": {
+      "flat": {
+        "accuracy": 1,
+        "total": 6,
+        "tasks": [
+          {
+            "operationId": "payments_api.customers.get",
+            "intent": "look up a customer",
+            "pass": true
+          },
+          {
+            "operationId": "payments_api.customers.get",
+            "intent": "get a customer's details",
+            "pass": true
+          },
+          {
+            "operationId": "payments_api.customers.get",
+            "intent": "find a customer by their id",
+            "pass": true
+          },
+          {
+            "operationId": "payments_api.payments.get",
+            "intent": "look up a payment",
+            "pass": true
+          },
+          {
+            "operationId": "payments_api.payments.get",
+            "intent": "check the status of a payment",
+            "pass": true
+          },
+          {
+            "operationId": "payments_api.payments.get",
+            "intent": "get details for a payment by id",
+            "pass": true
+          }
+        ]
+      },
+      "laddered": {
+        "accuracy": 1,
+        "total": 6,
+        "tasks": [
+          {
+            "operationId": "payments_api.customers.get",
+            "intent": "look up a customer",
+            "pass": true
+          },
+          {
+            "operationId": "payments_api.customers.get",
+            "intent": "get a customer's details",
+            "pass": true
+          },
+          {
+            "operationId": "payments_api.customers.get",
+            "intent": "find a customer by their id",
+            "pass": true
+          },
+          {
+            "operationId": "payments_api.payments.get",
+            "intent": "look up a payment",
+            "pass": true
+          },
+          {
+            "operationId": "payments_api.payments.get",
+            "intent": "check the status of a payment",
+            "pass": true
+          },
+          {
+            "operationId": "payments_api.payments.get",
+            "intent": "get details for a payment by id",
+            "pass": true
+          }
+        ]
       }
     }
   }

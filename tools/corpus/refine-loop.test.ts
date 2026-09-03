@@ -25,6 +25,7 @@ import {
   computeCatalogRatchet,
   diffFlippedToFail,
   readEstatesTsv,
+  readRefineEstatesTsv,
   renderSummaryMarkdown,
   reviewTierRefinements,
   runOnBundle,
@@ -159,6 +160,30 @@ describe("readEstatesTsv", () => {
     const path = join(dir, "estates.tsv");
     writeFileSync(path, "# comment\n\nname\tvendor\tfixture\tapi\n\n# trailing\n");
     expect(readEstatesTsv(path)).toEqual([{ name: "name", vendor: "vendor", fixture: "fixture", api: "api" }]);
+  });
+});
+
+// --- readRefineEstatesTsv ------------------------------------------------------------
+
+describe("readRefineEstatesTsv", () => {
+  it("parses the real refine-estates.tsv row (payments-approved)", () => {
+    const rows = readRefineEstatesTsv(join(HERE, "refine-estates.tsv"));
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toEqual({
+      name: "payments-approved",
+      vendor: "payments",
+      spec: "examples/payments/openapi.yaml",
+      manifest: "tools/corpus/fixtures/payments-approved.manifest.yaml",
+    });
+  });
+
+  it("skips '#' comment lines and blank lines, using its own name<TAB>vendor<TAB>spec<TAB>manifest schema", () => {
+    const dir = tempDir("refine-loop-tsv-");
+    const path = join(dir, "refine-estates.tsv");
+    writeFileSync(path, "# comment\n\nname\tvendor\tspec\tmanifest\n\n# trailing\n");
+    expect(readRefineEstatesTsv(path)).toEqual([
+      { name: "name", vendor: "vendor", spec: "spec", manifest: "manifest" },
+    ]);
   });
 });
 
@@ -434,5 +459,95 @@ describe("runEstateRow via the real corpus (kong-refunds)", () => {
     const report = JSON.parse(readFileSync(join(HERE, "report", "refine-loop.report.json"), "utf8"));
     expect(validateAgainstSchema(SCHEMA, report)).toEqual([]);
     expect(report.estates.some((e: { estate: string }) => e.estate === "kong-refunds")).toBe(true);
+  }, 60_000);
+});
+
+// --- payments-approved (refine-estates.tsv, direct-spec row) ------------------------
+//
+// The one row that gives the routing ratchet real signal: `estate import`
+// rows in estates.tsv all measure 0/0 (see README.md's Refine-loop mode
+// section), so these two tests pin that this row is different — compiled
+// directly via `anvil compile --manifest` (compileSpecRow) against
+// examples/payments/openapi.yaml with the two approved reads in
+// fixtures/payments-approved.manifest.yaml.
+
+function compilePaymentsApprovedBundle(): string {
+  const outDir = tempDir("refine-loop-payments-");
+  const spec = join(ROOT, "examples", "payments", "openapi.yaml");
+  const manifest = join(ROOT, "tools", "corpus", "fixtures", "payments-approved.manifest.yaml");
+  const result = spawnSync(
+    process.execPath,
+    [ANVIL, "compile", spec, "--manifest", manifest, "--out", join(outDir, "bundle"), "--root", outDir],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  if (result.status !== 0) {
+    throw new Error(`anvil compile (payments-approved fixture) failed:\n${result.stdout}\n${result.stderr}`);
+  }
+  return join(outDir, "bundle");
+}
+
+describe("payments-approved row (real anvil compile, real manifest)", () => {
+  it("yields a non-zero total and numeric accuracy for both the flat and laddered catalogs", async () => {
+    if (!existsSync(ANVIL)) throw new Error(`CLI not built: ${ANVIL}. Run \`pnpm build\` first.`);
+    const bundleDir = compilePaymentsApprovedBundle();
+    const rowDir = tempDir("refine-loop-row-");
+
+    const record = await runOnBundle("payments-approved", "payments", bundleDir, rowDir, ROOT, { estates: {} });
+
+    expect(record.status).toBe("green"); // no baseline yet — recorded, not gated
+    for (const catalog of ["flat", "laddered"] as const) {
+      const r = record.routing[catalog];
+      // The whole point of this row: unlike every estates.tsv row (0/0),
+      // getPayment/getCustomer are approved with real intent_examples, so
+      // there is something for the benchmark to route.
+      expect(r.total).toBeGreaterThan(0);
+      expect(typeof r.accuracy).toBe("number");
+      expect(Number.isNaN(r.accuracy)).toBe(false);
+    }
+  }, 60_000);
+
+  it("fails the ratchet when the recorded baseline is edited upward by 2.0 points beyond what this run measured", async () => {
+    if (!existsSync(ANVIL)) throw new Error(`CLI not built: ${ANVIL}. Run \`pnpm build\` first.`);
+    const bundleDir = compilePaymentsApprovedBundle();
+    const rowDir = tempDir("refine-loop-row-");
+
+    // First, a real run against no baseline, to learn this row's actual
+    // per-catalog accuracy and tasks.
+    const first = await runOnBundle("payments-approved", "payments", bundleDir, rowDir, ROOT, { estates: {} });
+    const current = (
+      first as unknown as {
+        _currentRouting: {
+          flat: { accuracy: number; total: number; tasks: unknown[] };
+          laddered: { accuracy: number; total: number; tasks: unknown[] };
+        };
+      }
+    )._currentRouting;
+    expect(current.flat.total).toBeGreaterThan(0);
+
+    // Edit the pinned baseline upward by exactly 2.0 accuracy points beyond
+    // what this run demonstrably measured — DROP_TOLERANCE_PTS is 1.0, so a
+    // 2.0-point gap must fail, and must name the estate's own tasks.
+    const inflate = (accuracy: number) => Math.round((accuracy + 0.02) * 1000) / 1000;
+    const baseline = {
+      estates: {
+        "payments-approved": {
+          flat: { accuracy: inflate(current.flat.accuracy), total: current.flat.total, tasks: current.flat.tasks },
+          laddered: {
+            accuracy: inflate(current.laddered.accuracy),
+            total: current.laddered.total,
+            tasks: current.laddered.tasks,
+          },
+        },
+      },
+    };
+
+    const rowDir2 = tempDir("refine-loop-row-");
+    const record = await runOnBundle("payments-approved", "payments", bundleDir, rowDir2, ROOT, baseline);
+
+    expect(record.status).toBe("regression");
+    expect(record.routing.flat.ok).toBe(false);
+    expect(record.routing.flat.deltaPts).toBeCloseTo(-2.0, 5);
+    expect(record.routing.laddered.ok).toBe(false);
+    expect(record.routing.laddered.deltaPts).toBeCloseTo(-2.0, 5);
   }, 60_000);
 });

@@ -19,6 +19,7 @@ import {
 import { analyzeTemplate, lexicalFamily } from "@anvil/grammar";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+import { decideAuthorizationCodeApproval, manifestReviewAnnotation } from "./auth-approval.js";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
 import { projectRoutingNames, singularize } from "./naming.js";
 import { analyzeSqlTemplate, supportedSqlDialects } from "./sql-grammar.js";
@@ -443,6 +444,15 @@ export const OperationManifest = z.object({
     })
     .optional(),
   state: z.enum(["generated", "review_required", "approved", "deprecated", "blocked"]).optional(),
+  /**
+   * Who reviewed this entry's `state` and why. The only place they GATE
+   * anything is an oauth2_authorization_code operation's `state: approved`
+   * (see auth-approval.ts) — both must be non-empty there or approval is
+   * refused. On every other auth type they are accepted and folded into a
+   * review note, never enforced.
+   */
+  reviewed_by: z.string().optional(),
+  review_reason: z.string().optional(),
 });
 export type OperationManifest = z.infer<typeof OperationManifest>;
 
@@ -1196,8 +1206,9 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
   // check itself is what says so, so the compiler no longer force-blocks
   // either type outright. oauth2_authorization_code is different: the
   // runtime CAN now replay or refresh it, but end-user authority is a human
-  // decision, not a material-completeness one, so it never leaves review —
-  // see the branch below rather than another line here.
+  // decision, not a material-completeness one, so a manifest can grant it
+  // only by naming who decided and why — see decideAuthorizationCodeApproval,
+  // after any `m.state` override above.
   const authIssues = authCoherenceIssues(op.auth);
   if (authIssues.length > 0) {
     op.state = "blocked";
@@ -1206,15 +1217,19 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
       if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
     }
   } else if (op.auth.type === "oauth2_authorization_code") {
-    // Unconditional, and after any `m.state` override above: no manifest may
-    // move this straight to approved, however complete its PKCE/token
-    // mechanics are. The broker is the named, reviewable unblock.
-    op.state = "review_required";
-    const note =
-      "Authorization-code auth stays review_required: end-user authority is a human decision, " +
-      "never a material-completeness one. Run `anvil auth login <bundle> --profile <profile>` " +
-      "to complete the interactive PKCE step and store a refresh token, then approve explicitly.";
-    if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    const decision = decideAuthorizationCodeApproval(
+      op.id,
+      m.state,
+      m.reviewed_by,
+      m.review_reason,
+    );
+    op.state = decision.state;
+    if (!op.reviewNotes.includes(decision.note)) op.reviewNotes.push(decision.note);
+  } else {
+    // reviewed_by/review_reason carry no gating power here — record them and
+    // move on; decideAuthorizationCodeApproval is the only enforcer.
+    const note = manifestReviewAnnotation(m.reviewed_by, m.review_reason);
+    if (note && !op.reviewNotes.includes(note)) op.reviewNotes.push(note);
   }
   // Deliberately no query_policy-style unblock-lift here: `m.state` and
   // `m.auth` can both be present in one merged manifest for UNRELATED

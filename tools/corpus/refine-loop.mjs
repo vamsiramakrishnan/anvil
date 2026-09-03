@@ -37,9 +37,23 @@
 // second implementation of what "laddered routing" means, just the existing
 // one read at finer grain than the CLI's own report exposes.
 //
+// Rows come from two files, acquired two different ways:
+//   - estates.tsv (gateway estates)  → `anvil estate import`. These pin route-
+//     only fidelity (naming, effect/risk classification, policy accounting)
+//     over the local gateway fixtures and, by design, import with ZERO
+//     approved operations — see README.md's Refine-loop mode section for why.
+//   - refine-estates.tsv (direct specs) → `anvil compile --manifest`. These
+//     carry an approved-operation-bearing manifest, so the routing-accuracy
+//     ratchet below has at least one row with real signal instead of 0/0.
+// Downstream of "how the bundle was acquired" every row is identical: the
+// same `runOnBundle` (refine run → benchmark --catalog both → clusters →
+// export-task → ratchet) runs over whatever bundle directory it received.
+//
 // Usage:
 //   node tools/corpus/refine-loop.mjs [--systems a,b] [--work <dir>]
-//                                     [--estates-file <tsv>] [--repo-root <dir>]
+//                                     [--estates-file <tsv>]
+//                                     [--refine-estates-file <tsv>]
+//                                     [--repo-root <dir>]
 //                                     [--update-routing-baseline]
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -51,6 +65,7 @@ import { validateAgainstSchema } from "./schema-check.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ESTATES_TSV = join(HERE, "estates.tsv");
+const DEFAULT_REFINE_ESTATES_TSV = join(HERE, "refine-estates.tsv");
 const ROUTING_BASELINE_PATH = join(HERE, "routing-baseline.json");
 const SCHEMA_PATH = join(HERE, "refine-loop.schema.json");
 const REPORT_DIR = join(HERE, "report");
@@ -70,6 +85,7 @@ function parseArgs(argv) {
     systems: null,
     work: null,
     estatesFile: DEFAULT_ESTATES_TSV,
+    refineEstatesFile: DEFAULT_REFINE_ESTATES_TSV,
     repoRoot: ROOT,
     updateRoutingBaseline: false,
   };
@@ -78,6 +94,7 @@ function parseArgs(argv) {
     if (a === "--systems") args.systems = argv[++i].split(",");
     else if (a === "--work") args.work = argv[++i];
     else if (a === "--estates-file") args.estatesFile = argv[++i];
+    else if (a === "--refine-estates-file") args.refineEstatesFile = argv[++i];
     else if (a === "--repo-root") args.repoRoot = argv[++i];
     else if (a === "--update-routing-baseline") args.updateRoutingBaseline = true;
     else throw new Error(`unknown flag: ${a}`);
@@ -92,6 +109,23 @@ export function readEstatesTsv(path) {
     .map((l) => {
       const [name, vendor, fixture, api] = l.split("\t");
       return { name, vendor, fixture, api };
+    });
+}
+
+/** refine-estates.tsv's own schema (documented at the top of that file):
+ *  name<TAB>vendor<TAB>spec<TAB>manifest — a direct API contract compiled via
+ *  `anvil compile --manifest`, not a gateway fixture through `estate import`.
+ *  A separate reader (not a `readEstatesTsv` variant) because the column
+ *  shape genuinely differs: `fixture`+`api` select one API out of a
+ *  multi-API gateway estate archive; `spec`+`manifest` name a contract file
+ *  and the supplemental manifest to compile it with directly. */
+export function readRefineEstatesTsv(path) {
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter((l) => l.trim() && !l.startsWith("#"))
+    .map((l) => {
+      const [name, vendor, spec, manifest] = l.split("\t");
+      return { name, vendor, spec, manifest };
     });
 }
 
@@ -132,6 +166,33 @@ function importEstate(est, outDir, repoRoot) {
     return { ok: false, classification: "crash", detail: "estate import --json did not emit JSON" };
   }
   return { ok: true, report, bundleDir: join(outDir, "bundle") };
+}
+
+// --- direct-spec compile (refine-estates.tsv rows; not a gateway fixture) -----
+
+/** `anvil compile <spec> --manifest <manifest>`, the same acquisition shape
+ *  as `importEstate` above (fixture existence check → run the real CLI →
+ *  return a bundle dir or a classified failure) but for a row that names a
+ *  bare API contract plus a supplemental manifest instead of a gateway
+ *  archive plus a vendor/api selector. */
+function compileSpecRow(est, outDir, repoRoot) {
+  const spec = join(repoRoot, est.spec);
+  const manifest = join(repoRoot, est.manifest);
+  if (!existsSync(spec)) {
+    return { ok: false, classification: "fixture-missing", detail: `spec not found: ${spec}` };
+  }
+  if (!existsSync(manifest)) {
+    return { ok: false, classification: "fixture-missing", detail: `manifest not found: ${manifest}` };
+  }
+  const res = runNode(
+    [ANVIL, "compile", spec, "--manifest", manifest, "--out", join(outDir, "bundle"), "--root", outDir],
+    { timeoutMs: 120_000 },
+  );
+  if (res.timedOut) return { ok: false, classification: "timeout", detail: "compile timed out" };
+  if (res.status !== 0) {
+    return { ok: false, classification: "compile-error", detail: lastLines(res) };
+  }
+  return { ok: true, bundleDir: join(outDir, "bundle") };
 }
 
 function lastLines(res, n = 4) {
@@ -382,23 +443,29 @@ export async function runOnBundle(name, vendor, bundleDir, rowDir, repoRoot, rou
   return record;
 }
 
-// --- one estate row (acquires a bundle via `estate import`, then runOnBundle) --
+// --- one row (acquires a bundle — `estate import` or `compile`, by row kind
+// — then runOnBundle) ------------------------------------------------------------
 
 async function runEstateRow(est, work, repoRoot, routingBaseline) {
   const rowDir = join(work, est.name);
   mkdirSync(rowDir, { recursive: true });
 
-  const imported = importEstate(est, rowDir, repoRoot);
-  if (!imported.ok) {
+  // The only branch downstream of "how was this bundle acquired": a gateway
+  // row (estates.tsv) goes through `estate import`, a direct-spec row
+  // (refine-estates.tsv) through `compile`. Everything after — runOnBundle
+  // (refine run, benchmark --catalog both, clusters, export-task, ratchet) —
+  // is identical for both.
+  const acquired = est.kind === "spec" ? compileSpecRow(est, rowDir, repoRoot) : importEstate(est, rowDir, repoRoot);
+  if (!acquired.ok) {
     return {
       estate: est.name,
       vendor: est.vendor,
       status: "fail",
-      classification: imported.classification ?? "import-error",
-      detail: imported.detail,
+      classification: acquired.classification ?? "import-error",
+      detail: acquired.detail,
     };
   }
-  return runOnBundle(est.name, est.vendor, imported.bundleDir, rowDir, repoRoot, routingBaseline);
+  return runOnBundle(est.name, est.vendor, acquired.bundleDir, rowDir, repoRoot, routingBaseline);
 }
 
 // --- report assembly ------------------------------------------------------------
@@ -556,7 +623,19 @@ async function main() {
     process.exit(2);
   }
 
-  const rows = readEstatesTsv(args.estatesFile).filter((e) => !args.systems || args.systems.includes(e.name));
+  // Two row sources, tagged by acquisition kind (see runEstateRow): gateway
+  // rows from estates.tsv (`estate import`), direct-spec rows from
+  // refine-estates.tsv (`compile`). The refine-estates file is optional —
+  // an explicit `--refine-estates-file` pointed at a missing path is an
+  // error (readRefineEstatesTsv throws), but the default path silently
+  // contributing zero rows if absent keeps `--estates-file` overrides (e.g.
+  // in a test fixture directory with no sibling refine-estates.tsv) working
+  // exactly as they did before this file existed.
+  const gatewayRows = readEstatesTsv(args.estatesFile).map((e) => ({ ...e, kind: "gateway" }));
+  const specRows = existsSync(args.refineEstatesFile)
+    ? readRefineEstatesTsv(args.refineEstatesFile).map((e) => ({ ...e, kind: "spec" }))
+    : [];
+  const rows = [...gatewayRows, ...specRows].filter((e) => !args.systems || args.systems.includes(e.name));
   if (rows.length === 0) throw new Error("no estates matched");
 
   const routingBaseline = existsSync(ROUTING_BASELINE_PATH)
