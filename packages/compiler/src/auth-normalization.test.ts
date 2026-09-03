@@ -54,7 +54,11 @@ describe("OpenAPI auth normalization", () => {
     });
   });
 
-  it("blocks end-user authorization-code flow rather than minting as the service", async () => {
+  it("keeps end-user authorization-code flow in review rather than minting as the service", async () => {
+    // The runtime can now replay/refresh this grant (packages/runtime/src/
+    // auth.ts), so it is no longer hard-blocked — but end-user authority is
+    // still a human decision, never a material-completeness one, so it lands
+    // at review_required, not "generated" straight to approvable.
     const air = await compile({
       spec: spec(
         {
@@ -77,10 +81,12 @@ describe("OpenAPI auth normalization", () => {
       type: "oauth2_authorization_code",
       principal: "end_user",
     });
-    expect(air.operations[0]?.state).toBe("blocked");
+    expect(air.operations[0]?.state).toBe("review_required");
     expect(air.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       "auth/end_user_flow_unexecutable",
     );
+    const note = air.operations[0]?.reviewNotes.join(" ") ?? "";
+    expect(note).toContain("anvil auth login");
   });
 
   it("preserves the API-key carrier", async () => {
@@ -589,5 +595,165 @@ auth:
         clientAuth: "private_key_jwt",
       },
     });
+  });
+});
+
+describe("mtls, custom_header, and oauth2_authorization_code: compiler unblock", () => {
+  it("blocks a manifest-declared mtls operation that names no client certificate", async () => {
+    const air = await compile({
+      spec: spec({}, []),
+      manifest: `
+operations:
+  listItems:
+    auth:
+      type: mtls
+    state: approved
+`,
+      serviceId: "auth-api",
+    });
+    expect(air.operations[0]?.auth.type).toBe("mtls");
+    expect(air.operations[0]?.state).toBe("blocked");
+    expect(air.operations[0]?.reviewNotes.join(" ")).toContain(
+      "mtls auth must name its client certificate and key references",
+    );
+  });
+
+  it("blocks a manifest-declared custom_header operation that names no carrier", async () => {
+    const air = await compile({
+      spec: spec({}, []),
+      manifest: `
+operations:
+  listItems:
+    auth:
+      type: custom_header
+    state: approved
+`,
+      serviceId: "auth-api",
+    });
+    expect(air.operations[0]?.auth.type).toBe("custom_header");
+    expect(air.operations[0]?.state).toBe("blocked");
+    expect(air.operations[0]?.reviewNotes.join(" ")).toContain(
+      "custom_header auth must name its credential carrier",
+    );
+  });
+
+  it("compiles a coherent manifest-declared custom_header straight through, unblocked", async () => {
+    const air = await compile({
+      spec: spec({}, []),
+      manifest: `
+operations:
+  listItems:
+    auth:
+      type: custom_header
+      carrier:
+        in: header
+        name: X-Vendor-Token
+`,
+      serviceId: "auth-api",
+    });
+    expect(air.operations[0]?.auth).toMatchObject({
+      type: "custom_header",
+      carrier: { in: "header", name: "X-Vendor-Token" },
+    });
+    // Never forced to blocked or even review — a complete custom_header
+    // contract is exactly as approvable as api_key/basic always were.
+    expect(air.operations[0]?.state).toBe("generated");
+  });
+
+  it("supplying coherent mtls material does not itself lift an unrelated block", async () => {
+    // Two OR alternatives that disagree in principal (service vs end_user) —
+    // AIR refuses to guess between them, so this compiles custom_header/blocked
+    // with an `auth/alternatives_unmodeled` diagnostic, same as the dedicated
+    // alternatives tests above. The manifest then REPLACES the whole contract
+    // with a coherent mtls one — but a manifest's `state` and `auth` can be
+    // merged from unrelated sources (a gateway-identity-contradiction guard
+    // overlay sets `state: blocked` in the very same resolved manifest a
+    // coherent auth patch rides in on), so a clean auth coherence result says
+    // only "auth is not what's blocking it," never "nothing is." The operator
+    // must lift the block explicitly (see the next test).
+    const air = await compile({
+      spec: spec(
+        {
+          apiKeyScheme: { type: "apiKey", in: "header", name: "X-API-Key" },
+          oidc: { type: "openIdConnect", openIdConnectUrl: "https://idp.example.com/.well-known" },
+        },
+        [{ apiKeyScheme: [] }, { oidc: [] }],
+      ),
+      manifest: `
+operations:
+  listItems:
+    auth:
+      type: mtls
+      tls:
+        client_cert_ref: ANVIL_BANK_CLIENT_CERT
+        client_key_ref: ANVIL_BANK_CLIENT_KEY
+`,
+      serviceId: "auth-api",
+    });
+    const op = air.operations[0];
+    expect(op?.auth).toMatchObject({
+      type: "mtls",
+      principal: "service",
+      tls: { clientCertRef: "ANVIL_BANK_CLIENT_CERT", clientKeyRef: "ANVIL_BANK_CLIENT_KEY" },
+    });
+    expect(op?.state).toBe("blocked");
+  });
+
+  it("lets an operator explicitly lift the block once mtls material is supplied", async () => {
+    const air = await compile({
+      spec: spec(
+        {
+          apiKeyScheme: { type: "apiKey", in: "header", name: "X-API-Key" },
+          oidc: { type: "openIdConnect", openIdConnectUrl: "https://idp.example.com/.well-known" },
+        },
+        [{ apiKeyScheme: [] }, { oidc: [] }],
+      ),
+      manifest: `
+operations:
+  listItems:
+    auth:
+      type: mtls
+      tls:
+        client_cert_ref: ANVIL_BANK_CLIENT_CERT
+        client_key_ref: ANVIL_BANK_CLIENT_KEY
+    state: review_required
+`,
+      serviceId: "auth-api",
+    });
+    const op = air.operations[0];
+    expect(op?.auth).toMatchObject({ type: "mtls" });
+    expect(op?.state).toBe("review_required");
+  });
+
+  it("keeps authorization-code review_required even when the manifest asks for approved", async () => {
+    const air = await compile({
+      spec: spec(
+        {
+          oauth: {
+            type: "oauth2",
+            flows: {
+              authorizationCode: {
+                authorizationUrl: "https://idp.example.com/authorize",
+                tokenUrl: "https://idp.example.com/token",
+                scopes: { "items.read": "read" },
+              },
+            },
+          },
+        },
+        [{ oauth: ["items.read"] }],
+      ),
+      manifest: `
+operations:
+  listItems:
+    state: approved
+`,
+      serviceId: "auth-api",
+    });
+    // No manifest `auth:` key at all here — end-user authority forces
+    // review_required unconditionally, regardless of what a manifest asked
+    // for and regardless of how complete the material is.
+    expect(air.operations[0]?.auth.type).toBe("oauth2_authorization_code");
+    expect(air.operations[0]?.state).toBe("review_required");
+    expect(air.operations[0]?.reviewNotes.join(" ")).toContain("never a material-completeness one");
   });
 });

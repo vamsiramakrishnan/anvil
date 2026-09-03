@@ -1,7 +1,16 @@
+import type { ClientRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import type { RetryCondition } from "@anvil/air";
 import { DEFAULT_UPSTREAM_TIMEOUT_MS } from "./config.js";
 
 export const MAX_UPSTREAM_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+/** Client-certificate material for an outbound mTLS connection. PEM text. */
+export interface TlsClientMaterial {
+  cert: string;
+  key: string;
+  ca?: string;
+}
 
 /** How much longer than its own window a stream request may live before the
  *  transport aborts it outright. Enough to close cleanly, not enough to hold a
@@ -24,6 +33,13 @@ export interface HttpRequest {
    * the window is the thing that was asked for. Whatever arrived is the result.
    */
   streamBound?: { maxEvents: number; maxSeconds: number };
+  /**
+   * A client certificate to present on this connection (`mtls` auth). Present
+   * only after `applyAuth` merges resolved `AuthMaterial.tls` on; its presence
+   * is what routes the request through `node:https` instead of `fetch` (Node's
+   * global fetch has no client-cert seam without reaching for undici's Agent).
+   */
+  tls?: TlsClientMaterial;
 }
 
 export interface HttpResponse {
@@ -63,6 +79,10 @@ export class FetchTransport implements Transport {
   constructor(private readonly fetchImpl: typeof fetch = fetch) {}
 
   async send(req: HttpRequest): Promise<HttpResponse> {
+    // A client certificate has no seam on the global fetch; node:https is the
+    // only path that can present one. Everything else keeps using fetch,
+    // unchanged — this is a routing decision, not a rewrite of either path.
+    if (req.tls) return sendHttps(req, req.tls);
     const controller = new AbortController();
     // A stream's own window is its deadline; the request timeout is only the
     // backstop behind it. Left at the ordinary value, the abort would fire
@@ -117,6 +137,151 @@ export class FetchTransport implements Transport {
     } finally {
       clearTimeout(timeout);
     }
+  }
+}
+
+/**
+ * The `node:https` path for a request carrying client-certificate material.
+ * Same `HttpRequest`/`HttpResponse` contract, same byte cap
+ * (`MAX_UPSTREAM_RESPONSE_BYTES`), same redirect refusal, and the same
+ * `TransportError` conditions as `FetchTransport.send` — a caller cannot tell
+ * which path served a call from its result. A `streamBound` request over this
+ * path still gets the wider stream timeout ceiling and the byte cap, but does
+ * not truncate at `maxEvents`/`maxSeconds` mid-stream the way the fetch/SSE
+ * path does: mTLS + `stream_source` together is not this lane's target case,
+ * and the byte cap plus timeout keep it safe rather than unbounded.
+ */
+function sendHttps(req: HttpRequest, tls: TlsClientMaterial): Promise<HttpResponse> {
+  const url = new URL(req.url);
+  const streamCeilingMs = req.streamBound
+    ? (req.streamBound.maxSeconds + STREAM_TIMEOUT_GRACE_SECONDS) * 1000
+    : 0;
+  const timeoutMs = Math.max(req.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS, streamCeilingMs);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timedOut = false;
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+
+    const nodeReq: ClientRequest = httpsRequest(
+      {
+        method: req.method,
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: `${url.pathname}${url.search}`,
+        headers: req.headers,
+        cert: tls.cert,
+        key: tls.key,
+        ca: tls.ca,
+        timeout: timeoutMs,
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        if (status >= 300 && status < 400) {
+          res.resume();
+          finish(() =>
+            reject(
+              new TransportError(
+                "connection_reset",
+                "The upstream returned a redirect, which Anvil refused to follow.",
+                "after_response",
+              ),
+            ),
+          );
+          return;
+        }
+        const declaredLength = Number(res.headers["content-length"]);
+        if (Number.isFinite(declaredLength) && declaredLength > MAX_UPSTREAM_RESPONSE_BYTES) {
+          res.destroy();
+          finish(() =>
+            reject(
+              new TransportError(
+                "connection_reset",
+                "The upstream response exceeds the runtime byte limit.",
+                "after_response",
+              ),
+            ),
+          );
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let total = 0;
+        res.on("data", (chunk: Buffer) => {
+          total += chunk.length;
+          if (total > MAX_UPSTREAM_RESPONSE_BYTES) {
+            res.destroy();
+            finish(() =>
+              reject(
+                new TransportError(
+                  "connection_reset",
+                  "The upstream response exceeds the runtime byte limit.",
+                  "after_response",
+                ),
+              ),
+            );
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on("end", () => {
+          const headers: Record<string, string> = {};
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (typeof v === "string") headers[k] = v;
+            else if (Array.isArray(v)) headers[k] = v.join(", ");
+          }
+          finish(() => resolve({ status, headers, body: Buffer.concat(chunks).toString("utf8") }));
+        });
+        res.on("error", () => {
+          finish(() =>
+            reject(
+              new TransportError(
+                "connection_reset",
+                "The upstream response body could not be consumed safely.",
+                "after_response",
+              ),
+            ),
+          );
+        });
+      },
+    );
+    nodeReq.on("timeout", () => {
+      timedOut = true;
+      nodeReq.destroy();
+    });
+    nodeReq.on("error", (err: Error) => {
+      finish(() =>
+        reject(
+          timedOut
+            ? new TransportError("timeout", "Request timed out before a response was received.")
+            : classifyNodeHttpsError(err),
+        ),
+      );
+    });
+    if (req.body) nodeReq.write(req.body);
+    nodeReq.end();
+  });
+}
+
+/** Best-effort classification of a thrown `node:https` error into a retry condition. */
+function classifyNodeHttpsError(err: unknown): TransportError {
+  const e = err as { code?: string; message?: string };
+  switch (e?.code) {
+    case "ECONNRESET":
+      return new TransportError("connection_reset", "The upstream connection was reset.");
+    case "ENOTFOUND":
+    case "EAI_AGAIN":
+      return new TransportError("dns_failure", "Upstream host could not be resolved.");
+    case "ETIMEDOUT":
+      return new TransportError("timeout", "The upstream connection timed out.");
+    default:
+      return new TransportError(
+        "connection_reset",
+        e?.message ?? "The upstream transport failed before a response.",
+      );
   }
 }
 

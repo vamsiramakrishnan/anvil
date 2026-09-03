@@ -205,7 +205,9 @@ describe("Swagger 2.0 long-tail conversion (docstore pair)", () => {
     expect(list?.auth.type).toBe("oauth2_authorization_code");
     expect(list?.auth.principal).toBe("end_user");
     expect(list?.auth.provider?.tokenEndpoint).toBe("https://auth.example.com/token");
-    expect(list?.state).toBe("blocked");
+    // Executable via replay/refresh now, but end-user authority still keeps
+    // it review-gated rather than a straight "generated" pass-through.
+    expect(list?.state).toBe("review_required");
     expect(list?.auth.scopes).toEqual(["docs.read"]);
     const usage = air.operations.find((o) => o.sourceRef.operationId === "getUsage");
     expect(usage?.auth.type).toBe("api_key");

@@ -6,9 +6,11 @@ import type { AuthRequirement } from "./schema.js";
  * AIR could name what they need: authorization-code (endpoints + PKCE, the
  * interactive step in a local broker, never the serving path), mutual TLS
  * (client material by environment-variable NAME only — PEM never appears in
- * AIR, a bundle, a record, or a log), and custom-header carriers. `schema.ts`
- * owns the shapes those facts hang off; this module owns the facts and the
- * coherence rules that keep them from being declared on the wrong scheme.
+ * AIR, a bundle, a record, or a log), and custom-header carriers (a
+ * credential that rides a header AIR's other auth types cannot name).
+ * `schema.ts` owns the shapes those facts hang off; this module owns the
+ * facts and the coherence rules that keep them from being declared on the
+ * wrong scheme, or — for custom_header — left with nowhere to ride at all.
  */
 
 export const TlsClientMaterialRefs = z.object({
@@ -29,6 +31,9 @@ export function authMechanicsIssues(auth: AuthRequirement): string[] {
   }
   if (auth.tls && auth.type !== "mtls") {
     issues.push(`${auth.type} auth cannot carry mtls client material references`);
+  }
+  if (auth.type === "custom_header" && !auth.carrier) {
+    issues.push("custom_header auth must name its credential carrier");
   }
   const mechanics =
     auth.provider?.pkce !== undefined || auth.provider?.authorizationEndpoint !== undefined;

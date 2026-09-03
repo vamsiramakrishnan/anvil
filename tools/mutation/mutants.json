@@ -984,6 +984,36 @@
       "tests": [
         "packages/compiler/src/protocols/har.test.ts"
       ]
+    },
+    {
+      "id": "auth/mtls-material-never-logged",
+      "file": "packages/runtime/src/auth.ts",
+      "control": "expectedCredentials surfaces mtls client-certificate material by its declared reference NAMES only, in an auth_required error a stranded caller reads -- never the resolved PEM value.",
+      "find": "      case \"mtls\":\n        return auth.tls\n          ? [\n              auth.tls.clientCertRef,\n              auth.tls.clientKeyRef,\n              ...(auth.tls.caRef ? [auth.tls.caRef] : []),\n            ]\n          : [];",
+      "replace": "      case \"mtls\":\n        return auth.tls\n          ? [this.env[auth.tls.clientCertRef] ?? \"\", this.env[auth.tls.clientKeyRef] ?? \"\"]\n          : [];",
+      "tests": [
+        "packages/runtime/src/auth.test.ts"
+      ]
+    },
+    {
+      "id": "auth/custom-header-never-bearer",
+      "file": "packages/runtime/src/auth.ts",
+      "control": "A resolved custom_header credential is carried verbatim under its declared carrier (a vendor's own header name and optional scheme prefix) -- never collapsed to a generic Authorization: Bearer header the way every OAuth/JWT variant is.",
+      "find": "        return carrier.in === \"query\"\n          ? { query: { [carrier.name]: value } }\n          : { headers: { [carrier.name]: carried } };",
+      "replace": "        return { headers: { Authorization: `Bearer ${value}` } };",
+      "tests": [
+        "packages/runtime/src/auth.test.ts"
+      ]
+    },
+    {
+      "id": "auth/authorization-code-stays-review",
+      "file": "packages/compiler/src/manifest.ts",
+      "control": "oauth2_authorization_code auth always compiles review_required, never approved by a manifest state override, however complete its PKCE/token mechanics are -- end-user authority is a human decision, not a material-completeness one.",
+      "find": "  } else if (op.auth.type === \"oauth2_authorization_code\") {",
+      "replace": "  } else if (false) {",
+      "tests": [
+        "packages/compiler/src/auth-normalization.test.ts"
+      ]
     }
   ]
 }
