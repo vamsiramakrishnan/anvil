@@ -41,7 +41,7 @@ const op = (
   auth: { type: "none", scopes: [] },
   cli: { command: id },
   mcp: { toolName },
-  skill: { intentExamples: [] },
+  skill: { intentExamples: [] as string[] },
   state,
   ...(tokens === undefined
     ? {}
@@ -335,5 +335,116 @@ describe("member vocabulary in entry cards", () => {
     // at the source rather than only through a downstream consumer.
     const description = laneEntryDescription(lane);
     expect(description).toContain("Covers: list widget, get widget.");
+  });
+});
+
+describe("member intent examples in entry cards", () => {
+  // The second stage-1 lever measured in docs/backtesting/routing-at-scale.md
+  // ("A second lever" section): memberVocabulary gives a router two-word
+  // stems, but the member operations' own authored intent examples are the
+  // full phrase an agent would actually type. Folded in the same
+  // dedup-and-cap shape, over three lanes so a per-lane cap can be pinned
+  // independently of the other lanes' own membership.
+  const opWithIntents = (
+    id: string,
+    toolName: string,
+    tokens: number,
+    intentExamples: string[],
+  ) => ({ ...op(id, toolName, tokens), skill: { intentExamples } });
+
+  it("folds each member's own intent examples into the card, deduplicated, across three lanes", () => {
+    const widgetOps = [
+      opWithIntents("svc.w_list", "tool_w_list", 15_000, [
+        "list the widgets",
+        "show me all widgets",
+      ]),
+      // Same first phrase as svc.w_list — must count once, not twice.
+      opWithIntents("svc.w_get", "tool_w_get", 15_000, ["list the widgets", "get a widget by id"]),
+    ];
+    const gadgetOps = [opWithIntents("svc.g_list", "tool_g_list", 15_000, ["list the gadgets"])];
+    const partOps = [opWithIntents("svc.p_list", "tool_p_list", 15_000, [])];
+    const plan = ladderPlan(
+      doc(
+        [...widgetOps, ...gadgetOps, ...partOps],
+        [
+          { id: "svc.widgets", operationIds: widgetOps.map((o) => o.id) },
+          { id: "svc.gadgets", operationIds: gadgetOps.map((o) => o.id) },
+          { id: "svc.parts", operationIds: partOps.map((o) => o.id) },
+        ],
+      ),
+    );
+    expect(plan.lanes).toHaveLength(3);
+    const widgets = plan.lanes.find((l) => l.capabilityId === "svc.widgets");
+    // buildLane iterates member operations in sorted-id order (svc.w_get
+    // before svc.w_list), so the walk visits svc.w_get's two examples first,
+    // then svc.w_list's — with its first phrase ("list the widgets") already
+    // seen and skipped as a duplicate.
+    expect(widgets?.memberIntentExamples).toEqual([
+      "list the widgets",
+      "get a widget by id",
+      "show me all widgets",
+    ]);
+    const gadgets = plan.lanes.find((l) => l.capabilityId === "svc.gadgets");
+    expect(gadgets?.memberIntentExamples).toEqual(["list the gadgets"]);
+    // A lane whose members carry no intent examples at all folds none in —
+    // absence stays absence, never a fabricated placeholder.
+    const parts = plan.lanes.find((l) => l.capabilityId === "svc.parts");
+    expect(parts?.memberIntentExamples).toEqual([]);
+  });
+
+  it("caps member intent examples at a small, bounded sample even with many verbose members", () => {
+    const ops = Array.from({ length: 20 }, (_, i) =>
+      opWithIntents(`svc.op${i}`, `tool_${i}`, 15_000, [
+        `distinct intent phrase number ${i} a`,
+        `distinct intent phrase number ${i} b`,
+        `distinct intent phrase number ${i} c`,
+      ]),
+    );
+    const plan = ladderPlan(doc(ops, [{ id: "svc.things", operationIds: ops.map((o) => o.id) }]));
+    const lane = plan.lanes.find((l) => l.capabilityId === "svc.things");
+    // 20 members with 3 distinct phrases each is 60 candidates — the card
+    // stays a routing aid, not a full member listing. Mutant
+    // `ladder/intent-examples-stay-within-card-budget` deletes this cap.
+    expect(lane?.memberIntentExamples.length).toBeLessThan(10);
+    expect(lane?.memberIntentExamples.length).toBeGreaterThan(0);
+    expect(new Set(lane?.memberIntentExamples).size).toBe(lane?.memberIntentExamples.length);
+  });
+
+  it("puts the member intent examples on the served entry-card description", () => {
+    // Two members, not one: a single-operation lane collapses nothing and the
+    // projection refuses to build it at all (`no_grouping_benefit`).
+    const ops = [
+      opWithIntents("svc.a_list", "tool_list", 15_000, ["list the widgets"]),
+      opWithIntents("svc.b_get", "tool_get", 15_000, []),
+    ];
+    const plan = ladderPlan(doc(ops, [{ id: "svc.widgets", operationIds: ops.map((o) => o.id) }]));
+    const lane = plan.lanes.find((l) => l.capabilityId === "svc.widgets");
+    expect(lane).toBeDefined();
+    if (!lane) throw new Error("expected a lane");
+    const description = laneEntryDescription(lane);
+    expect(description).toContain('Examples: "list the widgets".');
+  });
+
+  it("stays within the existing entry-card token budget alongside every other field", () => {
+    // The card's overall cost is still capped at the per-operation budget
+    // (`entryCardTokens`) exactly as it was before this field existed — a
+    // lane cannot cost more than the tools it is standing in for just
+    // because its members carry a lot of authored intent text.
+    const ops = Array.from({ length: 8 }, (_, i) =>
+      opWithIntents(`svc.op${i}`, `tool_${i}`, 100, [
+        "x".repeat(200),
+        "y".repeat(200),
+        "z".repeat(200),
+      ]),
+    );
+    const plan = ladderPlan(doc(ops, [{ id: "svc.things", operationIds: ops.map((o) => o.id) }]), {
+      surfaceBudgetTokens: 1,
+    });
+    expect(plan.mode).toBe("laddered");
+    const lane = plan.lanes.find((l) => l.capabilityId === "svc.things");
+    expect(lane).toBeDefined();
+    // restTokens is the measured served cost, and it must never exceed what
+    // the operations it replaces would have cost flat.
+    expect(plan.restTokens).toBeLessThan(plan.flatTokens);
   });
 });

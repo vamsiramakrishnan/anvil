@@ -6,6 +6,7 @@ import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
+import { measuredAccuracyFromReport } from "./ladder-status.js";
 import { annotate } from "./meta.js";
 
 /** `anvil serve <dir> [--fleet]` — boot the generated MCP server over stdio. */
@@ -36,9 +37,18 @@ export function registerServe(parent: Command, ctx: CommandContext): void {
 
 async function runServeMcp(dir: string, io: CliIO): Promise<number> {
   const air = loadAir(dir);
-  const { buildMcpServer, buildToolResources } = await import("@anvil/generators");
+  const { buildMcpServer, buildToolResources, readBundleDir, resolveBundleDir } = await import(
+    "@anvil/generators"
+  );
   const { allowedHostsFor, FetchTransport, loadRuntimeConfig, resolveCredentials, resolveLedger } =
     await import("@anvil/runtime");
+  // The same measured accuracy delta `anvil status`/`anvil inspect` would show
+  // for this bundle right now (`measuredAccuracyFromReport`), so `auto` mode's
+  // decision here and what an operator was told to expect can never disagree.
+  // A bundle that has never been benchmarked (or whose report is stale) simply
+  // has no delta to weigh, which reproduces `auto`'s pre-measurement behavior.
+  const bundleDir = resolveBundleDir(dir);
+  const measuredAccuracy = measuredAccuracyFromReport(bundleDir, readBundleDir(bundleDir));
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
   const config = loadRuntimeConfig();
   const transport = new FetchTransport();
@@ -56,6 +66,7 @@ async function runServeMcp(dir: string, io: CliIO): Promise<number> {
   );
   const server = buildMcpServer(air, {
     resources: buildToolResources(air),
+    measuredAccuracy,
     contextFor: () => ({
       transport,
       serviceId: air.service.id,
