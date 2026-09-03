@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { authMechanicsIssues, TlsClientMaterialRefs } from "./auth-mechanics.js";
 import { AgentProjection } from "./agent-projection.js";
 import {
   AuthPrincipal,
@@ -590,22 +591,6 @@ export const AuthProvider = z.object({
 export type AuthProvider = z.infer<typeof AuthProvider>;
 
 /**
- * Mutual-TLS client material, by NAME only. Each field names the environment
- * variable (or secret reference) the runtime reads the PEM from — the way every
- * other credential is addressed (`ANVIL_<PROFILE>_*`). PEM bytes never appear
- * in AIR, a bundle, a record, or a log.
- */
-export const TlsClientMaterialRefs = z.object({
-  clientCertRef: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
-  clientKeyRef: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
-  caRef: z
-    .string()
-    .regex(/^[A-Z][A-Z0-9_]*$/)
-    .optional(),
-});
-export type TlsClientMaterialRefs = z.infer<typeof TlsClientMaterialRefs>;
-
-/**
  * Exact on-wire credential carrier. This is separate from an OAuth token
  * endpoint and issuer: those identify token acquisition/trust, while the
  * carrier identifies how the resulting credential reaches the API.
@@ -717,11 +702,6 @@ export function authCoherenceIssues(auth: AuthRequirement): string[] {
     if (auth.principal !== "end_user") {
       issues.push("authorization-code auth must declare end_user authority");
     }
-    if (auth.provider?.authorizationEndpoint && !auth.provider.tokenEndpoint) {
-      issues.push(
-        "authorization-code auth that names an authorization endpoint must name its token endpoint",
-      );
-    }
   } else if (sharedCredential && auth.principal !== "service") {
     issues.push(`${auth.type} uses a shared runtime credential and must declare service authority`);
   }
@@ -789,18 +769,7 @@ export function authCoherenceIssues(auth: AuthRequirement): string[] {
       issues.push(`${auth.type} cannot declare a credential carrier`);
     }
   }
-  if (auth.type === "mtls" && !auth.tls) {
-    issues.push("mtls auth must name its client certificate and key references");
-  }
-  if (auth.tls && auth.type !== "mtls") {
-    issues.push(`${auth.type} auth cannot carry mtls client material references`);
-  }
-  if (
-    (auth.provider?.pkce !== undefined || auth.provider?.authorizationEndpoint !== undefined) &&
-    auth.type !== "oauth2_authorization_code"
-  ) {
-    issues.push(`${auth.type} auth cannot declare authorization-code mechanics`);
-  }
+  issues.push(...authMechanicsIssues(auth));
   return issues;
 }
 
