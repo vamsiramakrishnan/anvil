@@ -1,0 +1,190 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Anvil refine-loop report",
+  "description": "Written by tools/corpus/refine-loop.mjs. Checked in schema-check.mjs's small subset (type/enum/required/properties/items/additionalProperties) by refine-loop.mjs itself before the report is written, and by tools/corpus/refine-loop.test.ts.",
+  "type": "object",
+  "required": ["schemaVersion", "reportType", "generatedAt", "dropTolerancePts", "estates", "summary", "ratchet"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "type": "integer", "enum": [1] },
+    "reportType": { "type": "string", "enum": ["anvil.refine-loop"] },
+    "generatedAt": { "type": "string" },
+    "dropTolerancePts": { "type": "number" },
+    "estates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["estate", "vendor", "status", "classification"],
+        "additionalProperties": false,
+        "properties": {
+          "estate": { "type": "string" },
+          "vendor": { "type": "string" },
+          "status": { "type": "string", "enum": ["green", "regression", "fail"] },
+          "classification": { "type": "string" },
+          "detail": { "type": "string" },
+          "bundleDir": { "type": "string" },
+          "refine": {
+            "type": "object",
+            "required": ["packDir", "summary", "reviewRefinements"],
+            "additionalProperties": false,
+            "properties": {
+              "packDir": { "type": "string" },
+              "summary": {
+                "type": "object",
+                "required": ["proposed", "approved", "review", "rejected", "regressed", "skipped"],
+                "additionalProperties": false,
+                "properties": {
+                  "proposed": { "type": "integer" },
+                  "approved": { "type": "integer" },
+                  "review": { "type": "integer" },
+                  "rejected": { "type": "integer" },
+                  "regressed": { "type": "integer" },
+                  "skipped": { "type": "integer" }
+                }
+              },
+              "reviewRefinements": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "skill", "status", "deficiency", "message"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": { "type": "string" },
+                    "skill": { "type": "string" },
+                    "status": { "type": "string", "enum": ["improved", "neutral"] },
+                    "deficiency": { "type": "string" },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "benchmark": {
+            "type": "object",
+            "required": ["bundleHash", "router", "catalogSize", "summary"],
+            "additionalProperties": false,
+            "properties": {
+              "bundleHash": { "type": "string" },
+              "router": { "type": "string" },
+              "catalogSize": { "type": "integer" },
+              "summary": {
+                "type": "object",
+                "required": ["total", "passed", "score", "curatedRouted", "bareRouted", "upliftPts"],
+                "additionalProperties": false,
+                "properties": {
+                  "total": { "type": "integer" },
+                  "passed": { "type": "integer" },
+                  "score": { "type": "number" },
+                  "curatedRouted": { "type": "integer" },
+                  "bareRouted": { "type": "integer" },
+                  "upliftPts": { "type": "number" }
+                }
+              }
+            }
+          },
+          "clusters": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "taskCount", "members", "sharedTokens", "exportOk"],
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string" },
+                "taskCount": { "type": "integer" },
+                "members": { "type": "array", "items": { "type": "string" } },
+                "sharedTokens": { "type": "array", "items": { "type": "string" } },
+                "exportOk": { "type": "boolean" },
+                "exportedTaskPath": { "type": "string" },
+                "exportDetail": { "type": "string" }
+              }
+            }
+          },
+          "routing": {
+            "type": "object",
+            "required": ["flat", "laddered"],
+            "additionalProperties": false,
+            "properties": {
+              "flat": { "$ref": "#/definitions/catalogRatchet" },
+              "laddered": { "$ref": "#/definitions/catalogRatchet" }
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["estates", "green", "totalReviewRefinements", "totalClusters", "totalExportedTasks"],
+      "additionalProperties": false,
+      "properties": {
+        "estates": { "type": "integer" },
+        "green": { "type": "integer" },
+        "totalReviewRefinements": { "type": "integer" },
+        "totalClusters": { "type": "integer" },
+        "totalExportedTasks": { "type": "integer" }
+      }
+    },
+    "ratchet": {
+      "type": "object",
+      "required": ["status", "regressions"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "string", "enum": ["green", "red"] },
+        "regressions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["estate", "catalog", "baselineAccuracy", "currentAccuracy", "deltaPts", "flippedToFail"],
+            "additionalProperties": false,
+            "properties": {
+              "estate": { "type": "string" },
+              "catalog": { "type": "string", "enum": ["flat", "laddered"] },
+              "baselineAccuracy": { "type": "number" },
+              "currentAccuracy": { "type": "number" },
+              "deltaPts": { "type": "number" },
+              "flippedToFail": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["operationId", "intent"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "operationId": { "type": "string" },
+                    "intent": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "catalogRatchet": {
+      "type": "object",
+      "required": ["accuracy", "total", "hasBaseline", "baselineAccuracy", "deltaPts", "ok", "flippedToFail", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "accuracy": { "type": "number" },
+        "total": { "type": "integer" },
+        "hasBaseline": { "type": "boolean" },
+        "baselineAccuracy": { "type": "number" },
+        "deltaPts": { "type": "number" },
+        "ok": { "type": "boolean" },
+        "flippedToFail": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["operationId", "intent"],
+            "additionalProperties": false,
+            "properties": {
+              "operationId": { "type": "string" },
+              "intent": { "type": "string" }
+            }
+          }
+        },
+        "detail": { "type": "string" }
+      }
+    }
+  }
+}
