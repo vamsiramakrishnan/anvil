@@ -112,6 +112,57 @@ const zConfusionAnalysis = z.object({
 });
 export type ConfusionAnalysis = z.infer<typeof zConfusionAnalysis>;
 
+/** Routing performance for one catalog shape (`flat` or `laddered`), scored
+ *  the same way `summary` is: passed/total routes and uplift over the bare
+ *  baseline, in points of task share. */
+const zCatalogSummary = z.object({
+  total: z.number(),
+  passed: z.number(),
+  /** passed/total for this catalog mode. */
+  accuracy: z.number(),
+  /** This mode's routed share minus the bare baseline's, in points. */
+  upliftPts: z.number(),
+});
+export type CatalogSummary = z.infer<typeof zCatalogSummary>;
+
+/**
+ * Tokens an agent reads at rest under each surface, using the same
+ * `disclosureCost.toolTokens` measurement the compiler's capability-review
+ * budget reads (`disclosureTokens` in `capability-review.ts`) and the ladder
+ * projection itself already totals (`LadderPlan.flatTokens`/`restTokens`) —
+ * this estimate is read from those figures, never recomputed.
+ */
+const zDisclosureCostEstimate = z.object({
+  /** Every benchmarked operation's measured tool-surface cost — what a flat
+   *  catalog discloses in full before an agent has routed anywhere. */
+  flatTokens: z.number(),
+  /** Entry cards plus any unlaned tools — what a laddered catalog discloses
+   *  at rest, before any lane is opened. Equal to `flatTokens` when the ladder
+   *  plan declined. */
+  ladderRestTokens: z.number(),
+  /** Mean measured cost of the one lane a laddered task actually opened,
+   *  averaged over tasks that entered a lane. 0 when the plan declined or no
+   *  task opened one. */
+  avgOpenedLaneTokens: z.number(),
+  /** `ladderRestTokens + avgOpenedLaneTokens` — the laddered surface's
+   *  typical per-task reading cost, set beside `flatTokens`. */
+  estimatedLadderedTokens: z.number(),
+});
+export type DisclosureCostEstimate = z.infer<typeof zDisclosureCostEstimate>;
+
+/**
+ * The optional per-catalog comparison `--catalog laddered|both` populates.
+ * Absent under the default `--catalog flat`, which keeps every existing
+ * report byte-compatible with what `anvil benchmark` wrote before this field
+ * existed — the same report `--check` has always gated on.
+ */
+const zCatalogsBlock = z.object({
+  flat: zCatalogSummary.optional(),
+  laddered: zCatalogSummary.optional(),
+  disclosureCost: zDisclosureCostEstimate.optional(),
+});
+export type CatalogsBlock = z.infer<typeof zCatalogsBlock>;
+
 export const zBenchmarkReport = z.object({
   schemaVersion: z.literal(2),
   router: z.string(),
@@ -138,6 +189,12 @@ export const zBenchmarkReport = z.object({
     /** curated score minus bare score, in points of task share. */
     upliftPts: z.number(),
   }),
+  /**
+   * The disclosure-ladder comparison, present only when `--catalog laddered`
+   * or `--catalog both` asked for it. Additive: every field above this one
+   * keeps the exact meaning it had before the ladder was measured.
+   */
+  catalogs: zCatalogsBlock.optional(),
   /** The bundle content digest the report was measured against. */
   bundleHash: z.string().regex(/^[0-9a-f]{64}$/),
 });

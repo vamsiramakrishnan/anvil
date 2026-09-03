@@ -350,6 +350,103 @@ operations:
     });
   });
 
+  describe("Catalog comparison (--catalog)", () => {
+    it("omits catalogs from the report when --catalog is unset — the default stays flat", async () => {
+      // Mutant benchmark-ladder/flat-default-unchanged: change the default
+      // fallback away from "flat" and this must go red, because the report
+      // `anvil benchmark` writes with no flag at all would gain a field it
+      // never had before.
+      const bundleDir = await buildBundle(
+        "payments/openapi.yaml",
+        "payments/anvil.yaml",
+        "payments",
+      );
+      const io = bufferIO();
+      const code = await runBenchmarkCommand(bundleDir, {}, io);
+      expect(code).toBe(0);
+      const report: BenchmarkReport = JSON.parse(
+        readFileSync(join(bundleDir, "benchmark.report.json"), "utf8"),
+      );
+      expect(report.catalogs).toBeUndefined();
+    });
+
+    it("--catalog flat is byte-identical to the default — explicit and implicit flat agree", async () => {
+      const bundleDir = await buildBundle(
+        "payments/openapi.yaml",
+        "payments/anvil.yaml",
+        "payments",
+      );
+      const defaultIo = bufferIO();
+      await runBenchmarkCommand(bundleDir, {}, defaultIo);
+      const defaultReport = readFileSync(join(bundleDir, "benchmark.report.json"), "utf8");
+
+      const explicitIo = bufferIO();
+      await runBenchmarkCommand(bundleDir, { catalog: "flat" }, explicitIo);
+      const explicitReport = readFileSync(join(bundleDir, "benchmark.report.json"), "utf8");
+
+      expect(explicitReport).toBe(defaultReport);
+    });
+
+    it("--catalog laddered adds only the laddered summary and a disclosure-cost estimate", async () => {
+      const bundleDir = await buildBundle(
+        "payments/openapi.yaml",
+        "payments/anvil.yaml",
+        "payments",
+      );
+      const io = bufferIO();
+      const code = await runBenchmarkCommand(bundleDir, { catalog: "laddered" }, io);
+      expect(code).toBe(0);
+      const report: BenchmarkReport = JSON.parse(
+        readFileSync(join(bundleDir, "benchmark.report.json"), "utf8"),
+      );
+      expect(report.catalogs?.flat).toBeUndefined();
+      expect(report.catalogs?.laddered).toBeDefined();
+      expect(report.catalogs?.laddered?.total).toBeGreaterThanOrEqual(0);
+      expect(report.catalogs?.disclosureCost).toBeDefined();
+      expect(report.catalogs?.disclosureCost?.flatTokens).toBeGreaterThan(0);
+      // The top-level score is always the flat measurement, whichever
+      // --catalog mode was asked for — --check keeps gating on one number.
+      expect(report.summary.curatedRouted).toBeGreaterThanOrEqual(0);
+    });
+
+    it("--catalog both reports flat and laddered side by side and prints a comparison table", async () => {
+      const bundleDir = await buildBundle(
+        "payments/openapi.yaml",
+        "payments/anvil.yaml",
+        "payments",
+      );
+      const io = bufferIO();
+      const code = await runBenchmarkCommand(bundleDir, { catalog: "both" }, io);
+      expect(code).toBe(0);
+      const report: BenchmarkReport = JSON.parse(
+        readFileSync(join(bundleDir, "benchmark.report.json"), "utf8"),
+      );
+      expect(report.catalogs?.flat).toBeDefined();
+      expect(report.catalogs?.laddered).toBeDefined();
+      // The flat comparison entry mirrors the top-level curated routing score
+      // exactly — it is read back from the same run, never re-routed.
+      expect(report.catalogs?.flat?.passed).toBe(report.summary.curatedRouted);
+      expect(report.catalogs?.flat?.total).toBe(report.summary.total);
+
+      const output = io.text();
+      expect(output).toContain("Catalog comparison");
+      expect(output).toContain("laddered");
+      expect(output).toContain("Disclosure cost");
+    });
+
+    it("rejects an unrecognized --catalog value on the real CLI", async () => {
+      const bundleDir = await buildBundle(
+        "payments/openapi.yaml",
+        "payments/anvil.yaml",
+        "payments",
+      );
+      const io = bufferIO();
+      const code = await runAnvilCli(["benchmark", bundleDir, "--catalog", "bogus"], { io });
+      expect(code).toBe(1);
+      expect(io.text()).toContain("Allowed choices are flat, laddered, both");
+    });
+  });
+
   describe("Summary statistics", () => {
     it("correctly reports aggregate score in output", async () => {
       const bundleDir = await buildBundle(
