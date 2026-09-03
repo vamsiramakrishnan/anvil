@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { authMechanicsIssues, TlsClientMaterialRefs } from "./auth-mechanics.js";
 import { AgentProjection } from "./agent-projection.js";
+import { authMechanicsIssues, TlsClientMaterialRefs } from "./auth-mechanics.js";
 import {
   AuthPrincipal,
   AuthType,
