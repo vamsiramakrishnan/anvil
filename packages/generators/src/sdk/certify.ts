@@ -305,6 +305,17 @@ export function sdkAuthDrift(
             drift.push(`the ${language} SDK does not read the declared refresh env var ${envVar}`);
           }
         }
+        // The refresh grant must authenticate the way the runtime does for
+        // the same contract: a client registered for client_secret_post
+        // rejects a Basic header, and vice versa, so a language that drops
+        // the declared method disagrees with the CLI and MCP server on the
+        // wire even though every env-var name still matches.
+        const method = JSON.stringify(expected.tokenRefresh.clientAuth);
+        if (!sdkLanguageContains(files, language, method)) {
+          drift.push(
+            `the ${language} SDK does not carry the declared token-endpoint client auth ${method}`,
+          );
+        }
       }
     }
   }

@@ -234,6 +234,10 @@ const TokenEndpoint = ${g(refresh.tokenEndpoint)}
 const RefreshTokenEnvVar = ${g(refresh.refreshTokenEnvVar)}
 const ClientIDEnvVar = ${g(refresh.clientIdEnvVar)}
 const ClientSecretEnvVar = ${g(refresh.clientSecretEnvVar)}
+
+// TokenClientAuth is how the refresh grant authenticates to the token
+// endpoint — the same method the runtime uses for this contract.
+const TokenClientAuth = ${g(refresh.clientAuth)}
 `
     : ""
 }
@@ -380,7 +384,7 @@ ${
 	if config.tokenProvider == nil && config.token == "" {
 		refreshToken, clientID := os.Getenv(RefreshTokenEnvVar), os.Getenv(ClientIDEnvVar)
 		if refreshToken != "" && clientID != "" {
-			config.tokenProvider = NewRefreshingTokenProvider(TokenEndpoint, refreshToken, clientID, os.Getenv(ClientSecretEnvVar))
+			config.tokenProvider = NewRefreshingTokenProvider(TokenEndpoint, refreshToken, clientID, os.Getenv(ClientSecretEnvVar), TokenClientAuth)
 		}
 	}
 `

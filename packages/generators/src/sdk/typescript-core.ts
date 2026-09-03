@@ -1100,6 +1100,11 @@ export interface RefreshTokenProviderOptions {
   refreshToken: string;
   clientId: string;
   clientSecret?: string;
+  /**
+   * How to authenticate to the token endpoint (RFC 6749 §2.3.1). Defaults
+   * to "client_secret_basic", the runtime's default for the same contract.
+   */
+  clientAuth?: "client_secret_basic" | "client_secret_post" | "private_key_jwt";
   /** Injectable fetch, for tests. */
   fetch?: typeof fetch;
   /** Seconds of safety margin subtracted from a token's reported lifetime. */
@@ -1124,14 +1129,21 @@ export function createRefreshingTokenProvider(
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: options.refreshToken,
-      client_id: options.clientId,
     });
     const headers: Record<string, string> = {
       "content-type": "application/x-www-form-urlencoded",
     };
-    if (options.clientSecret) {
+    // Mirrors the runtime resolver exactly: client_secret_basic sends the
+    // credentials as HTTP Basic and keeps client_id out of the form; every
+    // other declared method carries client_id (and the secret, when present)
+    // in the form body.
+    const clientAuth = options.clientAuth ?? "client_secret_basic";
+    if (options.clientSecret && clientAuth === "client_secret_basic") {
       headers.authorization =
         "Basic " + btoa(options.clientId + ":" + options.clientSecret);
+    } else {
+      body.set("client_id", options.clientId);
+      if (options.clientSecret) body.set("client_secret", options.clientSecret);
     }
     const response = await fetchImpl(tokenEndpoint, {
       method: "POST",

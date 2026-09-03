@@ -224,6 +224,8 @@ TOKEN_ENDPOINT = ${p(refresh.tokenEndpoint)}
 REFRESH_TOKEN_ENV_VAR = ${p(refresh.refreshTokenEnvVar)}
 CLIENT_ID_ENV_VAR = ${p(refresh.clientIdEnvVar)}
 CLIENT_SECRET_ENV_VAR = ${p(refresh.clientSecretEnvVar)}
+#: How the refresh grant authenticates to the token endpoint — the same method the runtime uses.
+TOKEN_CLIENT_AUTH = ${p(refresh.clientAuth)}
 `
     : ""
 }_AUTH_CARRIER: Optional[Dict[str, Any]] = ${plan.auth.carrier ? pyLiteral(plan.auth.carrier) : "None"}
@@ -269,7 +271,12 @@ class ${className}(object):
             else os.environ.get("ANVIL_PROTOCOL_FACADE")
         )
         #: The credential this SDK carries on the wire. Never logged or echoed.
-        self._token = token if token is not None else os.environ.get(TOKEN_ENV_VAR)
+        #: An EMPTY credential is no credential, exactly as the runtime
+        #: resolver reads it: an env var exported but blank is what a .env file
+        #: or an unpopulated CI secret leaves behind, and treating it as a real
+        #: token would send an empty header instead of falling through to the
+        #: refresh the contract declares.
+        self._token = (token if token is not None else os.environ.get(TOKEN_ENV_VAR)) or None
 ${
   refresh
     ? `        #: A caller-supplied token or token_provider always wins. Only when
@@ -285,6 +292,7 @@ ${
                 _refresh_token,
                 _client_id,
                 client_secret=os.environ.get(CLIENT_SECRET_ENV_VAR),
+                client_auth=TOKEN_CLIENT_AUTH,
             )
         else:
             self._token_provider = None

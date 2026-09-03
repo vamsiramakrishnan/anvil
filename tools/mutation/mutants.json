@@ -967,7 +967,7 @@
     {
       "id": "targets/certify-checks-every-profile",
       "file": "packages/cli/src/commands/certify.ts",
-      "control": "`anvil certify` runs the target-kit-exact drift check for every registered profile whose subtree is present in the bundle, not only gemini-enterprise — the same regeneration proof Gemini always got. Narrow the loop back to one profile and a hand-tampered Claude, OpenAI, or MCP registry kit certifies clean.",
+      "control": "`anvil certify` runs the target-kit-exact drift check for every registered profile whose subtree is present in the bundle, not only gemini-enterprise \u2014 the same regeneration proof Gemini always got. Narrow the loop back to one profile and a hand-tampered Claude, OpenAI, or MCP registry kit certifies clean.",
       "find": "  for (const profile of listProfiles()) {",
       "replace": "  for (const profile of listProfiles().filter((p) => p.id === \"gemini-enterprise\")) {",
       "tests": [
@@ -1028,8 +1028,8 @@
     {
       "id": "legacy-bridge/stomp-content-length-is-bytes",
       "file": "packages/legacy-bridge/src/stomp-client.ts",
-      "control": "STOMP content-length is a byte count (encodeStompFrame emits Buffer.byteLength(body, \"utf8\")), and the parser must locate the body's NUL terminator by that same byte offset into the raw Buffer. Reintroduce string-length arithmetic — decoding to a string and walking UTF-16 code units instead of bytes — and any reply whose body contains a multibyte UTF-8 character (e.g. an accented name) lands short of the real terminator, so the frame never completes and the caller times out waiting for a reply that already arrived.",
-      "find": "    if (declaredLength !== undefined && /^\\d+$/.test(declaredLength)) {\n      bodyEnd = bodyStart + Number(declaredLength); // byte offset — content-length is bytes\n      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more",
+      "control": "STOMP content-length is a byte count (encodeStompFrame emits Buffer.byteLength(body, \"utf8\")), and the parser must locate the body's NUL terminator by that same byte offset into the raw Buffer. Reintroduce string-length arithmetic \u2014 decoding to a string and walking UTF-16 code units instead of bytes \u2014 and any reply whose body contains a multibyte UTF-8 character (e.g. an accented name) lands short of the real terminator, so the frame never completes and the caller times out waiting for a reply that already arrived.",
+      "find": "    if (declaredLength !== undefined && /^\\d+$/.test(declaredLength)) {\n      bodyEnd = bodyStart + Number(declaredLength); // byte offset \u2014 content-length is bytes\n      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more",
       "replace": "    if (declaredLength !== undefined && /^\\d+$/.test(declaredLength)) {\n      const decoded = buffer.toString(\"utf8\", bodyStart); // MUTANT: string-length arithmetic reintroduced\n      bodyEnd = bodyStart + decoded.slice(0, Number(declaredLength)).length;\n      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more",
       "tests": [
         "packages/legacy-bridge/src/stomp-client.test.ts"
@@ -1038,7 +1038,7 @@
     {
       "id": "legacy-bridge/wire-binding-coherence-refused",
       "file": "packages/legacy-bridge/src/wire-binding.ts",
-      "control": "The deployment-local bridge refuses to serve a queue wire binding whose legacyBindingContentHash does not match the reviewed LegacyCapabilityBinding it was handed — the coherence property that stops a bridge from silently serving an unreviewed or since-changed candidate. Delete the check and any wire binding is accepted for any binding, hash mismatch or not.",
+      "control": "The deployment-local bridge refuses to serve a queue wire binding whose legacyBindingContentHash does not match the reviewed LegacyCapabilityBinding it was handed \u2014 the coherence property that stops a bridge from silently serving an unreviewed or since-changed candidate. Delete the check and any wire binding is accepted for any binding, hash mismatch or not.",
       "find": "  if (wireBinding.legacyBindingContentHash !== binding.contentHash) {",
       "replace": "  if (false) {",
       "tests": [
@@ -1049,7 +1049,7 @@
     {
       "id": "legacy-bridge/idempotent-replay-dedup",
       "file": "packages/legacy-bridge/src/broker-double.ts",
-      "control": "A repeated idempotency key must return the identical cached reply without re-executing the business side — what makes an outer bounded retry safe at all. Delete the cache check and every call re-executes the handler, so a retried call can observe a different outcome than the one that actually happened.",
+      "control": "A repeated idempotency key must return the identical cached reply without re-executing the business side \u2014 what makes an outer bounded retry safe at all. Delete the cache check and every call re-executes the handler, so a retried call can observe a different outcome than the one that actually happened.",
       "find": "    if (cached !== undefined) return { body: cached };",
       "replace": "    if (false) return { body: cached };",
       "tests": [
@@ -1071,7 +1071,7 @@
     {
       "id": "legacy-bridge/timeout-enforced",
       "file": "packages/legacy-bridge/src/broker.ts",
-      "control": "The reviewed timeout is enforced by racing the broker call against a timer — the one place a hung exchange is ever turned into a failure. Delete the race and a broker that never replies leaves the call pending forever instead of failing closed.",
+      "control": "The reviewed timeout is enforced by racing the broker call against a timer \u2014 the one place a hung exchange is ever turned into a failure. Delete the race and a broker that never replies leaves the call pending forever instead of failing closed.",
       "find": "    return await Promise.race([client.requestReply(options), timeout]);",
       "replace": "    return await client.requestReply(options);",
       "tests": [
@@ -1082,7 +1082,7 @@
     {
       "id": "legacy-bridge/timeout-maps-to-structured-error",
       "file": "packages/legacy-bridge/src/facade.ts",
-      "control": "A broker timeout must answer with a structured, non-retryable upstream_timeout — never a hang and never a false success. Delete the branch and a timeout falls through to the generic transport-failure response, losing the distinction the runtime's own status-code mapping (packages/runtime/src/errors.ts) depends on.",
+      "control": "A broker timeout must answer with a structured, non-retryable upstream_timeout \u2014 never a hang and never a false success. Delete the branch and a timeout falls through to the generic transport-failure response, losing the distinction the runtime's own status-code mapping (packages/runtime/src/errors.ts) depends on.",
       "find": "      if (err instanceof QueueBrokerTimeoutError) {",
       "replace": "      if (false) {",
       "tests": [
@@ -1093,7 +1093,7 @@
     {
       "id": "legacy-bridge/promotion-requires-not-implemented",
       "file": "packages/compiler/src/legacy/refinement/model.ts",
-      "control": "A binding may be promoted to conformance_passed only from not_implemented — never a second time, and never from a status this function does not recognize. Delete the guard and an already-promoted binding could be silently re-promoted, an operation with no equivalent to a lower-safety direction.",
+      "control": "A binding may be promoted to conformance_passed only from not_implemented \u2014 never a second time, and never from a status this function does not recognize. Delete the guard and an already-promoted binding could be silently re-promoted, an operation with no equivalent to a lower-safety direction.",
       "find": "  if (binding.runtime.status !== \"not_implemented\") {",
       "replace": "  if (false) {",
       "tests": [
@@ -1230,6 +1230,36 @@
       "tests": [
         "packages/mcp-runtime/src/fleet.test.ts",
         "packages/cli/src/commands/serve.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/refresh-honours-declared-client-auth",
+      "file": "packages/generators/src/sdk/plan.ts",
+      "control": "The SDK plan carries the token endpoint's DECLARED client authentication method, so every generated client refreshes the way the runtime does for the same contract -- collapsing it to the default would send HTTP Basic to a provider registered for client_secret_post, which rejects it outright, while every env-var name the manifest promises still matches.",
+      "find": "    clientAuth: auth.provider.clientAuth ?? DEFAULT_TOKEN_REFRESH_CLIENT_AUTH,",
+      "replace": "    clientAuth: DEFAULT_TOKEN_REFRESH_CLIENT_AUTH,",
+      "tests": [
+        "packages/generators/src/sdk.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/auth-drift-catches-client-auth",
+      "file": "packages/generators/src/sdk/certify.ts",
+      "control": "Auth drift fails a bundle whose generated source lost the declared token-endpoint client auth -- without this check a language could quietly refresh a different way than the CLI and the MCP server while still naming every declared env var, which is the drift this gate exists to catch.",
+      "find": "        const method = JSON.stringify(expected.tokenRefresh.clientAuth);",
+      "replace": "        const method = \"\";",
+      "tests": [
+        "packages/generators/src/sdk.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/empty-token-env-is-no-token",
+      "file": "packages/generators/src/sdk/typescript.ts",
+      "control": "An exported-but-blank credential env var is NO credential, exactly as the runtime resolver reads it -- treating the empty string as a real token makes the client send an empty bearer instead of falling through to the refresh the contract declares, which is what a .env file or an unpopulated CI secret leaves behind.",
+      "find": "    const token = (options.token ?? env?.[TOKEN_ENV_VAR]) || undefined;",
+      "replace": "    const token = options.token ?? env?.[TOKEN_ENV_VAR];",
+      "tests": [
+        "packages/generators/src/sdk-oauth-refresh.test.ts"
       ]
     }
   ]

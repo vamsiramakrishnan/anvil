@@ -627,9 +627,17 @@ public final class Oauth {
    * Build a token supplier that exchanges {@code refreshToken} at {@code
    * tokenEndpoint} and caches the access token in memory until shortly before
    * it expires.
+   *
+   * <p>{@code clientAuth} is how the client authenticates to the token
+   * endpoint (RFC 6749 section 2.3.1); {@code "client_secret_basic"} is the
+   * runtime's default for the same contract.
    */
   public static Supplier<String> refreshingTokenProvider(
-      String tokenEndpoint, String refreshToken, String clientId, String clientSecret) {
+      String tokenEndpoint,
+      String refreshToken,
+      String clientId,
+      String clientSecret,
+      String clientAuth) {
     HttpClient client = HttpClient.newHttpClient();
     Object[] cache = new Object[] {null, Instant.MIN};
 
@@ -638,17 +646,29 @@ public final class Oauth {
         if (cache[0] != null && Instant.now().isBefore((Instant) cache[1])) {
           return (String) cache[0];
         }
-        String form =
-            "grant_type=refresh_token&refresh_token="
-                + java.net.URLEncoder.encode(refreshToken, StandardCharsets.UTF_8)
-                + "&client_id="
-                + java.net.URLEncoder.encode(clientId, StandardCharsets.UTF_8);
+        // Mirrors the runtime resolver exactly: client_secret_basic sends the
+        // credentials as HTTP Basic and keeps client_id out of the form; every
+        // other declared method carries client_id (and the secret, when
+        // present) in the form body.
+        boolean hasSecret = clientSecret != null && !clientSecret.isEmpty();
+        boolean useBasic = hasSecret && "client_secret_basic".equals(clientAuth);
+        StringBuilder form =
+            new StringBuilder("grant_type=refresh_token&refresh_token=")
+                .append(java.net.URLEncoder.encode(refreshToken, StandardCharsets.UTF_8));
+        if (!useBasic) {
+          form.append("&client_id=")
+              .append(java.net.URLEncoder.encode(clientId, StandardCharsets.UTF_8));
+          if (hasSecret) {
+            form.append("&client_secret=")
+                .append(java.net.URLEncoder.encode(clientSecret, StandardCharsets.UTF_8));
+          }
+        }
         HttpRequest.Builder builder =
             HttpRequest.newBuilder(URI.create(tokenEndpoint))
                 .timeout(Duration.ofSeconds(30))
                 .header("content-type", "application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString(form));
-        if (clientSecret != null && !clientSecret.isEmpty()) {
+                .POST(HttpRequest.BodyPublishers.ofString(form.toString()));
+        if (useBasic) {
           String basic =
               Base64.getEncoder()
                   .encodeToString((clientId + ":" + clientSecret).getBytes(StandardCharsets.UTF_8));

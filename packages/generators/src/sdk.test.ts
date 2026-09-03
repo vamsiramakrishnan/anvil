@@ -235,6 +235,7 @@ describe("auth scheme parity: custom-header, mtls, and delegated-token carriers"
   let CUSTOM_HEADER_DOC: AirDocument;
   let MTLS_DOC: AirDocument;
   let AUTH_CODE_DOC: AirDocument;
+  let AUTH_CODE_POST_DOC: AirDocument;
 
   beforeAll(() => {
     CUSTOM_HEADER_DOC = withAuth({
@@ -263,6 +264,19 @@ describe("auth scheme parity: custom-header, mtls, and delegated-token carriers"
       provider: {
         tokenEndpoint: "https://auth.example.com/token",
         authorizationEndpoint: "https://auth.example.com/authorize",
+        pkce: true,
+        redirectUri: "http://127.0.0.1:0/callback",
+      },
+    });
+    AUTH_CODE_POST_DOC = withAuth({
+      type: "oauth2_authorization_code",
+      scopes: ["payments.read"],
+      principal: "end_user",
+      secretSource: "env",
+      provider: {
+        tokenEndpoint: "https://auth.example.com/token",
+        authorizationEndpoint: "https://auth.example.com/authorize",
+        clientAuth: "client_secret_post",
         pkce: true,
         redirectUri: "http://127.0.0.1:0/callback",
       },
@@ -396,7 +410,44 @@ describe("auth scheme parity: custom-header, mtls, and delegated-token carriers"
         refreshTokenEnvVar: "PAYMENTS_REFRESH_TOKEN",
         clientIdEnvVar: "PAYMENTS_CLIENT_ID",
         clientSecretEnvVar: "PAYMENTS_CLIENT_SECRET",
+        // Unstated by this contract, so the runtime resolver's own default.
+        clientAuth: "client_secret_basic",
       });
+    });
+
+    it("carries the DECLARED token-endpoint client auth, not a guess", () => {
+      expect(sdkPlan(AUTH_CODE_POST_DOC).auth.tokenRefresh?.clientAuth).toBe("client_secret_post");
+    });
+
+    it("names that method in every language, so no SDK invents its own (mutant: sdk/refresh-honours-declared-client-auth)", () => {
+      // A client registered for client_secret_post rejects a Basic header
+      // outright, so a language that hard-codes one method disagrees with the
+      // CLI and the MCP server about how this very operation authenticates —
+      // while every env-var name still matches.
+      const posted = generateSdks(AUTH_CODE_POST_DOC);
+      for (const language of SDK_LANGUAGES) {
+        const joined = Object.entries(posted)
+          .filter(([path]) => path.startsWith(`sdk/${language}/`))
+          .map(([, contents]) => contents)
+          .join("\n");
+        expect(joined, `${language} declared client auth`).toContain('"client_secret_post"');
+      }
+    });
+
+    it("flags drift when a language's source loses the declared client auth", () => {
+      const posted = generateSdks(AUTH_CODE_POST_DOC);
+      const postPlan = sdkPlan(AUTH_CODE_POST_DOC);
+      const stripped = Object.fromEntries(
+        Object.entries(posted).map(([path, contents]) => [
+          path,
+          path.startsWith("sdk/go/")
+            ? contents.replaceAll('"client_secret_post"', '"client_secret_basic"')
+            : contents,
+        ]),
+      );
+      expect(sdkAuthDrift(stripped, postPlan.auth, sdkManifest(postPlan).auth)).toEqual([
+        'the go SDK does not carry the declared token-endpoint client auth "client_secret_post"',
+      ]);
     });
 
     it("carries a token-provider contract and the refresh env vars in every language", () => {

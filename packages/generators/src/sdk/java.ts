@@ -367,6 +367,8 @@ ${
   public static final String REFRESH_TOKEN_ENV_VAR = ${q(refresh.refreshTokenEnvVar)};
   public static final String CLIENT_ID_ENV_VAR = ${q(refresh.clientIdEnvVar)};
   public static final String CLIENT_SECRET_ENV_VAR = ${q(refresh.clientSecretEnvVar)};
+  /** How the refresh grant authenticates to the token endpoint — the same method the runtime uses. */
+  public static final String TOKEN_CLIENT_AUTH = ${q(refresh.clientAuth)};
 `
     : ""
 }
@@ -482,7 +484,11 @@ ${
         if (refreshToken != null && !refreshToken.isEmpty() && clientId != null && !clientId.isEmpty()) {
           tokenSupplier =
               Oauth.refreshingTokenProvider(
-                  TOKEN_ENDPOINT, refreshToken, clientId, System.getenv(CLIENT_SECRET_ENV_VAR));
+                  TOKEN_ENDPOINT,
+                  refreshToken,
+                  clientId,
+                  System.getenv(CLIENT_SECRET_ENV_VAR),
+                  TOKEN_CLIENT_AUTH);
         }
       }
 `
