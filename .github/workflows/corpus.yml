@@ -202,3 +202,122 @@ jobs:
             echo "::error::One or more corpus lanes failed. Download the lane-specific artifacts from this run."
             exit 1
           fi
+
+  # The refinement loop runs itself: compile each gateway estate, propose
+  # refinements, benchmark and cluster mis-routes, export harness case files —
+  # see tools/corpus/refine-loop.mjs. Nightly only (not workflow_dispatch;
+  # never a per-PR gate — this is background quality work, not a merge
+  # blocker) and sequenced after the corpus gate above so its issue traffic
+  # never lands ahead of a same-run corpus-regression report.
+  refine-loop:
+    name: Refinement loop
+    if: github.event_name == 'schedule'
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        run: pnpm build
+
+      # Red on its own terms: a routing-accuracy drop beyond tolerance (or an
+      # estate the pipeline could not process) exits non-zero here, same as
+      # every other corpus lane — independent of whether the Refinement inbox
+      # issue below gets updated.
+      - name: Run the refinement loop
+        run: node tools/corpus/refine-loop.mjs
+
+      - name: Collect refinement-loop report
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p corpus-reports/refine-loop
+          for f in refine-loop.report.json refine-loop-summary.md; do
+            if [[ -f "tools/corpus/report/$f" ]]; then
+              cp "tools/corpus/report/$f" "corpus-reports/refine-loop/$f"
+            fi
+          done
+          if [[ -f corpus-reports/refine-loop/refine-loop-summary.md ]]; then
+            cat corpus-reports/refine-loop/refine-loop-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload refinement-loop report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: refine-loop-${{ github.run_id }}-${{ github.run_attempt }}
+          path: corpus-reports/refine-loop/
+          if-no-files-found: warn
+          retention-days: 30
+
+      # The idempotent lookup — find the ONE open issue by label, else create
+      # it — mirrors the corpus-regression pattern above exactly. What differs
+      # is deliberate: "Refinement inbox" is a rolling STATUS PAGE (the current
+      # backlog of review-tier packs and mis-route clusters), not a transient
+      # incident, so its body is replaced with the latest summary every run
+      # instead of only being written once; and it is never auto-closed,
+      # because a clear ratchet does not mean the backlog is empty — someone
+      # still has to work the queue. A comment is added only when the routing
+      # ratchet is red this run, so there is an audit trail of regressions
+      # without a comment appearing on every green night.
+      - name: Open or update the Refinement inbox issue
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const label = "refinement-inbox";
+            const { owner, repo } = context.repo;
+            const summaryPath = "tools/corpus/report/refine-loop-summary.md";
+            const reportPath = "tools/corpus/report/refine-loop.report.json";
+            if (!fs.existsSync(summaryPath) || !fs.existsSync(reportPath)) {
+              core.warning("refine-loop wrote no report; skipping the Refinement inbox update.");
+              return;
+            }
+            const body = fs.readFileSync(summaryPath, "utf8");
+            const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label });
+            } catch {
+              await github.rest.issues.createLabel({
+                owner, repo, name: label, color: "0e8a16",
+                description: "The refinement loop's rolling review queue",
+              });
+            }
+
+            const open = await github.rest.issues.listForRepo({ owner, repo, state: "open", labels: label });
+            let issueNumber = open.data[0]?.number;
+            if (issueNumber === undefined) {
+              const created = await github.rest.issues.create({ owner, repo, title: "Refinement inbox", labels: [label], body });
+              issueNumber = created.data.number;
+            } else {
+              await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body });
+            }
+
+            if (report.ratchet.status === "red") {
+              const names = report.ratchet.regressions.map((r) => `${r.estate} (${r.catalog}, ${r.deltaPts} pts)`).join(", ");
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issueNumber,
+                body: `Routing-accuracy ratchet regressed: ${names}. Run: ${runUrl}`,
+              });
+            }
