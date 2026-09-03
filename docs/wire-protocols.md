@@ -21,6 +21,7 @@ Compilation does not turn an unsupported transport into HTTP.
 | SOAP 1.2 | Implemented, not yet covered by the acceptance suite | SOAP 1.2 envelope and content type | RPC/encoded and type-only messages |
 | gRPC with `google.api.http` | Supported, no declaration required | The verb, path, query, and body the annotation declares | Multi-segment path templates, nested field bindings, custom method kinds |
 | gRPC without annotations | Supported only through a declared JSON transcoder | JSON sent to the service/method path | Native gRPC and streaming RPCs |
+| Queue request/reply | Supported only through a declared facade — `@anvil/legacy-bridge`, conformance-tested against a double, never a live broker | JSON sent to the bridge's `POST /invoke`, which performs one queue request/reply exchange | Any transport other than a reviewed message binding with a `reply_to`/`fixed_destination` reply strategy |
 
 Read [source format support](SOURCE_FORMATS.md) for parsing and source-graph
 rules. Those rules are independent of this runtime matrix.
@@ -227,6 +228,46 @@ so an annotation on a streaming RPC is not read.
 
 `examples/grpc-gateway/` is an annotated service; `examples/grpc/` is a bare
 one.
+
+## Queue request/reply
+
+`queue_request_reply` is different from every other row in the table above:
+there is no native codec for it in `packages/runtime` at all, and there never
+will be — a broker destination and a correlated reply is not HTTP shaped, the
+same reason no facade can rescue a `graphql_sse` operation with no stream
+contract. The binding always needs a declared facade, exactly like a gRPC
+JSON transcoder.
+
+The wire binding is a fact about a *reviewed legacy capability*, not a source
+document's own declaration:
+
+```json
+{
+  "protocol": "queue_request_reply",
+  "legacyBindingContentHash": "sha256:…",
+  "requestDestination": "PAY.REFUND.REQUEST",
+  "reply": { "mode": "reply_to", "correlationField": "JMSCorrelationID" },
+  "requestSchemaRef": "#/operation/inputSchema",
+  "responseSchemaRef": "#/operation/outputSchema",
+  "timeoutMs": 30000,
+  "idempotency": { "carrier": "correlation_id" }
+}
+```
+
+`legacyBindingContentHash` is the coherence property: it names the exact
+`LegacyCapabilityBinding` (`packages/compiler/src/legacy/refinement/model.ts`)
+this exchange executes, by content hash. `@anvil/legacy-bridge` refuses to
+serve a wire binding whose hash does not match the binding it was handed —
+structurally, not by convention — so a bridge can never silently answer for a
+different, unreviewed, or since-changed candidate.
+
+The facade that serves this wire (`@anvil/legacy-bridge`) is documented in
+full in [Legacy runtime bridges](legacy-runtime-bridges.md#the-first-executable-bridge-queue-requestreply):
+what it proves against a deterministic in-process broker double, what it does
+not prove about a real broker, and its one protocol client (a zero-dependency
+STOMP 1.2 client over `node:net`, chosen for the same reason `graphql-sse`
+was chosen over `graphql-ws` above — the honest client a zero-dependency
+implementation can actually deliver).
 
 ## Declaring a protocol facade
 

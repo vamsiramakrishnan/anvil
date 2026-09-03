@@ -28,6 +28,7 @@ reviewed after compilation.
 | Google APIs | Discovery `restDescription` JSON | One document | HTTP with JSON | Does not call Google discovery services |
 | OData | v2 or v4 `$metadata` / EDMX XML | One metadata entrypoint | Entity sets; actions, functions, and v2 function imports; instance-bound operations through their entity set | Collection-bound and ambiguously-bound operations decline with a named reason; navigation semantics require review |
 | Postman | Collection v2.0 or v2.1 JSON | One collection document | HTTP with JSON | Pre-request and test scripts are reported but never executed |
+| Captured traffic (HAR) | HTTP Archive 1.2 JSON (`.har`) | One capture document | HTTP with JSON | See [Captured traffic (HAR)](#captured-traffic-har) — every operation compiles `review_required` at most; none is ever `approved` from a capture |
 
 The format adapter is only the first stage. Every source then uses the same
 normalize, classify, manifest, validate, capability, and generation pipeline.
@@ -244,6 +245,64 @@ otherwise compile into a surface that looks complete and cannot authenticate.
 The diagnostic carries the remedy: declare the auth contract in an Anvil
 manifest, then prove the result against the live service with
 `anvil conformance`.
+
+### Captured traffic (HAR)
+
+A HAR (HTTP Archive) 1.2 capture — a browser's "Save all as HAR", a proxy log,
+a `mitmproxy`/Charles/Fiddler export — is the cheapest evidence that exists for
+the long tail of internal and legacy HTTP APIs that have no spec, no Postman
+collection, nothing declared at all. Anvil compiles one, but it never pretends
+a capture is a contract: nobody declared what these endpoints mean, only what
+crossed the wire once.
+
+**What is inferred.** Entries are grouped by method and a templated path: a
+path segment that is purely numeric, UUID-shaped, or otherwise contains a
+digit is templated from a single sample already (the shape realistic ids
+take — `cus_101`, order refs, UUIDs); the parameter is named from the
+preceding literal segment's singular (`/customers/123` →
+`/customers/{customer_id}`). A purely alphabetic segment is never templated
+on cross-sample variation alone — collapsing two different resources that
+happen to share a segment count into one operation would be a worse defect
+than leaving them separate, so the adapter declines rather than guesses,
+matching the same abstention discipline [path grammar
+classification](#path-grammar-classification) uses. Query and header
+parameters are the union of observed (non-secret) names, required only when
+present in every sample. Request and response JSON bodies are schema-inferred
+conservatively across every sample mapped to an operation: a property's type
+is the union of types observed for it, `required` lists only properties
+present in every sample that carries a body at all, and
+`additionalProperties: true` always — an observed shape is a lower bound,
+never a closed contract. The auth scheme (Bearer, Basic, or an api-key
+header/query carrier NAME) is recorded from what was actually presented;
+real credential wiring (`anvil enrich-sources init`) still needs an operator.
+
+**What is dropped, before anything else runs.** `Authorization`, `Cookie`,
+`Set-Cookie`, `Proxy-Authorization`, and any header or query name matching
+`/token|secret|key|password|session/i` are stripped first. Their VALUES are
+never read for any purpose beyond one narrow exception — `Authorization`'s
+leading scheme word (`Bearer`/`Basic`), never the credential after it — and
+never copied into a schema, a diagnostic, an example, or a parameter. A
+carrier's NAME (e.g. the string `X-Api-Key`) is not secret material and is
+kept, because it is what the compiled `auth.provider.apiKey.name` needs to be
+useful. One `har_secrets_dropped` diagnostic reports how many values were
+scrubbed, every time — a capture with nothing to drop still confirms the scrub
+ran. Request/response BODY fields are not scrubbed by name (mirroring
+Postman's "body examples are documented payload data" policy); redacting a
+capture's body secrets before handing it to Anvil remains the operator's
+responsibility, the same as before handing anyone a HAR file at all.
+
+**Why nothing is ever approved from a capture.** Every operation compiled from
+a `har` source is capped at `review_required` — never `generated`, never
+`approved`, regardless of how many samples support it. Every safety-relevant
+claim (`effect.kind`, `idempotency.mode`, `longRunning`, `confirmation.required`,
+`retries.mode`, `auth.principal`) is reattributed to AIR's `recorded_traffic`
+evidence kind and capped at 0.5 confidence: real reliability in what was
+captured, but low confidence that one capture proves a general safety
+semantic — a HAR has no way to prove a POST is idempotent, only that it was
+called and something came back. A `reviewNotes` entry names exactly how many
+captured requests backed the operation. A manifest can still enrich the
+result as usual; nothing about the `har` posture blocks that path, only the
+auto-approval one.
 
 ## Path grammar classification
 

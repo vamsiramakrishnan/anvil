@@ -201,6 +201,23 @@ export const ErrorCode = z.enum([
   "policy_denied",
   "unknown_upstream_error",
 ]);
+/**
+ * Stable, operator-matchable sub-codes carried in a `policy_denied` /
+ * `rate_limited` error's `details.code` (fleet runtime): a local refusal
+ * that never reached the upstream, never retried. These are NOT members of
+ * `ErrorCode` itself — the wire error taxonomy stays exactly the 16 flat
+ * codes above (every generated SDK mirrors that list verbatim), so a fleet
+ * refusal reuses the closed `policy_denied`/`rate_limited` codes and adds
+ * this narrower reason underneath, in `details.code`, rather than growing
+ * the taxonomy every serving surface and SDK has to keep in sync.
+ */
+export const FLEET_POLICY_CODE = z.enum([
+  "policy/scope_denied",
+  "policy/rate_limited",
+  "policy/budget_exhausted",
+  "policy/principal_unresolved",
+]);
+export type FleetPolicyCode = z.infer<typeof FLEET_POLICY_CODE>;
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
 /** HTTP verbs, as they appear in source specs. */
@@ -221,7 +238,12 @@ export const ParamLocation = z.enum(["path", "query", "header", "cookie", "body"
 export type ParamLocation = z.infer<typeof ParamLocation>;
 
 /** Source spec kinds Anvil can parse (only `openapi` is wired in the MVP).
- *  `mcp` is a captured MCP server surface adopted as a source (Increment 6). */
+ *  `mcp` is a captured MCP server surface adopted as a source (Increment 6).
+ *  `har` is an HTTP Archive traffic capture — recorded requests, never a
+ *  declared contract. Every operation compiled from a `har` source is capped
+ *  at `review_required` and its safety claims at low confidence (see
+ *  `packages/compiler/src/har-posture.ts`); this is enforced at compile time,
+ *  not by this enum, which only says the kind exists. */
 export const SourceKind = z.enum([
   "openapi",
   "swagger",
@@ -231,6 +253,7 @@ export const SourceKind = z.enum([
   "discovery",
   "postman",
   "odata",
+  "har",
   "mcp",
 ]);
 export type SourceKind = z.infer<typeof SourceKind>;

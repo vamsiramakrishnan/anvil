@@ -34,6 +34,8 @@
     "@anvil/console": "workspace:*",
     "@anvil/generators": "workspace:*",
     "@anvil/harness": "workspace:*",
+    "@anvil/legacy-bridge": "workspace:*",
+    "@anvil/mcp-runtime": "workspace:*",
     "@anvil/refinement": "workspace:*",
     "@anvil/runtime": "workspace:*",
     "@anvil/system-pack": "workspace:*",

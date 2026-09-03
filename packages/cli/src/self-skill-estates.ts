@@ -175,5 +175,38 @@ SDK users can call \`planLegacyBridge\` and \`assessLegacyBridgeDriver\` from
 Never replace that last surface with generic \`consume_queue\`, \`put_message\`,
 \`invoke_any_ejb\`, or \`call_any_mbean\` tools. Broker acknowledgement means
 accepted by the transport; it does not mean the business work completed.
+
+## The first executable transport: queue request/reply
+
+For a message binding whose reply mode is \`reply_to\` or \`fixed_destination\`,
+\`@anvil/legacy-bridge\` is a real, servable HTTP facade — the deployment-local
+bridge this reference used to describe only as a future contract. Prove it,
+then let the binding's runtime status advance:
+
+\`\`\`bash
+anvil legacy bridge conformance bridge-plan.json --binding binding.json \\
+  --out conformance.json --emit-binding binding.conformance-passed.json
+\`\`\`
+
+This boots the exact facade a deployment would run, drives every required
+case from the plan plus three fixed safety invariants (a replayed idempotency
+key returns the identical reply without re-executing; a broker timeout maps
+to a structured, non-retryable error; one HTTP call to the facade produces
+exactly one broker exchange, never an internal retry) against a deterministic
+in-process broker double, and — only on a full pass — emits the binding
+promoted from \`not_implemented\` to \`conformance_passed\`, addressed to that
+exact report. It never connects to a real broker, in this command or in any
+test that exercises it.
+
+The honest limits: one protocol client (a zero-dependency STOMP 1.2 client
+over \`node:net\`, chosen — and documented in its own file header — as the
+client that keeps this package's dependency contract as honest as the four
+generated SDKs'), one transport (message request/reply), and no live broker
+was ever reached to produce this result. \`conformance_passed\` proves the
+bridge's own logic against a double, not that a real IBM MQ, JMS, or AMQP
+broker accepts a real connection. WebLogic/WebSphere/JBoss remote EJB, WCF,
+MSMQ, JCA resource adapters, stored procedures, and batch/scheduler jobs
+remain exactly as undescribed as the rest of this page says: a bridge plan
+and nothing that executes it.
 `;
 }

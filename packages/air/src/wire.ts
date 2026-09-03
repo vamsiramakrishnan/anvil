@@ -29,6 +29,7 @@ export const WIRE_PROTOCOLS = [
   "graphql_sse",
   "grpc",
   "mcp_tool",
+  "queue_request_reply",
 ] as const;
 export type WireProtocol = (typeof WIRE_PROTOCOLS)[number];
 
@@ -46,6 +47,7 @@ const PROTOCOL_BY_SOURCE_KIND: Record<SourceKind, WireProtocol> = {
   discovery: "http_json",
   postman: "http_json",
   odata: "http_json",
+  har: "http_json",
   wsdl: "soap",
   graphql: "graphql",
   protobuf: "grpc",
@@ -81,6 +83,11 @@ export function wireProtocolFor(source: SourceRef): WireProtocol {
   // endpoint — Server-Sent Events rather than one JSON response — so the
   // binding names it and the source format does not.
   if (source.binding?.protocol === "graphql_sse") return "graphql_sse";
+  // A queue request/reply binding has no `SourceKind` of its own — nothing in
+  // `PROTOCOL_BY_SOURCE_KIND` maps to it, because legacy candidates do not
+  // compile through the ordinary spec pipeline this table describes. The
+  // binding alone is the fact, same as `graphql_sse` above.
+  if (source.binding?.protocol === "queue_request_reply") return "queue_request_reply";
   return PROTOCOL_BY_SOURCE_KIND[source.kind];
 }
 
@@ -123,6 +130,13 @@ const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
     "an adopted MCP tool is invoked by a tools/call over the MCP transport; it " +
     "has no path and no method, which the runtime would silently degrade to " +
     "GET on the base URL",
+  queue_request_reply:
+    "this operation is a reviewed legacy capability bridged over a message " +
+    "queue — a request published to one destination and a reply correlated " +
+    "back from another. There is no URL or verb in that exchange for a JSON " +
+    "codec to construct, so Anvil never speaks it directly; a deployment-local " +
+    "bridge (@anvil/legacy-bridge) that actually performs the request/reply " +
+    "exchange and answers over HTTP+JSON is the one legitimate way onward",
 };
 
 const NEXT_ACTION =

@@ -1,4 +1,6 @@
 import { DEFAULT_LEDGER_RESULT_TTL_SECONDS } from "./idempotency.js";
+import type { LimitsConfig } from "./limits.js";
+import { type PrincipalDirectory, parsePrincipalDirectory } from "./policy.js";
 
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 20_000;
 export const MIN_UPSTREAM_TIMEOUT_MS = 100;
@@ -42,6 +44,15 @@ export interface RuntimeConfig {
   credentials?: string;
   /** Default GCP project for shorthand `sm://<secret>` credential references. */
   secretProject?: string;
+  /**
+   * Bearer token / `ANVIL_PRINCIPAL` -> named principal + scopes (fleet
+   * runtime). Empty when unconfigured, which resolves every call to the
+   * anonymous, every-scope principal (`policy.ts`'s `resolvePrincipal`) —
+   * the default that keeps single-bundle serving byte-identical.
+   */
+  principals: PrincipalDirectory;
+  /** Per-principal rate/spend limits (fleet runtime). Absent = unlimited, as today. */
+  limits: LimitsConfig;
 }
 
 /** The environments the runtime recognizes. Anything else is treated as prod. */
@@ -95,7 +106,37 @@ export function loadRuntimeConfig(
     ledgerResultTtlSeconds,
     credentials: env.ANVIL_CREDENTIALS,
     secretProject: env.ANVIL_SECRET_PROJECT,
+    principals: parsePrincipalDirectory(env.ANVIL_PRINCIPALS),
+    limits: parseLimitsConfig(env),
   };
+}
+
+/**
+ * `ANVIL_RATE_LIMIT_CAPACITY` + `ANVIL_RATE_LIMIT_REFILL_PER_SECOND` must both
+ * be set (a capacity with no refill rate, or vice versa, is not a token
+ * bucket) or both absent — a partial pair fails closed by omitting the
+ * limiter entirely rather than guessing the missing half. Same rule for
+ * `ANVIL_SPEND_BUDGET` + `ANVIL_SPEND_WINDOW_SECONDS`.
+ */
+function parseLimitsConfig(env: NodeJS.ProcessEnv): LimitsConfig {
+  const capacity = parsePositiveNumber(env.ANVIL_RATE_LIMIT_CAPACITY);
+  const refillPerSecond = parsePositiveNumber(env.ANVIL_RATE_LIMIT_REFILL_PER_SECOND);
+  const budget = parsePositiveNumber(env.ANVIL_SPEND_BUDGET);
+  const windowSeconds = parsePositiveNumber(env.ANVIL_SPEND_WINDOW_SECONDS);
+  return {
+    ...(capacity !== undefined && refillPerSecond !== undefined
+      ? { rate: { capacity, refillPerSecond } }
+      : {}),
+    ...(budget !== undefined && windowSeconds !== undefined
+      ? { spend: { budget, windowMs: windowSeconds * 1000 } }
+      : {}),
+  };
+}
+
+function parsePositiveNumber(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 export function parseUpstreamTimeoutMs(raw: unknown, label = "ANVIL_UPSTREAM_TIMEOUT_MS"): number {

@@ -265,6 +265,7 @@ describe("anvil capability propose --from-records", () => {
           policyDecisions: [],
           confirmationRequired: false,
           confirmed: false,
+          principalId: "anonymous",
         });
       }
     }
@@ -453,6 +454,7 @@ describe("anvil capability propose --from-records", () => {
       policyDecisions: [],
       confirmationRequired: false,
       confirmed: false,
+      principalId: "anonymous",
     });
     const unknown = bufferIO();
     expect(

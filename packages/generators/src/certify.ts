@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AirDocument, Operation } from "@anvil/air";
+import type { AirDocument, AuthRequirement, Operation } from "@anvil/air";
 import {
   AirDocument as AirDocumentSchema,
+  AuthRequirement as AuthRequirementSchema,
   authCoherenceIssues,
   hashCanonical,
   unexecutableWireFailures,
@@ -18,6 +19,7 @@ import {
 // benchmark in @anvil/refinement; this reader validates only the envelope
 // (digest + summary) it needs for freshness.
 import { BENCHMARK_REPORT_FILE, runDetectors, targetOperationId } from "@anvil/refinement";
+import { credentialRequirement } from "@anvil/runtime";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
@@ -888,14 +890,17 @@ interface SafetyView {
   confirmationRequired: boolean;
   authType: string;
   secretSource?: string;
+  /**
+   * The full AuthRequirement, when it could be recovered — from AIR directly,
+   * or parsed off the runtime manifest's JSON. Absent (rather than a partial
+   * reconstruction) is itself a `safety.auth-runtime-supported` failure: a
+   * bundle whose runtime manifest carries an auth object certify.ts cannot
+   * even parse is not one the deployed runtime can execute either.
+   */
+  auth?: AuthRequirement;
 }
 
 const HIGH_RISK: ReadonlySet<string> = new Set(["high", "financial", "destructive"]);
-const UNSUPPORTED_AUTH: ReadonlySet<string> = new Set([
-  "mtls",
-  "custom_header",
-  "oauth2_authorization_code",
-]);
 
 function safetyViewFromAir(op: Operation): SafetyView {
   return {
@@ -910,6 +915,7 @@ function safetyViewFromAir(op: Operation): SafetyView {
     confirmationRequired: op.confirmation.required,
     authType: op.auth.type,
     secretSource: op.auth.secretSource,
+    auth: op.auth,
   };
 }
 
@@ -925,11 +931,16 @@ function safetyViews(files: Record<string, string>, air: AirDocument): SafetyVie
           idempotency?: { mode?: string };
           retries?: { mode?: string; basis?: string };
           confirmation?: { required?: boolean };
-          auth?: { type?: string; secretSource?: string };
+          auth?: { type?: string; secretSource?: string } & Record<string, unknown>;
         }>;
       }
     | undefined;
   for (const op of manifest?.operations ?? []) {
+    // The full AuthRequirement travels in `auth: op.auth` verbatim
+    // (packages/generators/src/catalog.ts's `compiledOperations`) — parse it
+    // back rather than re-declaring a second, narrower shape that could
+    // silently drift from the real one and hide what the runtime executes.
+    const parsedAuth = AuthRequirementSchema.safeParse(op.auth);
     views.push({
       id: op.id,
       where: "runtime manifest",
@@ -942,6 +953,7 @@ function safetyViews(files: Record<string, string>, air: AirDocument): SafetyVie
       confirmationRequired: op.confirmation?.required ?? false,
       authType: op.auth?.type ?? "none",
       secretSource: op.auth?.secretSource,
+      auth: parsedAuth.success ? parsedAuth.data : undefined,
     });
   }
   return views;
@@ -983,11 +995,18 @@ function safetyChecks(files: Record<string, string>, air: AirDocument): Certific
       (v) =>
         `${at(v)} auth type "${v.authType}" is incoherent with secret source "${v.secretSource}"`,
     );
+  // Ask the runtime's own resolver contract, not a re-declared list here — the
+  // profile name never affects which resolver a shape gets, only the env var
+  // names inside it, so any placeholder name is safe for this classification.
   const unsupportedAuth = views
-    .filter((view) => UNSUPPORTED_AUTH.has(view.authType))
-    .map(
-      (view) =>
-        `${at(view)} uses unsupported auth type "${view.authType}"; no safe transport/carrier is modeled`,
+    .filter(
+      (view) => !view.auth || credentialRequirement("cert", view.auth).resolver === "unsupported",
+    )
+    .map((view) =>
+      view.auth
+        ? `${at(view)} uses auth type "${view.authType}" with no executable runtime resolver — ` +
+          `${credentialRequirement("cert", view.auth).note ?? "declared material is incomplete"}`
+        : `${at(view)} auth object could not be parsed from the runtime manifest`,
     );
   const incoherentAuthority = air.operations
     .filter((operation) => operation.state === "approved")

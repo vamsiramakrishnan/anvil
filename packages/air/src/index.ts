@@ -9,6 +9,7 @@
 
 export * from "./agent-projection.js";
 export * from "./async-contract.js";
+export * from "./auth-mechanics.js";
 export * from "./disclosure.js";
 export * from "./enums.js";
 export * from "./error-spec.js";

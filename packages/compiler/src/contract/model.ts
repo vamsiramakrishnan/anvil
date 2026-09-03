@@ -65,6 +65,13 @@ export const SemanticPredicate = z.enum([
   // agent-phrased routing examples (documentation; feeds skill + benchmark)
   "intentExamples",
   "state",
+  // who reviewed a manifest-set `state` and why. The only auth type where
+  // these GATE anything is oauth2_authorization_code's `state: approved`
+  // (see @anvil/compiler's auth-approval.ts); elsewhere they are recorded
+  // only. Not in CONTRACT_SAFETY_PREDICATES themselves — `state` already is,
+  // and that's the predicate whose loosening they justify.
+  "reviewedBy",
+  "reviewReason",
   // agent-facing routing name (re-homes canonicalName / CLI / MCP together)
   "name.resource",
   "name.verb",
@@ -76,6 +83,7 @@ export const SemanticPredicate = z.enum([
   "auth.issuer",
   "auth.audience",
   "auth.carrier",
+  "auth.tls",
   "auth.secretSource",
   "auth.tenant",
   "auth.actor",

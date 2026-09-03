@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type AirDocument, Operation as OperationSchema } from "@anvil/air";
+import { type AirDocument, type AuthRequirement, Operation as OperationSchema } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { generateSdks } from "./sdk/index.js";
@@ -435,4 +435,134 @@ describe("the four SDKs agree on the wire", () => {
     expect(first?.idempotencyKey).toBeUndefined();
     for (const request of gets) expect(request).toEqual(first);
   });
+});
+
+/**
+ * The three new auth schemes, through each language's real toolchain.
+ *
+ * The suite above proves the four SDKs agree on the wire for a static bearer
+ * token. It says nothing about `custom_header`, `mtls`, or
+ * `oauth2_authorization_code` — those need real code paths (a `node:https`
+ * transport, an `ssl.SSLContext`, a `tls.Config`, an `SSLContext` built from
+ * PKCS#8) that a string assertion cannot prove compile. Runtime behavior for
+ * these schemes is covered elsewhere: `sdk-mtls-smoke.test.ts` drives the
+ * TypeScript mTLS transport against a real local `node:https` server: this
+ * suite is the "does it even compile" claim for the other three languages,
+ * the same bar `sdk-compile.test.ts` already holds bearer auth to.
+ */
+describe("the three new auth schemes compile under every real toolchain", () => {
+  const TYPE_ROOTS = fileURLToPath(new URL("../../../node_modules/@types", import.meta.url));
+
+  const SCHEMES: Record<string, AuthRequirement> = {
+    customHeader: {
+      type: "custom_header",
+      scopes: [],
+      principal: "service",
+      secretSource: "env",
+      carrier: { in: "header", name: "X-Api-Auth" },
+    },
+    mtls: {
+      type: "mtls",
+      scopes: [],
+      principal: "service",
+      secretSource: "env",
+      tls: {
+        clientCertRef: "PAYMENTS_MTLS_CLIENT_CERT",
+        clientKeyRef: "PAYMENTS_MTLS_CLIENT_KEY",
+        caRef: "PAYMENTS_MTLS_CA",
+      },
+    },
+    authCode: {
+      type: "oauth2_authorization_code",
+      scopes: ["payments.read"],
+      principal: "end_user",
+      secretSource: "env",
+      provider: {
+        tokenEndpoint: "https://auth.example.com/token",
+        authorizationEndpoint: "https://auth.example.com/authorize",
+        pkce: true,
+        redirectUri: "http://127.0.0.1:0/callback",
+      },
+    },
+  };
+
+  /** The read operation the payments fixture already declares, retyped to one scheme. */
+  async function schemeBundleDir(auth: AuthRequirement): Promise<string> {
+    const base = await compile({
+      spec: read("openapi.yaml"),
+      manifest: read("anvil.yaml"),
+      serviceId: "payments",
+    });
+    const target = base.operations.find((op) => op.id === "payments.customers.get");
+    if (!target) throw new Error("fixture no longer has payments.customers.get");
+    const retyped = OperationSchema.parse({ ...target, auth });
+    const withScheme: AirDocument = {
+      ...base,
+      operations: base.operations.map((op) => (op.id === target.id ? retyped : op)),
+    };
+    const dir = mkdtempSync(join(tmpdir(), "anvil-sdk-authscheme-"));
+    for (const [rel, contents] of Object.entries(generateSdks(withScheme))) {
+      const full = join(dir, rel);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, contents, "utf8");
+    }
+    return dir;
+  }
+
+  for (const [name, auth] of Object.entries(SCHEMES)) {
+    describe.runIf(TOOLCHAIN.typescript)(`${name}: TypeScript`, () => {
+      it("compiles under its own strict tsconfig", async () => {
+        const dir = await schemeBundleDir(auth);
+        try {
+          const args = [TYPESCRIPT, "-p", "tsconfig.json"];
+          // mtls is the one scheme whose generated module speaks node:https
+          // directly, so it is the one that needs Node's own types — see
+          // packageJson()/tsconfig() in sdk/typescript.ts.
+          if (auth.type === "mtls") args.push("--typeRoots", TYPE_ROOTS);
+          run(process.execPath, args, join(dir, "sdk/typescript"));
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }, 180_000);
+    });
+
+    describe.runIf(TOOLCHAIN.python)(`${name}: Python`, () => {
+      it("byte-compiles", async () => {
+        const dir = await schemeBundleDir(auth);
+        try {
+          run("python3", ["-m", "compileall", "-q", "anvil_payments"], join(dir, "sdk/python"));
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }, 120_000);
+    });
+
+    describe.runIf(TOOLCHAIN.go)(`${name}: Go`, () => {
+      it("builds and vets clean", async () => {
+        const dir = await schemeBundleDir(auth);
+        try {
+          run("go", ["build", "./..."], join(dir, "sdk/go"));
+          run("go", ["vet", "./..."], join(dir, "sdk/go"));
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }, 180_000);
+    });
+
+    describe.runIf(TOOLCHAIN.java)(`${name}: Java`, () => {
+      it("compiles with javac and no dependencies", async () => {
+        const dir = await schemeBundleDir(auth);
+        try {
+          const sources = execFileSync("find", [join(dir, "sdk/java/src"), "-name", "*.java"], {
+            encoding: "utf8",
+          })
+            .trim()
+            .split("\n");
+          run("javac", ["-d", join(dir, "java-classes"), ...sources], join(dir, "sdk/java"));
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      }, 180_000);
+    });
+  }
 });

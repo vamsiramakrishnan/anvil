@@ -2,12 +2,14 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, resolve } from "node:path";
 import {
   assessLegacyBridgeDriver,
+  LegacyBridgeConformanceReport,
   LegacyBridgeDriverDescriptor,
   LegacyBridgePlan,
   LegacyBridgeSupportAssessment,
   LegacyCapabilityBinding,
   planLegacyBridge,
 } from "@anvil/compiler/legacy";
+import { runLegacyBridgeConformance } from "@anvil/legacy-bridge";
 import type { Command } from "commander";
 import { z } from "zod";
 import { emitRefusal } from "../../envelope.js";
@@ -16,6 +18,7 @@ import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
 
 const REPORT_TYPE = "anvil.legacy-bridge-plan";
+const CONFORMANCE_REPORT_TYPE = "anvil.legacy-bridge-conformance";
 const ERROR_REPORT_TYPE = "anvil.legacy-bridge-plan-error";
 const MAX_INPUT_BYTES = 32 * 1024 * 1024;
 
@@ -28,9 +31,25 @@ const BridgePlanReport = z
   })
   .strict();
 
+const BridgeConformanceReport = z
+  .object({
+    schemaVersion: z.literal(1),
+    reportType: z.literal(CONFORMANCE_REPORT_TYPE),
+    conformance: LegacyBridgeConformanceReport,
+    promotedBinding: LegacyCapabilityBinding.optional(),
+  })
+  .strict();
+
 interface BridgePlanOptions {
   driver?: string;
   out?: string;
+  json?: boolean;
+}
+
+interface BridgeConformanceOptions {
+  binding: string;
+  out?: string;
+  emitBinding?: string;
   json?: boolean;
 }
 
@@ -61,6 +80,30 @@ export function registerLegacyBridge(parent: Command, ctx: CommandContext): void
       .option("--json", "emit the complete bridge plan")
       .action((decision: string, options: BridgePlanOptions) => {
         ctx.code = runBridgePlan(decision, options, ctx.io);
+      }),
+    { mutates: true },
+  );
+
+  annotate(
+    bridge
+      .command("conformance")
+      .summary("Serve the bridge against an in-process broker double and prove it conformant.")
+      .description(
+        "Boots the facade `@anvil/legacy-bridge` builds for one reviewed binding and drives every required conformance case from the plan, plus three fixed safety invariants (idempotent replay returns the same reply; a broker timeout maps to a structured, non-retryable error; a failed exchange is never retried inside the bridge), against a deterministic in-process broker double. Never connects to a real broker. Writes legacy-bridge-conformance.report.json-shaped output; on a full pass, the binding's runtime status moves from not_implemented to conformance_passed and --emit-binding writes the promoted, re-addressed binding.",
+      )
+      .argument(
+        "<plan>",
+        "bridge plan report or LegacyBridgePlan JSON from `anvil legacy bridge plan`",
+      )
+      .requiredOption(
+        "--binding <file>",
+        "the approved decision report or LegacyCapabilityBinding JSON the plan was built from",
+      )
+      .option("--emit-binding <file>", "write the promoted binding here, only on a full pass")
+      .option("--out <file>", "write without overwriting different content")
+      .option("--json", "emit the complete conformance report")
+      .action(async (plan: string, options: BridgeConformanceOptions) => {
+        ctx.code = await runBridgeConformance(plan, options, ctx.io);
       }),
     { mutates: true },
   );
@@ -106,6 +149,67 @@ function runBridgePlan(decisionPath: string, options: BridgePlanOptions, io: Cli
       details: { decision: decisionPath, ...(options.driver ? { driver: options.driver } : {}) },
     });
   }
+}
+
+async function runBridgeConformance(
+  planPath: string,
+  options: BridgeConformanceOptions,
+  io: CliIO,
+): Promise<number> {
+  try {
+    const plan = readPlan(planPath);
+    const binding = readBinding(options.binding);
+    const { report, promotedBinding } = await runLegacyBridgeConformance(binding, plan);
+    const output = BridgeConformanceReport.parse({
+      schemaVersion: 1,
+      reportType: CONFORMANCE_REPORT_TYPE,
+      conformance: report,
+      ...(promotedBinding ? { promotedBinding } : {}),
+    });
+    const serialized = `${JSON.stringify(output, null, 2)}\n`;
+    if (options.out) writeReport(options.out, serialized);
+    if (promotedBinding && options.emitBinding) {
+      writeReport(options.emitBinding, `${JSON.stringify(promotedBinding, null, 2)}\n`);
+    }
+    if (options.json) io.out(serialized.trimEnd());
+    else {
+      const failed = report.checks.filter((check) => check.status !== "pass");
+      io.out(`Legacy bridge conformance ${report.reportId}`);
+      io.out(`  broker: ${report.brokerDouble}`);
+      io.out(`  ${report.checks.length - failed.length}/${report.checks.length} check(s) passed`);
+      for (const check of failed) io.out(`  FAIL ${check.id}: ${check.detail}`);
+      if (promotedBinding) {
+        io.out(`  binding ${promotedBinding.bindingId}: runtime status conformance_passed`);
+        if (options.emitBinding) io.out(`  promoted binding: ${options.emitBinding}`);
+      } else {
+        io.out("  binding runtime status unchanged: not_implemented");
+      }
+      if (options.out) io.out(`  report: ${options.out}`);
+    }
+    return promotedBinding ? 0 : 1;
+  } catch (error) {
+    return emitRefusal(io, options.json, {
+      reportType: ERROR_REPORT_TYPE,
+      code: errorCode(error),
+      message: error instanceof Error ? error.message : String(error),
+      details: { plan: planPath, binding: options.binding },
+    });
+  }
+}
+
+function readPlan(path: string): z.infer<typeof LegacyBridgePlan> {
+  const value = readJson(path);
+  if (value && typeof value === "object" && "plan" in value) {
+    const plan = (value as { plan?: unknown }).plan;
+    if (!plan) {
+      throw new LegacyBridgeCommandError(
+        "legacy/bridge_plan_missing",
+        "The report does not contain a bridge plan.",
+      );
+    }
+    return LegacyBridgePlan.parse(plan);
+  }
+  return LegacyBridgePlan.parse(value);
 }
 
 function readBinding(path: string): z.infer<typeof LegacyCapabilityBinding> {

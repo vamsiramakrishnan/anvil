@@ -487,6 +487,18 @@ describe("refinement harness import keeps the operator JSON contract", () => {
 describe("legacy product commands keep the operator JSON contract", () => {
   it.each([
     ["legacy bridge plan", ["legacy", "bridge", "plan", "missing-decision.json", "--json"]],
+    [
+      "legacy bridge conformance",
+      [
+        "legacy",
+        "bridge",
+        "conformance",
+        "missing-plan.json",
+        "--binding",
+        "missing-binding.json",
+        "--json",
+      ],
+    ],
     ["legacy plan", ["legacy", "plan", "missing-plan.json", "--json"]],
     ["legacy graph", ["legacy", "graph", "missing-inventory.json", "--json"]],
     ["legacy gaps", ["legacy", "gaps", "missing-inventory.json", "--json"]],
@@ -644,6 +656,38 @@ describe("anvil observe speaks the operator envelope", () => {
   });
 });
 
+describe("anvil auth status speaks the operator envelope", () => {
+  it("refuses a missing bundle as a document, not as prose on stderr", async () => {
+    const result = await run([
+      "auth",
+      "status",
+      join(work, "no-such-bundle"),
+      "--profile",
+      "prod",
+      "--json",
+    ]);
+    const envelope = expectRefusalContract(result, "auth status missing bundle --json");
+    expect(envelope.code).toBe("auth_status_bundle_invalid");
+  });
+
+  it("lists the bundle's credential profiles as one document, names only", async () => {
+    const spec = join(work, "auth-svc.yaml");
+    writeFileSync(
+      spec,
+      `openapi: 3.0.3\ninfo: { title: Svc, version: 1.0.0 }\ncomponents:\n  securitySchemes:\n    apiKeyAuth: { type: apiKey, in: header, name: X-API-Key }\nsecurity: [{ apiKeyAuth: [] }]\npaths:\n  /things:\n    get:\n      operationId: listThings\n      tags: [things]\n      responses: { "200": { description: ok } }\n`,
+      "utf8",
+    );
+    const dir = join(work, "auth-status-bundle");
+    mkdirSync(dir, { recursive: true });
+    expect((await run(["compile", spec, "--out", dir, "--service", "svc"])).code).toBe(0);
+    const result = await run(["auth", "status", dir, "--profile", "prod", "--json"]);
+    const envelope = expectJsonContract(result, "auth status --json");
+    expect(envelope.reportType).toBe("anvil.auth-status");
+    const parsed = JSON.parse(result.stdout) as { rows: Array<{ profile: string }> };
+    expect(parsed.rows.length).toBeGreaterThan(0);
+  });
+});
+
 describe("anvil capability propose speaks the operator envelope", () => {
   /** A compiled bundle, the only input both propose modes need. */
   async function bundle(): Promise<string> {
@@ -797,7 +841,10 @@ const UNEXERCISED: Record<string, string> = {
   selftest: "needs a compiled bundle fixture",
   simulate: "needs a compiled bundle fixture",
   sync: "needs a compiled bundle fixture",
-  target: "needs a compiled bundle fixture",
+  "target gemini-enterprise": "needs a compiled bundle fixture",
+  "target claude": "needs a compiled bundle fixture",
+  "target openai": "needs a compiled bundle fixture",
+  "target mcp-registry": "needs a compiled bundle fixture",
   "capability show": "needs a compiled bundle fixture",
   "capability compose": "needs two verified bundle fixtures",
   "deploy credentials": "needs a compiled bundle fixture",

@@ -38,7 +38,9 @@ export type SpecSyntax = z.infer<typeof SpecSyntax>;
 /**
  * The spec format one entrypoint declares for itself. `openapi`/`swagger` are
  * REST/JSON; `graphql`, `protobuf` (gRPC), `wsdl` (SOAP), `discovery`
- * (Google API Discovery), and `postman` (Postman Collection v2.x) are
+ * (Google API Discovery), `postman` (Postman Collection v2.x), and `har`
+ * (an HTTP Archive traffic capture — recorded requests, never a declared
+ * contract; see `docs/SOURCE_FORMATS.md#captured-traffic-har`) are
  * non-OpenAPI formats lowered into the same internal model by the protocol
  * adapters.
  */
@@ -51,6 +53,7 @@ export const EntrypointFormat = z.enum([
   "discovery",
   "postman",
   "odata",
+  "har",
 ]);
 export type EntrypointFormat = z.infer<typeof EntrypointFormat>;
 

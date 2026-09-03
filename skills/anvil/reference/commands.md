@@ -653,6 +653,19 @@ Options:
 - `--out <file>` — write without overwriting different content
 - `--json` — emit the complete bridge plan
 
+##### `anvil legacy bridge conformance`  *(mutates)*
+`anvil legacy bridge conformance [options] <plan>`
+
+Serve the bridge against an in-process broker double and prove it conformant.
+
+Boots the facade `@anvil/legacy-bridge` builds for one reviewed binding and drives every required conformance case from the plan, plus three fixed safety invariants (idempotent replay returns the same reply; a broker timeout maps to a structured, non-retryable error; a failed exchange is never retried inside the bridge), against a deterministic in-process broker double. Never connects to a real broker. Writes legacy-bridge-conformance.report.json-shaped output; on a full pass, the binding's runtime status moves from not_implemented to conformance_passed and --emit-binding writes the promoted, re-addressed binding.
+
+Options:
+- `--binding <file>` — the approved decision report or LegacyCapabilityBinding JSON the plan was built from
+- `--emit-binding <file>` — write the promoted binding here, only on a full pass
+- `--out <file>` — write without overwriting different content
+- `--json` — emit the complete conformance report
+
 #### `anvil legacy plan`  *(mutates)*
 `anvil legacy plan [options] <manifest>`
 
@@ -789,10 +802,17 @@ Options:
 - `--allow-degraded-native` — explicitly allow the unsandboxed native reviewer (isolated HOME; host files remain reachable)
 - `--json` — emit the full review report as JSON
 
-### `anvil target`  *(mutates)*
-`anvil target [options] <profile> <dir>`
+### `anvil target`
+`anvil target [options] [command]`
 
-Generate an agent-platform connector kit (e.g. Gemini Enterprise) for a bundle.
+Generate an agent-platform connector kit (Gemini Enterprise, Claude, OpenAI, MCP registry).
+
+Each subcommand is a pure projection of AIR plus its own config — no network calls, ever. Registered platforms: gemini-enterprise, claude, openai, mcp-registry. Validates the contract against the platform's requirements first; no files are written when validation fails.
+
+#### `anvil target gemini-enterprise`  *(mutates)*
+`anvil target gemini-enterprise [options] <dir>`
+
+Generate the Gemini Enterprise connector kit for a bundle.
 
 Validates and generates one explicit Gemini Enterprise registration journey. `custom-mcp` is console-first; its raw setUpDataConnector files are experimental references. `agent-gateway` emits guarded Agent Registry, gateway, engine-binding, and rollback artifacts. `both` is available only when explicitly requested for compatibility. Connector OAuth protects /mcp and is separate from Gemini Enterprise sign-in / Workforce Identity Federation. No files are written when validation fails.
 
@@ -820,6 +840,69 @@ Options:
 - `--gateway-authorization-policy <resource>` — full projects/<project>/locations/<region>/authzPolicies/<policy> resource attached to the gateway
 - `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
 - `--json` — emit the plan + compatibility report as JSON
+
+#### `anvil target claude`  *(mutates)*
+`anvil target claude [options] <dir>`
+
+Generate a Claude MCP config kit (stdio + streamable-http) for a bundle.
+
+Emits an mcpServers config fragment for both the stdio transport (`anvil serve mcp <dir>`) and the streamable-http transport, plus a per-tool permission hint and, when --server-auth oauth, a connector manifest. OAuth client credential flags accept an environment-variable NAME only, never a secret value. No files are written when validation fails.
+
+Options:
+- `--endpoint <url>` — the deployed MCP server's public HTTPS URL (e.g. https://host/mcp)
+- `--server-auth <mode>` — how the platform authenticates to the MCP server
+- `--oauth-authorization-url <url>` — connector OAuth authorization URL
+- `--oauth-token-url <url>` — connector OAuth token URL
+- `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
+- `--inbound-issuer <url>` — issuer the MCP resource server validates
+- `--inbound-audience <audience>` — audience identifying this MCP API
+- `--oauth-client-id-env <name>` — environment-variable NAME the platform's OAuth client id is read from (never a value)
+- `--oauth-client-secret-env <name>` — environment-variable NAME the platform's OAuth client secret is read from (never a value)
+- `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
+- `--json` — emit the compatibility report as JSON
+
+#### `anvil target openai`  *(mutates)*
+`anvil target openai [options] <dir>`
+
+Generate an OpenAI Responses API MCP tool kit for a bundle.
+
+Emits a `type: "mcp"` Responses API tool declaration for the deployed server, with require_approval derived per operation from contract-level confirmation, plus a `type: "function"` fallback (one function per approved operation, schemas from AIR) for clients that cannot attach a remote MCP server. No files are written when validation fails.
+
+Options:
+- `--endpoint <url>` — the deployed MCP server's public HTTPS URL (e.g. https://host/mcp)
+- `--server-auth <mode>` — how the platform authenticates to the MCP server
+- `--oauth-authorization-url <url>` — connector OAuth authorization URL
+- `--oauth-token-url <url>` — connector OAuth token URL
+- `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
+- `--inbound-issuer <url>` — issuer the MCP resource server validates
+- `--inbound-audience <audience>` — audience identifying this MCP API
+- `--oauth-client-id-env <name>` — environment-variable NAME the platform's OAuth client id is read from (never a value)
+- `--oauth-client-secret-env <name>` — environment-variable NAME the platform's OAuth client secret is read from (never a value)
+- `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
+- `--json` — emit the compatibility report as JSON
+
+#### `anvil target mcp-registry`  *(mutates)*
+`anvil target mcp-registry [options] <dir>`
+
+Generate an MCP registry server.json + publish plan for a bundle.
+
+Emits server.json (name, description, version, remotes) and a read-only publish plan for the MCP registry. Anvil holds no registry credentials and never calls the publish endpoint; the plan is guidance for a human operator. No files are written when validation fails.
+
+Options:
+- `--name <name>` — registry server name, e.g. io.github.<owner>/<slug> (defaults from the service id)
+- `--registry-version <version>` — version submitted to the registry (defaults to the AIR service version)
+- `--repository-url <url>` — source repository URL recorded in server.json
+- `--endpoint <url>` — the deployed MCP server's public HTTPS URL (e.g. https://host/mcp)
+- `--server-auth <mode>` — how the platform authenticates to the MCP server
+- `--oauth-authorization-url <url>` — connector OAuth authorization URL
+- `--oauth-token-url <url>` — connector OAuth token URL
+- `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
+- `--inbound-issuer <url>` — issuer the MCP resource server validates
+- `--inbound-audience <audience>` — audience identifying this MCP API
+- `--oauth-client-id-env <name>` — environment-variable NAME the platform's OAuth client id is read from (never a value)
+- `--oauth-client-secret-env <name>` — environment-variable NAME the platform's OAuth client secret is read from (never a value)
+- `--out <dir>` — compatibility flag; must resolve to the bundle root because target kits are certified in place
+- `--json` — emit the compatibility report as JSON
 
 ### `anvil deploy`
 `anvil deploy [options] [command]`
@@ -903,11 +986,13 @@ Options:
 
 Compare a bundle against the running application it was compiled from.
 
-Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json. RECORDED TRAFFIC (--from-records <dir>): instead of probing live, folds the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server; records carry outcomes, error codes, retry and ledger behaviour — no secrets, no payloads) into recorded_traffic evidence through the same reconciler. Traffic corroborates freely; the one patch it earns is deprecation, when every one of enough calls answered not_found. Writes traffic.report.json.
+Two passes, both propose-only. CONTRACT DRIFT: fetches the contract the application publishes about itself (springdoc /v3/api-docs, Swashbuckle /swagger/v1/swagger.json, a WSDL) and diffs it against the bundle's AIR through the same differ `anvil drift` uses — the app is the authority on its own shape. IMPLEMENTATION DRIFT: drives the operator's opt-in READS against the real application through the bundle's own generated MCP server, so the exact executor path the CLI, MCP server, and SDKs share is what gets exercised, then reports what the app returned against what AIR declares. A mutation is never invoked, whatever the config lists. Findings become an Anvil manifest proposal weighed by the same asymmetric-trust reconciler `anvil enrich` uses: observed traffic may tighten freely, and the one claim a read genuinely earns is that an operation the contract declares is not there. Review the proposal, then `anvil compile --manifest`. Writes observe.report.json. RECORDED TRAFFIC (--from-records <dir>): instead of probing live, folds the execution-record spool a deployed server wrote (set ANVIL_RECORDS_DIR on the generated MCP/HTTP server; records carry outcomes, error codes, retry and ledger behaviour — no secrets, no payloads) into recorded_traffic evidence through the same reconciler. Traffic corroborates freely; the one patch it earns is deprecation, when every one of enough calls answered not_found. Writes traffic.report.json. DRIFT ALARM (--alarm, with --from-records): folds the same spooled records against compiled safety claims — e.g. an operation compiled `idempotency.mode="natural"` that returned a conflict on replay — and, for a contradiction an existing refinement skill can investigate, opens a real case (`anvil case ...` rails) with the contradicting records attached as recorded_traffic evidence. Proposing only: this never patches AIR, and every opened case still requires the ordinary skill/approval workflow to go anywhere. See docs/fleet.md.
 
 Options:
 - `--config <file>` — JSON config naming the running application
 - `--from-records <dir>` — fold a serving-path record spool (ANVIL_RECORDS_DIR) into evidence instead of probing live
+- `--alarm` — with --from-records: also fold spooled records against compiled safety claims and open a refinement case for any contradiction found (propose-only; see docs/fleet.md)
+- `--case-root <dir>` — case root directory for --alarm
 - `--write <manifest>` — write the proposed manifest here instead of printing it
 - `--capture <file>` — save the contract the application served, to re-capture with `anvil source add`
 - `--json` — emit the full report as JSON
@@ -917,11 +1002,12 @@ Options:
 
 Route each intent example over the served tool catalog and score whether the agent reaches the right tool.
 
-Agent-task benchmark. For each approved operation's skill.intentExamples entry, routes the intent over (a) the curated catalog the generated MCP server serves and (b) the bare catalog the source document supplies on its own, then checks required parameters are satisfiable from surface examples. A task passes when the curated route reaches the right tool and its params are satisfiable; the bare score is the baseline that shows what compilation bought. Routing is deterministic (lexical) by default; pass --agent <command> to route with a real model over stdin/stdout. Writes benchmark.report.json, including deterministic mis-route clustering: confusable tool families with their evidence, and routing hubs reported apart — candidates for composition or collapse, never decisions. Exit 0 only when the score meets --check.
+Agent-task benchmark. For each approved operation's skill.intentExamples entry, routes the intent over (a) the curated catalog the generated MCP server serves and (b) the bare catalog the source document supplies on its own, then checks required parameters are satisfiable from surface examples. A task passes when the curated route reaches the right tool and its params are satisfiable; the bare score is the baseline that shows what compilation bought. Routing is deterministic (lexical) by default; pass --agent <command> to route with a real model over stdin/stdout. --catalog laddered or --catalog both additionally stages the route over the disclosure ladder (@anvil/air's ladderPlan, served by the MCP runtime's lane.ts): stage 1 picks a lane, stage 2 routes within it, falling back to the flat catalog when the ladder plan declines. --catalog both prints a flat-vs-laddered comparison table and records it (and a disclosure-cost estimate in measured tool-surface tokens) in benchmark.report.json's optional catalogs field; the top-level score always stays the flat-catalog measurement, so --check and every existing reader keep gating on the same number they always have. Writes benchmark.report.json, including deterministic mis-route clustering: confusable tool families with their evidence, and routing hubs reported apart — candidates for composition or collapse, never decisions. Exit 0 only when the score meets --check.
 
 Options:
 - `--check <threshold>` — exit non-zero if score < threshold (0..1)
 - `--agent <command>` — route with a real model: a command that reads the routing prompt on stdin and prints {"tool": "<name>"}
+- `--catalog <mode>` — which catalog(s) to route over: flat (default, today's behavior), laddered (stage over @anvil/air's disclosure ladder), or both (adds a flat-vs-laddered comparison)
 
 ### `anvil simulate`  *(mutates)*
 `anvil simulate [options] <dir>`
@@ -1069,6 +1155,35 @@ Options:
 - `--idempotency-key <key>` — caller-supplied idempotency key for the decision call
 - `--json` — emit the full result as JSON
 
+### `anvil auth`
+`anvil auth [options] [command]`
+
+Complete the interactive step for end-user (authorization-code) auth.
+
+#### `anvil auth login`  *(mutates)*
+`anvil auth login [options] <dir>`
+
+Run the PKCE authorization-code flow once and store a refresh token.
+
+Finds the bundle's oauth2_authorization_code operation (--operation disambiguates when more than one distinct shape is declared), prints the authorization URL (--open launches the default browser), listens on its declared loopback redirect_uri (127.0.0.1 or localhost, exactly as registered — a random port when none is declared), exchanges the returned code at token_endpoint, and writes { refresh_token, obtained_at } to ~/.anvil/credentials/<profile>.json with mode 0600 — never inside the bundle, never printed. The runtime's env resolver reads it back when *_REFRESH_TOKEN is unset. Requires ANVIL_<PROFILE>_CLIENT_ID in the environment (and *_CLIENT_SECRET if the provider needs one); neither is ever echoed.
+
+Options:
+- `--profile <profile>` — deployment profile (e.g. prod), combined with the operation's credential profile the same way the runtime combines them
+- `--operation <id>` — which oauth2_authorization_code operation's provider mechanics to use, when the bundle declares more than one distinct shape
+- `--open` — open the authorization URL in the default browser
+- `--timeout-seconds <n>` — how long to wait for the redirect
+
+#### `anvil auth status`
+`anvil auth status [options] <dir>`
+
+List credential profiles in a bundle and whether material is present (names only).
+
+Never prints a credential value — only env var NAMES and whether they (or, for oauth2_authorization_code, a stored refresh token) are present.
+
+Options:
+- `--profile <profile>` — deployment profile to resolve against
+- `--json` — emit the full result as JSON
+
 ### `anvil serve`
 `anvil serve [options] [command]`
 
@@ -1079,7 +1194,10 @@ Boots the MCP server for local agent use. The same server deploys to Cloud Run f
 #### `anvil serve mcp`
 `anvil serve mcp [options] <dir>`
 
-Serve the bundle's MCP server on stdio.
+Serve one bundle's MCP server on stdio, or a whole workspace with --fleet.
+
+Options:
+- `--fleet` — treat <dir> as a workspace root and mount every bundle beneath it onto one MCP server, each under a stable per-bundle tool prefix (see docs/fleet.md)
 
 ### `anvil package`  *(mutates)*
 `anvil package [options] [command]`

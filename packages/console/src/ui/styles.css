@@ -389,6 +389,37 @@ td {
 
 .table-wrap {
   overflow-x: auto;
+  max-width: 100%;
+}
+
+/* The claims table sits in the narrow detail pane. A fixed layout makes it
+ * honour the pane's width, so every cell wraps (ids and notes included)
+ * instead of the note column running off the edge; the wrapper still scrolls
+ * rather than the page if a single token cannot break. */
+.claims table {
+  table-layout: fixed;
+}
+
+.claims td,
+.claims th {
+  overflow-wrap: anywhere;
+}
+
+.claims th:nth-child(1) {
+  width: 20%;
+}
+.claims th:nth-child(2) {
+  width: 17%;
+}
+.claims th:nth-child(3) {
+  width: 21%;
+}
+.claims th:nth-child(4) {
+  width: 10%;
+}
+.claims td:nth-child(4),
+.claims th:nth-child(4) {
+  white-space: nowrap;
 }
 
 dl.kv {

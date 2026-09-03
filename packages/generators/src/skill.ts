@@ -27,6 +27,7 @@ export const ANVIL_SOURCE_FORMATS = [
   "SOAP/WSDL (multi-file)",
   "OData v2/v4 ($metadata/EDMX)",
   "Postman Collections",
+  "Captured traffic (HAR 1.2, review-only)",
 ] as const;
 
 /**

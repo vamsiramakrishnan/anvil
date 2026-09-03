@@ -30,6 +30,7 @@ import {
   type DisclosableTool,
   type DisclosureMode,
   decideLadder,
+  type LadderMeasuredAccuracy,
 } from "./lane.js";
 import { derivePageSize, detectSilentCap, silentCapNotice } from "./page-budget.js";
 import {
@@ -127,6 +128,16 @@ export interface McpBuildOptions {
    * measured against the same number.
    */
   surfaceBudgetTokens?: number;
+  /**
+   * A measured routing-accuracy delta for this bundle, when the CLI/serve path
+   * found one (`anvil benchmark --catalog both`'s report, read via
+   * `readBenchmarkReport` in `@anvil/refinement`). Passed through verbatim to
+   * `decideLadder` — this runtime holds no dependency on `@anvil/refinement`
+   * and never reads the report itself, matching the boundary `lane.ts`
+   * documents. Only consulted in `auto` mode; see `lane.ts` for the bars it
+   * gates.
+   */
+  measuredAccuracy?: LadderMeasuredAccuracy;
 }
 
 /**

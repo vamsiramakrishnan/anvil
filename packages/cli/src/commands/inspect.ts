@@ -1,9 +1,10 @@
-import { exampleInput, operationCatalog } from "@anvil/generators";
+import { exampleInput, operationCatalog, readBundleDir, resolveBundleDir } from "@anvil/generators";
 import { cliFlagsFor } from "@anvil/harness";
 import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
+import { ladderStatusSummary } from "./ladder-status.js";
 import { annotate } from "./meta.js";
 
 /** `anvil inspect <dir|air.yaml>` — the operation catalog and safety posture. */
@@ -48,6 +49,15 @@ function runInspect(path: string, opts: { json?: boolean }, io: CliIO): number {
         `${e.repeatedVerbWords} verb words repeated across parents`,
     );
   }
+  // The same accuracy-aware `auto` decision `anvil serve mcp` would make for
+  // this bundle right now (`decideLadder`, @anvil/mcp-runtime's `lane.ts`),
+  // read from a fresh benchmark report when one exists. `path` already loaded
+  // as AIR above, so its bundle directory is readable; an air.yaml with no
+  // compiled siblings around it just has no `benchmark.report.json` to find,
+  // which `ladderStatusSummary` reads as "no fresh report" the same way it
+  // would for any bundle that has never been benchmarked.
+  const bundleDir = resolveBundleDir(path);
+  io.out(ladderStatusSummary(bundleDir, readBundleDir(bundleDir), air).line);
   io.out("");
   for (const op of catalog.operations) {
     const operation = air.operations.find((candidate) => candidate.id === op.id);

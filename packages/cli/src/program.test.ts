@@ -92,8 +92,9 @@ describe("root help", () => {
     // out. Raise it by the number of commands you added, deliberately — the
     // point of the bound is that a description leaking into root help costs
     // many lines at once, not that the command list can never grow. Raised
-    // 52 -> 53 when `anvil console` landed (one command, one line).
-    expect(text.split("\n").length).toBeLessThan(53);
+    // 52 -> 53 when `anvil console` landed (one command, one line). Raised
+    // 53 -> 54 when `anvil auth` landed (one command, one line).
+    expect(text.split("\n").length).toBeLessThan(54);
     expect(text).not.toContain("--manifest");
   });
 

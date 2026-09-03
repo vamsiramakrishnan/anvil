@@ -575,6 +575,22 @@ func invoke(ctx context.Context, config clientConfig, spec OperationSpec, payloa
 	if refusal := assertConfirmed(spec, options); refusal != nil {
 		return nil, refusal
 	}
+	// A delegated token source takes priority over a static token: it is how a
+	// caller plugs in a refreshed authorization-code grant without the SDK
+	// ever holding a long-lived secret of its own. Resolved once per call,
+	// never cached here — a provider that wants caching does its own.
+	if config.tokenProvider != nil {
+		token, providerErr := config.tokenProvider(ctx)
+		if providerErr != nil {
+			return nil, &Error{
+				Code:      "auth_required",
+				Operation: spec.ID,
+				TraceID:   traceID(),
+				Message:   fmt.Sprintf("%s could not obtain a credential: %s", spec.ID, providerErr.Error()),
+			}
+		}
+		config.token = token
+	}
 	for key, value := range payload {
 		if value == nil {
 			delete(payload, key)

@@ -5,6 +5,7 @@ import { compile } from "../compile.js";
 import { adaptDiscovery, isDiscoveryDocument } from "./discovery.js";
 import { adaptGraphql } from "./graphql.js";
 import { adaptProto } from "./grpc.js";
+import { harVersion, isHarCapture } from "./har.js";
 import { detectProtocolFormat } from "./index.js";
 import { adaptOData } from "./odata.js";
 import { adaptPostman, isPostmanCollection, postmanSchemaVersion } from "./postman.js";
@@ -292,6 +293,25 @@ describe("protocol format detection", () => {
     // …and neither is a v1 export (no info.schema discriminator).
     expect(isPostmanCollection('{"name":"old","requests":[]}')).toBe(false);
     expect(postmanSchemaVersion(postmanSpec)).toBe("2.1");
+  });
+
+  it("detects a HAR 1.2 capture by its log.version/log.entries envelope", () => {
+    const har = JSON.stringify({
+      log: { version: "1.2", entries: [{ request: { method: "GET", url: "https://x/a" } }] },
+    });
+    expect(isHarCapture(har)).toBe(true);
+    expect(harVersion(har)).toBe("1.2");
+    // `.har` extension is authoritative, same as `.proto`/`.wsdl`.
+    expect(detectProtocolFormat("capture.har", har)).toEqual({ format: "har", version: "1.2" });
+    // No filename at all → content sniff.
+    expect(detectProtocolFormat("", har)?.format).toBe("har");
+    // A JSON object that merely has a `log` key but no `entries` array is not HAR.
+    expect(isHarCapture('{"log":{"version":"1.2"}}')).toBe(false);
+    // Neither is a JSON document that isn't even an object.
+    expect(isHarCapture("[]")).toBe(false);
+    expect(isHarCapture("not json")).toBe(false);
+    // A capture with no declared version still reports the HAR spec's own default.
+    expect(harVersion(JSON.stringify({ log: { entries: [] } }))).toBe("1.2");
   });
 });
 

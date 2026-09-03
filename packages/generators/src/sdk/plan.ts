@@ -1,5 +1,6 @@
 import {
   type AirDocument,
+  type AuthRequirement,
   agentPropKey,
   camelCase,
   effectiveAuthCarrier,
@@ -166,8 +167,35 @@ export interface SdkPlan {
     type: string;
     /** Where the credential goes on the wire; absent when the API needs none. */
     carrier?: { in: "header" | "query"; name: string; scheme?: string };
-    /** Environment variable an SDK reads when no credential is passed. */
+    /**
+     * Environment variable an SDK reads when no credential is passed. For
+     * `custom_header` this is the raw header value (`<SERVICE>_HEADER_VALUE`);
+     * for `mtls` it is unused — the client certificate travels through `tls`
+     * below instead, never through a header or token.
+     */
     envVar: string;
+    /**
+     * Client-certificate material for `mtls`, by environment-variable NAME
+     * only — the exact names AIR's `auth.tls` carries. PEM bytes never appear
+     * in the plan; each SDK reads them from its own process environment (a
+     * literal PEM value, or a file path) at construction time, mirroring how
+     * the runtime resolves the same names (spec §13, `ANVIL_<PROFILE>_*`
+     * convention). Present only when `type` is `"mtls"`.
+     */
+    tls?: { certEnvVar: string; keyEnvVar: string; caEnvVar?: string };
+    /**
+     * Optional refresh wiring for `oauth2_authorization_code`, present only
+     * when the manifest or import named a token endpoint. The interactive
+     * authorization step never runs in an SDK; this only replays or refreshes
+     * a token a broker already produced. Absent when the caller must supply
+     * `token`/`tokenProvider` outright.
+     */
+    tokenRefresh?: {
+      tokenEndpoint: string;
+      refreshTokenEnvVar: string;
+      clientIdEnvVar: string;
+      clientSecretEnvVar: string;
+    };
   };
   operations: SdkOperation[];
   /** The full Anvil error taxonomy, so every language enumerates the same codes. */
@@ -409,6 +437,76 @@ export function sdkOperations(air: AirDocument): Operation[] {
   );
 }
 
+/**
+ * The wire carrier for a service's auth, including the two schemes
+ * `effectiveAuthCarrier` does not resolve a default for.
+ *
+ * `custom_header` has no protocol-level default the way `api_key`/`basic`/the
+ * OAuth family do — an arbitrary header (or query parameter) is the entire
+ * point of the scheme — so the carrier AIR declared is read directly. `mtls`
+ * carries no on-wire credential at all: identity travels in the TLS
+ * handshake, and a client that also sent a header would be inventing a
+ * carrier the contract never declared.
+ */
+function authCarrierOf(
+  auth: AuthRequirement,
+  prefix: string,
+): { in: "header" | "query"; name: string; scheme?: string } | undefined {
+  if (auth.type === "mtls") return undefined;
+  if (auth.type === "custom_header") {
+    return auth.carrier ?? { in: "header", name: `X-${prefix}-Auth` };
+  }
+  return effectiveAuthCarrier(auth);
+}
+
+/**
+ * `mtls` client-certificate material, by environment-variable NAME only.
+ *
+ * Reads the exact names `auth.tls` carries — the same names the runtime
+ * resolves (Lane A's `packages/runtime/src/auth.ts`) — so an operator sets
+ * one PEM per name once and every surface agrees on where it lives. The
+ * `<SERVICE>_CLIENT_CERT`/`_CLIENT_KEY` fallback only covers a document that
+ * reached this projection without AIR's own `mtls auth must name its client
+ * certificate and key references` coherence rule having run.
+ */
+function tlsEnvVarsOf(
+  auth: AuthRequirement,
+  prefix: string,
+): { certEnvVar: string; keyEnvVar: string; caEnvVar?: string } {
+  const tls = auth.tls;
+  return {
+    certEnvVar: tls?.clientCertRef ?? `${prefix}_CLIENT_CERT`,
+    keyEnvVar: tls?.clientKeyRef ?? `${prefix}_CLIENT_KEY`,
+    ...(tls?.caRef ? { caEnvVar: tls.caRef } : {}),
+  };
+}
+
+/**
+ * `oauth2_authorization_code` refresh wiring, present only when the contract
+ * names a token endpoint to refresh against. Suffixes match Lane A's runtime
+ * resolver exactly (`${prefix}_REFRESH_TOKEN`/`_CLIENT_ID`/`_CLIENT_SECRET`)
+ * so an operator's env is shared between the runtime and every generated SDK.
+ */
+function tokenRefreshOf(
+  auth: AuthRequirement,
+  prefix: string,
+):
+  | {
+      tokenEndpoint: string;
+      refreshTokenEnvVar: string;
+      clientIdEnvVar: string;
+      clientSecretEnvVar: string;
+    }
+  | undefined {
+  if (auth.type !== "oauth2_authorization_code" || !auth.provider?.tokenEndpoint) return undefined;
+  return {
+    tokenEndpoint: auth.provider.tokenEndpoint,
+    refreshTokenEnvVar: `${prefix}_REFRESH_TOKEN`,
+    clientIdEnvVar: `${prefix}_CLIENT_ID`,
+    clientSecretEnvVar: `${prefix}_CLIENT_SECRET`,
+  };
+}
+
 /** Project AIR onto the language-neutral SDK plan. Pure and deterministic. */
 export function sdkPlan(air: AirDocument): SdkPlan {
   const byId = new Map(air.operations.map((op) => [op.id, op]));
@@ -418,7 +516,8 @@ export function sdkPlan(air: AirDocument): SdkPlan {
   // certification refuses a bundle whose approved operations disagree.
   const authOperation = sdkOperations(air).find((op) => op.auth.type !== "none");
   const auth = authOperation?.auth ?? air.service.auth;
-  const carrier = effectiveAuthCarrier(auth);
+  const prefix = serviceNames.snake.toUpperCase();
+  const carrier = authCarrierOf(auth, prefix);
   return {
     service: {
       id: air.service.id,
@@ -430,10 +529,10 @@ export function sdkPlan(air: AirDocument): SdkPlan {
     },
     auth: {
       type: auth.type,
-      ...(carrier
-        ? { carrier: { in: carrier.in, name: carrier.name, scheme: carrier.scheme } }
-        : {}),
-      envVar: `${serviceNames.snake.toUpperCase()}_TOKEN`,
+      ...(carrier ? { carrier } : {}),
+      envVar: auth.type === "custom_header" ? `${prefix}_HEADER_VALUE` : `${prefix}_TOKEN`,
+      ...(auth.type === "mtls" ? { tls: tlsEnvVarsOf(auth, prefix) } : {}),
+      ...(tokenRefreshOf(auth, prefix) ? { tokenRefresh: tokenRefreshOf(auth, prefix) } : {}),
     },
     operations: sdkOperations(air).map((op) => ({
       id: op.id,

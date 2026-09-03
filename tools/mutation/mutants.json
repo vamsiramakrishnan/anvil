@@ -5,13 +5,13 @@
     "decorative or untested, and both are worth knowing.",
     "",
     "Why this exists as a gate rather than an exercise: this repository's recurring",
-    "defect is a check that reports success without having run — an assertion behind",
+    "defect is a check that reports success without having run \u2014 an assertion behind",
     "a swallowed TypeError, a test whose guard skipped it, a mutation whose search",
     "string the shell expanded to nothing. Coverage cannot see any of them. Killing",
     "a mutant can.",
     "",
     "Adding a control here is cheap and the right instinct. `find` must appear",
-    "exactly once in the file, so a mutant cannot silently stop applying — the",
+    "exactly once in the file, so a mutant cannot silently stop applying \u2014 the",
     "failure mode that made one of these look like it survived when it had never",
     "been applied at all.",
     "",
@@ -270,7 +270,7 @@
     {
       "id": "adopt/conservative-classification",
       "file": "packages/compiler/src/adopt/air.ts",
-      "control": "An adopted MCP tool without a readOnlyHint is a non-idempotent mutation that confirms — unknown side effect beats assumed safety.",
+      "control": "An adopted MCP tool without a readOnlyHint is a non-idempotent mutation that confirms \u2014 unknown side effect beats assumed safety.",
       "find": "  if (a.readOnlyHint) {",
       "replace": "  if (a.readOnlyHint !== false) {",
       "tests": [
@@ -280,7 +280,7 @@
     {
       "id": "wire/runtime-transport-gate",
       "file": "packages/runtime/src/wire-gate.ts",
-      "control": "The runtime refuses an operation whose wire protocol it cannot speak. Without it a SOAP/GraphQL/gRPC operation is posted as JSON to a coordinate Anvil invented — a well-formed lie, indistinguishable on the wire from a real request.",
+      "control": "The runtime refuses an operation whose wire protocol it cannot speak. Without it a SOAP/GraphQL/gRPC operation is posted as JSON to a coordinate Anvil invented \u2014 a well-formed lie, indistinguishable on the wire from a real request.",
       "find": "  if (verdict.ok) return undefined;\n  // A facade declares that the base URL serves the synthesized *coordinates*",
       "replace": "  if (true) return undefined;\n  // A facade declares that the base URL serves the synthesized *coordinates*",
       "tests": [
@@ -362,7 +362,7 @@
     {
       "id": "observe/empty-contract-is-not-a-contract",
       "file": "packages/harness/src/observe.ts",
-      "control": "A document that compiles to no operations is not the application's contract. Accepting one turns an auth wall or a wrong path into a successful acquisition whose diff reports every operation as removed — a wall of false blocking drift that reads like a real emergency.",
+      "control": "A document that compiles to no operations is not the application's contract. Accepting one turns an auth wall or a wrong path into a successful acquisition whose diff reports every operation as removed \u2014 a wall of false blocking drift that reads like a real emergency.",
       "find": "  if (fresh.operations.length === 0) {",
       "replace": "  if (false) {",
       "tests": [
@@ -422,7 +422,7 @@
     {
       "id": "soap/fault-is-not-a-result",
       "file": "packages/runtime/src/executor.ts",
-      "control": "A soap:Fault is refused rather than returned as a result. Servers deliver one with HTTP 200 as readily as 500, so the status is not the answer — and reporting one as success would record a failed mutation in the idempotency ledger as completed.",
+      "control": "A soap:Fault is refused rather than returned as a result. Servers deliver one with HTTP 200 as readily as 500, so the status is not the answer \u2014 and reporting one as success would record a failed mutation in the idempotency ledger as completed.",
       "find": "        const fault = isFaultAware(codec) ? codec.faultIn(op, res) : undefined;",
       "replace": "        const fault = undefined;",
       "tests": [
@@ -432,7 +432,7 @@
     {
       "id": "soap/client-fault-never-retried",
       "file": "packages/runtime/src/codec-soap.ts",
-      "control": "Only a transport-layer Server fault is transient. An application fault — a rejected transfer, an unknown account — fails identically on retry, and retrying a mutation on one is exactly what the safety contract forbids.",
+      "control": "Only a transport-layer Server fault is transient. An application fault \u2014 a rejected transfer, an unknown account \u2014 fails identically on retry, and retrying a mutation on one is exactly what the safety contract forbids.",
       "find": "    const retryable = localName(code).toLowerCase() === \"server\";",
       "replace": "    const retryable = true;",
       "tests": [
@@ -492,7 +492,7 @@
     {
       "id": "graphql/arguments-are-variables",
       "file": "packages/compiler/src/protocols/graphql-binding.ts",
-      "control": "Every argument becomes a declared GraphQL variable, so no caller value is ever interpolated into query text. A value spliced into a statement is a value that can rewrite the statement — the same rule the SQL query policy enforces one layer over.",
+      "control": "Every argument becomes a declared GraphQL variable, so no caller value is ever interpolated into query text. A value spliced into a statement is a value that can rewrite the statement \u2014 the same rule the SQL query policy enforces one layer over.",
       "find": "    .map((arg: GraphQLArgument) => `$${arg.name}: ${arg.type.toString()}`)",
       "replace": "    .map((arg: GraphQLArgument) => `$${arg.name}: String`)",
       "tests": [
@@ -502,7 +502,7 @@
     {
       "id": "graphql/errors-are-not-results",
       "file": "packages/runtime/src/codec-graphql.ts",
-      "control": "GraphQL reports failures inside a 200 with an errors array. Reported as a result, a failed mutation would be recorded in the idempotency ledger as completed — and a partial response is still a failure, since AIR's output contract describes one shape.",
+      "control": "GraphQL reports failures inside a 200 with an errors array. Reported as a result, a failed mutation would be recorded in the idempotency ledger as completed \u2014 and a partial response is still a failure, since AIR's output contract describes one shape.",
       "find": "    if (!Array.isArray(errors) || errors.length === 0) return undefined;",
       "replace": "    return undefined;",
       "tests": [
@@ -532,7 +532,7 @@
     {
       "id": "grpc/needs-a-declared-transcoder",
       "file": "packages/air/src/wire.ts",
-      "control": "gRPC is refused until an operator declares a transcoder. Its path is real, which makes the temptation to just call it strong — and a native gRPC server rejects JSON over HTTP/1.1, so calling it anyway is the original bug.",
+      "control": "gRPC is refused until an operator declares a transcoder. Its path is real, which makes the temptation to just call it strong \u2014 and a native gRPC server rejects JSON over HTTP/1.1, so calling it anyway is the original bug.",
       "find": "  if (protocol === \"graphql\" && op.sourceRef.binding?.protocol === \"graphql\") return { ok: true };",
       "replace": "  if (protocol === \"graphql\" || protocol === \"grpc\") return { ok: true };",
       "tests": [
@@ -543,7 +543,7 @@
     {
       "id": "grpc/http-rule-multi-segment-refused",
       "file": "packages/compiler/src/protocols/grpc-http-rule.ts",
-      "control": "A path template whose pattern spans more than one path segment is refused. The runtime percent-encodes a path parameter, so a slash-bearing value would address a DIFFERENT resource and succeed against it — the worst shape of failure, since nothing errors.",
+      "control": "A path template whose pattern spans more than one path segment is refused. The runtime percent-encodes a path parameter, so a slash-bearing value would address a DIFFERENT resource and succeed against it \u2014 the worst shape of failure, since nothing errors.",
       "find": "    if (pattern !== \"*\") {",
       "replace": "    if (false) {",
       "tests": [
@@ -593,7 +593,7 @@
     {
       "id": "odata/unstated-verb-is-a-mutation",
       "file": "packages/compiler/src/protocols/odata-operations.ts",
-      "control": "An OData v2 FunctionImport that declares no m:HttpMethod is treated as a mutation. Defaulting it to GET would expose a write as a safe, auto-retryable read — the exact direction the asymmetric-trust rule forbids guessing in.",
+      "control": "An OData v2 FunctionImport that declares no m:HttpMethod is treated as a mutation. Defaulting it to GET would expose a write as a safe, auto-retryable read \u2014 the exact direction the asymmetric-trust rule forbids guessing in.",
       "find": "          const verb = declaredVerb === \"GET\" ? \"get\" : \"post\";",
       "replace": "          const verb = declaredVerb === \"POST\" ? \"post\" : \"get\";",
       "tests": [
@@ -613,7 +613,7 @@
     {
       "id": "stream/event-bound-applies-to-the-bytes",
       "file": "packages/runtime/src/transport.ts",
-      "control": "The event bound is applied to the bytes that leave the transport, not only to the loop condition. A burst delivers hundreds of events in ONE socket read, so by the time the counter is re-checked the buffer already holds them all — this is the bug that reached a live run.",
+      "control": "The event bound is applied to the bytes that leave the transport, not only to the loop condition. A burst delivers hundreds of events in ONE socket read, so by the time the counter is re-checked the buffer already holds them all \u2014 this is the bug that reached a live run.",
       "find": "  return truncateToEvents(text, bound.maxEvents);",
       "replace": "  return text;",
       "tests": [
@@ -633,7 +633,7 @@
     {
       "id": "stream/window-outlives-the-request-timeout",
       "file": "packages/runtime/src/transport.ts",
-      "control": "A stream's own window is its deadline; the request timeout is only the backstop behind it. Left at the ordinary value the abort fires first, turning a subscription that legitimately saw nothing into a timeout — and then retrying it, because a read is retry-safe.",
+      "control": "A stream's own window is its deadline; the request timeout is only the backstop behind it. Left at the ordinary value the abort fires first, turning a subscription that legitimately saw nothing into a timeout \u2014 and then retrying it, because a read is retry-safe.",
       "find": "    const timeoutMs = Math.max(req.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS, streamCeilingMs);",
       "replace": "    const timeoutMs = req.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;",
       "tests": [
@@ -643,7 +643,7 @@
     {
       "id": "stream/unterminated-frame-is-not-an-event",
       "file": "packages/runtime/src/codec-graphql-sse.ts",
-      "control": "A frame Anvil never saw the end of is not reported, and that must depend on the missing boundary rather than on its JSON failing to parse — a frame cut just after its closing brace parses perfectly and is still an event that was never completed.",
+      "control": "A frame Anvil never saw the end of is not reported, and that must depend on the missing boundary rather than on its JSON failing to parse \u2014 a frame cut just after its closing brace parses perfectly and is still an event that was never completed.",
       "find": "  if (!text.endsWith(\"\\n\\n\")) parts.pop();",
       "replace": "  if (false) parts.pop();",
       "tests": [
@@ -664,7 +664,7 @@
     {
       "id": "stream/facade-does-not-change-the-framing",
       "file": "packages/runtime/src/codec.ts",
-      "control": "A protocol facade declares coordinates, not framing. If it re-routed a subscription through the JSON codec, the call would lose `accept: text/event-stream` and its stream bound, and answer with one object where every other configuration answers with an array — one operation, two meanings, selected by an environment variable.",
+      "control": "A protocol facade declares coordinates, not framing. If it re-routed a subscription through the JSON codec, the call would lose `accept: text/event-stream` and its stream bound, and answer with one object where every other configuration answers with an array \u2014 one operation, two meanings, selected by an environment variable.",
       "find": "  const protocol = wireProtocolFor(op.sourceRef);\n  if (protocol === \"graphql_sse\") return graphqlSseCodec;\n  if (facadeDeclared) return httpJsonCodec;\n  return CODECS.get(protocol);",
       "replace": "  if (facadeDeclared) return httpJsonCodec;\n  return CODECS.get(wireProtocolFor(op.sourceRef));",
       "tests": [
@@ -684,7 +684,7 @@
     {
       "id": "records/traffic-never-deprecates-a-living-operation",
       "file": "packages/harness/src/records.ts",
-      "control": "Recorded traffic's one patch-bearing claim is deprecation, and only when NO observed call succeeded. Delete the check and an operation with live successes beside stale 404s gets proposed as deprecated — high-reliability evidence laundering a wrong conclusion.",
+      "control": "Recorded traffic's one patch-bearing claim is deprecation, and only when NO observed call succeeded. Delete the check and an operation with live successes beside stale 404s gets proposed as deprecated \u2014 high-reliability evidence laundering a wrong conclusion.",
       "find": "    summary.errors === summary.calls &&",
       "replace": "    true &&",
       "tests": [
@@ -694,7 +694,7 @@
     {
       "id": "pack/install-gates-on-certification",
       "file": "packages/cli/src/commands/pack.ts",
-      "control": "Digests prove the bytes are the builder's bytes; the certification says whether those bytes ever passed the gates. Delete the gate and an uncertified or failed-certification pack installs silently — distribution without the trust that makes it safe to distribute.",
+      "control": "Digests prove the bytes are the builder's bytes; the certification says whether those bytes ever passed the gates. Delete the gate and an uncertified or failed-certification pack installs silently \u2014 distribution without the trust that makes it safe to distribute.",
       "find": "  if (status !== \"certified\" && opts.allowUncertified !== true) {",
       "replace": "  if (false) {",
       "tests": [
@@ -704,7 +704,7 @@
     {
       "id": "benchmark/agent-answers-are-read-not-demanded",
       "file": "packages/refinement/src/benchmark/routing.ts",
-      "control": "Real model CLIs fence their JSON. Demanding that stdout parse whole scored 0/20 against a model that had in fact routed every task correctly — a measurement that silently reports failure for answers it was given is worse than no measurement, because a benchmark is believed.",
+      "control": "Real model CLIs fence their JSON. Demanding that stdout parse whole scored 0/20 against a model that had in fact routed every task correctly \u2014 a measurement that silently reports failure for answers it was given is worse than no measurement, because a benchmark is believed.",
       "find": "  for (const match of text.matchAll(/```(?:json)?\\s*([\\s\\S]*?)```/g)) {",
       "replace": "  for (const match of [] as RegExpMatchArray[]) {",
       "tests": [
@@ -714,7 +714,7 @@
     {
       "id": "intents/skill-and-tool-name-must-agree",
       "file": "packages/refinement/src/skills/executor.ts",
-      "control": "An intent example sharing no word with its own operation's names teaches the skill to route by a vocabulary the MCP tool name does not have. Delete the corroboration filter and Anvil ships two surfaces that disagree about what an operation is called — the one failure this compiler exists to prevent.",
+      "control": "An intent example sharing no word with its own operation's names teaches the skill to route by a vocabulary the MCP tool name does not have. Delete the corroboration filter and Anvil ships two surfaces that disagree about what an operation is called \u2014 the one failure this compiler exists to prevent.",
       "find": "    const corroborated = phrases.filter((phrase) =>\n      routingTokens(phrase).some((token) => vocabulary.has(token)),\n    );",
       "replace": "    const corroborated = phrases;",
       "tests": [
@@ -724,7 +724,7 @@
     {
       "id": "workflow-surface/only-an-eligible-workflow-supersedes",
       "file": "packages/air/src/workflow-surface.ts",
-      "control": "Only a workflow that will actually register as a composite tool may supersede operation tools. Delete the gate and a SKIPPED workflow — unapproved, an unapproved step, a malformed binding, a later step demanding the caller's one idempotency key — silently deletes its members from tools/list and registers nothing in their place. The agent loses the operations and the thing that was supposed to stand in for them.",
+      "control": "Only a workflow that will actually register as a composite tool may supersede operation tools. Delete the gate and a SKIPPED workflow \u2014 unapproved, an unapproved step, a malformed binding, a later step demanding the caller's one idempotency key \u2014 silently deletes its members from tools/list and registers nothing in their place. The agent loses the operations and the thing that was supposed to stand in for them.",
       "find": "    if (registration.skipReason !== undefined) continue;",
       "replace": "    if (false) continue;",
       "tests": [
@@ -734,7 +734,7 @@
     {
       "id": "workflow-surface/refusals-reach-a-fixed-point",
       "file": "packages/air/src/workflow-surface.ts",
-      "control": "Async-status refusals must iterate to a fixed point against the evolving suppression set. Collapse the loop to one round and a chain — A serves and polls B, B polls C, both B and C proposed for suppression — ends with B refused (kept) but C still suppressed: the served surface lists B whose anvil/async_status_tool names a tool absent from tools/list, the exact half-contract the refusal exists to prevent.",
+      "control": "Async-status refusals must iterate to a fixed point against the evolving suppression set. Collapse the loop to one round and a chain \u2014 A serves and polls B, B polls C, both B and C proposed for suppression \u2014 ends with B refused (kept) but C still suppressed: the served surface lists B whose anvil/async_status_tool names a tool absent from tools/list, the exact half-contract the refusal exists to prevent.",
       "find": "  while (changed) {",
       "replace": "  if (changed) {",
       "tests": [
@@ -745,7 +745,7 @@
     {
       "id": "trace-capabilities/ubiquity-pre-filter",
       "file": "packages/harness/src/trace-capabilities.ts",
-      "control": "A ubiquitous operation never becomes a grouping member. An operation present in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so without this pre-filter it joins every grouping and the observed tasks collapse into one undifferentiated blob — the behavioural form of the FLEXCUBE /fcubsWarningResp candidate that was 64% of every candidate member in that report.",
+      "control": "A ubiquitous operation never becomes a grouping member. An operation present in nearly every distinct trace shape (auth, health check, token refresh) co-occurs with everything, so without this pre-filter it joins every grouping and the observed tasks collapse into one undifferentiated blob \u2014 the behavioural form of the FLEXCUBE /fcubsWarningResp candidate that was 64% of every candidate member in that report.",
       "find": "    if (shapes >= UBIQUITY_MIN_SHAPES && shapeFraction >= UBIQUITY_SHAPE_FRACTION) {",
       "replace": "    if (false) {",
       "tests": [
@@ -767,7 +767,7 @@
     {
       "id": "naming/rehome-non-terminal-guard",
       "file": "packages/compiler/src/naming.ts",
-      "control": "The bare-CRUD-verb re-homing rule must never claim a verb word the estate itself uses as a real collection (a non-terminal path segment). Delete the guard and an estate with /count/{id}/lines loses its `count` resource to the rule — the exact over-reach the estate-wide pre-filter exists to prevent. It fired zero times on all six measured estates; that makes it insurance, and untested insurance is decoration.",
+      "control": "The bare-CRUD-verb re-homing rule must never claim a verb word the estate itself uses as a real collection (a non-terminal path segment). Delete the guard and an estate with /count/{id}/lines loses its `count` resource to the rule \u2014 the exact over-reach the estate-wide pre-filter exists to prevent. It fired zero times on all six measured estates; that makes it insurance, and untested insurance is decoration.",
       "find": "    if (!CRUD_SEGMENT_WORDS.has(word) || estate.nonTerminalSegments.has(word)) break;",
       "replace": "    if (!CRUD_SEGMENT_WORDS.has(word)) break;",
       "tests": [
@@ -777,7 +777,7 @@
     {
       "id": "naming/disambiguation-suffix-stutter-skip",
       "file": "packages/compiler/src/naming.ts",
-      "control": "The collision resolver must not append a distinguishing token the operation's canonicalName already ends with (compared singularized) — that is the tool-name stutter (`…_count_activities_activities`) an agent has to read past. Neutralize the check and the resolver reverts to appending the shortest token unconditionally.",
+      "control": "The collision resolver must not append a distinguishing token the operation's canonicalName already ends with (compared singularized) \u2014 that is the tool-name stutter (`\u2026_count_activities_activities`) an agent has to read past. Neutralize the check and the resolver reverts to appending the shortest token unconditionally.",
       "find": "  if (tokenWords[0] === last) return true;",
       "replace": "  return false;",
       "tests": [
@@ -787,7 +787,7 @@
     {
       "id": "corpus/naming-ratchet-fails-on-growth",
       "file": "tools/corpus/naming-conformance.mjs",
-      "control": "The naming-conformance ratchet fails on ANY counter growth. Delete the comparison and a new semantic contradiction — a resource its own name text denies, a stuttering tool name — rides through the corpus lanes green, which is exactly how six naming defects sat unnoticed for months before the naming audit found them by hand.",
+      "control": "The naming-conformance ratchet fails on ANY counter growth. Delete the comparison and a new semantic contradiction \u2014 a resource its own name text denies, a stuttering tool name \u2014 rides through the corpus lanes green, which is exactly how six naming defects sat unnoticed for months before the naming audit found them by hand.",
       "find": "    if (cur > base) {",
       "replace": "    if (false) {",
       "tests": [
@@ -795,9 +795,19 @@
       ]
     },
     {
+      "id": "corpus/refine-loop-ratchet-fails-on-drop",
+      "file": "tools/corpus/refine-loop.mjs",
+      "control": "The routing-accuracy ratchet fails when an estate's routing accuracy drops beyond the tolerance since the pinned baseline. Neutralize the comparison (always true) and a real routing regression \u2014 a task that used to route correctly and now does not \u2014 rides through the nightly refine-loop job green, exactly the failure mode the naming-conformance ratchet above already guards for a different signal.",
+      "find": "  const ok = deltaPts >= -toleranceDeltaPts;",
+      "replace": "  const ok = true;",
+      "tests": [
+        "tools/corpus/refine-loop.test.ts"
+      ]
+    },
+    {
       "id": "path-grammar/ambiguous-never-silently-selects",
       "file": "packages/compiler/src/path-grammar.ts",
-      "control": "An ambiguous path grammar never silently selects a grammar: when the estate's RPC and REST signals BOTH commit, the classifier must return `ambiguous` with a diagnostic naming both candidate grammars and fall back to the source kind's pre-classifier behavior — never let whichever side carries more votes win quietly. Delete the split-vote branch and a GET-heavy verb-terminal estate silently classifies rpc_plain with no warning.",
+      "control": "An ambiguous path grammar never silently selects a grammar: when the estate's RPC and REST signals BOTH commit, the classifier must return `ambiguous` with a diagnostic naming both candidate grammars and fall back to the source kind's pre-classifier behavior \u2014 never let whichever side carries more votes win quietly. Delete the split-vote branch and a GET-heavy verb-terminal estate silently classifies rpc_plain with no warning.",
       "find": "  if (votes.rpc.length > 0 && votes.rest.length > 0) {",
       "replace": "  if (false) {",
       "tests": [
@@ -827,7 +837,7 @@
     {
       "id": "capability-authoring/never-born-approved",
       "file": "packages/compiler/src/capability-authoring.ts",
-      "control": "An authored capability is never born approved: a manifest `capabilities` entry with an `operations` list lands in AIR at lifecycle `proposed`, and can only reach `approved` through the same review gate (and disclosure budget) as a discovered grouping. Set the birth lifecycle to `approved` and a manifest author has silently skipped review — the exact shortcut the propose-only boundary exists to forbid.",
+      "control": "An authored capability is never born approved: a manifest `capabilities` entry with an `operations` list lands in AIR at lifecycle `proposed`, and can only reach `approved` through the same review gate (and disclosure budget) as a discovered grouping. Set the birth lifecycle to `approved` and a manifest author has silently skipped review \u2014 the exact shortcut the propose-only boundary exists to forbid.",
       "find": "      lifecycle: \"proposed\",",
       "replace": "      lifecycle: \"approved\",",
       "tests": [
@@ -837,7 +847,7 @@
     {
       "id": "benchmark-admission/negative-delta-refused",
       "file": "packages/refinement/src/protocol/group.ts",
-      "control": "A group proposal whose measured routing delta is NEGATIVE is refused with the numbers before it can reach review. Disable the comparison and a composition that measurably mangles routing sails to a reviewer wearing a benchmark-scored evidence claim — the admission gate reporting success without having gated.",
+      "control": "A group proposal whose measured routing delta is NEGATIVE is refused with the numbers before it can reach review. Disable the comparison and a composition that measurably mangles routing sails to a reviewer wearing a benchmark-scored evidence claim \u2014 the admission gate reporting success without having gated.",
       "find": "  if (delta.passedAfter < delta.passedBefore) {",
       "replace": "  if (false) {",
       "tests": [
@@ -895,6 +905,46 @@
       ]
     },
     {
+      "id": "benchmark-ladder/stage-two-scoped-to-lane",
+      "file": "packages/refinement/src/benchmark/routing-ladder.ts",
+      "control": "A staged route's second hop is scored against ONLY the lane stage 1 entered, never the whole catalog \u2014 a real staged server has every other lane's tools closed, so a task whose target sits in a different lane must fail rather than pass through cross-lane leakage.",
+      "find": "  const stage2Outcome = await routeAndScore(router, intent, members, operationId);",
+      "replace": "  const stage2Outcome = await routeAndScore(router, intent, [...ladder.stage2.values()].flat(), operationId);",
+      "tests": [
+        "packages/refinement/src/benchmark/routing-ladder.test.ts"
+      ]
+    },
+    {
+      "id": "benchmark-ladder/flat-default-unchanged",
+      "file": "packages/cli/src/commands/benchmark.ts",
+      "control": "`anvil benchmark` with no --catalog flag stays flat: the default is decided in exactly one place, so the report it writes with no flag at all cannot silently gain the additive catalogs field or change what --check gates on.",
+      "find": "  const catalog: CatalogMode = opts.catalog ?? \"flat\";",
+      "replace": "  const catalog: CatalogMode = opts.catalog ?? \"laddered\";",
+      "tests": [
+        "packages/cli/src/commands/benchmark.bugbash.test.ts"
+      ]
+    },
+    {
+      "id": "ladder/intent-examples-stay-within-card-budget",
+      "file": "packages/air/src/ladder.ts",
+      "control": "An entry card folds at most MEMBER_INTENT_EXAMPLE_LIMIT of its member operations' own authored intent examples. The served card description is never truncated to the token budget (only the plan's own token accounting is, via entryCardTokens' Math.min), so this cap is the only thing keeping a lane with many verbose member intents from growing its actual served text unboundedly.",
+      "find": "const MEMBER_INTENT_EXAMPLE_LIMIT = 4;",
+      "replace": "const MEMBER_INTENT_EXAMPLE_LIMIT = Number.POSITIVE_INFINITY;",
+      "tests": [
+        "packages/air/src/ladder.test.ts"
+      ]
+    },
+    {
+      "id": "ladder/auto-never-ladders-past-accuracy-floor",
+      "file": "packages/mcp-runtime/src/lane.ts",
+      "control": "`auto` mode must refuse to ladder when a measured laddered-minus-flat accuracy delta falls below MIN_LADDERED_ACCURACY_DELTA_PTS. Weakening the floor would let `auto` serve a ladder measured to route meaningfully worse than the flat surface it replaces, with nothing telling the operator why.",
+      "find": "export const MIN_LADDERED_ACCURACY_DELTA_PTS = -8;",
+      "replace": "export const MIN_LADDERED_ACCURACY_DELTA_PTS = -100;",
+      "tests": [
+        "packages/mcp-runtime/src/lane.test.ts"
+      ]
+    },
+    {
       "id": "refinement/group-supersedes-outside-steps-refused",
       "file": "packages/refinement/src/skills/group-proposal.ts",
       "control": "A group workflow's supersedes may only name the proposal's own steps, and the named group_supersedes_within_steps check owns that refusal (the AIR schema's refinement is defense in depth behind it, not a substitute for the named rejection a harness is told to fix).",
@@ -902,6 +952,284 @@
       "replace": "    return false;",
       "tests": [
         "packages/refinement/src/protocol/group-cluster.test.ts"
+      ]
+    },
+    {
+      "id": "targets/approval-never-downgraded",
+      "file": "packages/targets/src/mcp-connector.ts",
+      "control": "The OpenAI require_approval tier for a confirmation-required (or human-approval-gated) operation is always \"always\", never \"never\" \u2014 this is the one place that mapping is decided, and every openai target profile validation/generation call goes through it. Delete the mapping and a confirmation-required, irreversible-financial refund tool would be handed to the platform as require_approval: never.",
+      "find": "  return op.confirmation.required || op.confirmation.humanApproval === true ? \"always\" : \"never\";",
+      "replace": "  return \"never\";",
+      "tests": [
+        "packages/targets/src/openai.test.ts"
+      ]
+    },
+    {
+      "id": "targets/certify-checks-every-profile",
+      "file": "packages/cli/src/commands/certify.ts",
+      "control": "`anvil certify` runs the target-kit-exact drift check for every registered profile whose subtree is present in the bundle, not only gemini-enterprise — the same regeneration proof Gemini always got. Narrow the loop back to one profile and a hand-tampered Claude, OpenAI, or MCP registry kit certifies clean.",
+      "find": "  for (const profile of listProfiles()) {",
+      "replace": "  for (const profile of listProfiles().filter((p) => p.id === \"gemini-enterprise\")) {",
+      "tests": [
+        "packages/cli/src/cmd-target.test.ts"
+      ]
+    },
+    {
+      "id": "targets/status-drift-checks-every-profile",
+      "file": "packages/cli/src/commands/status.ts",
+      "control": "`anvil status` regenerates and byte-compares the complete target subtree (verifyTargetKit) for any registered profile, not only gemini-enterprise; every other profile falls back to a shallow surfaceSignatureDigest-only freshness check that a tampered non-setup.json file never touches. Restrict the full check back to gemini-enterprise and a hand-edited Claude/OpenAI/MCP-registry kit file reports \"fresh\" with no findings.",
+      "find": "    const profile = findProfile(targetId);",
+      "replace": "    const profile = targetId === \"gemini-enterprise\" ? findProfile(targetId) : undefined;",
+      "tests": [
+        "packages/cli/src/cmd-target.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/custom-header-never-bearer",
+      "file": "packages/generators/src/sdk/plan.ts",
+      "control": "A custom_header auth scheme resolves a carrier with no Bearer/Basic scheme prefix \u2014 the header (or query) value the SDKs send travels exactly as AIR declared, never disguised as a bearer token.",
+      "find": "    return auth.carrier ?? { in: \"header\", name: `X-${prefix}-Auth` };",
+      "replace": "    return { ...(auth.carrier ?? { in: \"header\", name: `X-${prefix}-Auth` }), scheme: \"Bearer\" };",
+      "tests": [
+        "packages/generators/src/sdk.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/pem-never-in-generated-code",
+      "file": "packages/generators/src/sdk/typescript-core.ts",
+      "control": "Generated SDK source never carries a literal PEM block \u2014 only the environment-variable NAME that reads it at runtime, even in a doc comment.",
+      "find": "// material is never logged, echoed, or included in an error.",
+      "replace": "// material is never logged, echoed, or included in an error.\n// e.g. -----BEGIN CERTIFICATE-----\n// MIIBMUTANTFAKECERTIFICATEDATA==\n// -----END CERTIFICATE-----",
+      "tests": [
+        "packages/generators/src/sdk.test.ts"
+      ]
+    },
+    {
+      "id": "har/observed-never-generated",
+      "file": "packages/compiler/src/har-posture.ts",
+      "control": "Every operation compiled from a HAR (captured-traffic) source is capped at review_required, never generated or approved \u2014 a capture is evidence of what happened once, never a declared contract. Delete the cap and a HAR-sourced operation compiles straight to generated, one anvil approve away from exposure with no human ever reviewing what the adapter templated or inferred.",
+      "find": "    if (op.state === \"generated\" || op.state === \"approved\") {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/compiler/src/har-posture.test.ts",
+        "packages/compiler/src/protocols/har.test.ts"
+      ]
+    },
+    {
+      "id": "har/secret-values-never-emitted",
+      "file": "packages/compiler/src/protocols/har.ts",
+      "control": "A HAR capture's Cookie, Set-Cookie, Proxy-Authorization, and any header/query name matching /token|secret|key|password|session/i has its VALUE dropped before anything else in the adapter runs \u2014 only the carrier's NAME survives. Delete the drop and the original header (value intact) flows straight into the auth-scheme scan and the compiled document, leaking the real credential (an API key, a session cookie) into AIR the moment a HAR capture is compiled.",
+      "find": "        return { name: h.name };",
+      "replace": "        return h;",
+      "tests": [
+        "packages/compiler/src/protocols/har.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/stomp-content-length-is-bytes",
+      "file": "packages/legacy-bridge/src/stomp-client.ts",
+      "control": "STOMP content-length is a byte count (encodeStompFrame emits Buffer.byteLength(body, \"utf8\")), and the parser must locate the body's NUL terminator by that same byte offset into the raw Buffer. Reintroduce string-length arithmetic — decoding to a string and walking UTF-16 code units instead of bytes — and any reply whose body contains a multibyte UTF-8 character (e.g. an accented name) lands short of the real terminator, so the frame never completes and the caller times out waiting for a reply that already arrived.",
+      "find": "    if (declaredLength !== undefined && /^\\d+$/.test(declaredLength)) {\n      bodyEnd = bodyStart + Number(declaredLength); // byte offset — content-length is bytes\n      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more",
+      "replace": "    if (declaredLength !== undefined && /^\\d+$/.test(declaredLength)) {\n      const decoded = buffer.toString(\"utf8\", bodyStart); // MUTANT: string-length arithmetic reintroduced\n      bodyEnd = bodyStart + decoded.slice(0, Number(declaredLength)).length;\n      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more",
+      "tests": [
+        "packages/legacy-bridge/src/stomp-client.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/wire-binding-coherence-refused",
+      "file": "packages/legacy-bridge/src/wire-binding.ts",
+      "control": "The deployment-local bridge refuses to serve a queue wire binding whose legacyBindingContentHash does not match the reviewed LegacyCapabilityBinding it was handed — the coherence property that stops a bridge from silently serving an unreviewed or since-changed candidate. Delete the check and any wire binding is accepted for any binding, hash mismatch or not.",
+      "find": "  if (wireBinding.legacyBindingContentHash !== binding.contentHash) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/legacy-bridge/src/wire-binding.test.ts",
+        "packages/legacy-bridge/src/facade.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/idempotent-replay-dedup",
+      "file": "packages/legacy-bridge/src/broker-double.ts",
+      "control": "A repeated idempotency key must return the identical cached reply without re-executing the business side — what makes an outer bounded retry safe at all. Delete the cache check and every call re-executes the handler, so a retried call can observe a different outcome than the one that actually happened.",
+      "find": "    if (cached !== undefined) return { body: cached };",
+      "replace": "    if (false) return { body: cached };",
+      "tests": [
+        "packages/legacy-bridge/src/broker-double.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/broker-attempt-accounted",
+      "file": "packages/legacy-bridge/src/broker-double.ts",
+      "control": "Every exchange the double receives increments its attempt counter, which is the only way a caller can prove the bridge made exactly one broker attempt per HTTP call and never retried internally. Delete the increment and a silent internal retry loop would be unobservable.",
+      "find": "    this._sendAttempts += 1;",
+      "replace": "    // MUTANT: attempt not counted",
+      "tests": [
+        "packages/legacy-bridge/src/broker-double.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/timeout-enforced",
+      "file": "packages/legacy-bridge/src/broker.ts",
+      "control": "The reviewed timeout is enforced by racing the broker call against a timer — the one place a hung exchange is ever turned into a failure. Delete the race and a broker that never replies leaves the call pending forever instead of failing closed.",
+      "find": "    return await Promise.race([client.requestReply(options), timeout]);",
+      "replace": "    return await client.requestReply(options);",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/timeout-maps-to-structured-error",
+      "file": "packages/legacy-bridge/src/facade.ts",
+      "control": "A broker timeout must answer with a structured, non-retryable upstream_timeout — never a hang and never a false success. Delete the branch and a timeout falls through to the generic transport-failure response, losing the distinction the runtime's own status-code mapping (packages/runtime/src/errors.ts) depends on.",
+      "find": "      if (err instanceof QueueBrokerTimeoutError) {",
+      "replace": "      if (false) {",
+      "tests": [
+        "packages/legacy-bridge/src/facade.test.ts",
+        "packages/legacy-bridge/src/conformance.test.ts"
+      ]
+    },
+    {
+      "id": "legacy-bridge/promotion-requires-not-implemented",
+      "file": "packages/compiler/src/legacy/refinement/model.ts",
+      "control": "A binding may be promoted to conformance_passed only from not_implemented — never a second time, and never from a status this function does not recognize. Delete the guard and an already-promoted binding could be silently re-promoted, an operation with no equivalent to a lower-safety direction.",
+      "find": "  if (binding.runtime.status !== \"not_implemented\") {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/compiler/src/legacy/refinement/model.test.ts"
+      ]
+    },
+    {
+      "id": "auth/mtls-material-never-logged",
+      "file": "packages/runtime/src/auth.ts",
+      "control": "expectedCredentials surfaces mtls client-certificate material by its declared reference NAMES only, in an auth_required error a stranded caller reads -- never the resolved PEM value.",
+      "find": "      case \"mtls\":\n        return auth.tls\n          ? [\n              auth.tls.clientCertRef,\n              auth.tls.clientKeyRef,\n              ...(auth.tls.caRef ? [auth.tls.caRef] : []),\n            ]\n          : [];",
+      "replace": "      case \"mtls\":\n        return auth.tls\n          ? [this.env[auth.tls.clientCertRef] ?? \"\", this.env[auth.tls.clientKeyRef] ?? \"\"]\n          : [];",
+      "tests": [
+        "packages/runtime/src/auth.test.ts"
+      ]
+    },
+    {
+      "id": "auth/custom-header-never-bearer",
+      "file": "packages/runtime/src/auth.ts",
+      "control": "A resolved custom_header credential is carried verbatim under its declared carrier (a vendor's own header name and optional scheme prefix) -- never collapsed to a generic Authorization: Bearer header the way every OAuth/JWT variant is.",
+      "find": "        return carrier.in === \"query\"\n          ? { query: { [carrier.name]: value } }\n          : { headers: { [carrier.name]: carried } };",
+      "replace": "        return { headers: { Authorization: `Bearer ${value}` } };",
+      "tests": [
+        "packages/runtime/src/auth.test.ts"
+      ]
+    },
+    {
+      "id": "auth/authorization-code-stays-review",
+      "file": "packages/compiler/src/manifest.ts",
+      "control": "oauth2_authorization_code auth always compiles review_required, never approved by a manifest state override, however complete its PKCE/token mechanics are -- end-user authority is a human decision, not a material-completeness one.",
+      "find": "  } else if (op.auth.type === \"oauth2_authorization_code\") {",
+      "replace": "  } else if (false) {",
+      "tests": [
+        "packages/compiler/src/auth-normalization.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/scope-denied-before-upstream",
+      "file": "packages/runtime/src/executor.ts",
+      "control": "A named principal missing a scope an operation's auth.scopes requires is refused before any upstream call -- never silently allowed through because the check was skipped.",
+      "find": "    if (missingRequiredScopes.length > 0) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/runtime/src/fleet-safety.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/budget-never-retried",
+      "file": "packages/runtime/src/executor.ts",
+      "control": "A rate-limited or budget-exhausted refusal is never marked retryable -- a caller (SDK, agent, CLI) that respects the envelope must not loop hammering a budget that is already exhausted.",
+      "find": "          retryable: false,\n          safeToRetry: false,",
+      "replace": "          retryable: true,\n          safeToRetry: false,",
+      "tests": [
+        "packages/runtime/src/fleet-safety.test.ts"
+      ]
+    },
+    {
+      "id": "harness/drift-alarm-bare-409-is-not-replay-evidence",
+      "file": "packages/harness/src/drift-alarm.ts",
+      "control": "A bare `conflict` error code alone is not evidence of an idempotency-replay contradiction -- an ordinary business conflict (e.g. \"this resource already exists\") returns the same code and can itself be perfectly idempotent to repeat. Only a record carrying the runtime idempotency ledger's own \"replay\" evidence (SpooledRecord.ledger) proves the runtime treated it as a repeat of a specific earlier call. Drop the ledger check and any recorded conflict on a naturally-idempotent operation opens a high-severity case, alarm-fatiguing an operator over routine business conflicts.",
+      "find": "  const conflicting = opRecords.filter((r) => r.errorCode === \"conflict\" && r.ledger === \"replay\");",
+      "replace": "  const conflicting = opRecords.filter((r) => r.errorCode === \"conflict\");",
+      "tests": [
+        "packages/harness/src/drift-alarm.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/contradiction-opens-case-never-patches",
+      "file": "packages/harness/src/drift-alarm.ts",
+      "control": "The drift alarm routes an idempotency-replay contradiction through the EXISTING contested_safety_semantic deficiency (classify-idempotency's registered trigger) -- never a made-up code -- so opening a case actually reaches a real, evidence-compatible skill instead of silently finding nothing to open.",
+      "find": "      code: \"contested_safety_semantic\",",
+      "replace": "      code: \"contested_safety_semantic_MUTANT\",",
+      "tests": [
+        "packages/harness/src/drift-alarm.test.ts"
+      ]
+    },
+    {
+      "id": "auth/manifest-approval-needs-reviewer",
+      "file": "packages/compiler/src/auth-approval.ts",
+      "control": "A manifest's state: approved on an oauth2_authorization_code operation is only granted when BOTH reviewed_by and review_reason are non-empty -- deleting the reviewer/reason guard would let a bare `state: approved`, with neither field named, compile straight to approved with no one on record for delegating the end user's authority.",
+      "find": "  if (hasReviewer && hasReason) {",
+      "replace": "  if (true) {",
+      "tests": [
+        "packages/compiler/src/auth-normalization.test.ts",
+        "packages/cli/src/commands/manifest-auth-approval.bugbash.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/default-resolver-delegates-executable-auth-schemes",
+      "file": "packages/runtime/src/credentials.ts",
+      "control": "SecretManagerCredentialResolver -- the DEFAULT outbound resolver when ANVIL_CREDENTIALS is unset -- delegates mtls, custom_header, and oauth2_authorization_code to the wrapped EnvCredentialResolver instead of hard-failing them, so an approved, certified operation using one of these three schemes actually resolves credentials on a default-configured deploy instead of failing auth_required on every call (Codex review, PR #43, finding 1).",
+      "find": "          return this.inner.resolve(profileName, auth);",
+      "replace": "          return null;",
+      "tests": [
+        "packages/runtime/src/credentials.test.ts"
+      ]
+    },
+    {
+      "id": "cli/auth-login-preserves-declared-redirect-host",
+      "file": "packages/cli/src/commands/auth.ts",
+      "control": "`anvil auth login` builds redirect_uri from the provider's DECLARED loopback host (127.0.0.1 or localhost, exactly as registered) with only the port substituted, on both the authorize request and the token exchange -- an OAuth server compares redirect_uri byte-for-byte, so silently rewriting a registered `localhost` host to `127.0.0.1` would make a correctly-configured client reject the flow (Codex review, PR #43, finding 2).",
+      "find": "      const redirectUri = `http://${loopback.host}:${actualPort}${loopback.path}${loopback.search}`;",
+      "replace": "      const redirectUri = `http://127.0.0.1:${actualPort}${loopback.path}${loopback.search}`;",
+      "tests": [
+        "packages/cli/src/commands/auth.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/unresolved-principal-refused-when-directory-configured",
+      "file": "packages/runtime/src/executor.ts",
+      "control": "When a principal directory IS configured for this session but the caller's own credential did not resolve to an entry in it, execute() refuses fail-closed rather than silently falling back to the anonymous, every-scope principal -- deleting this gate would let a misconfigured/mistyped/unmatched credential grant every scope.",
+      "find": "    if (principalUnresolved) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/runtime/src/fleet-safety.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/credentials-namespaced-per-bundle",
+      "file": "packages/cli/src/commands/serve.ts",
+      "control": "From two bundles on, --fleet namespaces each bundle's authProfile by its own stable id before credentialProfileName adds the security-scheme suffix -- deleting the per-bundle namespace would let two bundles whose schemes share a name (both \"oauth\", say) resolve the SAME ANVIL_<PROFILE>_* variables, so one service's credential could be sent to another's origin.",
+      "find": "      bundles.length === 1\n        ? config.authProfile\n        : `${config.authProfile ?? \"default\"}_${fleetToolPrefix(bundle.id)}`;",
+      "replace": "config.authProfile;",
+      "tests": [
+        "packages/cli/src/commands/serve.test.ts"
+      ]
+    },
+    {
+      "id": "fleet/readyz-verifies-certification-hash",
+      "file": "packages/mcp-runtime/src/fleet.ts",
+      "control": "A bundle is ready only when its certification is BOTH status:\"passed\" AND its hash still matches the bundle's CURRENT content (fresh) -- deleting the freshness half would let a stale, copied, or mismatched certification.json (a compiler-owned file edited after `anvil certify` ran) still report ready:true.",
+      "find": "    const certificationFresh = bundle.certification?.fresh !== false;",
+      "replace": "    const certificationFresh = true;",
+      "tests": [
+        "packages/mcp-runtime/src/fleet.test.ts",
+        "packages/cli/src/commands/serve.test.ts"
       ]
     }
   ]

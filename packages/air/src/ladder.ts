@@ -75,9 +75,50 @@ export interface LadderLane {
   routingPhrases: string[];
   /** Member operations, disclosed only once the lane is opened. */
   operationIds: string[];
+  /**
+   * `${effect.action} ${effect.resource}` for up to `MEMBER_VOCABULARY_LIMIT`
+   * member operations, deduplicated and in `operationIds` order. A discovered
+   * capability's own `description`/`intentExamples` are frequently a template
+   * ("Views capability for zendesk.", "work with views") that shares no
+   * vocabulary with how an agent actually asks ("list the views", "get a view
+   * by id") — measured on a 640-operation estate, that gap was the majority of
+   * every stage-1 routing miss (see `docs/backtesting/routing-at-scale.md`).
+   * The member operations' own action/resource pairs are the one vocabulary
+   * source every lane already carries regardless of how its capability was
+   * authored, so `laneEntryDescription` folds them into the card.
+   */
+  memberVocabulary: string[];
+  /**
+   * Up to `MEMBER_INTENT_EXAMPLE_LIMIT` of the member operations' own
+   * `skill.intentExamples`, deduplicated and in `operationIds` order — the
+   * second stage-1 lever measured in `docs/backtesting/routing-at-scale.md`.
+   * `memberVocabulary` gives a router two-word stems ("list view"); an
+   * authored intent example is the full phrase an agent would actually type
+   * ("list the views created this week"), which a lexical or model router
+   * matches more directly than a stem ever can. Every approved operation
+   * already carries this field once `author-intent-examples` has run — it is
+   * the same text the routing benchmark's own tasks are drawn from — so, like
+   * `memberVocabulary`, folding it in costs no new evidence source and keeps
+   * the ladder a pure projection.
+   */
+  memberIntentExamples: string[];
   /** Measured cost of the operations this lane discloses; 0 when unmeasured. */
   laneTokens: number;
 }
+
+/** Cap on `LadderLane.memberVocabulary` — a card is a routing aid, not a
+ *  member listing, so this stays well short of the largest lane's true
+ *  member count. */
+const MEMBER_VOCABULARY_LIMIT = 8;
+
+/**
+ * Cap on `LadderLane.memberIntentExamples`. A full intent phrase costs far
+ * more of the card's text budget than a two-word vocabulary stem, so this
+ * stays smaller than `MEMBER_VOCABULARY_LIMIT` — enough for a router to see
+ * real phrasing from several distinct members without one lane's examples
+ * alone approaching `entryCardTokens`' per-card cap.
+ */
+const MEMBER_INTENT_EXAMPLE_LIMIT = 4;
 
 export interface LadderPlan {
   mode: LadderMode;
@@ -123,19 +164,30 @@ export function laneEntryToolName(capabilityId: string): string {
 /**
  * The agent-facing text of an entry card. Kept deliberately small — the card
  * exists to let an agent decide whether to pay for the lane, so it carries the
- * capability's own description and routing phrases and nothing else. Anything
- * richer belongs inside the lane, which is the whole point of the ladder.
+ * capability's own description, its member operations' own verb/resource
+ * vocabulary, and routing phrases, and nothing else. Anything richer belongs
+ * inside the lane, which is the whole point of the ladder.
  */
 export function laneEntryDescription(lane: {
   displayName: string;
   summary: string;
   routingPhrases: readonly string[];
   operationIds: readonly string[];
+  memberVocabulary: readonly string[];
+  memberIntentExamples: readonly string[];
 }): string {
   const parts = [
     lane.summary || lane.displayName,
     `Opens ${lane.operationIds.length} tool(s) for ${lane.displayName}.`,
   ];
+  if (lane.memberVocabulary.length > 0) {
+    parts.push(`Covers: ${lane.memberVocabulary.join(", ")}.`);
+  }
+  if (lane.memberIntentExamples.length > 0) {
+    parts.push(
+      `Examples: ${lane.memberIntentExamples.map((example) => `"${example}"`).join("; ")}.`,
+    );
+  }
   if (lane.routingPhrases.length > 0) {
     parts.push(`Use for requests like: ${lane.routingPhrases.slice(0, 5).join("; ")}.`);
   }
@@ -303,6 +355,41 @@ function buildLane(
     return total + (operation ? operationTokens(operation) : 0);
   }, 0);
 
+  // Deduplicated in `operationIds` order (already sorted above), so the same
+  // pair named by two member operations ("list ticket", "list ticket") counts
+  // once and the card's limited slots go to distinct vocabulary.
+  const memberVocabulary: string[] = [];
+  const seenVocabulary = new Set<string>();
+  for (const id of operationIds) {
+    if (memberVocabulary.length >= MEMBER_VOCABULARY_LIMIT) break;
+    const operation = byId.get(id);
+    if (!operation) continue;
+    const phrase = `${operation.effect.action} ${operation.effect.resource}`.trim();
+    if (phrase === "" || seenVocabulary.has(phrase)) continue;
+    seenVocabulary.add(phrase);
+    memberVocabulary.push(phrase);
+  }
+
+  // Same dedup-and-cap shape as `memberVocabulary` above, over a different
+  // vocabulary source: the member operations' own authored intent phrases
+  // rather than their action/resource stems. Iterated in the same
+  // `operationIds` order so both fields draw from the same deterministic
+  // walk of the lane's membership.
+  const memberIntentExamples: string[] = [];
+  const seenIntentExamples = new Set<string>();
+  for (const id of operationIds) {
+    if (memberIntentExamples.length >= MEMBER_INTENT_EXAMPLE_LIMIT) break;
+    const operation = byId.get(id);
+    if (!operation) continue;
+    for (const example of operation.skill.intentExamples) {
+      if (memberIntentExamples.length >= MEMBER_INTENT_EXAMPLE_LIMIT) break;
+      const trimmed = example.trim();
+      if (trimmed === "" || seenIntentExamples.has(trimmed)) continue;
+      seenIntentExamples.add(trimmed);
+      memberIntentExamples.push(trimmed);
+    }
+  }
+
   return {
     capabilityId: capability.id,
     entryToolName: laneEntryToolName(capability.id),
@@ -310,6 +397,8 @@ function buildLane(
     summary: capability.description,
     routingPhrases: capability.intentExamples,
     operationIds,
+    memberVocabulary,
+    memberIntentExamples,
     laneTokens,
   };
 }

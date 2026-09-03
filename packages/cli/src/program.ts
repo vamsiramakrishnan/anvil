@@ -3,6 +3,7 @@ import { registerAdopt } from "./commands/adopt.js";
 import { registerAgentify } from "./commands/agentify.js";
 import { registerApprove } from "./commands/approve.js";
 import { registerAssess } from "./commands/assess.js";
+import { registerAuth } from "./commands/auth.js";
 import { registerBenchmark } from "./commands/benchmark.js";
 import { registerBuild } from "./commands/build.js";
 import { registerCapability } from "./commands/capability/capability.js";
@@ -38,7 +39,7 @@ import { registerSource } from "./commands/source.js";
 import { registerSources } from "./commands/sources.js";
 import { registerStatus } from "./commands/status.js";
 import { registerSync } from "./commands/sync.js";
-import { registerTarget } from "./commands/target.js";
+import { registerTarget } from "./commands/target/target.js";
 import { processIO } from "./io.js";
 
 export const VERSION = "0.1.0";
@@ -121,6 +122,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerDrift(program, ctx);
   registerRun(program, ctx);
   registerJob(program, ctx);
+  registerAuth(program, ctx);
   registerServe(program, ctx);
   registerPackage(program, ctx);
   registerSkill(program, ctx);

@@ -103,6 +103,110 @@ Network-gated (it fetches the real specs), so it runs **nightly** in `corpus.yml
 not as a per-PR gate. Exits non-zero if any system is red. Flags: `--systems a,b`
 (subset), `--work <dir>` (keep the built bundles).
 
+## Refine-loop mode
+
+```bash
+node tools/corpus/refine-loop.mjs                          # every estates.tsv + refine-estates.tsv row
+node tools/corpus/refine-loop.mjs --systems kong-refunds    # subset
+node tools/corpus/refine-loop.mjs --work ./workspace        # keep the bundles + packs
+node tools/corpus/refine-loop.mjs --update-routing-baseline # bank routing-accuracy growth
+```
+
+The quality flywheel — `anvil refine run`, `anvil benchmark`, `anvil refine
+export-task … group:<id>` — is a loop only when someone types the commands.
+`refine-loop.mjs` (see its own header comment for the exact pipeline) is that
+someone: for every row of two files — `estates.tsv` (the same local, offline
+gateway-estate fixtures the `estates` mode above compiles) and
+`refine-estates.tsv` (bare API contracts compiled directly with a supplemental
+manifest; see below) — in a per-run workspace it acquires a bundle (`estate
+import` for a gateway row, `compile --manifest` for a direct-spec row — see
+`compileSpecRow`/`importEstate` in `refine-loop.mjs`) and then drives the same
+CLI seam over it regardless of source — `refine run --out` → `benchmark
+--catalog both` → read `confusion.clusters` off the written
+`benchmark.report.json` (already floored at `MIN_CLUSTER_EVIDENCE` by
+`@anvil/refinement`'s `analyzeConfusion`) → `refine export-task … group:<id>`
+for each cluster — and writes one schema-validated report
+(`report/refine-loop.report.json`, schema in `refine-loop.schema.json`) plus a
+Markdown summary (`report/refine-loop-summary.md`) that a nightly workflow
+posts to a single rolling **"Refinement inbox"** issue (see the `refine-loop`
+job in `.github/workflows/corpus.yml`).
+
+Deterministic; no model calls (the CLI's default lexical router); no network
+beyond the corpus's own local fixtures. **Nothing is auto-applied** — the loop
+only proposes and exports; a human still decides with `anvil refine
+review`/`approve`/`reject`, or by opening the workspace it wrote in `anvil
+console` (see `docs/console.md#the-refinement-loops-packs`).
+
+### Routing-accuracy ratchet (`routing-baseline.json`)
+
+Mirrors the naming-conformance ratchet's shape (below), applied to routing
+accuracy instead of a defect count: per estate, per catalog (`flat` and
+`laddered`), the pinned baseline records the measured accuracy plus the exact
+per-`(operationId, intent)` pass/fail outcomes it was measured from. A run's
+current accuracy is compared against that baseline —
+
+- **A drop beyond 1.0 point fails the job** and names the estate, the catalog,
+  and the exact `{operationId, intent}` pairs that flipped from passing to
+  failing (`flippedToFail`, the same shape `@anvil/refinement`'s group-proposal
+  routing delta uses, reused for a different comparison axis — across two runs
+  of the same catalog over time, not current-vs-hypothetical within one run).
+  A drop of *exactly* 1.0 point is not "beyond" it and still passes — routing
+  accuracy is expected to jitter by a fraction of a point as fixtures evolve,
+  unlike the naming-conformance counters below, which never legitimately grow.
+- **No baseline entry is not a failure.** It is the first-run state — recorded,
+  never gated, the same posture `baseline.json` and `naming-baseline.json`
+  take.
+- **`anvil benchmark`'s own report has no per-operation figure for the
+  `laddered` catalog** (only the aggregate `catalogs.laddered`), so
+  `refine-loop.mjs` re-derives it directly from `@anvil/refinement`'s built
+  dist — the exact same functions (`lexicalRouter`, `benchmarkOperations`,
+  `ladderedCatalog`, `stagedRoute`) `anvil benchmark --catalog both` calls
+  internally, read at finer grain. Never a second definition of "laddered
+  routing."
+
+**To re-record after an intentional change** (a fixture gains approved
+operations, an estate's routing genuinely improves):
+
+```bash
+pnpm build
+node tools/corpus/refine-loop.mjs --update-routing-baseline
+git diff tools/corpus/routing-baseline.json   # review — every delta should be explainable
+```
+
+As of this writing every `estates.tsv` row imports with **zero approved
+operations** (route-only fidelity — see the `operations-accounting` oracle
+above), so the routing benchmark has nothing to route for those six rows and
+every catalog's accuracy records `0/0`. This is a real, honest floor, not a
+placeholder: the ratchet holds trivially until a gateway estate is enriched
+past `blocked` and gains approved reads with `skill.intentExamples`. `refine
+run` itself is NOT similarly empty — it operates over every operation
+regardless of approval state, so review-tier refinements and auto-approved
+ones (documentation, intent examples) surface today even though routing does
+not yet.
+
+### `refine-estates.tsv`: the one row with real routing signal
+
+The six `estates.tsv` rows stay at `0/0` on purpose — they measure the
+gateway-import *route-only* posture (naming, effect/risk, policy accounting),
+never enrich a fixture past `blocked`, and touching them to manufacture
+routing signal would blur what the `estates` mode above is actually gating.
+`refine-estates.tsv` is a second, narrower row source that exists solely to
+give the routing-accuracy ratchet a row that isn't vacuous: each row names a
+bare API contract (not a gateway archive) plus a supplemental Anvil manifest,
+and `refine-loop.mjs` compiles it directly with `anvil compile <spec>
+--manifest <manifest>` (see `compileSpecRow`) instead of `estate import`. The
+one row today, `payments-approved`, compiles
+[`examples/payments/openapi.yaml`](../../examples/payments/openapi.yaml) with
+[`fixtures/payments-approved.manifest.yaml`](fixtures/payments-approved.manifest.yaml),
+which sets `state: approved` and three `intent_examples` on the two **read**
+operations only (`getPayment`, `getCustomer`) — never on `createRefund` or
+`capturePayment`, which stay `review_required`; this manifest exists to feed
+the ratchet, not to grant new authority, and a mutation is never approved just
+to produce a benchmark task. That row currently measures 100.0% on both the
+flat and laddered catalogs (6/6 tasks; see `routing-baseline.json`'s
+`payments-approved` entry) — real accuracy over a real approved surface, not a
+placeholder number.
+
 ### Outcome taxonomy
 
 | class | meaning | fatal? |
@@ -263,6 +367,10 @@ Every run rewrites `tools/corpus/report/`:
   per-oracle results.
 - `summary.md` — human-readable table (quick) or taxonomy + non-ok specimens
   (sweep).
+- `refine-loop.report.json` / `refine-loop-summary.md` — refine-loop mode's
+  own report (schema in `refine-loop.schema.json`) and the Markdown body
+  posted to the "Refinement inbox" issue.
 
 The directory is gitignored; CI uploads it as the `corpus-reports` artifact
-(see `.github/workflows/corpus.yml` — nightly cron + manual dispatch).
+(see `.github/workflows/corpus.yml` — nightly cron + manual dispatch; the
+`refine-loop` job runs on the cron schedule only).

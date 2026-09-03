@@ -25,9 +25,9 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 400,
-  "asserted": 286,
-  "unasserted": 114,
+  "total": 409,
+  "asserted": 294,
+  "unasserted": 115,
   "codes": {
     "apiconnect/empty_export": {
       "packages": [
@@ -1376,6 +1376,12 @@
       ],
       "asserted": false
     },
+    "legacy/bridge_plan_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
     "legacy/candidate_not_found": {
       "packages": [
         "cli"
@@ -1917,6 +1923,18 @@
       ],
       "asserted": true
     },
+    "target/approval_downgraded": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/embedded_secret_value": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
     "target/endpoint_query_or_fragment": {
       "packages": [
         "targets"
@@ -2067,6 +2085,18 @@
       ],
       "asserted": true
     },
+    "target/invalid_registry_name": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
+    },
+    "target/invalid_repository_url": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
     "target/invalid_server_auth": {
       "packages": [
         "targets"
@@ -2113,13 +2143,19 @@
       "packages": [
         "targets"
       ],
-      "asserted": false
+      "asserted": true
     },
     "target/missing_connector_oauth_tenant": {
       "packages": [
         "targets"
       ],
       "asserted": false
+    },
+    "target/missing_endpoint": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": true
     },
     "target/missing_file": {
       "packages": [
@@ -2137,19 +2173,37 @@
       "packages": [
         "targets"
       ],
-      "asserted": false
+      "asserted": true
     },
     "target/missing_inbound_issuer": {
       "packages": [
         "targets"
       ],
-      "asserted": false
+      "asserted": true
     },
     "target/missing_project_number": {
       "packages": [
         "targets"
       ],
       "asserted": true
+    },
+    "target/missing_registry_name": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/missing_registry_version": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
+    },
+    "target/missing_server_auth": {
+      "packages": [
+        "targets"
+      ],
+      "asserted": false
     },
     "target/missing_setup": {
       "packages": [

@@ -1,0 +1,32 @@
+# Supplemental manifest for the refine-loop corpus only (see
+# tools/corpus/refine-estates.tsv, which compiles examples/payments/openapi.yaml
+# with this manifest via `anvil compile --manifest`). It exists to give the
+# refine-loop routing-accuracy ratchet a row with real signal: every row of
+# estates.tsv imports through `anvil estate import` with zero approved
+# operations (route-only fidelity — see tools/corpus/README.md's Refine-loop
+# mode section), so their flat and laddered accuracy record 0/0 forever. This
+# manifest approves the two READ operations only:
+#
+#   getPayment, getCustomer
+#
+# `createRefund` and `capturePayment` are financial mutations and are
+# deliberately left unapproved here — this manifest exists to feed the
+# routing ratchet, not to grant new authority, and a mutation is never
+# approved just to produce a benchmark task. (The separate, human-reviewed
+# examples/payments/anvil.yaml *does* approve those mutations, with the
+# idempotency and confirmation evidence a real financial mutation requires —
+# see docs/MANIFEST.md. This fixture is not that review; it is a corpus input
+# scoped to `tools/corpus/` only.)
+operations:
+  getPayment:
+    state: approved
+    intent_examples:
+      - look up a payment
+      - check the status of a payment
+      - get details for a payment by id
+  getCustomer:
+    state: approved
+    intent_examples:
+      - look up a customer
+      - get a customer's details
+      - find a customer by their id

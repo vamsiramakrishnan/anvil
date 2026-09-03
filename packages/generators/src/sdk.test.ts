@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { type AirDocument, Operation as OperationSchema } from "@anvil/air";
+import { type AirDocument, type AuthRequirement, Operation as OperationSchema } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { beforeAll, describe, expect, it } from "vitest";
 import { generateBundle } from "./bundle.js";
 import { certifyBundle } from "./certify.js";
+import { sdkAuthDrift } from "./sdk/certify.js";
 import {
   generateSdks,
   SDK_LANGUAGES,
@@ -208,6 +209,224 @@ describe("credentials never reach the artifacts", () => {
     const plan = sdkPlan(air);
     expect(plan.auth.envVar).toBe("PAYMENTS_TOKEN");
     expect(plan.auth.carrier).toEqual({ in: "header", name: "Authorization", scheme: "Bearer" });
+  });
+});
+
+/**
+ * Auth scheme parity: custom-header carriers, mTLS, and the delegated-token
+ * (`oauth2_authorization_code`) contract — the three schemes commit c2733be
+ * gave AIR the mechanics for and this lane carries into all four generated
+ * SDKs. `payments.customers.get` (a read, gate-free) is retyped per scheme so
+ * each golden fixture exercises the real emitters end to end, the same way
+ * `withPagination`/`withHeld` above retype one operation rather than
+ * hand-building a document.
+ */
+describe("auth scheme parity: custom-header, mtls, and delegated-token carriers", () => {
+  function withAuth(auth: AuthRequirement): AirDocument {
+    const target = air.operations.find((op) => op.id === "payments.customers.get");
+    if (!target) throw new Error("fixture no longer has payments.customers.get");
+    const retyped = OperationSchema.parse({ ...target, auth });
+    return { ...air, operations: air.operations.map((op) => (op.id === target.id ? retyped : op)) };
+  }
+
+  // `air` is only populated in the top-level `beforeAll`, so these are built
+  // lazily in a local `beforeAll` rather than at describe-body evaluation
+  // time, when `air` is still undefined.
+  let CUSTOM_HEADER_DOC: AirDocument;
+  let MTLS_DOC: AirDocument;
+  let AUTH_CODE_DOC: AirDocument;
+
+  beforeAll(() => {
+    CUSTOM_HEADER_DOC = withAuth({
+      type: "custom_header",
+      scopes: [],
+      principal: "service",
+      secretSource: "env",
+      carrier: { in: "header", name: "X-Api-Auth" },
+    });
+    MTLS_DOC = withAuth({
+      type: "mtls",
+      scopes: [],
+      principal: "service",
+      secretSource: "env",
+      tls: {
+        clientCertRef: "PAYMENTS_MTLS_CLIENT_CERT",
+        clientKeyRef: "PAYMENTS_MTLS_CLIENT_KEY",
+        caRef: "PAYMENTS_MTLS_CA",
+      },
+    });
+    AUTH_CODE_DOC = withAuth({
+      type: "oauth2_authorization_code",
+      scopes: ["payments.read"],
+      principal: "end_user",
+      secretSource: "env",
+      provider: {
+        tokenEndpoint: "https://auth.example.com/token",
+        authorizationEndpoint: "https://auth.example.com/authorize",
+        pkce: true,
+        redirectUri: "http://127.0.0.1:0/callback",
+      },
+    });
+  });
+
+  describe("custom_header", () => {
+    let plan: ReturnType<typeof sdkPlan>;
+    let files: Record<string, string>;
+    beforeAll(() => {
+      plan = sdkPlan(CUSTOM_HEADER_DOC);
+      files = generateSdks(CUSTOM_HEADER_DOC);
+    });
+
+    it("resolves a service-prefixed HEADER_VALUE env var and the declared carrier, with no scheme", () => {
+      expect(plan.auth.envVar).toBe("PAYMENTS_HEADER_VALUE");
+      expect(plan.auth.carrier).toEqual({ in: "header", name: "X-Api-Auth" });
+    });
+
+    it("carries the declared header name in every language, and never a Bearer scheme (mutant: sdk/custom-header-never-bearer)", () => {
+      const sources: Record<SdkLanguage, string> = {
+        typescript: files["sdk/typescript/src/client.ts"] as string,
+        python: Object.entries(files).find(([p]) => p.endsWith("client.py"))?.[1] as string,
+        go: files["sdk/go/client.go"] as string,
+        java: Object.entries(files).find(([p]) => p.endsWith("PaymentsClient.java"))?.[1] as string,
+      };
+      for (const language of SDK_LANGUAGES) {
+        expect(sources[language], language).toContain("X-Api-Auth");
+        // The carrier the plan resolved carries no `scheme` — a header value
+        // sent verbatim, never prefixed the way a bearer token is.
+        expect(plan.auth.carrier?.scheme, language).toBeUndefined();
+      }
+    });
+
+    it("passes sdkAuthDrift for a freshly generated bundle", () => {
+      expect(sdkAuthDrift(files, plan.auth, sdkManifest(plan).auth)).toEqual([]);
+    });
+  });
+
+  describe("mtls", () => {
+    let plan: ReturnType<typeof sdkPlan>;
+    let files: Record<string, string>;
+    beforeAll(() => {
+      plan = sdkPlan(MTLS_DOC);
+      files = generateSdks(MTLS_DOC);
+    });
+
+    it("resolves the exact env-var NAMES auth.tls carries, and no bearer carrier at all", () => {
+      expect(plan.auth.tls).toEqual({
+        certEnvVar: "PAYMENTS_MTLS_CLIENT_CERT",
+        keyEnvVar: "PAYMENTS_MTLS_CLIENT_KEY",
+        caEnvVar: "PAYMENTS_MTLS_CA",
+      });
+      expect(plan.auth.carrier).toBeUndefined();
+    });
+
+    it("carries a real mTLS transport in every language, reading the declared env vars (mutant: sdk/pem-never-in-generated-code)", () => {
+      const sources: Record<SdkLanguage, string[]> = {
+        typescript: Object.entries(files)
+          .filter(([p]) => p.startsWith("sdk/typescript/"))
+          .map(([, c]) => c),
+        python: Object.entries(files)
+          .filter(([p]) => p.startsWith("sdk/python/"))
+          .map(([, c]) => c),
+        go: Object.entries(files)
+          .filter(([p]) => p.startsWith("sdk/go/"))
+          .map(([, c]) => c),
+        java: Object.entries(files)
+          .filter(([p]) => p.startsWith("sdk/java/"))
+          .map(([, c]) => c),
+      };
+      const transportSymbol: Record<SdkLanguage, string> = {
+        typescript: "createMtlsFetch",
+        python: "build_mtls_opener",
+        go: "NewMtlsHTTPClient",
+        java: "Mtls.buildContext",
+      };
+      for (const language of SDK_LANGUAGES) {
+        const joined = sources[language].join("\n");
+        expect(joined, `${language} transport`).toContain(transportSymbol[language]);
+        expect(joined, `${language} cert env var`).toContain("PAYMENTS_MTLS_CLIENT_CERT");
+        expect(joined, `${language} key env var`).toContain("PAYMENTS_MTLS_CLIENT_KEY");
+        expect(joined, `${language} ca env var`).toContain("PAYMENTS_MTLS_CA");
+        // The one property a mutant could quietly break: literal PEM bytes (a
+        // real certificate/key) never appear in generated source — only the
+        // env-var NAME that reads them at runtime. Every language's
+        // legitimate "is this value already PEM text?" check tests for the
+        // "-----BEGIN" prefix only, so that string alone appearing is not a
+        // leak; an actual embedded PEM block would carry "-----END" too,
+        // which no generated source has any legitimate reason to contain.
+        expect(joined, `${language} never embeds PEM`).not.toContain("-----END");
+      }
+    });
+
+    it("passes sdkAuthDrift for a freshly generated bundle", () => {
+      expect(sdkAuthDrift(files, plan.auth, sdkManifest(plan).auth)).toEqual([]);
+    });
+
+    it("flags drift when a language's source loses the declared mtls transport", () => {
+      // Deleting only mtls.go is not enough to prove the point: client.go
+      // still calls NewMtlsHTTPClient at its call site, so the substring is
+      // still present somewhere under sdk/go/. Stripping the whole language
+      // (the scenario `runtime.sdk-present` also exists for) is what actually
+      // removes every trace of the transport and the env vars it reads.
+      const stripped = Object.fromEntries(
+        Object.entries(files).filter(([path]) => !path.startsWith("sdk/go/")),
+      );
+      const drift = sdkAuthDrift(stripped, plan.auth, sdkManifest(plan).auth);
+      expect(drift.some((line) => line.includes("go") && line.includes("mtls transport"))).toBe(
+        true,
+      );
+      expect(
+        drift.some((line) => line.includes("go") && line.includes("PAYMENTS_MTLS_CLIENT_CERT")),
+      ).toBe(true);
+    });
+  });
+
+  describe("oauth2_authorization_code", () => {
+    let plan: ReturnType<typeof sdkPlan>;
+    let files: Record<string, string>;
+    beforeAll(() => {
+      plan = sdkPlan(AUTH_CODE_DOC);
+      files = generateSdks(AUTH_CODE_DOC);
+    });
+
+    it("keeps the existing bearer envVar/carrier — a static token still replays exactly as before — and adds refresh wiring", () => {
+      expect(plan.auth.envVar).toBe("PAYMENTS_TOKEN");
+      expect(plan.auth.carrier).toEqual({ in: "header", name: "Authorization", scheme: "Bearer" });
+      expect(plan.auth.tokenRefresh).toEqual({
+        tokenEndpoint: "https://auth.example.com/token",
+        refreshTokenEnvVar: "PAYMENTS_REFRESH_TOKEN",
+        clientIdEnvVar: "PAYMENTS_CLIENT_ID",
+        clientSecretEnvVar: "PAYMENTS_CLIENT_SECRET",
+      });
+    });
+
+    it("carries a token-provider contract and the refresh env vars in every language", () => {
+      const symbol: Record<SdkLanguage, string> = {
+        typescript: "tokenProvider",
+        python: "token_provider",
+        go: "TokenProvider",
+        java: "tokenSupplier",
+      };
+      for (const language of SDK_LANGUAGES) {
+        const joined = Object.entries(files)
+          .filter(([p]) => p.startsWith(`sdk/${language}/`))
+          .map(([, c]) => c)
+          .join("\n");
+        expect(joined, `${language} token provider`).toContain(symbol[language]);
+        expect(joined, `${language} refresh token env var`).toContain("PAYMENTS_REFRESH_TOKEN");
+        expect(joined, `${language} client id env var`).toContain("PAYMENTS_CLIENT_ID");
+        expect(joined, `${language} client secret env var`).toContain("PAYMENTS_CLIENT_SECRET");
+      }
+    });
+
+    it("passes sdkAuthDrift for a freshly generated bundle", () => {
+      expect(sdkAuthDrift(files, plan.auth, sdkManifest(plan).auth)).toEqual([]);
+    });
+  });
+
+  it("re-emits byte-identical files for the same model, for all three schemes", () => {
+    expect(generateSdks(CUSTOM_HEADER_DOC)).toEqual(generateSdks(CUSTOM_HEADER_DOC));
+    expect(generateSdks(MTLS_DOC)).toEqual(generateSdks(MTLS_DOC));
+    expect(generateSdks(AUTH_CODE_DOC)).toEqual(generateSdks(AUTH_CODE_DOC));
   });
 });
 

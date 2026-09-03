@@ -1,5 +1,6 @@
 import type { AirDocument } from "@anvil/air";
 import { SDK_LANGUAGES, type SdkLanguage, sdkManifest, sdkPlan } from "./index.js";
+import type { SdkPlan } from "./plan.js";
 
 /**
  * Certification over the generated SDKs.
@@ -150,6 +151,13 @@ export function sdkGateDrift(files: Record<string, string>, air: AirDocument): s
       drift.push(`sdk/manifest.json exposes unapproved ${id}`);
     }
   }
+  // Auth is a service-level fact, not a per-method one: drift here means every
+  // caller's credential ends up in the wrong place (or a header a caller
+  // trusted stops existing), not just one method's. Checked once, against the
+  // manifest's own auth block and every language's actual source — the same
+  // "recompute and refuse any difference" posture as the per-method gates
+  // above, extended to custom_header, mtls, and oauth2_authorization_code.
+  drift.push(...sdkAuthDrift(files, expected.auth, (actual as { auth?: unknown }).auth));
   return drift;
 }
 
@@ -178,4 +186,147 @@ function sdkSourceNames(
   const sources = SDK_METHOD_SOURCE[language](files);
   const pattern = new RegExp(`\\b${identifier.replace(/[^A-Za-z0-9_]/g, "")}\\b`);
   return sources.some((source) => pattern.test(source));
+}
+
+/** Every file actually emitted under one language's SDK root. */
+function sdkLanguageSources(files: Record<string, string>, language: SdkLanguage): string[] {
+  const root = `sdk/${language}/`;
+  return Object.entries(files)
+    .filter(([path]) => path.startsWith(root))
+    .map(([, contents]) => contents);
+}
+
+/** Whether any file under one language's SDK root contains the literal text. */
+function sdkLanguageContains(
+  files: Record<string, string>,
+  language: SdkLanguage,
+  needle: string,
+): boolean {
+  return sdkLanguageSources(files, language).some((source) => source.includes(needle));
+}
+
+/**
+ * The literal identifier each language names the delegated-token / mTLS
+ * transport contract by — the parity claim for `custom-header carriers`,
+ * `mtls`, and the `oauth2_authorization_code` token-provider contract is that
+ * all four define these, not just one.
+ */
+const SDK_TOKEN_PROVIDER_SYMBOL: Record<SdkLanguage, string> = {
+  typescript: "tokenProvider",
+  python: "token_provider",
+  go: "TokenProvider",
+  java: "tokenSupplier",
+};
+
+const SDK_MTLS_SYMBOL: Record<SdkLanguage, string> = {
+  typescript: "createMtlsFetch",
+  python: "build_mtls_opener",
+  go: "NewMtlsHTTPClient",
+  java: "Mtls.buildContext",
+};
+
+/**
+ * Auth drift, checked once per bundle rather than once per method: the
+ * manifest's own `auth` block against a fresh projection of AIR, and — for
+ * the three schemes a static/bearer credential cannot express — that every
+ * language's actual source carries the declared mechanism and the exact
+ * environment-variable NAMES the manifest promises. A caller who reads the
+ * manifest to learn "which env var do I set" must get an answer every
+ * generated client backs up.
+ */
+export function sdkAuthDrift(
+  files: Record<string, string>,
+  expected: SdkPlan["auth"],
+  actualValue: unknown,
+): string[] {
+  const drift: string[] = [];
+  if (typeof actualValue !== "object" || actualValue === null) {
+    return ["sdk/manifest.json declares no auth block"];
+  }
+  const actual = actualValue as Record<string, unknown>;
+  for (const field of ["type", "envVar"] as const) {
+    if (actual[field] !== expected[field]) {
+      drift.push(
+        `sdk/manifest.json declares auth.${field}=${String(actual[field])}, AIR says ${String(expected[field])}`,
+      );
+    }
+  }
+  if (JSON.stringify(actual.carrier) !== JSON.stringify(expected.carrier)) {
+    drift.push(
+      `sdk/manifest.json declares auth.carrier=${JSON.stringify(actual.carrier)}, AIR says ${JSON.stringify(expected.carrier)}`,
+    );
+  }
+  if (JSON.stringify(actual.tls) !== JSON.stringify(expected.tls)) {
+    drift.push(
+      `sdk/manifest.json declares auth.tls=${JSON.stringify(actual.tls)}, AIR says ${JSON.stringify(expected.tls)}`,
+    );
+  }
+  if (JSON.stringify(actual.tokenRefresh) !== JSON.stringify(expected.tokenRefresh)) {
+    drift.push(
+      `sdk/manifest.json declares auth.tokenRefresh=${JSON.stringify(actual.tokenRefresh)}, AIR says ${JSON.stringify(expected.tokenRefresh)}`,
+    );
+  }
+
+  if (expected.type === "mtls" && expected.tls) {
+    for (const language of SDK_LANGUAGES) {
+      if (!sdkLanguageContains(files, language, SDK_MTLS_SYMBOL[language])) {
+        drift.push(
+          `the ${language} SDK does not carry an mtls transport (${SDK_MTLS_SYMBOL[language]})`,
+        );
+      }
+      for (const envVar of [
+        expected.tls.certEnvVar,
+        expected.tls.keyEnvVar,
+        ...(expected.tls.caEnvVar ? [expected.tls.caEnvVar] : []),
+      ]) {
+        if (!sdkLanguageContains(files, language, envVar)) {
+          drift.push(`the ${language} SDK does not read the declared mtls env var ${envVar}`);
+        }
+      }
+    }
+  }
+
+  if (expected.type === "oauth2_authorization_code") {
+    for (const language of SDK_LANGUAGES) {
+      if (!sdkLanguageContains(files, language, SDK_TOKEN_PROVIDER_SYMBOL[language])) {
+        drift.push(
+          `the ${language} SDK does not carry a token-provider contract (${SDK_TOKEN_PROVIDER_SYMBOL[language]})`,
+        );
+      }
+    }
+    if (expected.tokenRefresh) {
+      for (const language of SDK_LANGUAGES) {
+        for (const envVar of [
+          expected.tokenRefresh.refreshTokenEnvVar,
+          expected.tokenRefresh.clientIdEnvVar,
+          expected.tokenRefresh.clientSecretEnvVar,
+        ]) {
+          if (!sdkLanguageContains(files, language, envVar)) {
+            drift.push(`the ${language} SDK does not read the declared refresh env var ${envVar}`);
+          }
+        }
+      }
+    }
+  }
+
+  // custom_header reuses the same carrier+envVar plumbing every bearer/api-key
+  // service already exercises (SDK_METHOD_SOURCE's client files apply the
+  // carrier to every request), so its parity claim is exactly the manifest
+  // comparison above: never a Bearer scheme, and the exact declared header.
+  if (expected.type === "custom_header" && expected.carrier) {
+    for (const language of SDK_LANGUAGES) {
+      // The carrier name is data (JSON-encoded into the client), not an
+      // identifier, so a literal byte-match on the client source is the
+      // honest check — the same file `SDK_METHOD_SOURCE` already trusts to
+      // define each method.
+      const source = SDK_METHOD_SOURCE[language](files).join("\n");
+      if (!source.includes(expected.carrier.name)) {
+        drift.push(
+          `the ${language} SDK does not carry the declared custom header ${expected.carrier.name}`,
+        );
+      }
+    }
+  }
+
+  return drift;
 }

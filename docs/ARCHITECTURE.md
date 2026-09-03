@@ -33,7 +33,7 @@ The architecture protects seven invariants:
 | Stage | Input | Responsibility | Output |
 | --- | --- | --- | --- |
 | Source capture | Files or a source directory | Detect entrypoints, follow permitted local references, reject path escape, store verbatim bytes | Immutable source snapshot |
-| Protocol adaptation | One locked entrypoint | Lower OpenAPI, Swagger, GraphQL, proto3, WSDL, Discovery, OData, or Postman into the shared HTTP-shaped compiler input | Normalized source document |
+| Protocol adaptation | One locked entrypoint | Lower OpenAPI, Swagger, GraphQL, proto3, WSDL, Discovery, OData, Postman, or a HAR capture into the shared HTTP-shaped compiler input | Normalized source document |
 | Semantic compilation | Adapted document plus optional manifest | Normalize operations, classify effects, apply reviewed facts, validate safety, discover capabilities | AIR document |
 | Projection | AIR | Generate CLI, MCP, skill, client SDKs, hooks, mocks, evals, runtime documents, targets, and deploy inputs | Bundle directory |
 | Review | Bundle | Inspect diagnostics, enrich missing facts, review capabilities, approve operations | Reviewed bundle |
@@ -101,6 +101,7 @@ perform deterministic lowering before semantic normalization:
 | Google Discovery | Resource methods and schemas become paths, operations, and components |
 | OData v2/v4 | Entity sets become permitted CRUD operations based on metadata |
 | Postman v2.x | Saved requests, folders, examples, and auth shapes become an API document |
+| HAR 1.2 capture | Recorded requests become templated operations; every operation is capped `review_required` — a capture is evidence, never a declared contract |
 
 Adapters own syntax and mechanical fidelity. They do not grant business
 authority. A method named `TransferFunds` remains a mutation whose idempotency
@@ -194,6 +195,11 @@ supported state.
 
 The deployed unit is the generated MCP server backed by `@anvil/mcp-runtime`
 and `@anvil/runtime`. It does not parse source specifications or run enrichment.
+`anvil serve mcp <dir>` serves one bundle per process; `anvil serve mcp
+<workspace-root> --fleet` mounts every bundle beneath a workspace root onto
+one MCP surface instead, each under a stable per-bundle tool-name prefix,
+composed from independently-built single-bundle servers rather than a second
+serving path — see [fleet.md](fleet.md).
 
 Before an upstream call, the executor evaluates the following controls in a
 deterministic order:
@@ -203,13 +209,15 @@ deterministic order:
 | Input validation | Reject arguments outside the generated schema |
 | Confirmation | Require explicit intent for gated effects |
 | Idempotency | Require and fingerprint deduplication keys where configured |
+| Principal scope | Refuse a caller missing a scope `auth.scopes` requires (fleet runtime; anonymous/every-scope by default) |
+| Rate/spend limits | Refuse a caller over its configured per-principal rate or spend budget (fleet runtime; unlimited by default) |
 | Dry run | Return a redacted request plan after preconditions pass |
 | Host pinning | Restrict upstream egress to reviewed hosts |
 | Auth resolution | Resolve named credential profiles without placing secrets in AIR |
 | Ledger durability | Fail closed when a required durable write ledger is unavailable |
 | Retry policy | Retry only bounded transient conditions when repetition is safe |
 | Response normalization | Produce structured outputs and stable error envelopes |
-| Observation | Emit an OpenTelemetry-shaped execution record |
+| Observation | Emit an OpenTelemetry-shaped execution record, including the calling principal's id (never its credential) |
 
 Runtime policy hooks can deny at defined pre/post phases. They are not the same
 as harness hooks: runtime hooks execute inside the authority boundary, while
@@ -266,6 +274,7 @@ compiled documents; it does not reinterpret the source contract.
 | `@anvil/runtime` | Safety executor, auth, retries, idempotency, errors, observation |
 | `@anvil/mcp-runtime` | MCP serving path, capability lanes, resource serving |
 | `@anvil/harness` | Evidence-source orchestration and executable bundle drivers |
+| `@anvil/legacy-bridge` | Deployment-local HTTP facade executing one reviewed legacy capability binding over one transport (queue request/reply), and its in-process conformance runner |
 | `@anvil/certification` | Cross-artifact and async contract checks |
 | `@anvil/simulator` | Scenario matrix and safety-regression mutation battery |
 | `@anvil/targets` | Agent-platform connector profiles |
@@ -278,7 +287,10 @@ can be called and tested without parsing terminal output.
 The legacy collectors, inventory model, reconciliation, and refinement
 workflow currently live behind the Node-only `@anvil/compiler/legacy` package
 export. This entrypoint accepts caller-supplied bytes and does not acquire files
-or network resources itself.
+or network resources itself. `@anvil/legacy-bridge` depends only on `@anvil/air`
+and `@anvil/compiler` (see `packages/cli/src/boundaries.test.ts`'s `ALLOWED_EDGES`)
+and is not part of the deployed MCP server's dependency closure — it is its own
+deployment-local process, run and reviewed separately from `@anvil/mcp-runtime`.
 
 ## Extension seams
 

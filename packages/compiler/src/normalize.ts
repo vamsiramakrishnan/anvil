@@ -511,11 +511,15 @@ function oauthAuth(schemeName: string, scheme: SecurityScheme, scopes: string[])
       issue: {
         code: "auth/end_user_flow_unexecutable",
         message:
-          "End-user OAuth cannot use one shared runtime token. To unblock, model per-caller " +
-          "delegation in the manifest — `auth: { type: oauth2_on_behalf_of }` — and the runtime " +
-          "will exchange each caller's inbound token (RFC 8693 token exchange; the imported " +
-          "token endpoint is preserved). Then set the operation state and approve.",
-        blocked: true,
+          "End-user OAuth cannot use one shared runtime token. Two ways to make this concrete: " +
+          "model per-caller delegation in the manifest — `auth: { type: oauth2_on_behalf_of }` " +
+          "— and the runtime will exchange each caller's inbound token (RFC 8693 token exchange; " +
+          "the imported token endpoint is preserved); or run `anvil auth login <bundle> " +
+          "--profile <profile>` once to complete the interactive PKCE step and store a refresh " +
+          "token the runtime replays/refreshes per call. Either way this stays review_required " +
+          "— end-user authority is a human decision, not a material-completeness one — until " +
+          "approved.",
+        blocked: false,
       },
     };
   }
@@ -658,11 +662,14 @@ function resolveSingleRequirement(
         code: "auth/end_user_flow_unexecutable",
         message:
           "OpenID Connect end-user auth needs per-caller token propagation/exchange; a shared " +
-          "runtime bearer is forbidden. To unblock, model per-caller delegation in the manifest " +
-          "— `auth: { type: oauth2_on_behalf_of, provider: { token_endpoint: <STS URL> } }` — " +
-          "and the runtime will exchange each caller's inbound token (RFC 8693). Then set the " +
-          "operation state and approve.",
-        blocked: true,
+          "runtime bearer is forbidden. Two ways to make this concrete: model per-caller " +
+          "delegation in the manifest — `auth: { type: oauth2_on_behalf_of, provider: { " +
+          "token_endpoint: <STS URL> } }` — and the runtime will exchange each caller's inbound " +
+          "token (RFC 8693); or run `anvil auth login <bundle> --profile <profile>` once to " +
+          "complete the interactive PKCE step and store a refresh token the runtime replays/" +
+          "refreshes per call. Either way this stays review_required — end-user authority is a " +
+          "human decision, not a material-completeness one — until approved.",
+        blocked: false,
       },
     };
   }

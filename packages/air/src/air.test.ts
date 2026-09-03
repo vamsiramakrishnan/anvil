@@ -500,3 +500,88 @@ describe("service source path grammar", () => {
     ).toThrowError();
   });
 });
+
+describe("auth coherence: authorization-code mechanics and mtls material references", () => {
+  const base = { scopes: [], secretSource: "env" as const };
+
+  it("requires mtls to name its client certificate and key references", () => {
+    const issues = authCoherenceIssues({ ...base, type: "mtls", principal: "service" } as never);
+    expect(issues).toContain("mtls auth must name its client certificate and key references");
+    const ok = authCoherenceIssues({
+      ...base,
+      type: "mtls",
+      principal: "service",
+      tls: { clientCertRef: "ANVIL_BANK_CLIENT_CERT", clientKeyRef: "ANVIL_BANK_CLIENT_KEY" },
+    } as never);
+    expect(ok.some((i) => i.includes("client certificate"))).toBe(false);
+  });
+
+  it("refuses mtls material on any other auth type", () => {
+    const issues = authCoherenceIssues({
+      ...base,
+      type: "api_key",
+      principal: "service",
+      tls: { clientCertRef: "ANVIL_X_CERT", clientKeyRef: "ANVIL_X_KEY" },
+    } as never);
+    expect(issues).toContain("api_key auth cannot carry mtls client material references");
+  });
+
+  it("ties authorization-code mechanics to the authorization-code type", () => {
+    const wrongType = authCoherenceIssues({
+      ...base,
+      type: "oauth2_client_credentials",
+      principal: "service",
+      provider: { pkce: true },
+    } as never);
+    expect(wrongType).toContain(
+      "oauth2_client_credentials auth cannot declare authorization-code mechanics",
+    );
+    const halfDeclared = authCoherenceIssues({
+      ...base,
+      type: "oauth2_authorization_code",
+      principal: "end_user",
+      provider: { authorizationEndpoint: "https://idp.example.com/authorize", pkce: true },
+    } as never);
+    expect(halfDeclared).toContain(
+      "authorization-code auth that names an authorization endpoint must name its token endpoint",
+    );
+    const complete = authCoherenceIssues({
+      ...base,
+      type: "oauth2_authorization_code",
+      principal: "end_user",
+      provider: {
+        authorizationEndpoint: "https://idp.example.com/authorize",
+        tokenEndpoint: "https://idp.example.com/token",
+        pkce: true,
+        redirectUri: "http://127.0.0.1:0/callback",
+      },
+    } as never);
+    expect(complete).toEqual([]);
+  });
+
+  it("requires custom_header to name its credential carrier", () => {
+    const issues = authCoherenceIssues({
+      ...base,
+      type: "custom_header",
+      principal: "service",
+    } as never);
+    expect(issues).toContain("custom_header auth must name its credential carrier");
+    const ok = authCoherenceIssues({
+      ...base,
+      type: "custom_header",
+      principal: "service",
+      carrier: { in: "header", name: "X-Vendor-Token" },
+    } as never);
+    expect(ok.some((i) => i.includes("credential carrier"))).toBe(false);
+  });
+
+  it("lets custom_header declare a carrier with no bearer/basic scheme restriction", () => {
+    const issues = authCoherenceIssues({
+      ...base,
+      type: "custom_header",
+      principal: "service",
+      carrier: { in: "header", name: "X-Vendor-Token", scheme: "Token" },
+    } as never);
+    expect(issues).toEqual([]);
+  });
+});

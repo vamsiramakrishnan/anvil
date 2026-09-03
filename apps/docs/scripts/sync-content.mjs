@@ -62,6 +62,8 @@ const PAGES = [
   { src: "docs/observing-running-apps.md", dest: "guides/observing-running-apps.md", order: 5 },
   { src: "docs/console.md", dest: "guides/review-console.md", order: 5 },
   { src: "docs/adopting-mcp-servers.md", dest: "guides/adopting-mcp-servers.md", order: 6 },
+  { src: "docs/targets.md", dest: "guides/agent-platform-targets.md", order: 6 },
+  { src: "docs/fleet.md", dest: "guides/fleet.md", order: 6 },
   { src: "docs/wire-protocols.md", dest: "guides/wire-protocols.md", order: 7 },
   { src: "docs/refinement-sdk.md", dest: "guides/refinement-sdk.md", order: 7 },
   { src: "docs/group-refinement.md", dest: "guides/group-refinement.md", order: 7 },
