@@ -913,6 +913,26 @@
       "tests": [
         "packages/targets/src/openai.test.ts"
       ]
+    },
+    {
+      "id": "sdk/custom-header-never-bearer",
+      "file": "packages/generators/src/sdk/plan.ts",
+      "control": "A custom_header auth scheme resolves a carrier with no Bearer/Basic scheme prefix — the header (or query) value the SDKs send travels exactly as AIR declared, never disguised as a bearer token.",
+      "find": "    return auth.carrier ?? { in: \"header\", name: `X-${prefix}-Auth` };",
+      "replace": "    return { ...(auth.carrier ?? { in: \"header\", name: `X-${prefix}-Auth` }), scheme: \"Bearer\" };",
+      "tests": [
+        "packages/generators/src/sdk.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/pem-never-in-generated-code",
+      "file": "packages/generators/src/sdk/typescript-core.ts",
+      "control": "Generated SDK source never carries a literal PEM block — only the environment-variable NAME that reads it at runtime, even in a doc comment.",
+      "find": "// material is never logged, echoed, or included in an error.",
+      "replace": "// material is never logged, echoed, or included in an error.\n// e.g. -----BEGIN CERTIFICATE-----\n// MIIBMUTANTFAKECERTIFICATEDATA==\n// -----END CERTIFICATE-----",
+      "tests": [
+        "packages/generators/src/sdk.test.ts"
+      ]
     }
   ]
 }

@@ -302,6 +302,13 @@ final class Invoker {
     final String protocolFacade;
 
     final String token;
+    /**
+     * Delegated-token source for oauth2_authorization_code: called once per
+     * request when set, taking priority over a static token. Never logged or
+     * echoed — only its resolved return value reaches the wire, and only as a
+     * header/query value, never in an exception.
+     */
+    final java.util.function.Supplier<String> tokenSupplier;
     final String authIn;
     final String authName;
     final String authScheme;
@@ -314,6 +321,7 @@ final class Invoker {
         String baseUrl,
         String protocolFacade,
         String token,
+        java.util.function.Supplier<String> tokenSupplier,
         String authIn,
         String authName,
         String authScheme,
@@ -324,6 +332,7 @@ final class Invoker {
       this.baseUrl = baseUrl;
       this.protocolFacade = protocolFacade;
       this.token = token;
+      this.tokenSupplier = tokenSupplier;
       this.authIn = authIn;
       this.authName = authName;
       this.authScheme = authScheme;
@@ -569,15 +578,20 @@ final class Invoker {
       }
     }
 
-    if (config.token != null && !config.token.isEmpty() && config.authName != null) {
+    // A delegated token source takes priority over a static token: it is how
+    // a caller plugs in a refreshed authorization-code grant without the SDK
+    // ever holding a long-lived secret of its own. Resolved once per call,
+    // never cached here — a supplier that wants caching does its own.
+    String resolvedToken = config.tokenSupplier != null ? config.tokenSupplier.get() : config.token;
+    if (resolvedToken != null && !resolvedToken.isEmpty() && config.authName != null) {
       if ("header".equals(config.authIn)) {
         String value =
             config.authScheme == null || config.authScheme.isEmpty()
-                ? config.token
-                : config.authScheme + " " + config.token;
+                ? resolvedToken
+                : config.authScheme + " " + resolvedToken;
         headers.put(config.authName.toLowerCase(), value);
       } else {
-        query.add(new String[] {config.authName, config.token});
+        query.add(new String[] {config.authName, resolvedToken});
       }
     }
     if (cookie.length() > 0) {
