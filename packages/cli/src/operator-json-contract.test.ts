@@ -487,6 +487,18 @@ describe("refinement harness import keeps the operator JSON contract", () => {
 describe("legacy product commands keep the operator JSON contract", () => {
   it.each([
     ["legacy bridge plan", ["legacy", "bridge", "plan", "missing-decision.json", "--json"]],
+    [
+      "legacy bridge conformance",
+      [
+        "legacy",
+        "bridge",
+        "conformance",
+        "missing-plan.json",
+        "--binding",
+        "missing-binding.json",
+        "--json",
+      ],
+    ],
     ["legacy plan", ["legacy", "plan", "missing-plan.json", "--json"]],
     ["legacy graph", ["legacy", "graph", "missing-inventory.json", "--json"]],
     ["legacy gaps", ["legacy", "gaps", "missing-inventory.json", "--json"]],
