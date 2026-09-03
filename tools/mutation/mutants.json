@@ -925,6 +925,26 @@
       ]
     },
     {
+      "id": "ladder/intent-examples-stay-within-card-budget",
+      "file": "packages/air/src/ladder.ts",
+      "control": "An entry card folds at most MEMBER_INTENT_EXAMPLE_LIMIT of its member operations' own authored intent examples. The served card description is never truncated to the token budget (only the plan's own token accounting is, via entryCardTokens' Math.min), so this cap is the only thing keeping a lane with many verbose member intents from growing its actual served text unboundedly.",
+      "find": "const MEMBER_INTENT_EXAMPLE_LIMIT = 4;",
+      "replace": "const MEMBER_INTENT_EXAMPLE_LIMIT = Number.POSITIVE_INFINITY;",
+      "tests": [
+        "packages/air/src/ladder.test.ts"
+      ]
+    },
+    {
+      "id": "ladder/auto-never-ladders-past-accuracy-floor",
+      "file": "packages/mcp-runtime/src/lane.ts",
+      "control": "`auto` mode must refuse to ladder when a measured laddered-minus-flat accuracy delta falls below MIN_LADDERED_ACCURACY_DELTA_PTS. Weakening the floor would let `auto` serve a ladder measured to route meaningfully worse than the flat surface it replaces, with nothing telling the operator why.",
+      "find": "export const MIN_LADDERED_ACCURACY_DELTA_PTS = -8;",
+      "replace": "export const MIN_LADDERED_ACCURACY_DELTA_PTS = -100;",
+      "tests": [
+        "packages/mcp-runtime/src/lane.test.ts"
+      ]
+    },
+    {
       "id": "refinement/group-supersedes-outside-steps-refused",
       "file": "packages/refinement/src/skills/group-proposal.ts",
       "control": "A group workflow's supersedes may only name the proposal's own steps, and the named group_supersedes_within_steps check owns that refusal (the AIR schema's refinement is defense in depth behind it, not a substitute for the named rejection a harness is told to fix).",

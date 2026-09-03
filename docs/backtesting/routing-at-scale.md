@@ -280,6 +280,119 @@ deployment over a catalog this large may prefer it; one where every routing
 point matters may not. What this run adds is that the trade is now a
 measured, reproducible one instead of an assumption on either side.
 
+### A second stage-1 lever: fold member intent examples into the card
+
+`memberVocabulary` closes most of the vocabulary gap with two-word stems
+(`list view`, `get view`); the phrase an agent actually types is longer than a
+stem, and every approved operation already carries authored phrasing that a
+lexical or model router matches more directly than a stem ever can —
+`skill.intentExamples`, the exact field `author-intent-examples` populates and
+this benchmark's own tasks are drawn from. `LadderLane.memberIntentExamples`
+(`packages/air/src/ladder.ts`) folds up to 4 of a lane's member operations'
+own intent examples into the card, deduplicated and walked in the same
+sorted-`operationIds` order `memberVocabulary` already uses, rendered as an
+`Examples: "…"; "…".` sentence. No new evidence source, no embeddings, no
+runtime search — the ladder stays a pure projection, and the card's overall
+cost stays capped at the per-operation budget exactly as before
+(`entryCardTokens`).
+
+Re-measured on the same three bundles, nothing else changed:
+
+| Tools | Flat pass rate | Laddered (lever 1) | Laddered (lever 1 + 2) | Recovered |
+| ---: | ---: | ---: | ---: | ---: |
+| 50 | 65.3% | 57.1% (56/98) | **66.3%** (65/98) | +9.2 pts |
+| 100 | 63.3% | 48.0% (94/196) | **60.7%** (119/196) | +12.7 pts |
+| 330 | 58.9% | 47.7% (312/654) | **52.1%** (341/654) | +4.4 pts |
+
+**The change is kept**, per the same bar the first lever cleared: laddered
+accuracy improved at every measured size, with no other move. At 50 tools the
+ladder now routes *better* than the flat catalog it replaces (66.3% vs.
+65.3%) — the first size at which laddering has ever beaten flat in this whole
+investigation. At 100 and 330 tools it still trails flat, by 2.6 and 6.8
+points respectively — down from 15.3 and 11.2 points after lever 1 alone at
+the same two sizes, and well inside the 8–15 point gap the first-pass ladder
+carried at every size.
+
+The updated trade-off, folding this lever's own token cost into the same
+comparison:
+
+| Tools | Flat tokens at rest | Laddered tokens at rest | Laddered tokens/task (rest + avg opened lane) | Reduction |
+| ---: | ---: | ---: | ---: | ---: |
+| 50 | 26,632 | 1,928 | 3,223 (1,928 + 1,295) | 8.3× |
+| 100 | 48,745 | 3,411 | 4,832 (3,411 + 1,421) | 10.1× |
+| 330 | 164,152 | 7,618 | 10,245 (7,618 + 2,627) | 16.0× |
+
+The extra phrasing costs real card tokens — the at-rest surface grew roughly
+40% at every size versus lever 1 alone (1,390 → 1,928 at 50 tools; 2,405 →
+3,411 at 100; 5,363 → 7,618 at 330) — and the reduction shrank from
+9.6×/12.6×/21.2× to 8.3×/10.1×/16.0×. That is the honest price of the accuracy
+gained: still a double-digit-times reduction at 100 and 330 tools, and still a
+real trade rather than a free win.
+
+## Result 4 — `auto` weighs the trade-off instead of assuming it
+
+Everything above answers "is laddering worth it here" with a report a human
+reads. `decideLadder`'s `auto` mode (`packages/mcp-runtime/src/lane.ts`) is
+the code that decides it for a live server, and until now it only ever
+answered from the token side of the trade — it laddered whenever
+`ladderPlan` said `over_budget`, with no notion that laddering might cost more
+accuracy than it saves.
+
+`auto` now consults a measured accuracy delta when one exists for the bundle.
+The CLI/serve path (`anvil serve mcp`, and `anvil status`/`anvil inspect` for
+reporting) reads `benchmark.report.json` via `readBenchmarkReport`
+(`@anvil/refinement`), checks it against the bundle's current content hash the
+same way `benchmarkEvidenceStatus` already does for the benchmark evidence
+lane, and — only when both `catalogs.flat` and `catalogs.laddered` are fresh —
+passes `{ ladderedMinusFlatPts }` in through `LadderServeOptions`. `@anvil/air`
+never imports `@anvil/refinement`, and neither does `@anvil/mcp-runtime`: the
+report is read and reduced to two numbers entirely inside the CLI package
+(`packages/cli/src/commands/ladder-status.ts`), which is the only new
+dependency this adds.
+
+With a fresh delta in hand, `auto` ladders only when **both** hold:
+
+- **Token savings clear `MIN_LADDER_TOKEN_SAVINGS_FRACTION` (0.5).** `ladderPlan`
+  already refuses to ladder unless the at-rest surface is *strictly* cheaper
+  (`no_token_benefit`), but "cheaper by a sliver" still costs an agent the
+  extra round trip the ladder's own header comment warns about. Every
+  measured reduction on this estate — 8.3×–16.0× after lever 2, 9.6×–21.2×
+  after lever 1 — clears a 50% bar by an order of magnitude, so this only
+  ever refuses a ladder whose saving is not obviously worth an accuracy risk;
+  it never fires with no report present.
+- **The accuracy delta is not worse than `MIN_LADDERED_ACCURACY_DELTA_PTS`
+  (-8 points).** Drawn from the two regimes this document measured, not
+  guessed: the lever-1 ladder trailed flat by 8.2–15.3 points at every size
+  and is exactly the surface this floor should refuse; the lever-1-plus-2
+  ladder trails by at most 6.8 points, and beats flat outright at 50 tools —
+  exactly the surface this floor should allow. -8 sits on the line between
+  those two measured regimes: tight enough to have rejected the ladder this
+  document shipped first, loose enough to admit the one it shipped after
+  measuring the fix.
+
+Both constants live in `lane.ts` with their own one-paragraph justification;
+change either only against new measurement, the same way these values came
+from measurement rather than a guess. With no report present — every bundle
+that has never been benchmarked, which is most of them — `auto` falls
+straight through to `ladderPlan`'s own verdict, byte-identical to its
+pre-measurement behavior; nothing about a never-benchmarked bundle's served
+surface changes because this feature shipped.
+
+`anvil status` and `anvil inspect` both print the live decision as one line —
+mode, the plan's own reason, and (when a fresh report informed it) which floor
+did the work or that both cleared:
+
+```
+Disclosure ladder: serving laddered — plan says over_budget (measured delta -2.6 pts clears the floors).
+Disclosure ladder: serving flat — plan says laddered (over_budget), but measured laddered accuracy (-11.2 pts) falls below the -8 pt floor.
+```
+
+This is a read of the exact same evidence `anvil serve mcp` would consult
+(`ladderStatusSummary` calls `decideLadder` with the same `measuredAccuracy`
+the serve path derives), not a second implementation of the decision — what
+the operator is told and what the deployed server does can never quietly
+disagree.
+
 ## Reproducing
 
 ```bash
