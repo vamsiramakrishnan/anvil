@@ -26,7 +26,7 @@ import {
   readBundleDir,
   writeBundle,
 } from "@anvil/generators";
-import { GEMINI_ENTERPRISE_PROFILE, verifyTargetKit } from "@anvil/targets";
+import { listProfiles, verifyTargetKit } from "@anvil/targets";
 
 /**
  * Transactional installation of a generated gateway bundle.
@@ -131,9 +131,10 @@ export interface GatewayLifecycleArtifacts {
 
 /**
  * Recognize post-import records and prove target-kit subtrees independently.
- * The `targets/` namespace is never trusted merely by name: only the known
- * Gemini Enterprise profile, regenerated exactly from canonical AIR, is safe
- * to preserve or ignore as lifecycle state.
+ * The `targets/` namespace is never trusted merely by name: only registered
+ * profiles, regenerated exactly from canonical AIR, are safe to preserve or
+ * ignore as lifecycle state. Every registered profile is recognized the same
+ * way Gemini Enterprise always was.
  */
 export function gatewayLifecycleArtifacts(
   files: Record<string, string>,
@@ -147,17 +148,11 @@ export function gatewayLifecycleArtifacts(
       .map((path) => /^targets\/([^/]+)\//.exec(path)?.[1])
       .filter((targetId): targetId is string => targetId !== undefined),
   );
-  for (const targetId of targetIds) {
-    if (targetId !== GEMINI_ENTERPRISE_PROFILE.id) {
-      diagnostics.push({
-        level: "error",
-        code: "gateway_receipt/unverified_target",
-        message: `Target subtree '${targetId}' is not a recognized, independently verifiable lifecycle artifact; refusing to ignore or delete it.`,
-        path: `targets/${targetId}`,
-      });
-      continue;
-    }
-    const verification = verifyTargetKit(air, GEMINI_ENTERPRISE_PROFILE, files);
+  for (const profile of listProfiles()) {
+    if (!targetIds.has(profile.id)) continue;
+
+    targetIds.delete(profile.id);
+    const verification = verifyTargetKit(air, profile, files);
     if (!verification.ok) {
       diagnostics.push(
         ...verification.findings.map((finding) => ({
@@ -170,6 +165,14 @@ export function gatewayLifecycleArtifacts(
       continue;
     }
     for (const path of verification.actualFiles) paths.add(path);
+  }
+  for (const targetId of targetIds) {
+    diagnostics.push({
+      level: "error",
+      code: "gateway_receipt/unverified_target",
+      message: `Target subtree '${targetId}' is not a recognized, independently verifiable lifecycle artifact; refusing to ignore or delete it.`,
+      path: `targets/${targetId}`,
+    });
   }
   for (const path of targetPaths) {
     if (!/^targets\/[^/]+\//.test(path)) {
