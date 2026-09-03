@@ -55,7 +55,6 @@ describe("LegacyCapabilityBinding runtime status", () => {
     expect(() =>
       LegacyCapabilityBinding.parse({
         ...core,
-        // @ts-expect-error deliberately missing the required field
         runtime: { placement: "deployment_local_bridge", status: "conformance_passed" },
       }),
     ).toThrow();

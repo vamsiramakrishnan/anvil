@@ -146,7 +146,12 @@ describe("wire protocol", () => {
       timeoutMs: 30_000,
       idempotency: { carrier: "correlation_id" },
     } as const;
-    const bridged = { kind: "openapi", path: "/bridge/refunds.submit", method: "post", binding };
+    const bridged = {
+      kind: "openapi",
+      path: "/bridge/refunds.submit",
+      method: "post",
+      binding,
+    } as const;
     expect(wireProtocolFor(bridged)).toBe("queue_request_reply");
     const verdict = wireExecutability(opWith(bridged));
     expect(verdict.ok).toBe(false);
