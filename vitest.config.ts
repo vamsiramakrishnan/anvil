@@ -17,6 +17,7 @@ export default defineConfig({
       "@anvil/compiler": pkg("compiler"),
       "@anvil/generators": pkg("generators"),
       "@anvil/harness": pkg("harness"),
+      "@anvil/legacy-bridge": pkg("legacy-bridge"),
       "@anvil/refinement": pkg("refinement"),
       "@anvil/system-pack": pkg("system-pack"),
       "@anvil/simulator": pkg("simulator"),

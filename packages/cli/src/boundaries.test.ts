@@ -154,6 +154,12 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
   certification: ["air", "compiler", "runtime", "simulator", "system-pack"],
   generators: ["air", "compiler", "mcp-runtime", "refinement", "runtime"],
   harness: ["air", "compiler", "generators", "mcp-runtime", "refinement", "runtime"],
+  // The deployment-local legacy bridge: a standalone HTTP facade process, not
+  // part of the deployed MCP server's own dependency closure (mcp-runtime
+  // never depends on it — see "serving-path isolation" below). It needs the
+  // reviewed binding/plan/report shapes from compiler's legacy subsystem and
+  // the QueueRequestReplyWireBinding schema from air; nothing else.
+  "legacy-bridge": ["air", "compiler"],
   // The review console is a pure projection: it reads bundles, packs, and
   // reports from disk and writes only through the library functions the CLI
   // itself calls. It sits beside the CLI, below it in the graph (cli -> console
@@ -175,6 +181,9 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
     // content-addressed packs. Same direction certification already points.
     "system-pack",
     "targets",
+    // `anvil legacy bridge conformance` boots the facade and runs it against
+    // an in-process broker double.
+    "legacy-bridge",
     // `anvil console` launches the review console; the console never imports
     // the CLI, so this edge cannot close a cycle.
     "console",

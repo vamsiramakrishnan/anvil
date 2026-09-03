@@ -267,6 +267,7 @@ compiled documents; it does not reinterpret the source contract.
 | `@anvil/runtime` | Safety executor, auth, retries, idempotency, errors, observation |
 | `@anvil/mcp-runtime` | MCP serving path, capability lanes, resource serving |
 | `@anvil/harness` | Evidence-source orchestration and executable bundle drivers |
+| `@anvil/legacy-bridge` | Deployment-local HTTP facade executing one reviewed legacy capability binding over one transport (queue request/reply), and its in-process conformance runner |
 | `@anvil/certification` | Cross-artifact and async contract checks |
 | `@anvil/simulator` | Scenario matrix and safety-regression mutation battery |
 | `@anvil/targets` | Agent-platform connector profiles |
@@ -279,7 +280,10 @@ can be called and tested without parsing terminal output.
 The legacy collectors, inventory model, reconciliation, and refinement
 workflow currently live behind the Node-only `@anvil/compiler/legacy` package
 export. This entrypoint accepts caller-supplied bytes and does not acquire files
-or network resources itself.
+or network resources itself. `@anvil/legacy-bridge` depends only on `@anvil/air`
+and `@anvil/compiler` (see `packages/cli/src/boundaries.test.ts`'s `ALLOWED_EDGES`)
+and is not part of the deployed MCP server's dependency closure — it is its own
+deployment-local process, run and reviewed separately from `@anvil/mcp-runtime`.
 
 ## Extension seams
 

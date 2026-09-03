@@ -402,6 +402,84 @@ export const GrpcWireBinding = z.object({
 export type GrpcWireBinding = z.infer<typeof GrpcWireBinding>;
 
 /**
+ * Same content-hash format as `packages/compiler/src/legacy/core/model.ts`'s
+ * `LegacySha256` — duplicated as a literal regex rather than imported, because
+ * `@anvil/air` must never depend on `@anvil/compiler` (the dependency runs the
+ * other way; `boundaries.test.ts` enforces the direction). Both sides describe
+ * the same `sha256:<64 lowercase hex>` shape independently, and a mismatch
+ * between them would be caught the moment a real hash failed to parse on
+ * either end.
+ */
+const LegacyBindingContentHash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+
+/**
+ * A queue request/reply exchange bridging one approved legacy capability
+ * binding onto the runtime's HTTP/JSON wire.
+ *
+ * This is the coherence property the legacy bridge exists to enforce:
+ * `legacyBindingContentHash` names the exact reviewed
+ * `LegacyCapabilityBinding` (`packages/compiler/src/legacy/refinement/model.ts`)
+ * this call executes, by content hash rather than by name or id, so a bridge
+ * can never silently start serving a different candidate than the one a human
+ * approved — a renamed, re-planned, or unreviewed binding fails to match and
+ * the deployment-local bridge (`@anvil/legacy-bridge`) refuses to serve it.
+ * The field is required, not optional, for the same reason `soapAction`
+ * cannot be blank: a queue binding with nothing reviewed behind it is not a
+ * fact this schema is willing to represent.
+ *
+ * There is deliberately no native codec for this protocol in
+ * `packages/runtime` — unlike SOAP or GraphQL, nothing in a bare queue
+ * request/reply exchange (a destination, a correlated reply, no URL, no verb)
+ * is HTTP shaped. `wireExecutability` therefore never answers `ok: true` for
+ * it on its own; the only legitimate path onward is the same protocol-facade
+ * declaration a gRPC JSON transcoder needs (see `wire.ts`) — an operator
+ * stating that `@anvil/legacy-bridge`'s HTTP facade really does serve this
+ * operation, so the runtime's existing HTTP/JSON codec applies unchanged.
+ */
+export const QueueRequestReplyWireBinding = z
+  .object({
+    protocol: z.literal("queue_request_reply"),
+    /** Content hash of the one reviewed `LegacyCapabilityBinding` this exchange
+     *  executes. See the coherence note above. */
+    legacyBindingContentHash: LegacyBindingContentHash,
+    /** The destination the request message is sent to. */
+    requestDestination: z.string().min(1).max(2048),
+    /** How the reply is correlated back to this call. */
+    reply: z.discriminatedUnion("mode", [
+      z
+        .object({
+          mode: z.literal("reply_to"),
+          /** Present only when the reviewed binding pins a fixed reply-to
+           *  destination rather than a broker-generated temporary one. */
+          destination: z.string().min(1).max(2048).optional(),
+          correlationField: z.string().min(1).max(512),
+        })
+        .strict(),
+      z
+        .object({
+          mode: z.literal("fixed_destination"),
+          destination: z.string().min(1).max(2048),
+          correlationField: z.string().min(1).max(512),
+        })
+        .strict(),
+    ]),
+    /** JSON Schema pointer for the request message body, resolved against the
+     *  operation's own input schema — never a second copy of it. */
+    requestSchemaRef: z.string().min(1).max(2048),
+    /** JSON Schema pointer for the reply message body. */
+    responseSchemaRef: z.string().min(1).max(2048),
+    /** Milliseconds the bridge waits for a correlated reply before failing the
+     *  call with a structured timeout — never reporting business success. */
+    timeoutMs: z.number().int().positive().max(3_600_000),
+    /** What the idempotency key rides as on the wire. A message id dedups at
+     *  the broker/consumer boundary; a correlation id dedups at the bridge,
+     *  keyed to the same value the reply is matched against. */
+    idempotency: z.object({ carrier: z.enum(["message_id", "correlation_id"]) }).strict(),
+  })
+  .strict();
+export type QueueRequestReplyWireBinding = z.infer<typeof QueueRequestReplyWireBinding>;
+
+/**
  * What a call to a non-HTTP/JSON source needs on the wire, read from the source
  * document by the compiler.
  *
@@ -422,6 +500,7 @@ export const WireBinding = z.discriminatedUnion("protocol", [
   GraphqlWireBinding,
   GraphqlSseBinding,
   GrpcWireBinding,
+  QueueRequestReplyWireBinding,
 ]);
 export type WireBinding = z.infer<typeof WireBinding>;
 
