@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { airToYaml, type Diagnostic } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { compile } from "../compile.js";
-import { adaptHar } from "./har.js";
+import { adaptHar, dropSecrets } from "./har.js";
 
 type Op = Record<string, unknown>;
 
@@ -198,6 +198,34 @@ describe("HAR adapter: schema inference (conservative union across samples)", ()
 });
 
 describe("HAR adapter: secrets are dropped before anything else runs", () => {
+  it("dropSecrets strips secret header/query VALUES from its own sanitized clone", () => {
+    // No downstream function in har.ts ever serializes a header/query VALUE
+    // into the compiled document (params carry only name/location/schema),
+    // so a document-level assertion alone could never observe this scrub —
+    // this tests dropSecrets's own output directly, the one place a leaked
+    // value would actually be visible.
+    const entries = har([
+      entry({
+        url: "https://api.example.com/customers/1",
+        headers: [
+          { name: "Cookie", value: "session_id=SUPER_SECRET_SESSION" },
+          { name: "Set-Cookie", value: "session_id=SUPER_SECRET_SET" },
+          { name: "Proxy-Authorization", value: "Basic SUPER_SECRET_PROXY" },
+          { name: "X-Api-Key", value: "SUPER_SECRET_API_KEY" },
+        ],
+        query: [{ name: "session_token", value: "SUPER_SECRET_QUERY_TOKEN" }],
+      }),
+    ]);
+    const raw = JSON.parse(entries) as { log: { entries: Array<Record<string, unknown>> } };
+    const { entries: sanitized, dropped } = dropSecrets(raw.log.entries);
+    const serialized = JSON.stringify(sanitized);
+    expect(serialized).not.toContain("SUPER_SECRET");
+    // Names survive — they are what the compiled auth carrier needs.
+    expect(serialized).toContain("X-Api-Key");
+    expect(serialized).toContain("session_token");
+    expect(dropped).toBe(5);
+  });
+
   it("never copies Authorization/Cookie/api-key VALUES into the document", () => {
     const doc = adaptHar(
       har([

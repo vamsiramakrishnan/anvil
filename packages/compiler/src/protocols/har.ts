@@ -212,9 +212,14 @@ function classifyAuthorizationValue(value: string | undefined): string | undefin
  * for the aggregate `har_secrets_dropped` diagnostic. Every later function in
  * this file (parameter building, auth-scheme derivation) reads ONLY this
  * sanitized clone, never the original entries — so there is no code path
- * left that could reach a secret value even by accident.
+ * left that could reach a secret value even by accident. No downstream
+ * function ever serializes a header/query VALUE (secret or not) into the
+ * lowered document — parameters carry only name/location/schema — so this
+ * function's own output is exported and tested directly rather than only
+ * through `adaptHar`'s document: a document-level assertion could never
+ * observe this scrub either way, secrets or none.
  */
-function dropSecrets(entries: HarEntry[]): { entries: HarEntry[]; dropped: number } {
+export function dropSecrets(entries: HarEntry[]): { entries: HarEntry[]; dropped: number } {
   let dropped = 0;
   const cleaned = entries.map((entry) => {
     const headers = (entry.request?.headers ?? []).map((h): HarNameValue => {
