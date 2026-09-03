@@ -577,8 +577,33 @@ export const AuthProvider = z.object({
   requestedTokenType: z.enum(["access_token", "jwt", "id_token"]).optional(),
   /** On-wire API-key carrier (name + location) when it is not `X-API-Key`. */
   apiKey: z.object({ in: z.enum(["header", "query"]), name: z.string() }).optional(),
+  /**
+   * Authorization-code mechanics (RFC 6749 §4.1, PKCE per RFC 7636). The
+   * interactive step runs in a local broker on the reviewer's machine, never in
+   * the serving path; the runtime only ever replays or refreshes the token it
+   * produced. `redirectUri` is the loopback the broker listens on.
+   */
+  authorizationEndpoint: z.string().url().optional(),
+  pkce: z.boolean().optional(),
+  redirectUri: z.string().url().optional(),
 });
 export type AuthProvider = z.infer<typeof AuthProvider>;
+
+/**
+ * Mutual-TLS client material, by NAME only. Each field names the environment
+ * variable (or secret reference) the runtime reads the PEM from — the way every
+ * other credential is addressed (`ANVIL_<PROFILE>_*`). PEM bytes never appear
+ * in AIR, a bundle, a record, or a log.
+ */
+export const TlsClientMaterialRefs = z.object({
+  clientCertRef: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
+  clientKeyRef: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
+  caRef: z
+    .string()
+    .regex(/^[A-Z][A-Z0-9_]*$/)
+    .optional(),
+});
+export type TlsClientMaterialRefs = z.infer<typeof TlsClientMaterialRefs>;
 
 /**
  * Exact on-wire credential carrier. This is separate from an OAuth token
@@ -631,6 +656,8 @@ const AuthRequirementBase = z.object({
     .optional(),
   /** Tenant/isolation boundary the call is scoped to, when multi-tenant. */
   tenant: z.string().optional(),
+  /** Client-certificate material references for `mtls`; refused on any other type. */
+  tls: TlsClientMaterialRefs.optional(),
   /**
    * How the credential grant is *mechanically* driven, when the runtime must
    * acquire a token rather than replay a static one (OAuth2 client-credentials,
@@ -689,6 +716,11 @@ export function authCoherenceIssues(auth: AuthRequirement): string[] {
   } else if (auth.type === "oauth2_authorization_code") {
     if (auth.principal !== "end_user") {
       issues.push("authorization-code auth must declare end_user authority");
+    }
+    if (auth.provider?.authorizationEndpoint && !auth.provider.tokenEndpoint) {
+      issues.push(
+        "authorization-code auth that names an authorization endpoint must name its token endpoint",
+      );
     }
   } else if (sharedCredential && auth.principal !== "service") {
     issues.push(`${auth.type} uses a shared runtime credential and must declare service authority`);
@@ -756,6 +788,18 @@ export function authCoherenceIssues(auth: AuthRequirement): string[] {
     } else {
       issues.push(`${auth.type} cannot declare a credential carrier`);
     }
+  }
+  if (auth.type === "mtls" && !auth.tls) {
+    issues.push("mtls auth must name its client certificate and key references");
+  }
+  if (auth.tls && auth.type !== "mtls") {
+    issues.push(`${auth.type} auth cannot carry mtls client material references`);
+  }
+  if (
+    (auth.provider?.pkce !== undefined || auth.provider?.authorizationEndpoint !== undefined) &&
+    auth.type !== "oauth2_authorization_code"
+  ) {
+    issues.push(`${auth.type} auth cannot declare authorization-code mechanics`);
   }
   return issues;
 }
