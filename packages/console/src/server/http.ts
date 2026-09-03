@@ -19,6 +19,8 @@ import { ConsoleError, forbidden, invalidRequest, notFound, toConsoleError } fro
  */
 
 const MAX_BODY_BYTES = 1024 * 1024;
+/** How long a refused connection stays open so the refusal reaches the peer before the reset. */
+const UNREAD_REFUSAL_GRACE_MS = 250;
 const TOKEN_HEADER = "x-anvil-console-token";
 const TOKEN_META = "anvil-console-token";
 
@@ -190,7 +192,16 @@ function sendUnreadRefusal(req: IncomingMessage, res: ServerResponse, error: Con
     "cache-control": "no-store",
     connection: "close",
   });
-  res.end(body, () => req.destroy());
+  res.end(body, () => {
+    // Destroying the socket the instant the refusal flushes sends a TCP reset
+    // while the client is still streaming, and a reset discards response bytes
+    // the peer has not read yet — the client sees nothing at all instead of a
+    // 413. A short grace lets the status line reach the peer; the unread body
+    // meanwhile sits in the kernel's bounded receive buffer, never in this
+    // process, and the destroy still closes the connection behind it.
+    const grace = setTimeout(() => req.destroy(), UNREAD_REFUSAL_GRACE_MS);
+    grace.unref();
+  });
 }
 
 const CONTENT_TYPES: Record<string, string> = {
