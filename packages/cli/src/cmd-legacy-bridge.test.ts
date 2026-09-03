@@ -167,7 +167,15 @@ describe("anvil legacy bridge conformance", () => {
   it("passes against the in-process double and promotes the binding, deterministically", async () => {
     const binding = writeRequestReplyBinding();
     const planPath = join(work, "bridge-plan.json");
-    const planResult = await anvil("legacy", "bridge", "plan", binding, "--out", planPath, "--json");
+    const planResult = await anvil(
+      "legacy",
+      "bridge",
+      "plan",
+      binding,
+      "--out",
+      planPath,
+      "--json",
+    );
     expect(planResult.code, planResult.err).toBe(0);
 
     const reportPath = join(work, "conformance.json");
@@ -206,9 +214,7 @@ describe("anvil legacy bridge conformance", () => {
       "--json",
     );
     expect(second.code, second.err).toBe(0);
-    expect(JSON.parse(second.out).conformance.contentHash).toBe(
-      output.conformance.contentHash,
-    );
+    expect(JSON.parse(second.out).conformance.contentHash).toBe(output.conformance.contentHash);
   });
 
   it("refuses a plan report with no plan inside it", async () => {
