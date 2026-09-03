@@ -361,16 +361,17 @@ describe("member intent examples in entry cards", () => {
       // Same first phrase as svc.w_list — must count once, not twice.
       opWithIntents("svc.w_get", "tool_w_get", 15_000, ["list the widgets", "get a widget by id"]),
     ];
-    const gadgetOps = [
-      opWithIntents("svc.g_list", "tool_g_list", 15_000, ["list the gadgets"]),
-    ];
+    const gadgetOps = [opWithIntents("svc.g_list", "tool_g_list", 15_000, ["list the gadgets"])];
     const partOps = [opWithIntents("svc.p_list", "tool_p_list", 15_000, [])];
     const plan = ladderPlan(
-      doc([...widgetOps, ...gadgetOps, ...partOps], [
-        { id: "svc.widgets", operationIds: widgetOps.map((o) => o.id) },
-        { id: "svc.gadgets", operationIds: gadgetOps.map((o) => o.id) },
-        { id: "svc.parts", operationIds: partOps.map((o) => o.id) },
-      ]),
+      doc(
+        [...widgetOps, ...gadgetOps, ...partOps],
+        [
+          { id: "svc.widgets", operationIds: widgetOps.map((o) => o.id) },
+          { id: "svc.gadgets", operationIds: gadgetOps.map((o) => o.id) },
+          { id: "svc.parts", operationIds: partOps.map((o) => o.id) },
+        ],
+      ),
     );
     expect(plan.lanes).toHaveLength(3);
     const widgets = plan.lanes.find((l) => l.capabilityId === "svc.widgets");
@@ -436,10 +437,9 @@ describe("member intent examples in entry cards", () => {
         "z".repeat(200),
       ]),
     );
-    const plan = ladderPlan(
-      doc(ops, [{ id: "svc.things", operationIds: ops.map((o) => o.id) }]),
-      { surfaceBudgetTokens: 1 },
-    );
+    const plan = ladderPlan(doc(ops, [{ id: "svc.things", operationIds: ops.map((o) => o.id) }]), {
+      surfaceBudgetTokens: 1,
+    });
     expect(plan.mode).toBe("laddered");
     const lane = plan.lanes.find((l) => l.capabilityId === "svc.things");
     expect(lane).toBeDefined();

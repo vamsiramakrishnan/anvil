@@ -13,8 +13,8 @@ import {
   laneMember,
   laneMemberLine,
   laneOpenResult,
-  MIN_LADDERED_ACCURACY_DELTA_PTS,
   MIN_LADDER_TOKEN_SAVINGS_FRACTION,
+  MIN_LADDERED_ACCURACY_DELTA_PTS,
 } from "./lane.js";
 
 /**
@@ -136,11 +136,7 @@ function estateWithThreeLanes(): AirDocument {
  * an 18% reduction — comfortably under the 50% floor.
  */
 function tinySavingsEstate(): AirDocument {
-  const ops = [
-    operation({ id: "svc.a" }),
-    operation({ id: "svc.b" }),
-    operation({ id: "svc.c" }),
-  ];
+  const ops = [operation({ id: "svc.a" }), operation({ id: "svc.b" }), operation({ id: "svc.c" })];
   for (const op of ops) op.disclosureCost = { ...measured, toolTokens: 100 };
   return loadAirDocument({
     service: { id: "test", version: "1.0.0", source: { kind: "openapi" } },
