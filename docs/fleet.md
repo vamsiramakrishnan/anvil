@@ -91,12 +91,20 @@ state:
 ```
 
 `certifiedHash`/`certificationStatus` come from each bundle's own
-`certification.json` (`anvil certify`), read by the CLI — `@anvil/mcp-runtime`
-never touches the filesystem or depends on `@anvil/generators` (that
-dependency runs the other way, so the deployed serving path stays thin).
-An uncertified bundle still serves; `/readyz` just says so, and the whole
-fleet's `ready` folds to `false` until every mounted bundle is certified
-`passed`.
+`certification.json` (`anvil certify`), read AND **re-verified against the
+bundle's current content** by the CLI (`verifyCertification`,
+`@anvil/generators` — the same freshness gate `anvil deploy` checks a plan
+against) — `@anvil/mcp-runtime` never touches the filesystem or depends on
+`@anvil/generators` (that dependency runs the other way, so the deployed
+serving path stays thin). A bundle is `ready` only when its certification is
+BOTH `status: "passed"` **and** its recorded `bundleHash` still matches what's
+on disk right now: a stale certification (a compiler-owned file edited after
+`anvil certify` ran), a copied-in `certification.json` from a different
+bundle, or one that otherwise no longer matches is reported `ready: false`
+with a `reason` explaining why — readyz never trusts a `"passed"` status
+string it hasn't re-verified. An uncertified bundle still serves; `/readyz`
+just says so, and the whole fleet's `ready` folds to `false` until every
+mounted bundle is certified `passed` AND fresh.
 
 ## Principals
 
@@ -110,10 +118,11 @@ missing a required scope is refused with `policy_denied`
 (`details.code: "policy/scope_denied"`) — never retried, and never a byte
 reaches the upstream host.
 
-**Default: the anonymous, every-scope principal.** Unless you configure a
-principal directory, every call resolves to
-`{ id: "anonymous", scopes: ["*"] }`, which satisfies any `auth.scopes`
-requirement — this is what keeps single-bundle behavior byte-identical.
+**Default: the anonymous, every-scope principal — but ONLY when no directory
+is configured at all.** Leave `ANVIL_PRINCIPALS` unset and every call
+resolves to `{ id: "anonymous", scopes: ["*"] }`, which satisfies any
+`auth.scopes` requirement — this is what keeps single-bundle behavior
+byte-identical.
 
 Configure named principals with `ANVIL_PRINCIPALS`, either inline
 (`token:id:scope1,scope2;token2:id2:scope3`) or as JSON
@@ -124,11 +133,62 @@ Configure named principals with `ANVIL_PRINCIPALS`, either inline
 - **stdio**: `ANVIL_PRINCIPAL=<token>` names one principal for the whole
   session (one caller per process lifetime).
 
+**Once a directory IS configured, an unresolved caller is refused
+fail-closed — never anonymous.** A missing, mistyped, or unlisted
+`ANVIL_PRINCIPAL`/bearer token on a session with a non-empty `ANVIL_PRINCIPALS`
+is a configuration/auth error, not "no policy configured": granting the
+anonymous principal's `scopes: ["*"]` here would silently hand every scope to
+an unauthenticated caller. `execute()` refuses before validation, before auth
+material is resolved, before a single byte reaches the upstream host, with
+`policy_denied` (`details.code: "policy/principal_unresolved"`) — never
+retried. The record's `principalId` is `"unresolved"` for this refusal, never
+`"anonymous"`, so the two cases stay separately auditable.
+
 Every `ExecutionRecord` carries the resolved `principalId` — **never the
 token** that resolved it. `principalId` defaults to `"anonymous"` when
 nothing is configured, so existing record consumers (`anvil observe
 --from-records`, the drift alarm below) see one extra, always-present field
 rather than a breaking schema change.
+
+## Credentials
+
+Every mounted bundle shares one `ANVIL_AUTH_PROFILE` deployment profile by
+default, and `credentialProfileName` (`packages/runtime/src/auth.ts`) adds
+only the source's own security-scheme suffix (`credentialProfile`, e.g.
+`oauth`) on top of it — so with `--fleet`, **from two bundles on**, each
+bundle's profile is additionally namespaced by its own stable id (the same
+`fleetToolPrefix` folding tool names already use):
+
+```text
+one bundle:   ANVIL_<PROFILE>_<SCHEME>_*            (unchanged — byte-identical to no --fleet)
+two+ bundles: ANVIL_<PROFILE>_<BUNDLE-ID>_<SCHEME>_*  (billing and shipping never collide)
+```
+
+Without this, two independently-sourced services whose security schemes
+happen to share a name (both named `oauth`, say) would resolve the *same*
+`ANVIL_<PROFILE>_*` environment variables, and one service's credential could
+be sent to another's origin. **With exactly one bundle mounted**, there is
+nothing to disambiguate, so the credential namespace stays byte-identical to
+`anvil serve mcp` without `--fleet` — mirroring the same "nothing is prefixed
+with one bundle" rule tool naming already follows.
+
+## Benchmarked ladder decisions under `--fleet`
+
+`auto` disclosure mode (the default — see `docs/ARCHITECTURE.md`'s ladder
+section) can consult a bundle's own `benchmark.report.json`
+(`anvil benchmark --catalog both`) to decide whether laddering is actually
+helping this bundle's routing accuracy, the same way standalone
+`anvil serve mcp` (no `--fleet`) already does. `--fleet` derives this
+`measuredAccuracy` delta **per bundle**, with the exact same helper
+(`measuredAccuracyFromReport`, `packages/cli/src/commands/ladder-status.ts`)
+standalone serving uses — so a bundle mounted into a fleet can never
+disagree with what serving it alone would decide. A bundle whose measured
+laddered-minus-flat accuracy delta falls below the floor
+(`MIN_LADDERED_ACCURACY_DELTA_PTS`, `-8` points) serves flat under `--fleet`
+exactly as it would standalone; a bundle with no report, or a report whose
+`bundleHash` no longer matches the bundle's current content, reproduces
+`auto`'s pre-measurement behavior (ladder whenever the projection is over
+budget), also unchanged.
 
 ## Rate and spend limits
 
