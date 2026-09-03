@@ -9,7 +9,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { airFromJson } from "@anvil/air";
 import {
+  approveOperations,
+  compile,
   FileSystemGatewayImportReceiptStore,
   finalizeGatewayImportReceipt,
   type GatewayImportReceipt,
@@ -20,8 +24,19 @@ import {
   redactGatewayImportReceipt,
 } from "@anvil/compiler";
 import type { GeneratedBundle } from "@anvil/generators";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { exactFileSetDiagnostics, prepareBundleInstall } from "./estate-bundle-install.js";
+import { CLAUDE_PROFILE, createClaudeTargetConfig, generateClaudeTargetKit } from "@anvil/targets";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  exactFileSetDiagnostics,
+  gatewayLifecycleArtifacts,
+  prepareBundleInstall,
+} from "./estate-bundle-install.js";
+
+const readExample = (rel: string) =>
+  readFileSync(
+    fileURLToPath(new URL(`../../../../../examples/payments/${rel}`, import.meta.url)),
+    "utf8",
+  );
 
 /**
  * Characterisation of the transactional bundle install.
@@ -524,5 +539,93 @@ describe("prepareBundleInstall — derived state", () => {
     const result = await install(join(work, "bundle"), impossible, receipt);
     expect(codes(result)).toEqual(["gateway_receipt/output_install_failed"]);
     expect(existsSync(join(work, "bundle"))).toBe(false);
+  });
+});
+
+describe("gatewayLifecycleArtifacts — multi-profile target kit recognition", () => {
+  let airWithOperations: ReturnType<typeof airFromJson>;
+
+  beforeAll(async () => {
+    // Load the example AIR with approved operations to generate valid target kits.
+    // This mirrors claude.test.ts: compile a spec and approve all operations.
+    const compiled = await compile({
+      spec: readExample("openapi.yaml"),
+      manifest: readExample("anvil.yaml"),
+      serviceId: "payments",
+    });
+    airWithOperations = approveOperations(
+      compiled,
+      compiled.operations.map((operation) => operation.id),
+    );
+  });
+
+  it("recognizes a claude target kit as lifecycle state (not treated as foreign files)", () => {
+    const claudeConfig = createClaudeTargetConfig({
+      httpEndpoint: "https://mcp.example.test/mcp",
+      authMode: "oauth",
+      oauth: {
+        authorizationUrl: "https://idp.example.test/authorize",
+        tokenUrl: "https://idp.example.test/token",
+        scopes: ["api://anvil-mcp/mcp.invoke"],
+        inboundIssuer: "https://idp.example.test/",
+        inboundAudience: "api://anvil-mcp",
+        clientIdEnvVar: "ANVIL_OAUTH_CLIENT_ID",
+        clientSecretEnvVar: "ANVIL_OAUTH_CLIENT_SECRET",
+      },
+    });
+    const claudeKit = generateClaudeTargetKit(airWithOperations, CLAUDE_PROFILE, claudeConfig);
+    const bundleWithClaude: Record<string, string> = {
+      "air.json": JSON.stringify(airWithOperations),
+      "README.md": "# payments\n",
+      ...Object.fromEntries(
+        claudeKit.files.map((f) => [f.path, new TextDecoder().decode(f.bytes)]),
+      ),
+    };
+
+    const result = gatewayLifecycleArtifacts(bundleWithClaude, airWithOperations);
+    expect(result.diagnostics).toEqual([]);
+    // All claude target kit files should be recognized as lifecycle state
+    for (const file of claudeKit.files) {
+      expect(result.paths.has(file.path)).toBe(true);
+    }
+  });
+
+  it("reports a hand-edited claude kit file the same way as a hand-edited gemini kit", () => {
+    const claudeConfig = createClaudeTargetConfig({
+      httpEndpoint: "https://mcp.example.test/mcp",
+      authMode: "oauth",
+      oauth: {
+        authorizationUrl: "https://idp.example.test/authorize",
+        tokenUrl: "https://idp.example.test/token",
+        scopes: ["api://anvil-mcp/mcp.invoke"],
+        inboundIssuer: "https://idp.example.test/",
+        inboundAudience: "api://anvil-mcp",
+        clientIdEnvVar: "ANVIL_OAUTH_CLIENT_ID",
+        clientSecretEnvVar: "ANVIL_OAUTH_CLIENT_SECRET",
+      },
+    });
+    const claudeKit = generateClaudeTargetKit(airWithOperations, CLAUDE_PROFILE, claudeConfig);
+    const bundleWithClaude: Record<string, string> = {
+      "air.json": JSON.stringify(airWithOperations),
+      "README.md": "# payments\n",
+      ...Object.fromEntries(
+        claudeKit.files.map((f) => [f.path, new TextDecoder().decode(f.bytes)]),
+      ),
+    };
+
+    // Corrupt one file in the claude kit (simulate a hand-edit)
+    const corruptedSetup = JSON.parse(bundleWithClaude["targets/claude/setup.json"]!);
+    corruptedSetup.config.httpEndpoint = "https://different.example.test/mcp";
+    bundleWithClaude["targets/claude/setup.json"] = JSON.stringify(corruptedSetup);
+
+    const result = gatewayLifecycleArtifacts(bundleWithClaude, airWithOperations);
+    // Should report errors about file mismatch
+    expect(result.diagnostics.length).toBeGreaterThan(0);
+    const mismatchDiagnostics = result.diagnostics.filter(
+      (d) => d.code === "gateway_receipt/unverified_target",
+    );
+    expect(mismatchDiagnostics.length).toBeGreaterThan(0);
+    // At least one diagnostic should mention file mismatch
+    expect(result.diagnostics.some((d) => d.message.includes("deterministic"))).toBe(true);
   });
 });
