@@ -41,7 +41,7 @@ const op = (
   auth: { type: "none", scopes: [] },
   cli: { command: id },
   mcp: { toolName },
-  skill: { intentExamples: [] },
+  skill: { intentExamples: [] as string[] },
   state,
   ...(tokens === undefined
     ? {}
