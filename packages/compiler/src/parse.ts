@@ -139,6 +139,7 @@ const PROTOCOL_FORMATS: Record<string, { format: ProtocolFormat; kind: SourceKin
   discovery: { format: "discovery", kind: "discovery" },
   postman: { format: "postman", kind: "postman" },
   odata: { format: "odata", kind: "odata" },
+  har: { format: "har", kind: "har" },
 };
 
 /**

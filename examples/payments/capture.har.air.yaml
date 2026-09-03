@@ -1,0 +1,745 @@
+anvilVersion: 0.1.0
+service:
+  id: payments
+  version: "1.2"
+  displayName: Captured Traffic
+  source:
+    kind: har
+    uri: examples/payments/capture.har
+    snapshotId: src-0f1c7bf7504edcd1
+    sourceHash: sha256:0f1c7bf7504edcd1711459ef2f2849c2275de342ebad476e277936b947f7cff7
+    origin:
+      kind: filesystem
+      uri: examples/payments/capture.har
+    entrypoint: capture.har
+    pathGrammar:
+      classification: resource_grammar
+      basis: estate_evidence
+      evidence:
+        operations: 4
+        readMethodOperations: 2
+        parameterizedPathOperations: 4
+        verbTerminalOperations: 0
+        dottedTerminalOperations: 0
+        repeatedVerbWords: 0
+  auth:
+    type: api_key
+    scopes: []
+    credentialProfile: api_key_auth_x_api_key_253eefea8ba0149d0b79cbd1be49e8e9
+    principal: service
+    secretSource: env
+    provider:
+      apiKey:
+        in: header
+        name: X-Api-Key
+  servers:
+    - url: https://payments.internal.example.com
+operations:
+  - id: payments.customers.get
+    canonicalName: get_customer
+    displayName: GET /customers/{customer_id}
+    description: Observed via captured traffic (3 samples).
+    tags: []
+    sourceRef:
+      kind: har
+      path: /customers/{customer_id}
+      method: get
+    effect:
+      kind: read
+      action: get
+      resource: customer
+      risk: none
+      reversible: true
+    input:
+      params:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+          inferred: false
+        - name: expand
+          in: query
+          required: false
+          schema:
+            type: string
+          inferred: false
+      schema:
+        $schema: https://json-schema.org/draft/2020-12/schema
+        type: object
+        title: get_customer
+        description: Observed via captured traffic (3 samples).
+        additionalProperties: false
+        properties:
+          customer_id:
+            type: string
+            x-anvil-wire-name: customer_id
+          expand:
+            type: string
+            x-anvil-wire-name: expand
+        required:
+          - customer_id
+    output:
+      schema:
+        type: object
+        properties:
+          email:
+            type: string
+          id:
+            type: string
+        required:
+          - email
+          - id
+        additionalProperties: true
+      description: Observed response (2 samples).
+    errors:
+      - code: not_found
+        upstream:
+          httpStatus: 404
+        message: Observed response (1 sample).
+    idempotency:
+      mode: natural
+      mechanism: none
+      keyDerivation: none
+    retries:
+      mode: safe
+      basis: read_safe
+      maxAttempts: 3
+      backoff: exponential_jitter
+      baseDelayMs: 200
+      maxDelayMs: 20000
+      retryOn:
+        - timeout
+        - connection_reset
+        - dns_failure
+        - http_408
+        - http_429
+        - http_500
+        - http_502
+        - http_503
+        - http_504
+    confirmation:
+      required: false
+    auth:
+      type: api_key
+      scopes: []
+      credentialProfile: api_key_auth_x_api_key_253eefea8ba0149d0b79cbd1be49e8e9
+      principal: service
+      secretSource: env
+      provider:
+        apiKey:
+          in: header
+          name: X-Api-Key
+    disclosureCost:
+      toolTokens: 328
+      responseItemTokens: 0
+      responseTokens: 0
+      charsPerToken: 4.174
+      estimator: o200k_base
+    streaming: false
+    longRunning: false
+    deprecated: false
+    cli:
+      command: payments customers get
+      aliases: []
+    mcp:
+      toolName: payments_get_customer
+    skill:
+      intentExamples: []
+    state: review_required
+    reviewNotes:
+      - Derived from 3 captured HTTP requests in a HAR capture (first seen 2026-08-01T14:00:00.000Z,
+        last seen 2026-08-01T14:10:00.000Z); every claim here is an observation, not a specification
+        — review before approving.
+    evidence:
+      claims:
+        - subject: payments.customers.get
+          predicate: exists
+          value: true
+          source: spec
+          sourceRef: GET /customers/{customer_id}
+          method: declared
+          confidence: 0.7
+        - subject: payments.customers.get
+          predicate: effect.kind
+          value: read
+          source: recorded_traffic
+          method: http_method_heuristic
+          confidence: 0.5
+          note: effect/idempotency inferred from HTTP method
+        - subject: payments.customers.get
+          predicate: name.quality
+          value: get_customer
+          source: inferred
+          sourceRef: naming
+          method: naming_pass
+          confidence: 0.6
+          note: name synthesized from HTTP method + path
+    capabilityId: payments.customer
+  - id: payments.payments.get
+    canonicalName: get_payment
+    displayName: GET /payments/{payment_id}
+    description: Observed via captured traffic (2 samples).
+    tags: []
+    sourceRef:
+      kind: har
+      path: /payments/{payment_id}
+      method: get
+    effect:
+      kind: read
+      action: get
+      resource: payment
+      risk: none
+      reversible: true
+    input:
+      params:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+          inferred: false
+      schema:
+        $schema: https://json-schema.org/draft/2020-12/schema
+        type: object
+        title: get_payment
+        description: Observed via captured traffic (2 samples).
+        additionalProperties: false
+        properties:
+          payment_id:
+            type: string
+            x-anvil-wire-name: payment_id
+        required:
+          - payment_id
+    output:
+      schema:
+        type: object
+        properties:
+          amount:
+            type: number
+          currency:
+            type: string
+          id:
+            type: string
+          status:
+            type: string
+        required:
+          - amount
+          - currency
+          - id
+          - status
+        additionalProperties: true
+      description: Observed response (2 samples).
+    errors: []
+    idempotency:
+      mode: natural
+      mechanism: none
+      keyDerivation: none
+    retries:
+      mode: safe
+      basis: read_safe
+      maxAttempts: 3
+      backoff: exponential_jitter
+      baseDelayMs: 200
+      maxDelayMs: 20000
+      retryOn:
+        - timeout
+        - connection_reset
+        - dns_failure
+        - http_408
+        - http_429
+        - http_500
+        - http_502
+        - http_503
+        - http_504
+    confirmation:
+      required: false
+    auth:
+      type: jwt_bearer
+      scopes: []
+      credentialProfile: bearer_auth_c41694373770a9cd96d5201f8a51c9d4
+      principal: service
+      secretSource: env
+    disclosureCost:
+      toolTokens: 313
+      responseItemTokens: 0
+      responseTokens: 0
+      charsPerToken: 4.166
+      estimator: o200k_base
+    streaming: false
+    longRunning: false
+    deprecated: false
+    cli:
+      command: payments payments get
+      aliases: []
+    mcp:
+      toolName: payments_get_payment
+    skill:
+      intentExamples: []
+    state: review_required
+    reviewNotes:
+      - Derived from 2 captured HTTP requests in a HAR capture (first seen 2026-08-01T14:15:00.000Z,
+        last seen 2026-08-01T14:20:00.000Z); every claim here is an observation, not a specification
+        — review before approving.
+    evidence:
+      claims:
+        - subject: payments.payments.get
+          predicate: exists
+          value: true
+          source: spec
+          sourceRef: GET /payments/{payment_id}
+          method: declared
+          confidence: 0.7
+        - subject: payments.payments.get
+          predicate: effect.kind
+          value: read
+          source: recorded_traffic
+          method: http_method_heuristic
+          confidence: 0.5
+          note: effect/idempotency inferred from HTTP method
+        - subject: payments.payments.get
+          predicate: name.quality
+          value: get_payment
+          source: inferred
+          sourceRef: naming
+          method: naming_pass
+          confidence: 0.6
+          note: name synthesized from HTTP method + path
+    capabilityId: payments.payment
+  - id: payments.capture.create
+    canonicalName: create_capture
+    displayName: POST /payments/{payment_id}/capture
+    description: Observed via captured traffic (1 sample).
+    tags: []
+    sourceRef:
+      kind: har
+      path: /payments/{payment_id}/capture
+      method: post
+    effect:
+      kind: mutation
+      action: create
+      resource: capture
+      risk: financial
+      reversible: false
+    input:
+      params:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+          inferred: false
+      body:
+        contentType: application/json
+        required: false
+        schema:
+          type: object
+          properties: {}
+          additionalProperties: true
+        projection: fields
+        fields: []
+      schema:
+        $schema: https://json-schema.org/draft/2020-12/schema
+        type: object
+        title: create_capture
+        description: Observed via captured traffic (1 sample).
+        additionalProperties: false
+        properties:
+          payment_id:
+            type: string
+            x-anvil-wire-name: payment_id
+          confirm:
+            type: boolean
+            const: true
+            description: This operation is an irreversible financial mutation.
+        required:
+          - payment_id
+          - confirm
+    output:
+      schema:
+        type: object
+        properties:
+          amount:
+            type: number
+          currency:
+            type: string
+          id:
+            type: string
+          status:
+            type: string
+        required:
+          - amount
+          - currency
+          - id
+          - status
+        additionalProperties: true
+      description: Observed response (1 sample).
+    errors: []
+    idempotency:
+      mode: none
+      mechanism: none
+      keyDerivation: none
+    retries:
+      mode: none
+      basis: unproven
+      maxAttempts: 1
+      backoff: none
+      baseDelayMs: 200
+      maxDelayMs: 20000
+      retryOn: []
+    confirmation:
+      required: true
+      risk: financial
+      reason: This operation is an irreversible financial mutation.
+    auth:
+      type: jwt_bearer
+      scopes: []
+      credentialProfile: bearer_auth_c41694373770a9cd96d5201f8a51c9d4
+      principal: service
+      secretSource: env
+    disclosureCost:
+      toolTokens: 350
+      responseItemTokens: 0
+      responseTokens: 0
+      charsPerToken: 4.369
+      estimator: o200k_base
+    streaming: false
+    longRunning: false
+    archetype: transaction
+    deprecated: false
+    cli:
+      command: payments capture create
+      aliases: []
+    mcp:
+      toolName: payments_create_capture
+    skill:
+      intentExamples: []
+    state: review_required
+    reviewNotes:
+      - Idempotency could not be proven from the source spec; supply a manifest policy to approve
+        retries.
+      - Marked confirmation-required; consider requiring an idempotency key for replay protection.
+      - Derived from 1 captured HTTP request in a HAR capture (first seen 2026-08-01T14:35:00.000Z,
+        last seen 2026-08-01T14:35:00.000Z); every claim here is an observation, not a specification
+        — review before approving.
+    evidence:
+      claims:
+        - subject: payments.capture.create
+          predicate: exists
+          value: true
+          source: spec
+          sourceRef: POST /payments/{payment_id}/capture
+          method: declared
+          confidence: 0.7
+        - subject: payments.capture.create
+          predicate: effect.kind
+          value: mutation
+          source: recorded_traffic
+          method: http_method_heuristic
+          confidence: 0.5
+          note: effect/idempotency inferred from HTTP method
+        - subject: payments.capture.create
+          predicate: name.quality
+          value: create_capture
+          source: inferred
+          sourceRef: naming
+          method: naming_pass
+          confidence: 0.6
+          note: name synthesized from HTTP method + path
+    capabilityId: payments.capture
+  - id: payments.refunds.create
+    canonicalName: create_refund
+    displayName: POST /payments/{payment_id}/refunds
+    description: Observed via captured traffic (2 samples).
+    tags: []
+    sourceRef:
+      kind: har
+      path: /payments/{payment_id}/refunds
+      method: post
+    effect:
+      kind: mutation
+      action: create
+      resource: refund
+      risk: financial
+      reversible: false
+    input:
+      params:
+        - name: payment_id
+          in: path
+          required: true
+          schema:
+            type: string
+          inferred: false
+      body:
+        contentType: application/json
+        required: false
+        schema:
+          type: object
+          properties:
+            amount:
+              type: number
+            currency:
+              type: string
+            reason:
+              type: string
+          required:
+            - amount
+            - currency
+          additionalProperties: true
+        projection: fields
+        fields:
+          - name: amount
+            required: true
+            schema:
+              type: number
+          - name: currency
+            required: true
+            schema:
+              type: string
+          - name: reason
+            required: false
+            schema:
+              type: string
+      schema:
+        $schema: https://json-schema.org/draft/2020-12/schema
+        type: object
+        title: create_refund
+        description: Observed via captured traffic (2 samples).
+        additionalProperties: false
+        properties:
+          payment_id:
+            type: string
+            x-anvil-wire-name: payment_id
+          amount:
+            type: number
+            x-anvil-wire-name: amount
+          currency:
+            type: string
+            x-anvil-wire-name: currency
+          reason:
+            type: string
+            x-anvil-wire-name: reason
+          confirm:
+            type: boolean
+            const: true
+            description: This operation is an irreversible financial mutation.
+        required:
+          - payment_id
+          - amount
+          - currency
+          - confirm
+    output:
+      schema:
+        type: object
+        properties:
+          amount:
+            type: number
+          id:
+            type: string
+          payment_id:
+            type: string
+          status:
+            type: string
+        required:
+          - amount
+          - id
+          - payment_id
+          - status
+        additionalProperties: true
+      description: Observed response (2 samples).
+    errors: []
+    idempotency:
+      mode: none
+      mechanism: none
+      keyDerivation: none
+    retries:
+      mode: none
+      basis: unproven
+      maxAttempts: 1
+      backoff: none
+      baseDelayMs: 200
+      maxDelayMs: 20000
+      retryOn: []
+    confirmation:
+      required: true
+      risk: financial
+      reason: This operation is an irreversible financial mutation.
+    auth:
+      type: jwt_bearer
+      scopes: []
+      credentialProfile: bearer_auth_c41694373770a9cd96d5201f8a51c9d4
+      principal: service
+      secretSource: env
+    disclosureCost:
+      toolTokens: 403
+      responseItemTokens: 0
+      responseTokens: 0
+      charsPerToken: 4.27
+      estimator: o200k_base
+    streaming: false
+    longRunning: false
+    archetype: transaction
+    deprecated: false
+    cli:
+      command: payments refunds create
+      aliases: []
+    mcp:
+      toolName: payments_create_refund
+    skill:
+      intentExamples: []
+    state: review_required
+    reviewNotes:
+      - Idempotency could not be proven from the source spec; supply a manifest policy to approve
+        retries.
+      - Marked confirmation-required; consider requiring an idempotency key for replay protection.
+      - Derived from 2 captured HTTP requests in a HAR capture (first seen 2026-08-01T14:25:00.000Z,
+        last seen 2026-08-01T14:30:00.000Z); every claim here is an observation, not a specification
+        — review before approving.
+    evidence:
+      claims:
+        - subject: payments.refunds.create
+          predicate: exists
+          value: true
+          source: spec
+          sourceRef: POST /payments/{payment_id}/refunds
+          method: declared
+          confidence: 0.7
+        - subject: payments.refunds.create
+          predicate: effect.kind
+          value: mutation
+          source: recorded_traffic
+          method: http_method_heuristic
+          confidence: 0.5
+          note: effect/idempotency inferred from HTTP method
+        - subject: payments.refunds.create
+          predicate: name.quality
+          value: create_refund
+          source: inferred
+          sourceRef: naming
+          method: naming_pass
+          confidence: 0.6
+          note: name synthesized from HTTP method + path
+    capabilityId: payments.refund
+capabilities:
+  - id: payments.capture
+    displayName: Capture
+    description: Capture capability for payments.
+    source: resource
+    resources:
+      - capture
+    operationIds:
+      - payments.capture.create
+    workflowIds: []
+    intentExamples:
+      - work with capture
+      - manage capture
+    state: review_required
+    lifecycle: proposed
+    evidence:
+      claims:
+        - subject: payments.capture
+          predicate: grouping
+          value: resource
+          source: inferred
+          method: resource_heuristic
+          confidence: 0.5
+          note: Inferred from the "capture" resource.
+  - id: payments.customer
+    displayName: Customer
+    description: Customer capability for payments.
+    source: resource
+    resources:
+      - customer
+    operationIds:
+      - payments.customers.get
+    workflowIds: []
+    intentExamples:
+      - work with customer
+      - manage customer
+    state: generated
+    lifecycle: proposed
+    evidence:
+      claims:
+        - subject: payments.customer
+          predicate: grouping
+          value: resource
+          source: inferred
+          method: resource_heuristic
+          confidence: 0.5
+          note: Inferred from the "customer" resource.
+  - id: payments.payment
+    displayName: Payment
+    description: Payment capability for payments.
+    source: resource
+    resources:
+      - payment
+    operationIds:
+      - payments.payments.get
+    workflowIds: []
+    intentExamples:
+      - work with payment
+      - manage payment
+    state: generated
+    lifecycle: proposed
+    evidence:
+      claims:
+        - subject: payments.payment
+          predicate: grouping
+          value: resource
+          source: inferred
+          method: resource_heuristic
+          confidence: 0.5
+          note: Inferred from the "payment" resource.
+  - id: payments.refund
+    displayName: Refund
+    description: Refund capability for payments.
+    source: resource
+    resources:
+      - refund
+    operationIds:
+      - payments.refunds.create
+    workflowIds: []
+    intentExamples:
+      - work with refund
+      - manage refund
+    state: review_required
+    lifecycle: proposed
+    evidence:
+      claims:
+        - subject: payments.refund
+          predicate: grouping
+          value: resource
+          source: inferred
+          method: resource_heuristic
+          confidence: 0.5
+          note: Inferred from the "refund" resource.
+workflows: []
+schemas: {}
+diagnostics:
+  - level: info
+    code: har_secrets_dropped
+    message: 11 secret header/query value(s) (Authorization, Cookie, Set-Cookie, Proxy-Authorization,
+      and any name matching /token|secret|key|password|session/i) were dropped before this capture
+      was lowered; none were copied into the compiled document.
+  - level: warning
+    code: unproven_idempotency
+    message: Operation 'payments.capture.create' is a mutation with no proven idempotency; auto-retry
+      disabled and confirmation required.
+    operationId: payments.capture.create
+  - level: info
+    code: no_declared_scopes
+    message: Mutation 'payments.capture.create' declares auth but no scopes.
+    operationId: payments.capture.create
+  - level: warning
+    code: unproven_idempotency
+    message: Operation 'payments.refunds.create' is a mutation with no proven idempotency; auto-retry
+      disabled and confirmation required.
+    operationId: payments.refunds.create
+  - level: info
+    code: no_declared_scopes
+    message: Mutation 'payments.refunds.create' declares auth but no scopes.
+    operationId: payments.refunds.create
+  - level: info
+    code: naming_dialect
+    message: 'Naming dialect "mixed" (casing: mixed, confidence 0.00, 4 operations sampled) — fewer than
+      5 operations — too small a sample to infer a house style.'

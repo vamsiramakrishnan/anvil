@@ -33,7 +33,7 @@ The architecture protects seven invariants:
 | Stage | Input | Responsibility | Output |
 | --- | --- | --- | --- |
 | Source capture | Files or a source directory | Detect entrypoints, follow permitted local references, reject path escape, store verbatim bytes | Immutable source snapshot |
-| Protocol adaptation | One locked entrypoint | Lower OpenAPI, Swagger, GraphQL, proto3, WSDL, Discovery, OData, or Postman into the shared HTTP-shaped compiler input | Normalized source document |
+| Protocol adaptation | One locked entrypoint | Lower OpenAPI, Swagger, GraphQL, proto3, WSDL, Discovery, OData, Postman, or a HAR capture into the shared HTTP-shaped compiler input | Normalized source document |
 | Semantic compilation | Adapted document plus optional manifest | Normalize operations, classify effects, apply reviewed facts, validate safety, discover capabilities | AIR document |
 | Projection | AIR | Generate CLI, MCP, skill, client SDKs, hooks, mocks, evals, runtime documents, targets, and deploy inputs | Bundle directory |
 | Review | Bundle | Inspect diagnostics, enrich missing facts, review capabilities, approve operations | Reviewed bundle |
@@ -101,6 +101,7 @@ perform deterministic lowering before semantic normalization:
 | Google Discovery | Resource methods and schemas become paths, operations, and components |
 | OData v2/v4 | Entity sets become permitted CRUD operations based on metadata |
 | Postman v2.x | Saved requests, folders, examples, and auth shapes become an API document |
+| HAR 1.2 capture | Recorded requests become templated operations; every operation is capped `review_required` — a capture is evidence, never a declared contract |
 
 Adapters own syntax and mechanical fidelity. They do not grant business
 authority. A method named `TransferFunds` remains a mutation whose idempotency

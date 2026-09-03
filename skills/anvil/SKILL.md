@@ -19,6 +19,7 @@ invent semantics.
 - SOAP/WSDL (multi-file)
 - OData v2/v4 ($metadata/EDMX)
 - Postman Collections
+- Captured traffic (HAR 1.2, review-only)
 
 Every source format lands in the same canonical model (AIR) and the same
 aligned MCP server + CLI + skill + SDK bundle.

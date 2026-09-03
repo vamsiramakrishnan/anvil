@@ -221,7 +221,12 @@ export const ParamLocation = z.enum(["path", "query", "header", "cookie", "body"
 export type ParamLocation = z.infer<typeof ParamLocation>;
 
 /** Source spec kinds Anvil can parse (only `openapi` is wired in the MVP).
- *  `mcp` is a captured MCP server surface adopted as a source (Increment 6). */
+ *  `mcp` is a captured MCP server surface adopted as a source (Increment 6).
+ *  `har` is an HTTP Archive traffic capture — recorded requests, never a
+ *  declared contract. Every operation compiled from a `har` source is capped
+ *  at `review_required` and its safety claims at low confidence (see
+ *  `packages/compiler/src/har-posture.ts`); this is enforced at compile time,
+ *  not by this enum, which only says the kind exists. */
 export const SourceKind = z.enum([
   "openapi",
   "swagger",
@@ -231,6 +236,7 @@ export const SourceKind = z.enum([
   "discovery",
   "postman",
   "odata",
+  "har",
   "mcp",
 ]);
 export type SourceKind = z.infer<typeof SourceKind>;

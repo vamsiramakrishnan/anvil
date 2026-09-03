@@ -19,6 +19,7 @@ import { manifestToOverlay } from "./contract/overlay.js";
 import { applyResolved, resolveOverlays } from "./contract/resolution.js";
 import { applyDialectAdjustment, detectNamingDialect } from "./dialect.js";
 import { measureAirDisclosure } from "./disclosure-cost.js";
+import { applyHarObservedPosture } from "./har-posture.js";
 import {
   type AnvilManifest,
   airAuthProviderToManifest,
@@ -429,6 +430,14 @@ async function buildAir(
   const { operations: queryTemplateDerived, diagnostics: queryTemplateDiagnostics } =
     buildQueryTemplates(manifest, validated, capabilities);
   const allOperations = [...validated, ...queryTemplateDerived];
+
+  // Captured-traffic posture: a HAR source proves what crossed the wire, never
+  // a declared contract. Cap state and safety-claim confidence AFTER every
+  // other pass has had its say, so this is the last word on both — see
+  // har-posture.ts.
+  if (parsed.kind === "har") {
+    applyHarObservedPosture(allOperations, doc);
+  }
 
   const serviceAuth: AuthRequirement = allOperations.find((o) => o.auth.type !== "none")?.auth ?? {
     type: "none",
