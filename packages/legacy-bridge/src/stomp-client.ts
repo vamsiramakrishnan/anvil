@@ -114,18 +114,29 @@ export function encodeStompFrame(
  * bytes across several socket `data` events — a STOMP frame has no length
  * prefix of its own; only `content-length` inside it does, so the terminator
  * search has to happen after headers are already parsed.
+ *
+ * Operates on a `Buffer` of raw bytes throughout, never a decoded string.
+ * `content-length` (per spec §3.3.3) is a *byte* count — `encodeStompFrame`
+ * emits `Buffer.byteLength(body, "utf8")` — so the body end has to be located
+ * by byte offset. A multibyte UTF-8 character (e.g. `é`, `✓`) encodes to more
+ * bytes than JS string `.length`/`.indexOf` count in UTF-16 code units;
+ * walking the declared length as a string index lands short of the real NUL
+ * terminator, the frame never completes, and the caller times out waiting for
+ * a reply that already arrived. Headers and the body are decoded to UTF-8
+ * strings only after both boundaries are found in byte space.
  */
-export function parseStompFrames(buffer: string): { frames: StompFrame[]; remaining: string } {
+export function parseStompFrames(buffer: Buffer): { frames: StompFrame[]; remaining: Buffer } {
+  const LF = 0x0a;
   const frames: StompFrame[] = [];
   let cursor = 0;
   for (;;) {
     // Heartbeat: a lone newline between frames, per spec §2.2. Consume and
     // continue rather than treating it as a malformed frame.
-    while (buffer[cursor] === "\n") cursor += 1;
+    while (cursor < buffer.length && buffer[cursor] === LF) cursor += 1;
     if (cursor >= buffer.length) break;
-    const headerEnd = buffer.indexOf("\n\n", cursor);
+    const headerEnd = buffer.indexOf("\n\n", cursor, "utf8");
     if (headerEnd === -1) break;
-    const headerBlock = buffer.slice(cursor, headerEnd);
+    const headerBlock = buffer.toString("utf8", cursor, headerEnd);
     const headerLines = headerBlock.split("\n");
     const command = headerLines[0] ?? "";
     const headers: Record<string, string> = {};
@@ -141,17 +152,17 @@ export function parseStompFrames(buffer: string): { frames: StompFrame[]; remain
     const declaredLength = headers["content-length"];
     let bodyEnd: number;
     if (declaredLength !== undefined && /^\d+$/.test(declaredLength)) {
-      bodyEnd = bodyStart + Number(declaredLength);
-      if (buffer[bodyEnd] !== NUL) break; // incomplete or malformed; wait for more
+      bodyEnd = bodyStart + Number(declaredLength); // byte offset — content-length is bytes
+      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more
     } else {
-      bodyEnd = buffer.indexOf(NUL, bodyStart);
+      bodyEnd = buffer.indexOf(0x00, bodyStart);
       if (bodyEnd === -1) break;
     }
     if (bodyEnd > buffer.length) break;
-    frames.push({ command, headers, body: buffer.slice(bodyStart, bodyEnd) });
+    frames.push({ command, headers, body: buffer.toString("utf8", bodyStart, bodyEnd) });
     cursor = bodyEnd + 1;
   }
-  return { frames, remaining: buffer.slice(cursor) };
+  return { frames, remaining: buffer.subarray(cursor) };
 }
 
 export interface StompClientOptions {
@@ -175,7 +186,7 @@ export interface StompClientOptions {
  */
 export class StompClient implements QueueBrokerClient {
   private socket: Socket | undefined;
-  private buffer = "";
+  private buffer: Buffer = Buffer.alloc(0);
   private readonly pending = new Map<
     string,
     { resolve: (reply: QueueReply) => void; reject: (error: Error) => void }
@@ -218,7 +229,7 @@ export class StompClient implements QueueBrokerClient {
     onConnectError: (err: Error) => void,
     connectTimer: ReturnType<typeof setTimeout>,
   ): void {
-    this.buffer += chunk.toString("utf8");
+    this.buffer = Buffer.concat([this.buffer, chunk]);
     const { frames, remaining } = parseStompFrames(this.buffer);
     this.buffer = remaining;
     for (const frame of frames) {
