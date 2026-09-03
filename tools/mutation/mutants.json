@@ -795,6 +795,16 @@
       ]
     },
     {
+      "id": "corpus/refine-loop-ratchet-fails-on-drop",
+      "file": "tools/corpus/refine-loop.mjs",
+      "control": "The routing-accuracy ratchet fails when an estate's routing accuracy drops beyond the tolerance since the pinned baseline. Neutralize the comparison (always true) and a real routing regression \u2014 a task that used to route correctly and now does not \u2014 rides through the nightly refine-loop job green, exactly the failure mode the naming-conformance ratchet above already guards for a different signal.",
+      "find": "  const ok = deltaPts >= -toleranceDeltaPts;",
+      "replace": "  const ok = true;",
+      "tests": [
+        "tools/corpus/refine-loop.test.ts"
+      ]
+    },
+    {
       "id": "path-grammar/ambiguous-never-silently-selects",
       "file": "packages/compiler/src/path-grammar.ts",
       "control": "An ambiguous path grammar never silently selects a grammar: when the estate's RPC and REST signals BOTH commit, the classifier must return `ambiguous` with a diagnostic naming both candidate grammars and fall back to the source kind's pre-classifier behavior \u2014 never let whichever side carries more votes win quietly. Delete the split-vote branch and a GET-heavy verb-terminal estate silently classifies rpc_plain with no warning.",
