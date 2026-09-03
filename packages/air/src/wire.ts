@@ -46,6 +46,7 @@ const PROTOCOL_BY_SOURCE_KIND: Record<SourceKind, WireProtocol> = {
   discovery: "http_json",
   postman: "http_json",
   odata: "http_json",
+  har: "http_json",
   wsdl: "soap",
   graphql: "graphql",
   protobuf: "grpc",
