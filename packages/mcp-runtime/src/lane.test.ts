@@ -487,7 +487,7 @@ describe("decideLadder — measured accuracy in 'auto' mode", () => {
   it("ladders when the measured accuracy delta clears the floor", () => {
     const decision = decideLadder(estateWithThreeLanes(), {
       surfaceBudgetTokens: 100,
-      measuredAccuracy: { ladderedMinusFlatPts: MIN_LADDERED_ACCURACY_DELTA_PTS + 1 },
+      measuredAccuracy: { ladderedMinusFlatPts: -2 },
     });
     expect(decision.laddered).toBe(true);
     expect(decision.decisionReason).toBe("plan");
@@ -495,9 +495,14 @@ describe("decideLadder — measured accuracy in 'auto' mode", () => {
   });
 
   it("serves flat when the measured accuracy delta falls below the floor", () => {
+    // Pins the documented floor value itself, and uses a fixed literal delta
+    // (not one computed from the constant under test) so a weakened floor —
+    // mutant `ladder/auto-never-ladders-past-accuracy-floor` — cannot pass by
+    // moving both sides of the comparison together.
+    expect(MIN_LADDERED_ACCURACY_DELTA_PTS).toBe(-8);
     const decision = decideLadder(estateWithThreeLanes(), {
       surfaceBudgetTokens: 100,
-      measuredAccuracy: { ladderedMinusFlatPts: MIN_LADDERED_ACCURACY_DELTA_PTS - 1 },
+      measuredAccuracy: { ladderedMinusFlatPts: -20 },
     });
     expect(decision.laddered).toBe(false);
     expect(decision.decisionReason).toBe("accuracy_below_floor");
