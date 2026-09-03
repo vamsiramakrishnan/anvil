@@ -134,13 +134,14 @@ export const MIN_LADDER_TOKEN_SAVINGS_FRACTION = 0.5;
 /**
  * The accuracy floor `auto` applies once a measured report exists: a laddered
  * catalog may trail the flat one by at most this many points of task share.
- * Drawn directly from the two regimes Result 3 measured on the same estate,
- * not guessed: the ladder's first pass (generic capability descriptions only)
- * trailed flat by 8.2-12.8 points at every size and is exactly the surface
- * this floor should refuse; folding member vocabulary and intent examples
- * into the entry card (the same document's second pass) cut that gap to
- * 0-6.8 points and is exactly the surface this floor should allow. -8 sits on
- * the line between those two measured regimes.
+ * Drawn directly from the two regimes `docs/backtesting/routing-at-scale.md`
+ * measured on the same estate, not guessed: folding member vocabulary alone
+ * into the entry card (the first stage-1 lever) trailed flat by 8.2-15.3
+ * points at every measured size and is exactly the surface this floor should
+ * refuse; also folding member intent examples in (the second lever) cut that
+ * gap to at most 6.8 points, beating flat outright at 50 tools, and is
+ * exactly the surface this floor should allow. -8 sits on the line between
+ * those two measured regimes.
  */
 export const MIN_LADDERED_ACCURACY_DELTA_PTS = -8;
 
