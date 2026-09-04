@@ -60,6 +60,7 @@ export const zValidationCheckId = z.enum([
   "group_supersedes_within_steps",
   "group_workflow_composes",
   "group_names_grounded",
+  "group_disambiguation_distinguishes",
 ]);
 export const zEvalFamily = z.enum([
   "operation_routing",

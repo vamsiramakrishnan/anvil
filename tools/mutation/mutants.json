@@ -1291,6 +1291,46 @@
       "tests": [
         "packages/generators/src/sdk-oauth-refresh.test.ts"
       ]
+    },
+    {
+      "id": "refinement/group-disambiguation-must-distinguish",
+      "file": "packages/refinement/src/skills/group-proposal.ts",
+      "control": "A disambiguation must leave every rewritten member carrying a content word its siblings do not all carry. Remove the check and a reword whose every word the siblings could say just as truthfully \u2014 a rewrite that cannot change which tool a router picks \u2014 is passed on to a reviewer as a fix.",
+      "find": "    if (distinguishing.length === 0) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/refinement/src/protocol/group-cluster.test.ts"
+      ]
+    },
+    {
+      "id": "refinement/group-disambiguation-review-tier",
+      "file": "packages/refinement/src/approval.ts",
+      "control": "A `disambiguate` patch rewrites what several served tools SAY at once, so it is pinned to the review tier on the FIELD like the other two group keys. Drop it from the guard and a harness can reword K tools' served text with no person in the loop.",
+      "find": "  if (\"workflow\" in set || \"capability\" in set || \"disambiguate\" in set) {",
+      "replace": "  if (\"workflow\" in set || \"capability\" in set) {",
+      "tests": [
+        "packages/refinement/src/protocol/group-cluster.test.ts"
+      ]
+    },
+    {
+      "id": "benchmark-admission/disambiguation-is-scored",
+      "file": "packages/refinement/src/protocol/exchange.ts",
+      "control": "Every arm of the group proposal union goes through the benchmark-scored admission, keyed off GROUP_PATCH_KEYS so a new arm cannot reach a reviewer unmeasured by simply not being named. Narrow it back to the two composition keys and a disambiguation lands with no delta at all \u2014 no refusal for a rewrite that makes routing worse, and no numbers for the reviewer.",
+      "find": "      GROUP_PATCH_KEYS.some((key) => key in refinement.proposal.set),",
+      "replace": "      (\"workflow\" in refinement.proposal.set || \"capability\" in refinement.proposal.set),",
+      "tests": [
+        "packages/cli/src/commands/refine-group.test.ts"
+      ]
+    },
+    {
+      "id": "refinement/group-disambiguation-all-or-nothing",
+      "file": "packages/refinement/src/apply.ts",
+      "control": "A disambiguation applies to every named member or to none. Remove the guard and an unresolvable reference leaves a half-disambiguated catalog \u2014 some members moved apart, the rest still colliding \u2014 which is not the change the receipt approved.",
+      "find": "        if (rewrites.some((rewrite) => rewrite.op === undefined)) return;",
+      "replace": "        // mutant: apply what resolves, skip what does not",
+      "tests": [
+        "packages/refinement/src/protocol/group-cluster.test.ts"
+      ]
     }
   ]
 }

@@ -10,16 +10,17 @@ surface:
 ```
 anvil benchmark            measure routing; mis-routes cluster into confusable families
 anvil refine export-task   hand ONE cluster to a coding harness as a hash-bound case file
-  <harness answers>        workflow | capability | honest decline
+  <harness answers>        disambiguate | workflow | capability | honest decline
 anvil refine import-proposal   deterministic validation + benchmark-scored admission
 anvil refine review/approve    a person decides, with the measured delta in front of them
 anvil refine apply-pack        the reviewed bytes land in AIR
 anvil compile / serve          the served surface shrinks (tools/list before vs after)
 ```
 
-Nothing in this loop auto-approves anything. The two proposal kinds are pinned
-to the review tier on their patch keys (`workflow`, `capability`), and the
-measured routing delta is evidence for the reviewer — never an approval.
+Nothing in this loop auto-approves anything. The three proposal kinds are
+pinned to the review tier on their patch keys (`disambiguate`, `workflow`,
+`capability`), and the measured routing delta is evidence for the reviewer —
+never an approval.
 
 ## 1. Measure and pick a cluster
 
@@ -56,8 +57,16 @@ job, with group-scope facts:
 
 ## 3. The harness answers — a bounded union
 
-Exactly one of:
+A cluster is confusable for one of three reasons, and the union has one arm for
+each. Exactly one of:
 
+- **A disambiguation proposal** (`patch.set.disambiguate`): a new description
+  (and optionally display name) plus a rationale for each of ≥ 2 members. The
+  members stay exactly as they are — nothing is added to the catalog and
+  nothing is removed from it; what changes is the text each tool SAYS, which is
+  what `mcpToolDescription` composes the served description from. This is the
+  common case and the smallest claim: the operations were fine, their wording
+  was not.
 - **A workflow proposal** (`patch.set.workflow`): name, description, intent
   examples, ordered steps with `$.output.<field>` bindings, and `supersedes` —
   the member tools the composite REPLACES on the served surface. `supersedes`
@@ -68,6 +77,12 @@ Exactly one of:
 - **No change, with a reason**: the protocol's honest-decline statuses
   (`insufficient_evidence`, …) with the reason in `summary` and no patch. A
   decline is a first-class answer, not a failure.
+
+One boundary applies to all three and matters most to the disambiguation arm:
+a proposal may never touch `intent_examples` on a member operation. Intent
+examples do not reach the served surface at all, and they ARE the task set the
+admission gate re-routes — editing them would move the target instead of the
+tool.
 
 ## 4. Import: deterministic validation, then benchmark-scored admission
 
@@ -88,16 +103,25 @@ the machine only accepts demonstrated, grounded output:
   `@anvil/mcp-runtime` serves and the disclosure budget charges), and every
   later step's required input is bound from a field the previous step's real
   output schema declares;
-- `group_names_grounded` — every proposed name and intent is the member
-  operations' own vocabulary (the shared `routingTokens` tokenizer), never an
-  invention.
+- `group_names_grounded` — every proposed name, intent, and disambiguated
+  description is built from the member operations' own vocabulary (the shared
+  `routingTokens` tokenizer), never an invention;
+- `group_disambiguation_distinguishes` — a disambiguation rewrites at least two
+  members, and leaves each of them carrying at least one content word its
+  siblings in the proposal do not all carry. A reword whose every word the
+  siblings could say just as truthfully cannot change which tool a router
+  picks, and is refused before it costs a reviewer's attention.
 
 Then the admission gate: the deterministic lexical router re-routes the same
 intent tasks over the current served catalog and over the hypothetical one the
 proposal would produce — for a workflow, members superseded per the shared
 planner and the composite registered under its real served name and
 description; for a capability, the member tasks routed over the full catalog
-vs the narrowed one.
+vs the narrowed one; for a disambiguation, EVERY task over a catalog rebuilt
+through the same `curatedCatalog`/`mcpToolDescription` path the runtime serves
+from, with the rewritten members' text in place. A disambiguation is scored
+over all tasks, not just the members', because sharper wording can just as
+easily stop eating a non-member's tasks — or start eating them.
 
 - A **negative** delta is refused with the numbers ("this abstraction makes
   routing worse: 6→4 of 12"), per-intent, and no pack is written.
@@ -131,6 +155,14 @@ An approved **capability** proposal lands born `proposed`, exactly like a
 manifest-authored capability: the receipt approved DECLARING the grouping, and
 the capability's own approval — with its disclosure budget — still goes
 through `anvil capability approve`.
+
+An approved **disambiguation** writes each member's `description` (and
+`display_name` when proposed) and records the rationale as a claim on that
+operation. `tools/list` is the same length afterwards; what changed is that the
+entries no longer read alike. It is all-or-nothing: if any referenced operation
+cannot be resolved, none of the rewrites land — half a disambiguation is a
+catalog where some members moved apart and the rest did not, which is not what
+the reviewer approved.
 
 Recompile (`anvil compile`) to reproject the bundle, and re-run
 `anvil benchmark` if you want the post-change measurement on the record.

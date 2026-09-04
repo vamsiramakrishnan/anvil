@@ -62,7 +62,8 @@ export type ValidationCheckId =
   | "group_grant_respected"
   | "group_supersedes_within_steps"
   | "group_workflow_composes"
-  | "group_names_grounded";
+  | "group_names_grounded"
+  | "group_disambiguation_distinguishes";
 
 /**
  * The minimal view of a frozen evidence artifact the `evidence_meets_verification`

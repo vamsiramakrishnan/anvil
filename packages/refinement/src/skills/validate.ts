@@ -28,6 +28,7 @@ import {
 } from "./contract.js";
 import {
   buildGroupWorkflow,
+  disambiguationIssues,
   groupGrantOf,
   groupNameIssues,
   groupPatchReferences,
@@ -633,13 +634,15 @@ const CHECKS: Record<ValidationCheckId, Check> = {
 
   /* ---------------------- group (confusable-cluster) checks ---------------------- */
   // The deterministic boundary that makes an unreliable harness safe on a whole
-  // CLUSTER: the proposal union is closed (exactly one of workflow/capability,
-  // strict zod shapes), every referenced operation stays inside the task's
-  // hash-bound grant, `supersedes` never leaves the payload's own steps, the
-  // composed workflow must register on the SHARED surface planner with bindings
-  // that actually thread, and every proposed name/intent is the member
-  // operations' own vocabulary. All of it delegates to group-proposal.ts so the
-  // apply path and the CLI's benchmark-scored admission read the same code.
+  // CLUSTER: the proposal union is closed (exactly one of
+  // workflow/capability/disambiguate, strict zod shapes), every referenced
+  // operation stays inside the task's hash-bound grant, `supersedes` never
+  // leaves the payload's own steps, the composed workflow must register on the
+  // SHARED surface planner with bindings that actually thread, a disambiguation
+  // must leave each member saying something its siblings do not, and every
+  // proposed name/intent is the member operations' own vocabulary. All of it
+  // delegates to group-proposal.ts so the apply path and the CLI's
+  // benchmark-scored admission read the same code.
 
   group_proposal_shape(_skill, proposal) {
     const parsed = parseGroupPatch(proposal.patch.set);
@@ -665,6 +668,20 @@ const CHECKS: Record<ValidationCheckId, Check> = {
           "group_grant_respected",
           `operation reference(s) outside the task's grant: ${[...new Set(outside)].join(", ")}`,
         );
+  },
+
+  group_disambiguation_distinguishes(_skill, proposal, context) {
+    const parsed = parseGroupPatch(proposal.patch.set);
+    if (!parsed.disambiguate) {
+      return ok("group_disambiguation_distinguishes", "patch proposes no disambiguation");
+    }
+    const issues = disambiguationIssues(parsed.disambiguate, context.groupOperations ?? []);
+    return issues.length === 0
+      ? ok(
+          "group_disambiguation_distinguishes",
+          "every member now carries a content word no sibling in this proposal carries",
+        )
+      : fail("group_disambiguation_distinguishes", issues.join("; "));
   },
 
   group_supersedes_within_steps(_skill, proposal, context) {

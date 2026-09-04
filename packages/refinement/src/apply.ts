@@ -4,6 +4,7 @@ import {
   buildGroupWorkflow,
   resolveOperationReference,
   zGroupCapabilityPayload,
+  zGroupDisambiguationPayload,
   zGroupWorkflowPayload,
 } from "./skills/group-proposal.js";
 import { describeTarget, type SemanticTarget } from "./target.js";
@@ -335,8 +336,8 @@ function applyOne(
     }
     case "group": {
       // The sole write path for `resolve-confusable-cluster` — and the ONLY
-      // route by which a group proposal reaches canonical AIR. Both keys are
-      // pinned to the review tier on the FIELD (approval.ts), so this code
+      // route by which a group proposal reaches canonical AIR. All three keys
+      // are pinned to the review tier on the FIELD (approval.ts), so this code
       // only ever runs under `applyReviewed` behind a receipt-bound human
       // decision (or a test exercising it directly).
       if (key === "workflow" && value && typeof value === "object") {
@@ -437,6 +438,46 @@ function applyOne(
         };
         record(key, undefined, { id: capability.id, operationIds: memberIds });
         air.capabilities.push(capability);
+        return;
+      }
+      // A disambiguation adds nothing to the catalog and removes nothing from
+      // it: it rewrites the served text of members that already exist, which is
+      // what `mcpToolDescription` composes each tool's description from. Notably
+      // it does NOT touch `skill.intentExamples` — those never reach the served
+      // surface, and they are the task set the routing delta was measured
+      // against, so editing them here would move the target the reviewer scored.
+      if (key === "disambiguate" && value && typeof value === "object") {
+        const payload = zGroupDisambiguationPayload.safeParse(value);
+        if (!payload.success) return;
+        const rewrites = payload.data.operations.map((entry) => ({
+          op: resolveOperationReference(air.operations, entry.operation),
+          entry,
+        }));
+        // All or nothing: half a disambiguation is a catalog where some members
+        // moved apart and the rest did not, which is what the reviewer refused.
+        if (rewrites.some((rewrite) => rewrite.op === undefined)) return;
+        for (const { op, entry } of rewrites) {
+          if (!op) continue;
+          record(`${key}.${op.id}.description`, op.description, entry.description);
+          op.description = entry.description;
+          if (entry.display_name !== undefined) {
+            record(`${key}.${op.id}.display_name`, op.displayName, entry.display_name);
+            op.displayName = entry.display_name;
+          }
+          op.evidence.claims.push({
+            subject: op.id,
+            predicate: "operation.description",
+            value: entry.description,
+            source: "inferred",
+            sourceRef: "anvil-refine-group",
+            method: "group_refinement",
+            note:
+              `Reworded to tell it apart from confusable cluster ` +
+              `'${describeTarget(target)}': ${entry.rationale}`,
+            confidence: 0.95,
+            review: "accepted",
+          });
+        }
         return;
       }
       return;

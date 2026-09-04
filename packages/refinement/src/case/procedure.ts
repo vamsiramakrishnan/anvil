@@ -292,9 +292,10 @@ const rehomeResource: InvestigationProcedure = {
 const resolveConfusableCluster: InvestigationProcedure = {
   skill: "resolve-confusable-cluster",
   question: (t) =>
-    `Decide the higher-order shape for ${targetNoun(t)}: the routing benchmark measured these tools eating each other's tasks. Compose a workflow that supersedes its own steps, author a capability over the members, or honestly propose no change.`,
+    `Decide the higher-order shape for ${targetNoun(t)}: the routing benchmark measured these tools eating each other's tasks. Make the members tellable apart, compose a workflow that supersedes its own steps, author a capability over the members, or honestly propose no change.`,
   searchHints: [
     "the task's own facts: member operations in full routing detail, the mis-routed intents verbatim, shared vocabulary tokens",
+    "for each mis-routed intent, WHICH word in it the wrong tool's description also uses — that collision is the defect you are fixing",
     "the estate's traffic groupings in the task facts, if a spool report was present at export",
     "the vendor's docs for the members: is the family one task performed in sequence, or true alternatives an agent must pick between?",
     "sibling estates or implementation code showing the members called together in one flow",
@@ -303,7 +304,17 @@ const resolveConfusableCluster: InvestigationProcedure = {
     {
       phase: "research",
       instruction:
-        "Read every member's name, description, params, and intent examples, and the mis-routed intents verbatim. Establish WHY the agent confuses them: variants of one read, steps of one task, or genuinely distinct operations with colliding vocabulary.",
+        "Read every member's name, description, params, and intent examples, and the mis-routed intents verbatim. Establish WHY the agent confuses them, because the answer decides the shape: steps of one task (workflow), one task-shaped family the catalog never names (capability), or — the common case — genuinely distinct operations whose descriptions do not state what distinguishes them (disambiguate).",
+    },
+    {
+      phase: "research",
+      instruction:
+        "Default to `disambiguate` unless the evidence forces a shape. Removing or regrouping tools is a bigger claim than rewording them: a workflow asserts the members are steps of one outcome, a capability asserts they belong under one heading. If neither is true, the members are fine and their TEXT is the defect.",
+    },
+    {
+      phase: "research",
+      instruction:
+        "For a disambiguation, name the discriminating axis first — what actually differs between these members (scope, lifecycle stage, input identity, returned shape, side effect) — then check each member's current description against it. The words the confusion is made of are in the task's `sharedTokens`; the words that resolve it are the ones only ONE member can truthfully say.",
     },
     {
       phase: "research",
@@ -318,22 +329,27 @@ const resolveConfusableCluster: InvestigationProcedure = {
     {
       phase: "extract",
       instruction:
-        "Record claims naming the chosen shape, each tied to a source; keep the evidence for sequences (docs describing the flow, traffic groupings) separate from vocabulary facts.",
+        "Record claims naming the chosen shape, each tied to a source. For a disambiguation the claim to ground is the DISTINCTION — the spec line, code path, or fixture showing this member does what the others do not; a reworded description asserting a difference no source states is inventing behavior.",
     },
     {
       phase: "synthesize",
       instruction:
-        "Propose EXACTLY ONE of `workflow` or `capability`, with every operation reference inside the task's grant, supersedes only naming the proposal's own steps, and every name/intent grounded in the members' own vocabulary. When neither shape is real, decline honestly (insufficient_evidence) and say why in the summary — a decline is a first-class answer.",
+        "Propose EXACTLY ONE of `disambiguate`, `workflow`, or `capability`, with every operation reference inside the task's grant. A disambiguation rewrites at least two members' descriptions (rewording one distinguishes it from nothing) and every rewrite carries a rationale. A workflow's supersedes names only its own steps; every name and intent is grounded in the members' own vocabulary. When no shape is real, decline honestly (insufficient_evidence) and say why — a decline is a first-class answer.",
+    },
+    {
+      phase: "synthesize",
+      instruction:
+        "Write each disambiguated description so it would still be right with the siblings absent, and so a reader could pick between them with nothing else on screen. Keep the domain's own nouns (Anvil refuses invented vocabulary), state the distinction in the FIRST clause, and do not describe the other members inside a member's own description. Do NOT touch intent examples: they never reach the served surface — `mcpToolDescription` composes it from description/displayName plus compiled safety facts — and they are the task set your proposal is scored against, so editing them moves the target instead of the tool.",
     },
     {
       phase: "critique",
       instruction:
-        "Try to falsify the composition: a binding whose field the previous step does not output, a superseded tool the composite cannot stand in for, a name that only relabels the confusion. Anvil will re-run the routing benchmark over your proposal and refuse a negative delta with the numbers.",
+        "Try to falsify the proposal: a binding whose field the previous step does not output, a superseded tool the composite cannot stand in for, a name that only relabels the confusion — or, for a disambiguation, a rewrite whose new words its siblings could say just as truthfully. Anvil refuses that last one deterministically (`group_disambiguation_distinguishes`) and then re-runs the routing benchmark over your proposal, refusing a negative delta with the numbers.",
     },
     {
       phase: "test",
       instruction:
-        "Record which mis-routed intents your shape should flip to passing; the import's scored admission attaches the measured delta as evidence for the reviewer.",
+        "Record which mis-routed intents your shape should flip to passing, and name the ones you expect it to leave failing; the import's scored admission re-routes every task over the hypothetical surface and attaches the measured delta as evidence for the reviewer.",
     },
   ],
 };
