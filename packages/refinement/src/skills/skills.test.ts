@@ -292,7 +292,12 @@ describe("author-intent-examples", () => {
     // sibling. Own-name corroboration cannot catch this: "list the views"
     // restates `list_views`'s own vocabulary perfectly well.
     const air = loadAirDocument({
-      service: { id: "helpdesk", displayName: "Helpdesk", version: "1", source: { kind: "openapi" } },
+      service: {
+        id: "helpdesk",
+        displayName: "Helpdesk",
+        version: "1",
+        source: { kind: "openapi" },
+      },
       operations: [
         {
           id: "helpdesk.views.list_views",
