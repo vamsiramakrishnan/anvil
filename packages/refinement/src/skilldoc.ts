@@ -449,6 +449,8 @@ const CHECK_DOC: Record<ValidationCheckId, string> = {
     "every proposed group name and intent is grounded in the member operations' own routing vocabulary; an invented word is refused",
   group_disambiguation_distinguishes:
     "a disambiguation patch rewrites at least two cluster members and leaves each one with wording its siblings do not all share, so the rewrite changes which tool a router picks",
+  intent_routes_to_own_tool:
+    "every proposed intent/routing phrase is routed over the served catalog (the benchmark's deterministic router); a phrase that lands on a different operation or capability is refused as a trap, not an example",
 };
 
 const FAMILY_DOC: Record<EvalFamily, string> = {

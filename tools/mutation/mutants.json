@@ -825,6 +825,16 @@
       ]
     },
     {
+      "id": "refinement/intent-collision-refused",
+      "file": "packages/refinement/src/skills/validate.ts",
+      "control": "An authored intent or routing phrase that the benchmark's own deterministic router sends to a DIFFERENT operation or capability than the one it was written for is not an example, it is a trap — refused by intent_routes_to_own_tool. Delete the refusal and a phrase like \"list the views\" (findings-log.md's helpdesk-views live loop) silently ships teaching an agent to route to the wrong tool, on a skill approval.ts auto-approves without a human ever seeing it.",
+      "find": "    if (collisions.length > 0) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/refinement/src/skills/skills.test.ts"
+      ]
+    },
+    {
       "id": "benchmark/hub-never-welds-clusters",
       "file": "packages/refinement/src/benchmark/clusters.ts",
       "control": "A routing hub's edges never enter confusion-cluster construction, so one catalog-scale sink cannot weld unrelated confusable families into a single blob.",

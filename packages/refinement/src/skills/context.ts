@@ -1,4 +1,5 @@
 import type { AirDocument, Claim, Operation } from "@anvil/air";
+import { benchmarkOperations } from "../benchmark/routing.js";
 import type { Deficiency } from "../deficiency.js";
 import { targetKey, targetOperationId } from "../target.js";
 import type { FieldContext, SkillContext } from "./contract.js";
@@ -81,6 +82,11 @@ export function assembleContext(
 
   if (t.kind === "capability") {
     ctx.capability = air.capabilities.find((c) => c.id === t.capabilityId);
+    // Every capability in the document is a candidate landing spot for an
+    // authored routing phrase — see `intent_routes_to_own_tool`. Capabilities
+    // carry no approval gate of their own (only `lifecycle`), so unlike the
+    // operation catalog below there is no "served vs. not" filter to apply.
+    ctx.routingCatalogCapabilities = air.capabilities;
     return structuredClone(ctx);
   }
 
@@ -108,7 +114,28 @@ export function assembleContext(
   ctx.operation = op;
   if (op.capabilityId) ctx.capability = air.capabilities.find((c) => c.id === op.capabilityId);
 
-  if (t.kind === "field" || t.kind === "enum") {
+  if (t.kind === "operation") {
+    // The narrow, proactive hint (same resource or capability, excluding
+    // self): a harness authoring an intent phrase can see these to avoid a
+    // likely collision before it is ever proposed.
+    ctx.siblingOperations = air.operations.filter(
+      (sibling) =>
+        sibling.id !== op.id &&
+        ((op.capabilityId !== undefined && sibling.capabilityId === op.capabilityId) ||
+          (op.effect.resource !== undefined && sibling.effect.resource === op.effect.resource)),
+    );
+    // The mandatory routing catalog `intent_routes_to_own_tool` checks against:
+    // the served surface plus the target itself. The target is included even
+    // when it is not yet approved (`operation_lacks_intent_examples` fires
+    // regardless of approval state, and a real live loop found this exact
+    // collision on operations approved together, before any of them had
+    // shipped intent examples) — a phrase must not collide with a sibling
+    // regardless of which of the two is approved first.
+    const served = benchmarkOperations(air);
+    const byId = new Map(served.map((o) => [o.id, o]));
+    byId.set(op.id, op);
+    ctx.routingCatalogOperations = [...byId.values()];
+  } else if (t.kind === "field" || t.kind === "enum") {
     const all = fieldsOf(op);
     ctx.field = all.find((f) => f.path === t.path);
     ctx.siblingFields = all.filter((f) => f.path !== t.path);

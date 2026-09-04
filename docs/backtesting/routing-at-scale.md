@@ -120,6 +120,24 @@ templates "list the count manies", because `get_view_counts` really does say
 "count" — naming that path segment correctly is a compiler-side fix, and this
 rule only refuses phrases that are provably about something else.
 
+**Corroboration-from-self has a blind spot the filter above cannot close: a
+sibling.** A live loop against a real six-operation helpdesk OpenAPI spec
+(`agentify` → `author-intent-examples` → approve → `anvil benchmark`) found
+`anvil benchmark`'s own confusion clustering surfacing cluster `cc_2b90f6b15dc7`
+organically: the templated intent "list the views" landed on THREE different
+operations — the execute/count/list variants of `/views` — even though it
+restates `list_views`'s own name text perfectly well. Own-name corroboration
+cannot see this, because it never looks past the one operation it is
+templating for. `intent_routes_to_own_tool` (`packages/refinement/src/skills/
+validate.ts`) is the validation check that can: it routes each proposed phrase
+over the operation's actual served siblings with the same deterministic
+`lexicalRoute` this benchmark measures with, and refuses a phrase that lands
+on a different operation's tool (or, for `author-routing-phrases`, a different
+capability's entry card) as a trap rather than an example. Both skills stay
+auto-approvable (Rule 4b, `approval.ts`) on the same grounded-evidence bar as
+before; this check is what makes that auto-approval safe against a
+sibling-collision it could not previously see.
+
 ## From failures to work items: mis-route clusters and routing hubs
 
 The 272 failures above used to die in the report as 272 `failReason` strings.
