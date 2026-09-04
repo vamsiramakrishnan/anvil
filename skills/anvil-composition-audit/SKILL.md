@@ -127,6 +127,15 @@ plan creation.
 Use it as the upstream signal for human semantic/authority review, then apply those
 decisions in downstream, single-bundle approval flows.
 
+The question this skill gets asked — "which bundle should the agent trust?" — is
+the one thing the audit deliberately will not answer for you. Overlap is
+evidence that two bundles *claim* the same resource; it is not evidence that
+either is authoritative. Authority comes from lineage a person can point at
+(system-of-record ownership, freshness, the scopes each path actually requires),
+and a same-shaped response is the strongest way to be wrong about it. Report the
+overlap with its digest-bound evidence, name what would settle it, and let the
+review decide.
+
 ## Reference
 
 - `skills/anvil/reference/composing-capabilities.md`

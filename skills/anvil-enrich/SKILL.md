@@ -90,7 +90,24 @@ threshold; `reconcile` still owns the tier (docs tighten / code loosens). So: di
 finds what's uncertain → the plan aims the sources at those ops → enrich resolves it →
 re-distill with the grounded intent phrases. The conversion gets better each pass.
 
-## Rules
+## After it lands: reproject and re-prove
+A manifest is only a proposal until it is compiled in, and everything built from
+the model is stale until you rebuild it:
+
+```
+anvil compile <spec> --manifest anvil.manifest.yaml --out <dir>
+anvil lint <dir> && anvil status <dir>
+anvil certify <bundle> && anvil selftest <bundle> && anvil conformance <bundle>
+```
+
+Enriching does not expose anything — which operations an agent can see is a
+separate gate (`anvil approve`), and an operation enrichment leaves
+`review_required` stays that way.
+
+## The rules, and why they hold
+
+Each is a specific way enrichment goes wrong, not ceremony. If your situation
+isn't covered, reason from the *why*; this is the floor, not the ceiling.
 
 - **Docs never loosen safety.** Only implementation/traffic evidence clears the
   loosen bar; a validator enforces it — don't try to override it.

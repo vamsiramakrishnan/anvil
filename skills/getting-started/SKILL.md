@@ -11,6 +11,14 @@ output. This skill gets you from a clean clone to a working `anvil` command and
 proves it with a real compile. It does not teach the operating loop — hand off
 to the `anvil` skill for that.
 
+## If `npx anvil` or `npm install` just failed
+Both fail by design, and neither means your machine is broken. Anvil is not
+published to any registry, so `npx` looks for a package that does not exist. And
+the workspace is declared in `pnpm-workspace.yaml` with `workspace:*` internal
+deps — a pnpm-only protocol npm cannot resolve — so `npm install` links none of
+the packages. Remove what npm left (`node_modules/`, `package-lock.json`; keep
+the checked-in `pnpm-lock.yaml`) and follow the install below.
+
 ## Prerequisites
 - **Node.js ≥ 22.17** (`node --version`)
 - **pnpm 10.x** — `corepack enable` lets pnpm match the version this repo pins.
@@ -27,10 +35,15 @@ pnpm build
 `packages/cli/dist/bin-anvil.js` — that file **is** the `anvil` command.
 
 ## Make `anvil` a command
-Call the entrypoint directly, or alias it for the session:
+The repo already ships a script for this — prefer it, because it always runs the
+CLI built from *this* checkout and needs no per-shell setup:
 ```bash
-alias anvil='node packages/cli/dist/bin-anvil.js'
-anvil --help
+pnpm anvil --help          # root script: node packages/cli/dist/bin-anvil.js
+```
+Call the entrypoint directly when you want no pnpm in the way, or alias it:
+```bash
+node packages/cli/dist/bin-anvil.js --help
+alias anvil='node packages/cli/dist/bin-anvil.js'   # per-shell; a new terminal needs it again
 ```
 
 ## Prove it runs
@@ -49,8 +62,9 @@ Clean output means Anvil is installed and working.
   `pnpm build` didn't finish — re-run it and watch for the failing package.
 - **Never approve or deploy from this skill.** Setup only proves the toolchain;
   exposing operations is the `anvil` skill's job, behind its safety gate.
-- **The alias is per-shell.** A new terminal needs the `alias` line again, or
-  call `node packages/cli/dist/bin-anvil.js` directly.
+- **Prefer `pnpm anvil` over the alias.** The alias is per-shell and silently
+  goes stale if you move the checkout; the root script always resolves to the
+  CLI built from this repo.
 
 ## Where to look
 - `skills/anvil/SKILL.md` — the operating manual: the compile → inspect →

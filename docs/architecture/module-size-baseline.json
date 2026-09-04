@@ -51,8 +51,8 @@
       "plan": "Raised deliberately from 1601 for the disclosure ladder's `auto` decision: one more read-only fact this report already reports things like (idempotency, certification, executable evidence), computed by ladder-status.ts and surfaced as a `disclosureLadder` field plus its one-line render. Putting the field here rather than a new module keeps it next to the StatusReport type it extends and the render function that prints it; the actual decision logic and report-freshness check live in ladder-status.ts, which this module only calls. Still queued: separate lane-freshness computation (domain) from the rendering, and share the certification-reading logic certify.ts duplicates."
     },
     "packages/cli/src/self-skill.ts": {
-      "lines": 1584,
-      "plan": "Must stay derived from the command registry. Separate registry metadata from document projection; no manually maintained parallel command description. Then +11 for the upstream-credentials reference's mtls/custom_header/oauth2_authorization_code section (env-var table per scheme, the `anvil auth login`/`status` broker flow) — content only, no new generation logic."
+      "lines": 1651,
+      "plan": "Must stay derived from the command registry. Separate registry metadata from document projection; no manually maintained parallel command description. Then +11 for the upstream-credentials reference's mtls/custom_header/oauth2_authorization_code section, and +67 for `reference/measuring-the-surface.md` — both are reference PROSE, not generation logic, which is the shape almost all growth here takes. That is the decomposition this file is waiting for: the nine reference bodies are static template strings that happen to live beside the Commander walk, and lifting them into their own module (or files read at build time) would drop this by well over half and leave behind only the part that must track the registry."
     },
     "packages/cli/src/tool-cli.ts": {
       "lines": 1433,

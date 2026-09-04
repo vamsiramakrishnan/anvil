@@ -53,6 +53,11 @@ export function generateAnvilSkill(program: Command): Record<string, string> {
         "anvil-durable-idempotency",
         "Inspect and prove the durable idempotency store for approved writes without confusing generated wiring with live readiness or exactly-once execution.",
       ) + durableIdempotencyRef(),
+    "reference/measuring-the-surface.md":
+      frontmatter(
+        "anvil-measuring-the-surface",
+        "Price and route a compiled bundle's served tool surface before shipping it: what anvil disclosure and anvil benchmark measure, and which answer a large surface needs versus a confusable one.",
+      ) + measuringRef(),
     "evals/operate_anvil.yaml": evals(),
   };
 }
@@ -75,39 +80,35 @@ description: Use this skill to operate Anvil — compile supported API specifica
 
 # Operating Anvil
 
-Anvil is an agent toolchain compiler. It turns a spec into four aligned
-surfaces (CLI, MCP server, skill, and TypeScript/Python/Go/Java client SDKs)
-from one model (AIR). Your job as a harness is to drive Anvil safely, not to
-invent semantics.
+Anvil is an agent toolchain compiler: one model (AIR) projected into four
+aligned surfaces — CLI, MCP server, skill, and TS/Python/Go/Java SDKs. Your job
+as a harness is to drive it safely, not to invent semantics.
 
 ## What Anvil can compile
-${ANVIL_SOURCE_FORMATS.map((f) => `- ${f}`).join("\n")}
+${ANVIL_SOURCE_FORMATS.join(" · ")}
 
-Every source format lands in the same canonical model (AIR) and the same
-aligned MCP server + CLI + skill + SDK bundle.
+All of them land in the same AIR model and the same aligned bundle.
 
 ## If the source is a gateway estate
-Do not start with \`compile\`. Read \`reference/gateway-estates.md\`; run
+Do not start with \`compile\` — a route table is not a contract. Run
 \`anvil estate inventory\`, \`anvil estate audit\`, and \`anvil estate plan\`;
-initialize triage with \`--init-selection\`; then review the exact coordinate,
-contract, gateway identity, semantic lane, and strict per-API import.
-For overlap across verified bundles, read
-\`reference/composing-capabilities.md\` and use audit-only
-\`anvil capability compose\`. It produces no AIR, MCP, approval, or build input.
+triage with \`--init-selection\`; adopt one API at a time against its exact
+coordinate, contract, gateway identity, and semantic lane
+(reference/gateway-estates.md). For overlap across verified bundles use
+audit-only \`anvil capability compose\` — no AIR, MCP, approval, or build input.
 
 ## If no API description exists
-Read \`reference/legacy-estates.md\`; run \`anvil legacy inventory\` on an offline
-export, then refine one exact candidate. Inventory finds technical facts;
-refinement separates harness proposals from human approval. Neither connects to
-the runtime.
+Run \`anvil legacy inventory\` on an offline export, then refine one exact
+candidate. Inventory finds technical facts; refinement separates harness
+proposals from human approval. Neither touches the runtime.
 
 ## The loop
 1. \`anvil compile <spec> --manifest <manifest> --out <dir>\` — build the bundle.
-2. \`anvil status <dir>\` — orient on projections, gates, evidence, target, and release state; follow its next safe action.
+2. \`anvil status <dir>\` — orient on projections, gates, evidence, and release state; follow its next safe action.
 3. \`anvil inspect <dir>\` and \`anvil lint <dir>\` — inspect risk and fix diagnostics. Non-idempotent mutations remain \`review_required\`.
-4. Enrich unsafe or weakly named operations via a manifest; \`anvil distill <dir> --as-enrich-plan\` targets residue for \`anvil enrich --plan\` (see reference/workflow.md).
-5. \`anvil approve <dir> <operation-id...>\` — expose operations only after inspecting risk. Receipt-bound gateway bundles instead require reviewed state in the supplemental manifest and a re-import, preserving immutable import-to-approval lineage.
-6. \`anvil sdk <dir>\` — review the four client SDKs \`compile\` wrote under \`sdk/\`: one method per approved operation, same gates. \`--out\` re-emits them elsewhere.
+4. Enrich unsafe or weakly named operations via a manifest; \`anvil distill <dir> --as-enrich-plan\` targets residue for \`anvil enrich --plan\` (reference/workflow.md).
+5. \`anvil approve <dir> <operation-id...>\` — expose operations only after inspecting risk. Receipt-bound gateway bundles approve differently (supplemental manifest + re-import, preserving import-to-approval lineage); see reference/gateway-estates.md.
+6. \`anvil sdk <dir>\` — review the four client SDKs under \`sdk/\`: one method per approved operation, same gates. Then measure what you exposed: \`anvil disclosure\` prices the surface, \`anvil benchmark\` routes it (reference/measuring-the-surface.md).
 7. For Gemini Enterprise, generate the target now: \`anvil target gemini-enterprise <dir> --surface <custom-mcp|agent-gateway> --server-auth <oauth|no-auth> ...\`. Keep its deployment inputs outside compiler-owned output.
 8. Run \`anvil deploy ledger <dir> --project <project-id> --database <firestore-database>\` to inspect writes and verify the store contract. Shared mode is the default; dedicated also needs immutable location. Its tfvars bind non-secret plan identity; live readiness remains unverified.
 9. Run \`anvil status <dir>\`, then certify the complete bundle. Target and idempotency-store artifacts are deployment inputs and part of the certified hash.
@@ -116,7 +117,9 @@ the runtime.
 12. After the endpoint is live, require \`/readyz\` HTTP 200 for ledger-backed writes, then complete the external Gemini console or guarded Agent Gateway registration steps. See reference/gemini-enterprise.md.
 
 ## Safety rules
+The loop above is a starting path, not a boundary; these are the boundary.
 - **Never approve an operation you have not inspected.** Only approved operations are exposed.
+- **Approval controls exposure, not safety posture.** \`anvil approve\` on an irreversible mutation whose idempotency is \`none\` does not make the call safe — it makes an unsafe call reachable. A deadline is not evidence.
 - **Do not** hand-wave idempotency. If a POST is not provably idempotent, either supply a manifest idempotency policy or leave it \`review_required\`.
 - Prefer \`anvil run <dir> ... --dry-run\` before any real invocation.
 - Treat \`review_required\` as a stop sign, not a nuisance.
@@ -124,12 +127,13 @@ the runtime.
 ## Where to look
 - \`reference/commands.md\` — every command and what it does.
 - \`reference/workflow.md\` — the enrich → approve workflow and manifest shape.
-- \`reference/gateway-estates.md\` — whole-estate audit, native-format boundaries, view/BFF semantics, and receipt-safe adoption.
-- \`reference/legacy-estates.md\` — offline Java/.NET/messaging evidence, conflicts, and the boundary before bridge generation.
-- \`reference/composing-capabilities.md\` — audit and review cross-bundle read overlap without inferring authority or generating MCP.
-- \`reference/gemini-enterprise.md\` — choose and safely configure one Gemini Enterprise BYO-MCP journey.
-- \`reference/upstream-credentials.md\` — configure outbound authentication from the runtime to the upstream API.
-- \`reference/durable-idempotency.md\` — configure the managed write ledger and distinguish static wiring, live readiness, and bounded guarantees.
+- \`reference/measuring-the-surface.md\` — price and route the surface; too big vs too alike.
+- \`reference/gateway-estates.md\` — whole-estate audit and receipt-safe adoption.
+- \`reference/legacy-estates.md\` — offline evidence, conflicts, pre-bridge boundary.
+- \`reference/composing-capabilities.md\` — cross-bundle overlap, authority not inferred.
+- \`reference/gemini-enterprise.md\` — one Gemini Enterprise BYO-MCP journey, safely.
+- \`reference/upstream-credentials.md\` — runtime → upstream outbound auth.
+- \`reference/durable-idempotency.md\` — the write ledger; wiring vs readiness.
 - \`evals/operate_anvil.yaml\` — behavior checks for operating Anvil.
 
 Run \`anvil --help\` before guessing.
@@ -1522,6 +1526,69 @@ fits inside the generated 600-second Cloud Run request deadline together with
 the bounded Firestore reservation and completion/readback path, leaving more
 than 100 seconds for credential acquisition, hooks, serialization, and response
 delivery.
+`;
+}
+
+function measuringRef(): string {
+  return `A surface nobody measured is a surface nobody can claim is good. Both
+commands below are read-only, cheap, and answer different questions — run them
+after \`approve\` and before you ship, so the shape an agent actually sees is a
+measurement rather than a hope.
+
+## \`anvil disclosure <dir>\` — what the catalog COSTS
+
+Prices every operation by the exact tokens its MCP tool surface costs an agent
+in \`tools/list\`, and attributes that cost to the contributor that produced it
+— the description, each input schema property, the safety metadata — so the
+output names the field to fix rather than the service to blame. Rolls up per
+capability and per service, reports the disclosure ladder's verdict (what
+laddering already saved, what remains over budget), and reports tokens-to-reach:
+what an agent must read, starting cold, before it holds one operation's input
+schema, and the round trips that cost buys.
+
+\`\`\`
+anvil disclosure <dir>
+anvil disclosure <dir> --json --reach
+\`\`\`
+
+Tool-surface and reach figures are exact measurements of the bytes the runtime
+publishes, counted under o200k_base. Response figures are projections read from
+\`simulation.report.json\` under a recorded seed, and are labelled as such — do
+not quote them as measurements.
+
+## \`anvil benchmark <dir>\` — whether the catalog ROUTES
+
+Routes the catalog's own intent examples over the served surface and reports
+what an agent would actually pick, including \`confusion.clusters\`: families of
+tools whose tasks land on each other, with the mis-routed intents verbatim and
+the vocabulary that explains the collision.
+
+## Which answer the numbers call for
+
+Size and distinctness are different problems, and the fix for one does not fix
+the other. On a real estate, routing accuracy fell from 90.0% at 10 served tools
+to 58.6% at 329 — catalog size dominates — yet only a small fraction of the
+failures were bad-name failures, so dropping operations will not repair a
+cluster that collides on vocabulary.
+
+- **Too big** → \`anvil distill <dir>\`. Reads collapse to a canonical basis;
+  writes never collapse. You reduce by NOT approving, never by deleting, so the
+  choice stays reversible. See \`skills/anvil-distill/SKILL.md\`.
+- **Too alike** → the group rail. \`anvil refine export-task <dir>
+  group:<cluster-id>\` hands one measured cluster to a harness;
+  \`anvil refine import-proposal\` re-routes every task over the proposal's
+  hypothetical surface and refuses a negative delta with the numbers, before a
+  reviewer sees it. Its three honest answers are a composed workflow, an
+  authored capability, or a disambiguation that rewrites what the members say.
+- **Nothing calls it** → \`anvil observe <dir> --from-records <spool>\` folds a
+  real serving-path record spool against the compiled contract. An operation
+  whose calls all answered \`not_found\` is evidence-backed deprecation rather
+  than a guess.
+
+One trap, because the scoring makes it tempting: **never edit an operation's
+intent examples to improve a routing number.** They are the task set those
+numbers are measured against — moving them moves the target instead of the
+tool, and every measurement downstream becomes circular.
 `;
 }
 
