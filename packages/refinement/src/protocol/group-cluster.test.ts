@@ -300,7 +300,11 @@ describe("group proposal approval tier", () => {
           },
         ],
       });
+      // The TIER alone does not pin this control: rule 5's default is review
+      // too, so a test that only reads the tier passes with the group guard
+      // deleted. The reason is what says the FIELD was recognised.
       expect(decision.tier).toBe("review");
+      expect(decision.reason).toContain("served tool surface");
     }
   });
 });
@@ -565,6 +569,10 @@ describe("group disambiguation proposal", () => {
       ],
     });
     expect(decision.tier).toBe("review");
+    // Pinned on the reason, not just the tier: rule 5 defaults to review as
+    // well, so only the reason distinguishes "the guard recognised this field"
+    // from "nothing matched and a human gets it anyway".
+    expect(decision.reason).toContain("rewording the served tool surface");
   });
 
   it("lands at REVIEW tier, then rewrites the served text WITHOUT changing the catalog", () => {
