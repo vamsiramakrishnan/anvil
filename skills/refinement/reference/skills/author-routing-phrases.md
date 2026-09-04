@@ -34,10 +34,12 @@ description: Contract and investigation method for the author-routing-phrases sk
 - `evidence_meets_minimum_strength`
 - `evidence_supports_value`
 - `evidence_meets_verification`
+- `intent_routes_to_own_tool`
 
 ## Context assembled for you
 - capability
 - source_evidence
+- routing_catalog
 
 ## Executor's job
 Ground every asserted value in admissible evidence.

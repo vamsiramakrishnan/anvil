@@ -383,13 +383,28 @@ const renameField: RefinementSkill = {
  * resource, display name) — never behavior claims — so the proposal restates
  * what the spec already names, in intent form. Documentation-tier risk, same
  * class as `generate-examples`.
+ *
+ * Corroboration-from-self is not enough. The executor's own-name-text filter
+ * (`executor.ts`) stops a phrase that describes nothing this operation is
+ * called, but it has no visibility into the rest of the catalog, so it will
+ * happily author a phrase that ALSO matches a sibling — the exact "list the
+ * views" collision a real six-operation compile found organically
+ * (`findings-log.md`). `intent_routes_to_own_tool` is the check that can see
+ * the sibling: it routes the phrase over the actual served catalog
+ * (`routing_catalog`) and refuses one that lands somewhere else.
  */
 const authorIntentExamples: RefinementSkill = {
   name: "author-intent-examples",
   version: 1,
   triggers: ["operation_lacks_intent_examples"],
   targetKind: "operation",
-  context: ["parent_operation", "capability", "source_evidence"],
+  context: [
+    "parent_operation",
+    "capability",
+    "source_evidence",
+    "sibling_operations",
+    "routing_catalog",
+  ],
   evidence: {
     allowed: ["spec", "doc_example", "postman"],
     minimumStrength: "single",
@@ -408,20 +423,26 @@ const authorIntentExamples: RefinementSkill = {
     "evidence_meets_minimum_strength",
     "evidence_supports_value",
     "evidence_meets_verification",
+    "intent_routes_to_own_tool",
   ],
 };
 
 /**
  * The capability-level sibling of `author-intent-examples`: routing phrases so
  * an agent can match a request to a capability. Templated from the capability's
- * own name and resource nouns — the same documentation-tier risk class.
+ * own name and resource nouns — the same documentation-tier risk class, and the
+ * same sibling-collision gap: `approval.ts` auto-approves both skills under the
+ * identical rule (grounded intent phrases, documentation tier), so a routing
+ * phrase that lands on a DIFFERENT capability's entry card is exactly as
+ * unsafe left unchecked here as it is for an operation, and gets the same
+ * `intent_routes_to_own_tool` guard.
  */
 const authorRoutingPhrases: RefinementSkill = {
   name: "author-routing-phrases",
   version: 1,
   triggers: ["capability_missing_routing_phrases"],
   targetKind: "capability",
-  context: ["capability", "source_evidence"],
+  context: ["capability", "source_evidence", "routing_catalog"],
   evidence: {
     allowed: ["spec", "doc_example", "postman"],
     minimumStrength: "single",
@@ -440,6 +461,7 @@ const authorRoutingPhrases: RefinementSkill = {
     "evidence_meets_minimum_strength",
     "evidence_supports_value",
     "evidence_meets_verification",
+    "intent_routes_to_own_tool",
   ],
 };
 

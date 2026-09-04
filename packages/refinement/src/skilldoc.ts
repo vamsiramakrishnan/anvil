@@ -447,6 +447,8 @@ const CHECK_DOC: Record<ValidationCheckId, string> = {
     "the composed workflow registers on the shared surface planner and every later step's required input is bound from a field the previous step actually outputs",
   group_names_grounded:
     "every proposed group name and intent is grounded in the member operations' own routing vocabulary; an invented word is refused",
+  intent_routes_to_own_tool:
+    "every proposed intent/routing phrase is routed over the served catalog (the benchmark's deterministic router); a phrase that lands on a different operation or capability is refused as a trap, not an example",
 };
 
 const FAMILY_DOC: Record<EvalFamily, string> = {

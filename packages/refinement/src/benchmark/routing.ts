@@ -134,39 +134,52 @@ function tokens(text: string): string[] {
  * scans first. Ties break lexicographically by tool name so the score is a
  * pure function of the catalog — a benchmark that can flake is a benchmark
  * nobody trusts on a red day.
+ *
+ * Exported synchronously — unlike `TaskRouter.route`, which every router
+ * (including a real model, over a real process boundary) must return as a
+ * `Promise` — because this particular router does no actual asynchronous
+ * work. A caller with no reason to `await` (a synchronous validation check,
+ * for instance) can call this directly instead of paying an async boundary
+ * for nothing. `lexicalRouter()` below is a thin `Promise.resolve` wrapper
+ * over this exact function, so the two entry points can never disagree on a
+ * route.
  */
+export function lexicalRoute(intent: string, tools: readonly RoutableTool[]): string | undefined {
+  const docs = tools.map((tool) => ({
+    tool,
+    name: new Set(tokens(tool.name)),
+    all: new Set([...tokens(tool.name), ...tokens(tool.description)]),
+  }));
+  const df = new Map<string, number>();
+  for (const d of docs) {
+    for (const t of d.all) df.set(t, (df.get(t) ?? 0) + 1);
+  }
+  const idf = (t: string) => Math.log(1 + docs.length / (df.get(t) ?? docs.length));
+
+  let best: { name: string; score: number } | undefined;
+  for (const d of docs) {
+    let score = 0;
+    for (const t of new Set(tokens(intent))) {
+      if (d.name.has(t)) score += 2 * idf(t);
+      else if (d.all.has(t)) score += idf(t);
+    }
+    if (
+      score > 0 &&
+      (best === undefined ||
+        score > best.score ||
+        (score === best.score && d.tool.name < best.name))
+    ) {
+      best = { name: d.tool.name, score };
+    }
+  }
+  return best?.name;
+}
+
 export function lexicalRouter(): TaskRouter {
   return {
     name: "lexical",
     route(intent, tools) {
-      const docs = tools.map((tool) => ({
-        tool,
-        name: new Set(tokens(tool.name)),
-        all: new Set([...tokens(tool.name), ...tokens(tool.description)]),
-      }));
-      const df = new Map<string, number>();
-      for (const d of docs) {
-        for (const t of d.all) df.set(t, (df.get(t) ?? 0) + 1);
-      }
-      const idf = (t: string) => Math.log(1 + docs.length / (df.get(t) ?? docs.length));
-
-      let best: { name: string; score: number } | undefined;
-      for (const d of docs) {
-        let score = 0;
-        for (const t of new Set(tokens(intent))) {
-          if (d.name.has(t)) score += 2 * idf(t);
-          else if (d.all.has(t)) score += idf(t);
-        }
-        if (
-          score > 0 &&
-          (best === undefined ||
-            score > best.score ||
-            (score === best.score && d.tool.name < best.name))
-        ) {
-          best = { name: d.tool.name, score };
-        }
-      }
-      return Promise.resolve(best?.name);
+      return Promise.resolve(lexicalRoute(intent, tools));
     },
   };
 }
