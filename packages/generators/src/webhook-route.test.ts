@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { type AirDocument, loadAirDocument, Operation } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { generateDeploy } from "./deploy.js";
-import { generateRuntimeServer, resolvedWebhookRoutes } from "./entrypoints.js";
+import { resolvedWebhookRoutes } from "./entrypoints.js";
 
 /**
  * Drift-guard for the generated Cloud Run deploy artifact's webhook receiver
@@ -114,82 +114,44 @@ describe("resolvedWebhookRoutes", () => {
   });
 });
 
-describe("the generated Cloud Run runtime server", () => {
+describe("the runtime a bundle ships", () => {
   const air = buildAir([submitOp(), webhookOp()]);
-  const source = generateRuntimeServer(air);
+  const files = generateDeploy(air);
 
-  it("emits syntactically valid JavaScript", () => {
+  it("ships exactly the resolved route table as webhooks.json, byte-identical to resolvedWebhookRoutes' own output", () => {
+    expect(JSON.parse(files["deploy/runtime/webhooks.json"] as string)).toEqual(
+      resolvedWebhookRoutes(air),
+    );
+  });
+
+  it("ships the literal route path in the artifact the image copies", () => {
+    // The route table is part of the directory `COPY deploy/runtime` ships and
+    // `deploymentArtifactHash` binds — the same guarantee the old embedded copy
+    // gave, now in the file the runtime reads at boot.
+    expect(files["deploy/runtime/webhooks.json"]).toContain("/webhooks/exports/exports.webhook");
+  });
+
+  it("ships one prebuilt, self-contained server that reads that table rather than embedding it", () => {
+    const server = files["deploy/runtime/server.js"] as string;
+    // Minifiers rename identifiers but never string literals — the file name the
+    // runtime opens at boot survives the exact bundle that ships to Cloud Run.
+    expect(server).toContain("webhooks.json");
+    // And the server is the same bytes for every service: no route baked in.
+    expect(server).not.toContain("/webhooks/exports/exports.webhook");
+    expect(server).not.toMatch(/^\s*import\s+.*from\s+["']@anvil\//m);
     const checked = spawnSync(process.execPath, ["--input-type=module", "--check", "-"], {
-      input: source,
+      input: server,
       encoding: "utf8",
     });
     expect(checked.status, checked.stderr).toBe(0);
   });
 
-  it("embeds exactly the resolved route table, byte-identical to resolvedWebhookRoutes' own output", () => {
-    const embedded = source.match(/const webhookRoutes = (\[.*?\]);/)?.[1];
-    expect(embedded).toBeDefined();
-    expect(JSON.parse(embedded as string)).toEqual(resolvedWebhookRoutes(air));
-  });
-
-  it("dispatches /webhooks/ paths before the inbound-OAuth-gated routes, unauthenticated", () => {
-    const webhookDispatch = source.indexOf('url.pathname.startsWith("/webhooks/")');
-    const mcpAuthGateComment = source.indexOf(
-      "Everything below exposes the tool surface — gate it on the inbound token.",
-    );
-    expect(webhookDispatch).toBeGreaterThan(-1);
-    expect(mcpAuthGateComment).toBeGreaterThan(-1);
-    expect(webhookDispatch).toBeLessThan(mcpAuthGateComment);
-  });
-
-  it("wires the route to handleWebhook with the operation's own resolved WebhookContract", () => {
-    expect(source).toContain("import {\n  buildMcpServer,\n  loadInboundAuthConfig,");
-    expect(source).toContain("recordWebhookCompletionIfIndexed,");
-    expect(source).toContain('} from "@anvil/mcp-runtime";');
-    expect(source).toContain("handleWebhook,");
-    expect(source).toContain('} from "@anvil/runtime";');
-    expect(source).toContain("resolveAsyncContract(submitOp, allOpsById)");
-    expect(source).toContain("operation: resolution.webhookOperation,");
-    expect(source).toContain("contract: resolution.contract.webhook,");
-    expect(source).toContain("resolveRef: resolveWebhookRef,");
-  });
-
   it("resolves every *Ref field through a plain runtime environment variable, never a literal", () => {
-    expect(source).toContain("process.env[ref]");
-    expect(source).not.toContain("EXPORTS_WEBHOOK_SECRET");
-  });
-
-  it("routes /webhooks/ requests to the handler, which verifies before it ever records a cache entry", () => {
-    const routeDefinition = source.indexOf("async function handleWebhookRoute(req, res, route) {");
-    const routeDispatchCall = source.indexOf("return handleWebhookRoute(req, res, route);");
-    const handleWebhookCall = source.indexOf("const outcome = await handleWebhook({");
-    const recordCall = source.indexOf("void recordWebhookCompletionIfIndexed({");
-    expect(routeDefinition).toBeGreaterThan(-1);
-    expect(routeDispatchCall).toBeGreaterThan(routeDefinition);
-    // Inside handleWebhookRoute itself: the durable handleWebhook() call (whose
-    // OWN first step is signature verification, before the ledger is touched —
-    // see webhook-receiver.ts) always precedes the best-effort status cache
-    // write, which only ever runs after a 200.
-    expect(handleWebhookCall).toBeGreaterThan(routeDefinition);
-    expect(recordCall).toBeGreaterThan(handleWebhookCall);
-  });
-});
-
-describe("the assembled deploy bundle survives esbuild bundling+minification", () => {
-  it("the deployed runtime.js still contains the literal webhook route path", () => {
-    const air = buildAir([submitOp(), webhookOp()]);
-    const files = generateDeploy(air);
-    const bundled = files["deploy/runtime/server.js"];
-    expect(bundled).toBeDefined();
-    // Minifiers rename identifiers but never string literals — this proves the
-    // route survives the exact bundling step that ships to Cloud Run, not just
-    // the pre-bundle source string above.
-    expect(bundled).toContain("/webhooks/exports/exports.webhook");
+    expect(files["deploy/runtime/server.js"]).not.toContain("EXPORTS_WEBHOOK_SECRET");
+    expect(files["deploy/runtime/webhooks.json"]).not.toContain("EXPORTS_WEBHOOK_SECRET");
   });
 
   it("documents the receiver route in deploy/README.md, naming its plain-env secret refs", () => {
-    const air = buildAir([submitOp(), webhookOp()]);
-    const files = generateDeploy(air);
     const readme = files["deploy/README.md"];
     expect(readme).toBeDefined();
     expect(readme).toContain("## Webhook receiver routes (inbound)");
@@ -198,8 +160,8 @@ describe("the assembled deploy bundle survives esbuild bundling+minification", (
   });
 
   it("emits no webhook section at all for a surface with no resolved webhook contract", () => {
-    const air = buildAir([]);
-    const files = generateDeploy(air);
-    expect(files["deploy/README.md"]).not.toContain("Webhook receiver routes");
+    const bare = generateDeploy(buildAir([]));
+    expect(bare["deploy/README.md"]).not.toContain("Webhook receiver routes");
+    expect(JSON.parse(bare["deploy/runtime/webhooks.json"] as string)).toEqual([]);
   });
 });

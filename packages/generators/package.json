@@ -1,7 +1,7 @@
 {
   "name": "@anvil/generators",
   "version": "0.1.0",
-  "description": "Anvil artifact generators — emit CLI, MCP, skill, docs, deploy, and tests from AIR.",
+  "description": "Anvil artifact generators \u2014 emit CLI, MCP, skill, docs, deploy, and tests from AIR.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -28,7 +28,6 @@
     "@anvil/refinement": "workspace:*",
     "@anvil/runtime": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.22.0",
-    "esbuild": "^0.27.7",
     "yaml": "^2.8.1",
     "zod": "^4.4.3"
   },

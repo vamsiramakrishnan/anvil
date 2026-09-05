@@ -13,6 +13,10 @@
     },
     "packages/design": {
       "entry": ["src/index.ts", "scripts/*.mjs"]
+    },
+    "packages/mcp-runtime": {
+      "entry": ["src/serve.ts", "scripts/*.mjs"],
+      "project": ["src/**/*.ts", "scripts/*.mjs"]
     }
   },
   "ignoreDependencies": ["@fontsource/hanken-grotesk", "@fontsource/jetbrains-mono"],

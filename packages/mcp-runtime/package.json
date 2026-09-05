@@ -1,7 +1,7 @@
 {
   "name": "@anvil/mcp-runtime",
   "version": "0.1.0",
-  "description": "Anvil MCP serving runtime — the thin, deployable path that turns AIR into a live MCP server. Build-time generators do not run here.",
+  "description": "Anvil MCP serving runtime \u2014 the thin, deployable path that turns AIR into a live MCP server. Build-time generators do not run here.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -10,13 +10,17 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./serve-bundle": {
+      "types": "./dist/serve-bundle.d.ts",
+      "import": "./dist/serve-bundle.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/build-serve.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --root ../.. packages/mcp-runtime/src",
     "clean": "rm -rf dist"
@@ -29,6 +33,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "esbuild": "^0.27.7",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"

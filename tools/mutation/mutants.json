@@ -1371,6 +1371,37 @@
       "tests": [
         "packages/cli/src/eval-vocabulary-drift.test.ts"
       ]
+    },
+    {
+      "id": "generators/deploy-ships-webhook-route-table",
+      "file": "packages/generators/src/deploy.ts",
+      "control": "The route table the prebuilt runtime reads at boot is written beside it as webhooks.json. Drop it and every compiled bundle boots a server that refuses to start (it fails closed on the missing artifact) \u2014 or, if that refusal were ever weakened, a server serving an empty route table under a hash that says otherwise.",
+      "find": "    \"deploy/runtime/webhooks.json\": webhookRoutesJson(air),\n",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/webhook-route.test.ts",
+        "packages/generators/src/generators.test.ts"
+      ]
+    },
+    {
+      "id": "generators/runtime-provenance-stamped",
+      "file": "packages/generators/src/deploy.ts",
+      "control": "Every bundle records which @anvil/mcp-runtime built its server and the sha256 of the exact bytes (runtime.lock.json). Drop it and a bundle's runtime provenance goes back to being implicit \u2014 inferable only from whichever Anvil happened to compile it.",
+      "find": "    [RUNTIME_LOCK_FILE]: runtimeLockJson(),\n",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/generators.test.ts"
+      ]
+    },
+    {
+      "id": "mcp-runtime/partial-artifact-fails-closed",
+      "file": "packages/mcp-runtime/src/serve.ts",
+      "control": "A runtime whose artifact directory is missing a file it reads at boot refuses to start. Return an empty document instead and a partial or tampered copy serves silently \u2014 with no route table, or no catalog \u2014 under a self-hash that no longer matches what was certified. Killed by the source-level check because the generators boot tests exercise the BUILT bundle, which a source mutation does not rebuild.",
+      "find": "    throw new Error(`Runtime artifact is missing ${name}; refusing to serve a partial deployment.`);",
+      "replace": "    return \"[]\";",
+      "tests": [
+        "packages/mcp-runtime/src/serve.test.ts"
+      ]
     }
   ]
 }
