@@ -1,8 +1,8 @@
 """Explainable checks for common AI-writing patterns.
 
 This module does not guess whether text was written by AI. It finds named patterns
-that are useful review candidates. Rules are intentionally split by confidence so
-CI can fail on narrow signals without turning style preferences into grammar laws.
+that are useful review candidates. Rules are split by confidence so CI can fail on
+narrow signals without turning style preferences into grammar laws.
 """
 
 from __future__ import annotations
@@ -68,16 +68,41 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule(
         "chatbot-residue", "high", "chatbot",
-        re.compile(r"\b(?:i hope this helps|of course!|certainly!|you(?:'|’)re absolutely right|would you like me to|want me to (?:continue|give examples)|let me know if you(?:'|’)d like)\b", re.I),
+        re.compile(r"\b(?:i hope this helps|of course!|certainly!|you(?:'|’)re absolutely right|would you like me to|want me to (?:continue|give examples)|let me know if you(?:'|’)d like|here is a (?:template|draft|breakdown))\b", re.I),
         "Assistant-facing language leaked into standalone prose.",
         "Delete the chatbot wrapper and keep the content.",
+    ),
+    Rule(
+        "knowledge-cutoff-disclaimer", "high", "chatbot",
+        re.compile(r"\b(?:up to my last training update|as of my last knowledge update|based on available information|in the (?:provided|available) sources|specific details are (?:limited|scarce)|not widely (?:available|documented|disclosed))\b", re.I),
+        "The prose exposes model limitations or source-search commentary instead of stating the supported fact.",
+        "State what the source establishes. Remove speculation used to fill the gap.",
+    ),
+    Rule(
+        "placeholder-text", "high", "chatbot",
+        re.compile(r"\b(?:insert_source_url|source_publisher|paste_[a-z0-9_]+_url_here|yyyy-mm-xx|20\d\d-xx-xx)\b", re.I),
+        "Template placeholder text appears in user-facing prose or citations.",
+        "Replace it with verified content or remove the incomplete block.",
+    ),
+    Rule(
+        "model-markup-leak", "high", "markup",
+        re.compile(r"(?:contentReference\[oaicite:|\[oai_citation:|turn\d+(?:search|news|file|image)\d+|\[attached_file:\d+\]|ppl-ai-file-upload|:::writing\{|\[cite:\s*\d+\]|\[span_\d+\])", re.I),
+        "Internal model or product markup leaked into the document.",
+        "Remove the artifact and restore a real citation or plain text.",
         P({"general", "technical", "strict"}),
     ),
     Rule(
         "vague-attribution", "high", "evidence",
-        re.compile(r"\b(?:experts (?:agree|argue|believe)|industry reports (?:show|suggest|indicate)|observers have cited|studies show|widely regarded as|many teams find)\b", re.I),
+        re.compile(r"\b(?:experts (?:agree|argue|believe)|industry reports (?:show|suggest|indicate)|observers have cited|studies show|widely regarded as|many teams find|critics argue|some observers say)\b", re.I),
         "The claim appeals to an unnamed authority.",
         "Name the source or remove the attribution.",
+    ),
+    Rule(
+        "notability-proof", "medium", "evidence",
+        re.compile(r"\b(?:independent coverage|regional media outlets|national media outlets|trade publications|profiled in|active social media presence|widely-read outlets)\b", re.I),
+        "The prose may be using coverage labels as a proxy for explaining what the sources establish.",
+        "State the sourced fact or contribution instead of rehearsing notability language.",
+        P({"general", "strict"}),
     ),
     Rule(
         "proof-laundering", "high", "evidence",
@@ -94,7 +119,7 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule(
         "not-just-but", "medium", "structure",
-        re.compile(r"\b(?:not (?:just|only|merely)\b[^.!?\n]{1,120}\bbut\b)", re.I),
+        re.compile(r"\b(?:not (?:just|only|merely)\b[^.!?\n]{1,120}\bbut\b|rather than\b[^.!?\n]{1,120}\b(?:is|are|was|were)\b)", re.I),
         "A stock contrast may be adding cadence rather than information.",
         "State the positive claim directly unless the contrast corrects a real misconception.",
     ),
@@ -113,16 +138,22 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule(
         "importance-puffery", "medium", "claim-quality",
-        re.compile(r"\b(?:pivotal|paramount|transformative|game[- ]changer|vital role|significant milestone|crucial distinction|indelible mark|evolving landscape)\b", re.I),
+        re.compile(r"\b(?:pivotal|paramount|transformative|game[- ]changer|vital role|significant milestone|crucial distinction|indelible mark|evolving landscape|lasting legacy|broader trend|focal point|setting the stage)\b", re.I),
         "The prose labels importance without supplying the evidence or consequence.",
         "Name the dependency, number, failure mode, or consequence.",
     ),
     Rule(
         "sales-language", "medium", "claim-quality",
-        re.compile(r"\b(?:breathtaking|must-visit|renowned|stunning|groundbreaking|rich cultural heritage|in the heart of|nestled (?:in|within)|boasts? a)\b", re.I),
+        re.compile(r"\b(?:breathtaking|must-visit|renowned|stunning|groundbreaking|rich cultural heritage|in the heart of|nestled (?:in|within)|boasts? a|diverse array|refined dynamism|immersive experience)\b", re.I),
         "The sentence uses promotional language where a factual description would be clearer.",
         "Replace the praise with the observable property or fact.",
         P({"general", "strict"}),
+    ),
+    Rule(
+        "copula-avoidance", "medium", "word-choice",
+        re.compile(r"\b(?:serves as|stands as|functions as|operates as|represents a|marks a|boasts|offers a|features a)\b", re.I),
+        "The sentence may be avoiding a simpler copula or possession verb.",
+        "Try is, are, or has. Keep the longer verb only when it adds meaning.",
     ),
     Rule(
         "fake-strong-verb", "medium", "word-choice",
@@ -132,15 +163,43 @@ RULES: tuple[Rule, ...] = (
     ),
     Rule(
         "superficial-analysis", "medium", "claim-quality",
-        re.compile(r"\b(?:highlighting|underscoring|showcasing|demonstrating|reflecting|symbolizing)\b[^.!?\n]{0,120}\b(?:commitment|importance|dedication|focus|innovation|leadership|excellence|connection)\b", re.I),
-        "A trailing analysis clause adds a virtue claim rather than a mechanism or consequence.",
+        re.compile(r"\b(?:highlighting|underscoring|showcasing|demonstrating|reflecting|symbolizing|emphasizing|ensuring|contributing to|fostering|cultivating|enhancing)\b[^.!?\n]{0,140}\b(?:commitment|importance|dedication|focus|innovation|leadership|excellence|connection|significance|relevance|impact)\b", re.I),
+        "A trailing analysis clause adds a virtue or significance claim rather than a mechanism or consequence.",
         "Delete the commentary or replace it with a concrete consequence.",
     ),
     Rule(
         "marketing-adjective", "medium", "word-choice",
-        re.compile(r"\b(?:robust|seamless|enterprise-grade|production-ready|battle-tested|cutting-edge|powerful|intuitive|effortless|sophisticated|vibrant)\b", re.I),
+        re.compile(r"\b(?:robust|seamless|enterprise-grade|production-ready|battle-tested|cutting-edge|powerful|intuitive|effortless|sophisticated|vibrant|profound|valuable|intricate|meticulous)\b", re.I),
         "A praise adjective may be replacing an observable property.",
         "Replace it with behavior, evidence, or a measurable property.",
+    ),
+    Rule(
+        "formulaic-outlook", "medium", "structure",
+        re.compile(r"\bdespite (?:these|its) challenges\b[^.!?\n]{0,180}\b(?:future|continues? to|positions? (?:it|them)|broader adoption|next-generation)\b", re.I),
+        "The sentence uses a stock challenges-to-future-prospects arc.",
+        "Keep only the documented limitation, planned action, or forecast.",
+        P({"general", "strict"}),
+    ),
+    Rule(
+        "inline-header-list", "advisory", "formatting",
+        re.compile(r"^\s*(?:[-*+] |\d+\.\s+)\*\*[^*]{1,80}\*\*\s*:\s+"),
+        "Bold mini-headings inside vertical lists are a common chatbot formatting pattern.",
+        "Use prose, a real heading, or a table when that better matches the information structure.",
+        P({"strict"}),
+    ),
+    Rule(
+        "thematic-break-before-heading", "advisory", "formatting",
+        re.compile(r"^\s*(?:---|\*\*\*|___)\s*$"),
+        "Repeated thematic breaks before headings can be template-like formatting residue.",
+        "Keep a break only when it marks a real section boundary.",
+        P({"strict"}),
+    ),
+    Rule(
+        "em-dash-density", "advisory", "rhythm",
+        re.compile(r"—"),
+        "Em dashes are valid punctuation, but repeated use can create stock generated rhythm.",
+        "Compare with the writer's normal punctuation. Do not remove a dash mechanically.",
+        P({"strict"}),
     ),
     Rule(
         "fake-profound-ending", "high", "ending",
@@ -198,10 +257,10 @@ def _mask_inline(line: str) -> str:
 
 
 def _masked_lines(text: str) -> Iterator[tuple[int, str]]:
-    """Yield source line numbers while hiding frontmatter, fenced code, URLs and inline code.
+    """Yield source line numbers while hiding frontmatter and fenced code.
 
     The masking keeps character offsets stable, so reported columns still map to the
-    original line.
+    original line. Model-markup checks happen before URL masking at the line level.
     """
     in_fence = False
     in_frontmatter = False
