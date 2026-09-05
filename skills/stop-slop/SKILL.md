@@ -1,152 +1,183 @@
 ---
 name: stop-slop
-description: Remove predictable AI writing patterns from prose, with extra rules for technical documentation.
+description: Detect and remove predictable AI writing patterns without flattening the writer's voice. Use for technical docs, READMEs, design docs, release notes, comments, prompts, product copy, code review prose, or any draft that feels generic, over-explained, self-important, or "Claude-ish".
+version: 2.0.0
+license: Apache-2.0
 metadata:
+  intent: writing-quality
+  default_mode: review
+  languages:
+    - en
   sources:
     - hardikpandya/stop-slop
     - petergyang/no-ai-slop
+    - rand/cc-polymath/skills/anti-slop
+  progressive_disclosure:
+    level_0:
+      read: SKILL.md
+      purpose: fast review and rewrite
+    level_1:
+      read:
+        - reference/pattern-catalog.md
+        - reference/examples.md
+      purpose: pattern-level diagnosis and examples
+    level_2:
+      read:
+        - reference/anti-examples.md
+        - reference/detection-model.md
+        - reference/claude-isms.md
+      purpose: edge cases, false positives, and technical-writing rules
+    level_3:
+      read:
+        - cli.md
+        - sdk.md
+      purpose: automation and CI integration
+    level_4:
+      run:
+        - python skills/stop-slop/scripts/slop.py check <path>
+        - python skills/stop-slop/scripts/slop.py explain <path>
+      purpose: deterministic scanning
 ---
 
 # Stop Slop
 
-Use this skill for README files, documentation, guides, release notes, comments, design docs, and other user-facing prose.
+Remove generated writing patterns while preserving the writer's point, facts, tone, and useful weirdness.
 
-## Editing goal
+The goal is not to make prose sound less like AI by making it bland. The goal is to increase information density and make claims easier to inspect.
 
-Preserve the writer's point and voice. Remove generated patterns without sanding the prose into generic corporate English.
+## Fast path
 
-The reader should leave with a clearer decision, command, constraint, mechanism, or result.
+Use this sequence unless the task needs deeper analysis.
 
-## Core rules
+1. Find the sentence that contains the actual point.
+2. Move it to the front.
+3. Delete setup that adds no context.
+4. Replace praise with behavior, evidence, numbers, constraints, or failure modes.
+5. Remove repeated conclusions.
+6. Put capability limits beside the capability claim.
+7. Keep the writer's vocabulary when it is precise.
+8. End on the last useful fact or next action.
 
-1. **Lead with the point.** Cut throat-clearing, scene-setting, and announcements when they add no context.
-2. **Preserve useful voice.** Keep bluntness, humor, edge, uncertainty, and unusual phrasing when they are doing real work.
-3. **Use the portability test.** If a sentence could move unchanged to another product or company, it is probably filler. Replace it with a fact, mechanism, consequence, constraint, or judgment specific to this subject.
-4. **Remove binary pivots.** Avoid `not X, but Y`, `the question isn't X`, and similar reveal structures. State Y directly.
-5. **Remove faux-insight setups.** Cut `what most people miss`, `here's what nobody tells you`, `the interesting part is`, and similar writer-flattering scaffolding.
-6. **Remove slogan headings.** Prefer `Runtime policy` over `One contract. Every surface.` Prefer retrieval over cadence.
-7. **Remove benefit-restatement loops.** Do not explain a mechanism, restate its consequence, ask why it matters, then restate the consequence again.
-8. **Replace praise with properties.** Prefer `hash-bound`, `idempotent`, `local-only`, `read-only`, `blocking`, `resumable`, or `deterministic` over `robust`, `powerful`, `enterprise-grade`, or `seamless`.
-9. **Protect specific facts.** Do not smooth numbers, names, protocols, timings, failure modes, or concrete behavior into generic importance claims.
-10. **Do not overclaim from implementation.** A generated file, shared model, or CI test does not prove something `cannot drift`, `always agrees`, or `can never go stale`. State what the test checks and when it runs.
-11. **Scope absolutes.** Treat `every`, `all`, `always`, `never`, `single`, `only`, `complete`, `exact`, and `guaranteed` as claims that need a defined boundary.
-12. **Put boundaries beside capabilities.** If parsing does not imply execution, say so at first mention. If `publish` does not deploy, say so at first mention.
-13. **Explain only the non-obvious part.** Do not paraphrase a code block, table, diagram, or command. Explain the state change, failure mode, or constraint the reader cannot infer.
-14. **Replace architecture metaphors with invariants.** Name the component, check, owner, and enforcement point. Metaphors may orient; they must not carry the specification.
-15. **Use concrete verbs.** Prefer `rejects`, `compiles`, `records`, `retries`, `omits`, or plain `is` over decorative verbs such as `serves as`, `enables`, `empowers`, `unlocks`, or `showcases`.
-16. **Avoid synonym cycling.** If `operation` is the correct word, keep using `operation`. Do not rotate through `action`, `capability`, `tool`, and `function` for style.
-17. **Remove superficial analysis.** Trailing clauses with `highlighting`, `underscoring`, `reflecting`, `showcasing`, or `demonstrating` often pretend to add analysis. Replace them with the concrete consequence or delete them.
-18. **Remove importance puffery.** Cut `pivotal`, `critical`, `vital`, `transformative`, `significant`, and similar labels unless the sentence proves the importance with evidence.
-19. **Name sources.** Replace `experts agree`, `studies show`, `industry reports suggest`, or `widely regarded` with a named source or remove the claim.
-20. **Avoid colon reveals.** Use colons for lists, labels, definitions, and quotations. Do not use `The secret: ...`, `The best part: ...`, or similar staged reveals.
-21. **Use active voice when ownership matters.** Do not hide the actor behind `was decided`, `was approved`, or `was generated` when responsibility matters. Keep a passive construction when the actor is irrelevant and the technical state is clearer.
-22. **Remove empty adverbs.** Keep adverbs that carry semantics, such as `retry automatically`, `execute concurrently`, or `fail deterministically`.
-23. **Do not manufacture reassurance or intimacy.** Cut `rest assured`, `and that's okay`, `the good news is`, `I promise`, and similar hand-holding.
-24. **Do not manufacture profundity.** Cut mic-drop fragments, aphoristic kickers, and fake-deep closing lines. End on the last concrete point or next action.
-25. **Avoid summary-recap endings.** If the reader just read the section, do not close with `In conclusion`, `Ultimately`, or a paragraph that repeats it.
-26. **Use formatting for structure, not decoration.** Avoid emoji headings, random bold emphasis, two-line sections with headers, and bullet lists that would read better as prose.
-27. **Treat rhythm rules as heuristics, not laws.** Avoid repeated em-dash chains, identical sentence shapes, and stacked punchy fragments. Do not ban every long sentence, fragment, passive, adverb, or dash when it is the clearest form.
+## High-confidence patterns
 
-## Phrases to flag
+These deserve immediate inspection:
 
-These are signals, not regex-level bans. Inspect the sentence before deleting.
+- throat clearing: `Here's the thing`, `Let me be clear`, `It's worth noting`;
+- faux insight: `What most people miss`, `Here's what nobody tells you`;
+- binary reveal: `It's not X. It's Y.`;
+- colon reveal: `The best part: ...`;
+- narrator certification: `The rule is simple`, `The key point is`;
+- importance puffery: `pivotal`, `transformative`, `vital`, `paramount`;
+- fake-strong verbs: `empower`, `unlock`, `leverage`, `showcase`;
+- superficial analysis: `highlighting`, `underscoring`, `demonstrating` followed by a generic virtue;
+- proof laundering: `generated from the source, so it cannot drift`;
+- unscoped absolutes: `always`, `never`, `every`, `complete`, `guaranteed`;
+- summary endings that repeat the section;
+- mic-drop fragments and fake-profound closing lines.
 
-- Here's the thing
-- Here's why
-- Here's what I mean
-- Let me be clear
-- The uncomfortable truth is
-- What most people miss
-- Here's what nobody tells you
-- The part everyone misses
-- The real X is
-- The truth is
-- The rule is direct
-- The consequence is concrete
-- The result is simple
-- The key point is
-- The takeaway is
-- This distinction matters
-- This matters because
-- Here's why that matters
-- So what does this buy?
-- What does this buy you?
-- The payoff is
-- In practice, this means
-- Put differently
-- In other words
-- As you can see
-- real compiled output
-- the real thing
-- the only honest enforcement
-- with confidence
-- cannot disagree
-- can't drift
-- can't go stale
-- always agrees
-- single source of truth
-- robust
-- seamless
-- comprehensive
-- powerful
-- sophisticated
-- intuitive
-- effortless
-- enterprise-grade
-- production-ready
-- battle-tested
-- cutting-edge
-- paradigm shift
-- game changer
-- transformative
-- elevate
-- empower
-- streamline
-- facilitate
-- utilize
-- leverage
-- unlock
-- harness
-- at its core
-- it's worth noting
-- it's important to note
-- the reality is
-- in today's world
-- in the age of
-- in the world of
-- when it comes to
-- going forward
-- let me walk you through
-- in this section, we'll
-- by the end of this guide
-- and that's okay
-- rest assured
-- the good news is
-- that's it
-- it's that simple
-- stands as a testament
-- marks a pivotal moment
-- plays a vital role
-- underscores its significance
-- solidifies its position
+Do not treat these as grammar bans. A flagged phrase can be correct. Inspect the function it serves.
 
-See `reference/claude-isms.md` for technical patterns and examples.
+## Rewrite tests
 
-## Technical documentation test
+For each paragraph, ask:
 
-Before merging prose, ask:
-
-- What should the reader do, decide, expect, or avoid after this paragraph?
-- Can this sentence move unchanged to another product? If yes, why is it here?
+- What should the reader know, do, decide, expect, or avoid?
+- Could this sentence move unchanged to another company or product?
 - Does an adjective stand in for an observable property?
-- Did a concrete fact become a generic benefit claim?
-- Does a test or generator justify less than the prose claims?
-- Is an absolute scoped to the component and code path that enforce it?
-- Does the reader see the limitation at the first capability claim?
-- Does a paragraph restate a table, diagram, or command?
-- Does a metaphor hide the actual component or check?
-- Did the prose rotate terminology without changing meaning?
-- Does a trailing `-ing` clause add evidence, or just commentary?
-- Does the section end by repeating itself or reaching for a quotable line?
+- Does the prose claim more than the implementation, test, or source proves?
+- Is an absolute scoped to the component or code path that enforces it?
+- Is the limitation stated at first mention?
+- Does the paragraph narrate a command, table, or diagram the reader can already see?
+- Did terminology change only for variety?
+- Does the final sentence add information?
 
-Clear is the goal. Short sentences help expose unclear thinking, but sentence length is not a quality metric by itself.
+If a sentence fails all of these tests, delete it.
+
+## Technical writing rules
+
+Prefer:
+
+- `rejects`, `compiles`, `records`, `retries`, `omits`, `requires`, `is`;
+- exact nouns repeated consistently;
+- named owners and enforcement points;
+- concrete failure behavior;
+- measured claims;
+- scoped guarantees.
+
+Avoid using `robust`, `secure`, `enterprise-grade`, `production-ready`, `seamless`, `intuitive`, or `powerful` as substitutes for technical properties.
+
+A generated file does not prove it cannot go stale. A shared type does not prove two systems cannot disagree. A passing test proves the test passed under its stated conditions.
+
+## Preserve voice
+
+Do not normalize all prose into corporate English.
+
+Keep:
+
+- dry humor;
+- short blunt sentences;
+- unusual but precise wording;
+- domain vocabulary;
+- uncertainty when the facts are uncertain;
+- long sentences when they carry one coherent idea better than several fragments.
+
+Do not mechanically ban passive voice, adverbs, fragments, or em dashes. Treat repeated patterns as signals, not laws.
+
+## Editing modes
+
+### Review
+
+Return findings with pattern name, severity, evidence, and a suggested change. Do not rewrite everything.
+
+### Rewrite
+
+Preserve facts and intent. Make the minimum set of edits needed to remove slop.
+
+### Enforce
+
+Use the CLI or SDK for deterministic checks in CI. Fail only on high-confidence rules. Keep heuristic rules advisory.
+
+### Teach
+
+Explain the pattern and show one bad example, one better example, and why the change is better.
+
+## Progressive disclosure
+
+For a normal edit, stop here.
+
+Read `reference/pattern-catalog.md` when you need the full taxonomy.
+
+Read `reference/examples.md` for paired rewrites.
+
+Read `reference/anti-examples.md` before enforcing rules mechanically. It covers valid uses of passive voice, adverbs, repeated terminology, long sentences, and other common false positives.
+
+Read `reference/detection-model.md` before changing scores or CI thresholds.
+
+Read `reference/claude-isms.md` for technical-documentation patterns observed in practice.
+
+Read `cli.md` and `sdk.md` to automate checks.
+
+## Deterministic scan
+
+Run:
+
+```bash
+python skills/stop-slop/scripts/slop.py check README.md
+python skills/stop-slop/scripts/slop.py explain apps/docs/src/content/docs
+python skills/stop-slop/scripts/slop.py check . --format json --fail-on high
+```
+
+The scanner is intentionally conservative. It finds candidates. It does not decide whether prose is good.
+
+## Output contract
+
+When reviewing prose, report findings in this shape:
+
+```text
+[path:line] severity / pattern
+Evidence: <short excerpt>
+Why: <what information problem this creates>
+Change: <delete, rewrite, scope, source, or keep>
+```
+
+When rewriting, return the rewritten text first. Add notes only where a material claim, ambiguity, or trade-off needs explanation.
