@@ -1,6 +1,6 @@
 ---
-title: Understand Anvil
-description: Understand how Anvil turns an API contract and reviewed policy into aligned agent tools with runtime enforcement.
+title: How Anvil works
+description: See how Anvil turns an API contract and reviewed policy into agent tools with one runtime contract.
 sidebar:
   order: 1
 ---
@@ -8,28 +8,25 @@ sidebar:
 import WhichSurfaceDiagram from '../../../components/diagrams/WhichSurfaceDiagram.astro';
 import LifecycleDiagram from '../../../components/diagrams/LifecycleDiagram.astro';
 
-Anvil is a compiler for agent-facing API tools.
+Anvil compiles API contracts into agent-facing tools.
 
-An API specification describes transport. It usually does not prove business
-effect, retry safety, confirmation policy, or approval. Anvil combines the
-source contract with reviewed operational facts, compiles both into AIR, and
-generates every agent surface from AIR.
+The API contract gives Anvil transport facts: paths, methods, fields, schemas, and auth schemes. It usually does not tell Anvil whether a call moves money, can be retried, needs confirmation, or is approved for agent use.
+
+You supply those missing facts in a reviewed manifest.
 
 ```text
 API contract + reviewed manifest -> AIR -> CLI / MCP / SDKs / skill / hooks
 ```
 
-AIR is the Anvil Intermediate Representation. It is the only semantic model in
-the generated bundle.
+AIR is the Anvil Intermediate Representation. Every generated surface comes from it.
 
-## Trace one operation
+## Follow one operation
 
-Consider `POST /refunds`.
+Take `POST /refunds`.
 
-The API contract can establish the path, request schema, response schema, and
-auth scheme. It may not establish whether a retry can duplicate a refund.
+The API contract can prove the request and response shape. It cannot prove that retrying the call will not create a second refund.
 
-The reviewed manifest supplies the missing facts:
+Put that policy in the manifest:
 
 ```yaml
 operations:
@@ -46,130 +43,113 @@ operations:
       reason: This operation moves money and cannot be reversed.
 ```
 
-Anvil then applies five steps:
+Anvil then:
 
-1. Capture the exact source bytes.
-2. Combine source facts and reviewed manifest facts in AIR.
-3. Validate effect, retry, confirmation, auth, and approval as one policy.
-4. Generate every surface from that policy.
-5. Recheck the policy in the runtime before network access.
+1. captures the exact source bytes;
+2. combines source facts and reviewed facts in AIR;
+3. validates effect, retry, confirmation, auth, and approval together;
+4. generates each surface from AIR; and
+5. checks the same policy again at runtime before network access.
 
-Therefore, the refund keeps the same name, schema, confirmation rule, and
-idempotency requirement in the CLI, MCP server, SDKs, skill, and hooks.
+The result is simple: the refund has the same name, schema, confirmation rule, and idempotency rule everywhere.
 
-## One operation, several surfaces
+## One operation, several ways to call it
 
 <WhichSurfaceDiagram />
 
-| Surface | Caller | Responsibility |
+| Surface | Used by | What it does |
 | --- | --- | --- |
-| CLI | Developer or CI | Inspect and invoke approved operations with typed arguments |
-| MCP server | Agent runtime | Expose approved operations as MCP tools |
-| Client SDKs | Application code | Call the same approved operations from TypeScript, Python, Go, or Java |
-| Skill | Agent | Discover capabilities, setup, constraints, errors, and examples |
-| Harness hooks | Coding harness | Refuse or escalate earlier in the call path |
+| CLI | Developer or CI | Inspects and invokes approved operations |
+| MCP server | Agent runtime | Exposes approved operations as MCP tools |
+| Client SDKs | Application code | Calls the same operations from TypeScript, Python, Go, or Java |
+| Skill | Agent | Describes setup, capabilities, constraints, errors, and examples |
+| Harness hooks | Coding harness | Refuses or escalates earlier in the call path |
 
-The surfaces are projections. They are not independent integrations.
+These are generated views of one contract. They are not separate integrations.
 
-Do not edit generated files. Change the API contract or reviewed manifest, then
-recompile.
+Do not edit generated files. Change the source contract or manifest and compile again.
 
-## Approval controls callability
+## Approval controls exposure
 
-Classification describes an operation. Approval determines whether callers
-can use it.
+Classification says what an operation does. Approval says whether it may be called.
 
 <LifecycleDiagram />
 
 | State | Meaning |
 | --- | --- |
 | `generated` | The operation exists in AIR |
-| `review_required` | A missing fact or decision prevents safe exposure |
+| `review_required` | A missing fact or decision blocks exposure |
 | `approved` | The operation may enter callable surfaces |
 | `blocked` | A known condition prevents approval |
-| `deprecated` | The contract remains recorded but is removed from normal use |
+| `deprecated` | The operation remains recorded but is removed from normal use |
 
-Only `approved` operations are callable. A name such as `getTransferStatus`
-does not override missing evidence. An HTTP method does not establish business
-effect. Approval follows inspection; it does not replace it.
+Only `approved` operations are callable.
 
-## Safety rules
+Names are not evidence. `getTransferStatus` may still mutate state. HTTP methods are not enough either. Review the operation before approving it.
 
-Anvil resolves policy with explicit conditions:
+## Runtime rules
 
 | If | Then |
 | --- | --- |
 | Effect is uncertain | Keep the operation `review_required` |
 | Mutation idempotency is unproven | Disable automatic retry |
-| Confirmation is required and absent | Return `confirmation_required` |
-| Durable deduplication is required and unavailable | Fail the write closed |
+| Required confirmation is absent | Return `confirmation_required` |
+| Durable deduplication is required but unavailable | Fail the write closed |
 | Host is outside the reviewed allowlist | Return `policy_denied` |
-| A hook is unavailable | Enforce the same rule in the runtime |
+| A hook is unavailable | Enforce the rule in the runtime |
 
-Hooks improve feedback time. They are not the trust boundary. The runtime owns
-the authoritative validation, auth resolution, idempotency, retry, host, and
-execution checks.
+Hooks improve feedback. They are not the trust boundary. The runtime owns the final validation, auth, idempotency, retry, host, and execution checks.
 
 ## What a bundle contains
 
-`anvil compile` writes three classes of artifact:
+`anvil compile` writes three kinds of artifact:
 
-1. **Contract:** AIR, source identity, evidence, catalogs, and compiled policy.
-2. **Projections:** CLI, MCP, SDKs, skill, hooks, mocks, evaluations, target
-   kits, and deployment inputs.
-3. **Assurance:** certification, self-test, conformance, simulation, and
-   publication records bound to the bundle hash.
+1. **Contract:** AIR, source identity, evidence, catalogs, and policy.
+2. **Generated surfaces:** CLI, MCP, SDKs, skill, hooks, mocks, evaluations, target kits, and deployment inputs.
+3. **Assurance:** certification, self-test, conformance, simulation, and publication records tied to the bundle hash.
 
-Run `anvil status <bundle>` when you resume work. It checks all three classes
-and reports the first required action.
+Run `anvil status <bundle>` when you return to a bundle. It reports the first action still required.
 
-## Evidence follows the bundle
+## Evidence is tied to bytes
 
 | Command | Question |
 | --- | --- |
 | `anvil certify` | Do generated artifacts agree with AIR? |
-| `anvil selftest` | Does the generated MCP surface behave correctly over local transport? |
+| `anvil selftest` | Does the generated MCP surface work over local transport? |
 | `anvil conformance` | Do the generated CLI, MCP server, and skill agree? |
 | `anvil simulate` | Do controls hold across the generated safety matrix? |
 
-Each record identifies the bundle hash it tested. Change the bundle and the
-record is stale. `anvil publish` requires current evidence, then prepares an
-operator plan. It does not deploy.
+Each record names the bundle hash it tested. Change the bundle and the record is stale.
 
-## Separate input paths
+`anvil publish` requires current evidence and creates an operator plan. It does not deploy.
 
-Anvil compiles OpenAPI, Swagger, GraphQL SDL, proto3, WSDL, Google Discovery,
-OData metadata, and Postman collections. Read
-[source format support](/anvil/guides/source-formats/) for parser and wire
-boundaries.
+## Pick the right input path
 
-Gateway exports use the estate workflow because gateway identity, policies,
-coordinates, and provenance must survive import.
+API contracts use `compile` or `agentify`.
 
-Application-server, .NET, and broker configuration use the legacy workflow.
-Legacy inventory records offline technical evidence and supports reviewed
-capability bindings. It does not create or run a deployment-local bridge in the
-current release.
+Gateway exports use the estate workflow. Gateway identity, policy, coordinates, and provenance need to survive import.
 
-Existing MCP servers use `anvil adopt`. Missing `readOnlyHint` metadata is
-treated conservatively; the tool remains a mutation until reviewed.
+Application-server, .NET, and broker configuration use the legacy workflow. That workflow records offline evidence and reviewed bindings. It does not create a runnable deployment-local bridge in the current release.
 
-## What Anvil does not own
+Existing MCP servers use `anvil adopt`. A tool without a clear read-only signal stays a mutation until someone reviews it.
+
+Anvil parses OpenAPI, Swagger, GraphQL SDL, proto3, WSDL, Google Discovery, OData metadata, and Postman collections. Parser support does not imply native wire support. See [source format support](/anvil/guides/source-formats/).
+
+## What Anvil does not do
 
 Anvil does not:
 
 - invent business meaning;
-- approve an uncertain mutation;
+- approve uncertain mutations;
 - store production credentials;
 - replace upstream authorization;
 - fetch remote references during local source capture;
-- turn a gateway or legacy inventory into execution authority; or
+- turn inventory into execution authority; or
 - deploy when `publish` runs.
 
-These are enforced boundaries. Read the full
-[product boundary](/anvil/concepts/product-boundary/) for ownership details.
+See the [product boundary](/anvil/concepts/product-boundary/) for the full ownership model.
 
-## Continue
+## Next
 
 - [Install Anvil](/anvil/cookbooks/install-anvil/)
 - [Run the quickstart](/anvil/start/quickstart/)

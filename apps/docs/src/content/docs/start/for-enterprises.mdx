@@ -1,52 +1,48 @@
 ---
 title: Adopt Anvil across a platform
-description: Pilot Anvil with explicit ownership, review, assurance, deployment, and drift controls before scaling across services.
+description: Pilot Anvil with clear ownership, review gates, assurance, deployment, and drift handling before you scale it.
 sidebar:
   order: 3
 ---
 
 import JourneyDiagram from '../../../components/diagrams/JourneyDiagram.astro';
 
-Anvil scales only when ownership remains clear.
+Anvil is useful at platform scale only if ownership stays explicit.
 
-- The API owner owns business semantics.
-- The platform team owns the compiler, runtime pattern, CI, and delivery path.
-- Security owns the policy for sensitive exposure and execution.
-- The agent team consumes approved capabilities; it does not approve them.
+- The API owner owns business meaning.
+- The platform team owns Anvil, CI, runtime patterns, and delivery.
+- Security owns policy for sensitive exposure and execution.
+- The agent team consumes approved capabilities. It does not approve them.
 
-If the platform team invents business semantics, it guesses. If each service
-team builds its own agent surfaces, those surfaces drift. Anvil keeps meaning
-with the service owner and generation with the platform.
+Do not ask the platform team to guess whether a call is safe. Do not ask every service team to build its own CLI, MCP server, SDK, and skill. Keep semantics with the service owner. Generate the surfaces centrally.
 
-## Pilot admission criteria
+## Pick a pilot that can fail for a useful reason
 
 Choose one service with:
 
 - a real mutation with a visible consequence;
 - an owner who can answer auth and idempotency questions;
-- a usable API contract, or a gateway export paired with its authoritative API
-  contract; and
+- a usable API contract, or a gateway export plus the authoritative contract; and
 - a mock or non-production endpoint for executable checks.
 
-A read-only demo proves parsing. A payment, provisioning, or case-management
-operation proves the review and runtime model.
+A read-only demo proves parsing. It does not prove the review model.
 
-For a legacy queue, EJB, or WCF endpoint, include the middleware owner. Treat a
-reviewed binding as a design artifact until a deployment-local adapter exists
-and passes assurance.
+A refund, provisioning action, or case update forces the team to answer the questions that matter: who may call it, what must be confirmed, and what happens on retry.
 
-## Pilot exit criteria
+For a legacy queue, EJB, or WCF endpoint, include the middleware owner. A reviewed binding is still only a design artifact until a deployment-local adapter exists and passes assurance.
 
-The pilot is complete only when the team can reproduce:
+## Know when the pilot is done
+
+The pilot is done when the team can reproduce:
 
 1. the exact source bytes Anvil compiled;
 2. the evidence behind every exposed operation;
 3. the calls the runtime will refuse;
-4. the assurance required for release;
+4. the checks required before release;
 5. the operator action that performs deployment; and
 6. the response to source or policy drift.
 
-Tool count is not an exit criterion.
+Generated tool count is not an exit criterion.
 
 ## Adoption path
 
@@ -54,46 +50,43 @@ Tool count is not an exit criterion.
 
 ### 1. Capture the source
 
-Use content-addressed source snapshots. For gateway exports, run estate
-inventory, audit, and planning before importing individual APIs. Do not flatten
-an estate into one tool catalog.
+Keep content-addressed source snapshots.
+
+For gateway exports, inventory and audit the estate before importing individual APIs. Do not flatten a gateway estate into one tool catalog.
 
 ### 2. Build a candidate
 
-Use `anvil agentify` for an unfamiliar API. It captures, compiles, assesses,
-and proposes capability groups. It then stops for review.
+Use `anvil agentify` for an unfamiliar API. It captures the source, compiles it, assesses operations, proposes capability groups, and stops for review.
 
-For legacy configuration, use inventory and candidate refinement. The output is
-a reviewed, non-executable binding. It is not an onboarded runtime.
+For legacy configuration, inventory first. The result is evidence and a candidate binding. It is not a runtime.
 
-### 3. Add owner-reviewed facts
+### 3. Add facts the owner can defend
 
-Keep `anvil.yaml` beside the source contract. Record stable names,
-idempotency, confirmation, auth posture, retry constraints, and authored
-workflows. Review the manifest like code.
+Keep `anvil.yaml` beside the source contract.
 
-### 4. Approve the smallest useful capability
+Record stable names, idempotency, confirmation, auth posture, retry constraints, and authored workflows. Review the manifest like code because it changes what agents may call.
 
-Approval changes what the generated CLI, MCP server, and SDKs can expose.
-Start with the minimum operation set that satisfies the use case. Do not approve
-an entire service because one operation was reviewed.
+### 4. Approve the smallest useful set
+
+Approval changes exposure in the CLI, MCP server, and SDKs.
+
+Approve only the operations needed for the use case. Reviewing one operation is not evidence for approving the whole service.
 
 ### 5. Verify one bundle hash
 
-Run certification, self-test, conformance, and simulation against the same
-bundle. Generate target and ledger inputs before the final assurance pass when
-those artifacts enter the certified hash.
+Run certification, self-test, conformance, and simulation against the same bundle.
 
-`anvil publish` prepares an operator plan. The existing delivery system still
-owns credentials, provider mutations, rollout, and rollback.
+If target or ledger artifacts become part of the certified bundle, generate them before the final assurance pass.
+
+`anvil publish` creates an operator plan. Your delivery system still owns credentials, provider mutations, rollout, and rollback.
 
 ### 6. Reconcile drift
 
-Recompile or run `anvil sync` when the source changes. A description edit, a
-dropped confirmation rule, and a widened auth scope require different review.
-Review semantic drift, not only file diffs.
+Recompile or run `anvil sync` when the source changes.
 
-## Ownership
+Not all diffs mean the same thing. A description edit, a removed confirmation rule, and a wider auth scope deserve different review. Review semantic drift, not just changed lines.
+
+## Ownership table
 
 | Decision | API owner | Platform | Security / risk | Agent team |
 | --- | --- | --- | --- | --- |
@@ -106,7 +99,7 @@ Review semantic drift, not only file diffs.
 | Confirm legacy binding | Consulted | Coordinates middleware owner | Reviews exposure | Does not infer semantics |
 | Operate legacy adapter | Supports behavior | Owns adapter lifecycle | Reviews identity and network | Consumes approved surface |
 
-## Map existing controls
+## Fit Anvil into controls you already have
 
 | Existing control | Anvil artifact or gate |
 | --- | --- |
@@ -115,15 +108,13 @@ Review semantic drift, not only file diffs.
 | Least privilege | Only approved operations enter callable surfaces |
 | Separation of duties | Explicit operation review and human-approval policy |
 | Release evidence | Hash-bound certification, self-test, conformance, and simulation records |
-| Change detection | Semantic drift report with blocking policy changes separated from documentation changes |
-| Secret management | Credential contract containing names and references, never values |
+| Change detection | Semantic drift report that separates policy changes from documentation changes |
+| Secret management | Credential contract with names and references, never values |
 | Runtime egress | Reviewed host policy plus platform network controls |
 
-Anvil should enter the controls already used for source review, identity,
-secrets, deployment, and incident response. It is not a second organizational
-control plane.
+Anvil should plug into source review, identity, secrets, deployment, and incident response. Do not build a second control plane around it.
 
-## Rollout sequence
+## Roll out in three steps
 
 ### Pilot
 
@@ -132,7 +123,7 @@ control plane.
 - One consequential mutation.
 - One approved capability.
 - One mock or non-production runtime.
-- One recorded list of unresolved gaps.
+- One written list of unresolved gaps.
 
 ### Template
 
@@ -144,27 +135,26 @@ control plane.
 
 ### Scale
 
-- Onboard through a written ownership contract.
-- Publish approved bundles and skills through the existing catalog.
+- Require a written ownership contract for onboarding.
+- Publish approved bundles and skills through the catalog you already operate.
 - Keep estate inventory separate from operation approval.
 - Track failures by source, review, assurance, deployment, and runtime stage.
 
-## Metrics that indicate progress
+## Measure the work that matters
 
 Track:
 
 - time to first approved capability;
-- percentage of candidate operations left `review_required`;
+- percentage of candidate operations still in `review_required`;
 - review latency by missing claim type;
 - assurance failure rate by lane;
 - time to resolve blocking drift;
 - percentage of live runtimes with current bundle evidence; and
-- incidents caused by false source or manifest claims.
+- incidents caused by wrong source or manifest claims.
 
-Do not optimize for generated tool count. A useful capability has a named
-owner, a reviewed contract, current evidence, and an operated runtime.
+Do not optimize generated tool count. A useful capability has an owner, a reviewed contract, current evidence, and an operated runtime.
 
-## Continue
+## Next
 
 - [Run Anvil in CI](/anvil/guides/ci/)
 - [Write a manifest](/anvil/guides/manifest/)

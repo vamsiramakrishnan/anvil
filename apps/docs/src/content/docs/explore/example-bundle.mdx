@@ -1,49 +1,36 @@
 ---
-title: "The example bundle, browsed"
-description: "Every operation Anvil compiled from examples/payments — real output, with its CLI command, MCP tool, risk, and safety rules side by side."
+title: Browse the example bundle
+description: Inspect the operations compiled from examples/payments, including CLI names, MCP tools, risk, approval, confirmation, and retry policy.
 sidebar:
   order: 1
 ---
 
 import OperationTable from "../../../components/OperationTable.astro";
 
-This table is **real compiled output**, not prose someone wrote by hand. Anvil's
-compiler ran over
-[`examples/payments`](https://github.com/vamsiramakrishnan/anvil/tree/main/examples/payments)
-— its `openapi.yaml` plus the `anvil.yaml` manifest that fills in what the spec
-left out — via `node scripts/gen-docs-data.mjs`. A test,
-`packages/generators/src/docs-data.test.ts`, recompiles the example on every run
-and fails if this page ever stops matching what the compiler produces. If you
-can read it here, the toolchain agrees with it.
+The table below comes from the compiled `examples/payments` bundle.
 
-Each row is one operation. The CLI command, the MCP tool, and the skill that
-describes them are all generated from the same entry in the shared model — which
-is why they can't disagree about what the operation does.
+`node scripts/gen-docs-data.mjs` compiles `openapi.yaml` with its reviewed `anvil.yaml` manifest and writes the data used by this page. `packages/generators/src/docs-data.test.ts` recompiles the fixture during tests and checks that the published data still matches the compiler output.
+
+Each row is one AIR operation. The CLI name, MCP tool, approval state, and policy fields come from that same operation.
 
 <OperationTable />
 
-## Reading the safety columns
+## Read the policy columns
 
-- **Effect / risk** — the classifier's verdict on what the operation does. Reads
-  are low-stakes; the two `financial` mutations can't be undone, which is why
-  they're gated more tightly.
-- **Confirm required** — the tools refuse the call until an explicit `--confirm`
-  (CLI) or `confirm: true` (MCP). **Human approval** is the stricter tier: the
-  model can't confirm its own way past it — a person has to.
-- **Idempotency key** — the operation demands `--idempotency-key`, so a repeated
-  call can't double-refund a customer.
-- **Retry-safe** — whether the runtime may auto-retry a transient failure. An
-  operation that isn't safe to repeat is never auto-retried.
+- **Effect / risk:** what the operation does and the risk assigned during review.
+- **Confirm required:** whether the call needs `--confirm` in the CLI or `confirm: true` in MCP.
+- **Human approval:** whether a person must approve the operation. A model argument cannot satisfy this gate.
+- **Idempotency key:** whether the caller must supply a stable key before a mutation can be repeated safely.
+- **Retry-safe:** whether the runtime may retry a transient failure automatically.
 
-## Approved vs. review required
+A non-idempotent mutation is not auto-retried. The first request may already have reached the upstream system.
 
-The **state** column is the approval gate. Only `approved` operations reach the
-generated CLI, MCP server, and skill. A `review_required` operation still exists
-in the model but is left *out* of every generated tool until a human approves it
-— usually after a manifest fills in the missing facts (that it's safe to repeat,
-say, or how risky it is).
+## Approval controls what gets generated
 
-Every operation above is already approved, because the example's `anvil.yaml`
-manifest did that work up front. To see how an operation moves from
-`review_required` to `approved`, read
-[the enrich → approve workflow](/anvil/guides/enrich-approve-workflow/).
+Only `approved` operations enter callable CLI, MCP, and SDK surfaces.
+
+A `review_required` operation stays in AIR but is omitted from callable tools. Add the missing evidence to the reviewed manifest, then approve and compile again.
+
+The payments fixture is already reviewed, so its example operations are approved.
+
+To see that transition on your own contract, use the [enrich and approve workflow](/anvil/guides/enrich-approve-workflow/).
