@@ -827,7 +827,7 @@
     {
       "id": "refinement/intent-collision-refused",
       "file": "packages/refinement/src/skills/validate.ts",
-      "control": "An authored intent or routing phrase that the benchmark's own deterministic router sends to a DIFFERENT operation or capability than the one it was written for is not an example, it is a trap — refused by intent_routes_to_own_tool. Delete the refusal and a phrase like \"list the views\" (findings-log.md's helpdesk-views live loop) silently ships teaching an agent to route to the wrong tool, on a skill approval.ts auto-approves without a human ever seeing it.",
+      "control": "An authored intent or routing phrase that the benchmark's own deterministic router sends to a DIFFERENT operation or capability than the one it was written for is not an example, it is a trap \u2014 refused by intent_routes_to_own_tool. Delete the refusal and a phrase like \"list the views\" (findings-log.md's helpdesk-views live loop) silently ships teaching an agent to route to the wrong tool, on a skill approval.ts auto-approves without a human ever seeing it.",
       "find": "    if (collisions.length > 0) {",
       "replace": "    if (false) {",
       "tests": [
@@ -1340,6 +1340,36 @@
       "replace": "        // mutant: apply what resolves, skip what does not",
       "tests": [
         "packages/refinement/src/protocol/group-cluster.test.ts"
+      ]
+    },
+    {
+      "id": "evals/undefined-token-is-never-passed",
+      "file": "packages/refinement/src/evals/grade.ts",
+      "control": "A behaviour-check token no vocabulary defines cannot be decided, so it is reported ungraded. Make it pass instead and the runner launders an unrunnable check into a green report \u2014 which is the exact defect the runner was built to remove, reproduced one level up.",
+      "find": "  if (!term) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/refinement/src/evals/grade.test.ts"
+      ]
+    },
+    {
+      "id": "evals/ungraded-counts-against-the-rate",
+      "file": "packages/refinement/src/evals/grade.ts",
+      "control": "The pass rate counts ungraded expectations in its denominator. Drop them and the rate RISES as more undecidable checks are added \u2014 a score that improves by measuring less.",
+      "find": "    passRate: totals.total === 0 ? 0 : Math.round((totals.passed / totals.total) * 1000) / 10,",
+      "replace": "    passRate:\n      totals.passed + totals.failed === 0\n        ? 0\n        : Math.round((totals.passed / (totals.passed + totals.failed)) * 1000) / 10,",
+      "tests": [
+        "packages/refinement/src/evals/grade.test.ts"
+      ]
+    },
+    {
+      "id": "evals/vocabulary-defines-every-emitted-token",
+      "file": "packages/air/src/eval-vocabulary.ts",
+      "control": "Every concept token the emitters write is defined here, and the drift gate holds that equal in both directions. Remove a definition and a shipped behaviour check goes back to naming a word nothing defines \u2014 the state that made these files unrunnable for years.",
+      "find": "  not_exactly_once: {",
+      "replace": "  removed_by_mutation_not_exactly_once: {",
+      "tests": [
+        "packages/cli/src/eval-vocabulary-drift.test.ts"
       ]
     }
   ]

@@ -31,6 +31,7 @@ export * from "./deficiency.js";
 export * from "./detect.js";
 export * from "./distill.js";
 export * from "./enrich-plan.js";
+export * from "./evals/grade.js";
 export * from "./evals/index.js";
 export * from "./model.js";
 export * from "./pack.js";
