@@ -30,6 +30,8 @@
  *    whole spec's schema graph) only happens once, in phase 1; phase 2 runs
  *    per operation over an already-small, already-deduped input.
  */
+import { SCHEMA_MAP_KEYS, truncateToStub } from "./schema-stub.js";
+
 export interface BundleResult<T> {
   document: T;
   /** Document paths (dot/bracket notation) where a true cycle in *unnamed* structure was truncated. */
@@ -596,6 +598,7 @@ function walk(
   inSchema: boolean,
   ctx: WalkContext,
   definingName: string | undefined,
+  inSchemaMap = false,
 ): unknown {
   if (node === null || typeof node !== "object") return node;
   const { nameOf, structural, resolved, maxDepth, truncatedAt, depthLimitedAt } = ctx;
@@ -631,7 +634,7 @@ function walk(
 
   if (ancestors.has(node)) {
     truncatedAt.push(path);
-    return truncate(node as Record<string, unknown> | unknown[]);
+    return truncateToStub(node as Record<string, unknown> | unknown[], inSchemaMap);
   }
   const cached = resolved.get(node);
   if (cached !== undefined && inSchema) {
@@ -665,7 +668,7 @@ function walk(
   // structure, which real specs rarely have without a name breaking it up.
   if (inSchema && depth >= maxDepth) {
     depthLimitedAt.push(path);
-    return truncate(node as Record<string, unknown> | unknown[]);
+    return truncateToStub(node as Record<string, unknown> | unknown[], inSchemaMap);
   }
 
   // Prefer a vendor-declared *compact* shape over the fully expanded one:
@@ -705,7 +708,19 @@ function walk(
       const entersSchema = k === "schema" || isSchemasContainer;
       const childInSchema = inSchema || entersSchema;
       const childDepth = entersSchema ? 0 : inSchema ? depth + 1 : depth;
-      obj[k] = walk(v, nextAncestors, `${path}.${k}`, childDepth, childInSchema, ctx, undefined);
+      // Only a *schema* node has schema-map children; a container's own
+      // children are schemas, so the flag alternates rather than latching.
+      const childInSchemaMap = inSchema && !inSchemaMap && SCHEMA_MAP_KEYS.has(k);
+      obj[k] = walk(
+        v,
+        nextAncestors,
+        `${path}.${k}`,
+        childDepth,
+        childInSchema,
+        ctx,
+        undefined,
+        childInSchemaMap,
+      );
     }
     out = obj;
   }
@@ -747,23 +762,6 @@ function collapseExpandable(node: Record<string, unknown>): Record<string, unkno
     ...(compact.length === 1 ? (compact[0] as object) : { [key]: compact }),
     description: typeof node.description === "string" ? `${node.description} (${note})` : note,
   };
-}
-
-/**
- * Replace a node truncated by cycle-breaking or the depth bound with a
- * shallow, safe stub — type-preserving. An array in, an array out: this walk
- * runs over the *whole* OpenAPI document, not just JSON Schema, so a
- * truncated node can just as easily be a plain array (e.g. OAuth scope
- * lists) as an object — collapsing an array into `{}` would silently turn a
- * `string[]` into an object downstream code still expects to `.map()` over.
- */
-function truncate(node: Record<string, unknown> | unknown[]): Record<string, unknown> | unknown[] {
-  if (Array.isArray(node)) return [];
-  const stub: Record<string, unknown> = {};
-  if (typeof node.type === "string") stub.type = node.type;
-  const note = "nested reference truncated by Anvil to keep the schema JSON-safe and bounded";
-  stub.description = typeof node.description === "string" ? `${node.description} (${note})` : note;
-  return stub;
 }
 
 export interface MaterializeResult {
@@ -837,6 +835,7 @@ function resolveRefs(
   nodeBudgetLimitedAt: string[],
   resolved: Map<string, { refDepth: number; value: unknown }>,
   budget: Budget,
+  inSchemaMap = false,
 ): unknown {
   if (node === null || typeof node !== "object") return node;
 
@@ -848,7 +847,7 @@ function resolveRefs(
       budget.spent = true;
       nodeBudgetLimitedAt.push(path);
     }
-    return truncate(node as Record<string, unknown> | unknown[]);
+    return truncateToStub(node as Record<string, unknown> | unknown[], inSchemaMap);
   }
   budget.count += 1;
 
@@ -865,7 +864,7 @@ function resolveRefs(
           ? (target as Record<string, unknown>).type
           : undefined;
       const description = `A '${name}' object; nested one level deep to keep this schema a bounded size — see the '${name}' schema for its full fields.`;
-      return truncate(typeof type === "string" ? { type, description } : { description });
+      return truncateToStub(typeof type === "string" ? { type, description } : { description });
     }
     const nextAncestors = new Set(ancestors);
     nextAncestors.add(name);
@@ -916,6 +915,7 @@ function resolveRefs(
       nodeBudgetLimitedAt,
       resolved,
       budget,
+      !inSchemaMap && SCHEMA_MAP_KEYS.has(k),
     );
   }
   return obj;

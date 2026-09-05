@@ -12,7 +12,16 @@ service:
   environment: prod
 
 auth:
-  type: oauth2
+  # GitHub's `repo`/`read:org` scopes are granted by a *user* authorizing an
+  # OAuth/GitHub App, so the authority is the end user's and is exercised per
+  # caller — `oauth2_on_behalf_of`, the compiler's one executable end-user
+  # shape. The legacy bare `oauth2` is refused as ambiguous whenever the spec
+  # carries no per-operation security (as GitHub's trimmed spec does not), and
+  # the service-wide types are not interchangeable here: compiled against
+  # `jwt_bearer` or `oauth2_client_credentials` the bundle's own selftest
+  # cannot reach the wire at all (0/33 checks), against `oauth2_on_behalf_of`
+  # it executes (25 passing).
+  type: oauth2_on_behalf_of
   scopes:
     - repo
     - read:org
