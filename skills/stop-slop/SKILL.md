@@ -1,7 +1,7 @@
 ---
 name: stop-slop
 description: Detect and remove predictable AI writing patterns without flattening the writer's voice. Use for technical docs, READMEs, design docs, release notes, comments, prompts, product copy, code review prose, or any draft that feels generic, over-explained, self-important, or "Claude-ish".
-version: 2.0.0
+version: 2.1.0
 license: Apache-2.0
 metadata:
   intent: writing-quality
@@ -12,6 +12,7 @@ metadata:
     - hardikpandya/stop-slop
     - petergyang/no-ai-slop
     - rand/cc-polymath/skills/anti-slop
+    - Wikipedia:Signs_of_AI_writing
   progressive_disclosure:
     level_0:
       read: SKILL.md
@@ -26,7 +27,8 @@ metadata:
         - reference/anti-examples.md
         - reference/detection-model.md
         - reference/claude-isms.md
-      purpose: edge cases, false positives, and technical-writing rules
+        - reference/wikipedia-signals.md
+      purpose: edge cases, false positives, source-derived signals, and technical-writing rules
     level_3:
       read:
         - cli.md
@@ -43,141 +45,113 @@ metadata:
 
 Remove generated writing patterns while preserving the writer's point, facts, tone, and useful weirdness.
 
-The goal is not to make prose sound less like AI by making it bland. The goal is to increase information density and make claims easier to inspect.
+Do not use this skill to guess authorship. A pattern is evidence about the prose, not proof about who or what wrote it.
 
 ## Fast path
 
-Use this sequence unless the task needs deeper analysis.
-
 1. Find the sentence that contains the actual point.
-2. Move it to the front.
+2. Move it to the front when that helps comprehension.
 3. Delete setup that adds no context.
-4. Replace praise with behavior, evidence, numbers, constraints, or failure modes.
-5. Remove repeated conclusions.
-6. Put capability limits beside the capability claim.
-7. Keep the writer's vocabulary when it is precise.
-8. End on the last useful fact or next action.
+4. Restore specific facts when prose has smoothed them into generic praise or significance.
+5. Replace praise with behavior, evidence, numbers, constraints, or failure modes.
+6. Remove repeated conclusions and self-certifying commentary.
+7. Put capability limits beside the capability claim.
+8. Keep one technical term for one concept. Do not rotate synonyms for style.
+9. Remove chatbot residue, placeholders, and leaked internal citation markup.
+10. End on the last useful fact or next action.
 
-## High-confidence patterns
+## What to inspect first
 
-These deserve immediate inspection:
+High-confidence defects:
 
-- throat clearing: `Here's the thing`, `Let me be clear`, `It's worth noting`;
-- faux insight: `What most people miss`, `Here's what nobody tells you`;
-- binary reveal: `It's not X. It's Y.`;
-- colon reveal: `The best part: ...`;
-- narrator certification: `The rule is simple`, `The key point is`;
-- importance puffery: `pivotal`, `transformative`, `vital`, `paramount`;
-- fake-strong verbs: `empower`, `unlock`, `leverage`, `showcase`;
-- superficial analysis: `highlighting`, `underscoring`, `demonstrating` followed by a generic virtue;
-- proof laundering: `generated from the source, so it cannot drift`;
-- unscoped absolutes: `always`, `never`, `every`, `complete`, `guaranteed`;
-- summary endings that repeat the section;
-- mic-drop fragments and fake-profound closing lines.
+- chatbot residue such as `I hope this helps` or `Would you like me to...`;
+- faux insight such as `What most people miss`;
+- narrator certification such as `The rule is simple`;
+- vague attribution such as `industry reports suggest`;
+- proof laundering such as `cannot drift` when the implementation proves less;
+- knowledge-cutoff or source-search disclaimers pasted into final prose;
+- placeholder citation text;
+- internal model markup such as `oai_citation`, `turn0search0`, or `:::writing`;
+- fake-profound endings.
 
-Do not treat these as grammar bans. A flagged phrase can be correct. Inspect the function it serves.
+Medium-confidence review signals:
 
-## Rewrite tests
+- significance and legacy inflation;
+- promotional language;
+- `not just X, but Y`;
+- `serves as`, `stands as`, `features`, or `offers` where `is` or `has` is clearer;
+- superficial `-ing` analysis;
+- stock `challenges -> future prospects` arcs;
+- marketing adjectives and fake-strong verbs;
+- colon reveals and empty transitions.
 
-For each paragraph, ask:
+Advisory signals:
 
-- What should the reader know, do, decide, expect, or avoid?
-- Could this sentence move unchanged to another company or product?
-- Does an adjective stand in for an observable property?
-- Does the prose claim more than the implementation, test, or source proves?
-- Is an absolute scoped to the component or code path that enforces it?
-- Is the limitation stated at first mention?
-- Does the paragraph narrate a command, table, or diagram the reader can already see?
-- Did terminology change only for variety?
-- Does the final sentence add information?
+- absolutes that may need scope;
+- repeated triads;
+- suspicious `from X to Y` ranges;
+- em-dash density;
+- template-like formatting.
 
-If a sentence fails all of these tests, delete it.
+Advisory means inspect, not rewrite automatically.
 
-## Technical writing rules
+## Core editing rules
 
-Prefer:
+1. Preserve the claim. Do not invent facts, examples, benchmarks, opinions, or certainty.
+2. Preserve useful voice. Keep bluntness, humor, uncertainty, and unusual phrasing when they do real work.
+3. Protect specifics. Names, numbers, protocols, timings, commands, states, and failure modes outrank generic benefit language.
+4. Use the portability test. If a sentence could move unchanged to another product or company, replace it with a fact, mechanism, constraint, consequence, or judgment specific to this subject.
+5. Remove fake contrast. State the positive claim directly unless the rejected alternative matters to the reader.
+6. Prefer plain verbs. `is`, `has`, `stores`, `checks`, `rejects`, and `returns` often beat decorative verbs.
+7. Do not confuse tests with guarantees. Name the enforcement point, scope, timing, and failure mode.
+8. Keep boundaries next to capabilities. Do not force the reader to discover limitations later.
+9. Explain only the non-obvious part of code, tables, commands, or diagrams.
+10. Do not replace architecture with metaphor. Name the component, actor, check, and state transition.
+11. Repeat the correct technical noun. Synonym cycling can invent distinctions that do not exist.
+12. Cut superficial analysis. `highlighting`, `underscoring`, `reflecting`, and similar clauses need a real consequence to survive.
+13. Name sources. Do not replace evidence with `experts agree`, `studies show`, or coverage labels.
+14. Avoid summary-recap endings and mic-drop closers.
+15. Formatting should expose structure, not manufacture importance.
+16. Treat punctuation and rhythm rules as heuristics. Do not ban every dash, adverb, fragment, passive sentence, or list of three.
+17. Stop editing when the prose is clear. Anti-slop should not create another synthetic house style.
 
-- `rejects`, `compiles`, `records`, `retries`, `omits`, `requires`, `is`;
-- exact nouns repeated consistently;
-- named owners and enforcement points;
-- concrete failure behavior;
-- measured claims;
-- scoped guarantees.
+## Wikipedia-derived principle
 
-Avoid using `robust`, `secure`, `enterprise-grade`, `production-ready`, `seamless`, `intuitive`, or `powerful` as substitutes for technical properties.
+The most useful lesson from Wikipedia's field guide is not a phrase blacklist. It is regression toward the generic: specific facts get smoothed into broader, more positive, more important-sounding prose.
 
-A generated file does not prove it cannot go stale. A shared type does not prove two systems cannot disagree. A passing test proves the test passed under its stated conditions.
+Repair that at the information level. Restore the fact, source, mechanism, limitation, or consequence that the generic sentence displaced.
 
-## Preserve voice
+Read `reference/wikipedia-signals.md` when reviewing encyclopedia-style prose, source-heavy writing, formatting residue, citation artifacts, or broader AI-writing signals.
 
-Do not normalize all prose into corporate English.
+## Automation
 
-Keep:
-
-- dry humor;
-- short blunt sentences;
-- unusual but precise wording;
-- domain vocabulary;
-- uncertainty when the facts are uncertain;
-- long sentences when they carry one coherent idea better than several fragments.
-
-Do not mechanically ban passive voice, adverbs, fragments, or em dashes. Treat repeated patterns as signals, not laws.
-
-## Editing modes
-
-### Review
-
-Return findings with pattern name, severity, evidence, and a suggested change. Do not rewrite everything.
-
-### Rewrite
-
-Preserve facts and intent. Make the minimum set of edits needed to remove slop.
-
-### Enforce
-
-Use the CLI or SDK for deterministic checks in CI. Fail only on high-confidence rules. Keep heuristic rules advisory.
-
-### Teach
-
-Explain the pattern and show one bad example, one better example, and why the change is better.
-
-## Progressive disclosure
-
-For a normal edit, stop here.
-
-Read `reference/pattern-catalog.md` when you need the full taxonomy.
-
-Read `reference/examples.md` for paired rewrites.
-
-Read `reference/anti-examples.md` before enforcing rules mechanically. It covers valid uses of passive voice, adverbs, repeated terminology, long sentences, and other common false positives.
-
-Read `reference/detection-model.md` before changing scores or CI thresholds.
-
-Read `reference/claude-isms.md` for technical-documentation patterns observed in practice.
-
-Read `cli.md` and `sdk.md` to automate checks.
-
-## Deterministic scan
-
-Run:
+Use the CLI for deterministic candidates:
 
 ```bash
-python skills/stop-slop/scripts/slop.py check README.md
-python skills/stop-slop/scripts/slop.py explain apps/docs/src/content/docs
-python skills/stop-slop/scripts/slop.py check . --format json --fail-on high
+python skills/stop-slop/scripts/slop.py check README.md --profile technical
+python skills/stop-slop/scripts/slop.py explain docs --profile strict --include-advisory
+python skills/stop-slop/scripts/slop.py rules --profile technical
 ```
 
-The scanner is intentionally conservative. It finds candidates. It does not decide whether prose is good.
+Use `--format json` for programmatic consumers and `--format sarif` for code-scanning integration.
 
-## Output contract
+The scanner supports local suppression with `<!-- slop: ignore-line -->` and project-level rule suppression with repeated `--disable-rule` flags.
 
-When reviewing prose, report findings in this shape:
+Autofix is intentionally narrow. It may simplify wording such as `in order to` -> `to`. It must not automatically rewrite claims, evidence, technical guarantees, punctuation, or author voice.
 
-```text
-[path:line] severity / pattern
-Evidence: <short excerpt>
-Why: <what information problem this creates>
-Change: <delete, rewrite, scope, source, or keep>
-```
+## Final check
 
-When rewriting, return the rewritten text first. Add notes only where a material claim, ambiguity, or trade-off needs explanation.
+Before returning or merging prose, ask:
+
+- What should the reader know, decide, run, expect, or avoid after this paragraph?
+- Did a specific fact become a generic importance claim?
+- Does an adjective stand in for an observable property?
+- Does a test or generator justify less than the prose claims?
+- Is an absolute scoped to the component and code path that enforce it?
+- Does the limitation appear at the first capability claim?
+- Did the prose rename the same technical concept for variety?
+- Does a trailing analysis clause add evidence or only commentary?
+- Did assistant-facing text, placeholders, or internal citation artifacts leak into the result?
+- Would this sound natural if read to the intended reader rather than performed at them?
+
+Clear is the goal. Short sentences often expose unclear thinking, but sentence length is not a quality metric by itself.
