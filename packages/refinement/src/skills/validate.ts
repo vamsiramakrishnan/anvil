@@ -10,9 +10,11 @@ import {
   AgentProjection,
   agentProjectionIssues,
   agentPropKey,
+  laneEntryToolName,
   resolveIdempotencyCarrier,
   snakeCase,
 } from "@anvil/air";
+import { curatedCatalog, lexicalRoute, type RoutableTool } from "../benchmark/routing.js";
 import { concretePathSegments, normalizedWords, wordGrounds } from "../vocabulary.js";
 import {
   type EvidenceStrength,
@@ -28,6 +30,7 @@ import {
 } from "./contract.js";
 import {
   buildGroupWorkflow,
+  disambiguationIssues,
   groupGrantOf,
   groupNameIssues,
   groupPatchReferences,
@@ -631,15 +634,133 @@ const CHECKS: Record<ValidationCheckId, Check> = {
     );
   },
 
+  /**
+   * The gap `findings-log.md`'s helpdesk-views live loop names directly: the
+   * templated intent "list the views" landed on THREE different operations
+   * (execute/count/list variants of `/views`), organically, on a real
+   * six-operation compile. `author-intent-examples` already requires an
+   * operation's OWN name text to corroborate a phrasing
+   * (`executor.ts`'s corroboration filter, mutant
+   * `intents/skill-and-tool-name-must-agree`) — which catches a phrase that
+   * describes nothing this operation is called. It cannot, by construction,
+   * see a SIBLING: a phrase can restate this operation's own vocabulary and
+   * still be the exact phrase an agent would use for `execute_view` or
+   * `list_active_views`. This check is the other half: it does not ask
+   * "does this phrase describe the operation", it asks "does this phrase, put
+   * in front of the actual router the benchmark measures with, come back to
+   * this operation" — which corroboration-from-self cannot answer because it
+   * never looks past the one operation it is templating for.
+   *
+   * Reuses the benchmark's own deterministic floor router (`lexicalRoute`,
+   * the synchronous core `lexicalRouter()` wraps — see routing.ts) rather
+   * than a bespoke heuristic, for the same reason `scoreGroupProposal` scores
+   * a group proposal with it: a proposal must be judged by the exact
+   * instrument that measured the problem, or a validator and the benchmark
+   * could quietly disagree about what "routes correctly" means. `lexicalRoute`
+   * is used directly, not `lexicalRouter().route()`, because this check is a
+   * synchronous, deterministic `Check` like every other one in this file —
+   * going through the `Promise`-returning `TaskRouter` interface (needed only
+   * so a real model can be swapped in as a router, over a real process
+   * boundary) would force `validateProposal` and its five call sites async
+   * for a router that does no actual asynchronous work.
+   *
+   * Ties are not a special case. `lexicalRoute`'s tie-break (lexicographic on
+   * tool/card name) is how the deterministic floor router resolves ambiguity
+   * everywhere else it is used (`routeAndScore`, `scoreGroupProposal`); a tie
+   * that resolves away from the target is scored as a collision here too —
+   * anything more lenient would let this check pass a phrase the benchmark
+   * itself would count as a miss.
+   *
+   * Refuses ONLY a real collision (a phrase that routes to a *different*
+   * served name). A phrase that routes to nothing is weak, not a trap:
+   * nobody is misdirected by it, and it is surfaced in the passing reason
+   * for a reviewer rather than failing the check — a separate, softer
+   * "author better intents" signal, not this check's job. `findings-log.md`
+   * already has that softer signal (the corroboration filter, and
+   * `benchmark/clusters.ts`'s post-hoc confusion clustering); duplicating it
+   * here as a hard failure would refuse a phrase for being unremarkable, not
+   * for being a trap.
+   */
+  intent_routes_to_own_tool(_skill, proposal, context) {
+    const set = proposal.patch.set;
+    if (!("intent_examples" in set)) {
+      return ok("intent_routes_to_own_tool", "patch does not propose intent examples to route");
+    }
+    const proposed = set.intent_examples;
+    const phrases = Array.isArray(proposed)
+      ? proposed.filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+      : [];
+    if (phrases.length === 0) {
+      return ok("intent_routes_to_own_tool", "no non-empty phrase proposed to route");
+    }
+
+    let ownName: string | undefined;
+    let catalog: RoutableTool[] | undefined;
+    if (context.operation) {
+      ownName = context.operation.mcp.toolName;
+      catalog =
+        context.routingCatalogOperations && curatedCatalog(context.routingCatalogOperations);
+    } else if (context.capability) {
+      const capabilityId = context.capability.id;
+      ownName = laneEntryToolName(capabilityId);
+      catalog = context.routingCatalogCapabilities?.map((cap) => ({
+        name: laneEntryToolName(cap.id),
+        // A lightweight stand-in for the real entry card
+        // (`laneEntryDescription` in @anvil/air's ladder.ts also folds in
+        // member vocabulary drawn from the capability's own operations),
+        // built from exactly the fields this proposal can change plus the
+        // capability's stable identity — enough to judge whether a proposed
+        // routing phrase reads like ANOTHER capability's own text, without
+        // depending on ladder-mode membership math a documentation-tier
+        // proposal has no business needing.
+        description: [cap.displayName, cap.description, ...cap.intentExamples]
+          .filter((part) => part.length > 0)
+          .join(" "),
+        // Reused purely as this catalog's local correlation key — no
+        // operation exists at capability granularity.
+        operationId: cap.id,
+      }));
+    }
+
+    if (ownName === undefined || catalog === undefined) {
+      return fail(
+        "intent_routes_to_own_tool",
+        "no routing catalog in context to check the proposed phrases against",
+      );
+    }
+
+    const collisions: string[] = [];
+    let unrouted = 0;
+    for (const phrase of phrases) {
+      const routed = lexicalRoute(phrase, catalog);
+      if (routed === undefined) unrouted += 1;
+      else if (routed !== ownName) {
+        collisions.push(`"${phrase}" routes to '${routed}' instead of '${ownName}'`);
+      }
+    }
+
+    if (collisions.length > 0) {
+      return fail("intent_routes_to_own_tool", `not an example, a trap: ${collisions.join("; ")}`);
+    }
+    return ok(
+      "intent_routes_to_own_tool",
+      unrouted === 0
+        ? "every proposed phrase routes back to this target's own tool"
+        : `no proposed phrase collides with another served tool (${unrouted} route to none)`,
+    );
+  },
+
   /* ---------------------- group (confusable-cluster) checks ---------------------- */
   // The deterministic boundary that makes an unreliable harness safe on a whole
-  // CLUSTER: the proposal union is closed (exactly one of workflow/capability,
-  // strict zod shapes), every referenced operation stays inside the task's
-  // hash-bound grant, `supersedes` never leaves the payload's own steps, the
-  // composed workflow must register on the SHARED surface planner with bindings
-  // that actually thread, and every proposed name/intent is the member
-  // operations' own vocabulary. All of it delegates to group-proposal.ts so the
-  // apply path and the CLI's benchmark-scored admission read the same code.
+  // CLUSTER: the proposal union is closed (exactly one of
+  // workflow/capability/disambiguate, strict zod shapes), every referenced
+  // operation stays inside the task's hash-bound grant, `supersedes` never
+  // leaves the payload's own steps, the composed workflow must register on the
+  // SHARED surface planner with bindings that actually thread, a disambiguation
+  // must leave each member saying something its siblings do not, and every
+  // proposed name/intent is the member operations' own vocabulary. All of it
+  // delegates to group-proposal.ts so the apply path and the CLI's
+  // benchmark-scored admission read the same code.
 
   group_proposal_shape(_skill, proposal) {
     const parsed = parseGroupPatch(proposal.patch.set);
@@ -665,6 +786,20 @@ const CHECKS: Record<ValidationCheckId, Check> = {
           "group_grant_respected",
           `operation reference(s) outside the task's grant: ${[...new Set(outside)].join(", ")}`,
         );
+  },
+
+  group_disambiguation_distinguishes(_skill, proposal, context) {
+    const parsed = parseGroupPatch(proposal.patch.set);
+    if (!parsed.disambiguate) {
+      return ok("group_disambiguation_distinguishes", "patch proposes no disambiguation");
+    }
+    const issues = disambiguationIssues(parsed.disambiguate, context.groupOperations ?? []);
+    return issues.length === 0
+      ? ok(
+          "group_disambiguation_distinguishes",
+          "every member now carries a content word no sibling in this proposal carries",
+        )
+      : fail("group_disambiguation_distinguishes", issues.join("; "));
   },
 
   group_supersedes_within_steps(_skill, proposal, context) {

@@ -1,6 +1,4 @@
 import { createHash } from "node:crypto";
-import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   type AirDocument,
   type AuthRequirement,
@@ -22,14 +20,20 @@ import {
   MAX_UPSTREAM_TIMEOUT_MS,
   MIN_UPSTREAM_TIMEOUT_MS,
 } from "@anvil/runtime";
-import { buildSync } from "esbuild";
 import { stringify as toYaml } from "yaml";
 import { z } from "zod";
 import { compiledOperations } from "./catalog.js";
-import { generateRuntimeServer, resolvedWebhookRoutes } from "./entrypoints.js";
+import {
+  resolvedWebhookRoutes,
+  runtimeLockJson,
+  runtimeServerBundle,
+  webhookRoutesJson,
+} from "./entrypoints.js";
 import { buildToolResources, type ResourceOptions } from "./resources.js";
 
 export const IDEMPOTENCY_STORE_CONTRACT_FILE = "deploy/idempotency-store.json";
+/** Which @anvil/mcp-runtime built the bundle's server, and the sha256 of its bytes. */
+export const RUNTIME_LOCK_FILE = "deploy/runtime/runtime.lock.json";
 export const DEPLOY_RUNTIME_PREFIX = "deploy/runtime/";
 export const GOOGLE_PROVIDER_CONSTRAINT = ">= 7.33.0, < 8.0.0";
 export const GENERATED_CLOUD_RUN_TIMEOUT_SECONDS = 600;
@@ -461,41 +465,24 @@ export function deploymentArtifactHash(files: Record<string, string>): string {
   return hash.digest("hex");
 }
 
+/**
+ * The exact directory `COPY deploy/runtime ./runtime` ships. `server.js` is the
+ * runtime `@anvil/mcp-runtime` prebuilt at Anvil's own build, copied byte for
+ * byte; every other file is data the server reads at boot. Nothing is bundled
+ * here any more — see `runtimeServerBundle` for why that matters and what the
+ * per-compile esbuild step used to cost. `webhooks.json` and
+ * `runtime.lock.json` are new entries under the same prefix, so
+ * `deploymentArtifactHash` and the server's boot-time self-hash cover them
+ * without changing shape.
+ */
 function deployRuntime(air: AirDocument, resourceOptions: ResourceOptions): Record<string, string> {
-  const source = generateRuntimeServer(air);
-  const result = buildSync({
-    stdin: {
-      contents: source,
-      sourcefile: "runtime/server.js",
-      resolveDir: dirname(fileURLToPath(import.meta.url)),
-      loader: "js",
-    },
-    bundle: true,
-    platform: "node",
-    format: "esm",
-    target: "node22",
-    treeShaking: true,
-    minify: true,
-    legalComments: "none",
-    // A few transitive CommonJS modules use dynamic require for Node built-ins.
-    // ESM has no ambient require, so provide a local createRequire seam while
-    // keeping every third-party package bundled into this single file.
-    banner: {
-      js: 'import{createRequire as __anvilCreateRequire}from"node:module";const require=__anvilCreateRequire(import.meta.url);',
-    },
-    sourcemap: false,
-    write: false,
-    logLevel: "silent",
-  });
-  const server = result.outputFiles[0]?.text;
-  if (!server) throw new Error("Failed to bundle the deploy runtime.");
   return {
     "deploy/runtime/package.json": `${JSON.stringify(
       { name: `${air.service.id}-anvil-runtime`, private: true, type: "module" },
       null,
       2,
     )}\n`,
-    "deploy/runtime/server.js": server,
+    "deploy/runtime/server.js": runtimeServerBundle(),
     "deploy/runtime/air.json": airToJson(air),
     "deploy/runtime/resources.json": `${JSON.stringify(
       buildToolResources(air, resourceOptions),
@@ -503,6 +490,8 @@ function deployRuntime(air: AirDocument, resourceOptions: ResourceOptions): Reco
       2,
     )}\n`,
     "deploy/runtime/operations.manifest.json": `${JSON.stringify(compiledOperations(air), null, 2)}\n`,
+    "deploy/runtime/webhooks.json": webhookRoutesJson(air),
+    [RUNTIME_LOCK_FILE]: runtimeLockJson(),
   };
 }
 
@@ -1266,7 +1255,7 @@ function credentialRow(
 /**
  * Operator-facing documentation for the `/webhooks/<service>/<opId>` routes
  * (design doc §7/§14) the generated runtime serves (`entrypoints.ts`'s
- * `resolvedWebhookRoutes`/`generateRuntimeServer`). Empty string when the
+ * `resolvedWebhookRoutes`/`webhookRoutesJson`). Empty string when the
  * surface has none, so a service with no resolved webhook contract emits no
  * new section at all — silence is the honest answer for "this doesn't apply".
  */

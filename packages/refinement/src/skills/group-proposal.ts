@@ -80,8 +80,47 @@ export const zGroupCapabilityPayload = z
   .strict();
 export type GroupCapabilityPayload = z.infer<typeof zGroupCapabilityPayload>;
 
-/** The two patch keys a group skill may write. Exactly one per proposal. */
-export const GROUP_PATCH_KEYS = ["workflow", "capability"] as const;
+/**
+ * Make the cluster's members tellable apart, in place — the third answer, and
+ * the only one that treats the confusion itself rather than building something
+ * over it.
+ *
+ * What it may rewrite is exactly what the ROUTER reads: `mcpToolDescription`
+ * (@anvil/air `mcp.ts`) is built from the operation's description and display
+ * name, so those are the surface a mis-route is decided on. What it may NOT
+ * touch is `skill.intentExamples`: in the benchmark those ARE the task set, so
+ * a proposal able to rewrite them could pass by rewriting the exam instead of
+ * the answer. Held-out by construction, not by good manners.
+ *
+ * Renaming (`mcp.toolName`, `canonicalName`) is deliberately out of scope here:
+ * a name change is a contract change across every generated surface, and the
+ * measurement says the description is the larger text a lexical router reads.
+ * If evidence later shows names carry the collision, that is its own change
+ * with its own migration story.
+ */
+export const zGroupDisambiguationPayload = z
+  .object({
+    operations: z
+      .array(
+        z
+          .object({
+            /** Operation reference: AIR id, canonicalName, or source operationId. */
+            operation: z.string().min(1),
+            /** The served description that replaces this member's own. */
+            description: z.string().min(1),
+            display_name: z.string().min(1).optional(),
+            /** Why THIS member is now distinguishable from the others named here. */
+            rationale: z.string().min(1),
+          })
+          .strict(),
+      )
+      .min(2, "disambiguating one operation distinguishes it from nothing"),
+  })
+  .strict();
+export type GroupDisambiguationPayload = z.infer<typeof zGroupDisambiguationPayload>;
+
+/** The three patch keys a group skill may write. Exactly one per proposal. */
+export const GROUP_PATCH_KEYS = ["workflow", "capability", "disambiguate"] as const;
 
 /* --------------------------------- grant ---------------------------------- */
 
@@ -216,6 +255,7 @@ export function buildGroupWorkflow(
 export function parseGroupPatch(set: Record<string, JsonValue>): {
   workflow?: GroupWorkflowPayload;
   capability?: GroupCapabilityPayload;
+  disambiguate?: GroupDisambiguationPayload;
   issues: string[];
 } {
   const keys = Object.keys(set);
@@ -237,12 +277,22 @@ export function parseGroupPatch(set: Record<string, JsonValue>): {
           ),
         };
   }
-  const parsed = zGroupCapabilityPayload.safeParse(set.capability);
+  if ("capability" in set) {
+    const parsed = zGroupCapabilityPayload.safeParse(set.capability);
+    return parsed.success
+      ? { capability: parsed.data, issues: [] }
+      : {
+          issues: parsed.error.issues.map(
+            (issue) => `capability.${issue.path.join(".")}: ${issue.message}`,
+          ),
+        };
+  }
+  const parsed = zGroupDisambiguationPayload.safeParse(set.disambiguate);
   return parsed.success
-    ? { capability: parsed.data, issues: [] }
+    ? { disambiguate: parsed.data, issues: [] }
     : {
         issues: parsed.error.issues.map(
-          (issue) => `capability.${issue.path.join(".")}: ${issue.message}`,
+          (issue) => `disambiguate.${issue.path.join(".")}: ${issue.message}`,
         ),
       };
 }
@@ -251,6 +301,7 @@ export function parseGroupPatch(set: Record<string, JsonValue>): {
 export function groupPatchReferences(patch: {
   workflow?: GroupWorkflowPayload;
   capability?: GroupCapabilityPayload;
+  disambiguate?: GroupDisambiguationPayload;
 }): string[] {
   if (patch.workflow) {
     return [
@@ -258,7 +309,60 @@ export function groupPatchReferences(patch: {
       ...(patch.workflow.supersedes ?? []),
     ];
   }
+  if (patch.disambiguate) return patch.disambiguate.operations.map((entry) => entry.operation);
   return patch.capability?.operations ?? [];
+}
+
+/**
+ * The rule that makes a disambiguation proposal mean something: every member
+ * must end up carrying at least one routing token NO sibling in the same
+ * proposal carries.
+ *
+ * Without it the honest-looking failure is three descriptions rewritten into
+ * three synonyms — prettier prose, identical routing, and a delta of zero that
+ * a reviewer still has to read. This refuses that shape deterministically,
+ * before anything is scored, and names the members that collide. It reads the
+ * SERVED text (description plus display name), because that is what
+ * `mcpToolDescription` composes and therefore what the router sees; the
+ * operations' unchanged safety sentences are identical across a cluster by
+ * construction and would only dilute the comparison.
+ */
+export function disambiguationIssues(
+  payload: GroupDisambiguationPayload,
+  grantOps: readonly Operation[],
+): string[] {
+  const issues: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of payload.operations) {
+    const op = resolveOperationReference(grantOps, entry.operation);
+    const key = op?.id ?? entry.operation;
+    if (seen.has(key)) issues.push(`operation '${entry.operation}' is disambiguated twice`);
+    seen.add(key);
+  }
+  const tokensOf = (index: number): Set<string> => {
+    const entry = payload.operations[index];
+    if (!entry) return new Set();
+    return new Set(routingTokens([entry.description, entry.display_name ?? ""].join(" ")));
+  };
+  const all = payload.operations.map((_, index) => tokensOf(index));
+  for (const [index, own] of all.entries()) {
+    const entry = payload.operations[index];
+    if (!entry) continue;
+    if (own.size === 0) {
+      issues.push(`'${entry.operation}' has a description with no content words`);
+      continue;
+    }
+    const distinguishing = [...own].filter((token) =>
+      all.every((other, otherIndex) => otherIndex === index || !other.has(token)),
+    );
+    if (distinguishing.length === 0) {
+      issues.push(
+        `'${entry.operation}' shares every content word with the other members — ` +
+          "this rewording would not change which tool a router picks",
+      );
+    }
+  }
+  return issues;
 }
 
 /**
@@ -397,7 +501,11 @@ function grounded(token: string, vocabulary: ReadonlySet<string>): boolean {
  * so each must *share* vocabulary with the members rather than consist of it.
  */
 export function groupNameIssues(
-  patch: { workflow?: GroupWorkflowPayload; capability?: GroupCapabilityPayload },
+  patch: {
+    workflow?: GroupWorkflowPayload;
+    capability?: GroupCapabilityPayload;
+    disambiguate?: GroupDisambiguationPayload;
+  },
   grantOps: readonly Operation[],
 ): string[] {
   const vocabulary = groupVocabulary(grantOps);
@@ -427,6 +535,16 @@ export function groupNameIssues(
     sentenceOf("workflow description", patch.workflow.description);
     for (const [index, intent] of patch.workflow.intent_examples.entries()) {
       sentenceOf(`workflow intent_examples[${index}]`, intent);
+    }
+  }
+  if (patch.disambiguate) {
+    // Only sentences here: a disambiguation authors no new NAME, it rewrites
+    // the served prose. Each rewritten description must still be spoken in the
+    // members' own vocabulary — distinguishing them by inventing a word the
+    // estate never uses would route on a term no caller would ever say.
+    for (const [index, entry] of patch.disambiguate.operations.entries()) {
+      sentenceOf(`disambiguate[${index}] description`, entry.description);
+      if (entry.display_name) nameOf(`disambiguate[${index}] display_name`, entry.display_name);
     }
   }
   if (patch.capability) {

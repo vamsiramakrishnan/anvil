@@ -280,6 +280,71 @@ describe("author-intent-examples", () => {
     const ctx = contextFor(air, (code) => code === "operation_lacks_intent_examples");
     expect(await executor.execute(skill, ctx)).toBeNull();
   });
+
+  it("refuses a phrase that routes to a sibling instead of its own operation (the 'list the views' collision)", async () => {
+    // findings-log.md's helpdesk-views live loop found this organically, on a
+    // real six-operation compile: the templated intent "list the views"
+    // landed on a DIFFERENT operation than the one it was authored for.
+    // `list_views` and `list_active_views` share every content word
+    // ("list", "views"), so the deterministic router — the exact instrument
+    // `anvil benchmark` scores with — ties on them and its lexicographic
+    // tie-break (`list_active_views` < `list_views`) hands the phrase to the
+    // sibling. Own-name corroboration cannot catch this: "list the views"
+    // restates `list_views`'s own vocabulary perfectly well.
+    const air = loadAirDocument({
+      service: {
+        id: "helpdesk",
+        displayName: "Helpdesk",
+        version: "1",
+        source: { kind: "openapi" },
+      },
+      operations: [
+        {
+          id: "helpdesk.views.list_views",
+          canonicalName: "list_views",
+          displayName: "List Views",
+          sourceRef: { kind: "openapi", path: "/views", method: "get" },
+          effect: { kind: "read", action: "list", resource: "view" },
+          input: { params: [] },
+          idempotency: { mode: "none" },
+          retries: { mode: "safe" },
+          confirmation: { required: false },
+          auth: { type: "api_key" },
+          state: "approved",
+          cli: { command: "helpdesk views list" },
+          mcp: { toolName: "list_views" },
+          skill: { intentExamples: [] },
+        },
+        {
+          id: "helpdesk.views.list_active_views",
+          canonicalName: "list_active_views",
+          displayName: "List Active Views",
+          sourceRef: { kind: "openapi", path: "/views/active", method: "get" },
+          effect: { kind: "read", action: "list", resource: "view" },
+          input: { params: [] },
+          idempotency: { mode: "none" },
+          retries: { mode: "safe" },
+          confirmation: { required: false },
+          auth: { type: "api_key" },
+          state: "approved",
+          cli: { command: "helpdesk views list-active" },
+          mcp: { toolName: "list_active_views" },
+          skill: { intentExamples: ["list the active views"] },
+        },
+      ],
+    });
+    const ctx = contextFor(air, (code) => code === "operation_lacks_intent_examples");
+    const proposal = await executor.execute(skill, ctx);
+    // Sanity check on the templating itself before the routing check runs:
+    // this is the exact phrase the live loop found, not a phrase engineered
+    // to fail.
+    expect(proposal?.patch.set.intent_examples).toContain("list the views");
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("rejected");
+    const outcome = result.outcomes.find((o) => o.check === "intent_routes_to_own_tool");
+    expect(outcome?.ok).toBe(false);
+    expect(outcome?.reason).toContain("list_active_views");
+  });
 });
 
 describe("review-query-passthrough", () => {
@@ -334,6 +399,59 @@ describe("author-routing-phrases", () => {
     expect(proposal?.patch.set.intent_examples).toEqual(["work with refunds", "manage refunds"]);
     const result = validateProposal(skill, proposal!, ctx);
     expect(result.status).toBe("validated");
+  });
+
+  it("refuses a routing phrase that routes to a sibling capability's entry card instead", async () => {
+    // The same collision as `author-intent-examples`, one level up: a
+    // routing phrase templated from THIS capability's own name/resources can
+    // still be the phrase an agent would use for a DIFFERENT capability's
+    // entry card once the document ladders (`@anvil/air`'s `ladder.ts`).
+    // `approval.ts` auto-approves both skills under the identical rule
+    // (grounded intent phrases, documentation tier), so this is exactly as
+    // unsafe left unchecked here as it is for an operation.
+    const air = doc();
+    air.capabilities.push(
+      {
+        id: "helpdesk.refunds",
+        displayName: "Refunds",
+        description: "",
+        source: "resource",
+        resources: ["refund"],
+        operationIds: ["payments.refunds.create"],
+        workflowIds: [],
+        intentExamples: [],
+        state: "generated",
+        lifecycle: "proposed",
+        evidence: { claims: [] },
+      },
+      {
+        id: "helpdesk.active_refunds",
+        displayName: "Active Refunds",
+        description: "",
+        source: "resource",
+        resources: [],
+        operationIds: [],
+        workflowIds: [],
+        // Already carries the exact phrase the target's own templating is
+        // about to propose — the sibling's own text is what wins the route.
+        intentExamples: ["manage refunds"],
+        state: "generated",
+        lifecycle: "proposed",
+        evidence: { claims: [] },
+      },
+    );
+    // The sibling already carries intent phrases, so it never triggers its
+    // own `capability_missing_routing_phrases` deficiency — only the target
+    // (empty `intentExamples`) does, so this resolves unambiguously to it.
+    const ctx = contextFor(air, (code) => code === "capability_missing_routing_phrases");
+    expect(ctx.capability?.id).toBe("helpdesk.refunds");
+    const proposal = await executor.execute(skill, ctx);
+    expect(proposal?.patch.set.intent_examples).toEqual(["work with refunds", "manage refunds"]);
+    const result = validateProposal(skill, proposal!, ctx);
+    expect(result.status).toBe("rejected");
+    const outcome = result.outcomes.find((o) => o.check === "intent_routes_to_own_tool");
+    expect(outcome?.ok).toBe(false);
+    expect(outcome?.reason).toContain("open_helpdesk_active_refunds");
   });
 });
 

@@ -204,6 +204,30 @@ describe("EnvCredentialResolver — oauth2_authorization_code", () => {
     expect(calls[0]).toContain("client_secret=shh");
   });
 
+  it("refuses private_key_jwt outright instead of sending a secret the client does not have", async () => {
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 }));
+    const r = new EnvCredentialResolver(
+      {
+        ANVIL_PROD_REFRESH_TOKEN: "refresh-me",
+        ANVIL_PROD_CLIENT_ID: "client-1",
+        ANVIL_PROD_CLIENT_SECRET: "shh",
+      },
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
+    );
+    const material = await r.resolve(
+      "prod",
+      withProvider({
+        provider: {
+          tokenEndpoint: "https://idp.example.com/token",
+          clientAuth: "private_key_jwt",
+        },
+      }),
+    );
+    // Fails closed (auth_required), and never reaches the token endpoint at all.
+    expect(material).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("caches the acquired token in memory until expiry, then refreshes again", async () => {
     let now = 0;
     const fetchImpl = vi.fn(

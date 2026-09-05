@@ -195,6 +195,14 @@ export interface SdkPlan {
       refreshTokenEnvVar: string;
       clientIdEnvVar: string;
       clientSecretEnvVar: string;
+      /**
+       * How the client authenticates to the token endpoint on refresh — the
+       * provider's declared method, defaulting to `client_secret_basic`
+       * exactly as the runtime resolver does. `client_secret_basic` sends
+       * HTTP Basic and keeps `client_id` out of the form; every other method
+       * carries `client_id` (and the secret, when present) in the form body.
+       */
+      clientAuth: TokenRefreshClientAuth;
     };
   };
   operations: SdkOperation[];
@@ -487,23 +495,25 @@ function tlsEnvVarsOf(
  * resolver exactly (`${prefix}_REFRESH_TOKEN`/`_CLIENT_ID`/`_CLIENT_SECRET`)
  * so an operator's env is shared between the runtime and every generated SDK.
  */
+/** The token-endpoint client authentication methods AIR can declare. */
+export type TokenRefreshClientAuth = NonNullable<
+  NonNullable<AuthRequirement["provider"]>["clientAuth"]
+>;
+
+/** The runtime's default when a provider declares no method (`auth.ts`). */
+const DEFAULT_TOKEN_REFRESH_CLIENT_AUTH: TokenRefreshClientAuth = "client_secret_basic";
+
 function tokenRefreshOf(
   auth: AuthRequirement,
   prefix: string,
-):
-  | {
-      tokenEndpoint: string;
-      refreshTokenEnvVar: string;
-      clientIdEnvVar: string;
-      clientSecretEnvVar: string;
-    }
-  | undefined {
+): NonNullable<SdkPlan["auth"]["tokenRefresh"]> | undefined {
   if (auth.type !== "oauth2_authorization_code" || !auth.provider?.tokenEndpoint) return undefined;
   return {
     tokenEndpoint: auth.provider.tokenEndpoint,
     refreshTokenEnvVar: `${prefix}_REFRESH_TOKEN`,
     clientIdEnvVar: `${prefix}_CLIENT_ID`,
     clientSecretEnvVar: `${prefix}_CLIENT_SECRET`,
+    clientAuth: auth.provider.clientAuth ?? DEFAULT_TOKEN_REFRESH_CLIENT_AUTH,
   };
 }
 

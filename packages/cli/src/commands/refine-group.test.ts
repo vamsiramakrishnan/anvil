@@ -164,6 +164,20 @@ interface TaskFile {
   taskHash: string;
 }
 
+function disambiguationSubmission(task: TaskFile, payload: unknown) {
+  return {
+    schemaVersion: 1,
+    taskId: task.taskId,
+    taskHash: task.taskHash,
+    executor: { name: "claude-code", version: "1" },
+    status: "proposal_generated",
+    summary: "The members are distinct reads; only their served text collided.",
+    evidence: [{ id: "doc", kind: "repository", source: "doc_example", path: "air.yaml" }],
+    claims: [{ predicate: "group.disambiguate", value: payload, evidenceId: "doc" }],
+    patch: { set: { disambiguate: payload } },
+  };
+}
+
 function workflowSubmission(task: TaskFile, payload: unknown) {
   return {
     schemaVersion: 1,
@@ -200,6 +214,29 @@ const MANGLING_PAYLOAD = {
     { operation: "svc.views.execute", bindings: { view_id: "$.output.view_id" } },
   ],
   supersedes: ["svc.views.list"],
+};
+
+/** Each member states what it enumerates and what it returns — and what it does NOT. */
+const DISAMBIGUATION_PAYLOAD = {
+  operations: [
+    {
+      operation: "svc.views.list",
+      description:
+        "List the views available, returning every view's title and id. It does not execute a view and does not count tickets.",
+      rationale: "Only this member enumerates views; the others act on one view already chosen.",
+    },
+    {
+      operation: "svc.views.execute",
+      description:
+        "Execute one view by view_id and return the rows it matches, row by row. It does not count them.",
+      rationale: "Only this member returns the rows themselves.",
+    },
+    {
+      operation: "svc.views.count",
+      description: "Count how many tickets one view by view_id matches, returning the number only.",
+      rationale: "Only this member returns a number instead of the content.",
+    },
+  ],
 };
 
 async function benchmarkAndExport(root: string, airPath: string) {
@@ -308,6 +345,94 @@ describe("anvil refine group loop (benchmark → export → scored import → ap
     expect([...plan.superseded.keys()].sort()).toEqual(["svc.views.execute", "svc.views.list"]);
     const servedTools = next.operations.filter((op) => !plan.superseded.has(op.id)).length + 1;
     expect(servedTools).toBe(3);
+  });
+
+  it("scores a disambiguation over every task, and applies it WITHOUT changing the catalog", async () => {
+    const { root, airPath } = fixture();
+    const { taskPath, task } = await benchmarkAndExport(root, airPath);
+    const before = airFromYaml(readFileSync(airPath, "utf8"));
+
+    const submissionPath = join(root, "disambiguation.json");
+    writeFileSync(
+      submissionPath,
+      `${JSON.stringify(disambiguationSubmission(task, DISAMBIGUATION_PAYLOAD), null, 2)}\n`,
+    );
+    const packDir = join(root, "pack-disambiguate");
+    const imported = await anvil(
+      "refine",
+      "import-proposal",
+      airPath,
+      taskPath,
+      submissionPath,
+      "--repo-root",
+      root,
+      "--out",
+      packDir,
+    );
+    expect(imported.code, imported.io.text()).toBe(0);
+
+    // The disambiguation went through the SAME scored admission as a composition:
+    // the arm that only rewrites text is not the arm that skips measurement.
+    const delta = JSON.parse(readFileSync(join(packDir, "routing-delta.json"), "utf8"));
+    expect(delta.proposalKind).toBe("disambiguate");
+    expect(delta.scope).toBe("all_tasks");
+    expect(delta.totalTasks).toBe(12);
+    // +33.3 pts from a pure reword: no tool added, none superseded, none
+    // hidden — the same four tools, now saying what tells them apart.
+    expect(delta.passedBefore).toBe(6);
+    expect(delta.passedAfter).toBe(10);
+    expect(delta.upliftPts).toBeCloseTo(33.3, 1);
+    // Both directions, verbatim, as with a composition: the reword wins six
+    // confused tasks and loses two — the "does not …" clauses that pull the
+    // right tasks in also pull two wrong ones. The reviewer decides on the
+    // trade, not on the headline.
+    expect(delta.flippedToPass).toHaveLength(6);
+    expect(delta.flippedToFail).toEqual([
+      { intent: "list the view rows", operationId: "svc.views.execute" },
+      { intent: "execute a count of the view", operationId: "svc.views.count" },
+    ]);
+    expect(delta.hypothetical.catalogSize).toBe(4);
+    expect(delta.hypothetical.supersededOperationIds).toEqual([]);
+    expect(delta.hypothetical.rewrittenOperationIds).toEqual([
+      "svc.views.count",
+      "svc.views.execute",
+      "svc.views.list",
+    ]);
+
+    const pack = JSON.parse(readFileSync(join(packDir, "pack.json"), "utf8"));
+    const refinement = pack.refinements[0];
+    expect(refinement.approval.tier).toBe("review");
+
+    const approved = await anvil(
+      "refine",
+      "approve",
+      packDir,
+      refinement.id,
+      "--reviewer",
+      "reviewer@example.test",
+      "--reason",
+      "the distinctions are the ones the spec states",
+    );
+    expect(approved.code, approved.io.text()).toBe(0);
+    const applied = await anvil("refine", "apply-pack", airPath, packDir);
+    expect(applied.code, applied.io.text()).toBe(0);
+
+    // Same tools, different words: no workflow registered, no capability
+    // declared, no operation added or removed — only the served text moved.
+    const next = airFromYaml(readFileSync(airPath, "utf8"));
+    expect(next.workflows).toHaveLength(0);
+    expect(next.capabilities).toHaveLength(before.capabilities.length);
+    expect(next.operations.map((op) => op.id)).toEqual(before.operations.map((op) => op.id));
+    const byId = new Map(next.operations.map((op) => [op.id, op]));
+    for (const entry of DISAMBIGUATION_PAYLOAD.operations) {
+      expect(byId.get(entry.operation)?.description).toBe(entry.description);
+    }
+    // Intent examples are the task set the delta was measured against; an apply
+    // that could move them would make every number in this loop circular.
+    for (const op of next.operations) {
+      const original = before.operations.find((candidate) => candidate.id === op.id);
+      expect(op.skill.intentExamples).toEqual(original?.skill.intentExamples);
+    }
   });
 
   it("REFUSES a submission that mangles routing, with the numbers, writing no pack", async () => {

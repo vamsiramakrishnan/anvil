@@ -112,6 +112,31 @@ that regresses any measured family is rejected — however confident you are.
   investigate, then import its JSON submission. The harness needs no Anvil package and
   Anvil re-resolves repository evidence from the pinned Git commit.
 
+## After it lands: re-prove, and know what you did NOT do
+Applying a patch changes the model, so the artifacts built from it are stale
+until you rebuild and re-prove them:
+
+\`\`\`
+anvil compile <spec> --manifest <manifest> --out <dir>   # reproject CLI + MCP + skill + SDKs
+anvil lint <dir> && anvil status <dir>
+anvil certify <bundle> && anvil selftest <bundle> && anvil conformance <bundle>
+\`\`\`
+
+Two things refinement deliberately does not do, worth saying to whoever asked:
+
+- **Refining does not expose anything.** Deficiency work improves the model;
+  which operations an agent can see is a separate gate (\`anvil approve <dir>
+  <operation-id...>\`), and a mutation that is still \`review_required\` stays
+  that way through every patch you land.
+- **\`anvil refine approve\` records a REVIEWER.** It takes \`--reviewer
+  <identity>\` and a reason, and binds them into the receipt. A harness is not a
+  reviewer identity — if a proposal sits at review tier, that is a person's
+  decision to make, and saying so is the honest answer rather than signing for
+  them.
+
+Applying rewrites \`air.yaml\`/\`air.json\` in place. Work on a branch so the
+undo is \`git restore\` rather than a re-derivation.
+
 ## Where to look (progressive disclosure)
 - **L1** \`reference/loop.md\` — the \`anvil refine\` commands, the deficiency catalog, the pack layout.
 - **L1** \`reference/investigation.md\` — the case framework: \`anvil case\` helpers, the phases, honest declines.
@@ -438,7 +463,7 @@ const CHECK_DOC: Record<ValidationCheckId, string> = {
   resource_grounded_in_contract:
     "a proposed routing resource is a word the operation's own path or name text states (plural-insensitive); an invented word is refused",
   group_proposal_shape:
-    "a group patch sets exactly one of workflow/capability, and the payload matches its strict schema",
+    "a group patch sets exactly one of workflow/capability/disambiguate, and the payload matches its strict schema",
   group_grant_respected:
     "every operation a group proposal references is inside the task's hash-bound grant (cluster members plus explicitly-listed related operations)",
   group_supersedes_within_steps:
@@ -447,6 +472,10 @@ const CHECK_DOC: Record<ValidationCheckId, string> = {
     "the composed workflow registers on the shared surface planner and every later step's required input is bound from a field the previous step actually outputs",
   group_names_grounded:
     "every proposed group name and intent is grounded in the member operations' own routing vocabulary; an invented word is refused",
+  group_disambiguation_distinguishes:
+    "a disambiguation patch rewrites at least two cluster members and leaves each one with wording its siblings do not all share, so the rewrite changes which tool a router picks",
+  intent_routes_to_own_tool:
+    "every proposed intent/routing phrase is routed over the served catalog (the benchmark's deterministic router); a phrase that lands on a different operation or capability is refused as a trap, not an example",
 };
 
 const FAMILY_DOC: Record<EvalFamily, string> = {

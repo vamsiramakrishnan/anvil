@@ -1,0 +1,790 @@
+/**
+ * The thin, stateless Cloud Run server (spec: "Production serving path"). It
+ * exposes /mcp, /healthz, /readyz, /metrics, /openapi, and the inbound
+ * /webhooks/ routes. Nothing on the hot path parses specs or runs an LLM.
+ *
+ * This module is Anvil's artifact, not the compile's. It boots on import from
+ * a data directory beside itself — `air.json`, `resources.json`,
+ * `operations.manifest.json`, `webhooks.json` — and is bundled ONCE, at Anvil's
+ * own build (`scripts/build-serve.mjs`), into a self-contained `dist/serve.js`
+ * that `anvil compile` copies into every bundle as `runtime/server.js` and
+ * `deploy/runtime/server.js`.
+ *
+ * It used to be a 700-line template string in `@anvil/generators`, re-bundled
+ * with esbuild on every `anvil compile`. Two per-service values were baked
+ * into that code — the webhook route table and whether a durable ledger is
+ * required — and everything else was invariant. Re-bundling an invariant on
+ * every compile put a bundler on the hot path, shipped esbuild's native
+ * platform binary inside the CLI, and required Anvil's own packages to be
+ * resolvable from a real `node_modules` at compile time, which no single-file
+ * distribution (bun, pkg, deno) can provide. Both values are now data the
+ * server reads at boot, so one prebuilt runtime serves every service, and a
+ * compile is a copy.
+ *
+ * Everything the runtime needs is beside it, and everything beside it is part
+ * of the hashed artifact: a missing file is a corrupted deployment and the boot
+ * fails closed on it, never silently serving with a piece of its contract gone.
+ */
+import { createHash, randomUUID } from "node:crypto";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { join as joinPath } from "node:path";
+import { fileURLToPath } from "node:url";
+import { loadAirDocument, resolveAsyncContract } from "@anvil/air";
+import {
+  allowedHostsFor,
+  currentInboundIdentity,
+  FetchTransport,
+  handleWebhook,
+  InMemoryObserver,
+  JsonlRecordSpool,
+  loadRuntimeConfig,
+  probeLedgerReadiness,
+  resolveCredentials,
+  resolveLedger,
+  withInboundIdentity,
+} from "@anvil/runtime";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { recordWebhookCompletionIfIndexed } from "./async-completion.js";
+import {
+  loadInboundAuthConfig,
+  protectedResourceMetadata,
+  verifyInboundToken,
+} from "./inbound-auth.js";
+import { buildMcpServer } from "./server.js";
+
+const runtimeRoot = fileURLToPath(new URL(".", import.meta.url));
+
+/**
+ * One file of the artifact, read as JSON. Every file this server reads is part
+ * of the directory `deploymentArtifactHash` binds and `COPY deploy/runtime`
+ * ships, so absence means the deployment is not the one that was certified.
+ * Failing here — before `listen` — is the fail-closed answer; an empty route
+ * table or an empty catalog would be a server quietly serving a different
+ * contract than the one reviewed.
+ */
+function readArtifactJson(name: string): unknown {
+  let text: string;
+  try {
+    text = readFileSync(joinPath(runtimeRoot, name), "utf8");
+  } catch {
+    throw new Error(`Runtime artifact is missing ${name}; refusing to serve a partial deployment.`);
+  }
+  return JSON.parse(text);
+}
+
+const air = loadAirDocument(readArtifactJson("air.json"));
+const resources = readArtifactJson("resources.json") as Parameters<
+  typeof buildMcpServer
+>[1]["resources"];
+
+// Hash the exact /app/runtime payload copied into the production image. The
+// local live-conformance harness independently computes the same digest from
+// deploy/runtime; matching tool names alone can never attest a deployment.
+function runtimeArtifactEntries(dir = runtimeRoot, prefix = ""): Array<[string, Buffer]> {
+  const entries: Array<[string, Buffer]> = [];
+  for (const name of readdirSync(dir).sort()) {
+    const full = joinPath(dir, name);
+    const relative = prefix ? `${prefix}/${name}` : name;
+    const stat = lstatSync(full);
+    if (stat.isSymbolicLink()) throw new Error("Runtime artifact contains a symbolic link.");
+    if (stat.isDirectory()) entries.push(...runtimeArtifactEntries(full, relative));
+    else if (stat.isFile()) entries.push([relative, readFileSync(full)]);
+    else throw new Error("Runtime artifact contains an unsupported filesystem entry.");
+  }
+  return entries;
+}
+
+function computeRuntimeArtifactHash(): string {
+  const hash = createHash("sha256");
+  for (const [relative, bytes] of runtimeArtifactEntries()) {
+    const contentHash = createHash("sha256").update(bytes).digest("hex");
+    hash.update(`${relative}\0${contentHash}\0`);
+  }
+  return hash.digest("hex");
+}
+
+const artifactHash = computeRuntimeArtifactHash();
+const config = loadRuntimeConfig();
+const catalog = readArtifactJson("operations.manifest.json");
+// ANVIL_RECORDS_DIR spools every execution record (no secrets, no payloads --
+// ExecutionRecord's own contract) to JSONL for anvil observe --from-records,
+// which folds real traffic back into evidence. Unset, records stay in memory.
+const observer = process.env.ANVIL_RECORDS_DIR
+  ? new JsonlRecordSpool(process.env.ANVIL_RECORDS_DIR)
+  : new InMemoryObserver();
+// Resolve the idempotency ledger once at boot. ANVIL_LEDGER selects a durable
+// backend; without one, required-idempotency mutations fail closed outside dev
+// (enforced in the executor) — a horizontally-scaled runtime never silently
+// trusts a process-local ledger.
+const deps = {
+  transport: new FetchTransport(),
+  // ANVIL_CREDENTIALS / per-op AuthRequirement selects the resolver: static env
+  // (default), Secret Manager references (sm://…), or RFC 8693 OBO token exchange
+  // using the inbound caller token threaded below. Dev stays byte-identical.
+  credentials: resolveCredentials(config),
+  ledger: resolveLedger(config.ledger, {
+    resultTtlMs: config.ledgerResultTtlSeconds * 1000,
+  }),
+  observer,
+};
+// Whether readiness must prove a durable ledger: any approved mutation that
+// requires an idempotency key needs one outside dev. Derived from the same AIR
+// the server serves, at boot — it used to be a boolean literal the generator
+// baked into this file, which is the one thing that made the file per-service.
+const requiresDurableLedger = air.operations.some(
+  (operation) =>
+    operation.state === "approved" &&
+    operation.effect.kind === "mutation" &&
+    operation.idempotency.mode === "required",
+);
+// ANVIL_BASE_URL is a deliberate operator override (loopback self-test, staging
+// smoke tests); when set without an explicit allowlist, egress pins to its host.
+const baseUrl = process.env.ANVIL_BASE_URL ?? air.service.servers[0]?.url ?? "";
+const allowedHosts = allowedHostsFor(
+  config.allowedHosts,
+  baseUrl,
+  process.env.ANVIL_BASE_URL !== undefined,
+);
+// A non-HTTP/JSON source (SOAP, GraphQL, gRPC, an adopted MCP tool) reaches the
+// runtime with a coordinate Anvil synthesized. Set ANVIL_PROTOCOL_FACADE to the
+// reason ANVIL_BASE_URL really does serve those coordinates over HTTP+JSON; the
+// runtime refuses those operations otherwise, and records this reason when it
+// does not. It is a declaration, never an inference.
+const protocolFacade = process.env.ANVIL_PROTOCOL_FACADE;
+
+/** One entry of the generated route table (`@anvil/generators` `WebhookRoute`). */
+interface WebhookRoute {
+  path: string;
+  submitOperationId: string;
+  webhookOperationId: string;
+}
+
+// /webhooks/<service>/<opId> route table (design doc §7/§14) — a pure
+// projection of AIR computed at generation time (resolvedWebhookRoutes,
+// packages/generators/src/entrypoints.ts), one entry per operation whose
+// AsyncContract resolved a real webhook, shipped beside this file as
+// webhooks.json. The FULL WebhookContract is not embedded there; it is
+// re-derived at request time from the loaded 'air' by resolveAsyncContract,
+// the exact same pure function every other surface (the MCP tool metadata,
+// certification) resolves it through, so a stale copy can never diverge from
+// what the rest of the runtime agrees the contract is.
+const webhookRoutes = readArtifactJson("webhooks.json") as WebhookRoute[];
+const webhookRoutesByPath = new Map(webhookRoutes.map((route) => [route.path, route]));
+const WEBHOOK_BODY_MAX_BYTES = 1024 * 1024;
+
+// Every "*Ref" field on a WebhookSignatureVerification (secretRef,
+// credentialRef, verifyEndpointRef, expectedAudienceRef) names a plain
+// runtime environment variable — the same "operator supplies it through
+// var.env / var.credential_secret_refs, the runtime dereferences it, never a
+// literal in the bundle" convention every other credential in this runtime
+// already follows (see var.credential_secret_refs in
+// deploy/terraform/main.tf). Returns undefined for an unset or empty value;
+// handleWebhook() treats that as "not configured" and fails closed, exactly
+// as it does for any other unresolvable ref.
+async function resolveWebhookRef(ref: string): Promise<string | undefined> {
+  const value = process.env[ref];
+  return value && value.length > 0 ? value : undefined;
+}
+
+// Twilio's signature covers the exact URL a sender POSTed to, so this needs a
+// best-effort reconstruction of the PUBLIC url — Cloud Run terminates TLS
+// upstream of this process and forwards the original scheme/host, which is
+// exactly what x-forwarded-proto/x-forwarded-host carry.
+function webhookRequestUrl(req: IncomingMessage): string {
+  const proto = req.headers["x-forwarded-proto"] ?? "https";
+  const host = req.headers["x-forwarded-host"] ?? req.headers.host ?? "";
+  return `${proto}://${host}${req.url ?? ""}`;
+}
+
+type BodyRead<T> = { ok: true; value: T } | { ok: false };
+
+function readRawBody(req: IncomingMessage, res: ServerResponse): Promise<BodyRead<Buffer>> {
+  const declaredLength = req.headers["content-length"];
+  if (
+    typeof declaredLength === "string" &&
+    /^\d+$/.test(declaredLength) &&
+    Number(declaredLength) > WEBHOOK_BODY_MAX_BYTES
+  ) {
+    req.resume();
+    json(res, 413, {
+      error: { code: "validation_error", message: "Webhook body exceeds the size limit." },
+    });
+    return Promise.resolve({ ok: false });
+  }
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let received = 0;
+    let settled = false;
+    const finish = (value: BodyRead<Buffer>) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    req.on("data", (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      received += bytes.length;
+      if (received > WEBHOOK_BODY_MAX_BYTES) {
+        if (!res.headersSent) {
+          json(res, 413, {
+            error: { code: "validation_error", message: "Webhook body exceeds the size limit." },
+          });
+        }
+        req.resume();
+        finish({ ok: false });
+        return;
+      }
+      chunks.push(bytes);
+    });
+    req.once("end", () => finish({ ok: true, value: Buffer.concat(chunks) }));
+    req.once("aborted", () => finish({ ok: false }));
+    req.once("error", () => finish({ ok: false }));
+  });
+}
+
+async function handleWebhookRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  route: WebhookRoute,
+): Promise<void> {
+  const submitOp = air.operations.find((op) => op.id === route.submitOperationId);
+  const allOpsById = new Map(air.operations.map((op) => [op.id, op]));
+  const resolution = submitOp
+    ? resolveAsyncContract(submitOp, allOpsById)
+    : ({ ok: false } as const);
+  if (!resolution.ok || !resolution.contract.webhook || !resolution.webhookOperation) {
+    // The operation was resolvable at generation time but is not any more
+    // (e.g. AIR changed underneath a stale bundle) — fail closed exactly
+    // like any other spec/deploy mismatch this runtime already refuses to
+    // guess through.
+    return json(res, 404, {
+      error: { code: "not_found", message: "Webhook route is not resolvable." },
+    });
+  }
+  const body = await readRawBody(req, res);
+  if (!body.ok) return; // readRawBody already responded on a real failure
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (typeof value === "string") headers[key] = value;
+    else if (Array.isArray(value)) headers[key] = value.join(", ");
+  }
+  const outcome = await handleWebhook({
+    operation: resolution.webhookOperation,
+    contract: resolution.contract.webhook,
+    rawBody: body.value,
+    headers,
+    requestUrl: webhookRequestUrl(req),
+    ledger: deps.ledger,
+    resolveRef: resolveWebhookRef,
+    allowedHosts,
+    env: config.env,
+  });
+  if (outcome.status === 200) {
+    // Best-effort only — see recordWebhookCompletionIfIndexed's own doc
+    // comment. Never allowed to change what was already durably acknowledged
+    // to the sender above.
+    void recordWebhookCompletionIfIndexed({
+      contract: resolution.contract.webhook,
+      rawBody: body.value,
+      headers,
+      ledger: deps.ledger,
+    });
+    return json(res, 200, { ok: true });
+  }
+  return json(res, outcome.status, {
+    error: {
+      code: outcome.status === 401 ? "auth_required" : "validation_error",
+      message: outcome.reason,
+    },
+  });
+}
+
+function mcpContext() {
+  return {
+    ...deps,
+    serviceId: air.service.id,
+    baseUrl,
+    authProfile: config.authProfile,
+    allowedHosts,
+    protocolFacade,
+    env: config.env,
+    timeoutMs: config.upstreamTimeoutMs,
+    // The per-request caller identity (set by withInboundIdentity around dispatch);
+    // the credential resolver uses it as the subject_token for OBO exchange.
+    inbound: currentInboundIdentity(),
+  };
+}
+
+// Inbound authentication: this server is an OAuth 2 resource server. When a
+// platform (e.g. Gemini Enterprise) is configured to present a bearer token, we
+// validate it on every protected route rather than trusting the network. Mode
+// "none" (the default) admits everything, for local runs behind other controls.
+const inboundAuth = loadInboundAuthConfig();
+
+// The MCP Authorization discovery document, served unauthenticated so a client
+// can find the authorization server before it has a token.
+const resourceMetadata = protectedResourceMetadata(inboundAuth);
+
+type Claims = Record<string, unknown>;
+
+type Authorized =
+  | { ok: false }
+  | {
+      ok: true;
+      identity: ReturnType<typeof inboundIdentityFrom>;
+      callerFingerprint: string;
+    };
+
+// Verify the inbound bearer and, on success, distill the validated caller into an
+// InboundIdentity so an on-behalf-of upstream call can exchange it (RFC 8693). On
+// failure the 401/403 is written here and { ok:false } signals the caller to stop.
+async function authorized(req: IncomingMessage, res: ServerResponse): Promise<Authorized> {
+  const header = req.headers.authorization;
+  const result = await verifyInboundToken(header, inboundAuth);
+  if (!result.ok) {
+    res.writeHead(result.status, {
+      "content-type": "application/json",
+      "www-authenticate": result.wwwAuthenticate,
+    });
+    res.end(JSON.stringify({ error: { code: result.error, message: result.description } }));
+    return { ok: false };
+  }
+  const rawToken =
+    typeof header === "string" ? header.replace(/^Bearer\s+/i, "").trim() : undefined;
+  if (inboundAuth.mode !== "none" && !rawToken) {
+    res.writeHead(401, {
+      "content-type": "application/json",
+      "www-authenticate": 'Bearer error="invalid_token"',
+    });
+    res.end(
+      JSON.stringify({
+        error: { code: "invalid_token", message: "Verified bearer token is unavailable." },
+      }),
+    );
+    return { ok: false };
+  }
+  const callerFingerprint =
+    inboundAuth.mode === "none" ? "anonymous" : verifiedPrincipalFingerprint(result.claims);
+  if (!callerFingerprint) {
+    res.writeHead(401, {
+      "content-type": "application/json",
+      "www-authenticate": 'Bearer error="invalid_token"',
+    });
+    res.end(
+      JSON.stringify({
+        error: {
+          code: "invalid_token",
+          message: "Verified token does not identify a stable caller principal.",
+        },
+      }),
+    );
+    return { ok: false };
+  }
+  // Inbound mode "none" deliberately performs no token verification. Never promote a
+  // caller-supplied bearer from that mode into a "validated" OBO subject.
+  return {
+    ok: true,
+    identity:
+      inboundAuth.mode === "none"
+        ? undefined
+        : inboundIdentityFrom(rawToken, (result.claims ?? {}) as Claims),
+    // Bind the session to the verified principal, not the bearer bytes. Access
+    // tokens rotate during a long MCP session; the same issuer/subject may keep
+    // using its session while a different principal cannot take it over.
+    callerFingerprint,
+  };
+}
+
+function verifiedPrincipalFingerprint(claims: unknown): string | undefined {
+  if (!claims || typeof claims !== "object" || Array.isArray(claims)) return undefined;
+  const record = claims as Claims;
+  const issuer = typeof record.iss === "string" ? record.iss : undefined;
+  // sub is the standard principal. oid covers app-only Entra tokens, while
+  // azp / client_id identify a verified machine caller when no subject claim
+  // is issued. The verifier has already checked signature, issuer and audience.
+  const textClaim = (value: unknown) =>
+    typeof value === "string" && value.length > 0 ? value : undefined;
+  const sub = textClaim(record.sub);
+  const oid = textClaim(record.oid);
+  const authorizedParty = textClaim(record.azp) ?? textClaim(record.client_id);
+  if (!issuer || (!sub && !oid && !authorizedParty)) return undefined;
+  const tenant =
+    typeof record.tid === "string"
+      ? record.tid
+      : typeof record.tenant === "string"
+        ? record.tenant
+        : undefined;
+  return createHash("sha256")
+    .update(JSON.stringify({ issuer, sub, oid, authorizedParty, tenant }))
+    .digest("base64url");
+}
+
+// The raw caller token + its verified claims → the OBO subject. The raw bearer is
+// forwarded ONLY to the configured token endpoint for exchange; it is never sent
+// to the upstream directly, recorded, or logged.
+function inboundIdentityFrom(raw: string | undefined, claims: Claims) {
+  if (!raw) return undefined;
+  return {
+    subjectToken: raw,
+    subjectTokenType: raw.split(".").length === 3 ? ("jwt" as const) : ("access_token" as const),
+    sub: claims.sub as string | undefined,
+    email: claims.email as string | undefined,
+    scope: claims.scope as string | undefined,
+    claims,
+  };
+}
+
+// Live MCP sessions keyed by the mcp-session-id minted at initialize. Gemini
+// Enterprise (and any spec-compliant client) drives a real lifecycle —
+// initialize, then tools/list and tool calls on that SAME session in separate
+// HTTP requests — so the server must be stateful: a stateless transport builds a
+// fresh, uninitialized server per request and the second call fails.
+//
+// The store is intentionally bounded. Idle sessions expire, capacity pressure
+// evicts the least-recently-used inactive session, and active requests are never
+// classified as idle. All transports are closed on eviction and process shutdown.
+const MCP_REQUEST_MAX_BYTES = 1024 * 1024;
+const MCP_SESSION_IDLE_TTL_MS = 15 * 60 * 1000;
+const MCP_SESSION_SWEEP_MS = 60 * 1000;
+const MCP_MAX_SESSIONS = 1000;
+
+interface SessionEntry {
+  mcp: McpServer;
+  transport: StreamableHTTPServerTransport;
+  callerFingerprint: string;
+  lastUsedAt: number;
+  activeRequests: number;
+  sessionId: string | undefined;
+  closePromise: Promise<void> | undefined;
+}
+
+const sessions = new Map<string, SessionEntry>();
+const liveSessionEntries = new Set<SessionEntry>();
+let pendingSessionCount = 0;
+let shuttingDown = false;
+
+function forgetSession(entry: SessionEntry): void {
+  liveSessionEntries.delete(entry);
+  if (entry.sessionId && sessions.get(entry.sessionId) === entry) {
+    sessions.delete(entry.sessionId);
+  }
+}
+
+async function closeSession(entry: SessionEntry): Promise<void> {
+  if (entry.closePromise) return entry.closePromise;
+  forgetSession(entry);
+  entry.closePromise = entry.mcp.close().catch(() => {
+    // Cleanup is best-effort after the session has already been made unreachable.
+    console.error("Failed to close an MCP session cleanly.");
+  });
+  return entry.closePromise;
+}
+
+function pruneIdleSessions(now = Date.now()): void {
+  for (const entry of sessions.values()) {
+    if (entry.activeRequests === 0 && now - entry.lastUsedAt >= MCP_SESSION_IDLE_TTL_MS) {
+      void closeSession(entry);
+    }
+  }
+}
+
+function leastRecentlyUsedIdleSession(): SessionEntry | undefined {
+  let oldest: SessionEntry | undefined;
+  for (const entry of sessions.values()) {
+    if (entry.activeRequests !== 0) continue;
+    if (!oldest || entry.lastUsedAt < oldest.lastUsedAt) oldest = entry;
+  }
+  return oldest;
+}
+
+function reserveSessionSlot(): boolean {
+  pruneIdleSessions();
+  while (sessions.size + pendingSessionCount >= MCP_MAX_SESSIONS) {
+    const oldest = leastRecentlyUsedIdleSession();
+    if (!oldest) return false;
+    // closeSession removes the entry synchronously before awaiting transport close.
+    void closeSession(oldest);
+  }
+  pendingSessionCount += 1;
+  return true;
+}
+
+function releaseSessionReservation(): void {
+  pendingSessionCount = Math.max(0, pendingSessionCount - 1);
+}
+
+const sessionSweep = setInterval(() => pruneIdleSessions(), MCP_SESSION_SWEEP_MS);
+sessionSweep.unref();
+
+const server = createServer(async (req, res) => {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  // Health/readiness are always open — probes have no token.
+  if (url.pathname === "/healthz")
+    return json(res, 200, {
+      status: "ok",
+      service: air.service.id,
+      artifactHash,
+    });
+  if (url.pathname === "/readyz") {
+    const ledger = await probeLedgerReadiness(
+      deps.ledger,
+      requiresDurableLedger && config.env !== "dev",
+    );
+    return ledger.ready
+      ? json(res, 200, { ready: true, service: air.service.id })
+      : json(res, 503, {
+          ready: false,
+          service: air.service.id,
+          code: "ledger_unavailable",
+        });
+  }
+  if (url.pathname === "/.well-known/oauth-protected-resource") {
+    return resourceMetadata
+      ? json(res, 200, resourceMetadata)
+      : json(res, 404, {
+          error: { code: "not_found", message: "Inbound auth is not configured." },
+        });
+  }
+  // Webhook receiver routes (design doc §7/§14) are deliberately UNAUTHENTICATED
+  // by the inbound-OAuth check every route below this one goes through — a
+  // third-party sender (Stripe, GitHub, …) never has this deployment's inbound
+  // token. handleWebhook()'s own per-scheme signature verification is the real
+  // gate, checked before anything is parsed or the ledger is touched, and it
+  // fails closed exactly like the inbound-auth check does for every other route.
+  if (url.pathname.startsWith("/webhooks/")) {
+    const route = webhookRoutesByPath.get(url.pathname);
+    if (!route || req.method !== "POST") {
+      return json(res, 404, { error: { code: "not_found", message: "No such webhook route." } });
+    }
+    return handleWebhookRoute(req, res, route);
+  }
+  // Everything below exposes the tool surface — gate it on the inbound token.
+  if (url.pathname === "/metrics") {
+    if (!(await authorized(req, res)).ok) return;
+    return json(res, 200, { records: observer.count });
+  }
+  if (url.pathname === "/openapi") {
+    if (!(await authorized(req, res)).ok) return;
+    return json(res, 200, catalog);
+  }
+  if (url.pathname === "/mcp") {
+    if (shuttingDown) {
+      return jsonRpcError(res, 503, -32000, "Server is shutting down.");
+    }
+    const auth = await authorized(req, res);
+    if (!auth.ok) return;
+    // Stateful StreamableHTTP sessions. Buffer the POST body so we can both route
+    // by session and detect the initialize request; GET/DELETE carry no body.
+    let body: unknown;
+    if (req.method === "POST") {
+      const mediaType = String(req.headers["content-type"] ?? "")
+        .split(";", 1)[0]
+        ?.trim()
+        .toLowerCase();
+      if (mediaType !== "application/json") {
+        req.resume();
+        return jsonRpcError(res, 415, -32600, "Content-Type must be application/json.");
+      }
+      const parsed = await readJsonBody(req, res);
+      if (!parsed.ok) return;
+      body = parsed.value;
+    }
+    const sidHeader = req.headers["mcp-session-id"];
+    const sid = typeof sidHeader === "string" ? sidHeader : undefined;
+    let entry = sid ? sessions.get(sid) : undefined;
+    if (entry && entry.callerFingerprint !== auth.callerFingerprint) {
+      return jsonRpcError(
+        res,
+        403,
+        -32001,
+        "This MCP session belongs to a different authenticated caller.",
+      );
+    }
+    let reservationHeld = false;
+    if (!entry) {
+      if (req.method === "POST" && isInitializeRequest(body)) {
+        if (!reserveSessionSlot()) {
+          return jsonRpcError(res, 503, -32000, "MCP session capacity is temporarily exhausted.");
+        }
+        reservationHeld = true;
+        // New session: build the server once and keep it for the session's life.
+        const mcp = buildMcpServer(air, { resources, contextFor: () => mcpContext() });
+        let initializedEntry: SessionEntry | undefined;
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (id) => {
+            releaseSessionReservation();
+            reservationHeld = false;
+            if (!initializedEntry) return;
+            initializedEntry.sessionId = id;
+            sessions.set(id, initializedEntry);
+          },
+        });
+        transport.onclose = () => {
+          if (initializedEntry) forgetSession(initializedEntry);
+        };
+        initializedEntry = {
+          mcp,
+          transport,
+          callerFingerprint: auth.callerFingerprint,
+          lastUsedAt: Date.now(),
+          activeRequests: 0,
+          sessionId: undefined,
+          closePromise: undefined,
+        };
+        entry = initializedEntry;
+        liveSessionEntries.add(entry);
+        try {
+          await mcp.connect(transport);
+        } catch {
+          releaseSessionReservation();
+          reservationHeld = false;
+          await closeSession(entry);
+          return jsonRpcError(res, 500, -32603, "MCP session initialization failed.");
+        }
+      } else {
+        // A non-initialize request with no known session — reject per the spec.
+        return jsonRpcError(res, 400, -32000, "No valid session; send initialize first.");
+      }
+    }
+    // Dispatch inside the caller's identity so contextFor()/the resolver can use
+    // it as the OBO subject_token. No identity (inbound auth "none") → plain call;
+    // delegated ops then correctly fail auth_required rather than degrading.
+    const live = entry;
+    live.activeRequests += 1;
+    live.lastUsedAt = Date.now();
+    try {
+      return await (auth.identity
+        ? withInboundIdentity(auth.identity, () => live.transport.handleRequest(req, res, body))
+        : live.transport.handleRequest(req, res, body));
+    } catch {
+      if (!res.headersSent) {
+        return jsonRpcError(res, 500, -32603, "MCP request handling failed.");
+      }
+      res.destroy();
+    } finally {
+      live.activeRequests = Math.max(0, live.activeRequests - 1);
+      live.lastUsedAt = Date.now();
+      if (reservationHeld) {
+        releaseSessionReservation();
+        await closeSession(live);
+      }
+    }
+    return;
+  }
+  return json(res, 404, { error: { code: "not_found", message: "No such route." } });
+});
+
+function readJsonBody(req: IncomingMessage, res: ServerResponse): Promise<BodyRead<unknown>> {
+  const declaredLength = req.headers["content-length"];
+  if (
+    typeof declaredLength === "string" &&
+    /^\d+$/.test(declaredLength) &&
+    Number(declaredLength) > MCP_REQUEST_MAX_BYTES
+  ) {
+    req.resume();
+    jsonRpcError(res, 413, -32600, "MCP request body exceeds the size limit.");
+    return Promise.resolve({ ok: false });
+  }
+
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let received = 0;
+    let settled = false;
+
+    const cleanup = () => {
+      req.off("data", onData);
+      req.off("end", onEnd);
+      req.off("aborted", onAborted);
+      req.off("error", onError);
+    };
+    const finish = (value: BodyRead<unknown>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const rejectBody = (status: number, message: string) => {
+      if (!res.headersSent) jsonRpcError(res, status, -32600, message);
+      // Continue consuming the socket without retaining attacker-controlled bytes.
+      req.once("error", () => {});
+      req.resume();
+      finish({ ok: false });
+    };
+    const onData = (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      received += bytes.length;
+      if (received > MCP_REQUEST_MAX_BYTES) {
+        rejectBody(413, "MCP request body exceeds the size limit.");
+        return;
+      }
+      chunks.push(bytes);
+    };
+    const onEnd = () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      if (!raw.trim()) {
+        rejectBody(400, "MCP request body must contain JSON.");
+        return;
+      }
+      try {
+        finish({ ok: true, value: JSON.parse(raw) });
+      } catch {
+        rejectBody(400, "MCP request body is malformed JSON.");
+      }
+    };
+    const onAborted = () => rejectBody(400, "MCP request body was aborted.");
+    const onError = () => rejectBody(400, "MCP request body could not be read.");
+
+    req.on("data", onData);
+    req.once("end", onEnd);
+    req.once("aborted", onAborted);
+    req.once("error", onError);
+  });
+}
+
+function jsonRpcError(res: ServerResponse, status: number, code: number, message: string): void {
+  json(res, status, {
+    jsonrpc: "2.0",
+    error: { code, message },
+    id: null,
+  });
+}
+
+function json(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+  });
+  res.end(JSON.stringify(body));
+}
+
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  clearInterval(sessionSweep);
+  const serverClosed = new Promise<void>((resolve) => {
+    server.close((error) => {
+      if (error) {
+        console.error("HTTP server shutdown failed.");
+        process.exitCode = 1;
+      }
+      resolve();
+    });
+  });
+  // Bound graceful shutdown even if a client leaves an HTTP stream or transport
+  // open. The timer starts before awaiting MCP close so cleanup cannot deadlock.
+  const forceClose = setTimeout(() => server.closeAllConnections?.(), 5000);
+  forceClose.unref();
+  await Promise.allSettled([...liveSessionEntries].map((entry) => closeSession(entry)));
+  server.closeIdleConnections?.();
+  await serverClosed;
+  clearTimeout(forceClose);
+}
+
+process.once("SIGTERM", () => void shutdown());
+process.once("SIGINT", () => void shutdown());
+
+const port = process.env.PORT ? Number(process.env.PORT) : 8080;
+server.listen(port, () => console.error(air.service.id, "listening"));

@@ -383,13 +383,28 @@ const renameField: RefinementSkill = {
  * resource, display name) — never behavior claims — so the proposal restates
  * what the spec already names, in intent form. Documentation-tier risk, same
  * class as `generate-examples`.
+ *
+ * Corroboration-from-self is not enough. The executor's own-name-text filter
+ * (`executor.ts`) stops a phrase that describes nothing this operation is
+ * called, but it has no visibility into the rest of the catalog, so it will
+ * happily author a phrase that ALSO matches a sibling — the exact "list the
+ * views" collision a real six-operation compile found organically
+ * (`findings-log.md`). `intent_routes_to_own_tool` is the check that can see
+ * the sibling: it routes the phrase over the actual served catalog
+ * (`routing_catalog`) and refuses one that lands somewhere else.
  */
 const authorIntentExamples: RefinementSkill = {
   name: "author-intent-examples",
   version: 1,
   triggers: ["operation_lacks_intent_examples"],
   targetKind: "operation",
-  context: ["parent_operation", "capability", "source_evidence"],
+  context: [
+    "parent_operation",
+    "capability",
+    "source_evidence",
+    "sibling_operations",
+    "routing_catalog",
+  ],
   evidence: {
     allowed: ["spec", "doc_example", "postman"],
     minimumStrength: "single",
@@ -408,20 +423,26 @@ const authorIntentExamples: RefinementSkill = {
     "evidence_meets_minimum_strength",
     "evidence_supports_value",
     "evidence_meets_verification",
+    "intent_routes_to_own_tool",
   ],
 };
 
 /**
  * The capability-level sibling of `author-intent-examples`: routing phrases so
  * an agent can match a request to a capability. Templated from the capability's
- * own name and resource nouns — the same documentation-tier risk class.
+ * own name and resource nouns — the same documentation-tier risk class, and the
+ * same sibling-collision gap: `approval.ts` auto-approves both skills under the
+ * identical rule (grounded intent phrases, documentation tier), so a routing
+ * phrase that lands on a DIFFERENT capability's entry card is exactly as
+ * unsafe left unchecked here as it is for an operation, and gets the same
+ * `intent_routes_to_own_tool` guard.
  */
 const authorRoutingPhrases: RefinementSkill = {
   name: "author-routing-phrases",
   version: 1,
   triggers: ["capability_missing_routing_phrases"],
   targetKind: "capability",
-  context: ["capability", "source_evidence"],
+  context: ["capability", "source_evidence", "routing_catalog"],
   evidence: {
     allowed: ["spec", "doc_example", "postman"],
     minimumStrength: "single",
@@ -440,6 +461,7 @@ const authorRoutingPhrases: RefinementSkill = {
     "evidence_meets_minimum_strength",
     "evidence_supports_value",
     "evidence_meets_verification",
+    "intent_routes_to_own_tool",
   ],
 };
 
@@ -699,20 +721,33 @@ const reduceSchemaDisclosure: RefinementSkill = {
  * `AirDocument`); the CLI constructs it deterministically from the benchmark
  * report's confusion clusters and hash-binds the members, the mis-routed
  * intents, and the grant into the exported task. The output boundary is the
- * bounded proposal union in group-proposal.ts: EITHER one composed workflow
- * (steps ⊆ grant, supersedes ⊆ its own steps, bindings that thread on the
- * shared planner) OR one authored capability (members ⊆ grant) — and "no
- * change, with a reason" is the protocol's honest-decline status, never a
- * patch.
+ * bounded proposal union in group-proposal.ts, with one arm per reason a
+ * cluster can be confusable: `workflow` (the members are steps of one outcome
+ * the catalog made the caller assemble), `capability` (they belong under one
+ * heading the catalog never states), or `disambiguate` (they are genuinely
+ * distinct, and only their SERVED TEXT fails to say how they differ — the
+ * common case, and the one answer that changes what a router reads without
+ * changing what the catalog offers). "No change, with a reason" is the
+ * protocol's honest-decline status, never a patch.
+ *
+ * `disambiguate` rewrites description/displayName on ≥ 2 members — what
+ * `mcpToolDescription` (packages/air/src/mcp.ts) composes served text from —
+ * and must NOT touch `skill.intentExamples`, which never reach the served
+ * surface and ARE the task set the admission benchmark routes. Its
+ * per-operation sibling `disambiguate-operations` answers a different
+ * deficiency one node at a time and cannot see the siblings it must differ
+ * from; this arm is scored against them.
  *
  * Three boundaries make an unreliable harness safe here: the deterministic
- * group checks below; the approval policy routing every `workflow`/`capability`
- * patch to review on the FIELD (approval.ts); and the CLI's benchmark-scored
- * admission, which refuses any proposal whose measured routing delta is
- * negative before a reviewer ever sees it. Evidence bar is `single` for the
- * same reason as `rename-operation`: the proposal is a projection of surfaces
- * the task itself carries (the operations' own names, intents, and measured
- * confusions); a second source could only restate them.
+ * group checks below — including `group_disambiguation_distinguishes`, which
+ * refuses a reword leaving a member sharing every content word with its
+ * siblings, since that could not change a router's pick; the approval policy
+ * routing every group patch to review on the FIELD (approval.ts); and the
+ * CLI's benchmark-scored admission, which refuses any proposal whose measured
+ * routing delta is negative before a reviewer ever sees it. Evidence bar is
+ * `single` for the same reason as `rename-operation`: the proposal is a
+ * projection of surfaces the task itself carries (the operations' own names,
+ * intents, and measured confusions); a second source could only restate them.
  */
 const resolveConfusableCluster: RefinementSkill = {
   name: "resolve-confusable-cluster",
@@ -726,9 +761,9 @@ const resolveConfusableCluster: RefinementSkill = {
     minimumVerification: "allow_unverified",
   },
   output: {
-    predicates: ["group.workflow", "group.capability"],
+    predicates: ["group.workflow", "group.capability", "group.disambiguate"],
     supportingPredicates: ["group.analysis"],
-    fields: ["workflow", "capability"],
+    fields: ["workflow", "capability", "disambiguate"],
   },
   constraints: ["do_not_loosen_safety", "do_not_invent_business_rules", "preserve_domain_terms"],
   validation: [
@@ -743,6 +778,7 @@ const resolveConfusableCluster: RefinementSkill = {
     "group_supersedes_within_steps",
     "group_workflow_composes",
     "group_names_grounded",
+    "group_disambiguation_distinguishes",
   ],
 };
 

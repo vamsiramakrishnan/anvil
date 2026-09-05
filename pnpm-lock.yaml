@@ -310,9 +310,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.22.0
         version: 1.29.0(zod@4.4.3)
-      esbuild:
-        specifier: ^0.27.7
-        version: 0.27.7
       yaml:
         specifier: ^2.8.1
         version: 2.9.0
@@ -419,6 +416,9 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      esbuild:
+        specifier: ^0.27.7
+        version: 0.27.7
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.26)(typescript@5.9.3)(yaml@2.9.0)

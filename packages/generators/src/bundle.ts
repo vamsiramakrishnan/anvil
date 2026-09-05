@@ -10,7 +10,7 @@ import {
 import { generateConformanceTest } from "./conformance.js";
 import { generateDeploy } from "./deploy.js";
 import { generateDocs } from "./docs.js";
-import { generateCliSource, generateRuntimeServer } from "./entrypoints.js";
+import { generateCliSource, runtimeServerBundle, webhookRoutesJson } from "./entrypoints.js";
 import { generateEvals } from "./evals.js";
 import { generateMcpServerSource, generateMcpSseServerSource } from "./mcp.js";
 import {
@@ -138,7 +138,8 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   // Thin runtime server (Cloud Run hot path) + compiled manifests.
   files["runtime/air.json"] = airJson;
   files["runtime/resources.json"] = resourcesJson;
-  files["runtime/server.js"] = generateRuntimeServer(air);
+  files["runtime/server.js"] = runtimeServerBundle();
+  files["runtime/webhooks.json"] = webhookRoutesJson(air);
   files["runtime/operations.manifest.json"] =
     `${JSON.stringify(compiledOperations(air), null, 2)}\n`;
   files["runtime/schemas.compiled.json"] = `${JSON.stringify(compiledSchemas(air), null, 2)}\n`;

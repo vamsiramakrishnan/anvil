@@ -4,6 +4,7 @@ import type { AirDocument } from "@anvil/air";
 import type { Deficiency } from "../deficiency.js";
 import { packFiles, type RefinementPack } from "../pack.js";
 import { buildRefinementPlan } from "../plan.js";
+import { GROUP_PATCH_KEYS } from "../skills/group-proposal.js";
 import { skillFor } from "../skills/registry.js";
 import { targetKey } from "../target.js";
 import type { GroupRoutingDelta } from "./group.js";
@@ -163,10 +164,14 @@ export async function importRefinementSubmission(
   });
 
   const groupRecord = pack.harnessImports?.[0];
+  // Driven off `GROUP_PATCH_KEYS` rather than a literal list, so a group patch
+  // key added later cannot reach a reviewer unscored by simply not being named
+  // here — the admission refusal is the only thing standing between a harness's
+  // confident abstraction and a catalog that routes worse.
   const groupRefinement = pack.refinements.find(
     (refinement) =>
       refinement.target.kind === "group" &&
-      ("workflow" in refinement.proposal.set || "capability" in refinement.proposal.set),
+      GROUP_PATCH_KEYS.some((key) => key in refinement.proposal.set),
   );
   let delta: GroupRoutingDelta | undefined;
   if (groupRefinement && groupRecord) {

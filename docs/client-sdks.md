@@ -127,7 +127,33 @@ contract names a token endpoint, each SDK exposes a `createRefreshingTokenProvid
 `<SERVICE>_REFRESH_TOKEN` + `<SERVICE>_CLIENT_ID` (+ optional `_CLIENT_SECRET`)
 at the declared token endpoint (RFC 6749 §6) and caches the access token in
 memory until shortly before it expires — and the client wires one in
-automatically when those env vars are present. The interactive
+automatically when those env vars are present.
+
+That refresh authenticates to the token endpoint the way the contract declares
+and the runtime already does (`provider.clientAuth`, RFC 6749 §2.3.1), not the
+way each language finds convenient:
+
+| Declared method | What every SDK sends |
+| --- | --- |
+| `client_secret_basic` (the default when the contract names none) | HTTP Basic, and **no** `client_id` in the form |
+| `client_secret_post` | `client_id` and `client_secret` in the form, and **no** Basic header |
+| `private_key_jwt` | Nothing — refused. No refresh helper mints an RFC 7523 assertion, so a contract that declares it is refused as incoherent before it can be approved, the runtime fails closed, and the generated helper raises rather than substituting a client secret the caller may not even have. (The client-credentials and token-exchange grants **do** implement the method.) |
+
+An identity provider registered for one method rejects the other, so this is
+not cosmetic: it is the same agreement the CLI and the MCP server make about
+the same operation. `packages/generators/src/sdk-oauth-refresh.test.ts` drives
+each language's real helper against a local token endpoint and asserts the
+exact grant it sends.
+
+The helpers stay source-compatible across regenerations: Go's `clientAuth` is
+variadic, Java keeps a four-argument overload, and Python's `client_auth` is
+last in the signature — so a call written against an earlier generation still
+compiles and still means `client_secret_basic`.
+
+A credential env var that is exported but **empty** is no credential at all —
+the same reading the runtime gives it — so a blank `<SERVICE>_TOKEN` (what a
+`.env` file or an unpopulated CI secret leaves behind) falls through to the
+refresh rather than putting an empty bearer on the wire. The interactive
 authorization-code step itself never runs inside a generated SDK: it is a
 human-driven broker exchange run once, outside the serving path, and these
 SDKs only ever replay or refresh the token that step already produced.

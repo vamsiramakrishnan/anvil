@@ -611,6 +611,7 @@ describe("bundle", () => {
       "mcp/server.js",
       "mcp/server-sse.js",
       "runtime/server.js",
+      "runtime/webhooks.json",
       "runtime/operations.manifest.json",
       "skill/SKILL.md",
       "skill/reference/operations.md",
@@ -623,11 +624,15 @@ describe("bundle", () => {
     ]) {
       expect(paths, `missing ${expected}`).toContain(expected);
     }
+    // runtime/server.js is the prebuilt, self-contained runtime — one file that
+    // serves any service from the data beside it — so `npm start` needs no linked
+    // @anvil packages. Identifiers are minified; property names and the artifact
+    // file names it opens at boot survive the bundle.
     const runtimeServer = files["runtime/server.js"] as string;
-    expect(runtimeServer).toContain(
-      'identity: inboundAuth.mode === "none" ? undefined : inboundIdentityFrom',
-    );
+    expect(runtimeServer).not.toMatch(/^\s*import\s+.*from\s+["']@anvil\//m);
     expect(runtimeServer).toContain("upstreamTimeoutMs");
+    expect(runtimeServer).toContain("webhooks.json");
+    expect(Array.isArray(JSON.parse(files["runtime/webhooks.json"] as string))).toBe(true);
   });
 
   it("compiles only approved operations into the runtime manifest", () => {
@@ -941,6 +946,8 @@ describe("GCP-native deploy (single owner per concern)", () => {
       "air.json",
       "resources.json",
       "operations.manifest.json",
+      "webhooks.json",
+      "runtime.lock.json",
     ]) {
       writeFileSync(join(runtimeDir, name), files[`deploy/runtime/${name}`] as string);
     }
@@ -996,6 +1003,66 @@ describe("GCP-native deploy (single owner per concern)", () => {
       rmSync(root, { recursive: true, force: true });
     }
     expect(output).toContain("payments listening");
+  });
+
+  it("refuses to boot when its route table is missing, rather than serving without one", async () => {
+    // Every file beside server.js is part of the hashed artifact. A copy that
+    // lost one is a partial or tampered deployment, and an empty route table
+    // would be the runtime quietly serving a different contract than the one
+    // certified — so the boot fails before `listen`, naming the file.
+    const { files } = generateBundle(air);
+    const root = mkdtempSync(join(tmpdir(), "anvil-deploy-runtime-partial-"));
+    const runtimeDir = join(root, "runtime");
+    mkdirSync(runtimeDir);
+    for (const name of [
+      "package.json",
+      "server.js",
+      "air.json",
+      "resources.json",
+      "operations.manifest.json",
+      "runtime.lock.json",
+    ]) {
+      writeFileSync(join(runtimeDir, name), files[`deploy/runtime/${name}`] as string);
+    }
+    const port = await availableLoopbackPort();
+    const child = spawn(process.execPath, [join(runtimeDir, "server.js")], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PORT: String(port),
+        ANVIL_ENV: "prod",
+        ANVIL_LEDGER: "",
+        ANVIL_INBOUND_AUTH_MODE: "none",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    const capture = (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+    };
+    child.stdout.on("data", capture);
+    child.stderr.on("data", capture);
+    try {
+      const code = await new Promise<number | null>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error(`runtime kept running without webhooks.json:\n${output}`));
+        }, 5_000);
+        child.once("exit", (exitCode) => {
+          clearTimeout(timer);
+          resolve(exitCode);
+        });
+      });
+      expect(code).not.toBe(0);
+      expect(output).toContain("webhooks.json");
+      // The runtime's log line, not the bare word: an uncaught throw makes Node
+      // echo the minified source line, which contains the string "listening"
+      // from the log call itself. `payments listening` can only come from the
+      // server actually reaching listen() — the same form the boot test asserts.
+      expect(output).not.toContain("payments listening");
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("defaults to a shared estate ledger and retains an explicit dedicated mode", () => {

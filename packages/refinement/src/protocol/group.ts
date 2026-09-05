@@ -14,10 +14,12 @@ import { type Deficiency, makeDeficiency } from "../deficiency.js";
 import {
   buildGroupWorkflow,
   type GroupCapabilityPayload,
+  type GroupDisambiguationPayload,
   type GroupWorkflowPayload,
   groupGrantOf,
   resolveOperationReference,
   zGroupCapabilityPayload,
+  zGroupDisambiguationPayload,
   zGroupWorkflowPayload,
 } from "../skills/group-proposal.js";
 import { HarnessProtocolError, type HarnessRejection } from "./errors.js";
@@ -260,7 +262,7 @@ export interface GroupRoutingDelta {
   schemaVersion: 1;
   reportType: "anvil.group-routing-delta";
   clusterId: string;
-  proposalKind: "workflow" | "capability";
+  proposalKind: "workflow" | "capability" | "disambiguate";
   /**
    * Which tasks the paired comparison ran over. A workflow reshapes the whole
    * served surface, so ALL approved tasks are re-routed. A capability narrows
@@ -269,6 +271,12 @@ export interface GroupRoutingDelta {
    * removing tools it never touches — so the same member tasks are routed over
    * the full catalog (before) and the narrowed one (after): the measured value
    * of the narrowing for the tasks it serves.
+   *
+   * A disambiguation adds and removes no tools at all — it rewrites the served
+   * text of members that are already there — so its effect is not confined to
+   * the members: sharpened wording can just as easily stop eating a NON-member's
+   * tasks, or start eating them. Scoring it over member tasks only would hide
+   * the collateral, so it re-routes ALL tasks over the full catalog both times.
    */
   scope: "all_tasks" | "member_tasks";
   router: string;
@@ -283,6 +291,8 @@ export interface GroupRoutingDelta {
     catalogSize: number;
     compositeTool?: string;
     supersededOperationIds: string[];
+    /** For a disambiguation: whose served text the hypothetical surface rewrote. */
+    rewrittenOperationIds?: string[];
   };
   /**
    * Honesty flag: the workflow chain's data flow was validated STRUCTURALLY
@@ -426,6 +436,49 @@ export async function scoreGroupProposal(
     });
   }
 
+  if ("disambiguate" in patchSet) {
+    const payload: GroupDisambiguationPayload = zGroupDisambiguationPayload.parse(
+      patchSet.disambiguate,
+    );
+    // Rewrite the operations themselves and rebuild the catalog through the SAME
+    // `curatedCatalog`/`mcpToolDescription` path the runtime serves from. Composing
+    // the hypothetical description by hand here would measure a surface the server
+    // does not serve — the safety and pagination sentences would go missing, and
+    // those are part of what the router reads.
+    const rewrittenById = new Map<string, { description: string; displayName?: string }>();
+    for (const entry of payload.operations) {
+      const op = resolveOperationReference(grantOps, entry.operation);
+      if (!op) continue;
+      rewrittenById.set(op.id, {
+        description: entry.description,
+        displayName: entry.display_name,
+      });
+    }
+    const rewrittenOps = ops.map((op) => {
+      const rewrite = rewrittenById.get(op.id);
+      if (!rewrite) return op;
+      return {
+        ...op,
+        description: rewrite.description,
+        displayName: rewrite.displayName ?? op.displayName,
+      };
+    });
+    const hypothetical = curatedCatalog(rewrittenOps);
+    // The tool NAME is `op.mcp.toolName`, which a disambiguation does not touch,
+    // so each task's target tool is the same on both surfaces: this is a pure
+    // measurement of whether the new wording routes better.
+    const tasks: RoutedTask[] = ops.flatMap((op) =>
+      op.skill.intentExamples.map((intent) => ({ operationId: op.id, intent })),
+    );
+    const before = await routeTasks(tasks, current, (id) => currentToolByOp.get(id));
+    const after = await routeTasks(tasks, hypothetical, (id) => currentToolByOp.get(id));
+    return assembleDelta(clusterId, "disambiguate", "all_tasks", tasks, before, after, {
+      catalogSize: hypothetical.length,
+      supersededOperationIds: [],
+      rewrittenOperationIds: [...rewrittenById.keys()].sort(),
+    });
+  }
+
   const payload: GroupCapabilityPayload = zGroupCapabilityPayload.parse(patchSet.capability);
   const memberOps = payload.operations
     .map((reference) => resolveOperationReference(grantOps, reference))
@@ -445,7 +498,7 @@ export async function scoreGroupProposal(
 
 function assembleDelta(
   clusterId: string,
-  proposalKind: "workflow" | "capability",
+  proposalKind: GroupRoutingDelta["proposalKind"],
   scope: "all_tasks" | "member_tasks",
   tasks: readonly RoutedTask[],
   before: readonly boolean[],

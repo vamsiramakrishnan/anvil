@@ -13,6 +13,7 @@ export * from "./auth-mechanics.js";
 export * from "./disclosure.js";
 export * from "./enums.js";
 export * from "./error-spec.js";
+export * from "./eval-vocabulary.js";
 export * from "./hash.js";
 export * from "./idempotency-carrier.js";
 export * from "./jsonschema.js";

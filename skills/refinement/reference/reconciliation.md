@@ -25,11 +25,13 @@ A proposal is rejected unless every check its skill declares passes.
 - `idempotency_carrier_resolves` — a proposed idempotency mode/mechanism/key resolves cleanly against the operation (the same check the compiler runs)
 - `pagination_binding_resolves` — when pagination style is cursor/page/offset, the cursor param names an existing input parameter, and pagination_items_field is a non-empty string
 - `resource_grounded_in_contract` — a proposed routing resource is a word the operation's own path or name text states (plural-insensitive); an invented word is refused
-- `group_proposal_shape` — a group patch sets exactly one of workflow/capability, and the payload matches its strict schema
+- `group_proposal_shape` — a group patch sets exactly one of workflow/capability/disambiguate, and the payload matches its strict schema
 - `group_grant_respected` — every operation a group proposal references is inside the task's hash-bound grant (cluster members plus explicitly-listed related operations)
 - `group_supersedes_within_steps` — a group workflow's supersedes names only the proposal's own steps — a composite may only replace what it performs
 - `group_workflow_composes` — the composed workflow registers on the shared surface planner and every later step's required input is bound from a field the previous step actually outputs
 - `group_names_grounded` — every proposed group name and intent is grounded in the member operations' own routing vocabulary; an invented word is refused
+- `group_disambiguation_distinguishes` — a disambiguation patch rewrites at least two cluster members and leaves each one with wording its siblings do not all share, so the rewrite changes which tool a router picks
+- `intent_routes_to_own_tool` — every proposed intent/routing phrase is routed over the served catalog (the benchmark's deterministic router); a phrase that lands on a different operation or capability is refused as a trap, not an example
 
 ## Eval families (the measurement)
 For a refinement we score ONLY the families it affects, before and after applying

@@ -1033,6 +1033,33 @@ Options:
 - `--check` — gate: exit non-zero when a tool surface exceeds its budget
 - `--json` — emit the full bill of materials as JSON
 
+### `anvil evals`
+`anvil evals [options] [command]`
+
+Grade a harness against the behaviour checks a skill or bundle ships.
+
+#### `anvil evals grade`
+`anvil evals grade [options] <suite>`
+
+Grade harness answers against one emitted eval suite.
+
+Read-only. Grades a harness's answers against the cases in an emitted `evals/*.yaml` — the behaviour checks every skill and every generated bundle already ships. Literal expectations (a command, a flag, a value the document supplied) are matched directly. Concept tokens are decided by `EVAL_VOCABULARY`, whose signals are treated as necessary evidence rather than sufficient: absence under `must_include` and presence under `must_not` are demonstrated failures. An expectation no wording can decide is reported UNGRADED and counted against the pass rate — never passed silently. Exits 0 unless `--check` is given and some expectation actually failed.
+
+Options:
+- `--answers <file>` — JSON object mapping case name to the harness's answer
+- `--check` — gate: exit non-zero when an expectation failed
+- `--json` — emit the full grading report as JSON
+
+#### `anvil evals vocabulary`
+`anvil evals vocabulary [options]`
+
+Print what each concept token in a behaviour check means.
+
+Read-only. Prints the defined vocabulary the checks are written in: for each token, what an answer must show, a concrete shape that satisfies it, one that violates it, and the signals that decide it. Tokens marked judge-only have no wording that separates the behaviour from its absence — commonly because a compliant answer names the thing it is declining — and are reported ungraded rather than guessed at.
+
+Options:
+- `--json` — emit the vocabulary as JSON
+
 ### `anvil pack`
 `anvil pack [options] [command]`
 

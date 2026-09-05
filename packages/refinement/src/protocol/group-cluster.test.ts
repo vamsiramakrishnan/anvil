@@ -2,13 +2,20 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type AirDocument, loadAirDocument, planWorkflowSurface } from "@anvil/air";
+import {
+  type AirDocument,
+  loadAirDocument,
+  mcpToolDescription,
+  planWorkflowSurface,
+} from "@anvil/air";
 import { describe, expect, it } from "vitest";
+import { applyPatch } from "../apply.js";
 import { classifyApproval } from "../approval.js";
 import { makeDeficiency } from "../deficiency.js";
 import { applyReviewed, createReviewReceipt } from "../pack.js";
-import type { GroupWorkflowPayload } from "../skills/group-proposal.js";
+import type { GroupDisambiguationPayload, GroupWorkflowPayload } from "../skills/group-proposal.js";
 import { HarnessProtocolError } from "./errors.js";
+import { admitOrRefuse, GroupAdmissionRefusal, scoreGroupProposal } from "./group.js";
 import { importHarnessSubmission } from "./import.js";
 import { resolveRepositoryRevision } from "./repository.js";
 import type { HarnessSubmission, RefinementTask } from "./schema.js";
@@ -251,7 +258,7 @@ describe("group task export", () => {
     // The mis-routed intents, verbatim, with counts.
     const edges = facts.misroutedEdges as Array<Record<string, unknown>>;
     expect(edges[0]?.intents).toEqual(["execute the view list"]);
-    expect(task.policy.writableFields).toEqual(["workflow", "capability"]);
+    expect(task.policy.writableFields).toEqual(["workflow", "capability", "disambiguate"]);
     expect(JSON.stringify(task.expectedSubmission)).toContain("workflow");
   });
 });
@@ -293,7 +300,11 @@ describe("group proposal approval tier", () => {
           },
         ],
       });
+      // The TIER alone does not pin this control: rule 5's default is review
+      // too, so a test that only reads the tier passes with the group guard
+      // deleted. The reason is what says the FIELD was recognised.
       expect(decision.tier).toBe("review");
+      expect(decision.reason).toContain("served tool surface");
     }
   });
 });
@@ -495,5 +506,296 @@ describe("group proposal refusals — deterministic, by name", () => {
     const pack = importHarnessSubmission(air, task, decline, { repositoryRoot: root });
     expect(pack.refinements).toHaveLength(0);
     expect(pack.summary.skipped).toBe(1);
+  });
+});
+
+/**
+ * The DISAMBIGUATION arm: the third answer, and the one the measurements say a
+ * cluster usually needs. The members are real and distinct; what collides is
+ * their served text. This suite holds the two things that make the arm
+ * trustworthy — the deterministic distinctness rule, which refuses a reword
+ * that could not change a router's pick, and the scored admission, which
+ * re-routes every task over a catalog rebuilt through the same
+ * `curatedCatalog`/`mcpToolDescription` path the runtime serves from.
+ */
+
+/** Each member says something the others cannot: what it returns, and on what. */
+const DISAMBIGUATION_PAYLOAD: GroupDisambiguationPayload = {
+  operations: [
+    {
+      operation: "svc.views.list",
+      description:
+        "List every view available, returning each view's title and id. This does not execute a view or read any tickets.",
+      rationale: "Only this member enumerates views; the others act on one view already chosen.",
+    },
+    {
+      operation: "svc.views.execute",
+      description: "Execute one view by view_id and return the ticket rows it matches, row by row.",
+      rationale: "Only this member returns the rows themselves.",
+    },
+    {
+      operation: "svc.views.count",
+      description:
+        "Count how many tickets one view by view_id matches, returning only the number and not the tickets.",
+      rationale: "Only this member returns a count instead of the content.",
+    },
+  ],
+};
+
+describe("group disambiguation proposal", () => {
+  it("pins the disambiguate key to review, at any evidence strength", () => {
+    const decision = classifyApproval({
+      skill: "resolve-confusable-cluster",
+      proposal: {
+        skill: "resolve-confusable-cluster",
+        skillVersion: 1,
+        deficiency: "confusable_tool_cluster",
+        target: { kind: "group", groupId: CLUSTER_ID },
+        claims: [],
+        patch: {
+          target: { kind: "group", groupId: CLUSTER_ID },
+          set: { disambiguate: DISAMBIGUATION_PAYLOAD as never },
+        },
+      },
+      evidence: [
+        {
+          subject: CLUSTER_ID,
+          predicate: "group.disambiguate",
+          value: true,
+          source: "source_impl",
+          sourceRef: "src/views.rb",
+          confidence: 0.99,
+        },
+      ],
+    });
+    expect(decision.tier).toBe("review");
+    // Pinned on the reason, not just the tier: rule 5 defaults to review as
+    // well, so only the reason distinguishes "the guard recognised this field"
+    // from "nothing matched and a human gets it anyway".
+    expect(decision.reason).toContain("rewording the served tool surface");
+  });
+
+  it("lands at REVIEW tier, then rewrites the served text WITHOUT changing the catalog", () => {
+    const air = viewsEstate();
+    const root = repository();
+    const task = taskFor(air, root);
+    const pack = importHarnessSubmission(
+      air,
+      task,
+      submission(
+        task,
+        { disambiguate: DISAMBIGUATION_PAYLOAD },
+        "group.disambiguate",
+        DISAMBIGUATION_PAYLOAD,
+      ),
+      { repositoryRoot: root },
+    );
+    const refinement = pack.refinements[0]!;
+    expect(refinement.validation.every((outcome) => outcome.ok)).toBe(true);
+    expect(refinement.approval.tier).toBe("review");
+
+    const receipt = createReviewReceipt(
+      pack,
+      refinement.id,
+      "approved",
+      "reviewer@example.test",
+      "the distinctions are the ones the source states",
+    );
+    const { air: next } = applyReviewed(air, pack, [receipt]);
+
+    // Nothing was added or removed: this arm changes what tools SAY, not which
+    // tools exist — the whole point of offering it beside workflow/capability.
+    expect(next.operations).toHaveLength(air.operations.length);
+    expect(next.workflows).toHaveLength(0);
+    expect(next.capabilities).toEqual(air.capabilities);
+
+    const byId = new Map(next.operations.map((op) => [op.id, op]));
+    for (const entry of DISAMBIGUATION_PAYLOAD.operations) {
+      const op = byId.get(entry.operation)!;
+      expect(op.description).toBe(entry.description);
+      // The served description is what the router reads, so assert the real
+      // composition — not just the field.
+      expect(mcpToolDescription(op)).toContain(entry.description);
+      expect(op.evidence.claims.some((c) => c.note?.includes(entry.rationale))).toBe(true);
+    }
+
+    // Intent examples are the task set the delta was measured against. If an
+    // apply could move them, every measurement in this loop would be circular.
+    for (const op of next.operations) {
+      const before = air.operations.find((candidate) => candidate.id === op.id)!;
+      expect(op.skill.intentExamples).toEqual(before.skill.intentExamples);
+    }
+  });
+
+  it("REFUSES a rewrite that shares every content word with its siblings", () => {
+    const air = viewsEstate();
+    const root = repository();
+    const task = taskFor(air, root);
+    const payload: GroupDisambiguationPayload = {
+      operations: [
+        {
+          operation: "svc.views.list",
+          description: "Work with the view tickets.",
+          rationale: "clearer",
+        },
+        {
+          operation: "svc.views.execute",
+          description: "Work with the view tickets.",
+          rationale: "clearer",
+        },
+      ],
+    };
+    const rejection = importRejection(
+      air,
+      task,
+      submission(task, { disambiguate: payload }, "group.disambiguate", payload),
+      root,
+    );
+    expect(rejection.rejection.issues.join(" ")).toContain("group_disambiguation_distinguishes");
+    expect(rejection.rejection.issues.join(" ")).toContain(
+      "would not change which tool a router picks",
+    );
+  });
+
+  it("REFUSES disambiguating a single operation — it is distinguished from nothing", () => {
+    const air = viewsEstate();
+    const root = repository();
+    const task = taskFor(air, root);
+    const payload = {
+      operations: [
+        {
+          operation: "svc.views.list",
+          description: "List every view, returning titles and ids.",
+          rationale: "clearer",
+        },
+      ],
+    };
+    const rejection = importRejection(
+      air,
+      task,
+      submission(task, { disambiguate: payload }, "group.disambiguate", payload),
+      root,
+    );
+    expect(rejection.rejection.issues.join(" ")).toContain("group_proposal_shape");
+  });
+
+  it("REFUSES a member outside the task's grant", () => {
+    const air = viewsEstate();
+    const root = repository();
+    const task = taskFor(air, root);
+    const payload: GroupDisambiguationPayload = {
+      operations: [
+        {
+          operation: "svc.views.list",
+          description: "List every view, returning each title and id.",
+          rationale: "enumerates",
+        },
+        {
+          operation: "svc.tickets.get",
+          description: "Read one ticket by its own id, not through a view.",
+          rationale: "different resource",
+        },
+      ],
+    };
+    const rejection = importRejection(
+      air,
+      task,
+      submission(task, { disambiguate: payload }, "group.disambiguate", payload),
+      root,
+    );
+    expect(rejection.rejection.issues.join(" ")).toContain("group_grant_respected");
+  });
+
+  it("applies ALL member rewrites or none — a half-disambiguated catalog is not what was approved", () => {
+    const air = viewsEstate();
+    // The second reference resolves against nothing. Validation would have
+    // caught it upstream; this pins the apply path's own guard, because a
+    // partial write leaves some members moved apart and the rest not.
+    const { air: next, changes } = applyPatch(air, {
+      target: { kind: "group", groupId: CLUSTER_ID },
+      set: {
+        disambiguate: {
+          operations: [
+            {
+              operation: "svc.views.list",
+              description: "List every view, returning each title and id.",
+              rationale: "enumerates",
+            },
+            {
+              operation: "svc.views.nonexistent",
+              description: "Something else entirely.",
+              rationale: "unresolvable",
+            },
+          ],
+        } as never,
+      },
+    });
+    expect(changes).toEqual([]);
+    for (const op of next.operations) {
+      const before = air.operations.find((candidate) => candidate.id === op.id)!;
+      expect(op.description).toBe(before.description);
+    }
+  });
+
+  it("scores the rewrite over EVERY task on a catalog rebuilt the way the runtime serves it", async () => {
+    const air = viewsEstate();
+    const delta = await scoreGroupProposal(air, clusterDeficiencyFixture(air), {
+      disambiguate: DISAMBIGUATION_PAYLOAD,
+    });
+    expect(delta.proposalKind).toBe("disambiguate");
+    expect(delta.scope).toBe("all_tasks");
+    // A disambiguation neither adds nor supersedes: the served catalog is the
+    // same size it was, and the delta names exactly whose text moved.
+    expect(delta.hypothetical.catalogSize).toBe(air.operations.length);
+    expect(delta.hypothetical.supersededOperationIds).toEqual([]);
+    expect(delta.hypothetical.rewrittenOperationIds).toEqual([
+      "svc.views.count",
+      "svc.views.execute",
+      "svc.views.list",
+    ]);
+    // Every intent example in the estate is a task, member or not — the point
+    // of scoring this arm over all tasks.
+    const allTasks = air.operations.reduce((n, op) => n + op.skill.intentExamples.length, 0);
+    expect(delta.totalTasks).toBe(allTasks);
+    expect(admitOrRefuse(delta)).toBe(delta);
+    expect(delta.passedAfter).toBeGreaterThan(delta.passedBefore);
+  });
+
+  it("REFUSES a distinct-but-worse rewrite with the numbers, before a reviewer sees it", async () => {
+    const air = viewsEstate();
+    // Each member still says something the others do not — the deterministic
+    // check passes — but the wording pulls the wrong tasks. Only the benchmark
+    // can catch this, which is why the arm has both gates and not one.
+    const worse: GroupDisambiguationPayload = {
+      operations: [
+        {
+          operation: "svc.views.list",
+          description: "Return the ticket rows one view matches, row by row.",
+          rationale: "wrong on purpose",
+        },
+        {
+          operation: "svc.views.execute",
+          description: "A general view helper.",
+          rationale: "wrong on purpose",
+        },
+        {
+          operation: "svc.views.count",
+          description: "Another view utility.",
+          rationale: "wrong on purpose",
+        },
+      ],
+    };
+    const delta = await scoreGroupProposal(air, clusterDeficiencyFixture(air), {
+      disambiguate: worse,
+    });
+    expect(() => admitOrRefuse(delta)).toThrow(GroupAdmissionRefusal);
+    try {
+      admitOrRefuse(delta);
+    } catch (error) {
+      const refusal = error as GroupAdmissionRefusal;
+      expect(refusal.rejection.code).toBe("refinement/group_delta_regressed");
+      expect(refusal.rejection.message).toContain("makes routing worse");
+      expect(refusal.delta.flippedToFail.length).toBeGreaterThan(0);
+    }
   });
 });

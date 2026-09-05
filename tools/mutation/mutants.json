@@ -825,6 +825,16 @@
       ]
     },
     {
+      "id": "refinement/intent-collision-refused",
+      "file": "packages/refinement/src/skills/validate.ts",
+      "control": "An authored intent or routing phrase that the benchmark's own deterministic router sends to a DIFFERENT operation or capability than the one it was written for is not an example, it is a trap \u2014 refused by intent_routes_to_own_tool. Delete the refusal and a phrase like \"list the views\" (findings-log.md's helpdesk-views live loop) silently ships teaching an agent to route to the wrong tool, on a skill approval.ts auto-approves without a human ever seeing it.",
+      "find": "    if (collisions.length > 0) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/refinement/src/skills/skills.test.ts"
+      ]
+    },
+    {
       "id": "benchmark/hub-never-welds-clusters",
       "file": "packages/refinement/src/benchmark/clusters.ts",
       "control": "A routing hub's edges never enter confusion-cluster construction, so one catalog-scale sink cannot weld unrelated confusable families into a single blob.",
@@ -967,7 +977,7 @@
     {
       "id": "targets/certify-checks-every-profile",
       "file": "packages/cli/src/commands/certify.ts",
-      "control": "`anvil certify` runs the target-kit-exact drift check for every registered profile whose subtree is present in the bundle, not only gemini-enterprise — the same regeneration proof Gemini always got. Narrow the loop back to one profile and a hand-tampered Claude, OpenAI, or MCP registry kit certifies clean.",
+      "control": "`anvil certify` runs the target-kit-exact drift check for every registered profile whose subtree is present in the bundle, not only gemini-enterprise \u2014 the same regeneration proof Gemini always got. Narrow the loop back to one profile and a hand-tampered Claude, OpenAI, or MCP registry kit certifies clean.",
       "find": "  for (const profile of listProfiles()) {",
       "replace": "  for (const profile of listProfiles().filter((p) => p.id === \"gemini-enterprise\")) {",
       "tests": [
@@ -1028,8 +1038,8 @@
     {
       "id": "legacy-bridge/stomp-content-length-is-bytes",
       "file": "packages/legacy-bridge/src/stomp-client.ts",
-      "control": "STOMP content-length is a byte count (encodeStompFrame emits Buffer.byteLength(body, \"utf8\")), and the parser must locate the body's NUL terminator by that same byte offset into the raw Buffer. Reintroduce string-length arithmetic — decoding to a string and walking UTF-16 code units instead of bytes — and any reply whose body contains a multibyte UTF-8 character (e.g. an accented name) lands short of the real terminator, so the frame never completes and the caller times out waiting for a reply that already arrived.",
-      "find": "    if (declaredLength !== undefined && /^\\d+$/.test(declaredLength)) {\n      bodyEnd = bodyStart + Number(declaredLength); // byte offset — content-length is bytes\n      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more",
+      "control": "STOMP content-length is a byte count (encodeStompFrame emits Buffer.byteLength(body, \"utf8\")), and the parser must locate the body's NUL terminator by that same byte offset into the raw Buffer. Reintroduce string-length arithmetic \u2014 decoding to a string and walking UTF-16 code units instead of bytes \u2014 and any reply whose body contains a multibyte UTF-8 character (e.g. an accented name) lands short of the real terminator, so the frame never completes and the caller times out waiting for a reply that already arrived.",
+      "find": "    if (declaredLength !== undefined && /^\\d+$/.test(declaredLength)) {\n      bodyEnd = bodyStart + Number(declaredLength); // byte offset \u2014 content-length is bytes\n      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more",
       "replace": "    if (declaredLength !== undefined && /^\\d+$/.test(declaredLength)) {\n      const decoded = buffer.toString(\"utf8\", bodyStart); // MUTANT: string-length arithmetic reintroduced\n      bodyEnd = bodyStart + decoded.slice(0, Number(declaredLength)).length;\n      if (buffer[bodyEnd] !== 0x00) break; // incomplete or malformed; wait for more",
       "tests": [
         "packages/legacy-bridge/src/stomp-client.test.ts"
@@ -1038,7 +1048,7 @@
     {
       "id": "legacy-bridge/wire-binding-coherence-refused",
       "file": "packages/legacy-bridge/src/wire-binding.ts",
-      "control": "The deployment-local bridge refuses to serve a queue wire binding whose legacyBindingContentHash does not match the reviewed LegacyCapabilityBinding it was handed — the coherence property that stops a bridge from silently serving an unreviewed or since-changed candidate. Delete the check and any wire binding is accepted for any binding, hash mismatch or not.",
+      "control": "The deployment-local bridge refuses to serve a queue wire binding whose legacyBindingContentHash does not match the reviewed LegacyCapabilityBinding it was handed \u2014 the coherence property that stops a bridge from silently serving an unreviewed or since-changed candidate. Delete the check and any wire binding is accepted for any binding, hash mismatch or not.",
       "find": "  if (wireBinding.legacyBindingContentHash !== binding.contentHash) {",
       "replace": "  if (false) {",
       "tests": [
@@ -1049,7 +1059,7 @@
     {
       "id": "legacy-bridge/idempotent-replay-dedup",
       "file": "packages/legacy-bridge/src/broker-double.ts",
-      "control": "A repeated idempotency key must return the identical cached reply without re-executing the business side — what makes an outer bounded retry safe at all. Delete the cache check and every call re-executes the handler, so a retried call can observe a different outcome than the one that actually happened.",
+      "control": "A repeated idempotency key must return the identical cached reply without re-executing the business side \u2014 what makes an outer bounded retry safe at all. Delete the cache check and every call re-executes the handler, so a retried call can observe a different outcome than the one that actually happened.",
       "find": "    if (cached !== undefined) return { body: cached };",
       "replace": "    if (false) return { body: cached };",
       "tests": [
@@ -1071,7 +1081,7 @@
     {
       "id": "legacy-bridge/timeout-enforced",
       "file": "packages/legacy-bridge/src/broker.ts",
-      "control": "The reviewed timeout is enforced by racing the broker call against a timer — the one place a hung exchange is ever turned into a failure. Delete the race and a broker that never replies leaves the call pending forever instead of failing closed.",
+      "control": "The reviewed timeout is enforced by racing the broker call against a timer \u2014 the one place a hung exchange is ever turned into a failure. Delete the race and a broker that never replies leaves the call pending forever instead of failing closed.",
       "find": "    return await Promise.race([client.requestReply(options), timeout]);",
       "replace": "    return await client.requestReply(options);",
       "tests": [
@@ -1082,7 +1092,7 @@
     {
       "id": "legacy-bridge/timeout-maps-to-structured-error",
       "file": "packages/legacy-bridge/src/facade.ts",
-      "control": "A broker timeout must answer with a structured, non-retryable upstream_timeout — never a hang and never a false success. Delete the branch and a timeout falls through to the generic transport-failure response, losing the distinction the runtime's own status-code mapping (packages/runtime/src/errors.ts) depends on.",
+      "control": "A broker timeout must answer with a structured, non-retryable upstream_timeout \u2014 never a hang and never a false success. Delete the branch and a timeout falls through to the generic transport-failure response, losing the distinction the runtime's own status-code mapping (packages/runtime/src/errors.ts) depends on.",
       "find": "      if (err instanceof QueueBrokerTimeoutError) {",
       "replace": "      if (false) {",
       "tests": [
@@ -1093,7 +1103,7 @@
     {
       "id": "legacy-bridge/promotion-requires-not-implemented",
       "file": "packages/compiler/src/legacy/refinement/model.ts",
-      "control": "A binding may be promoted to conformance_passed only from not_implemented — never a second time, and never from a status this function does not recognize. Delete the guard and an already-promoted binding could be silently re-promoted, an operation with no equivalent to a lower-safety direction.",
+      "control": "A binding may be promoted to conformance_passed only from not_implemented \u2014 never a second time, and never from a status this function does not recognize. Delete the guard and an already-promoted binding could be silently re-promoted, an operation with no equivalent to a lower-safety direction.",
       "find": "  if (binding.runtime.status !== \"not_implemented\") {",
       "replace": "  if (false) {",
       "tests": [
@@ -1230,6 +1240,167 @@
       "tests": [
         "packages/mcp-runtime/src/fleet.test.ts",
         "packages/cli/src/commands/serve.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/refresh-honours-declared-client-auth",
+      "file": "packages/generators/src/sdk/plan.ts",
+      "control": "The SDK plan carries the token endpoint's DECLARED client authentication method, so every generated client refreshes the way the runtime does for the same contract -- collapsing it to the default would send HTTP Basic to a provider registered for client_secret_post, which rejects it outright, while every env-var name the manifest promises still matches.",
+      "find": "    clientAuth: auth.provider.clientAuth ?? DEFAULT_TOKEN_REFRESH_CLIENT_AUTH,",
+      "replace": "    clientAuth: DEFAULT_TOKEN_REFRESH_CLIENT_AUTH,",
+      "tests": [
+        "packages/generators/src/sdk.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/auth-drift-catches-client-auth",
+      "file": "packages/generators/src/sdk/certify.ts",
+      "control": "Auth drift fails a bundle whose generated source lost the declared token-endpoint client auth -- without this check a language could quietly refresh a different way than the CLI and the MCP server while still naming every declared env var, which is the drift this gate exists to catch.",
+      "find": "        const method = JSON.stringify(expected.tokenRefresh.clientAuth);",
+      "replace": "        const method = \"\";",
+      "tests": [
+        "packages/generators/src/sdk.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/empty-token-env-is-no-token",
+      "file": "packages/generators/src/sdk/typescript.ts",
+      "control": "An exported-but-blank credential env var is NO credential, exactly as the runtime resolver reads it -- treating the empty string as a real token makes the client send an empty bearer instead of falling through to the refresh the contract declares, which is what a .env file or an unpopulated CI secret leaves behind.",
+      "find": "    const token = (options.token ?? env?.[TOKEN_ENV_VAR]) || undefined;",
+      "replace": "    const token = options.token ?? env?.[TOKEN_ENV_VAR];",
+      "tests": [
+        "packages/generators/src/sdk-oauth-refresh.test.ts"
+      ]
+    },
+    {
+      "id": "auth/auth-code-refuses-assertion-client-auth",
+      "file": "packages/air/src/auth-mechanics.ts",
+      "control": "An authorization-code contract cannot declare private_key_jwt client authentication: neither the runtime's refresh nor any of the four SDK helpers mints an RFC 7523 assertion, so declaring it would promise what no surface keeps and every one of them would fall back to sending a client secret a private-key client does not have. Scoped to this scheme -- the client-credentials and token-exchange resolvers DO implement the method.",
+      "find": "  if (\n    auth.type === \"oauth2_authorization_code\" &&\n    auth.provider?.clientAuth === \"private_key_jwt\"\n  ) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/air/src/air.test.ts"
+      ]
+    },
+    {
+      "id": "runtime/auth-code-refresh-refuses-assertion-client-auth",
+      "file": "packages/runtime/src/auth.ts",
+      "control": "The authorization-code refresh fails closed for private_key_jwt rather than sending a client_secret grant -- without this the serving path would hand a private-key client's secret-post form to a provider that expects a signed assertion, which is both wrong on the wire and a credential the client never declared.",
+      "find": "    if (method === \"private_key_jwt\") return null;",
+      "replace": "    if (false) return null;",
+      "tests": [
+        "packages/runtime/src/auth.test.ts"
+      ]
+    },
+    {
+      "id": "sdk/python-refresh-keeps-positional-order",
+      "file": "packages/generators/src/sdk/python-core.ts",
+      "control": "client_auth is LAST in the Python refresh helper's signature so a caller written against an earlier generation keeps its meaning -- inserting it before expiry_skew_seconds silently rebinds a positional 60.0 into the client-auth slot, selecting the post branch and sending client_id where Basic was intended.",
+      "find": "    client_secret: Optional[str] = None,\n    expiry_skew_seconds: float = 30.0,\n    opener: Any = None,\n    client_auth: str = \"client_secret_basic\",",
+      "replace": "    client_secret: Optional[str] = None,\n    client_auth: str = \"client_secret_basic\",\n    expiry_skew_seconds: float = 30.0,\n    opener: Any = None,",
+      "tests": [
+        "packages/generators/src/sdk-oauth-refresh.test.ts"
+      ]
+    },
+    {
+      "id": "refinement/group-disambiguation-must-distinguish",
+      "file": "packages/refinement/src/skills/group-proposal.ts",
+      "control": "A disambiguation must leave every rewritten member carrying a content word its siblings do not all carry. Remove the check and a reword whose every word the siblings could say just as truthfully \u2014 a rewrite that cannot change which tool a router picks \u2014 is passed on to a reviewer as a fix.",
+      "find": "    if (distinguishing.length === 0) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/refinement/src/protocol/group-cluster.test.ts"
+      ]
+    },
+    {
+      "id": "refinement/group-disambiguation-review-tier",
+      "file": "packages/refinement/src/approval.ts",
+      "control": "A `disambiguate` patch rewrites what several served tools SAY at once, so it is pinned to the review tier on the FIELD like the other two group keys. Drop it from the guard and a harness can reword K tools' served text with no person in the loop.",
+      "find": "  if (\"workflow\" in set || \"capability\" in set || \"disambiguate\" in set) {",
+      "replace": "  if (\"workflow\" in set || \"capability\" in set) {",
+      "tests": [
+        "packages/refinement/src/protocol/group-cluster.test.ts"
+      ]
+    },
+    {
+      "id": "benchmark-admission/disambiguation-is-scored",
+      "file": "packages/refinement/src/protocol/exchange.ts",
+      "control": "Every arm of the group proposal union goes through the benchmark-scored admission, keyed off GROUP_PATCH_KEYS so a new arm cannot reach a reviewer unmeasured by simply not being named. Narrow it back to the two composition keys and a disambiguation lands with no delta at all \u2014 no refusal for a rewrite that makes routing worse, and no numbers for the reviewer.",
+      "find": "      GROUP_PATCH_KEYS.some((key) => key in refinement.proposal.set),",
+      "replace": "      (\"workflow\" in refinement.proposal.set || \"capability\" in refinement.proposal.set),",
+      "tests": [
+        "packages/cli/src/commands/refine-group.test.ts"
+      ]
+    },
+    {
+      "id": "refinement/group-disambiguation-all-or-nothing",
+      "file": "packages/refinement/src/apply.ts",
+      "control": "A disambiguation applies to every named member or to none. Remove the guard and an unresolvable reference leaves a half-disambiguated catalog \u2014 some members moved apart, the rest still colliding \u2014 which is not the change the receipt approved.",
+      "find": "        if (rewrites.some((rewrite) => rewrite.op === undefined)) return;",
+      "replace": "        // mutant: apply what resolves, skip what does not",
+      "tests": [
+        "packages/refinement/src/protocol/group-cluster.test.ts"
+      ]
+    },
+    {
+      "id": "evals/undefined-token-is-never-passed",
+      "file": "packages/refinement/src/evals/grade.ts",
+      "control": "A behaviour-check token no vocabulary defines cannot be decided, so it is reported ungraded. Make it pass instead and the runner launders an unrunnable check into a green report \u2014 which is the exact defect the runner was built to remove, reproduced one level up.",
+      "find": "  if (!term) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/refinement/src/evals/grade.test.ts"
+      ]
+    },
+    {
+      "id": "evals/ungraded-counts-against-the-rate",
+      "file": "packages/refinement/src/evals/grade.ts",
+      "control": "The pass rate counts ungraded expectations in its denominator. Drop them and the rate RISES as more undecidable checks are added \u2014 a score that improves by measuring less.",
+      "find": "    passRate: totals.total === 0 ? 0 : Math.round((totals.passed / totals.total) * 1000) / 10,",
+      "replace": "    passRate:\n      totals.passed + totals.failed === 0\n        ? 0\n        : Math.round((totals.passed / (totals.passed + totals.failed)) * 1000) / 10,",
+      "tests": [
+        "packages/refinement/src/evals/grade.test.ts"
+      ]
+    },
+    {
+      "id": "evals/vocabulary-defines-every-emitted-token",
+      "file": "packages/air/src/eval-vocabulary.ts",
+      "control": "Every concept token the emitters write is defined here, and the drift gate holds that equal in both directions. Remove a definition and a shipped behaviour check goes back to naming a word nothing defines \u2014 the state that made these files unrunnable for years.",
+      "find": "  not_exactly_once: {",
+      "replace": "  removed_by_mutation_not_exactly_once: {",
+      "tests": [
+        "packages/cli/src/eval-vocabulary-drift.test.ts"
+      ]
+    },
+    {
+      "id": "generators/deploy-ships-webhook-route-table",
+      "file": "packages/generators/src/deploy.ts",
+      "control": "The route table the prebuilt runtime reads at boot is written beside it as webhooks.json. Drop it and every compiled bundle boots a server that refuses to start (it fails closed on the missing artifact) \u2014 or, if that refusal were ever weakened, a server serving an empty route table under a hash that says otherwise.",
+      "find": "    \"deploy/runtime/webhooks.json\": webhookRoutesJson(air),\n",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/webhook-route.test.ts",
+        "packages/generators/src/generators.test.ts"
+      ]
+    },
+    {
+      "id": "generators/runtime-provenance-stamped",
+      "file": "packages/generators/src/deploy.ts",
+      "control": "Every bundle records which @anvil/mcp-runtime built its server and the sha256 of the exact bytes (runtime.lock.json). Drop it and a bundle's runtime provenance goes back to being implicit \u2014 inferable only from whichever Anvil happened to compile it.",
+      "find": "    [RUNTIME_LOCK_FILE]: runtimeLockJson(),\n",
+      "replace": "",
+      "tests": [
+        "packages/generators/src/generators.test.ts"
+      ]
+    },
+    {
+      "id": "mcp-runtime/partial-artifact-fails-closed",
+      "file": "packages/mcp-runtime/src/serve.ts",
+      "control": "A runtime whose artifact directory is missing a file it reads at boot refuses to start. Return an empty document instead and a partial or tampered copy serves silently \u2014 with no route table, or no catalog \u2014 under a self-hash that no longer matches what was certified. Killed by the source-level check because the generators boot tests exercise the BUILT bundle, which a source mutation does not rebuild.",
+      "find": "    throw new Error(`Runtime artifact is missing ${name}; refusing to serve a partial deployment.`);",
+      "replace": "    return \"[]\";",
+      "tests": [
+        "packages/mcp-runtime/src/serve.test.ts"
       ]
     }
   ]

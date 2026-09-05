@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -915,6 +916,77 @@ function jsonCommandPaths(): Set<string> {
 }
 
 const JSON_COMMANDS = jsonCommandPaths();
+
+describe("anvil evals speaks the operator envelope", () => {
+  /**
+   * These two need no bundle: a suite file is checked in, and the vocabulary is
+   * compiled into the binary. So there is no honest reason to waive them — the
+   * gate asked for a decision and the decision is coverage.
+   */
+  // Resolved from this file, not from the process cwd: turbo runs the package's
+  // own `test` script with cwd=packages/cli, so a repo-relative path resolves
+  // when vitest is invoked from the root and silently does not under `pnpm test`.
+  const SUITE = fileURLToPath(
+    new URL("../../../skills/anvil/evals/operate_anvil.yaml", import.meta.url),
+  );
+
+  it("grades a real emitted suite as one document", async () => {
+    const answers = join(work, "answers.json");
+    writeFileSync(
+      answers,
+      JSON.stringify({
+        inspects_before_approving:
+          "I would run `anvil inspect payments/` and then `anvil approve payments/ pay.capture`.",
+      }),
+      "utf8",
+    );
+    const result = await run(["evals", "grade", SUITE, "--answers", answers, "--json"]);
+    const envelope = expectJsonContract(result, "evals grade --json");
+    expect(envelope.reportType).toBe("anvil.eval-run");
+    const parsed = JSON.parse(result.stdout) as {
+      totals: { passed: number; failed: number; ungraded: number; total: number };
+      cases: Array<{ case: string; expectations: Array<{ outcome: string; method: string }> }>;
+    };
+    // The suite is real, so the grader must have had something to decide.
+    expect(parsed.totals.total).toBeGreaterThan(0);
+    // The answered case names both commands it must call, so it passes them.
+    const answered = parsed.cases.find((c) => c.case === "inspects_before_approving");
+    expect(answered?.expectations.every((e) => e.outcome === "passed")).toBe(true);
+    // And the honesty property that matters most: nothing this run could not
+    // decide is reported as passed.
+    expect(parsed.totals.passed + parsed.totals.failed + parsed.totals.ungraded).toBe(
+      parsed.totals.total,
+    );
+  });
+
+  it("gates on a real failure and stays quiet about undecidable ones", async () => {
+    const answers = join(work, "bad-answers.json");
+    writeFileSync(
+      answers,
+      JSON.stringify({ inspects_before_approving: "I'll approve it now." }),
+      "utf8",
+    );
+    const result = await run(["evals", "grade", SUITE, "--answers", answers, "--check", "--json"]);
+    expect(result.code).toBe(1);
+    const envelope = expectJsonContract(result, "evals grade --check --json");
+    expect(envelope.reportType).toBe("anvil.eval-run");
+  });
+
+  it("prints the vocabulary as an envelope, not a bare object", async () => {
+    const result = await run(["evals", "vocabulary", "--json"]);
+    const envelope = expectJsonContract(result, "evals vocabulary --json");
+    expect(envelope.reportType).toBe("anvil.eval-vocabulary");
+    const parsed = JSON.parse(result.stdout) as {
+      terms: Record<string, { check: string; satisfiedBy: string; violatedBy: string }>;
+    };
+    expect(Object.keys(parsed.terms).length).toBeGreaterThan(0);
+    for (const term of Object.values(parsed.terms)) {
+      expect(term.check.length).toBeGreaterThan(0);
+      expect(term.satisfiedBy.length).toBeGreaterThan(0);
+      expect(term.violatedBy.length).toBeGreaterThan(0);
+    }
+  });
+});
 
 describe("every --json command is accounted for", () => {
   it("has at least one --json command, so an empty walk cannot pass vacuously", () => {

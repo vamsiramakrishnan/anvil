@@ -884,10 +884,24 @@ def create_refreshing_token_provider(
     client_secret: Optional[str] = None,
     expiry_skew_seconds: float = 30.0,
     opener: Any = None,
+    client_auth: str = "client_secret_basic",
 ) -> Callable[[], str]:
     """Build a token provider that exchanges 'refresh_token' at
     'token_endpoint' and caches the access token in memory until shortly
-    before it expires."""
+    before it expires.
+
+    'client_auth' is how the client authenticates to the token endpoint
+    (RFC 6749 section 2.3.1), defaulting to 'client_secret_basic' exactly as
+    the runtime resolver does for the same contract. It is LAST in the
+    signature on purpose: callers of an earlier generation may pass
+    'expiry_skew_seconds' and 'opener' positionally, and inserting a parameter
+    before them would silently rebind those arguments on regeneration."""
+    if client_auth == "private_key_jwt":
+        # Nothing here mints an RFC 7523 assertion, so a private-key client is
+        # refused rather than sent a client_secret it does not have.
+        raise RuntimeError(
+            "private_key_jwt client authentication is not supported by the refresh helper"
+        )
     send = opener or urllib.request.urlopen
     cache: Dict[str, Any] = {}
 
@@ -896,17 +910,20 @@ def create_refreshing_token_provider(
         expires_at = cache.get("expires_at", 0.0)
         if cached_token and expires_at > time.time():
             return cached_token
-        body = urllib.parse.urlencode(
-            {
-                "grant_type": "refresh_token",
-                "refresh_token": refresh_token,
-                "client_id": client_id,
-            }
-        ).encode("utf-8")
+        form: Dict[str, str] = {"grant_type": "refresh_token", "refresh_token": refresh_token}
         headers = {"content-type": "application/x-www-form-urlencoded"}
-        if client_secret:
+        # Mirrors the runtime resolver exactly: client_secret_basic sends the
+        # credentials as HTTP Basic and keeps client_id out of the form; every
+        # other declared method carries client_id (and the secret, when
+        # present) in the form body.
+        if client_secret and client_auth == "client_secret_basic":
             basic = base64.b64encode(("%s:%s" % (client_id, client_secret)).encode("utf-8"))
             headers["authorization"] = "Basic " + basic.decode("ascii")
+        else:
+            form["client_id"] = client_id
+            if client_secret:
+                form["client_secret"] = client_secret
+        body = urllib.parse.urlencode(form).encode("utf-8")
         request = urllib.request.Request(token_endpoint, data=body, headers=headers, method="POST")
         try:
             with send(request, timeout=30.0) as response:

@@ -333,6 +333,8 @@ export const TOKEN_ENDPOINT = ${j(refresh.tokenEndpoint)};
 export const REFRESH_TOKEN_ENV_VAR = ${j(refresh.refreshTokenEnvVar)};
 export const CLIENT_ID_ENV_VAR = ${j(refresh.clientIdEnvVar)};
 export const CLIENT_SECRET_ENV_VAR = ${j(refresh.clientSecretEnvVar)};
+/** How the refresh grant authenticates to the token endpoint — the same method the runtime uses. */
+export const TOKEN_CLIENT_AUTH = ${j(refresh.clientAuth)};
 `
     : ""
 }
@@ -352,7 +354,12 @@ export class ${className} {
   constructor(options: ClientOptions = {}) {
     const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
       ?.env;
-    const token = options.token ?? env?.[TOKEN_ENV_VAR];
+    // An EMPTY credential is no credential, exactly as the runtime resolver
+    // reads it (\`if (staticToken)\`): an env var that is exported but blank is
+    // the shape a .env file or a CI secret that failed to populate leaves
+    // behind, and treating it as a real token would send an empty header
+    // instead of falling through to the refresh the contract declares.
+    const token = (options.token ?? env?.[TOKEN_ENV_VAR]) || undefined;
 ${
   refresh
     ? `    // A caller-supplied token or tokenProvider always wins. Only when neither
@@ -367,6 +374,7 @@ ${
             refreshToken,
             clientId,
             clientSecret: env?.[CLIENT_SECRET_ENV_VAR],
+            clientAuth: TOKEN_CLIENT_AUTH,
           })
         : undefined);
 `

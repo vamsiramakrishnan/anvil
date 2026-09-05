@@ -31,7 +31,22 @@ export type ContextNeed =
   | "source_evidence"
   | "declared_error"
   | "capability"
-  | "group_members";
+  | "group_members"
+  /**
+   * The operations sharing this one's resource or capability — the harness's
+   * own visibility into who it must not collide with, so an authoring skill
+   * can avoid drafting a colliding phrase rather than only having it refused
+   * afterwards by `intent_routes_to_own_tool`. Narrower than `routing_catalog`
+   * on purpose: a proactive hint names the likely collision partners, while
+   * the validator below must check against the whole served surface.
+   */
+  | "sibling_operations"
+  /**
+   * The full served catalog (or, for a capability target, every capability's
+   * own entry card) an authored intent or routing phrase must route back to
+   * its own target within — what `intent_routes_to_own_tool` checks against.
+   */
+  | "routing_catalog";
 
 /** An invariant a skill must not violate. Enforced by validation, never trusted. */
 export type SkillConstraint =
@@ -62,7 +77,9 @@ export type ValidationCheckId =
   | "group_grant_respected"
   | "group_supersedes_within_steps"
   | "group_workflow_composes"
-  | "group_names_grounded";
+  | "group_names_grounded"
+  | "group_disambiguation_distinguishes"
+  | "intent_routes_to_own_tool";
 
 /**
  * The minimal view of a frozen evidence artifact the `evidence_meets_verification`
@@ -172,6 +189,32 @@ export interface SkillContext {
    * member order the deficiency's facts declare.
    */
   groupOperations?: Operation[];
+  /**
+   * For an `operation` target: the operations sharing this one's resource or
+   * capability, excluding itself — the narrow, proactive hint `ContextNeed`
+   * `"sibling_operations"` names. A harness authoring an intent phrase can
+   * read this to avoid a likely collision; the deterministic check below does
+   * not consult it (it needs the whole catalog, not a narrowed guess at where
+   * a collision is likely).
+   */
+  siblingOperations?: Operation[];
+  /**
+   * For an `operation` target: the routing catalog `intent_routes_to_own_tool`
+   * checks a proposed phrase against — the served surface
+   * (`benchmarkOperations`) plus the target itself even when it is not yet
+   * approved, so a phrase must not collide with a sibling regardless of which
+   * of the two is approved first. `undefined` for every other target kind.
+   * Rebuilt from AIR at validation time, like `groupOperations` — never
+   * trusted from a stale snapshot.
+   */
+  routingCatalogOperations?: Operation[];
+  /**
+   * For a `capability` target: every capability in the document, whose own
+   * entry-card tool name and intent vocabulary an authored routing phrase
+   * must not land on instead of this one's. `undefined` for every other
+   * target kind.
+   */
+  routingCatalogCapabilities?: Capability[];
   /** Claim-scoped evidence gathered for this target (may be empty). */
   evidence: Claim[];
 }
