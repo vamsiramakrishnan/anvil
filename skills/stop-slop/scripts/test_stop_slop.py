@@ -19,6 +19,9 @@ def test_high_confidence_patterns() -> None:
     assert "fake-profound-ending" in ids("The future isn't coming. It's already here.")
     assert "chatbot-residue" in ids("I hope this helps. Let me know if you'd like more detail.")
     assert "vague-attribution" in ids("Industry reports suggest this is safer.")
+    assert "knowledge-cutoff-disclaimer" in ids("Based on available information, the date is unclear.")
+    assert "placeholder-text" in ids("url=INSERT_SOURCE_URL_30")
+    assert "model-markup-leak" in ids("The claim is supported. [oai_citation:2]")
 
 
 def test_medium_patterns() -> None:
@@ -27,10 +30,13 @@ def test_medium_patterns() -> None:
     assert "fake-strong-verb" in found
     assert "superficial-analysis" in found
     assert "not-just-but" in ids("It is not just a wrapper but a complete platform.")
+    assert "copula-avoidance" in ids("AIR serves as the operation model.")
 
 
-def test_general_profile_gets_sales_language_but_not_technical_proof_rule() -> None:
+def test_general_profile_gets_wikipedia_style_signals() -> None:
     assert "sales-language" in ids("Nestled in the heart of town, it is a stunning venue.", profile="general")
+    assert "notability-proof" in ids("The subject maintains an active social media presence.", profile="general")
+    assert "formulaic-outlook" in ids("Despite these challenges, the project continues to evolve toward broader adoption.", profile="general")
     assert "proof-laundering" not in ids("The files cannot drift.", profile="general")
 
 
@@ -38,6 +44,8 @@ def test_strict_profile_adds_advisory_structure_checks() -> None:
     rule_ids = {rule.id for rule in get_rules(profile="strict")}
     assert "forced-triad" in rule_ids
     assert "false-range" in rule_ids
+    assert "inline-header-list" in rule_ids
+    assert "em-dash-density" in rule_ids
 
 
 def test_code_and_frontmatter_are_masked_without_losing_line_numbers() -> None:
