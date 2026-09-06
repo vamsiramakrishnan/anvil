@@ -1,14 +1,12 @@
 # Client SDKs
 
 Anvil generates TypeScript, Python, Go, and Java clients from the same AIR
-document as the CLI and MCP server.
+contract as the CLI and MCP server. Use a generated SDK when an application
+needs those operations and policy checks without a terminal or MCP client.
 
-The consequence is mechanical:
-
-1. AIR defines the approved operation set and safety rules.
-2. Every SDK is generated from AIR.
-3. Therefore, an operation cannot require confirmation in one generated client
-   and omit it in another.
+Regenerate clients after changing the source or manifest. Shared input enables
+consistent policy; generation and conformance tests provide the evidence that
+each surface enforces it. Hand-edited generated clients are outside that claim.
 
 ## Generate and inspect the clients
 

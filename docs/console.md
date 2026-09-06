@@ -1,12 +1,11 @@
 # Review console
 
-`anvil console` opens a browser page over a workspace of compiled bundles for
-the person who is Anvil's approval gate. On a real estate that gate is
-hundreds of review-tier decisions — operations sitting in `review_required`,
-capabilities born `proposed`, workflows the planner refuses, refinement packs
-awaiting a receipt — made today by reading CLI text and typing ids into YAML.
-The console puts the evidence next to the decision and the decision one click
-from the receipt.
+Use `anvil console` to inspect compiled bundles, review pending decisions,
+and examine the evidence associated with them. The console presents the same
+workspace state used by the CLI.
+
+Review the affected operation or capability before approving it. A successful
+UI action does not establish that the deployed upstream integration works.
 
 ## A projection, not a second truth
 

@@ -1,13 +1,13 @@
 # Product boundary
 
-Anvil owns the transformation from an API contract to a reviewed, aligned, and
-assured agent-tool bundle. When no useful API contract exists, it also owns an
-offline path from captured legacy configuration to a reviewed, non-executable
-capability binding. It does not own the upstream system, the organization's
-approval system, or live deployment.
+Anvil compiles source contracts and reviewed policy into agent tools and the
+evidence used to assess them. An operation's approval is separate from upstream
+authorization, deployment readiness, and successful execution.
 
-This boundary matters because agent integrations fail when one tool quietly
-becomes the source of truth for semantics it cannot authoritatively know.
+Legacy inputs first produce an inventory and reviewed capability bindings.
+Execution additionally requires a supported bridge, its declared prerequisites,
+and the runtime checks described in [Legacy runtime bridges](legacy-runtime-bridges.md).
+An inventory or binding alone is not a runnable integration.
 
 ## The contract
 

@@ -1,7 +1,7 @@
 # PR #5 hardening report — case-based investigation framework
 
 This report summarises the refactor that made the investigation framework smaller,
-safer, and measurable, per the review brief. The north star is unchanged: **give an
+safer, and measurable, per the review brief. The design goal is unchanged: **give an
 intelligent coding agent a bounded investigation case, not an unstructured prompt** —
 but the agent is now bounded and attributable in code, not in prose.
 

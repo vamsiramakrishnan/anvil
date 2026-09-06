@@ -3,7 +3,7 @@
 Anvil is a compiler: it compiles heterogeneous system descriptions and evidence
 into **AIR**, then projects AIR into CLIs, MCP servers, skills, mocks, evals,
 tests, docs, and Cloud Run deployments. This audit reviews the codebase against
-that North Star and records, per mechanism, whether we **Keep / Simplify /
+that architecture goal and records, per mechanism, whether we **Keep / Simplify /
 Replace / Delete / Defer** it. It is deliberately direct.
 
 The rule applied throughout: *only keep an abstraction that has a real second
@@ -57,7 +57,7 @@ workflows layered as **views over operation ids**:
   supersession, no per-claim review status.
 
 This is exactly the "confidence number not attached to a specific claim" and
-"evidence graph implemented as an unstructured list" the North Star calls out.
+"evidence graph implemented as an unstructured list" the architecture goal calls out.
 
 **Disposition: Replace.** Evidence is now **claim-scoped** — see §"Refactors".
 The resolver `resolveSemantic(evidence, predicate)` is **conflict-aware**: it
@@ -81,7 +81,7 @@ library-maximal). There is **one** parser and **one** runtime target today.
 
 **Disposition: Keep (do not fake a plugin framework).** Introducing
 `SourceParser` / `CompilerPass` / `ArtifactGenerator` interfaces with a single
-implementation each would be precisely the premature abstraction the North Star
+implementation each would be precisely the premature abstraction the architecture goal
 forbids ("Do not add an interface because the architecture document says
 plugin"). The real, minimal seam that matters — *adding a source format must not
 touch classify/validate/generate* — is made explicit and **tested** (a parser is
