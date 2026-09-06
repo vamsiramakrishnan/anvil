@@ -1,30 +1,25 @@
 # Anvil
 
-**Turn one API contract into agent tools that share one policy.**
+**Give agents access to your API through a CLI, MCP server, and SDKs that enforce the same reviewed policy.**
 
-Give Anvil an API contract and reviewed policy. It generates:
+Anvil compiles an API description and a policy manifest into an agent-facing
+bundle. Review an operation once: its approval, confirmation, retry, and
+authentication requirements follow it across the generated interfaces.
 
-- a typed CLI;
-- an MCP server;
-- client SDKs for TypeScript, Python, Go, and Java;
-- an agent skill;
-- harness hooks;
-- mocks and evaluations; and
-- deployment inputs.
+Use it when you own an API integration and need more than a tool schema.
+The output includes executable tools, client libraries, agent instructions,
+local mocks, and evidence for checking that the interfaces agree.
 
-All of them come from AIR, the Anvil Intermediate Representation.
+Source install · Node.js 22.17+ · pnpm · Apache-2.0
 
-AIR records the operation schema, effect, risk, auth, approval, confirmation, idempotency, retry, and evidence contract. That matters because hand-written surfaces drift. A refund can end up requiring confirmation in the CLI but not in MCP. Anvil makes that disagreement a compiler and runtime problem instead of a prompt problem.
+[Run the quickstart](apps/docs/src/content/docs/start/quickstart.md) ·
+[Supported inputs](docs/SOURCE_FORMATS.md) ·
+[Documentation site](https://vamsiramakrishnan.github.io/anvil/)
 
-Three rules define the model:
+## Compile a tool you can inspect
 
-1. Unapproved operations are not callable.
-2. Mutations are not retried unless idempotency is proven.
-3. Assurance evidence is valid only for the bundle hash it verified.
-
-## Run the example
-
-Anvil currently runs from source. You need Node.js 22.17 or later, Corepack, and Git.
+The included payments example needs no credentials or upstream service for
+compilation and dry runs:
 
 ```bash
 git clone https://github.com/vamsiramakrishnan/anvil.git
@@ -32,128 +27,98 @@ cd anvil
 corepack enable
 pnpm install
 pnpm build
-```
 
-Compile the included payments API:
-
-```bash
 pnpm anvil compile examples/payments/openapi.yaml \
   --manifest examples/payments/anvil.yaml \
-  --service payments \
-  --out generated/payments
+  --service payments --out generated/payments
 
 pnpm anvil status generated/payments
 pnpm anvil inspect generated/payments
 ```
 
-`compile` creates the bundle. `status` tells you what state it is in and what to do next. `inspect` shows which operations are callable and why.
+`status` reports the bundle's state and next action. `inspect` shows each
+operation's generated name and policy. The fixture's refund operation requires
+confirmation and an idempotency key.
 
-The bundle contains:
-
-| Path | Contains |
-| --- | --- |
-| `air.yaml` | Canonical operation and policy model |
-| `cli/` | Typed commands for approved operations |
-| `mcp/` | MCP server exposing the same approved operations |
-| `sdk/` | TypeScript, Python, Go, and Java clients |
-| `skill/` | Agent setup and operation reference |
-| `plugin/` | Hooks for supported coding harnesses |
-| `mock/`, `tests/`, `skill/evals/` | Mock, conformance, and agent-evaluation assets |
-| `deploy/` | Runtime and infrastructure inputs |
-
-The generated CLI, MCP server, and runtime run from this checkout or another environment where the Anvil packages are installed or linked. The four SDK trees can be vendored independently and use only their platform standard libraries.
-
-## See a refusal before a network call
-
-The payments fixture contains a refund operation. It moves money. The manifest therefore requires confirmation and an idempotency key.
-
-Omit both:
+Try it without those requirements:
 
 ```bash
 pnpm anvil run generated/payments refunds create \
-  --payment-id pay_123 \
-  --amount 4200 \
-  --currency usd \
-  --reason duplicate_charge \
-  --dry-run
+  --payment-id pay_123 --amount 4200 --currency usd \
+  --reason duplicate_charge --dry-run
 ```
 
-Anvil returns `confirmation_required` before request construction or network access.
-
-Now supply both requirements:
+Expected result: `confirmation_required`, before request construction or
+network access. Then supply the reviewed requirements:
 
 ```bash
 pnpm anvil run generated/payments refunds create \
-  --payment-id pay_123 \
-  --amount 4200 \
-  --currency usd \
-  --reason duplicate_charge \
-  --idempotency-key refund-pay_123-001 \
-  --confirm \
-  --dry-run
+  --payment-id pay_123 --amount 4200 --currency usd \
+  --reason duplicate_charge --idempotency-key refund-pay_123-001 \
+  --confirm --dry-run
 ```
 
-Anvil prints a redacted request plan. `--dry-run` still prevents execution.
+Expected result: a redacted request plan. `--dry-run` prevents execution after
+policy checks pass. The [complete quickstart](apps/docs/src/content/docs/start/quickstart.md)
+then tests the generated MCP server against a local mock.
 
-[Run the complete quickstart](apps/docs/src/content/docs/start/quickstart.md) to test the generated MCP surface and assurance records.
+## What lands in the bundle
 
-## Use your API
+| Artifact | Use it for |
+|---|---|
+| `air.yaml` | Review the canonical operation schema and policy |
+| `cli/`, `mcp/` | Invoke approved operations from a terminal or an MCP client |
+| `sdk/` | Call the same operations from TypeScript, Python, Go, or Java |
+| `skill/`, `plugin/` | Give coding harnesses operation guidance and supported hooks |
+| `mock/`, `tests/`, `skill/evals/` | Exercise generated behavior before connecting a real service |
+| `deploy/` | Prepare runtime and infrastructure inputs for the operator |
 
-For an unfamiliar contract:
+AIR is the Anvil Intermediate Representation. Generated files are projections
+of that model. Change the source contract or reviewed manifest, then recompile;
+manual edits to generated files do not become a new source of truth.
+
+The CLI, MCP server, and runtime require installed or linked Anvil packages.
+The four generated SDK trees can be vendored independently and use their
+platform standard libraries. [Client SDK details](docs/client-sdks.md).
+
+## Choose your starting material
+
+| You have | Begin with | Result and boundary |
+|---|---|---|
+| An API description | `anvil agentify` or `anvil compile` | Candidate bundle; unfamiliar operations still need review |
+| A gateway export | `anvil estate support`, then `anvil estate inventory` | Inventory retaining gateway identity and provenance |
+| Application-server, .NET, or broker configuration | `anvil legacy inventory` | Offline evidence and technical candidates; no runnable bridge |
+| An existing MCP server | `anvil adopt` | Review artifacts and an adoption plan; unknown effects remain mutations |
+
+For your first contract:
 
 ```bash
-pnpm anvil agentify path/to/spec \
-  --service inventory \
-  --out generated/inventory
-```
-
-`agentify` captures the source, compiles it, assesses operations, proposes capability groups, and stops for review. It does not infer approval, certify, publish, or deploy. Existing approvals in a reviewed manifest are preserved.
-
-Then inspect the candidate:
-
-```bash
+pnpm anvil agentify path/to/spec --service inventory --out generated/inventory
 pnpm anvil status generated/inventory
 pnpm anvil inspect generated/inventory
 pnpm anvil assess generated/inventory
 pnpm anvil lint generated/inventory
 ```
 
-If the contract omits a business fact, put that fact in reviewed `anvil.yaml` and compile again. Do not edit generated files.
+`agentify` captures, compiles, assesses, and proposes capability groups. It stops
+for review. It preserves explicit approvals from a reviewed manifest and does
+not infer new ones, certify the bundle, publish it, or deploy it.
 
-## Start from the evidence you actually have
+## Take a reviewed bundle toward release
 
-| Starting material | First command | Result |
-| --- | --- | --- |
-| OpenAPI, Swagger, GraphQL, proto3, WSDL, Discovery, OData, or Postman | `anvil agentify` or `anvil compile` | Candidate AIR bundle and generated surfaces |
-| API gateway export | `anvil estate support`, then `anvil estate inventory` | Gateway-aware inventory for later audit and import |
-| Application-server, .NET, or broker configuration | `anvil legacy inventory` | Offline evidence and technical candidates |
-| Existing MCP server | `anvil adopt` | Conservative review artifacts and an adoption plan |
+| Step | Command | Evidence |
+|---|---|---|
+| Resolve missing semantics | `anvil enrich`, reviewed manifest | Explicit operation behavior |
+| Approve inspected operations | `anvil approve` | Deliberate exposure decision |
+| Check generated artifacts | `anvil certify` | Agreement with AIR |
+| Exercise the MCP server | `anvil selftest` | Local transport and refusal checks |
+| Compare surfaces | `anvil conformance` | CLI, MCP, and skill consistency |
+| Exercise policy scenarios | `anvil simulate` | Scenario results |
+| Prepare release | `anvil publish` | Operator plan; no deployment performed |
 
-These inputs do not grant the same execution authority.
-
-- A supported API contract can become executable after review and assurance.
-- A gateway export keeps gateway identity and provenance during import.
-- Legacy inventory produces evidence and candidates. It does not create or run a Java, Windows, or broker bridge in the current release.
-- An adopted MCP tool without an explicit read-only signal remains a mutation until reviewed.
-
-Read [source format support](docs/SOURCE_FORMATS.md), [gateway estates](docs/gateways.md), [legacy estates](docs/legacy-estates.md), or [MCP adoption](docs/adopting-mcp-servers.md) before choosing a path.
-
-## Operating loop
-
-```text
-source -> compile -> inspect -> enrich -> approve -> assure -> release plan
-```
-
-| Stage | Rule | Primary command |
-| --- | --- | --- |
-| Compile | Capture exact source bytes before deriving semantics | `anvil compile` |
-| Inspect | Keep unknown mutations unavailable | `anvil status`, `anvil inspect`, `anvil lint` |
-| Enrich | Add evidence-backed facts | `anvil distill`, `anvil enrich` |
-| Approve | Change exposure through an explicit decision | `anvil approve` |
-| Assure | Bind every report to the same bundle hash | `anvil certify`, `anvil selftest`, `anvil conformance`, `anvil simulate` |
-| Release | Prepare a plan; leave deployment with the operator | `anvil publish` |
-
-Run `status` whenever you return to a bundle or a gate fails. It reports the first action still required.
+Assurance records bind to a bundle hash. Changed bytes require new evidence.
+Use `status` when a gate fails or you return to an unfinished bundle.
+[CI integration](docs/CI.md).
 
 ## Runtime contract
 
@@ -179,6 +144,28 @@ The current runtime executes HTTP+JSON, GraphQL queries and mutations, and suppo
 
 See [source format support](docs/SOURCE_FORMATS.md) and [wire protocols](docs/wire-protocols.md) for the tested boundary.
 
+## Decide whether Anvil fits
+
+Use Anvil when several clients or agent harnesses must share reviewed operation
+semantics, or when you need repeatable compilation and conformance checks.
+A single hand-written integration may need less setup for a small API.
+
+Anvil cannot infer missing business guarantees from transport syntax. In
+particular, generating an idempotency key does not prove the upstream service
+honors it. Record what the upstream contract establishes and keep uncertain
+mutations unavailable until reviewed.
+
+## Documentation
+
+[Install](apps/docs/src/content/docs/cookbooks/install-anvil.md) ·
+[Manifest](docs/MANIFEST.md) · [Gateway estates](docs/gateways.md) ·
+[Legacy inventory](docs/legacy-estates.md) · [MCP adoption](docs/adopting-mcp-servers.md) ·
+[Troubleshooting](docs/TROUBLESHOOTING.md) · [Product boundary](docs/PRODUCT_BOUNDARY.md) ·
+[Architecture](docs/ARCHITECTURE.md) · [Command reference](skills/anvil/reference/commands.md)
+
+The site publishes [llms.txt](https://vamsiramakrishnan.github.io/anvil/llms.txt)
+and [llms-full.txt](https://vamsiramakrishnan.github.io/anvil/llms-full.txt).
+
 ## Development
 
 ```bash
@@ -190,31 +177,4 @@ pnpm docs:check
 pnpm --filter @anvil/docs build
 ```
 
-Repository map:
-
-- `packages/air`: canonical schemas and semantics;
-- `packages/compiler`: source capture, adapters, classification, and manifests;
-- `packages/generators`: CLI, MCP, SDK, skill, hook, test, and deployment projections;
-- `packages/runtime`: validation, policy, auth, retries, idempotency, and execution;
-- `packages/mcp-runtime`: generated MCP serving path;
-- `packages/certification` and `packages/simulator`: assurance gates; and
-- `packages/cli`: command orchestration over the libraries above.
-
-## Documentation
-
-- [Documentation site](https://vamsiramakrishnan.github.io/anvil/)
-- [Install Anvil](apps/docs/src/content/docs/cookbooks/install-anvil.md)
-- [Quickstart](apps/docs/src/content/docs/start/quickstart.md)
-- [Manifest](docs/MANIFEST.md)
-- [Client SDKs](docs/client-sdks.md)
-- [CI](docs/CI.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Product boundary](docs/PRODUCT_BOUNDARY.md)
-- [Command reference](skills/anvil/reference/commands.md)
-
-The documentation site also publishes [`llms.txt`](https://vamsiramakrishnan.github.io/anvil/llms.txt) and [`llms-full.txt`](https://vamsiramakrishnan.github.io/anvil/llms-full.txt).
-
-## License
-
-Apache-2.0.
+Apache-2.0. See [LICENSE](LICENSE).
