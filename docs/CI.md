@@ -1,11 +1,11 @@
 # Run Anvil in CI
 
-A good Anvil pipeline automates reproducible checks and preserves human
-decisions. It should never approve uncertain operations merely to make the
-build green.
+Run candidate generation, review, assurance, and release planning as separate
+stages. Preserve the bundle hash and each stage's evidence so a later check
+cannot be mistaken for approval of different bytes.
 
-This guide separates candidate generation, review, assurance, and release
-planning so the same bundle hash moves through every gate.
+Keep uncertain operations pending review. CI should report a failed gate and
+its diagnostic rather than approve an operation to make the pipeline pass.
 
 ## Recommended stages
 
