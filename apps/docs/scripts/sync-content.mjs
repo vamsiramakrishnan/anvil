@@ -37,6 +37,7 @@ const SYNCED_SECTIONS = ["concepts", "guides", "design", "reference"];
 
 /** Curated source → destination map. Order drives the sidebar. */
 const PAGES = [
+  { src: "docs/README.md", dest: "guides/workflows.md", order: 0, title: "Choose a workflow" },
   { src: "docs/ARCHITECTURE.md", dest: "concepts/architecture.md", order: 1 },
   { src: "docs/PRODUCT_BOUNDARY.md", dest: "concepts/product-boundary.md", order: 2 },
   { src: "docs/mechanisms.md", dest: "concepts/mechanisms.md", order: 3 },

@@ -1,9 +1,12 @@
 # Build a legacy inventory
 
-Use `anvil legacy inventory` when no useful API contract exists and the best
-available evidence is an offline application-server, .NET, or messaging export.
-The command produces a deterministic inventory and a set of technical
-invocation candidates. It never invokes the estate.
+Use legacy inventory to extract technical evidence from captured application,
+server, and broker configuration. The result helps identify capabilities and
+missing facts before proposing an integration.
+
+Inventory does not establish business meaning or executable access. Continue
+through review and a [supported runtime bridge](legacy-runtime-bridges.md)
+when the goal is to invoke the capability.
 
 ## Before you begin
 

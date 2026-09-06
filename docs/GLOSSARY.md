@@ -1,11 +1,8 @@
 # Glossary
 
-Anvil's vocabulary, defined once. The docs site auto-links the first mention of
-each term on every synced page back to its entry here, so a definition is always
-one hover (or one click) away. Every entry below leads with a plain-language
-summary, then the precise detail. Definitions are grounded in the code and
-design docs — `packages/air/src/schema.ts`, `ARCHITECTURE.md`, `mechanisms.md`,
-and `design/hooks-and-plugins.md` — not in aspiration.
+Definitions used by the CLI, generated artifacts, and documentation. Each term
+names an implementation concept or evidence category. Follow the linked guide
+for the workflow and the conditions under which its result is valid.
 
 ## AIR
 

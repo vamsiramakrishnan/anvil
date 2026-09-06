@@ -1,13 +1,11 @@
 # Architecture
 
-Anvil is a compiler with a thin generated runtime. Its primary path captures an
-API source, builds one canonical contract, and projects that contract into a
-CLI, an MCP server, a skill, hooks, tests, and deployment inputs. A separate
-legacy path inventories offline technical evidence and produces reviewed,
-non-executable capability bindings when no useful API contract exists.
+Anvil captures source contracts, combines them with reviewed policy, and
+compiles AIR into CLI, MCP, SDK, and supporting artifacts. This page maps those
+stages to packages and explains where validation and execution occur.
 
-This page describes the implementation architecture. For ownership and
-non-goals, read [Product boundary](PRODUCT_BOUNDARY.md).
+Start with [the product boundary](PRODUCT_BOUNDARY.md) to distinguish contract
+compilation, offline legacy evidence, and runnable bridge support.
 
 ## Design invariants
 

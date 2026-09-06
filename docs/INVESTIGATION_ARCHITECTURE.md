@@ -1,26 +1,12 @@
 # The case-based investigation framework
 
-This document describes the **case** subsystem (`packages/refinement/src/case/`):
-the part of Anvil that lets a coding agent (Claude Code, Codex, a human) do
-the one thing a deterministic pass cannot — go read the repository and find the
-truth a spec omits — without letting that agent become an unaccountable oracle.
+The case subsystem gives a coding agent a bounded investigation and accepts
+structured evidence and proposals in return. Anvil owns case identity, allowed
+mutations, evidence validation, reconciliation, and application.
 
-It documents the **target design**. Some of it is implemented today; where the
-current code is being hardened toward a stricter shape, this document describes
-the target and says so. The rule that governs every decision here:
-
-> A coding agent owns investigation, navigation, evidence-discovery, synthesis,
-> and critique. Anvil owns case identity, the semantic target, evidence
-> admissibility, mutation boundaries, runtime validation, reconciliation, eval
-> delta, and application. **An agent is never trusted to define or widen the
-> boundary of its own investigation.**
-
-The refinement loop already knows how to *detect* a deficiency, *validate* a
-proposal against a skill contract, *measure* it against evals, and *reconcile*
-it under the asymmetric-trust rule. What it could not do was the messy middle:
-turn "this field has no description" into a grounded, sourced answer. The case
-framework is that middle, boxed so its output re-enters the existing rails
-unchanged.
+This page contains target design as well as implementation details. Use the
+[refinement guide](refinement-sdk.md) for the current operating path. A proposal
+must pass Anvil's checks even when its author is a capable model or a human.
 
 ## 1. What a case is
 
@@ -189,7 +175,7 @@ alignment — it is refused, because a coerced target is exactly the failure mod
 
 ## 5. Evidence freezing
 
-Evidence is the load-bearing input to every proposal, so the agent is not
+Evidence is the required input to every proposal, so the agent is not
 allowed to *assert* evidence — only to *point at a source*, which Anvil then
 reads and freezes.
 

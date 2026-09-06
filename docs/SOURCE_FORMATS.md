@@ -1,20 +1,12 @@
 # Source format support
 
-“Supported” can mean four different things: Anvil can parse an input, capture
-its local source graph, lower it into AIR, or execute the resulting operation.
-These capabilities are listed separately below.
+Check support at four stages: parsing, local source capture, lowering into
+AIR, and execution of the resulting operation. Passing one stage does not
+establish support for the next.
 
-For example, Anvil can parse proto3 and generate aligned surfaces from any
-`.proto` file. Whether it can also *execute* those operations depends on what
-the file declares. A method carrying `google.api.http` names the HTTP route a
-gateway serves, so Anvil calls that route directly and the operation is
-wire-executable with nothing further to configure. A method with no annotation
-leaves Anvil with only gRPC's own coordinate, which a native call would reach
-over HTTP/2 with length-prefixed protobuf — so the bundle needs a declared JSON
-transcoder before that operation becomes wire-executable.
-
-Use this page to choose the right entrypoint and understand what must be
-reviewed after compilation.
+For example, proto3 parsing can produce aligned artifacts while execution
+still needs an HTTP annotation or a declared JSON transcoder. Use the tables
+below to identify the adapter, required configuration, and refusal boundary.
 
 ## Support matrix
 

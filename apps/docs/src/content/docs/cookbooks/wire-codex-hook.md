@@ -10,10 +10,10 @@ through a `PreToolUse` hook — model-confirm mutations denied until
 `confirm: true`, human-approval operations blocked fail-closed, and the trust
 prompt reviewed deliberately rather than skipped.
 
-Codex's hook contract is a near-clone of Claude Code's, so the generated hook
-reuses the same decision core (`plugin/hookcore.mjs`) behind a Codex-specific
-shim (`plugin/codex/hook.mjs`). What differs is what Codex lets a hook *say* —
-and that difference matters for safety, so read step 4 before relying on it.
+The generated Codex shim (`plugin/codex/hook.mjs`) calls the shared decision
+core (`plugin/hookcore.mjs`). Its output follows the Codex-specific contract.
+Read the deny-only behavior below and test it with the installed host version
+before relying on a permission flow.
 
 :::note[Before you start]
 You need Anvil built from source (see [Install Anvil](/anvil/cookbooks/install-anvil/))
@@ -23,7 +23,8 @@ and Codex installed. The commands below use the repo's payments example.
 ## 1. Compile the bundle
 
 ```bash
-anvil compile openapi.yaml --manifest anvil.yaml --out generated/payments
+anvil compile examples/payments/openapi.yaml \
+  --manifest examples/payments/anvil.yaml --service payments --out generated/payments
 ```
 
 The bundle contains `plugin/codex/hooks.json`, `plugin/codex/hook.mjs`, and a
@@ -78,7 +79,7 @@ at all:
   `confirm: true`; the reason names the flag.
 - **Human-approval operation** → **also `deny`, fail-closed.** Codex cannot
   prompt a human from a PreToolUse hook, and the model must never self-approve,
-  so the only honest enforcement is to block the tool here — even when the
+ so the shim blocks the tool here — even when the
   model supplies `confirm: true`. These operations are therefore *not runnable
   autonomously in Codex*. To gate them interactively, use Codex's own approval
   policy / `PermissionRequest` hook — that is the mechanism designed for user
@@ -122,7 +123,7 @@ both escalate to a real prompt).
 - An org policy of `allow_managed_hooks_only = true` silently drops this hook.
   The MCP server's runtime still refuses unsafe calls regardless — the hook is
   the outer, advisory check, not the contract.
-- The output shape mirrors Claude's `hookSpecificOutput`. If your installed
+- The shim emits the documented `hookSpecificOutput` envelope. If your installed
   Codex build documents different PreToolUse field names, adjust
   `plugin/codex/hook.mjs` against the current Codex hooks reference — the
   decision logic in `hookcore.mjs` stays the same.

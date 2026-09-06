@@ -100,7 +100,7 @@ Prefer the source operation id when it is stable and unique.
 | `none` | Repetition may duplicate the effect | Default for an unproven mutation |
 
 For `required_request_key`, declare both the location and its exact source
-name:
+    name:
 
 ```yaml
 idempotency:

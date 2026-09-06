@@ -1,4 +1,4 @@
-# Anvil — agent operating guide (Codex / AGENTS.md)
+# Working on Anvil
 
 Anvil is an agent toolchain compiler: it turns API specifications into aligned
 CLI + MCP + skill + client-SDK artifacts from one model (AIR). This file is the
@@ -7,18 +7,19 @@ runtime-native entry point for coding agents operating this repository.
 ## Operate Anvil through its own skill
 The canonical operating manual is a progressive-disclosure skill:
 **`skills/anvil/SKILL.md`** (with `reference/` and `evals/`). Read it before
-driving Anvil. It is generated from Anvil's own command registry, so it never
-drifts from the CLI. Regenerate it with `anvil skill skills/anvil`.
+driving Anvil. It is generated from the command registry. Regenerate it with
+`anvil skill skills/anvil` after command changes, and check the generated diff.
 
-## The loop (harness)
+## Inspect a local bundle
 1. `pnpm build` then `node packages/cli/dist/bin-anvil.js --help`.
 2. `anvil compile <spec> --manifest <manifest> --out <dir>`.
 3. `anvil inspect <dir>` and `anvil lint <dir>` — read the safety posture.
-4. `anvil distill <dir>` — reduce to the eigenbasis; `--as-enrich-plan` targets
+4. `anvil distill <dir>` — identify the minimal capability basis; `--as-enrich-plan` targets
    the residue. Enrich unsafe/uncertain operations via a manifest, or drive it
    with `anvil enrich --plan` (see `skills/anvil/reference/workflow.md`).
 5. `anvil approve <dir> <operation-id...>` — only after inspecting risk.
-6. `anvil package skill <dir>` / `anvil deploy cloud-run <dir> --env prod`.
+6. Package the reviewed bundle with `anvil package skill <dir>`. Deployment is
+ a separate operation: follow the target guide and the user's authorization.
 
 ## Rules
 - Only approved operations are ever exposed. Never approve what you have not inspected.
@@ -36,4 +37,6 @@ drifts from the CLI. Regenerate it with `anvil skill skills/anvil`.
 - `packages/cli` — the `anvil` command + the shared tool-CLI engine.
 - `examples/payments` — the reference spec + manifest.
 
-Run the tests with `pnpm test`.
+Install with `pnpm install`. Run `pnpm build`, `pnpm typecheck`, and `pnpm test`
+for implementation changes. For documentation changes, run the docs content
+check and production site build. Do not log or echo credentials.
