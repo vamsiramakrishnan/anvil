@@ -113,6 +113,7 @@ not infer new ones, certify the bundle, publish it, or deploy it.
 | Check generated artifacts | `anvil certify` | Agreement with AIR |
 | Exercise the MCP server | `anvil selftest` | Local transport and refusal checks |
 | Compare surfaces | `anvil conformance` | CLI, MCP, and skill consistency |
+| Find failing call sequences | `anvil fuzz` | Stateful properties, shrinking, and exact replay |
 | Exercise policy scenarios | `anvil simulate` | Scenario results |
 | Prepare release | `anvil publish` | Operator plan; no deployment performed |
 

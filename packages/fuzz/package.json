@@ -1,0 +1,36 @@
+{
+  "name": "@anvil/fuzz",
+  "version": "0.1.0",
+  "description": "Stateful, cross-surface testing with replay and minimized counterexamples. Independent of AIR and Anvil runtimes.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.17"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/fuzz/src",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "fast-check": "^4.4.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

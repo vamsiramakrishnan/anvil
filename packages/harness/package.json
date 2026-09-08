@@ -24,6 +24,7 @@
   "dependencies": {
     "@anvil/air": "workspace:*",
     "@anvil/compiler": "workspace:*",
+    "@anvil/fuzz": "workspace:*",
     "@anvil/generators": "workspace:*",
     "@anvil/mcp-runtime": "workspace:*",
     "@anvil/refinement": "workspace:*",

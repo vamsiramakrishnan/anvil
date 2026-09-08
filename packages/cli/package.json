@@ -32,6 +32,7 @@
     "@anvil/certification": "workspace:*",
     "@anvil/compiler": "workspace:*",
     "@anvil/console": "workspace:*",
+    "@anvil/fuzz": "workspace:*",
     "@anvil/generators": "workspace:*",
     "@anvil/harness": "workspace:*",
     "@anvil/legacy-bridge": "workspace:*",

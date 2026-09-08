@@ -981,6 +981,30 @@ Options:
 - `--live <config>` — probe a real deployed MCP endpoint named in this JSON config
 - `--json` — emit the full report as JSON
 
+### `anvil fuzz`  *(mutates)*
+`anvil fuzz [options] [dir]`
+
+Find, shrink, and replay failures across generated tool surfaces.
+
+Run seeded campaigns against isolated loopback fixtures. Contract mode checks AIR/wire consistency; the payments example uses an independent stateful ledger. Writes a private report and exact replay under --out. Exit 0 means all evaluated checks passed; 1 means a semantic failure; 2 means unsupported or inconclusive coverage. A passing campaign is bounded test evidence, not release certification. --agent-config runs an explicitly configured NDJSON harness bridge against the payment task and records actual tool calls.
+
+Options:
+- `--example <name>` — generate the owned payments fixture bundle
+- `--fixture <name>` — contract or payments
+- `--surfaces <list>` — comma-separated mcp,cli,cli-mcp,python (agent mode: one surface)
+- `--seed <n>` — deterministic generation seed
+- `--runs <n>` — generated scenarios, excluding shrinking
+- `--budget-ms <n>` — campaign or agent time budget
+- `--timeout-ms <n>` — per driver open/call deadline
+- `--out <dir>` — root for unique report directories
+- `--replay <file>` — execute an exact recorded replay JSON
+- `--against-current` — acknowledge changed bundle/toolchain hashes when replaying a repair
+- `--agent-config <file>` — explicit process harness configuration; payments fixture only
+- `--case <dir>` — attach report evidence to an existing case using its admissibility policy
+- `--predicate <name>` — explicit claim predicate for --case
+- `--value <json>` — explicit claim value for --case
+- `--json` — emit the full report and artifact paths
+
 ### `anvil observe`
 `anvil observe [options] <dir>`
 
