@@ -1,8 +1,22 @@
 # Review console
 
-Use `anvil console` to inspect compiled bundles, review pending decisions,
-and examine the evidence associated with them. The console presents the same
-workspace state used by the CLI.
+Use `anvil console` to review integrations, prepare requests, inspect generated
+clients, compare versions, and check release evidence. It reads the same bundle
+files as the CLI. Decisions use the same approval functions.
+
+```bash
+anvil console ./generated --open
+```
+
+The workspace lists bundles in a searchable table. Filter by review work,
+blocked operations, or missing benchmarks. Sort by review work or bundle name.
+Operation-review counts exclude refinement packs; a pack can hold several
+refinements or already have receipts. Malformed bundles appear as individual
+errors while healthy bundles remain available.
+
+Open a bundle to use its navigation rail. `Ctrl+K` / `⌘K` finds bundles and views.
+Selected operations, files, and comparison pairs have copyable URL coordinates.
+Refresh controls re-read disk after CLI changes.
 
 Review the affected operation or capability before approving it. A successful
 UI action does not establish that the deployed upstream integration works.
@@ -58,7 +72,7 @@ The full contract is the comment block at the top of
 socket, and the mutation gate deletes the token, origin, and path checks to
 prove those tests notice.
 
-## The three views
+## Review views
 
 **Decision queue** — every grey decision in one list, six kinds: an operation
 not yet approved, a capability born `proposed`, a workflow the planner refuses,
@@ -89,6 +103,49 @@ supersession, and drift against another bundle in the workspace.
 hubs with the mis-routed intents verbatim. A cluster exports a harness case
 file; a submission imports back through the scored admission gate, and a
 refusal shows the routing numbers, not only prose.
+
+## Prepare an integration request
+
+The **Request builder** opens from any operation in the inspector. It shows
+inputs, output schema, authentication scopes, confirmation, idempotency and
+retry requirements. Input keys and CLI flags come from AIR's shared projection,
+including names that collide with Anvil's safety controls.
+
+Enter JSON arguments or insert required-field placeholders. Copy a POSIX-shell
+command ending in `--dry-run`, or a JSON-RPC `tools/call` request. The console
+never executes either. Required-field placeholders are a starting point;
+Anvil's runtime still validates inputs and policy when the command runs.
+Confirmation is never prefilled as true. Arguments stay in page memory and are
+cleared when the selected operation or bundle changes.
+
+An MCP request is a normal invocation when executed by a client. It has no
+implicit dry-run protection. The editor labels that distinction. Operations
+awaiting approval or superseded by a workflow are marked unavailable.
+
+## Compare versions and inspect client artifacts
+
+**Compare bundles** takes the current bundle as the baseline and a selected
+bundle as the candidate. It uses `diffContracts`, orders changes by severity,
+and shows the before/after facts and affected capabilities. Swap the comparison
+direction, filter by severity or operation, or download the comparison as JSON.
+
+**Generated files** lists the current generator-owned files and named evidence
+records. Filter by surface (`sdk`, `mcp`, `skill`, and others), inspect a file,
+or copy/download its bytes. Only expected generator paths and named reports
+are accessible. Arbitrary files such as `.env` are excluded; symlinks are
+refused. Previews stop at 256 KiB and cannot be downloaded as incomplete files.
+Generated HTML and JavaScript are displayed as text.
+
+## Check assurance
+
+**Assurance** runs the existing deterministic `certifyBundle` checks over the
+current bytes. It separately verifies recorded certification and reads the
+selftest, conformance and simulation evidence. A current failing report remains
+a failure; a passing report for different bytes remains stale.
+
+Filter static failures, inspect each gate, download the report, and copy the
+commands that regenerate evidence. Reading this page neither records a new
+certification nor runs executable tests. It does not claim deployment readiness.
 
 ## Running it
 
