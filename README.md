@@ -156,6 +156,17 @@ particular, generating an idempotency key does not prove the upstream service
 honors it. Record what the upstream contract establishes and keep uncertain
 mutations unavailable until reviewed.
 
+## Review integrations in the console
+
+```bash
+pnpm anvil console generated --open
+```
+
+Search bundles, review approvals, prepare CLI dry runs and MCP requests,
+inspect generated SDKs, compare contract versions, and check assurance evidence.
+The console uses the same AIR projections and review gates as the CLI.
+[Console guide](docs/console.md).
+
 ## Documentation
 
 [Install](apps/docs/src/content/docs/cookbooks/install-anvil.md) ·

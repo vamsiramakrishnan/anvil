@@ -166,6 +166,7 @@ describe("the console contract parses what the library produces", () => {
   it("GET /api/workspace", () => {
     const view: ConsoleResponse<"workspace"> = {
       root,
+      issues: [],
       bundles: [
         {
           id: "payments",

@@ -79,18 +79,19 @@ test("1. the workspace lists the bundle with the counts on disk", async ({ page 
   expect(approved).toBe(0);
 
   await page.goto(`${state.url}/#/`);
-  const card = page.locator("a.card").filter({ hasText: document.service.id });
-  await expect(card).toBeVisible();
-  await expect(card).toContainText(state.bundleDir);
-  const count = (label: string) =>
-    card.locator(".count").filter({ hasText: label }).locator("strong");
-  // pending = review_required + generated operations + proposed capabilities + packs (one)
-  await expect(count("awaiting decision")).toHaveText(String(review + generated + proposed + 1));
-  await expect(count("approved ops")).toHaveText(String(approved));
-  await expect(count("blocked")).toHaveText(String(blocked));
-  await expect(count("proposed caps")).toHaveText(String(proposed));
-  await expect(count("packs")).toHaveText("1");
-  await expect(card).toHaveAttribute("href", `#/b/${state.bundleId}/queue`);
+  const row = page.locator(".inventory-table tbody tr").filter({ hasText: document.service.id });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText(state.bundleId);
+  const cells = row.locator("td");
+  await expect(cells.nth(2)).toHaveText(String(approved));
+  await expect(cells.nth(3)).toHaveText(String(review + generated));
+  await expect(cells.nth(4)).toHaveText(String(blocked));
+  await expect(cells.nth(5)).toHaveText(String(proposed));
+  await expect(cells.nth(6)).toContainText("1 refinement packs");
+  await expect(row.locator("a.service-link")).toHaveAttribute(
+    "href",
+    `#/b/${state.bundleId}/queue`,
+  );
 });
 
 test("3. a non-idempotent financial mutation is barred from every bulk policy, and the row says why", async ({
@@ -275,7 +276,7 @@ test("6. the browser cannot drive a mutation without the token, and another orig
   request,
 }) => {
   await page.goto(`${state.url}/#/`);
-  await expect(page.getByRole("heading", { name: "workspace" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bundles", exact: true })).toBeVisible();
 
   // The token is in the page — measured by length only, never read into a log.
   const tokenLength = await page.evaluate(

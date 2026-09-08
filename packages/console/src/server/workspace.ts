@@ -61,14 +61,14 @@ export interface DiscoveredPack {
 }
 
 /** Every valid pack beneath the root whose service matches the bundle's. */
-export function discoverPacks(root: string, serviceId: string): DiscoveredPack[] {
+export function discoverPacks(root: string, serviceId?: string): DiscoveredPack[] {
   const found: DiscoveredPack[] = [];
   const walk = (dir: string, depth: number): void => {
     if (depth > PACK_MAX_DEPTH) return;
     if (existsSync(join(dir, "pack.json"))) {
       try {
         const pack = readPackDir(dir);
-        if (pack.service.id === serviceId) {
+        if (serviceId === undefined || pack.service.id === serviceId) {
           found.push({ dir, pack, hash: refinementPackHash(pack) });
         }
       } catch {

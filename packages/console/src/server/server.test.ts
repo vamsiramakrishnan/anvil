@@ -95,7 +95,13 @@ function pathFor(route: ConsoleRoute, params: Record<string, string>): string {
 
 describe("every route in the contract is registered", () => {
   it("answers each route with something other than the unknown-route 404", async () => {
-    const params = { id: ws.bundleId, capId: "x", hash: "0".repeat(64), clusterId: "cc_none" };
+    const params = {
+      operationId: ws.air.operations[0]!.id,
+      id: ws.bundleId,
+      capId: "x",
+      hash: "0".repeat(64),
+      clusterId: "cc_none",
+    };
     for (const key of Object.keys(CONSOLE_ROUTES) as ConsoleRoute[]) {
       const route = CONSOLE_ROUTES[key];
       const path = pathFor(key, params) + (key === "drift" ? `?against=${ws.bundleId}` : "");

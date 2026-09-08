@@ -131,7 +131,9 @@ export function InspectView({ api, bundleId, data, against }: Props) {
                 {operations.map((op) => (
                   <tr key={op.id}>
                     <td>
-                      <code>{op.canonicalName}</code>
+                      <a href={href(bundleId, "workbench", { operation: op.id })}>
+                        <code>{op.canonicalName}</code>
+                      </a>
                       <div className="row-id">{op.id}</div>
                     </td>
                     <td>

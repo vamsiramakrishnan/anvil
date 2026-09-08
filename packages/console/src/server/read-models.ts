@@ -1,6 +1,14 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AirDocument, type Operation, planWorkflowSurface } from "@anvil/air";
+import {
+  type AirDocument,
+  agentPropKey,
+  type Operation,
+  operationBusinessInputCliFlag,
+  operationInputSchema,
+  operationSafetyInputKeys,
+  planWorkflowSurface,
+} from "@anvil/air";
 import { capabilityDisclosureBudget, diffContracts } from "@anvil/compiler";
 import { bundleHash, loadBundleAir, readBundleDir } from "@anvil/generators";
 import {
@@ -21,6 +29,7 @@ import {
   type Workspace,
   zGroupRoutingDelta,
 } from "../contract.js";
+import { notFound } from "./errors.js";
 import {
   type DiscoveredPack,
   discoverBundles,
@@ -56,26 +65,37 @@ function countBy<T extends string>(values: readonly T[]): Partial<Record<T, numb
 }
 
 export function workspaceView(root: string): Workspace {
+  const issues: Workspace["issues"] = [];
+  const packs = discoverPacks(root);
   return {
+    issues,
     root,
-    bundles: discoverBundles(root).map((bundle) => {
-      const { air, dir } = loadBundle(bundle);
-      return {
-        id: bundle.id,
-        path: dir,
-        service: { id: air.service.id, version: air.service.version },
-        sourceKind: air.service.source.kind,
-        ...(air.service.source.pathGrammar
-          ? { pathGrammar: air.service.source.pathGrammar.classification }
-          : {}),
-        counts: {
-          operations: countBy(air.operations.map((op) => op.state)),
-          capabilities: countBy(air.capabilities.map((cap) => cap.lifecycle)),
-          workflows: countBy(air.workflows.map((wf) => wf.state)),
-        },
-        hasBenchmark: existsSync(join(dir, "benchmark.report.json")),
-        packs: discoverPacks(root, air.service.id).length,
-      };
+    bundles: discoverBundles(root).flatMap((bundle) => {
+      try {
+        const { air, dir } = loadBundle(bundle);
+        return {
+          id: bundle.id,
+          path: dir,
+          service: { id: air.service.id, version: air.service.version },
+          sourceKind: air.service.source.kind,
+          ...(air.service.source.pathGrammar
+            ? { pathGrammar: air.service.source.pathGrammar.classification }
+            : {}),
+          counts: {
+            operations: countBy(air.operations.map((op) => op.state)),
+            capabilities: countBy(air.capabilities.map((cap) => cap.lifecycle)),
+            workflows: countBy(air.workflows.map((wf) => wf.state)),
+          },
+          hasBenchmark: existsSync(join(dir, "benchmark.report.json")),
+          packs: packs.filter((pack) => pack.pack.service.id === air.service.id).length,
+        };
+      } catch (error) {
+        issues.push({
+          id: bundle.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+      }
     }),
   };
 }
@@ -372,4 +392,37 @@ export function driftView(root: string, id: string, against: string): DriftView 
   const { air } = loadBundle(findBundle(root, id));
   const other = loadBundle(findBundle(root, against)).air;
   return { bundleId: id, against, items: diffContracts(air, other) };
+}
+
+/** Full input details are loaded only when an operation is selected. */
+export function operationView(root: string, id: string, operationId: string) {
+  const { air } = loadBundle(findBundle(root, id));
+  const operation = air.operations.find((op) => op.id === operationId);
+  if (!operation) throw notFound(`No operation '${operationId}' in bundle '${id}'.`);
+  const cliFlags: Record<string, string> = {};
+  for (const param of operation.input.params) {
+    const flag = operationBusinessInputCliFlag(operation, param.in, param.name);
+    if (flag) cliFlags[agentPropKey(param)] = flag;
+  }
+  if (operation.input.body?.projection === "fields") {
+    for (const field of operation.input.body.fields) {
+      const flag = operationBusinessInputCliFlag(operation, "body", field.name);
+      if (flag) cliFlags[agentPropKey(field)] = flag;
+    }
+  } else if (operation.input.body) cliFlags.body = "--body";
+  const schema = operationInputSchema(operation);
+  const safety = operationSafetyInputKeys(operation);
+  const properties = schema.properties as Record<string, unknown> | undefined;
+  if (operation.confirmation.required && properties?.[safety.confirm])
+    cliFlags[safety.confirm] = "--confirm";
+  if (!Object.hasOwn(cliFlags, safety.idempotencyKey) && properties?.[safety.idempotencyKey])
+    cliFlags[safety.idempotencyKey] = "--idempotency-key";
+  const { plan } = servedSurface(air);
+  return {
+    operation,
+    inputSchema: schema,
+    cliFlags,
+    confirmationKey: safety.confirm,
+    served: operation.state === "approved" && !plan.superseded.has(operation.id),
+  };
 }
