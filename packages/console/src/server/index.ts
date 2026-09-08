@@ -6,6 +6,7 @@ import { createRequestListener, type Handlers } from "./http.js";
 import type { Request } from "./mutations.js";
 import * as mutations from "./mutations.js";
 import * as views from "./read-models.js";
+import * as workbench from "./workbench.js";
 import { assertDirectory } from "./workspace.js";
 
 /**
@@ -85,6 +86,21 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
   const origin = () => `http://${CONSOLE_HOST}:${boundPort}`;
 
   const handlers: Handlers = {
+    operation: ({ params }) =>
+      workbench.operationView(root, param(params, "id"), param(params, "opId")),
+    preview: ({ params, body }) =>
+      workbench.previewOperation(
+        root,
+        param(params, "id"),
+        param(params, "opId"),
+        body as Request<"preview">,
+      ),
+    evidence: ({ params }) => workbench.evidenceView(root, param(params, "id")),
+    artifacts: ({ params }) => workbench.artifactsView(root, param(params, "id")),
+    artifact: ({ params, query }) =>
+      workbench.artifactView(root, param(params, "id"), query.get("path") ?? ""),
+    regenerate: ({ params, body }) =>
+      workbench.regenerateBundle(root, param(params, "id"), body as Request<"regenerate">),
     workspace: () => views.workspaceView(root),
     bundle: ({ params }) => views.bundleView(root, param(params, "id")),
     queue: ({ params }) => views.queueView(root, param(params, "id")),

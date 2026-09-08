@@ -28,6 +28,16 @@ import {
   zRefinementTask,
 } from "@anvil/refinement";
 import { z } from "zod";
+import {
+  zArtifact,
+  zArtifactQuery,
+  zArtifacts,
+  zEvidenceView,
+  zOperationDetail,
+  zPreview,
+  zPreviewRequest,
+  zRegenerateRequest,
+} from "./workbench-contract.js";
 
 /**
  * The console's HTTP API contract.
@@ -259,6 +269,7 @@ export const zWorkspaceBundle = z.object({
     capabilities: zCapabilityLifecycleCounts,
     workflows: zOperationStateCounts,
   }),
+  pendingDecisions: z.number().int().nonnegative(),
   hasBenchmark: z.boolean(),
   /** Refinement pack directories found for this bundle. */
   packs: z.number().int().nonnegative(),
@@ -267,6 +278,7 @@ export const zWorkspaceBundle = z.object({
 export const zWorkspace = z.object({
   root: z.string(),
   bundles: z.array(zWorkspaceBundle),
+  problems: z.array(z.object({ id: z.string(), message: z.string() })).default([]),
 });
 export type Workspace = z.infer<typeof zWorkspace>;
 
@@ -580,12 +592,9 @@ export const zApplyPackRequest = z.object({
 });
 
 /**
- * `applyPackToBundle` writes AIR only, and so does the console: exactly as
- * `anvil refine apply-pack` ends with "Regenerate the bundle with `anvil
- * compile`", the console has no reproject-after-apply route by design, and
- * its post-apply state tells the reviewer to recompile. `reprojection` is
- * therefore absent today; it is kept for a server that deliberately performs
- * one, never inferred.
+ * `applyPackToBundle` writes AIR only. The console offers regeneration as a
+ * separate action bound to the viewed bundle digest. Applying alone does not
+ * regenerate projections, so this response carries no reprojection result.
  */
 export const zApplyPackResponse = z.object({
   airPath: z.string(),
@@ -655,6 +664,45 @@ export const zImportTaskResponse = z.object({
  * read-only projection.
  */
 export const CONSOLE_ROUTES = {
+  operation: {
+    method: "GET",
+    path: "/api/bundles/:id/operations/:opId",
+    mutates: false,
+    response: zOperationDetail,
+  },
+  preview: {
+    method: "POST",
+    path: "/api/bundles/:id/operations/:opId/preview",
+    mutates: true,
+    request: zPreviewRequest,
+    response: zPreview,
+  },
+  evidence: {
+    method: "GET",
+    path: "/api/bundles/:id/evidence",
+    mutates: false,
+    response: zEvidenceView,
+  },
+  artifacts: {
+    method: "GET",
+    path: "/api/bundles/:id/artifacts",
+    mutates: false,
+    response: zArtifacts,
+  },
+  artifact: {
+    method: "GET",
+    path: "/api/bundles/:id/artifact",
+    mutates: false,
+    query: zArtifactQuery,
+    response: zArtifact,
+  },
+  regenerate: {
+    method: "POST",
+    path: "/api/bundles/:id/regenerate",
+    mutates: true,
+    request: zRegenerateRequest,
+    response: zReprojection,
+  },
   workspace: { method: "GET", path: "/api/workspace", mutates: false, response: zWorkspace },
   bundle: {
     method: "GET",

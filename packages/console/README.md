@@ -37,7 +37,7 @@ deterministic refinement plan.
 ## Dependency direction
 
 `@anvil/cli` → `@anvil/console` → `air`, `compiler`, `generators`,
-`refinement` (the allow-list also admits `harness` and `system-pack`). The
+`refinement`, and `runtime` (offline request planning only; the allow-list also admits `harness` and `system-pack`). The
 console never imports the CLI; `anvil console` is a thin launcher. The
 boundaries ratchet (`packages/cli/src/boundaries.test.ts`) enforces this, and
 the console is listed as a build-time package so it can never reach the
@@ -53,7 +53,7 @@ against the contract before any library function runs. The full contract is
 the comment block at the top of `src/contract.ts` — it is the specification
 the server lane implements and the review reads against.
 
-## Three views
+## Review views
 
 - **Decision queue** — `GET /api/bundles/:id/queue`: every grey decision in one
   list, six kinds: an **operation** not yet approved, a **capability** born
@@ -84,8 +84,32 @@ The pack list (`GET /api/bundles/:id/packs`) names, per refinement, the
 receipt files under the pack's `receipts/` that bind a decision to it, and
 carries every receipt the pack holds — what `anvil refine apply-pack` loads.
 Applying a reviewed pack writes AIR only, exactly as the CLI does; the console
-then tells the reviewer to recompile, because it has no reproject-after-apply
-route by design.
+then directs the reviewer to **Evidence & artifacts** to regenerate projections
+from current AIR through `reprojectBundleAtomically`. This action checks the
+viewed bundle digest and retains the shared gateway-lineage refusal.
+
+## Workbench views
+
+- **Operation catalog**: paginated search, URL-encoded filters and selection,
+  full operation/schema inspection, and a request preview through `execute`
+  with `dryRun: true`. No working transport, credentials, observer, or ledger.
+- **Evidence & artifacts**: current static checks, recorded certification,
+  digest-bound executable evidence, generated text artifacts, and explicit
+  atomic regeneration after a refinement.
+- **Workspace**: search, pending-work filters, bundle switching, a keyboard
+  finder, source-command setup, and per-bundle parse failures.
+
+`workbench-contract.ts` contains browser-safe schemas derived from AIR and
+checked against owning library types. `server/workbench.ts` implements the
+six workbench routes. Preview and regeneration reject stale bundle digests.
+Artifact reads allow generator-owned paths and known evidence records only,
+reject symlinks, and cap each displayed file at 256 KiB.
+
+The typed request loader ignores late responses after navigation or a newer
+refresh. Request inputs are held only in component memory. Opening the
+catalog does not fetch benchmark and refinement-pack data.
+
+See [the console guide](../../docs/console.md) for workflows and limits.
 
 ## Layout
 

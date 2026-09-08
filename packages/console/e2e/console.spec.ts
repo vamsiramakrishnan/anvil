@@ -84,8 +84,14 @@ test("1. the workspace lists the bundle with the counts on disk", async ({ page 
   await expect(card).toContainText(state.bundleDir);
   const count = (label: string) =>
     card.locator(".count").filter({ hasText: label }).locator("strong");
-  // pending = review_required + generated operations + proposed capabilities + packs (one)
-  await expect(count("awaiting decision")).toHaveText(String(review + generated + proposed + 1));
+  const pack = JSON.parse(readFileSync(join(state.packDir, "pack.json"), "utf8"));
+  const pendingRefinements = pack.refinements.filter(
+    (r: { approval: { tier: string }; status: string }) =>
+      r.approval.tier === "review" && ["improved", "neutral"].includes(r.status),
+  ).length;
+  await expect(count("awaiting decision")).toHaveText(
+    String(review + generated + proposed + pendingRefinements),
+  );
   await expect(count("approved ops")).toHaveText(String(approved));
   await expect(count("blocked")).toHaveText(String(blocked));
   await expect(count("proposed caps")).toHaveText(String(proposed));
@@ -275,7 +281,7 @@ test("6. the browser cannot drive a mutation without the token, and another orig
   request,
 }) => {
   await page.goto(`${state.url}/#/`);
-  await expect(page.getByRole("heading", { name: "workspace" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "From contract to callable." })).toBeVisible();
 
   // The token is in the page — measured by length only, never read into a log.
   const tokenLength = await page.evaluate(
@@ -346,4 +352,75 @@ test("6. the browser cannot drive a mutation without the token, and another orig
   expect(preflight.status()).toBe(403);
   expect(preflight.headers()["access-control-allow-origin"]).toBeUndefined();
   expect(preflight.headers()["access-control-allow-methods"]).toBeUndefined();
+});
+
+test("8. catalog deep links preserve filters and preview an approved read without changing the bundle", async ({
+  page,
+}) => {
+  const before = readBundleDir(state.bundleDir);
+  const id = state.reviewReads[0];
+  await page.goto(
+    `${state.url}/#/b/${state.bundleId}/catalog?state=approved&op=${encodeURIComponent(id)}`,
+  );
+  await expect(page.getByRole("heading", { name: "Operation catalog" })).toBeVisible();
+  await expect(page.getByLabel("Operation state")).toHaveValue("approved");
+  await page.getByRole("button", { name: "Preview request", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("validation_error");
+  await page
+    .getByRole("textbox", { name: "Request inputs", exact: true })
+    .fill('{"payment_id":"pay_console_fixture"}');
+  await page.getByRole("button", { name: "Preview request", exact: true }).click();
+  await expect(page.getByText("Request plan · no upstream call", { exact: true })).toBeVisible();
+  await expect(page.locator("pre").filter({ hasText: '"method": "GET"' })).toContainText(
+    "/payments/pay_console_fixture",
+  );
+  await page.getByRole("textbox", { name: "Request inputs", exact: true }).fill("{}");
+  await expect(page.getByText("Request plan · no upstream call", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Schemas", exact: true }).click();
+  await expect(page.getByText("Input · shared CLI and MCP schema", { exact: true })).toBeVisible();
+  expect(readBundleDir(state.bundleDir)).toEqual(before);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(page.locator(".sidebar")).toHaveCSS("top", "0px");
+  await page.screenshot({ path: test.info().outputPath("catalog.png"), fullPage: true });
+});
+
+test("9. artifact source is displayed as text, and keyboard search opens a bundle", async ({
+  page,
+}) => {
+  await page.goto(`${state.url}/#/b/${state.bundleId}/evidence?file=skill%2FSKILL.md`);
+  await expect(
+    page.getByRole("heading", { name: "Evidence & artifacts", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".artifact-content pre")).toContainText("name:");
+  await expect(page.getByText("Executable evidence", { exact: true }).first()).toBeVisible();
+  await page.screenshot({ path: test.info().outputPath("evidence.png"), fullPage: true });
+  await page.getByRole("button", { name: "Find anything" }).click();
+  const dialog = page.getByRole("dialog", { name: "Find a bundle or view" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("searchbox").fill(state.bundleId);
+  await dialog.getByRole("searchbox").press("Enter");
+  await expect(page.getByRole("heading", { name: "Operation catalog" })).toBeVisible();
+  await page.getByRole("button", { name: "Skip to content" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("main")).toBeFocused();
+  await expect(page).toHaveURL(/\/catalog/);
+});
+
+test("10. workspace and request workbench fit a phone viewport in both themes", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${state.url}/#/`);
+  await expect(page.getByRole("heading", { name: "From contract to callable." })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: test.info().outputPath("workspace-mobile.png"), fullPage: true });
+  await page.getByRole("button", { name: /theme:/ }).click();
+  await page.getByRole("link", { name: "Explore operations →" }).click();
+  await expect(page.getByRole("heading", { name: "Operation catalog" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: test.info().outputPath("catalog-mobile.png"), fullPage: true });
 });

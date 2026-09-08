@@ -1402,6 +1402,36 @@
       "tests": [
         "packages/mcp-runtime/src/serve.test.ts"
       ]
+    },
+    {
+      "id": "console-workbench/preview-only",
+      "file": "packages/console/src/server/workbench.ts",
+      "control": "Console request previews must use the shared runtime dry-run path. Removing the flag must fail instead of silently attempting execution.",
+      "find": "      dryRun: true,",
+      "replace": "      dryRun: false,",
+      "tests": [
+        "packages/console/src/server/workbench.test.ts"
+      ]
+    },
+    {
+      "id": "console-workbench/stale-bundle",
+      "file": "packages/console/src/server/workbench.ts",
+      "control": "A preview or regeneration must refuse a bundle changed since it was reviewed. Removing the hash guard must be caught by stale request tests.",
+      "find": "  if (actual !== expected) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/console/src/server/workbench.test.ts"
+      ]
+    },
+    {
+      "id": "console-workbench/artifact-allowlist",
+      "file": "packages/console/src/server/workbench.ts",
+      "control": "Only generator-owned artifacts and known evidence records are exposed. Removing the allowlist must expose a private test file and fail.",
+      "find": "  if (!paths.includes(path))",
+      "replace": "  if (false)",
+      "tests": [
+        "packages/console/src/server/workbench.test.ts"
+      ]
     }
   ]
 }

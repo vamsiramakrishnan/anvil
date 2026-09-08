@@ -11,7 +11,7 @@ import type { ConsoleResponse } from "../contract.js";
 
 /* ------------------------------- routing --------------------------------- */
 
-export type View = "queue" | "inspect" | "confusion";
+export type View = "queue" | "inspect" | "confusion" | "catalog" | "evidence";
 
 export type Route =
   | { view: "workspace" }
@@ -19,13 +19,21 @@ export type Route =
 
 export function parseHash(hash: string): Route {
   const [path = "", search = ""] = hash.replace(/^#/, "").split("?");
-  const match = /^\/b\/([^/]+)\/(queue|inspect|confusion)$/.exec(path);
+  const match = /^\/b\/([^/]+)\/(queue|inspect|confusion|catalog|evidence)$/.exec(path);
   if (!match) return { view: "workspace" };
   return {
     view: match[2] as View,
-    bundleId: decodeURIComponent(match[1] ?? ""),
+    bundleId: decodeBundleId(match[1] ?? ""),
     query: new URLSearchParams(search),
   };
+}
+
+function decodeBundleId(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 export function href(bundleId: string, view: View, query?: Record<string, string>): string {
@@ -183,6 +191,7 @@ export function selectByPolicy(rows: readonly DecisionRow[], policy: Policy): De
 /* -------------------------------- keys ----------------------------------- */
 
 export const KEY_MAP: ReadonlyArray<readonly [string, string]> = [
+  ["Ctrl/Cmd + K", "find a bundle or view"],
   ["j / k", "next / previous row"],
   ["x", "select or deselect the row"],
   ["a", "approve the row (or focus what it still needs)"],

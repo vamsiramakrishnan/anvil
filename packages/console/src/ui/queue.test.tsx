@@ -128,7 +128,7 @@ describe("the decision queue", () => {
     expect(notice.textContent).toMatch(
       /applied rf_describe_sendReceipt → \/work\/estate\/payments\/air\.yaml/,
     );
-    expect(notice.textContent).toMatch(/does not reproject/);
+    expect(notice.textContent).toMatch(/Evidence & artifacts/);
     expect(notice.textContent).not.toMatch(/reprojected/);
     const pack = mock.state.bundles.payments?.packs[0];
     expect(
@@ -242,7 +242,7 @@ describe("the other views", () => {
 
   it("the workspace lists bundles with what awaits a decision", async () => {
     mount("#/");
-    const card = (await screen.findByText("payments")).closest("a");
+    const card = (await screen.findByRole("heading", { name: "payments" })).closest("a");
     expect(card?.textContent).toMatch(/awaiting decision/);
     expect(card?.getAttribute("href")).toBe("#/b/payments/queue");
   });

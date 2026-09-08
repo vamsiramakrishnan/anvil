@@ -45,9 +45,9 @@ function readReviewer(): string {
 const stale = (r: { reprojection: { stale: { records: string[]; targetFiles: string[] } } }) =>
   [...r.reprojection.stale.records, ...r.reprojection.stale.targetFiles].join(", ");
 
-/** What `anvil refine apply-pack` ends with; the console has no reproject route by design. */
+/** Applying a pack writes AIR; regeneration is a separate, explicit action. */
 const RECOMPILE_AFTER_APPLY =
-  "AIR was written; recompile the bundle (anvil compile) to regenerate its projections — the console does not reproject after a pack is applied";
+  "AIR was written; recompile the bundle (anvil compile) or open Evidence & artifacts to regenerate its projections.";
 
 type PackRow = Extract<DecisionRow, { kind: "pack" }>;
 

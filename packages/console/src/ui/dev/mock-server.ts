@@ -116,8 +116,40 @@ export function createMockConsole(
   };
 
   const handlers: { [R in ConsoleRoute]: Handler<R> } = {
+    operation: () => {
+      throw refuse(
+        409,
+        "console/refused",
+        "Request previews use real compiled bundles. Start anvil console <workspace>.",
+      );
+    },
+    preview: () => {
+      throw refuse(
+        409,
+        "console/refused",
+        "Request previews are unavailable in the fixture workspace.",
+      );
+    },
+    evidence: () => ({
+      bundleHash: "a".repeat(64),
+      staticStatus: "failed",
+      checks: [],
+      certification: {
+        valid: false,
+        detail: "Fixture data; run anvil console on compiled bundles to inspect evidence.",
+      },
+      execution: [],
+    }),
+    artifacts: () => ({ bundleHash: "a".repeat(64), files: [] }),
+    artifact: () => {
+      throw refuse(404, "console/not_found", "No artifacts in the fixture workspace.");
+    },
+    regenerate: () => {
+      throw refuse(409, "console/refused", "Regeneration requires a real compiled bundle.");
+    },
     workspace: () => ({
       root: state.root,
+      problems: [],
       bundles: Object.entries(state.bundles).map(([id, b]) => ({
         id,
         path: b.inspector.path,
@@ -129,6 +161,9 @@ export function createMockConsole(
           capabilities: countBy(b.inspector.capabilities.map((cap) => cap.lifecycle)),
           workflows: countBy(b.inspector.workflows.map((wf) => wf.state)),
         },
+        pendingDecisions: b.queue.items.filter(
+          (item) => ["operation", "capability", "pack"].includes(item.kind) && !item.blocking,
+        ).length,
         hasBenchmark: b.benchmark !== null,
         packs: b.packs.length,
       })),

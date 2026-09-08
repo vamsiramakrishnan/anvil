@@ -56,28 +56,44 @@ function countBy<T extends string>(values: readonly T[]): Partial<Record<T, numb
 }
 
 export function workspaceView(root: string): Workspace {
-  return {
-    root,
-    bundles: discoverBundles(root).map((bundle) => {
+  const problems: Workspace["problems"] = [];
+  const bundles = discoverBundles(root).flatMap((bundle) => {
+    try {
       const { air, dir } = loadBundle(bundle);
-      return {
-        id: bundle.id,
-        path: dir,
-        service: { id: air.service.id, version: air.service.version },
-        sourceKind: air.service.source.kind,
-        ...(air.service.source.pathGrammar
-          ? { pathGrammar: air.service.source.pathGrammar.classification }
-          : {}),
-        counts: {
-          operations: countBy(air.operations.map((op) => op.state)),
-          capabilities: countBy(air.capabilities.map((cap) => cap.lifecycle)),
-          workflows: countBy(air.workflows.map((wf) => wf.state)),
+      const packs = discoverPacks(root, air.service.id);
+      return [
+        {
+          id: bundle.id,
+          path: dir,
+          service: { id: air.service.id, version: air.service.version },
+          sourceKind: air.service.source.kind,
+          ...(air.service.source.pathGrammar
+            ? { pathGrammar: air.service.source.pathGrammar.classification }
+            : {}),
+          counts: {
+            operations: countBy(air.operations.map((op) => op.state)),
+            capabilities: countBy(air.capabilities.map((cap) => cap.lifecycle)),
+            workflows: countBy(air.workflows.map((wf) => wf.state)),
+          },
+          pendingDecisions:
+            air.operations.filter(
+              (op) => op.state === "generated" || op.state === "review_required",
+            ).length +
+            air.capabilities.filter((cap) => cap.lifecycle === "proposed").length +
+            packs.flatMap(packDecisions).length,
+          hasBenchmark: existsSync(join(dir, "benchmark.report.json")),
+          packs: packs.length,
         },
-        hasBenchmark: existsSync(join(dir, "benchmark.report.json")),
-        packs: discoverPacks(root, air.service.id).length,
-      };
-    }),
-  };
+      ];
+    } catch (error) {
+      problems.push({
+        id: bundle.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  });
+  return { root, bundles, problems };
 }
 
 function servedSurface(air: AirDocument) {

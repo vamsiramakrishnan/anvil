@@ -146,6 +146,14 @@ export function createConsoleApi(options: ConsoleApiOptions = {}) {
 
   return {
     workspace: () => call("workspace", {}),
+    operation: (id: string, opId: string) => call("operation", { id, opId }),
+    preview: (id: string, opId: string, body: ConsoleRequest<"preview">) =>
+      call("preview", { id, opId }, body),
+    evidence: (id: string) => call("evidence", { id }),
+    artifacts: (id: string) => call("artifacts", { id }),
+    artifact: (id: string, path: string) => call("artifact", { id }, undefined, { path }),
+    regenerate: (id: string, body: ConsoleRequest<"regenerate">) =>
+      call("regenerate", { id }, body),
     bundle: (id: string) => call("bundle", { id }),
     queue: (id: string) => call("queue", { id }),
     packs: (id: string) => call("packs", { id }),

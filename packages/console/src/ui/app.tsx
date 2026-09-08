@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { type ConsoleApi, type ConsoleApiError, toConsoleApiError } from "./api.js";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import type { ConsoleApi } from "./api.js";
 import { ErrorBox } from "./components.js";
+import { useLoad } from "./load.js";
 import {
   type Benchmark,
-  href,
   type Inspector,
   initialTheme,
   KEY_MAP,
@@ -14,7 +14,18 @@ import {
   THEME_KEY,
   type Theme,
 } from "./model.js";
+import { CommandPalette, Sidebar, VIEWS } from "./navigation.js";
+
+const CatalogView = lazy(() =>
+  import("./views/catalog.js").then((module) => ({ default: module.CatalogView })),
+);
+
 import { ConfusionView } from "./views/confusion.js";
+
+const EvidenceView = lazy(() =>
+  import("./views/evidence.js").then((module) => ({ default: module.EvidenceView })),
+);
+
 import { InspectView } from "./views/inspect.js";
 import { QueueView } from "./views/queue.js";
 import { WorkspaceView } from "./views/workspace.js";
@@ -57,33 +68,7 @@ function useTheme(): [Theme, () => void] {
   return [theme, () => setTheme((t) => (t === "dark" ? "light" : "dark"))];
 }
 
-export interface Loaded<T> {
-  state: "loading" | "ready" | "error";
-  data?: T;
-  error?: ConsoleApiError;
-  reload: () => Promise<void>;
-}
-
-export function useLoad<T>(load: () => Promise<T>, deps: readonly unknown[]): Loaded<T> {
-  const [result, setResult] = useState<Omit<Loaded<T>, "reload">>({ state: "loading" });
-  const latest = useRef(load);
-  latest.current = load;
-  const reload = useCallback(async () => {
-    try {
-      const data = await latest.current();
-      setResult({ state: "ready", data });
-    } catch (error) {
-      setResult({ state: "error", error: toConsoleApiError(error) });
-    }
-  }, []);
-  // The caller names the inputs whose change should refetch; they are compared by value.
-  const key = JSON.stringify(deps);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is the value-compared dependency list
-  useEffect(() => {
-    void reload();
-  }, [reload, key]);
-  return { ...result, reload };
-}
+export { useLoad } from "./load.js";
 
 export interface BundleData {
   inspector: Inspector;
@@ -93,6 +78,20 @@ export interface BundleData {
 }
 
 function BundleFrame({
+  api,
+  route,
+}: {
+  api: ConsoleApi;
+  route: Exclude<Route, { view: "workspace" }>;
+}) {
+  if (route.view === "catalog")
+    return <CatalogView api={api} bundleId={route.bundleId} query={route.query} />;
+  if (route.view === "evidence")
+    return <EvidenceView api={api} bundleId={route.bundleId} query={route.query} />;
+  return <ReviewFrame api={api} route={route} />;
+}
+
+function ReviewFrame({
   api,
   route,
 }: {
@@ -110,7 +109,14 @@ function BundleFrame({
   }, [route.bundleId]);
   if (loaded.state === "loading") return <p className="mono">loading {route.bundleId}…</p>;
   if (loaded.state === "error" || !loaded.data) {
-    return loaded.error ? <ErrorBox error={loaded.error} /> : null;
+    return loaded.error ? (
+      <div className="stack">
+        <ErrorBox error={loaded.error} />
+        <button className="btn" type="button" onClick={() => void loaded.reload()}>
+          Retry
+        </button>
+      </div>
+    ) : null;
   }
   const common = { api, bundleId: route.bundleId, data: loaded.data, reload: loaded.reload };
   switch (route.view) {
@@ -120,6 +126,8 @@ function BundleFrame({
       return <InspectView {...common} against={route.query.get("against") ?? ""} />;
     case "confusion":
       return <ConfusionView {...common} />;
+    default:
+      return null;
   }
 }
 
@@ -155,12 +163,17 @@ export function App({ api }: { api: ConsoleApi }) {
   const route = useHashRoute();
   const [theme, toggleTheme] = useTheme();
   const [keysOpen, setKeysOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const workspace = useLoad(() => api.workspace(), [route.view === "workspace"]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const typing = target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName);
-      if (event.key === "?" && !typing) {
+      if (event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        setPaletteOpen((value) => !value);
+      } else if (event.key === "?" && !typing) {
         event.preventDefault();
         setKeysOpen(true);
       } else if (event.key === "Escape" && keysOpen) {
@@ -174,61 +187,85 @@ export function App({ api }: { api: ConsoleApi }) {
   const bundleId = route.view === "workspace" ? undefined : route.bundleId;
   return (
     <div className="frame">
-      <header className="topbar">
-        <a className="wordmark" href="#/">
-          <span className="monogram" aria-hidden="true">
-            an
-          </span>
-          anvil console
-        </a>
-        {bundleId ? (
-          <nav className="tabs" aria-label="bundle views">
-            <span className="mono" style={{ alignSelf: "center" }}>
-              {bundleId}
-            </span>
-            {(["queue", "inspect", "confusion"] as const).map((view) => (
-              <a
-                key={view}
-                className="tab"
-                href={href(bundleId, view)}
-                aria-current={route.view === view ? "page" : undefined}
-              >
-                {view === "queue"
-                  ? "decision queue"
-                  : view === "inspect"
-                    ? "estate inspector"
-                    : "confusion"}
-              </a>
-            ))}
-          </nav>
-        ) : null}
-        <div className="topbar-right">
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => setKeysOpen(true)}
-            aria-haspopup="dialog"
+      <button
+        type="button"
+        className="skip-link"
+        onClick={() => {
+          document.getElementById("main-content")?.focus();
+        }}
+      >
+        Skip to content
+      </button>
+      <Sidebar route={route} bundles={workspace.data?.bundles ?? []} />
+      <div className="main-shell">
+        <header className="topbar">
+          <div className="breadcrumb">
+            <a href="#/">Workspace</a>
+            {bundleId ? (
+              <>
+                <span>/</span>
+                <span className="mono">{bundleId}</span>
+                <span>/</span>
+                <strong>{VIEWS.find((v) => v.id === route.view)?.label}</strong>
+              </>
+            ) : (
+              <>
+                <span>/</span>
+                <strong>Overview</strong>
+              </>
+            )}
+          </div>
+          <div className="topbar-right">
+            <button
+              type="button"
+              className="btn search-trigger"
+              onClick={() => setPaletteOpen(true)}
+            >
+              Find anything <kbd>⌘ K</kbd>
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setKeysOpen(true)}
+              aria-haspopup="dialog"
+            >
+              keys <kbd>?</kbd>
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={toggleTheme}
+              aria-pressed={theme === "dark"}
+              aria-label={`theme: ${theme}; switch to ${theme === "dark" ? "light" : "dark"}`}
+            >
+              {theme === "dark" ? "dark" : "light"}
+            </button>
+          </div>
+        </header>
+        <main id="main-content" tabIndex={-1}>
+          <Suspense
+            fallback={
+              <p className="loading-state" role="status">
+                Loading view…
+              </p>
+            }
           >
-            keys <kbd>?</kbd>
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={toggleTheme}
-            aria-pressed={theme === "dark"}
-            aria-label={`theme: ${theme}; switch to ${theme === "dark" ? "light" : "dark"}`}
-          >
-            {theme === "dark" ? "dark" : "light"}
-          </button>
-        </div>
-      </header>
-      <main>
-        {route.view === "workspace" ? (
-          <WorkspaceView api={api} />
-        ) : (
-          <BundleFrame api={api} route={route} />
-        )}
-      </main>
+            {route.view === "workspace" ? (
+              <WorkspaceView api={api} />
+            ) : (
+              <BundleFrame key={route.bundleId} api={api} route={route} />
+            )}
+          </Suspense>
+        </main>
+      </div>
+      {paletteOpen ? (
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          bundles={workspace.data?.bundles ?? []}
+          bundleId={bundleId}
+        />
+      ) : null}
       <KeyMap open={keysOpen} onClose={() => setKeysOpen(false)} />
     </div>
   );
