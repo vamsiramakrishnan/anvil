@@ -1,5 +1,5 @@
 import { planLegacyBridge } from "@anvil/compiler/legacy";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runLegacyBridgeConformance } from "./conformance.js";
 import { fixtureLegacyCapabilityBinding } from "./test-fixtures.js";
 
@@ -47,7 +47,22 @@ describe("runLegacyBridgeConformance", () => {
     const plan = planLegacyBridge(binding);
     const first = await runLegacyBridgeConformance(binding, plan);
     const second = await runLegacyBridgeConformance(binding, plan);
+    expect(first.report.checks.filter((check) => check.status === "fail")).toEqual([]);
+    expect(second.report.checks.filter((check) => check.status === "fail")).toEqual([]);
     expect(second.report.contentHash).toBe(first.report.contentHash);
+  });
+
+  it("measures timeout conformance independently of wall-clock adjustments", async () => {
+    const binding = fixtureLegacyCapabilityBinding();
+    const plan = planLegacyBridge(binding);
+    let wallClock = Date.now();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => (wallClock -= 1000));
+    try {
+      const { report } = await runLegacyBridgeConformance(binding, plan);
+      expect(report.checks.filter((check) => check.status === "fail")).toEqual([]);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("refuses a plan bound to a different binding", async () => {
