@@ -9,6 +9,7 @@ import {
   unexecutableWireFailures,
 } from "@anvil/air";
 import { stringify as toYaml } from "yaml";
+import { businessSkill } from "./business-skill.js";
 import { credentialContract } from "./deploy.js";
 import { operationInputSignature } from "./input-signature.js";
 
@@ -97,6 +98,11 @@ export function generateSkill(air: AirDocument): Record<string, string> {
   const hasLongRunningCard = asyncOps.length > 0 || webhookOps.length > 0;
 
   files["SKILL.md"] = skillMd(air, exposed, hasLongRunningCard);
+  if (air.business) {
+    files["SKILL.md"] +=
+      "\n## Business decisions\n\nRead [business actions](reference/business.md) for intent selection, clarification, effects, and recovery before executing a business action.\n";
+    files["reference/business.md"] = businessSkill(air.business);
+  }
   files["manifest.yaml"] = toYaml({
     name,
     description: `Machine-readable index of the ${svc.displayName ?? svc.id} skill package: identity, auth, and surface counts. Read SKILL.md first; this file is for tooling.`,

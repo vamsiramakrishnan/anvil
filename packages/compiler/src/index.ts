@@ -5,6 +5,7 @@
  */
 
 export * from "./adopt/index.js";
+export * from "./business.js";
 export * from "./capabilities.js";
 export * from "./capability/index.js";
 export * from "./capability-authoring.js";

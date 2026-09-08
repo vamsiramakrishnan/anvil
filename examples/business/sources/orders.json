@@ -1,0 +1,228 @@
+{
+  "service": {
+    "id": "owned-orders",
+    "version": "1",
+    "source": {
+      "kind": "openapi"
+    },
+    "servers": [
+      {
+        "url": "http://127.0.0.1:1"
+      }
+    ]
+  },
+  "operations": [
+    {
+      "id": "raw_order_lookup",
+      "canonicalName": "raw_order_lookup",
+      "displayName": "raw_order_lookup",
+      "sourceRef": {
+        "kind": "openapi",
+        "method": "get",
+        "path": "/internal/orders/{opaque_order_ref}"
+      },
+      "effect": {
+        "kind": "read",
+        "risk": "low",
+        "reversible": true
+      },
+      "input": {
+        "params": [
+          {
+            "name": "opaque_order_ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      },
+      "output": {
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "wire_order_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "pay_txn": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tenant_key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "lifecycle": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "refundable_minor": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "vendor_debug": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "wire_order_id",
+            "pay_txn",
+            "tenant_key",
+            "lifecycle",
+            "revision",
+            "refundable_minor",
+            "vendor_debug"
+          ]
+        }
+      },
+      "idempotency": {
+        "mode": "natural"
+      },
+      "retries": {
+        "mode": "none"
+      },
+      "confirmation": {
+        "required": false
+      },
+      "auth": {
+        "type": "none"
+      },
+      "cli": {
+        "command": "raw order lookup"
+      },
+      "mcp": {
+        "toolName": "raw_order_lookup"
+      },
+      "skill": {
+        "intentExamples": [
+          "raw_order_lookup"
+        ]
+      },
+      "state": "approved"
+    },
+    {
+      "id": "raw_order_patch",
+      "canonicalName": "raw_order_patch",
+      "displayName": "raw_order_patch",
+      "sourceRef": {
+        "kind": "openapi",
+        "method": "put",
+        "path": "/internal/orders/{wire_order_id}"
+      },
+      "effect": {
+        "kind": "mutation",
+        "risk": "high",
+        "reversible": false
+      },
+      "input": {
+        "params": [
+          {
+            "name": "wire_order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "body": {
+          "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "revision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "addressline": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "revision",
+              "addressline"
+            ]
+          },
+          "required": true,
+          "projection": "fields",
+          "fields": [
+            {
+              "name": "revision",
+              "schema": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "required": true
+            },
+            {
+              "name": "addressline",
+              "schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "required": true
+            }
+          ]
+        }
+      },
+      "output": {
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "wire_order_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "wire_order_id",
+            "revision"
+          ]
+        }
+      },
+      "idempotency": {
+        "mode": "required",
+        "mechanism": "header",
+        "key": "X-Request-Token",
+        "keyDerivation": "client_supplied"
+      },
+      "retries": {
+        "mode": "none"
+      },
+      "confirmation": {
+        "required": true
+      },
+      "auth": {
+        "type": "none"
+      },
+      "cli": {
+        "command": "raw order patch"
+      },
+      "mcp": {
+        "toolName": "raw_order_patch"
+      },
+      "skill": {
+        "intentExamples": [
+          "raw_order_patch"
+        ]
+      },
+      "state": "approved"
+    }
+  ]
+}

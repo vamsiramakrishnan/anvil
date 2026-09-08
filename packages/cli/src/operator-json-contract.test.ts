@@ -51,6 +51,32 @@ afterEach(() => rmSync(work, { recursive: true, force: true }));
  */
 const exercised = new Set<string>();
 
+describe("business capability compilation JSON", () => {
+  it("emits one typed document for success and refusal", async () => {
+    const root = fileURLToPath(new URL("../../../examples/business", import.meta.url));
+    const argv = [
+      "capability",
+      "compile",
+      join(root, "definition.json"),
+      "--source",
+      ...["orders", "billing", "identity", "support"].map(
+        (name) => `${name}=${join(root, "sources", `${name}.json`)}`,
+      ),
+      "--out",
+      join(work, "business"),
+      "--json",
+    ];
+    const success = await run(argv);
+    expect(success.code, success.stderr).toBe(0);
+    expect(expectJsonContract(success, "business compile success").reportType).toBe(
+      "anvil.business-compile",
+    );
+    expect(
+      expectRefusalContract(await run(argv), "business compile existing output").reportType,
+    ).toBe("anvil.business-compile-error");
+  });
+});
+
 /** Run a command as an operator's script would, capturing the two streams apart. */
 async function run(argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   if (argv.includes("--json")) {

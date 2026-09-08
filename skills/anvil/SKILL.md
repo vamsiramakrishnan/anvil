@@ -1,18 +1,19 @@
 ---
 name: anvil
-description: Use this skill to operate Anvil — compile supported API specifications into aligned CLI, MCP, skill, and SDK bundles; inventory offline legacy estates; refine, approve, and deploy. Use when turning API contracts or legacy exports into safe agent tools or clients.
+description: Use Anvil to compile API and business contracts into aligned CLI, MCP, skill, and SDK bundles; inventory legacy estates; refine, approve, and deploy. Use when turning reviewed contracts or legacy exports into agent tools.
 ---
 
 # Operating Anvil
 
-Anvil is an agent toolchain compiler: one model (AIR) projected into four
-aligned surfaces — CLI, MCP server, skill, and TS/Python/Go/Java SDKs. Your job
-as a harness is to drive it safely, not to invent semantics.
+Anvil projects one model (AIR) into CLI, MCP, skills, and TS/Python/Go/Java SDKs.
+Operate the toolchain; never invent semantics.
 
 ## What Anvil can compile
 OpenAPI 3.x · Swagger 2.0 · Google Discovery · GraphQL SDL · gRPC/proto3 (multi-file) · SOAP/WSDL (multi-file) · OData v2/v4 ($metadata/EDMX) · Postman Collections · Captured traffic (HAR 1.2, review-only)
 
 All of them land in the same AIR model and the same aligned bundle.
+
+Business actions: see reference/business-capabilities.md for `capability compile` and approved source bindings.
 
 ## If the source is a gateway estate
 Do not start with `compile` — a route table is not a contract. Run

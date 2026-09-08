@@ -1,0 +1,214 @@
+{
+  "service": {
+    "id": "owned-identity",
+    "version": "1",
+    "source": {
+      "kind": "openapi"
+    },
+    "servers": [
+      {
+        "url": "http://127.0.0.1:1"
+      }
+    ]
+  },
+  "operations": [
+    {
+      "id": "raw_directory_lookup",
+      "canonicalName": "raw_directory_lookup",
+      "displayName": "raw_directory_lookup",
+      "sourceRef": {
+        "kind": "openapi",
+        "method": "get",
+        "path": "/internal/directory/{login}"
+      },
+      "effect": {
+        "kind": "read",
+        "risk": "low",
+        "reversible": true
+      },
+      "input": {
+        "params": [
+          {
+            "name": "login",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "tenant_key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      },
+      "output": {
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "person_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tenant_key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "manager_ok": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "person_id",
+            "tenant_key",
+            "manager_ok"
+          ]
+        }
+      },
+      "idempotency": {
+        "mode": "natural"
+      },
+      "retries": {
+        "mode": "none"
+      },
+      "confirmation": {
+        "required": false
+      },
+      "auth": {
+        "type": "none"
+      },
+      "cli": {
+        "command": "raw directory lookup"
+      },
+      "mcp": {
+        "toolName": "raw_directory_lookup"
+      },
+      "skill": {
+        "intentExamples": [
+          "raw_directory_lookup"
+        ]
+      },
+      "state": "approved"
+    },
+    {
+      "id": "raw_grant_write",
+      "canonicalName": "raw_grant_write",
+      "displayName": "raw_grant_write",
+      "sourceRef": {
+        "kind": "openapi",
+        "method": "post",
+        "path": "/internal/grants"
+      },
+      "effect": {
+        "kind": "mutation",
+        "risk": "high",
+        "reversible": false
+      },
+      "input": {
+        "params": [],
+        "body": {
+          "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "person_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tenant_key": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "person_id",
+              "role",
+              "tenant_key"
+            ]
+          },
+          "required": true,
+          "projection": "fields",
+          "fields": [
+            {
+              "name": "person_id",
+              "schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "required": true
+            },
+            {
+              "name": "role",
+              "schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "required": true
+            },
+            {
+              "name": "tenant_key",
+              "schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "required": true
+            }
+          ]
+        }
+      },
+      "output": {
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "grant_key": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "grant_key"
+          ]
+        }
+      },
+      "idempotency": {
+        "mode": "required",
+        "mechanism": "header",
+        "key": "X-Request-Token",
+        "keyDerivation": "client_supplied"
+      },
+      "retries": {
+        "mode": "none"
+      },
+      "confirmation": {
+        "required": true
+      },
+      "auth": {
+        "type": "none"
+      },
+      "cli": {
+        "command": "raw grant write"
+      },
+      "mcp": {
+        "toolName": "raw_grant_write"
+      },
+      "skill": {
+        "intentExamples": [
+          "raw_grant_write"
+        ]
+      },
+      "state": "approved"
+    }
+  ]
+}

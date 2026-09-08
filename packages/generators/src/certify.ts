@@ -850,7 +850,14 @@ function generatedProjectionDrift(files: Record<string, string>, air: AirDocumen
       `${GENERATION_METADATA_FILE} is missing or invalid; recompile to persist generator inputs`,
     ];
   }
-  const expected = generateBundle(air, options).files;
+  let expected: Record<string, string>;
+  try {
+    expected = generateBundle(air, options).files;
+  } catch {
+    return [
+      "Generator inputs do not match the reviewed contract; recompile the source definition.",
+    ];
+  }
   const drift: string[] = [];
   for (const [path, contents] of Object.entries(expected)) {
     const actual = files[path];

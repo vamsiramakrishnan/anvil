@@ -57,7 +57,9 @@ describe("public StreamableHTTP server hardening", () => {
     expect(source).toContain("callerFingerprint: auth.callerFingerprint");
     expect(source).toContain("entry.callerFingerprint !== auth.callerFingerprint");
     expect(source).toContain("verifiedPrincipalFingerprint(result.claims)");
-    expect(source).toContain("JSON.stringify({ issuer, sub, oid, authorizedParty, tenant })");
+    expect(readFileSync(new URL("./inbound-auth.ts", import.meta.url), "utf8")).toContain(
+      "JSON.stringify({ issuer, sub, oid, authorizedParty, tenant })",
+    );
     expect(source).not.toContain('createHash("sha256").update(rawToken)');
     expect(source).toContain("This MCP session belongs to a different authenticated caller.");
     ordered(

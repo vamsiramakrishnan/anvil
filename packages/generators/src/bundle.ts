@@ -1,6 +1,15 @@
 import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
-import { type AirDocument, airToJson, airToYaml, operationInputSchema } from "@anvil/air";
+import {
+  type AirDocument,
+  airToJson,
+  airToYaml,
+  type BusinessPlan,
+  contractHash,
+  loadBusinessPlan,
+  operationInputSchema,
+} from "@anvil/air";
+import { compileBusiness } from "@anvil/compiler";
 import {
   compiledErrors,
   compiledOperations,
@@ -34,6 +43,7 @@ export const GENERATION_METADATA_FILE = "generation.json";
 export interface GenerationMetadata {
   schemaVersion: 1;
   resourceOptions: {
+    businessPlan?: BusinessPlan;
     mcpEndpoint: string | null;
     cliNpmPackage: string | null;
     cliOci: string | null;
@@ -45,6 +55,7 @@ function generationMetadata(options: ResourceOptions): GenerationMetadata {
   return {
     schemaVersion: 1,
     resourceOptions: {
+      ...(options.businessPlan ? { businessPlan: options.businessPlan } : {}),
       mcpEndpoint: options.mcpEndpoint ?? null,
       cliNpmPackage: options.cliNpmPackage ?? null,
       cliOci: options.cliOci ?? null,
@@ -74,6 +85,14 @@ export function resourceOptionsFromGenerationMetadata(
   const resourceOptions = (value as { resourceOptions?: unknown }).resourceOptions;
   if (typeof resourceOptions !== "object" || resourceOptions === null) return undefined;
   const record = resourceOptions as Record<string, unknown>;
+  let businessPlan: BusinessPlan | undefined;
+  if (record.businessPlan !== undefined) {
+    try {
+      businessPlan = loadBusinessPlan(record.businessPlan);
+    } catch {
+      return undefined;
+    }
+  }
   for (const key of ["mcpEndpoint", "cliNpmPackage", "cliOci"] as const) {
     if (record[key] !== null && typeof record[key] !== "string") return undefined;
   }
@@ -86,6 +105,7 @@ export function resourceOptionsFromGenerationMetadata(
     return undefined;
   }
   return {
+    ...(businessPlan ? { businessPlan } : {}),
     ...(typeof record.mcpEndpoint === "string" ? { mcpEndpoint: record.mcpEndpoint } : {}),
     ...(typeof record.cliNpmPackage === "string" ? { cliNpmPackage: record.cliNpmPackage } : {}),
     ...(typeof record.cliOci === "string" ? { cliOci: record.cliOci } : {}),
@@ -101,6 +121,16 @@ export function resourceOptionsFromGenerationMetadata(
  * product.
  */
 export function generateBundle(air: AirDocument, options: ResourceOptions = {}): GeneratedBundle {
+  if (air.business) {
+    const plan = loadBusinessPlan(options.businessPlan, air.business.planDigest);
+    if (contractHash(compileBusiness(plan.definition, plan.sources).air) !== contractHash(air)) {
+      throw new Error(
+        "Edit the business definition and recompile; the public AIR has drifted from its private plan.",
+      );
+    }
+  } else if (options.businessPlan) {
+    throw new Error("A private business plan requires its compiled business AIR.");
+  }
   const files: Record<string, string> = {};
   const airJson = airToJson(air);
   const id = air.service.id;
@@ -196,6 +226,11 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   // Docs, deploy, mocks, conformance.
   Object.assign(files, generateDocs(air));
   Object.assign(files, generateDeploy(air, options));
+  if (options.businessPlan) {
+    const privatePlan = `${JSON.stringify(options.businessPlan, null, 2)}\n`;
+    files["runtime/business.plan.json"] = privatePlan;
+    files["deploy/runtime/business.plan.json"] = privatePlan;
+  }
   files["mock/scenarios.json"] = `${JSON.stringify(generateScenarios(air), null, 2)}\n`;
   files["mock/routes.json"] = `${JSON.stringify(generateMockRoutes(air), null, 2)}\n`;
   files["mock/server.mjs"] = generateMockServerSource(air);

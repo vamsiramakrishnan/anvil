@@ -15,7 +15,7 @@
  * Zod schemas: runtime parsing + types + JSON Schema. Digests reuse
  * `@anvil/air`'s canonical hasher.
  */
-import { Evidence } from "@anvil/air";
+import { BusinessSurface, Evidence } from "@anvil/air";
 import { z } from "zod";
 
 /** The aggregate authentication posture of a capability's operations. */
@@ -106,6 +106,7 @@ export type SurfaceSignature = z.infer<typeof SurfaceSignature>;
 
 /** The agent-facing business boundary — reviewable and declaratively editable. */
 export const CapabilityContract = z.object({
+  business: BusinessSurface.optional(),
   schemaVersion: z.literal(1),
   id: z.string(),
   version: z.string(),

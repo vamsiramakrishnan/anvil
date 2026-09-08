@@ -81,6 +81,8 @@ export type ExecuteResult =
   | { outcome: "dry_run"; plan: DryRunPlan; record: ExecutionRecord };
 
 export interface ExecuteContext {
+  /** A compiled business gateway owns the durable intent ledger; clients must not cache its refusals. */
+  remoteIdempotency?: boolean;
   transport: Transport;
   /** Stable AIR service identity used to namespace replay protection. */
   serviceId: string;
@@ -1213,6 +1215,7 @@ export async function execute(
       op.effect.kind === "mutation" &&
       op.idempotency.mode === "required" &&
       env !== "dev" &&
+      !ctx.remoteIdempotency &&
       !ctx.ledger?.durable
     ) {
       return fail(
@@ -1231,7 +1234,7 @@ export async function execute(
     // 8. Idempotency ledger for unsafe idempotent mutations.
     let reservationOwned = false;
     let ledgerReference: string | undefined;
-    if (op.effect.kind === "mutation" && ledgerKey && ctx.ledger) {
+    if (op.effect.kind === "mutation" && ledgerKey && ctx.ledger && !ctx.remoteIdempotency) {
       let reservation: Awaited<ReturnType<IdempotencyLedger["reserve"]>>;
       try {
         reservation = await ctx.ledger.reserve(ledgerKey, idempotencyFingerprint, {

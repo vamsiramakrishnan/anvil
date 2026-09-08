@@ -1,6 +1,7 @@
 import { ANVIL_SOURCE_FORMATS } from "@anvil/generators";
 import type { Command, Help } from "commander";
 import { metaOf } from "./commands/meta.js";
+import { businessCapabilitiesRef } from "./self-skill-business.js";
 import { gatewaySupportMarkdownTable, legacyEstatesRef } from "./self-skill-estates.js";
 
 /**
@@ -13,6 +14,11 @@ import { gatewaySupportMarkdownTable, legacyEstatesRef } from "./self-skill-esta
 export function generateAnvilSkill(program: Command): Record<string, string> {
   return {
     "SKILL.md": skillMd(),
+    "reference/business-capabilities.md":
+      frontmatter(
+        "anvil-business-capabilities",
+        "Author, review, compile, and calibrate business actions with a private execution plan and aligned agent surfaces.",
+      ) + businessCapabilitiesRef(),
     "reference/commands.md":
       frontmatter(
         "anvil-commands",
@@ -75,19 +81,20 @@ function frontmatter(name: string, description: string): string {
 function skillMd(): string {
   return `---
 name: anvil
-description: Use this skill to operate Anvil — compile supported API specifications into aligned CLI, MCP, skill, and SDK bundles; inventory offline legacy estates; refine, approve, and deploy. Use when turning API contracts or legacy exports into safe agent tools or clients.
+description: Use Anvil to compile API and business contracts into aligned CLI, MCP, skill, and SDK bundles; inventory legacy estates; refine, approve, and deploy. Use when turning reviewed contracts or legacy exports into agent tools.
 ---
 
 # Operating Anvil
 
-Anvil is an agent toolchain compiler: one model (AIR) projected into four
-aligned surfaces — CLI, MCP server, skill, and TS/Python/Go/Java SDKs. Your job
-as a harness is to drive it safely, not to invent semantics.
+Anvil projects one model (AIR) into CLI, MCP, skills, and TS/Python/Go/Java SDKs.
+Operate the toolchain; never invent semantics.
 
 ## What Anvil can compile
 ${ANVIL_SOURCE_FORMATS.join(" · ")}
 
 All of them land in the same AIR model and the same aligned bundle.
+
+Business actions: see reference/business-capabilities.md for \`capability compile\` and approved source bindings.
 
 ## If the source is a gateway estate
 Do not start with \`compile\` — a route table is not a contract. Run
