@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type ConsoleApi, type ConsoleApiError, toConsoleApiError } from "./api.js";
+import { CommandMenu } from "./command-menu.js";
 import { ErrorBox } from "./components.js";
 import {
   type Benchmark,
@@ -13,10 +14,15 @@ import {
   type Route,
   THEME_KEY,
   type Theme,
+  VIEWS,
 } from "./model.js";
+import { ArtifactsView } from "./views/artifacts.js";
+import { AssuranceView } from "./views/assurance.js";
+import { CompareView } from "./views/compare.js";
 import { ConfusionView } from "./views/confusion.js";
 import { InspectView } from "./views/inspect.js";
 import { QueueView } from "./views/queue.js";
+import { WorkbenchView } from "./views/workbench.js";
 import { WorkspaceView } from "./views/workspace.js";
 
 /** The frame: hash routing, theme, the key map, and one bundle's read models. */
@@ -65,24 +71,33 @@ export interface Loaded<T> {
 }
 
 export function useLoad<T>(load: () => Promise<T>, deps: readonly unknown[]): Loaded<T> {
-  const [result, setResult] = useState<Omit<Loaded<T>, "reload">>({ state: "loading" });
+  const key = JSON.stringify(deps);
+  const [result, setResult] = useState<Omit<Loaded<T>, "reload"> & { key: string }>({
+    state: "loading",
+    key,
+  });
   const latest = useRef(load);
   latest.current = load;
+  const generation = useRef(0);
+  // A response belongs to both its resource key and request generation.
+  // Switching resources hides the previous data immediately, before effects run.
   const reload = useCallback(async () => {
+    const request = ++generation.current;
     try {
       const data = await latest.current();
-      setResult({ state: "ready", data });
+      if (request === generation.current) setResult({ state: "ready", data, key });
     } catch (error) {
-      setResult({ state: "error", error: toConsoleApiError(error) });
+      if (request === generation.current)
+        setResult({ state: "error", error: toConsoleApiError(error), key });
     }
-  }, []);
-  // The caller names the inputs whose change should refetch; they are compared by value.
-  const key = JSON.stringify(deps);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` is the value-compared dependency list
+  }, [key]);
   useEffect(() => {
     void reload();
-  }, [reload, key]);
-  return { ...result, reload };
+    return () => {
+      generation.current++;
+    };
+  }, [reload]);
+  return result.key === key ? { ...result, reload } : { state: "loading", reload };
 }
 
 export interface BundleData {
@@ -99,28 +114,80 @@ function BundleFrame({
   api: ConsoleApi;
   route: Exclude<Route, { view: "workspace" }>;
 }) {
+  if (route.view === "assurance") return <AssuranceView api={api} bundleId={route.bundleId} />;
+  if (route.view === "artifacts")
+    return (
+      <ArtifactsView api={api} bundleId={route.bundleId} path={route.query.get("path") ?? ""} />
+    );
+  if (route.view === "compare")
+    return (
+      <CompareView api={api} bundleId={route.bundleId} against={route.query.get("against") ?? ""} />
+    );
+  if (route.view === "workbench")
+    return (
+      <WorkbenchView
+        api={api}
+        bundleId={route.bundleId}
+        operationId={route.query.get("operation") ?? ""}
+      />
+    );
+  return <ReviewFrame api={api} route={route} />;
+}
+
+function ReviewFrame({
+  api,
+  route,
+}: {
+  api: ConsoleApi;
+  route: Exclude<Route, { view: "workspace" }>;
+}) {
   const loaded = useLoad<BundleData>(async () => {
     const [inspector, queue, packs, benchmark] = await Promise.all([
       api.bundle(route.bundleId),
-      api.queue(route.bundleId),
-      api.packs(route.bundleId),
-      api.benchmark(route.bundleId),
+      route.view === "queue"
+        ? api.queue(route.bundleId)
+        : Promise.resolve({ bundleId: route.bundleId, items: [] }),
+      route.view === "queue" ? api.packs(route.bundleId) : Promise.resolve([]),
+      route.view === "confusion" ? api.benchmark(route.bundleId) : Promise.resolve(null),
     ]);
     return { inspector, queue, packs, benchmark };
-  }, [route.bundleId]);
-  if (loaded.state === "loading") return <p className="mono">loading {route.bundleId}…</p>;
-  if (loaded.state === "error" || !loaded.data) {
-    return loaded.error ? <ErrorBox error={loaded.error} /> : null;
-  }
+  }, [route.bundleId, route.view]);
+  if (loaded.state === "loading")
+    return (
+      <p className="loading" role="status">
+        Loading {route.bundleId}…
+      </p>
+    );
+  if (loaded.state === "error" || !loaded.data)
+    return (
+      <div>
+        {loaded.error ? <ErrorBox error={loaded.error} /> : null}
+        <button type="button" className="btn" onClick={() => void loaded.reload()}>
+          Retry
+        </button>
+      </div>
+    );
   const common = { api, bundleId: route.bundleId, data: loaded.data, reload: loaded.reload };
-  switch (route.view) {
-    case "queue":
-      return <QueueView {...common} />;
-    case "inspect":
-      return <InspectView {...common} against={route.query.get("against") ?? ""} />;
-    case "confusion":
-      return <ConfusionView {...common} />;
-  }
+  return (
+    <>
+      <div className="bundle-context">
+        <span>
+          {loaded.data.inspector.service.displayName ?? route.bundleId}{" "}
+          <span className="muted">/ {route.bundleId}</span>
+        </span>
+        <button className="btn btn-sm" type="button" onClick={() => void loaded.reload()}>
+          Refresh from disk
+        </button>
+      </div>
+      {route.view === "queue" ? (
+        <QueueView {...common} />
+      ) : route.view === "inspect" ? (
+        <InspectView {...common} against={route.query.get("against") ?? ""} />
+      ) : (
+        <ConfusionView {...common} />
+      )}
+    </>
+  );
 }
 
 function KeyMap({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -155,12 +222,18 @@ export function App({ api }: { api: ConsoleApi }) {
   const route = useHashRoute();
   const [theme, toggleTheme] = useTheme();
   const [keysOpen, setKeysOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const typing = target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName);
-      if (event.key === "?" && !typing) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen((open) => !open);
+        return;
+      }
+      if (event.key === "?" && !typing && !document.querySelector("dialog[open]")) {
         event.preventDefault();
         setKeysOpen(true);
       } else if (event.key === "Escape" && keysOpen) {
@@ -174,6 +247,15 @@ export function App({ api }: { api: ConsoleApi }) {
   const bundleId = route.view === "workspace" ? undefined : route.bundleId;
   return (
     <div className="frame">
+      <button
+        type="button"
+        className="skip-link"
+        onClick={() => {
+          document.getElementById("main-content")?.focus();
+        }}
+      >
+        Skip to content
+      </button>
       <header className="topbar">
         <a className="wordmark" href="#/">
           <span className="monogram" aria-hidden="true">
@@ -181,28 +263,16 @@ export function App({ api }: { api: ConsoleApi }) {
           </span>
           anvil console
         </a>
-        {bundleId ? (
-          <nav className="tabs" aria-label="bundle views">
-            <span className="mono" style={{ alignSelf: "center" }}>
-              {bundleId}
-            </span>
-            {(["queue", "inspect", "confusion"] as const).map((view) => (
-              <a
-                key={view}
-                className="tab"
-                href={href(bundleId, view)}
-                aria-current={route.view === view ? "page" : undefined}
-              >
-                {view === "queue"
-                  ? "decision queue"
-                  : view === "inspect"
-                    ? "estate inspector"
-                    : "confusion"}
-              </a>
-            ))}
-          </nav>
-        ) : null}
+        <span className="local-label">Local workspace</span>
         <div className="topbar-right">
+          <button
+            type="button"
+            className="btn command-trigger"
+            onClick={() => setCommandOpen(true)}
+            aria-haspopup="dialog"
+          >
+            Find bundle or view <kbd>⌘ K</kbd>
+          </button>
           <button
             type="button"
             className="btn btn-sm"
@@ -222,13 +292,50 @@ export function App({ api }: { api: ConsoleApi }) {
           </button>
         </div>
       </header>
-      <main>
-        {route.view === "workspace" ? (
-          <WorkspaceView api={api} />
-        ) : (
-          <BundleFrame api={api} route={route} />
-        )}
-      </main>
+      <div className={bundleId ? "app-body" : "app-body workspace-body"}>
+        {bundleId ? (
+          <aside className="sidebar">
+            <a className="back-link" href="#/">
+              ← All bundles
+            </a>
+            <div className="sidebar-bundle">
+              <span className="label">Current bundle</span>
+              <strong>{bundleId}</strong>
+            </div>
+            <nav aria-label="bundle views">
+              {VIEWS.map(([view, label], index) => (
+                <a
+                  key={view}
+                  className="nav-link"
+                  href={href(bundleId, view)}
+                  aria-current={route.view === view ? "page" : undefined}
+                >
+                  <span className="nav-number" aria-hidden="true">
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  {label}
+                </a>
+              ))}
+            </nav>
+            <p className="sidebar-note">
+              Decisions update the bundle through Anvil’s shared review gates.
+            </p>
+          </aside>
+        ) : null}
+        <main id="main-content" tabIndex={-1}>
+          {route.view === "workspace" ? (
+            <WorkspaceView api={api} />
+          ) : (
+            <BundleFrame key={route.bundleId} api={api} route={route} />
+          )}
+        </main>
+      </div>
+      <CommandMenu
+        open={commandOpen}
+        onClose={() => setCommandOpen(false)}
+        api={api}
+        bundleId={bundleId}
+      />
       <KeyMap open={keysOpen} onClose={() => setKeysOpen(false)} />
     </div>
   );

@@ -53,7 +53,7 @@ against the contract before any library function runs. The full contract is
 the comment block at the top of `src/contract.ts` — it is the specification
 the server lane implements and the review reads against.
 
-## Three views
+## Review views
 
 - **Decision queue** — `GET /api/bundles/:id/queue`: every grey decision in one
   list, six kinds: an **operation** not yet approved, a **capability** born
@@ -86,6 +86,31 @@ carries every receipt the pack holds — what `anvil refine apply-pack` loads.
 Applying a reviewed pack writes AIR only, exactly as the CLI does; the console
 then tells the reviewer to recompile, because it has no reproject-after-apply
 route by design.
+
+## Integration workbench
+
+The workspace provides a searchable, filtered, paginated inventory. It reports
+unreadable bundles separately and discovers refinement packs once per workspace
+request. Bundle routes load only their needed reports. Resource keys and request
+generations prevent late responses from rendering another bundle's data.
+
+| View | API and library |
+| --- | --- |
+| Request builder | `GET /api/bundles/:id/operations/:operationId`; AIR's `operationInputSchema`, `operationBusinessInputCliFlag`, and `operationSafetyInputKeys` |
+| Assurance | `GET /api/bundles/:id/assurance`; `certifyBundle`, `verifyCertification`, and `executableEvidenceStatuses` |
+| Generated files | `GET /api/bundles/:id/artifacts` and `/artifact?path=...`; generator-owned path allowlist and named evidence records |
+| Compare bundles | Existing drift route and `diffContracts`; baseline/candidate selector, severity filtering, export |
+
+The request builder creates copyable CLI dry runs and MCP JSON-RPC requests.
+It never executes them or stores arguments. CLI previews always end in
+`--dry-run`; MCP requests are ordinary calls when executed by another client.
+Static assurance is recomputed on read but never written as a certification.
+Artifact previews return JSON text, are capped at 256 KiB, and refuse arbitrary
+files and symlinks. These routes inherit the existing origin/Host protections.
+
+The navigation rail, `Ctrl+K` / `⌘K` menu, per-view refresh controls, and URL
+coordinates support moving between review, debugging, comparison and handoff.
+See `docs/console.md` for the user workflow and current boundaries.
 
 ## Layout
 

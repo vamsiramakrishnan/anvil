@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import type { ConsoleApiError } from "./api.js";
 import { type DecisionItem, type RoutingDelta, show, tone } from "./model.js";
 
@@ -199,5 +199,75 @@ export function Panel({
       </div>
       <div className="panel-body">{children}</div>
     </section>
+  );
+}
+
+/** Clipboard permission failures keep the selectable text visible. */
+function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState<{ text: string; message: string }>();
+  const status = copied?.text === text ? copied.message : "";
+  return (
+    <span className="copy-control">
+      <button
+        className="btn btn-sm"
+        type="button"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(text);
+            setCopied({ text, message: "Copied" });
+          } catch {
+            setCopied({ text, message: "Select the text and copy it manually." });
+          }
+        }}
+      >
+        {label}
+      </button>
+      <span role="status" className="row-id">
+        {status}
+      </span>
+    </span>
+  );
+}
+
+export function CodeBlock({ text, label }: { text: string; label: string }) {
+  return (
+    <div className="code-block">
+      <div className="code-head">
+        <Label>{label}</Label>
+        <CopyButton text={text} />
+      </div>
+      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard users must be able to scroll code horizontally */}
+      <pre tabIndex={0}>
+        <code>{text}</code>
+      </pre>
+    </div>
+  );
+}
+
+export function DownloadButton({
+  content,
+  filename,
+  disabled = false,
+}: {
+  content: string;
+  filename: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className="btn btn-sm"
+      disabled={disabled}
+      onClick={() => {
+        const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename.replace(/[^A-Za-z0-9._-]/g, "_");
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+      }}
+    >
+      Download
+    </button>
   );
 }
