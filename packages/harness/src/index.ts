@@ -13,6 +13,7 @@ export * from "./disclosure-reconcile.js";
 export * from "./drift-alarm.js";
 export * from "./enrich.js";
 export * from "./evidence.js";
+export * from "./fuzz/index.js";
 export * from "./live.js";
 export * from "./llm-agent.js";
 export * from "./loopback.js";

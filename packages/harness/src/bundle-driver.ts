@@ -529,23 +529,38 @@ export class MockControl {
 }
 
 /** Boot mock/server.mjs on an ephemeral port and parse its ready line. */
-export function startMockServer(dir: string): Promise<{ port: number; child: ChildProcess }> {
+export function startMockServer(
+  dir: string,
+  options: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
+): Promise<{ port: number; child: ChildProcess }> {
   const child = spawn(process.execPath, [join(dir, "mock", "server.mjs")], {
-    env: { ...process.env, PORT: "0", ANVIL_MOCK_SCENARIO: "" },
+    env: { ...(options.env ?? process.env), PORT: "0", ANVIL_MOCK_SCENARIO: "" },
+    signal: options.signal,
+    killSignal: "SIGKILL",
     stdio: ["ignore", "ignore", "pipe"],
   });
   return new Promise((resolvePromise, reject) => {
     let buffer = "";
+    let listening = false;
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       reject(new Error("mock server did not report listening within 15s"));
     }, 15_000);
     child.stderr?.on("data", (chunk: Buffer) => {
+      if (listening) return;
       buffer += chunk.toString("utf8");
+      if (Buffer.byteLength(buffer) > 1024 * 1024) {
+        clearTimeout(timer);
+        child.kill("SIGKILL");
+        reject(new Error("mock server startup output exceeded its limit"));
+        return;
+      }
       for (const line of buffer.split("\n")) {
         const event = parseJson(line) as { event?: string; port?: number } | undefined;
         if (event?.event === "listening" && typeof event.port === "number") {
           clearTimeout(timer);
+          listening = true;
+          buffer = "";
           resolvePromise({ port: event.port, child });
           return;
         }
@@ -603,8 +618,8 @@ export function ensureBundleNodeModules(dir: string, extra: BundleLink[] = []): 
  * node_modules chain (ESM-safe: `require.resolve` cannot resolve packages whose
  * exports map has no "require" condition, which is true of every @anvil/*).
  */
-export function packageDirOf(name: string): string {
-  let current = dirname(fileURLToPath(import.meta.url));
+export function packageDirOf(name: string, from = dirname(fileURLToPath(import.meta.url))): string {
+  let current = from;
   while (true) {
     const candidate = join(current, "node_modules", ...name.split("/"));
     if (existsSync(join(candidate, "package.json"))) return realpathSync(candidate);

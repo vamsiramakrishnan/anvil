@@ -25,6 +25,7 @@ executed. Parsing and lowering can succeed while the wire path remains blocked.
 | Do related tools need joint review? | [Group refinement](group-refinement.md) | Member and non-member evaluation results |
 | Can this legacy capability execute? | [Runtime bridges](legacy-runtime-bridges.md) | Reviewed binding and declared bridge prerequisites |
 | Do the generated surfaces agree? | [Simulation and backtesting](simulation-and-backtesting.md) | Results scoped to bundle bytes and test conditions |
+| Which call sequences break a toolchain? | [Stateful fuzzing](fuzzing.md) | Minimized failures, fixture state, and exact replay |
 | Can this bundle advance? | [CI workflow](CI.md) | Fresh evidence for the same bundle hash |
 | Which decision failed? | [Troubleshooting](TROUBLESHOOTING.md) | Refusal code, current state, next action |
 

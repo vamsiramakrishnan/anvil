@@ -20,6 +20,7 @@ import { registerDrift } from "./commands/drift.js";
 import { registerEnrich } from "./commands/enrich.js";
 import { registerEstate } from "./commands/estate/estate.js";
 import { registerEvals } from "./commands/evals.js";
+import { registerFuzz } from "./commands/fuzz.js";
 import { registerInspect } from "./commands/inspect.js";
 import { registerJob } from "./commands/job.js";
 import { registerLegacy } from "./commands/legacy/legacy.js";
@@ -113,6 +114,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerCertify(program, ctx);
   registerSelftest(program, ctx);
   registerConformance(program, ctx);
+  registerFuzz(program, ctx);
   registerObserve(program, ctx);
   registerBenchmark(program, ctx);
   registerSimulate(program, ctx);

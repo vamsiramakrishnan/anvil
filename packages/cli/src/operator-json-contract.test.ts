@@ -917,6 +917,32 @@ function jsonCommandPaths(): Set<string> {
 
 const JSON_COMMANDS = jsonCommandPaths();
 
+describe("anvil fuzz speaks the operator envelope", () => {
+  it("emits a structured refusal for invalid campaign inputs", async () => {
+    const result = await run(["fuzz", "--example", "payments", "--runs", "0", "--json"]);
+    expect(expectRefusalContract(result, "fuzz invalid budget").reportType).toBe(
+      "anvil.fuzz-error",
+    );
+  });
+
+  it("emits a typed report for a completed fixture campaign", async () => {
+    const result = await run([
+      "fuzz",
+      "--example",
+      "payments",
+      "--surfaces",
+      "python",
+      "--runs",
+      "1",
+      "--out",
+      join(work, "fuzz"),
+      "--json",
+    ]);
+    expect(result.code).toBe(0);
+    expect(expectJsonContract(result, "fuzz campaign").reportType).toBe("anvil.fuzz");
+  });
+});
+
 describe("anvil evals speaks the operator envelope", () => {
   /**
    * These two need no bundle: a suite file is checked in, and the vocabulary is

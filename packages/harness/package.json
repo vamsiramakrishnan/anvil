@@ -24,17 +24,18 @@
   "dependencies": {
     "@anvil/air": "workspace:*",
     "@anvil/compiler": "workspace:*",
+    "@anvil/fuzz": "workspace:*",
     "@anvil/generators": "workspace:*",
     "@anvil/mcp-runtime": "workspace:*",
     "@anvil/refinement": "workspace:*",
     "@anvil/runtime": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.22.0",
     "yaml": "^2.8.1",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "typescript": "^5.9.3"
   },
   "devDependencies": {
     "tsup": "^8.5.0",
-    "typescript": "^5.9.3",
     "vitest": "^4.1.10"
   }
 }
