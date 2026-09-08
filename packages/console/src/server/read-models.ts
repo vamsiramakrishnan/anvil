@@ -56,26 +56,38 @@ function countBy<T extends string>(values: readonly T[]): Partial<Record<T, numb
 }
 
 export function workspaceView(root: string): Workspace {
+  const issues: NonNullable<Workspace["issues"]> = [];
   return {
+    issues,
     root,
-    bundles: discoverBundles(root).map((bundle) => {
-      const { air, dir } = loadBundle(bundle);
-      return {
-        id: bundle.id,
-        path: dir,
-        service: { id: air.service.id, version: air.service.version },
-        sourceKind: air.service.source.kind,
-        ...(air.service.source.pathGrammar
-          ? { pathGrammar: air.service.source.pathGrammar.classification }
-          : {}),
-        counts: {
-          operations: countBy(air.operations.map((op) => op.state)),
-          capabilities: countBy(air.capabilities.map((cap) => cap.lifecycle)),
-          workflows: countBy(air.workflows.map((wf) => wf.state)),
-        },
-        hasBenchmark: existsSync(join(dir, "benchmark.report.json")),
-        packs: discoverPacks(root, air.service.id).length,
-      };
+    bundles: discoverBundles(root).flatMap((bundle) => {
+      try {
+        const { air, dir } = loadBundle(bundle);
+        return [
+          {
+            id: bundle.id,
+            path: dir,
+            service: { id: air.service.id, version: air.service.version },
+            sourceKind: air.service.source.kind,
+            ...(air.service.source.pathGrammar
+              ? { pathGrammar: air.service.source.pathGrammar.classification }
+              : {}),
+            counts: {
+              operations: countBy(air.operations.map((op) => op.state)),
+              capabilities: countBy(air.capabilities.map((cap) => cap.lifecycle)),
+              workflows: countBy(air.workflows.map((wf) => wf.state)),
+            },
+            hasBenchmark: existsSync(join(dir, "benchmark.report.json")),
+            packs: discoverPacks(root, air.service.id).length,
+          },
+        ];
+      } catch (error) {
+        issues.push({
+          id: bundle.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+      }
     }),
   };
 }
@@ -120,6 +132,7 @@ export function bundleView(root: string, id: string): BundleInspector {
       id: op.id,
       canonicalName: op.canonicalName,
       displayName: op.displayName,
+      input: op.input,
       mcp: { toolName: op.mcp.toolName },
       cli: { command: op.cli.command },
       effect: op.effect,

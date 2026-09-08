@@ -28,6 +28,7 @@ import {
   zRefinementTask,
 } from "@anvil/refinement";
 import { z } from "zod";
+import { WORKBENCH_ROUTES } from "./workbench-contract.js";
 
 /**
  * The console's HTTP API contract.
@@ -267,6 +268,7 @@ export const zWorkspaceBundle = z.object({
 export const zWorkspace = z.object({
   root: z.string(),
   bundles: z.array(zWorkspaceBundle),
+  issues: z.array(z.object({ id: zBundleId, message: z.string() })).optional(),
 });
 export type Workspace = z.infer<typeof zWorkspace>;
 
@@ -278,6 +280,7 @@ export const zOperationRow = z.object({
   id: Operation.shape.id,
   canonicalName: Operation.shape.canonicalName,
   displayName: Operation.shape.displayName,
+  input: Operation.shape.input.optional(),
   mcp: z.object({ toolName: Operation.shape.mcp.shape.toolName }),
   cli: z.object({ command: Operation.shape.cli.shape.command }),
   effect: Operation.shape.effect,
@@ -655,6 +658,7 @@ export const zImportTaskResponse = z.object({
  * read-only projection.
  */
 export const CONSOLE_ROUTES = {
+  ...WORKBENCH_ROUTES,
   workspace: { method: "GET", path: "/api/workspace", mutates: false, response: zWorkspace },
   bundle: {
     method: "GET",

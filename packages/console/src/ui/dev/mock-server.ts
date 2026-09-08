@@ -116,6 +116,30 @@ export function createMockConsole(
   };
 
   const handlers: { [R in ConsoleRoute]: Handler<R> } = {
+    createBundle: () => {
+      throw refuse(
+        409,
+        "console/refused",
+        "This development preview uses fixtures. Run anvil console to compile real source files.",
+      );
+    },
+    evidence: ({ id = "" }) => {
+      bundle(id);
+      return {
+        bundleHash: "a".repeat(64),
+        staticChecks: [],
+        certification: { valid: false, detail: "No certification in this fixture." },
+        executable: [],
+      };
+    },
+    artifacts: ({ id = "" }) => {
+      bundle(id);
+      return { files: [{ path: "catalog.json", bytes: 2 }] };
+    },
+    artifact: ({ id = "" }, _body, { path = "catalog.json" }) => {
+      bundle(id);
+      return { path, bytes: 2, content: "{}" };
+    },
     workspace: () => ({
       root: state.root,
       bundles: Object.entries(state.bundles).map(([id, b]) => ({

@@ -11,21 +11,26 @@ import type { ConsoleResponse } from "../contract.js";
 
 /* ------------------------------- routing --------------------------------- */
 
-export type View = "queue" | "inspect" | "confusion";
+export type View = "overview" | "queue" | "inspect" | "confusion" | "evidence" | "artifacts";
 
 export type Route =
-  | { view: "workspace" }
+  | { view: "workspace" | "new" }
   | { view: View; bundleId: string; query: URLSearchParams };
 
 export function parseHash(hash: string): Route {
   const [path = "", search = ""] = hash.replace(/^#/, "").split("?");
-  const match = /^\/b\/([^/]+)\/(queue|inspect|confusion)$/.exec(path);
+  if (path === "/new") return { view: "new" };
+  const match = /^\/b\/([^/]+)\/(overview|queue|inspect|confusion|evidence|artifacts)$/.exec(path);
   if (!match) return { view: "workspace" };
-  return {
-    view: match[2] as View,
-    bundleId: decodeURIComponent(match[1] ?? ""),
-    query: new URLSearchParams(search),
-  };
+  try {
+    return {
+      view: match[2] as View,
+      bundleId: decodeURIComponent(match[1] ?? ""),
+      query: new URLSearchParams(search),
+    };
+  } catch {
+    return { view: "workspace" };
+  }
 }
 
 export function href(bundleId: string, view: View, query?: Record<string, string>): string {
@@ -223,3 +228,12 @@ export function tone(value: string): string {
       return "queued";
   }
 }
+
+export const BUNDLE_VIEWS: ReadonlyArray<readonly [View, string, string]> = [
+  ["overview", "Overview", "01"],
+  ["queue", "Decision queue", "02"],
+  ["inspect", "Operations & contracts", "03"],
+  ["confusion", "Routing quality", "04"],
+  ["evidence", "Evidence & checks", "05"],
+  ["artifacts", "Generated files", "06"],
+];

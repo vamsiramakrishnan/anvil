@@ -190,7 +190,7 @@ describe("the decision queue", () => {
     expect(document.activeElement).toBe(screen.getByLabelText("filter decisions"));
     (document.activeElement as HTMLElement).blur();
     await press("?");
-    const dialog = screen.getByRole("dialog", { hidden: true });
+    const dialog = screen.getByRole("dialog", { name: "keyboard map", hidden: true });
     expect(dialog.hasAttribute("open")).toBe(true);
     expect(within(dialog).getByText(/next \/ previous row/)).toBeTruthy();
     await press("Escape");
@@ -199,7 +199,7 @@ describe("the decision queue", () => {
 
   it("shows a designed empty state naming the anvil command when nothing is pending", async () => {
     mount("#/b/ledger/queue");
-    const empty = await screen.findByRole("status");
+    const empty = await screen.findByText(/anvil refine run \/work\/estate\/ledger --out/);
     expect(empty.textContent).toMatch(/anvil refine run \/work\/estate\/ledger --out/);
   });
 });
@@ -228,22 +228,28 @@ describe("the other views", () => {
 
   it("the confusion explorer names the benchmark command when there is no report", async () => {
     mount("#/b/ledger/confusion");
-    const empty = await screen.findByRole("status");
+    const empty = await screen.findByText(/anvil benchmark \/work\/estate\/ledger --json/);
     expect(empty.textContent).toMatch(/anvil benchmark \/work\/estate\/ledger --json/);
   });
 
   it("the inspector shows the served surface after supersession and drift on request", async () => {
     mount("#/b/payments/inspect?against=payments-next");
-    await screen.findByText(/served MCP surface/);
-    expect(screen.getByText(/4 tools after planning/)).toBeTruthy();
     await screen.findByText(/idempotency mode changed/);
-    expect(screen.getAllByText(/step exportStatement is blocked/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("link", { name: "Served surface" }));
+    await screen.findByText(/4 tools after planning/);
+    fireEvent.click(screen.getByRole("link", { name: "Capabilities & workflows" }));
+    await screen.findByText(/step exportStatement is blocked/);
   });
 
   it("the workspace lists bundles with what awaits a decision", async () => {
     mount("#/");
-    const card = (await screen.findByText("payments")).closest("a");
-    expect(card?.textContent).toMatch(/awaiting decision/);
-    expect(card?.getAttribute("href")).toBe("#/b/payments/queue");
+    const link = await screen.findByRole("link", { name: /^payments\s*v/ });
+    const row = link.closest("tr");
+    expect(row?.textContent).toMatch(/proposed capabilities/);
+    expect(link.getAttribute("href")).toBe("#/b/payments/overview");
+    if (!row) throw new Error("No bundle row");
+    expect(within(row).getByRole("link", { name: "Review →" }).getAttribute("href")).toBe(
+      "#/b/payments/queue",
+    );
   });
 });
