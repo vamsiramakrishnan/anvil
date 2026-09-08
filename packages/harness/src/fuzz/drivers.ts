@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadAirDocument, type Operation, operationSafetyInputKeys } from "@anvil/air";
+import { type Operation, operationSafetyInputKeys } from "@anvil/air";
 import {
   type Driver,
   type DriverSession,
@@ -9,31 +9,28 @@ import {
   processEnvironment,
   runProcess,
 } from "@anvil/fuzz";
-import { readBundleDir, sdkPlan, writeBundle } from "@anvil/generators";
+import {
+  loadBundleAir,
+  readBundleDir,
+  SDK_LANGUAGES,
+  type SdkLanguage,
+  sdkPlan,
+  writeBundle,
+} from "@anvil/generators";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { cliFlagsFor, ensureBundleNodeModules, hermeticCredentialEnv } from "../bundle-driver.js";
 import { connectSource, type McpSource } from "../mcp-source.js";
 import { type FuzzFixture, type FuzzFixtureFactory, generatedMockFixture } from "./fixture.js";
 
-export type FuzzSurface = "mcp" | "cli" | "cli-mcp" | "python";
-export interface BundleDriverOptions {
+import { prepareSdk, type SdkInvocation, type SdkToolchains } from "./sdk-driver.js";
+
+export const FUZZ_SURFACES = ["mcp", "cli", "cli-mcp", ...SDK_LANGUAGES] as const;
+export type FuzzSurface = (typeof FUZZ_SURFACES)[number];
+export interface BundleDriverOptions extends SdkToolchains {
   surfaces?: FuzzSurface[];
   cliPackageDir?: string;
-  pythonCommand?: string;
   fixture?: FuzzFixtureFactory;
 }
-
-const PYTHON_INVOKE = `import importlib, json, sys
-request = json.load(sys.stdin)
-module = importlib.import_module(request["package"])
-client = getattr(module, request["client"])(base_url=request["base"], token="anvil-hermetic-token", protocol_facade="Anvil fuzz fixture", timeout=5)
-try:
-    value = getattr(client, request["method"])(**request["input"])
-    print(json.dumps({"status":"ok", "value":value}))
-except Exception as error:
-    code = getattr(error, "code", None)
-    print(json.dumps({"status":"error" if code else "inconclusive", "value":None, "errorCode":code or type(error).__name__}))
-`;
 
 function decoded(text: string, isError: boolean): Outcome {
   let value: unknown;
@@ -59,7 +56,7 @@ export function bundleFuzzDrivers(
   options: BundleDriverOptions = {},
 ): Driver[] {
   const files = typeof bundle === "string" ? readBundleDir(bundle) : { ...bundle };
-  const air = loadAirDocument(JSON.parse(files["air.json"] ?? "null"));
+  const air = loadBundleAir(typeof bundle === "string" ? bundle : "bundle snapshot", files);
   const operations = new Map(air.operations.map((op) => [op.id, op]));
   const plan = sdkPlan(air);
   const sdkOperations = new Map(plan.operations.map((op) => [op.id, op]));
@@ -72,6 +69,7 @@ export function bundleFuzzDrivers(
         const dir = mkdtempSync(join(tmpdir(), "anvil-fuzz-"));
         let fixture: FuzzFixture | undefined;
         let source: McpSource | undefined;
+        let sdkClient: SdkInvocation | undefined;
         let closed = false;
         const close = async () => {
           if (closed) return;
@@ -92,6 +90,8 @@ export function bundleFuzzDrivers(
             dir,
             options.cliPackageDir ? [{ name: "@anvil/cli", dir: options.cliPackageDir }] : [],
           );
+          if ((SDK_LANGUAGES as readonly string[]).includes(surface))
+            sdkClient = await prepareSdk(surface as SdkLanguage, plan, files, dir, options, signal);
           fixture = await (options.fixture ?? generatedMockFixture)(dir, seed, signal);
           if (!/^http:\/\/127\.0\.0\.1:\d+\/?$/.test(fixture.baseUrl))
             throw new Error("Fuzz fixtures must bind loopback");
@@ -154,34 +154,11 @@ export function bundleFuzzDrivers(
                 } finally {
                   callSignal.removeEventListener("abort", abort);
                 }
-              } else if (surface === "python") {
+              } else if (sdkClient) {
                 const sdk = sdkOperations.get(op.id);
                 if (!sdk)
                   return { status: "unsupported", value: null, errorCode: "sdk_operation_missing" };
-                const raw = await runProcess(
-                  {
-                    command: options.pythonCommand ?? "python3",
-                    args: ["-c", PYTHON_INVOKE],
-                    cwd: dir,
-                    env: {
-                      ...env,
-                      PYTHONPATH: join(dir, "sdk/python"),
-                      PYTHONDONTWRITEBYTECODE: "1",
-                    },
-                  },
-                  JSON.stringify({
-                    package: `anvil_${plan.service.names.snake}`,
-                    client: `${plan.service.names.pascal}Client`,
-                    method: sdk.names.snake,
-                    input: step.input,
-                    base,
-                  }),
-                  callSignal,
-                );
-                outcome =
-                  raw.exitCode === 0
-                    ? Outcome.parse(JSON.parse(raw.stdout))
-                    : { status: "inconclusive", value: null, errorCode: "python_process_failed" };
+                outcome = await sdkClient.invoke(sdk, step, base, env, callSignal);
               } else {
                 const raw = await runProcess(
                   {

@@ -29,10 +29,14 @@ afterAll(() => {
 });
 
 describe("real generated payment surfaces", () => {
-  it("checks contract wire behavior and negative gates through the generated mock", async () => {
+  it.each([
+    "mcp",
+    "cli",
+    "python",
+  ] as const)("checks %s contract wire behavior and negative gates through the generated mock", async (surface) => {
     const report = await runCampaign({
       arbitrary: contractScenarios(air),
-      drivers: bundleFuzzDrivers(dir, { cliPackageDir }),
+      drivers: bundleFuzzDrivers(dir, { cliPackageDir, surfaces: [surface] }),
       properties: [contractProperties(air)],
       seed: 13,
       runs: 6,

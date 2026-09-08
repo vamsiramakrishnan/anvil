@@ -1,12 +1,14 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { loadAirDocument, operationInputSchema } from "@anvil/air";
+import { operationInputSchema } from "@anvil/air";
 import type { CampaignReport, SkillRun } from "@anvil/fuzz";
 import {
   bundleHash,
   generateBundle,
+  loadBundleAir,
   readBundleDir,
   resolveBundleDir,
+  SDK_LANGUAGES,
   writeBundle,
 } from "@anvil/generators";
 import type { FuzzSurface } from "@anvil/harness";
@@ -56,7 +58,7 @@ export function registerFuzz(parent: Command, ctx: CommandContext): void {
       .option("--fixture <name>", "contract or payments", "contract")
       .option(
         "--surfaces <list>",
-        "comma-separated mcp,cli,cli-mcp,python (agent mode: one surface)",
+        "comma-separated mcp,cli,cli-mcp,typescript,python,go,java (agent mode: one surface)",
       )
       .option("--seed <n>", "deterministic generation seed", integer, 42)
       .option("--runs <n>", "generated scenarios, excluding shrinking", integer, 5)
@@ -133,15 +135,16 @@ export async function runFuzzCommand(
   )
     throw new Error("Evidence attachment requires --case, --predicate, and --value together");
   const claim = opts.value === undefined ? undefined : z.json().parse(JSON.parse(opts.value));
+  const harness = await import("@anvil/harness");
   const surfaces = (opts.surfaces ?? (opts.agentConfig ? "cli" : "mcp,cli,python")).split(
     ",",
   ) as FuzzSurface[];
   if (
     !surfaces.length ||
     new Set(surfaces).size !== surfaces.length ||
-    surfaces.some((s) => !["mcp", "cli", "cli-mcp", "python"].includes(s))
+    surfaces.some((s) => !harness.FUZZ_SURFACES.includes(s))
   )
-    throw new Error("Choose distinct supported surfaces: mcp,cli,cli-mcp,python");
+    throw new Error(`Choose distinct supported surfaces: ${harness.FUZZ_SURFACES.join(",")}`);
   if (opts.agentConfig && surfaces.length !== 1)
     throw new Error("Agent execution requires exactly one surface");
   const seed = opts.seed ?? 42;
@@ -164,7 +167,6 @@ export async function runFuzzCommand(
   )
     throw new Error("Invalid seed, runs (1–10000), or time budget (1–3600000 ms)");
   const core = await import("@anvil/fuzz");
-  const harness = await import("@anvil/harness");
   const root = resolve(opts.out ?? ".anvil/fuzz");
   if (path) {
     const rel = relative(resolveBundleDir(path), root);
@@ -183,7 +185,7 @@ export async function runFuzzCommand(
     dir = resolveBundleDir(path as string);
   }
   const files = readBundleDir(dir);
-  const air = loadAirDocument(JSON.parse(files["air.json"] ?? "null"));
+  const air = loadBundleAir(dir, files);
   if (
     fixture === "payments" &&
     JSON.stringify(air) !== JSON.stringify(await harness.compilePaymentFuzzFixture())
@@ -194,7 +196,13 @@ export async function runFuzzCommand(
   const cliPackageDir = resolveCliPackageDir();
   const identity = {
     bundle: bundleHash(files),
-    toolchain: fuzzToolchainHash(cliPackageDir, harness.packageDirOf),
+    toolchain: fuzzToolchainHash(
+      cliPackageDir,
+      harness.packageDirOf,
+      await harness.sdkToolchainIdentity(
+        SDK_LANGUAGES.filter((language) => surfaces.includes(language)),
+      ),
+    ),
     adapter: "anvil-fuzz/v1",
     fixture: `${fixture}/v1`,
     oracle: `${fixture}/v1`,

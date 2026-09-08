@@ -7,12 +7,14 @@ import { readBundleDir } from "@anvil/generators";
 export function fuzzToolchainHash(
   cliRoot: string,
   packageDir: (name: string, from?: string) => string,
+  sdkToolchains: Record<string, string> = {},
 ): string {
   const hash = createHash("sha256");
   hash.update(
     JSON.stringify({ node: process.version, platform: process.platform, arch: process.arch }),
   );
-  for (const name of ["cli", "air", "runtime", "mcp-runtime", "harness", "fuzz"]) {
+  hash.update(JSON.stringify(sdkToolchains));
+  for (const name of ["generators", "cli", "air", "runtime", "mcp-runtime", "harness", "fuzz"]) {
     const root = name === "cli" ? cliRoot : packageDir(`@anvil/${name}`, cliRoot);
     hash.update(readFileSync(join(root, "package.json")));
     const files = readBundleDir(join(root, "dist"));

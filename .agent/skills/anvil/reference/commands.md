@@ -991,7 +991,7 @@ Run seeded campaigns against isolated loopback fixtures. Contract mode checks AI
 Options:
 - `--example <name>` — generate the owned payments fixture bundle
 - `--fixture <name>` — contract or payments
-- `--surfaces <list>` — comma-separated mcp,cli,cli-mcp,python (agent mode: one surface)
+- `--surfaces <list>` — comma-separated mcp,cli,cli-mcp,typescript,python,go,java (agent mode: one surface)
 - `--seed <n>` — deterministic generation seed
 - `--runs <n>` — generated scenarios, excluding shrinking
 - `--budget-ms <n>` — campaign or agent time budget

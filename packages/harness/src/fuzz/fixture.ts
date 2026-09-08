@@ -37,6 +37,7 @@ export const generatedMockFixture: FuzzFixtureFactory = async (bundle, _seed, si
           method: c.method,
           path: c.path,
           query: c.query,
+          headers: c.headers,
           body: c.body as JsonValue,
           contentType: c.contentType,
         })),

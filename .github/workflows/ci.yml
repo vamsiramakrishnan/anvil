@@ -22,6 +22,8 @@ jobs:
     name: Verify workspace
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      ANVIL_FUZZ_REQUIRE_SDKS: "true"
 
     steps:
       - name: Check out repository
@@ -40,6 +42,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Set up Go for SDK execution
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.12"
+          cache: false
+
+      - name: Set up Java for SDK execution
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: Lint
         run: pnpm lint
 
@@ -56,7 +70,8 @@ jobs:
         run: pnpm build
 
       - name: Test
-        run: pnpm test
+        # SDK compiler processes share the runner with the test workers.
+        run: pnpm test --concurrency=2 -- --maxWorkers=2
 
       # The mutation runner edits source files while proving that the declared
       # tests detect each removed control. Keep it after the normal suite and

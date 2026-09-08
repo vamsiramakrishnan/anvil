@@ -89,7 +89,16 @@ export function contractProperties(air: AirDocument): Property {
           const want = expectedWire(op, event.input);
           const losses: WireLoss[] = [];
           for (const raw of requests) {
-            const actual = raw as { path?: unknown; query?: unknown; body?: unknown };
+            const actual = raw as {
+              method?: unknown;
+              path?: unknown;
+              query?: unknown;
+              body?: unknown;
+              headers?: Record<string, string>;
+            };
+            diff(op.sourceRef.method?.toUpperCase(), actual.method, "method", losses);
+            for (const [key, value] of Object.entries(want.headers))
+              diff(value, actual.headers?.[key], `headers.${key}`, losses);
             diff(want.path, actual.path, "path", losses);
             diff(want.query, actual.query ?? {}, "query", losses);
             diff(want.body ?? null, actual.body ?? null, "body", losses);
@@ -130,12 +139,15 @@ export function contractProperties(air: AirDocument): Property {
       for (const item of outcomes.slice(1)) {
         const a = baseline.event?.outcome;
         const b = item.event?.outcome;
+        const values: WireLoss[] = [];
+        if (a?.status === "ok" && b?.status === "ok") diff(a.value, b.value, "value", values);
         checks.push({
           id: "contract.outcome-agreement",
           driver: item.driver,
           operation: step.operation,
           stepId: step.id,
           status:
+            !values.length &&
             a?.status === b?.status &&
             (step.tags.some((tag) => ["unconfirmed", "keyless"].includes(tag)) ||
               a?.errorCode === b?.errorCode)

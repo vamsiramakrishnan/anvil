@@ -53,5 +53,5 @@ arbitrary synchronous code; this library is not an operating-system sandbox.
 The supplied `runProcess` helper uses argv arrays, kills process groups on POSIX,
 limits combined output, and inherits only basic process environment variables.
 
-The Anvil-specific MCP, CLI, CLI→MCP, and Python SDK drivers live in
+The Anvil-specific MCP, CLI, CLI→MCP, and TypeScript/Python/Go/Java SDK drivers live in
 `packages/harness/src/fuzz`. See the [workflow and protocol reference](../../docs/fuzzing.md).

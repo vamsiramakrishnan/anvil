@@ -8,11 +8,14 @@ The reusable kernel is `packages/fuzz`; Anvil's adapters live in
 ## Run a campaign
 
 Build the workspace with `pnpm install` and `pnpm build`. Python SDK execution
-also requires `python3`; the generated client uses the standard library.
+requires `python3`, Go requires Go 1.21+, and Java requires a JDK 11+ with both
+`javac` and `java` on `PATH`. The harness includes the TypeScript compiler.
+All four generated SDKs use their language's standard runtime libraries.
 
 ```sh
 node packages/cli/dist/bin-anvil.js fuzz --example payments \
-  --surfaces mcp,cli,cli-mcp,python --seed 39 --runs 5
+  --surfaces mcp,cli,cli-mcp,typescript,python,go,java \
+  --seed 39 --runs 5 --timeout-ms 120000 --budget-ms 300000
 ```
 
 The owned payment contract has two approved operations and an explicit
@@ -42,7 +45,26 @@ arbitrary JSON Schema constraints or malformed transport frames.
 | `mcp` | Generated MCP server over an actual stdio MCP connection |
 | `cli` | Generated CLI entry point in a child process |
 | `cli-mcp` | Generated CLI with `--mcp stdio` |
+| `typescript` | Compile copied sources with TypeScript, invoke the public client method in Node |
 | `python` | Generated Python client's public method in a child process |
+| `go` | Compile copied sources with `go build`, populate the public input struct and call the public method |
+| `java` | Compile copied sources with `javac`, construct the public input class and call the public method |
+
+The default surfaces remain `mcp,cli,python`; select additional SDKs explicitly.
+A missing compiler or runtime is unsupported coverage, and a compilation error
+is inconclusive coverage. Neither is a passing test. The first compiled SDK run
+can be slow, particularly when Go builds its standard library; the command above
+allows a longer startup deadline. No package installers or dependency downloads
+run during a campaign.
+
+Successful build artifacts are cached by exact source and toolchain identity in
+a bounded process-local cache. Every case, shrink, and replay gets fresh fixture
+state and a fresh copy of the client. Each step invokes a new SDK process; these
+drivers cover API call sequences, not state retained within a client instance.
+Prebuilt artifacts supplied in the bundle are not used in place of compilation.
+Typed clients cannot express every malformed JSON input. For example, omitting
+a required Go or Java constructor field reports unsupported coverage instead of
+silently replacing it with a zero value. Transport-frame fuzzing remains separate.
 
 The exact bundle bytes are copied before execution, including any hand-edited
 client defect. Regenerating clients inside the driver would hide that defect.
@@ -96,10 +118,11 @@ Replay executes the recorded calls without resampling. The driver set and
 recorded identities must match. To test edited bundle bytes, add
 `--against-current`; the report records changed bundle and toolchain hashes and
 retains the original replay identity. The toolchain hash covers installed Anvil
-execution binaries, Node/platform identity, and protocol/schema/generator dependency
-versions. Declared fixture and oracle version changes still refuse.
+execution binaries (including generators), Node/platform identity, selected SDK
+compiler/runtime versions, and protocol/schema/generator dependency versions.
+Declared fixture and oracle version changes still refuse.
 
-The regression suite plants a defect in the generated Python client that
+The regression suite plants a defect in each generated SDK's public client that
 replaces the caller's idempotency key on each call. An isolated refund succeeds.
 The campaign finds the duplicated commit, shrinks the case to read → refund →
 repeat with amount `1`, reproduces it, then passes after restoring the client.

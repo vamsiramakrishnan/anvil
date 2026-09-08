@@ -40,7 +40,10 @@ export async function runProcess(
       cwd: spec.cwd,
       env: processEnvironment(spec.env),
       detached: process.platform !== "win32",
-      stdio: ["pipe", "pipe", "pipe"],
+      // Version probes and compilers may exit before an empty stdin pipe is
+      // flushed. Give commands with no input EOF directly, avoiding a spurious
+      // EPIPE that would misreport an installed toolchain as unavailable.
+      stdio: [input.length ? "pipe" : "ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -51,18 +54,18 @@ export async function runProcess(
       stopProcess(child);
     };
     signal.addEventListener("abort", fail, { once: true });
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
       bytes += Buffer.byteLength(chunk);
       if (bytes > limit) fail();
       else stdout += chunk;
     });
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
       if (bytes > limit) fail();
       else stderr += chunk.toString("utf8");
     });
-    child.stdin.on("error", fail);
+    child.stdin?.on("error", fail);
     child.on("error", () => {
       signal.removeEventListener("abort", fail);
       reject(new Error("Process could not start"));
@@ -72,6 +75,6 @@ export async function runProcess(
       if (failed || signal.aborted) reject(new Error("Process aborted or output limit exceeded"));
       else resolve({ exitCode, stdout, stderr });
     });
-    child.stdin.end(input);
+    child.stdin?.end(input);
   });
 }
