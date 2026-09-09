@@ -145,16 +145,18 @@ export function createConsoleApi(options: ConsoleApiOptions = {}) {
   }
 
   return {
-    workspace: () => call("workspace", {}),
-    operation: (id: string, opId: string) => call("operation", { id, opId }),
-    preview: (id: string, opId: string, body: ConsoleRequest<"preview">) =>
-      call("preview", { id, opId }, body),
-    evidence: (id: string) => call("evidence", { id }),
-    artifacts: (id: string) => call("artifacts", { id }),
-    artifact: (id: string, path: string) => call("artifact", { id }, undefined, { path }),
+    preview: (id: string, operationId: string, body: ConsoleRequest<"preview">) =>
+      call("preview", { id, operationId }, body),
     regenerate: (id: string, body: ConsoleRequest<"regenerate">) =>
       call("regenerate", { id }, body),
+    workspace: () => call("workspace", {}),
+    createBundle: (body: ConsoleRequest<"createBundle">) => call("createBundle", {}, body),
+    evidence: (id: string) => call("evidence", { id }),
     bundle: (id: string) => call("bundle", { id }),
+    operation: (id: string, operationId: string) => call("operation", { id, operationId }),
+    assurance: (id: string) => call("assurance", { id }),
+    artifacts: (id: string) => call("artifacts", { id }),
+    artifact: (id: string, path: string) => call("artifact", { id }, undefined, { path }),
     queue: (id: string) => call("queue", { id }),
     packs: (id: string) => call("packs", { id }),
     benchmark: (id: string) => call("benchmark", { id }),

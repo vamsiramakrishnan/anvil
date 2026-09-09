@@ -9,7 +9,8 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "env": ["ANVIL_FUZZ_REQUIRE_SDKS"]
     },
     "clean": {
       "cache": false

@@ -47,14 +47,20 @@ const stale = (r: { reprojection: { stale: { records: string[]; targetFiles: str
 
 /** Applying a pack writes AIR; regeneration is a separate, explicit action. */
 const RECOMPILE_AFTER_APPLY =
-  "AIR was written; recompile the bundle (anvil compile) or open Evidence & artifacts to regenerate its projections.";
+  "AIR was written; applying a pack does not reproject. You can recompile the bundle (anvil compile) or open Evidence & checks to regenerate its projections.";
 
 type PackRow = Extract<DecisionRow, { kind: "pack" }>;
 
 export function QueueView({ api, bundleId, data, reload }: Props) {
   const rows = useMemo(() => toRows(data.queue), [data.queue]);
   const [filter, setFilter] = useState("");
-  const [cursor, setCursor] = useState(0);
+  const initialItem = new URLSearchParams(location.hash.split("?")[1] ?? "").get("item");
+  const [cursor, setCursor] = useState(() =>
+    Math.max(
+      0,
+      rows.findIndex((row) => row.key === initialItem),
+    ),
+  );
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [policyId, setPolicyId] = useState<string | undefined>();
   const [reviewer, setReviewerState] = useState(readReviewer);
@@ -287,7 +293,11 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (
+        target &&
+        (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)
+      ) {
         if (event.key === "Escape") target.blur();
         return;
       }

@@ -77,6 +77,8 @@ const SPEC_EXTENSIONS = [
   "wsdl",
   "xsd",
   "xml",
+  "edmx",
+  "har",
 ];
 
 /** XSD schema files are XML supporting files, never YAML and never entrypoints. */
@@ -287,7 +289,7 @@ async function importDirectory(state: ImportState, root: string): Promise<void> 
     state.diagnostics.push({
       level: "error",
       code: "source/empty",
-      message: `No spec files found under '${root}'. Expected .yaml, .yml, or .json files.`,
+      message: `No spec files found under '${root}'. Expected a supported API specification.`,
     });
     return;
   }
@@ -305,7 +307,7 @@ async function importDirectory(state: ImportState, root: string): Promise<void> 
       level: "warning",
       code: "source/unclassified",
       message:
-        "No supported API contract detected. Provide OpenAPI, Swagger, GraphQL SDL, proto3, WSDL, Google Discovery, OData metadata, or a Postman collection.",
+        "No supported API contract detected. Provide OpenAPI, Swagger, GraphQL SDL, proto3, WSDL, Google Discovery, OData metadata, a Postman collection, or HAR capture.",
     });
     return;
   }

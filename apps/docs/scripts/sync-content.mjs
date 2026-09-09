@@ -60,6 +60,8 @@ const PAGES = [
   { src: "docs/MANIFEST.md", dest: "guides/manifest.md", order: 2 },
   { src: "skills/anvil/reference/workflow.md", dest: "guides/enrich-approve-workflow.md", order: 3 },
   { src: "docs/client-sdks.md", dest: "guides/client-sdks.md", order: 4 },
+  { src: "docs/fuzzing.md", dest: "guides/fuzzing.md", order: 4 },
+  { src: "docs/business-capabilities.md", dest: "guides/business-capabilities.md", order: 4 },
   { src: "docs/observing-running-apps.md", dest: "guides/observing-running-apps.md", order: 5 },
   { src: "docs/console.md", dest: "guides/review-console.md", order: 5 },
   { src: "docs/adopting-mcp-servers.md", dest: "guides/adopting-mcp-servers.md", order: 6 },

@@ -29,14 +29,23 @@ import {
 } from "@anvil/refinement";
 import { z } from "zod";
 import {
-  zArtifact,
+  WORKBENCH_ROUTES,
   zArtifactQuery,
-  zArtifacts,
-  zEvidenceView,
-  zOperationDetail,
+  zArtifactsView,
+  zArtifactView,
+  zAssuranceView,
+  zOperationView,
   zPreview,
   zPreviewRequest,
   zRegenerateRequest,
+} from "./workbench-contract.js";
+
+export {
+  zArtifactQuery,
+  zArtifactsView,
+  zArtifactView,
+  zAssuranceView,
+  zOperationView,
 } from "./workbench-contract.js";
 
 /**
@@ -278,7 +287,7 @@ export const zWorkspaceBundle = z.object({
 export const zWorkspace = z.object({
   root: z.string(),
   bundles: z.array(zWorkspaceBundle),
-  problems: z.array(z.object({ id: z.string(), message: z.string() })).default([]),
+  issues: z.array(z.object({ id: zBundleId, message: z.string() })).default([]),
 });
 export type Workspace = z.infer<typeof zWorkspace>;
 
@@ -290,6 +299,7 @@ export const zOperationRow = z.object({
   id: Operation.shape.id,
   canonicalName: Operation.shape.canonicalName,
   displayName: Operation.shape.displayName,
+  input: Operation.shape.input.optional(),
   mcp: z.object({ toolName: Operation.shape.mcp.shape.toolName }),
   cli: z.object({ command: Operation.shape.cli.shape.command }),
   effect: Operation.shape.effect,
@@ -592,9 +602,8 @@ export const zApplyPackRequest = z.object({
 });
 
 /**
- * `applyPackToBundle` writes AIR only. The console offers regeneration as a
- * separate action bound to the viewed bundle digest. Applying alone does not
- * regenerate projections, so this response carries no reprojection result.
+ * `applyPackToBundle` writes AIR only. Regeneration is a separate action bound
+ * to the viewed bundle digest; applying alone does not regenerate projections.
  */
 export const zApplyPackResponse = z.object({
   airPath: z.string(),
@@ -664,37 +673,13 @@ export const zImportTaskResponse = z.object({
  * read-only projection.
  */
 export const CONSOLE_ROUTES = {
-  operation: {
-    method: "GET",
-    path: "/api/bundles/:id/operations/:opId",
-    mutates: false,
-    response: zOperationDetail,
-  },
+  ...WORKBENCH_ROUTES,
   preview: {
     method: "POST",
-    path: "/api/bundles/:id/operations/:opId/preview",
+    path: "/api/bundles/:id/operations/:operationId/preview",
     mutates: true,
     request: zPreviewRequest,
     response: zPreview,
-  },
-  evidence: {
-    method: "GET",
-    path: "/api/bundles/:id/evidence",
-    mutates: false,
-    response: zEvidenceView,
-  },
-  artifacts: {
-    method: "GET",
-    path: "/api/bundles/:id/artifacts",
-    mutates: false,
-    response: zArtifacts,
-  },
-  artifact: {
-    method: "GET",
-    path: "/api/bundles/:id/artifact",
-    mutates: false,
-    query: zArtifactQuery,
-    response: zArtifact,
   },
   regenerate: {
     method: "POST",
@@ -709,6 +694,31 @@ export const CONSOLE_ROUTES = {
     path: "/api/bundles/:id",
     mutates: false,
     response: zBundleInspector,
+  },
+  operation: {
+    method: "GET",
+    path: "/api/bundles/:id/operations/:operationId",
+    mutates: false,
+    response: zOperationView,
+  },
+  assurance: {
+    method: "GET",
+    path: "/api/bundles/:id/assurance",
+    mutates: false,
+    response: zAssuranceView,
+  },
+  artifacts: {
+    method: "GET",
+    path: "/api/bundles/:id/artifacts",
+    mutates: false,
+    response: zArtifactsView,
+  },
+  artifact: {
+    method: "GET",
+    path: "/api/bundles/:id/artifact",
+    mutates: false,
+    query: zArtifactQuery,
+    response: zArtifactView,
   },
   queue: {
     method: "GET",

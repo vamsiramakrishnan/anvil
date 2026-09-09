@@ -1712,6 +1712,11 @@ describe("observability", () => {
 });
 
 describe("fingerprint", () => {
+  it("does not collide when JSON contains a prototype-named property", () => {
+    expect(requestFingerprint("op", JSON.parse('{"__proto__":{"amount":42}}'))).not.toBe(
+      requestFingerprint("op", {}),
+    );
+  });
   it("is stable regardless of key order", () => {
     const a = requestFingerprint("op", { a: 1, b: 2 });
     const b = requestFingerprint("op", { b: 2, a: 1 });

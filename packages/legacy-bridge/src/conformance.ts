@@ -223,9 +223,9 @@ async function timeoutScenario(
     ECHO_HANDLER,
     { silentDestinations: new Set([wireBinding.requestDestination]) },
     async ({ baseUrl }) => {
-      const start = Date.now();
+      const start = performance.now();
       const res = await invoke(baseUrl, '{"a":1}');
-      const elapsedMs = Date.now() - start;
+      const elapsedMs = performance.now() - start;
       assertCheck(res.status === 504, `expected 504, got ${res.status}`);
       const parsed = JSON.parse(res.text) as { code?: string; retryable?: boolean };
       assertCheck(

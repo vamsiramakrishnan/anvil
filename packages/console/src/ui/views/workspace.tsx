@@ -1,206 +1,340 @@
-import { useState } from "react";
-import type { ConsoleApi } from "../api.js";
-import { Label, Tag } from "../components.js";
-import { useLoad } from "../load.js";
+import { useMemo, useState } from "react";
+import type { ConsoleResponse } from "../../contract.js";
+import { ErrorBox, Label, Tag } from "../components.js";
+import type { Loaded } from "../hooks.js";
 import { href } from "../model.js";
-import { LoadState } from "../workbench-components.js";
-import { SourceSetup } from "./source-setup.js";
+import { Loading, Metric, PageHeader } from "../workbench-components.js";
 
-export function WorkspaceView({ api }: { api: ConsoleApi }) {
-  const loaded = useLoad(() => api.workspace(), []);
-  const [search, setSearch] = useState("");
+type Bundle = ConsoleResponse<"workspace">["bundles"][number];
+const pending = (b: Bundle) =>
+  (b.counts.operations.review_required ?? 0) + (b.counts.operations.generated ?? 0);
+const total = (b: Bundle) =>
+  Object.values(b.counts.operations).reduce((sum, count) => sum + count, 0);
+const PAGE_SIZE = 25;
+
+export function WorkspaceView({ loaded }: { loaded: Loaded<ConsoleResponse<"workspace">> }) {
+  const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
-  const [sort, setSort] = useState("attention");
-  const [onboarding, setOnboarding] = useState(false);
-  if (!loaded.data) return <LoadState loaded={loaded} />;
-  const { root, bundles } = loaded.data;
-  const pending = bundles.reduce((total, b) => total + b.pendingDecisions, 0);
-  const approved = bundles.reduce((total, b) => total + (b.counts.operations.approved ?? 0), 0);
-  const blocked = bundles.reduce((total, b) => total + (b.counts.operations.blocked ?? 0), 0);
-  const visible = bundles
-    .filter(
-      (b) =>
-        `${b.id} ${b.service.id} ${b.sourceKind}`.toLowerCase().includes(search.toLowerCase()) &&
-        (filter === "all" ||
-          (filter === "review" ? b.pendingDecisions > 0 : (b.counts.operations.blocked ?? 0) > 0)),
-    )
-    .sort((a, b) =>
-      sort === "attention"
-        ? b.pendingDecisions - a.pendingDecisions || a.id.localeCompare(b.id)
-        : a.id.localeCompare(b.id),
+  const [source, setSource] = useState("");
+  const [sort, setSort] = useState("review");
+  const [page, setPage] = useState(0);
+  const [selected, setSelected] = useState<string[]>([]);
+  const bundles = loaded.data?.bundles ?? [];
+  const filtered = useMemo(
+    () =>
+      bundles
+        .filter((b) => {
+          const match = `${b.id} ${b.path} ${b.service.id} ${b.service.version} ${b.sourceKind}`
+            .toLowerCase()
+            .includes(query.trim().toLowerCase());
+          return (
+            match &&
+            (!source || b.sourceKind === source) &&
+            (filter === "all" ||
+              (filter === "review" && pending(b) > 0) ||
+              (filter === "blocked" && (b.counts.operations.blocked ?? 0) > 0) ||
+              (filter === "benchmark" && !b.hasBenchmark))
+          );
+        })
+        .sort(
+          (a, b) =>
+            (sort === "review"
+              ? pending(b) - pending(a)
+              : sort === "size"
+                ? total(b) - total(a)
+                : 0) ||
+            a.service.id.localeCompare(b.service.id) ||
+            a.id.localeCompare(b.id),
+        ),
+    [bundles, query, source, filter, sort],
+  );
+  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pages - 1);
+  const visible = filtered.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+  if (!loaded.data)
+    return loaded.error ? (
+      <div className="stack">
+        <ErrorBox error={loaded.error} />
+        <button type="button" className="btn" onClick={() => void loaded.reload()}>
+          Try again
+        </button>
+      </div>
+    ) : (
+      <Loading />
     );
   return (
-    <div className="stack">
-      <div className="page-heading">
-        <div>
-          <Label>YOUR INTEGRATION WORKSPACE</Label>
-          <h1>From contract to callable.</h1>
-          <p>Explore your APIs, resolve review decisions, and inspect what your agents receive.</p>
-        </div>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => setOnboarding((value) => !value)}
-        >
-          {onboarding ? "Close setup" : "+ Add a source"}
-        </button>
+    <div className="stack workspace-view">
+      <PageHeader
+        eyebrow="API toolchain"
+        title="workspace"
+        description="Your API contracts, review work, and generated tools in one place."
+        actions={
+          <>
+            <button
+              type="button"
+              className="btn"
+              disabled={loaded.refreshing}
+              onClick={() => void loaded.reload()}
+            >
+              {loaded.refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+            <a className="btn btn-primary" href="#/new">
+              ＋ Create bundle
+            </a>
+          </>
+        }
+      />
+      <div className="metrics">
+        <Metric label="Bundles" value={bundles.length} detail="Discovered in this workspace" />
+        <Metric
+          label="Operations"
+          value={bundles.reduce((n, b) => n + total(b), 0)}
+          detail="Across all source formats"
+        />
+        <Metric
+          label="Pending decisions"
+          value={bundles.reduce((n, b) => n + b.pendingDecisions, 0)}
+          tone="attention"
+          detail="Operations, capabilities and refinement items"
+        />
+        <Metric
+          label="Approved operations"
+          value={bundles.reduce((n, b) => n + (b.counts.operations.approved ?? 0), 0)}
+          detail="Available to generated tools"
+        />
       </div>
-      <div className="workspace-path">
-        <span className="local-dot" />
-        <code>{root}</code>
-        <span>Local discovery</span>
-        <button type="button" className="btn btn-sm" onClick={() => void loaded.reload()}>
-          Refresh
-        </button>
-      </div>
-      {loaded.data.problems.length ? (
-        <div className="callout warning" role="alert">
+      {loaded.data.issues?.length ? (
+        <div className="error" role="alert">
           <strong>Some bundles could not be read</strong>
-          {loaded.data.problems.map((problem) => (
-            <p key={problem.id}>
-              <code>{problem.id}</code>: {problem.message}
+          {loaded.data.issues.map((issue) => (
+            <p key={issue.id}>
+              <code>{issue.id}</code>: {issue.message}
             </p>
           ))}
         </div>
       ) : null}
-      <div className="metrics-grid workspace-metrics">
-        <div className="metric">
-          <Label>Compiled bundles</Label>
-          <strong>{bundles.length.toString().padStart(2, "0")}</strong>
-          <p>One contract, aligned outputs</p>
+      {bundles.length === 0 ? (
+        <div className="onboarding">
+          <span className="onboarding-number">01 / START WITH A CONTRACT</span>
+          <h2>Make your first API usable by agents.</h2>
+          <p>
+            Upload a specification, paste a contract, or compile files already in this workspace.
+            Anvil keeps the source and generates aligned tools.
+          </p>
+          <a className="btn btn-primary" href="#/new">
+            Create your first bundle →
+          </a>
+          <div className="onboarding-steps">
+            <div>
+              <Label>01 · Import</Label>
+              <p>OpenAPI, SOAP, gRPC, GraphQL, OData, Postman, and captured traffic.</p>
+            </div>
+            <div>
+              <Label>02 · Review</Label>
+              <p>Inspect effects, idempotency, and the evidence behind each decision.</p>
+            </div>
+            <div>
+              <Label>03 · Use</Label>
+              <p>Browse the CLI, MCP server, skills, SDKs, and deployment files.</p>
+            </div>
+          </div>
         </div>
-        <div className="metric">
-          <Label>Awaiting decision</Label>
-          <strong>{pending.toString().padStart(2, "0")}</strong>
-          <button type="button" className="text-button" onClick={() => setFilter("review")}>
-            Review the queue →
-          </button>
-        </div>
-        <div className="metric">
-          <Label>Approved operations</Label>
-          <strong>{approved.toString().padStart(2, "0")}</strong>
-          <p>Approved for exposure</p>
-        </div>
-        <div className="metric">
-          <Label>Blocked operations</Label>
-          <strong>{blocked.toString().padStart(2, "0")}</strong>
-          <button type="button" className="text-button" onClick={() => setFilter("blocked")}>
-            Inspect blockers →
-          </button>
-        </div>
-      </div>
-      {onboarding || bundles.length === 0 ? <SourceSetup root={root} /> : null}
-      <div className="section-heading">
-        <div>
-          <h2>Your bundles</h2>
-          <p>Choose a bundle to review it. Open the catalog to explore its operations.</p>
-        </div>
-        <span className="label">
-          {visible.length} OF {bundles.length} BUNDLES
-        </span>
-      </div>
-      <div className="filter-bar">
-        <input
-          type="search"
-          aria-label="Search bundles"
-          placeholder="Search bundles or source formats…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select
-          aria-label="Bundle filter"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        >
-          <option value="all">All bundles</option>
-          <option value="review">Needs a decision</option>
-          <option value="blocked">Has blockers</option>
-        </select>
-        <select aria-label="Sort bundles" value={sort} onChange={(e) => setSort(e.target.value)}>
-          <option value="attention">Most decisions first</option>
-          <option value="name">Name A–Z</option>
-        </select>
-      </div>
-      <div className="cards">
-        {visible.map((bundle) => {
-          const ops = bundle.counts.operations;
-          const total = Object.values(ops).reduce((sum, count) => sum + (count ?? 0), 0);
-          return (
-            <article className="bundle-card" key={bundle.id}>
-              <a className="card" href={href(bundle.id, "queue")}>
-                <div className="bundle-card-title">
-                  <span className="bundle-symbol" aria-hidden="true">
-                    {bundle.service.id.slice(0, 2).toUpperCase()}
-                  </span>
-                  <div>
-                    <h2>{bundle.service.id}</h2>
-                    <span className="mono muted">{bundle.id}</span>
-                  </div>
-                  <span className="card-arrow" aria-hidden="true">
-                    ↗
-                  </span>
-                </div>
-                <div className="chips">
-                  <Tag>{bundle.sourceKind}</Tag>
-                  <Tag>{bundle.service.version}</Tag>
-                  {bundle.hasBenchmark ? <Tag>Benchmark present</Tag> : null}
-                </div>
-                <div
-                  className="approval-bar"
-                  role="img"
-                  aria-label={`${ops.approved ?? 0} of ${total} operations approved`}
+      ) : (
+        <section className="bundle-list" aria-label="Bundles">
+          <div className="list-tabs">
+            {[
+              ["all", "All bundles"],
+              ["review", "Needs operation review"],
+              ["blocked", "Blocked operations"],
+              ["benchmark", "No benchmark"],
+            ].map(([id, label]) => (
+              <button
+                type="button"
+                key={id}
+                aria-pressed={filter === id}
+                onClick={() => {
+                  setFilter(id ?? "all");
+                  setPage(0);
+                }}
+              >
+                {label}
+                {id === "all" ? <span>{bundles.length}</span> : null}
+              </button>
+            ))}
+          </div>
+          <div className="list-toolbar">
+            <input
+              type="search"
+              aria-label="Search bundles"
+              placeholder="Search by service, version, format, or path…"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setPage(0);
+              }}
+            />
+            <select
+              aria-label="Source format"
+              value={source}
+              onChange={(e) => {
+                setSource(e.target.value);
+                setPage(0);
+              }}
+            >
+              <option value="">All formats</option>
+              {[...new Set(bundles.map((b) => b.sourceKind))].sort().map((kind) => (
+                <option key={kind}>{kind}</option>
+              ))}
+            </select>
+            <select
+              aria-label="Sort bundles"
+              value={sort}
+              onChange={(e) => {
+                setSort(e.target.value);
+                setPage(0);
+              }}
+            >
+              <option value="review">Most reviews first</option>
+              <option value="name">Service name</option>
+              <option value="size">Most operations</option>
+            </select>
+          </div>
+          {selected.length > 0 ? (
+            <div className="selection-bar">
+              <span>{selected.length} of 2 bundles selected for contract comparison</span>
+              {selected.length === 2 ? (
+                <a
+                  className="btn btn-primary btn-sm"
+                  href={href(selected[0] ?? "", "inspect", { against: selected[1] ?? "" })}
                 >
-                  <span style={{ width: `${total ? ((ops.approved ?? 0) / total) * 100 : 0}%` }} />
-                </div>
-                <div className="counts">
-                  <div className="count">
-                    <strong>{bundle.pendingDecisions}</strong>
-                    <Label>awaiting decision</Label>
-                  </div>
-                  <div className="count">
-                    <strong>{ops.approved ?? 0}</strong>
-                    <Label>approved ops</Label>
-                  </div>
-                  <div className="count">
-                    <strong>{ops.blocked ?? 0}</strong>
-                    <Label>blocked</Label>
-                  </div>
-                </div>
-                <div className="bundle-meta">
-                  <span className="count">
-                    <strong>{bundle.counts.capabilities.proposed ?? 0}</strong> proposed caps
-                  </span>
-                  <span className="count">
-                    <strong>{bundle.packs}</strong> packs
-                  </span>
-                  <span>{total} operations</span>
-                </div>
-                <div className="row-id bundle-path">{bundle.path}</div>
-              </a>
-              <div className="bundle-links">
-                <a href={href(bundle.id, "catalog")}>Explore operations →</a>
-                <a href={href(bundle.id, "evidence")}>Evidence & artifacts</a>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-      {!visible.length && bundles.length ? (
-        <div className="empty">
-          <h2>No matching bundles</h2>
-          <p>Clear the search or select a different filter.</p>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              setSearch("");
-              setFilter("all");
-            }}
-          >
-            Clear filters
-          </button>
-        </div>
-      ) : null}
+                  Compare contracts →
+                </a>
+              ) : null}
+              <button type="button" className="btn btn-sm" onClick={() => setSelected([])}>
+                Clear
+              </button>
+            </div>
+          ) : null}
+          <div className="table-wrap">
+            <table className="portfolio-table">
+              <thead>
+                <tr>
+                  <th>
+                    <span className="sr-only">Compare</span>
+                  </th>
+                  <th>Service / bundle</th>
+                  <th>Source</th>
+                  <th>Operations</th>
+                  <th>To review</th>
+                  <th>Approved</th>
+                  <th>Blocked</th>
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((bundle) => (
+                  <tr key={bundle.id} data-bundle-id={bundle.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`Compare ${bundle.id}`}
+                        checked={selected.includes(bundle.id)}
+                        disabled={!selected.includes(bundle.id) && selected.length >= 2}
+                        onChange={() =>
+                          setSelected((s) =>
+                            s.includes(bundle.id)
+                              ? s.filter((id) => id !== bundle.id)
+                              : [...s, bundle.id],
+                          )
+                        }
+                      />
+                    </td>
+                    <td>
+                      <a className="bundle-name" href={href(bundle.id, "overview")}>
+                        {bundle.service.id}
+                        <span className="version">v{bundle.service.version}</span>
+                      </a>
+                      <div className="row-id" title={bundle.path}>
+                        {bundle.id}
+                      </div>
+                      <div className="bundle-meta">
+                        {bundle.counts.capabilities.proposed ?? 0} proposed capabilities ·{" "}
+                        {bundle.packs} packs
+                      </div>
+                    </td>
+                    <td>
+                      <Tag>{bundle.sourceKind}</Tag>
+                    </td>
+                    <td className="numeric">{total(bundle)}</td>
+                    <td className="numeric">
+                      <a
+                        className={pending(bundle) ? "review-count" : "muted"}
+                        href={href(bundle.id, "queue")}
+                      >
+                        {pending(bundle)}
+                      </a>
+                    </td>
+                    <td className="numeric">{bundle.counts.operations.approved ?? 0}</td>
+                    <td className="numeric">{bundle.counts.operations.blocked ?? 0}</td>
+                    <td>
+                      <a className="btn btn-sm" href={href(bundle.id, "queue")}>
+                        Review →
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {filtered.length === 0 ? (
+            <div className="empty">
+              <h2>No matching bundles</h2>
+              <p>Try another query or clear the filters.</p>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setQuery("");
+                  setSource("");
+                  setFilter("all");
+                }}
+              >
+                Clear filters
+              </button>
+            </div>
+          ) : null}
+          <div className="list-footer">
+            <span>
+              {filtered.length ? currentPage * PAGE_SIZE + 1 : 0}–
+              {Math.min((currentPage + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}{" "}
+              bundles
+            </span>
+            <span className="pagination">
+              <button
+                className="btn btn-sm"
+                type="button"
+                disabled={currentPage === 0}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                Previous
+              </button>
+              <span>
+                {currentPage + 1} / {pages}
+              </span>
+              <button
+                className="btn btn-sm"
+                type="button"
+                disabled={currentPage + 1 === pages}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                Next
+              </button>
+            </span>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

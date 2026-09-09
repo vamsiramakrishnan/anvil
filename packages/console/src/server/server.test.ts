@@ -96,9 +96,9 @@ function pathFor(route: ConsoleRoute, params: Record<string, string>): string {
 describe("every route in the contract is registered", () => {
   it("answers each route with something other than the unknown-route 404", async () => {
     const params = {
+      operationId: ws.air.operations[0]!.id,
       id: ws.bundleId,
       capId: "x",
-      opId: "x",
       hash: "0".repeat(64),
       clusterId: "cc_none",
     };

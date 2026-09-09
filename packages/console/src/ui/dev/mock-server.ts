@@ -1,3 +1,4 @@
+import { Operation, operationInputSchema } from "@anvil/air";
 import type { z } from "zod";
 import {
   CONSOLE_ROUTES,
@@ -116,40 +117,35 @@ export function createMockConsole(
   };
 
   const handlers: { [R in ConsoleRoute]: Handler<R> } = {
-    operation: () => {
+    createBundle: () => {
       throw refuse(
         409,
         "console/refused",
-        "Request previews use real compiled bundles. Start anvil console <workspace>.",
+        "This development preview uses fixtures. Run anvil console to compile real source files.",
       );
+    },
+    evidence: ({ id = "" }) => {
+      bundle(id);
+      return {
+        bundleHash: "a".repeat(64),
+        staticChecks: [],
+        certification: { valid: false, detail: "No certification in this fixture." },
+        executable: [],
+      };
     },
     preview: () => {
       throw refuse(
         409,
         "console/refused",
-        "Request previews are unavailable in the fixture workspace.",
+        "Request previews require a real compiled bundle. Run anvil console on a workspace.",
       );
     },
-    evidence: () => ({
-      bundleHash: "a".repeat(64),
-      staticStatus: "failed",
-      checks: [],
-      certification: {
-        valid: false,
-        detail: "Fixture data; run anvil console on compiled bundles to inspect evidence.",
-      },
-      execution: [],
-    }),
-    artifacts: () => ({ bundleHash: "a".repeat(64), files: [] }),
-    artifact: () => {
-      throw refuse(404, "console/not_found", "No artifacts in the fixture workspace.");
-    },
     regenerate: () => {
-      throw refuse(409, "console/refused", "Regeneration requires a real compiled bundle.");
+      throw refuse(409, "console/refused", "Regeneration requires a real bundle directory.");
     },
     workspace: () => ({
       root: state.root,
-      problems: [],
+      issues: [],
       bundles: Object.entries(state.bundles).map(([id, b]) => ({
         id,
         path: b.inspector.path,
@@ -162,13 +158,78 @@ export function createMockConsole(
           workflows: countBy(b.inspector.workflows.map((wf) => wf.state)),
         },
         pendingDecisions: b.queue.items.filter(
-          (item) => ["operation", "capability", "pack"].includes(item.kind) && !item.blocking,
+          (item) =>
+            item.kind !== "workflow" && item.kind !== "refinement" && item.kind !== "cluster",
         ).length,
         hasBenchmark: b.benchmark !== null,
         packs: b.packs.length,
       })),
     }),
     bundle: ({ id = "" }) => bundle(id).inspector,
+    operation: ({ id = "", operationId = "" }) => {
+      const row = bundle(id).inspector.operations.find((op) => op.id === operationId);
+      if (!row) throw refuse(404, "console/not_found", `No operation '${operationId}'.`);
+      const operation = Operation.parse({
+        ...row,
+        cli: { command: `${id} ${row.canonicalName.replaceAll("_", " ")}` },
+        sourceRef: { kind: "openapi" },
+        skill: { intentExamples: [] },
+        input: { params: [{ name: "id", in: "path", required: true, schema: { type: "string" } }] },
+        retries: { mode: "none" },
+        auth: { type: "none" },
+        evidence: { claims: [] },
+        reviewNotes: row.blockerNotes,
+      });
+      const inputSchema = operationInputSchema(operation);
+      const cliFlags: Record<string, string> = { id: "--id" };
+      if (operation.confirmation.required) cliFlags.confirm = "--confirm";
+      if (operation.idempotency.mode === "required") cliFlags.idempotency_key = "--idempotency-key";
+      return {
+        bundleHash: "a".repeat(64),
+        diagnostics: [],
+        operation,
+        inputSchema,
+        cliFlags,
+        confirmationKey: "confirm",
+        served: row.state === "approved",
+      };
+    },
+    assurance: ({ id = "" }) => ({
+      path: bundle(id).inspector.path,
+      bundleHash: "a".repeat(64),
+      status: "failed",
+      checks: [
+        {
+          id: "contract.surfaces-agree",
+          gate: "contract",
+          status: "failed",
+          detail: "Development fixture: regenerate this bundle before certifying.",
+        },
+      ],
+      certification: {
+        valid: false,
+        detail: "No certification recorded in the development fixture.",
+      },
+      evidence: (["selftest", "conformance", "simulation"] as const).map((lane) => ({
+        lane,
+        file: `${lane}.report.json` as const,
+        state: "missing" as const,
+        fresh: false,
+        passed: null,
+        bundleHash: null,
+        detail: "No evidence recorded.",
+      })),
+    }),
+    artifacts: ({ id = "" }) => {
+      bundle(id);
+      return { files: [{ path: "skill/SKILL.md", bytes: 25 }] };
+    },
+    artifact: ({ id = "" }, _body, { path = "" }) => {
+      bundle(id);
+      if (path !== "skill/SKILL.md")
+        throw refuse(404, "console/not_found", "No such generated artifact.");
+      return { path, content: "# Development skill\n", bytes: 20, truncated: false };
+    },
     queue: ({ id = "" }) => bundle(id).queue,
     packs: ({ id = "" }) => bundle(id).packs,
     benchmark: ({ id = "" }) => bundle(id).benchmark,

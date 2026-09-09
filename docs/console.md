@@ -1,163 +1,235 @@
 # Console
 
-Use `anvil console` to explore compiled bundles, review operations, preview
-requests, and inspect generated artifacts. It reads the same files and calls
-the same review and runtime libraries as the CLI.
+Use `anvil console` to turn source specifications into bundles, review pending
+decisions, compare contracts, and inspect the generated tools. The console reads
+the same workspace and calls the same libraries as the CLI.
+
+The workspace lists services with searchable, filterable, paginated operation
+counts. Select two bundles to compare their contracts. A broken bundle appears
+as a diagnostic while healthy bundles remain available. `Ctrl+K` or `Cmd+K`
+opens navigation across bundles and views.
+
+Each bundle has an overview, a decision queue, an operation inspector, routing
+quality, evidence checks, and a generated-file browser. Views fetch their own
+read models. **Refresh bundle** reloads changes made from the CLI.
+
+Review the affected operation or capability before approving it. A successful
+UI action does not establish that the deployed upstream integration works.
+
+## A projection, not a second truth
+
+The console owns no state and no rules. It reads what is already on disk —
+`air.yaml`, the generated projections, the benchmark report, refinement packs
+and their `receipts/` — and it writes only by calling the library functions the
+CLI commands themselves call:
+
+| Console action | CLI command it equals |
+| --- | --- |
+| approve operations | `anvil approve` |
+| approve or reject a capability | `anvil capability approve` / `reject` |
+| record a pack decision | `anvil refine approve` / `reject` |
+| apply a reviewed pack | `anvil refine apply-pack` |
+| export a cluster task | `anvil refine export-task … group:<id>` |
+| import a submission | `anvil refine import-proposal` |
+
+An approval made in the console is staged, byte-verified, surface-checked, and
+swapped into place exactly as `anvil approve` does it. A receipt written in the
+console is the receipt `anvil refine apply-pack` verifies — the end-to-end
+proof below hands one to the CLI to show it. A group proposal imported in the
+console is benchmark-scored and refused on a negative delta exactly as the CLI
+refuses it. The safety gates cannot diverge because there is one implementation
+of each. Nothing the console shows is computed by the console: counts,
+budgets, planner verdicts, drift, and clusters come from the same library
+functions the CLI prints.
+
+## Security posture, in plain words
+
+The console runs on your machine with your filesystem authority, and its write
+routes change approval state. A page open in another browser tab must not be
+able to drive them, so:
+
+- It binds `127.0.0.1` only and refuses to start on any other address.
+- Every process mints a random token, puts it only in the page it serves, and
+  requires it on every write. Nothing else carries it — not the URL the
+  command prints, not a log line, not a JSON response.
+- Every write must come from the console's own origin. Requests from any other
+  page are refused, and the server never emits CORS headers, so another origin
+  can read nothing either.
+- Bodies are JSON only, capped in size, and validated against the API contract
+  before any library function runs.
+- Reads never write. No report is regenerated, no cache file lands in a
+  bundle, and the console's scratch directory (`<root>/.anvil/console`) is
+  created only by a write that needs it.
+- Every path a request names must resolve inside the workspace root.
+
+The full contract is the comment block at the top of
+`packages/console/src/contract.ts`. Tests assert every line of it over a real
+socket, and the mutation gate deletes the token, origin, and path checks to
+prove those tests notice.
+
+## Bundle views
+
+**Overview** — operation counts, served tool counts, contract identity, and links
+to pending reviews and compiler diagnostics. Individual operation links open the
+matching queue item. Copyable commands continue the same work in a terminal.
+
+**Decision queue** — every grey decision in one list, six kinds: an operation
+not yet approved, a capability born `proposed`, a workflow the planner refuses,
+a deficiency the deterministic plan reports, a review-tier refinement in a pack
+awaiting a receipt, and a benchmark cluster of confusable tools. Each item
+carries its reasons, its AIR claims (source, confidence, note), the suggested
+action, and exactly what its decision needs: the operation's effect,
+idempotency, retry, and confirmation posture; the capability's budget verdict;
+the pack hash, refinement id, tier, and measured routing delta; the cluster's
+members and mis-routed intents.
+
+Bulk approval is by policy only — "reads, naturally idempotent,
+evidence-backed", "capabilities within budget", "positive measured delta" — and
+a policy can never reach a row the barrier bars: a non-idempotent mutation, a
+destructive or irreversible one, an operation that requires confirmation, a
+blocked operation, a capability outside its budget, or a pack refinement with a
+non-positive delta. Barred rows say why in the list. The keyboard drives the
+whole queue: `j`/`k` move, `x` selects, `a` approves, `r` rejects, `/`
+filters, `?` shows the map.
+
+**Estate inspector** — the bundle as AIR sees it: service, source and path
+grammar, diagnostics, every operation with its effect, state, idempotency mode
+and confirmation requirement, capabilities with their budget verdicts,
+workflows with the planner's verdict, the served MCP surface before and after
+supersession, and drift against another bundle in the workspace.
+
+**Confusion explorer** — the benchmark's confusable-tool clusters and routing
+hubs with the mis-routed intents verbatim. A cluster exports a harness case
+file; a submission imports back through the scored admission gate, and a
+refusal shows the routing numbers, not only prose.
+
+**Evidence & checks** — current static checks from `certifyBundle`, recorded
+certification validation, and self-test, conformance, and simulation freshness
+from `executableEvidenceStatuses`. Passing results for older generated bytes
+appear as stale. Reading this view writes no reports and invokes no upstream
+service. Commands beside each lane produce the missing evidence.
+
+**Generated files** — filter the artifact inventory, read source as text, copy
+it, or download the exact bytes. CLI, MCP, skills, SDKs, schemas, harness plugin
+files, deployment files, and evidence reports are included. Previews are limited
+to 1 MiB per file; larger files remain available in the bundle directory.
+Unrelated local files and hidden credentials are excluded from the inventory.
+
+## Create a bundle
+
+Open **New bundle** and choose one source:
+
+- **Upload files** for a specification and its supporting files. Choose the
+  containing folder to preserve nested `$ref`, protobuf, and WSDL/XSD paths.
+- **Paste a contract** for a single specification. The included orders example
+  can exercise the complete flow without credentials.
+- **Workspace path** for a specification or directory already under the console
+  root. Use this for sources that exceed the upload limit.
+
+Uploads accept up to 100 files and 800 KB of source text. The complete encoded
+request, including any optional manifest, must fit the server's 1 MiB body cap.
+The compiler detects the format. Supported directory sources include `.har`
+captures and `.edmx` metadata as well as OpenAPI, Swagger, GraphQL, protobuf,
+WSDL, Google Discovery, and Postman collections.
+
+Choose a bundle name. The console locks the source in `.anvil/sources`, compiles
+from those captured bytes, and installs `generated/<name>` transactionally.
+Existing destinations are refused, including concurrent attempts at the same
+name. Use a new name for a second version, then compare it in the inspector.
+Compilation preserves the compiler's approval gates; it does not approve
+operations on the reviewer's behalf. A reviewed manifest can provide semantic
+overrides and exact operation approvals using the existing compiler contract.
+
+Creation requires a workspace root rather than an individual bundle root.
+If the console was launched on one bundle, reopen it on that bundle's parent.
+Local references stay within the import root. Remote references are never
+fetched. Temporary upload files are removed after capture; locked source
+snapshots remain available to the CLI, including diagnostic snapshots of invalid
+input.
+
+## Running it
 
 ```bash
-anvil console ./generated --open
-anvil console ./generated/payments --open
-anvil console . --port 4177 --json
+anvil console                # the current directory as the workspace root
+anvil console ./generated    # every bundle beneath a directory
+anvil console ./generated/payments --open   # one bundle, opening a browser
+anvil console . --port 4177 --json          # print { url, port, root }, keep serving
 ```
 
-The console binds `127.0.0.1`. Open the printed URL on the same machine.
-`--json` prints the URL, port, and workspace root and keeps the server running.
+A workspace root is walked for every directory holding an `air.yaml` (or
+`air.json`); each is a bundle addressed by its workspace-relative path. Any
+`pack.json` beneath the root whose service matches a bundle is one of that
+bundle's packs. Both are re-read on every request, so what you see is what is
+on disk now — including changes the CLI made a moment ago.
 
-## Start from the workspace
+### Deciding a refinement pack
 
-The workspace discovers directories containing `air.yaml` or `air.json`.
-Search by bundle name or source format. Filter for pending decisions or
-blocked operations. Sort by name or by pending work. Refresh after a CLI
-command changes files.
+Record decisions in the console or with `anvil refine approve|reject`; the
+receipt is the same file either way, under the pack's `receipts/`. Applying
+the pack writes AIR only, exactly as `anvil refine apply-pack` does, and the
+console then says what the CLI says: recompile the bundle to regenerate its
+projections. A pack is bound to the source contract it was measured against,
+and approving an operation or deciding a capability changes that contract —
+so decide and apply a pack before approving, or run `anvil refine run` again
+afterwards; a stale pack is refused, never silently applied.
 
-The pending count includes generated or review-required operations, proposed
-capabilities, and undecided review-tier refinements. A pack with no pending
-review does not inflate that count. A malformed bundle is listed as a problem;
-other bundles remain available.
+### The refinement loop's packs
 
-**Add a source** builds a copyable terminal command for an API contract, gateway
-export, or offline legacy export. It does not execute that command. Gateway
-and legacy sources start with inventory; their routes and candidates still
-need reviewed contracts or bindings. Compile outputs must sit beneath the
-workspace root to appear here.
-
-Use the bundle selector to switch services. `Ctrl+K` or `Cmd+K` opens the
-bundle and view finder. The interface supports light and dark themes and
-narrow screens. Bundle changes discard pending responses from the previous
-view, so a delayed response cannot replace the selected bundle's data.
-
-## Explore and preview an operation
-
-Open **Operation catalog**. Search names, resources, CLI commands, or MCP tool
-names. Filter by approval state and effect. Results are paginated. Filters and
-the selected operation are encoded in the URL; request inputs are not.
-
-Each operation provides four sections:
-
-| Section | What it shows |
-| --- | --- |
-| Request preview | Named input reference, JSON editor, explicit confirmation and idempotency controls, and the runtime's request plan or refusal |
-| Schemas | The shared CLI/MCP input schema and the modeled output schema |
-| Policy & evidence | Effect, risk, retries, idempotency, auth requirements, scopes, review notes, claims, and diagnostics |
-| Use this tool | CLI inspection command, MCP tool name, intent examples, and a link to generated skill and SDK files |
-
-A preview calls the runtime with `dryRun: true`. It checks approval, required
-input presence, confirmation, idempotency, and applicable wire/query gates.
-It uses the first server URL declared by the bundle. An unapproved operation
-is refused; the UI links to its decision queue.
-
-A successful preview is a request plan. It does not prove full JSON Schema
-conformance, credentials, host policy, upstream connectivity, or live behavior.
-The console installs no credential resolver, ledger, observer, or working
-upstream transport for previews. The preview route accepts no live-execution
-flag. Inputs stay in component memory and are discarded when the operation
-changes; editing inputs clears the previous result.
-
-The preview binds to the bundle digest displayed when the operation loaded.
-If the files change, reload the operation before trying again.
-
-## Review decisions
-
-**Decision queue** brings together operations, proposed capabilities, workflow
-problems, refinement deficiencies, review-tier pack items, and tool-confusion
-clusters. Select an item to inspect its reasons and evidence before deciding.
-
-Bulk selection uses policies. The barrier excludes blocked operations,
-non-idempotent mutations, destructive or irreversible effects, confirmation-
-gated operations, oversized capabilities, and pack refinements with a
-non-positive measured routing delta. Each excluded row explains why.
-
-Keyboard controls: `j`/`k` move, `x` selects, `a` approves, `r` rejects, `/`
-focuses the filter, and `?` opens the key map.
-
-| Action | Shared implementation |
-| --- | --- |
-| Approve operations | `approveOperationsInBundle`, also used by `anvil approve` |
-| Approve or reject a capability | The bundle capability review functions used by the CLI |
-| Record a pack decision | `recordPackDecision`; writes the receipt the CLI verifies |
-| Apply a reviewed pack | `applyPackToBundle`; writes AIR only |
-| Export a cluster task | The refinement task export functions |
-| Import a submission | `importRefinementSubmission`; rejects a negative measured routing delta |
-| Regenerate projections | `reprojectBundleAtomically`, the same staged replacement used after CLI approval |
-
-Pack receipts bind to the source contract. Decide and apply a pack before
-changing operation or capability approval, or generate a new pack afterwards.
-A stale pack is refused.
-
-## Inspect evidence and generated files
-
-**Evidence & artifacts** separates three facts:
-
-1. Static checks run in memory against the current bundle.
-2. A recorded certification may be missing, failing, stale, or current.
-3. Selftest, conformance, and simulation reports each have their own status
-   and digest freshness.
-
-Opening this view writes no certification or test report. Run the named CLI
-lanes to produce executable evidence. Deployment readiness still needs checks
-against the live endpoint.
-
-The artifact browser lists generator-owned paths and known evidence records.
-Search by path or language to inspect CLI, MCP, skill, SDK, deployment, and
-report files. Contents are rendered as text, with a copy action. Previews are
-limited to 256 KiB. Arbitrary workspace files and symlink-backed content are
-refused.
-
-After applying a refinement, choose **Regenerate bundle…** and review the
-confirmation. The console reads current AIR, checks that the bundle digest
-has not changed, stages generated outputs, verifies their bytes and surface
-agreement, and replaces the bundle through the shared transaction. It does
-not approve additional operations. Reports remain on disk; reports tied to
-older bytes must be rerun. Target setup may also need regeneration.
-
-Changed receipt-bound gateway bundles are refused by the same reprojection
-gate as CLI approval. Carry those changes through a supplemental manifest
-and re-import instead.
-
-## Compare contracts and investigate routing
-
-**Estate inspector** shows operations, capability budgets, workflow planner
-verdicts, and the served surface before and after supersession. Operation names
-link to the catalog. Compare against another bundle to inspect contract drift.
-
-**Routing analysis** shows measured tool-confusion clusters, routing hubs, and
-mis-routed intents. Export a case file for a harness, then import its proposal
-through the scored admission gate. Refusals include the routing delta.
-
-The nightly refinement loop emits ordinary bundles and packs. Its output can
-be opened directly:
+`tools/corpus/refine-loop.mjs` (see `tools/corpus/README.md`) runs the same
+`anvil refine run --out`/`anvil benchmark`/`anvil refine export-task` sequence
+a human would type, once nightly, over every gateway-estate fixture — so its
+output is not a special case for the console, it is the ordinary case: a
+workspace directory holding `air.yaml` files with `pack.json`s sitting beside
+them. Point the console at that workspace and the loop's packs appear in the
+decision queue exactly like a pack a person ran by hand:
 
 ```bash
 node tools/corpus/refine-loop.mjs --work ./refine-loop-workspace
 anvil console ./refine-loop-workspace --open
 ```
 
-## Local security boundary
+Nothing routes the loop's findings anywhere else, and nothing new had to be
+built to show them: the "Prefer documenting how the console shows the loop's
+packs over adding a console route" call in the loop's own design is this
+section — the console already walks a workspace for `air.yaml` + `pack.json`
+pairs (above), and `refine-loop.mjs` writes exactly that shape. The loop's own
+`refine-loop.report.json`/`refine-loop-summary.md` (and the "Refinement
+inbox" issue a nightly workflow keeps rolling from it — see
+`.github/workflows/corpus.yml`) are the fast, textual view of the SAME
+backlog; the console is where a human actually decides it, cluster exports
+included.
 
-Every POST requires the per-process token and the console's own origin before
-its JSON body is read. Bodies are capped at 1 MiB and validated against the
-route schema. The server emits no CORS headers. Paths remain confined to the
-workspace and reads do not write. Preview and regeneration requests also
-check the current bundle digest.
+## The end-to-end proof
 
-The console does not deploy services, send live upstream requests, issue
-credentials, approve workflows, or invent reviewer identity for capability
-decisions. Pack receipts carry reviewer identity because their shared contract
-records it.
+`pnpm test:e2e` (a turbo task deliberately outside `pnpm test`, so the unit
+suite and the mutation runner never depend on a browser) runs
+`packages/console/e2e` under Playwright: Chromium drives the real built page
+served by a real `anvil console` process over a workspace the built CLI
+compiles from the payments example. Every scenario asserts on disk — the
+operation's `state` in `air.yaml` and in the regenerated MCP projection, the
+bundle digest before and after, the capability's lifecycle, the receipt file,
+and `anvil refine apply-pack` accepting that receipt — because the disk is the
+truth the console projects. The security scenario runs in the browser: a write
+without the token is refused, and a page at another origin can read nothing.
 
-## Verification
+## What it deliberately does not do
 
-`pnpm test` includes contract, socket-level security, request-preview,
-regeneration, artifact-access, navigation-race, and UI tests. `pnpm test:e2e`
-uses Chromium against the real built CLI and console. It verifies decisions
-on disk, previews, artifact inspection, keyboard navigation, and narrow layouts.
+- **No reproject-after-apply route.** `anvil refine apply-pack` writes AIR and
+  tells you to recompile; so does the console. One implementation, one
+  message.
+- **No reviewer identity on capability decisions.** The library records none
+  for `anvil capability approve|reject`, so the console does not invent a
+  field it would have no home for. Pack decisions carry a reviewer because
+  their receipts do.
+- **No workflow approval.** A workflow the planner refuses is fixed at its
+  source and recompiled; the queue explains which step is refused and why.
+- **No report regeneration.** The benchmark and certification records are the
+  CLI's to produce; the console shows them and says when they are stale.
+
+## Request drafts and comparison
+
+The Request builder projects the operation’s shared input schema into CLI dry-run and MCP request drafts. Drafts stay in memory and do not call an upstream API. Compare bundles shows contract and policy changes against another workspace bundle. Generated files exposes only generator-owned artifacts and named evidence reports, with a 256 KiB text preview limit; incomplete previews cannot be downloaded. The Assurance route also remains available for static-check filtering and JSON report downloads.
+
+## Runtime-backed workbench
+
+Operation catalog adds paginated search, state/effect filters, deep links, shared input schemas, and runtime-backed request previews. Preview is always a dry run: it has no credentials or live transport and preserves approval, validation, confirmation, and stale-bundle checks. Command drafts remain available for CLI and MCP handoff. Evidence & checks provides an explicit, digest-bound regeneration action after refinements; generation uses the shared atomic reprojection path and does not approve operations or produce execution evidence.

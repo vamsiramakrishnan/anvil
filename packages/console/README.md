@@ -1,12 +1,13 @@
 # @anvil/console
 
-The local review console: a browser page over a workspace of compiled bundles,
-for the human who is Anvil's approval gate. On a real estate that gate is
-hundreds of review-tier decisions — operations sitting in `review_required`,
-capabilities born `proposed`, workflows the planner refuses, refinement packs
-awaiting a receipt — made today by reading CLI text and typing ids into YAML.
-The console puts the evidence next to the decision and the decision one click
-from the receipt.
+The local console for importing API specifications, inspecting generated tools,
+and reviewing the decisions that expose those tools to agents. Start with a
+workspace of specifications or existing bundles, then work through source
+capture, compilation, review, contract comparison, and evidence inspection.
+
+The workspace supports search, source filters, operation-review filters, sorting,
+pagination, and two-bundle comparison. `Ctrl+K` / `Cmd+K` navigates directly to a
+bundle or view. A malformed bundle does not hide the rest of the workspace.
 
 ## Pure projection, no new truth
 
@@ -37,7 +38,7 @@ deterministic refinement plan.
 ## Dependency direction
 
 `@anvil/cli` → `@anvil/console` → `air`, `compiler`, `generators`,
-`refinement`, and `runtime` (offline request planning only; the allow-list also admits `harness` and `system-pack`). The
+`refinement` (the allow-list also admits `harness` and `system-pack`). The
 console never imports the CLI; `anvil console` is a thin launcher. The
 boundaries ratchet (`packages/cli/src/boundaries.test.ts`) enforces this, and
 the console is listed as a build-time package so it can never reach the
@@ -53,7 +54,7 @@ against the contract before any library function runs. The full contract is
 the comment block at the top of `src/contract.ts` — it is the specification
 the server lane implements and the review reads against.
 
-## Review views
+## Workspace and bundle views
 
 - **Decision queue** — `GET /api/bundles/:id/queue`: every grey decision in one
   list, six kinds: an **operation** not yet approved, a **capability** born
@@ -80,36 +81,54 @@ the server lane implements and the review reads against.
   verbatim; a cluster exports a harness task and a submission imports back
   through the scored admission gate.
 
+- **Overview** — the contract's identity, operation counts, and links to the
+  next review or inspection task. Copyable commands continue the work in the CLI.
+- **Evidence** — current static checks, recorded certification validity, and
+  executable report freshness against the exact bundle digest. Read-only.
+- **Generated files** — a searchable file inventory with text preview, copy,
+  and download. Includes generated harness plugins; excludes unrelated local
+  files. Previews are bounded to 1 MiB.
+
+**New bundle** accepts uploaded files/folders, pasted contracts, or an existing
+workspace path. `SourceService` locks the source, `compileSource` compiles it,
+then `generateBundle` and `installGeneratedBundle` produce the output. It creates
+`generated/<name>` and never overwrites an existing destination. Uploads are
+limited to 100 files and 800 KB, within the server's 1 MiB JSON body cap. Use a
+workspace path for larger sources. Temporary uploads are cleaned up; source
+snapshots persist in the same store the CLI uses. Creation is unavailable when
+the console root is itself a bundle; open its parent workspace instead.
+
 The pack list (`GET /api/bundles/:id/packs`) names, per refinement, the
 receipt files under the pack's `receipts/` that bind a decision to it, and
 carries every receipt the pack holds — what `anvil refine apply-pack` loads.
 Applying a reviewed pack writes AIR only, exactly as the CLI does; the console
-then directs the reviewer to **Evidence & artifacts** to regenerate projections
-from current AIR through `reprojectBundleAtomically`. This action checks the
-viewed bundle digest and retains the shared gateway-lineage refusal.
+then tells the reviewer to recompile, because it has no reproject-after-apply
+route by design.
 
-## Workbench views
+## Integration workbench
 
-- **Operation catalog**: paginated search, URL-encoded filters and selection,
-  full operation/schema inspection, and a request preview through `execute`
-  with `dryRun: true`. No working transport, credentials, observer, or ledger.
-- **Evidence & artifacts**: current static checks, recorded certification,
-  digest-bound executable evidence, generated text artifacts, and explicit
-  atomic regeneration after a refinement.
-- **Workspace**: search, pending-work filters, bundle switching, a keyboard
-  finder, source-command setup, and per-bundle parse failures.
+The workspace provides a searchable, filtered, paginated inventory. It reports
+unreadable bundles separately and discovers refinement packs once per workspace
+request. Bundle routes load only their needed reports. Resource keys and request
+generations prevent late responses from rendering another bundle's data.
 
-`workbench-contract.ts` contains browser-safe schemas derived from AIR and
-checked against owning library types. `server/workbench.ts` implements the
-six workbench routes. Preview and regeneration reject stale bundle digests.
-Artifact reads allow generator-owned paths and known evidence records only,
-reject symlinks, and cap each displayed file at 256 KiB.
+| View | API and library |
+| --- | --- |
+| Request builder | `GET /api/bundles/:id/operations/:operationId`; AIR's `operationInputSchema`, `operationBusinessInputCliFlag`, and `operationSafetyInputKeys` |
+| Assurance | `GET /api/bundles/:id/assurance`; `certifyBundle`, `verifyCertification`, and `executableEvidenceStatuses` |
+| Generated files | `GET /api/bundles/:id/artifacts` and `/artifact?path=...`; generator-owned path allowlist and named evidence records |
+| Compare bundles | Existing drift route and `diffContracts`; baseline/candidate selector, severity filtering, export |
 
-The typed request loader ignores late responses after navigation or a newer
-refresh. Request inputs are held only in component memory. Opening the
-catalog does not fetch benchmark and refinement-pack data.
+The request builder creates copyable CLI dry runs and MCP JSON-RPC requests.
+It never executes them or stores arguments. CLI previews always end in
+`--dry-run`; MCP requests are ordinary calls when executed by another client.
+Static assurance is recomputed on read but never written as a certification.
+Artifact previews return JSON text, are capped at 256 KiB, and refuse arbitrary
+files and symlinks. These routes inherit the existing origin/Host protections.
 
-See [the console guide](../../docs/console.md) for workflows and limits.
+The navigation rail, `Ctrl+K` / `⌘K` menu, per-view refresh controls, and URL
+coordinates support moving between review, debugging, comparison and handoff.
+See `docs/console.md` for the user workflow and current boundaries.
 
 ## Layout
 
@@ -130,3 +149,7 @@ port, `--open` opens a browser. The end-to-end proof lives in `e2e/`
 (`pnpm test:e2e`): Playwright drives the built page against a real
 `anvil console` process over the real payments bundle and asserts every
 decision on disk. See `docs/console.md`.
+
+## Runtime-backed workbench
+
+Operation catalog adds paginated search, state/effect filters, deep links, shared input schemas, and runtime-backed request previews. Preview is always a dry run: it has no credentials or live transport and preserves approval, validation, confirmation, and stale-bundle checks. Command drafts remain available for CLI and MCP handoff. Evidence & checks provides an explicit, digest-bound regeneration action after refinements; generation uses the shared atomic reprojection path and does not approve operations or produce execution evidence.

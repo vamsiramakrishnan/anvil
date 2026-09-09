@@ -218,6 +218,28 @@ Options:
 - `--review <file>` — apply an edited, digest-bound review manifest on a deterministic rerun
 - `--json` — also emit the complete audit report as JSON on stdout
 
+#### `anvil capability compile`  *(mutates)*
+`anvil capability compile [options] <definition>`
+
+Compile a business contract into aligned MCP, CLI, skill, and four SDKs.
+
+Compile explicit business inputs, outcomes, source authority, bindings, effects, and recovery against approved source AIR snapshots. The default state is proposed. Review the definition before marking actions approved. Public artifacts contain business actions; the private execution plan stays in runtime and generator inputs. The output must be a new directory.
+
+Options:
+- `--source <binding...>` — source bindings, each alias=bundle-directory-or-air-file
+- `--out <directory>` — new generated business bundle directory
+- `--json` — emit the business surface summary as JSON
+
+#### `anvil capability preview`
+`anvil capability preview [options] <bundle>`
+
+Preview the business surface or inspect its private execution plan.
+
+The default view shows agent inputs, outcomes, intent guidance, and effects. --execution shows operator-only source bindings, authority, preconditions, and recovery. This command never executes operations or grants approval.
+
+Options:
+- `--execution` — show the private operator execution view
+
 ### `anvil refine`  *(mutates)*
 `anvil refine [options] [command]`
 
@@ -980,6 +1002,30 @@ With --live <config.json>, probes a REAL deployed MCP endpoint instead of the mo
 Options:
 - `--live <config>` — probe a real deployed MCP endpoint named in this JSON config
 - `--json` — emit the full report as JSON
+
+### `anvil fuzz`  *(mutates)*
+`anvil fuzz [options] [dir]`
+
+Find, shrink, and replay failures across generated tool surfaces.
+
+Run seeded campaigns against isolated loopback fixtures. Contract mode checks AIR/wire consistency; the payments example uses an independent stateful ledger. Writes a private report and exact replay under --out. Exit 0 means all evaluated checks passed; 1 means a semantic failure; 2 means unsupported or inconclusive coverage. A passing campaign is bounded test evidence, not release certification. --agent-config runs an explicitly configured NDJSON harness bridge against the payment task and records actual tool calls.
+
+Options:
+- `--example <name>` — generate the owned payments fixture bundle
+- `--fixture <name>` — contract or payments
+- `--surfaces <list>` — comma-separated mcp,cli,cli-mcp,typescript,python,go,java (agent mode: one surface)
+- `--seed <n>` — deterministic generation seed
+- `--runs <n>` — generated scenarios, excluding shrinking
+- `--budget-ms <n>` — campaign or agent time budget
+- `--timeout-ms <n>` — per driver open/call deadline
+- `--out <dir>` — root for unique report directories
+- `--replay <file>` — execute an exact recorded replay JSON
+- `--against-current` — acknowledge changed bundle/toolchain hashes when replaying a repair
+- `--agent-config <file>` — explicit process harness configuration; payments fixture only
+- `--case <dir>` — attach report evidence to an existing case using its admissibility policy
+- `--predicate <name>` — explicit claim predicate for --case
+- `--value <json>` — explicit claim value for --case
+- `--json` — emit the full report and artifact paths
 
 ### `anvil observe`
 `anvil observe [options] <dir>`

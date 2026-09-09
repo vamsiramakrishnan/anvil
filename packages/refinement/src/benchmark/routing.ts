@@ -16,8 +16,8 @@ import { type AgentProcessRunner, allowlistedEnv } from "../case/process-runner.
  *
  * The router is pluggable. The built-in lexical router is deterministic — CI
  * needs a score that cannot flake — and deliberately dumb: it models an agent
- * that can only read, not reason, which makes it a FLOOR. A real model routes
- * at least as well, and `--agent <command>` swaps one in through the same
+ * that uses lexical overlap. It is a deterministic baseline, not a lower bound
+ * on model accuracy. `--agent <command>` measures a real agent through the same
  * process-runner seam the enrichment harness already uses.
  */
 

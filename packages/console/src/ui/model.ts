@@ -11,28 +11,38 @@ import type { ConsoleResponse } from "../contract.js";
 
 /* ------------------------------- routing --------------------------------- */
 
-export type View = "queue" | "inspect" | "confusion" | "catalog" | "evidence";
+export type View =
+  | "overview"
+  | "queue"
+  | "inspect"
+  | "confusion"
+  | "evidence"
+  | "artifacts"
+  | "catalog"
+  | "workbench"
+  | "assurance"
+  | "compare";
 
 export type Route =
-  | { view: "workspace" }
+  | { view: "workspace" | "new" }
   | { view: View; bundleId: string; query: URLSearchParams };
 
 export function parseHash(hash: string): Route {
   const [path = "", search = ""] = hash.replace(/^#/, "").split("?");
-  const match = /^\/b\/([^/]+)\/(queue|inspect|confusion|catalog|evidence)$/.exec(path);
+  if (path === "/new") return { view: "new" };
+  const match =
+    /^\/b\/([^/]+)\/(overview|queue|inspect|confusion|evidence|artifacts|catalog|workbench|assurance|compare)$/.exec(
+      path,
+    );
   if (!match) return { view: "workspace" };
-  return {
-    view: match[2] as View,
-    bundleId: decodeBundleId(match[1] ?? ""),
-    query: new URLSearchParams(search),
-  };
-}
-
-function decodeBundleId(value: string): string {
   try {
-    return decodeURIComponent(value);
+    return {
+      view: match[2] as View,
+      bundleId: decodeURIComponent(match[1] ?? ""),
+      query: new URLSearchParams(search),
+    };
   } catch {
-    return value;
+    return { view: "workspace" };
   }
 }
 
@@ -51,7 +61,12 @@ export function initialTheme(
   storage: Pick<Storage, "getItem"> | undefined,
   prefersDark: boolean,
 ): Theme {
-  const stored = storage?.getItem(THEME_KEY);
+  let stored: string | null | undefined;
+  try {
+    stored = storage?.getItem(THEME_KEY);
+  } catch {
+    /* Storage can be disabled. */
+  }
   if (stored === "light" || stored === "dark") return stored;
   return prefersDark ? "dark" : "light";
 }
@@ -191,7 +206,6 @@ export function selectByPolicy(rows: readonly DecisionRow[], policy: Policy): De
 /* -------------------------------- keys ----------------------------------- */
 
 export const KEY_MAP: ReadonlyArray<readonly [string, string]> = [
-  ["Ctrl/Cmd + K", "find a bundle or view"],
   ["j / k", "next / previous row"],
   ["x", "select or deselect the row"],
   ["a", "approve the row (or focus what it still needs)"],
@@ -232,3 +246,15 @@ export function tone(value: string): string {
       return "queued";
   }
 }
+
+export const BUNDLE_VIEWS: ReadonlyArray<readonly [View, string, string]> = [
+  ["overview", "Overview", "01"],
+  ["queue", "Decision queue", "02"],
+  ["inspect", "Operations & contracts", "03"],
+  ["catalog", "Operation catalog", "04"],
+  ["workbench", "Command drafts", "05"],
+  ["compare", "Compare bundles", "06"],
+  ["confusion", "Routing quality", "07"],
+  ["evidence", "Evidence & checks", "08"],
+  ["artifacts", "Generated files", "09"],
+];

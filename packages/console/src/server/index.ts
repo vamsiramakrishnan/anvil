@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { artifactsView, artifactView, assuranceView } from "./assurance.js";
+import * as creation from "./creation.js";
 import { createRequestListener, type Handlers } from "./http.js";
 import type { Request } from "./mutations.js";
 import * as mutations from "./mutations.js";
@@ -86,23 +88,25 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
   const origin = () => `http://${CONSOLE_HOST}:${boundPort}`;
 
   const handlers: Handlers = {
-    operation: ({ params }) =>
-      workbench.operationView(root, param(params, "id"), param(params, "opId")),
     preview: ({ params, body }) =>
       workbench.previewOperation(
         root,
         param(params, "id"),
-        param(params, "opId"),
+        param(params, "operationId"),
         body as Request<"preview">,
       ),
-    evidence: ({ params }) => workbench.evidenceView(root, param(params, "id")),
-    artifacts: ({ params }) => workbench.artifactsView(root, param(params, "id")),
-    artifact: ({ params, query }) =>
-      workbench.artifactView(root, param(params, "id"), query.get("path") ?? ""),
     regenerate: ({ params, body }) =>
       workbench.regenerateBundle(root, param(params, "id"), body as Request<"regenerate">),
+    createBundle: ({ body }) => creation.createBundle(root, body as Request<"createBundle">),
+    evidence: ({ params }) => creation.evidenceView(root, param(params, "id")),
     workspace: () => views.workspaceView(root),
     bundle: ({ params }) => views.bundleView(root, param(params, "id")),
+    operation: ({ params }) =>
+      views.operationView(root, param(params, "id"), param(params, "operationId")),
+    assurance: ({ params }) => assuranceView(root, param(params, "id")),
+    artifacts: ({ params }) => artifactsView(root, param(params, "id")),
+    artifact: ({ params, query }) =>
+      artifactView(root, param(params, "id"), query.get("path") ?? ""),
     queue: ({ params }) => views.queueView(root, param(params, "id")),
     packs: ({ params }) => views.packsView(root, param(params, "id")),
     benchmark: ({ params }) => views.benchmarkView(root, param(params, "id")),

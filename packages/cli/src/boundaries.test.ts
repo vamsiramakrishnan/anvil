@@ -137,6 +137,7 @@ const GRAPH = new Map(PACKAGES.map((pkg) => [pkg, declaredDeps(pkg)]));
 const ALLOWED_EDGES: Record<string, readonly string[]> = {
   air: [],
   grammar: [],
+  fuzz: [],
   // Design tokens: two dependency-free .mjs modules and the CSS generated from
   // them. Imports nothing — a colour source that could reach any other package
   // would be a colour source that can drift with it.
@@ -153,7 +154,7 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
   // logic. No cycle: runtime depends on nothing above it in this list.
   certification: ["air", "compiler", "runtime", "simulator", "system-pack"],
   generators: ["air", "compiler", "mcp-runtime", "refinement", "runtime"],
-  harness: ["air", "compiler", "generators", "mcp-runtime", "refinement", "runtime"],
+  harness: ["air", "compiler", "fuzz", "generators", "mcp-runtime", "refinement", "runtime"],
   // The deployment-local legacy bridge: a standalone HTTP facade process, not
   // part of the deployed MCP server's own dependency closure (mcp-runtime
   // never depends on it — see "serving-path isolation" below). It needs the
@@ -179,6 +180,7 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
     "system-pack",
   ],
   cli: [
+    "fuzz",
     "air",
     "certification",
     "compiler",

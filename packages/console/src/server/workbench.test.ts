@@ -5,7 +5,8 @@ import { approveOperationsInBundle, bundleHash, readBundleDir } from "@anvil/gen
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CONSOLE_ROUTES } from "../contract.js";
 import { loadAir, paymentsWorkspace, startServer } from "./fixture.js";
-import { operationView, previewOperation } from "./workbench.js";
+import { operationView } from "./read-models.js";
+import { previewOperation } from "./workbench.js";
 
 let workspace: Awaited<ReturnType<typeof paymentsWorkspace>>;
 let running: Awaited<ReturnType<typeof startServer>>;
@@ -112,8 +113,8 @@ describe("workbench", () => {
     const evidence = await running.client.get(route("/evidence"));
     expect(evidence.status).toBe(200);
     const data = CONSOLE_ROUTES.evidence.response.parse(evidence.json);
-    expect(data.execution).toHaveLength(3);
-    expect(data.execution.every((lane) => lane.state === "missing")).toBe(true);
+    expect(data.executable).toHaveLength(3);
+    expect(data.executable.every((lane) => lane.state === "missing")).toBe(true);
     const listing = CONSOLE_ROUTES.artifacts.response.parse(
       (await running.client.get(route("/artifacts"))).json,
     );
@@ -140,7 +141,11 @@ describe("workbench", () => {
 
   it("bounds artifact previews and refuses symlink-backed content", async () => {
     writeFileSync(join(workspace.bundleDir, "skill", "SKILL.md"), "x".repeat(256 * 1024 + 1));
-    expect((await running.client.get(route("/artifact?path=skill%2FSKILL.md"))).status).toBe(413);
+    const large = await running.client.get(route("/artifact?path=skill%2FSKILL.md"));
+    expect(large.status).toBe(200);
+    const preview = CONSOLE_ROUTES.artifact.response.parse(large.json);
+    expect(preview.truncated).toBe(true);
+    expect(Buffer.byteLength(preview.content)).toBe(256 * 1024);
     const target = join(workspace.root, "outside.txt");
     writeFileSync(target, "outside-content");
     rmSync(join(workspace.bundleDir, "skill", "SKILL.md"));
@@ -174,7 +179,7 @@ describe("workbench", () => {
     expect(response.status).toBe(200);
     const workspaceView = CONSOLE_ROUTES.workspace.response.parse(response.json);
     expect(workspaceView.bundles.map((b) => b.id)).toContain("payments");
-    expect(workspaceView.problems.map((b) => b.id)).toEqual(["broken"]);
+    expect(workspaceView.issues.map((b) => b.id)).toEqual(["broken"]);
     expect(operationView(workspace.root, "payments", getId).operation.id).toBe(getId);
   });
 });

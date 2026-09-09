@@ -22,7 +22,7 @@ export function canonicalJson(value: unknown): string {
 function sortKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
+    const out: Record<string, unknown> = Object.create(null);
     for (const k of Object.keys(value as Record<string, unknown>).sort()) {
       out[k] = sortKeys((value as Record<string, unknown>)[k]);
     }

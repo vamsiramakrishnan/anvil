@@ -1,10 +1,11 @@
 import { useState } from "react";
 import type { ConsoleResponse } from "../../contract.js";
 import { type ConsoleApi, type ConsoleApiError, toConsoleApiError } from "../api.js";
-import { Chip, Claims, ErrorBox, KV, Label, Panel, Tag } from "../components.js";
-import { useLoad } from "../load.js";
+import { Chip, Claims, CodeBlock, ErrorBox, KV, Label, Panel, Tag } from "../components.js";
+import { useLoad } from "../hooks.js";
 import { href, show } from "../model.js";
-import { CodeBlock, LoadState, setQuery, shellQuote } from "../workbench-components.js";
+import { shellQuote } from "../request-builder.js";
+import { LoadState, setQuery } from "../workbench-components.js";
 
 const PAGE_SIZE = 40;
 
@@ -269,7 +270,7 @@ function OperationDetail({
             ) : (
               <p>No intent examples have been authored for this tool.</p>
             )}
-            <a href={href(bundleId, "evidence", { file: "skill/SKILL.md" })}>
+            <a href={href(bundleId, "artifacts", { path: "skill/SKILL.md" })}>
               Open the generated skill and SDK artifacts →
             </a>
           </Panel>

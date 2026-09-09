@@ -1425,10 +1425,10 @@
     },
     {
       "id": "console-workbench/artifact-allowlist",
-      "file": "packages/console/src/server/workbench.ts",
+      "file": "packages/console/src/server/assurance.ts",
       "control": "Only generator-owned artifacts and known evidence records are exposed. Removing the allowlist must expose a private test file and fail.",
-      "find": "  if (!paths.includes(path))",
-      "replace": "  if (false)",
+      "find": "  return Object.fromEntries(Object.entries(files).filter(([path]) => allowed.has(path)));",
+      "replace": "  return Object.fromEntries(Object.entries(files));",
       "tests": [
         "packages/console/src/server/workbench.test.ts"
       ]
