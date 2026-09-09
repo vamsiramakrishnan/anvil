@@ -11,9 +11,10 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConsoleResponse } from "../contract.js";
 import { createConsoleApi } from "./api.js";
-import { App, useLoad } from "./app.js";
+import { App } from "./app.js";
 import { createMockConsole, mockFetch } from "./dev/mock-server.js";
-import { href, initialTheme, parseHash, VIEWS } from "./model.js";
+import { useLoad } from "./hooks.js";
+import { BUNDLE_VIEWS, href, initialTheme, parseHash } from "./model.js";
 import { inputDraft, requestDraft, shellQuote } from "./request-builder.js";
 
 function setup() {
@@ -71,11 +72,11 @@ describe("request and navigation isolation", () => {
       .mockRejectedValue(new Error("malformed benchmark"));
     location.hash = href("payments", "inspect");
     render(<App api={api} />);
-    await screen.findByRole("heading", { name: "estate inspector" });
+    await screen.findByRole("heading", { name: "Operations & contracts" });
     expect(benchmark).not.toHaveBeenCalled();
   });
   it("round-trips every view with nested bundle ids, and recovers from malformed links", () => {
-    for (const [view] of VIEWS)
+    for (const [view] of BUNDLE_VIEWS)
       expect(parseHash(href("retail/payments", view))).toMatchObject({
         view,
         bundleId: "retail/payments",

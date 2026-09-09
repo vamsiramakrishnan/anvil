@@ -3,10 +3,12 @@ import { createServer, type Server } from "node:http";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { artifactsView, artifactView, assuranceView } from "./assurance.js";
+import * as creation from "./creation.js";
 import { createRequestListener, type Handlers } from "./http.js";
 import type { Request } from "./mutations.js";
 import * as mutations from "./mutations.js";
 import * as views from "./read-models.js";
+import * as workbench from "./workbench.js";
 import { assertDirectory } from "./workspace.js";
 
 /**
@@ -86,6 +88,17 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
   const origin = () => `http://${CONSOLE_HOST}:${boundPort}`;
 
   const handlers: Handlers = {
+    preview: ({ params, body }) =>
+      workbench.previewOperation(
+        root,
+        param(params, "id"),
+        param(params, "operationId"),
+        body as Request<"preview">,
+      ),
+    regenerate: ({ params, body }) =>
+      workbench.regenerateBundle(root, param(params, "id"), body as Request<"regenerate">),
+    createBundle: ({ body }) => creation.createBundle(root, body as Request<"createBundle">),
+    evidence: ({ params }) => creation.evidenceView(root, param(params, "id")),
     workspace: () => views.workspaceView(root),
     bundle: ({ params }) => views.bundleView(root, param(params, "id")),
     operation: ({ params }) =>

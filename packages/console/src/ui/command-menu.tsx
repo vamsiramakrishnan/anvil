@@ -1,70 +1,123 @@
 import { useEffect, useRef, useState } from "react";
-import type { ConsoleApi } from "./api.js";
-import { useLoad } from "./app.js";
-import { ErrorBox } from "./components.js";
-import { href, VIEWS } from "./model.js";
+import type { ConsoleResponse } from "../contract.js";
+import type { Loaded } from "./hooks.js";
+import { BUNDLE_VIEWS, href } from "./model.js";
 
+/** Native modal focus containment with a bounded, keyboard-navigable result set. */
 export function CommandMenu({
   open,
   onClose,
-  api,
+  workspace,
   bundleId,
 }: {
   open: boolean;
   onClose: () => void;
-  api: ConsoleApi;
-  bundleId: string | undefined;
+  workspace: Loaded<ConsoleResponse<"workspace">>;
+  bundleId?: string;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const ref = useRef<HTMLDialogElement>(null);
+  const input = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
-  const loaded = useLoad(() => (open ? api.workspace() : Promise.resolve(null)), [open]);
+  const [cursor, setCursor] = useState(0);
   useEffect(() => {
     if (open) {
       setQuery("");
-      dialog.current?.showModal?.();
-      dialog.current?.querySelector("input")?.focus();
-    } else if (dialog.current?.open) dialog.current.close?.();
+      setCursor(0);
+      if (!ref.current?.open) ref.current?.showModal?.();
+      input.current?.focus();
+    } else if (ref.current?.open) ref.current.close();
   }, [open]);
-  const links = [
-    { label: "All bundles", path: "#/", group: "Workspace" },
+  const entries = [
+    { name: "Workspace", detail: "Browse and compare bundles", href: "#/" },
+    { name: "New bundle", detail: "Import an API contract", href: "#/new" },
     ...(bundleId
-      ? VIEWS.map(([view, label]) => ({ label, path: href(bundleId, view), group: bundleId }))
+      ? BUNDLE_VIEWS.map(([view, name]) => ({ name, detail: bundleId, href: href(bundleId, view) }))
       : []),
-    ...(loaded.data?.bundles ?? []).map((bundle) => ({
-      label: `${bundle.service.id} · ${bundle.id}`,
-      path: href(bundle.id, "queue"),
-      group: "Bundles",
+    ...(workspace.data?.bundles ?? []).map((b) => ({
+      name: b.service.id,
+      detail: `${b.id} · ${b.sourceKind} · ${b.service.version}`,
+      href: href(b.id, "overview"),
     })),
-  ].filter((link) => `${link.group} ${link.label}`.toLowerCase().includes(query.toLowerCase()));
+  ]
+    .filter((entry) =>
+      `${entry.name} ${entry.detail}`.toLowerCase().includes(query.trim().toLowerCase()),
+    )
+    .slice(0, 30);
+  const current = Math.min(cursor, entries.length - 1);
+  useEffect(() => {
+    if (open)
+      document.getElementById(`command-result-${current}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [current, open]);
+  function go(index: number) {
+    const entry = entries[index];
+    if (entry) {
+      location.hash = entry.href;
+      onClose();
+    }
+  }
   return (
-    <dialog
-      ref={dialog}
-      className="command-menu"
-      aria-label="Find bundle or view"
-      onClose={onClose}
-    >
-      <div className="panel-head">
-        <h2>Go to</h2>
+    <dialog className="command-menu" ref={ref} aria-label="Find a bundle or view" onClose={onClose}>
+      <div className="command-search">
+        <input
+          ref={input}
+          type="search"
+          role="combobox"
+          aria-label="Find a bundle or view"
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-controls="command-results"
+          aria-activedescendant={current >= 0 ? `command-result-${current}` : undefined}
+          placeholder="Search bundles, operations, evidence…"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setCursor(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setCursor((n) => Math.min(n + 1, entries.length - 1));
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setCursor((n) => Math.max(n - 1, 0));
+            }
+            if (e.key === "Enter") {
+              e.preventDefault();
+              go(current);
+            }
+          }}
+        />
         <button type="button" className="btn btn-sm" onClick={onClose}>
-          Close
+          Esc
         </button>
       </div>
-      <input
-        type="search"
-        aria-label="Search navigation"
-        placeholder="Bundle name or view…"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-      />
-      {loaded.error ? <ErrorBox error={loaded.error} /> : null}
-      <div className="command-results">
-        {links.slice(0, 50).map((link) => (
-          <a key={link.path} href={link.path} onClick={onClose}>
-            <span>{link.label}</span>
-            <span className="row-id">{link.group}</span>
-          </a>
+      <div id="command-results" role="listbox" aria-label="Navigation results">
+        {entries.map((entry, i) => (
+          <div
+            role="option"
+            id={`command-result-${i}`}
+            aria-selected={i === current}
+            key={`${entry.href}:${entry.name}`}
+            tabIndex={-1}
+            onClick={() => go(i)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") go(i);
+            }}
+          >
+            <strong>{entry.name}</strong>
+            <span>{entry.detail}</span>
+            <kbd>↵</kbd>
+          </div>
         ))}
-        {links.length === 0 ? <p role="status">No matching bundles or views.</p> : null}
+      </div>
+      {entries.length === 0 ? (
+        <p className="empty">No matches. Try a service name, source format, or bundle path.</p>
+      ) : null}
+      <div className="command-footer">
+        <span>↑ ↓ to navigate</span>
+        <span>Enter to open</span>
+        <span>Esc to close</span>
       </div>
     </dialog>
   );

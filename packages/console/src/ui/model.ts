@@ -11,25 +11,29 @@ import type { ConsoleResponse } from "../contract.js";
 
 /* ------------------------------- routing --------------------------------- */
 
-export const VIEWS = [
-  ["queue", "Decision queue"],
-  ["inspect", "Inspector"],
-  ["workbench", "Request builder"],
-  ["compare", "Compare bundles"],
-  ["assurance", "Assurance"],
-  ["artifacts", "Generated files"],
-  ["confusion", "Routing benchmark"],
-] as const;
-export type View = (typeof VIEWS)[number][0];
+export type View =
+  | "overview"
+  | "queue"
+  | "inspect"
+  | "confusion"
+  | "evidence"
+  | "artifacts"
+  | "catalog"
+  | "workbench"
+  | "assurance"
+  | "compare";
 
 export type Route =
-  | { view: "workspace" }
+  | { view: "workspace" | "new" }
   | { view: View; bundleId: string; query: URLSearchParams };
 
 export function parseHash(hash: string): Route {
   const [path = "", search = ""] = hash.replace(/^#/, "").split("?");
+  if (path === "/new") return { view: "new" };
   const match =
-    /^\/b\/([^/]+)\/(queue|inspect|confusion|workbench|compare|assurance|artifacts)$/.exec(path);
+    /^\/b\/([^/]+)\/(overview|queue|inspect|confusion|evidence|artifacts|catalog|workbench|assurance|compare)$/.exec(
+      path,
+    );
   if (!match) return { view: "workspace" };
   try {
     return {
@@ -208,7 +212,6 @@ export const KEY_MAP: ReadonlyArray<readonly [string, string]> = [
   ["r", "reject the row (or focus the reason)"],
   ["/", "focus the filter"],
   ["?", "this key map"],
-  ["Ctrl / ⌘ K", "find a bundle or view"],
   ["Esc", "close, or clear the selection"],
 ];
 
@@ -243,3 +246,15 @@ export function tone(value: string): string {
       return "queued";
   }
 }
+
+export const BUNDLE_VIEWS: ReadonlyArray<readonly [View, string, string]> = [
+  ["overview", "Overview", "01"],
+  ["queue", "Decision queue", "02"],
+  ["inspect", "Operations & contracts", "03"],
+  ["catalog", "Operation catalog", "04"],
+  ["workbench", "Command drafts", "05"],
+  ["compare", "Compare bundles", "06"],
+  ["confusion", "Routing quality", "07"],
+  ["evidence", "Evidence & checks", "08"],
+  ["artifacts", "Generated files", "09"],
+];

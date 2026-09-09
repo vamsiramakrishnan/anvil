@@ -50,7 +50,9 @@ const DERIVED_RECORD_FILES = new Set([
   "simulation.report.json",
 ]);
 
-function summarizeReprojection(result: BundleReprojectionResult): z.infer<typeof zReprojection> {
+export function summarizeReprojection(
+  result: BundleReprojectionResult,
+): z.infer<typeof zReprojection> {
   const files = Object.keys(result.existingFiles);
   return {
     bundleDir: result.bundleDir,

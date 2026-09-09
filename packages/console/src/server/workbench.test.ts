@@ -1,143 +1,185 @@
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { operationInputSchema } from "@anvil/air";
-import { certifyBundle, executableEvidenceStatuses, readBundleDir } from "@anvil/generators";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  zArtifactsView,
-  zArtifactView,
-  zAssuranceView,
-  zOperationView,
-  zWorkspace,
-} from "../contract.js";
+import { airToYaml, operationInputSchema } from "@anvil/air";
+import { approveOperationsInBundle, bundleHash, readBundleDir } from "@anvil/generators";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CONSOLE_ROUTES } from "../contract.js";
 import { loadAir, paymentsWorkspace, startServer } from "./fixture.js";
+import { operationView } from "./read-models.js";
+import { previewOperation } from "./workbench.js";
 
 let workspace: Awaited<ReturnType<typeof paymentsWorkspace>>;
 let running: Awaited<ReturnType<typeof startServer>>;
-beforeAll(async () => {
+let getId: string;
+
+beforeEach(async () => {
   workspace = await paymentsWorkspace();
   running = await startServer(workspace.root);
+  const op = workspace.air.operations.find((op) => op.sourceRef.operationId === "getPayment");
+  if (!op) throw new Error("Missing fixture read");
+  getId = op.id;
 });
-afterAll(async () => {
+afterEach(async () => {
+  vi.restoreAllMocks();
   await running?.server.close();
   if (workspace) rmSync(workspace.root, { recursive: true, force: true });
 });
-const base = "/api/bundles/payments";
 
-describe("workbench read APIs over real generated bundles", () => {
-  it("projects the exact shared input schema without exposing an unapproved operation", async () => {
-    const op = loadAir(workspace.bundleDir).operations.find((item) => item.state !== "approved");
-    expect(op).toBeDefined();
-    const reply = await running.client.get(`${base}/operations/${encodeURIComponent(op!.id)}`);
-    expect(reply.status).toBe(200);
-    const view = zOperationView.parse(reply.json);
-    expect(view.inputSchema).toEqual(operationInputSchema(op!));
-    expect(view.operation).toEqual(op);
-    expect(view.served).toBe(false);
-    expect((await running.client.get(`${base}/operations/not-an-operation`)).status).toBe(404);
-  });
+const route = (suffix = "") => `/api/bundles/payments${suffix}`;
+const previewPath = () => route(`/operations/${getId}/preview`);
+const digest = () => bundleHash(readBundleDir(workspace.bundleDir));
 
-  it("runs the existing static checks and evidence readers without writing reports", async () => {
+describe("workbench", () => {
+  it("returns the shared input schema and refuses unapproved execution", async () => {
+    const response = await running.client.get(route(`/operations/${getId}`));
+    expect(response.status).toBe(200);
+    const detail = CONSOLE_ROUTES.operation.response.parse(response.json);
+    expect(detail.inputSchema).toEqual(operationInputSchema(detail.operation));
     const before = readBundleDir(workspace.bundleDir);
-    const expected = certifyBundle(before, loadAir(workspace.bundleDir));
-    const reply = await running.client.get(`${base}/assurance`);
-    expect(reply.status).toBe(200);
-    const report = zAssuranceView.parse(reply.json);
-    expect(report.checks).toEqual(expected.checks);
-    expect(report.status).toBe(expected.status);
-    expect(report.bundleHash).toBe(expected.bundleHash);
-    expect(report.evidence).toEqual(Object.values(executableEvidenceStatuses(before)));
-    expect(report.certification.valid).toBe(false);
+    const refused = await running.client.post(previewPath(), {
+      bundleHash: detail.bundleHash,
+      input: { payment_id: "pay_1" },
+    });
+    expect(refused.status).toBe(422);
+    expect(refused.json).toMatchObject({ error: { code: "unsupported_operation" } });
     expect(readBundleDir(workspace.bundleDir)).toEqual(before);
   });
 
-  it("shows stale passing evidence as stale, and current failing evidence as failed", async () => {
-    const path = join(workspace.bundleDir, "selftest.report.json");
-    const files = readBundleDir(workspace.bundleDir);
-    const hash = certifyBundle(files, loadAir(workspace.bundleDir)).bundleHash;
-    try {
-      writeFileSync(
-        path,
-        JSON.stringify({
-          schemaVersion: 1,
-          bundleHash: "0".repeat(64),
-          summary: { pass: 1, fail: 0, skipped: 0 },
-        }),
-      );
-      const stale = zAssuranceView.parse((await running.client.get(`${base}/assurance`)).json);
-      expect(stale.evidence.find((lane) => lane.lane === "selftest")?.state).toBe("stale");
-      writeFileSync(
-        path,
-        JSON.stringify({
-          schemaVersion: 1,
-          bundleHash: hash,
-          summary: { pass: 0, fail: 1, skipped: 0 },
-        }),
-      );
-      const failed = zAssuranceView.parse((await running.client.get(`${base}/assurance`)).json);
-      expect(failed.evidence.find((lane) => lane.lane === "selftest")?.passed).toBe(false);
-    } finally {
-      rmSync(path, { force: true });
+  it("plans an approved request without network, credentials, or disk writes", async () => {
+    approveOperationsInBundle(workspace.bundleDir, [getId]);
+    const before = readBundleDir(workspace.bundleDir);
+    const network = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("Unexpected network"));
+    const result = await previewOperation(workspace.root, "payments", getId, {
+      bundleHash: digest(),
+      input: { payment_id: "pay_1" },
+    });
+    expect(result.outcome).toBe("dry_run");
+    expect(result.plan.method).toBe("GET");
+    expect(result.plan.url).toContain("/payments/pay_1");
+    expect(network).not.toHaveBeenCalled();
+    expect(readBundleDir(workspace.bundleDir)).toEqual(before);
+  });
+
+  it("keeps missing-input and explicit confirmation gates, even in a preview", async () => {
+    approveOperationsInBundle(workspace.bundleDir, [getId]);
+    const missing = await running.client.post(previewPath(), { bundleHash: digest(), input: {} });
+    expect(missing.status).toBe(422);
+    expect(missing.json).toMatchObject({ error: { code: "validation_error" } });
+    const air = loadAir(workspace.bundleDir);
+    const op = air.operations.find((op) => op.id === getId);
+    if (!op) throw new Error("Missing read");
+    op.confirmation.required = true;
+    writeFileSync(join(workspace.bundleDir, "air.yaml"), airToYaml(air));
+    const body = { bundleHash: digest(), input: { payment_id: "pay_1" } };
+    const refused = await running.client.post(previewPath(), body);
+    expect(refused.status).toBe(422);
+    expect(refused.json).toMatchObject({
+      error: { code: "confirmation_required", issues: ["--confirm"] },
+    });
+    expect((await running.client.post(previewPath(), { ...body, confirm: true })).status).toBe(200);
+  });
+
+  it("rejects stale preview and regeneration requests, and cannot turn off dry-run", async () => {
+    const stale = digest();
+    approveOperationsInBundle(workspace.bundleDir, [getId]);
+    const before = readBundleDir(workspace.bundleDir);
+    expect(
+      (await running.client.post(previewPath(), { bundleHash: stale, input: {} })).status,
+    ).toBe(409);
+    expect((await running.client.post(route("/regenerate"), { bundleHash: stale })).status).toBe(
+      409,
+    );
+    expect(
+      (await running.client.post(previewPath(), { bundleHash: digest(), input: {}, dryRun: false }))
+        .status,
+    ).toBe(400);
+    expect(readBundleDir(workspace.bundleDir)).toEqual(before);
+  });
+
+  it("requires the token and same origin on both new POST routes", async () => {
+    for (const path of [previewPath(), route("/regenerate")]) {
+      expect((await running.client.post(path, {}, { token: null })).status).toBe(403);
+      expect(
+        (await running.client.post(path, {}, { origin: "https://untrusted.example" })).status,
+      ).toBe(403);
     }
   });
 
-  it("lists and reads generated bytes, refusing arbitrary files and path traversal", async () => {
-    writeFileSync(join(workspace.bundleDir, ".env"), "PRIVATE_SENTINEL=not-for-the-console");
-    try {
-      const listing = zArtifactsView.parse((await running.client.get(`${base}/artifacts`)).json);
-      expect(listing.files.some((file) => file.path === ".env")).toBe(false);
-      const path = listing.files.find((file) => file.path.startsWith("sdk/"))!.path;
-      const reply = await running.client.get(`${base}/artifact?${new URLSearchParams({ path })}`);
-      const artifact = zArtifactView.parse(reply.json);
-      expect(artifact.content).toBe(readFileSync(join(workspace.bundleDir, path), "utf8"));
-      expect(artifact.truncated).toBe(false);
-      for (const outside of [".env", "../payments/.env", "/etc/passwd", "__proto__"]) {
-        const denied = await running.client.get(
-          `${base}/artifact?${new URLSearchParams({ path: outside })}`,
-        );
-        expect(denied.status).toBe(404);
-        expect(denied.text).not.toContain("PRIVATE_SENTINEL");
-      }
-    } finally {
-      rmSync(join(workspace.bundleDir, ".env"));
+  it("reads evidence and generated artifacts without issuing records; refuses arbitrary files", async () => {
+    writeFileSync(join(workspace.bundleDir, "private.txt"), "private-content");
+    const before = readBundleDir(workspace.bundleDir);
+    const evidence = await running.client.get(route("/evidence"));
+    expect(evidence.status).toBe(200);
+    const data = CONSOLE_ROUTES.evidence.response.parse(evidence.json);
+    expect(data.executable).toHaveLength(3);
+    expect(data.executable.every((lane) => lane.state === "missing")).toBe(true);
+    const listing = CONSOLE_ROUTES.artifacts.response.parse(
+      (await running.client.get(route("/artifacts"))).json,
+    );
+    expect(listing.files.some((file) => file.path === "skill/SKILL.md")).toBe(true);
+    expect(listing.files.some((file) => file.path === "private.txt")).toBe(false);
+    const artifact = await running.client.get(route("/artifact?path=skill%2FSKILL.md"));
+    expect(artifact.status).toBe(200);
+    expect(CONSOLE_ROUTES.artifact.response.parse(artifact.json).content).toBe(
+      before["skill/SKILL.md"],
+    );
+    for (const path of [
+      "private.txt",
+      "../private.txt",
+      "/etc/passwd",
+      "constructor",
+      "__proto__",
+    ]) {
+      expect(
+        (await running.client.get(route(`/artifact?path=${encodeURIComponent(path)}`))).status,
+      ).toBe(404);
     }
+    expect(readBundleDir(workspace.bundleDir)).toEqual(before);
   });
 
-  it("bounds artifact responses and refuses symlink targets", async () => {
-    const listing = zArtifactsView.parse((await running.client.get(`${base}/artifacts`)).json);
-    const file = listing.files.find((item) => item.path.endsWith(".md"))!;
-    const path = join(workspace.bundleDir, file.path);
-    const original = readFileSync(path, "utf8");
-    try {
-      writeFileSync(path, "x".repeat(300 * 1024));
-      const result = zArtifactView.parse(
-        (await running.client.get(`${base}/artifact?${new URLSearchParams({ path: file.path })}`))
-          .json,
-      );
-      expect(result.bytes).toBe(300 * 1024);
-      expect(result.content.length).toBe(256 * 1024);
-      expect(result.truncated).toBe(true);
-      rmSync(path);
-      symlinkSync("/etc/passwd", path);
-      expect((await running.client.get(`${base}/artifacts`)).status).toBe(409);
-    } finally {
-      rmSync(path, { force: true });
-      writeFileSync(path, original);
-    }
+  it("bounds artifact previews and refuses symlink-backed content", async () => {
+    writeFileSync(join(workspace.bundleDir, "skill", "SKILL.md"), "x".repeat(256 * 1024 + 1));
+    const large = await running.client.get(route("/artifact?path=skill%2FSKILL.md"));
+    expect(large.status).toBe(200);
+    const preview = CONSOLE_ROUTES.artifact.response.parse(large.json);
+    expect(preview.truncated).toBe(true);
+    expect(Buffer.byteLength(preview.content)).toBe(256 * 1024);
+    const target = join(workspace.root, "outside.txt");
+    writeFileSync(target, "outside-content");
+    rmSync(join(workspace.bundleDir, "skill", "SKILL.md"));
+    symlinkSync(target, join(workspace.bundleDir, "skill", "SKILL.md"));
+    const reply = await running.client.get(route("/artifact?path=skill%2FSKILL.md"));
+    expect(reply.status).toBe(409);
+    expect(reply.text).not.toContain("outside-content");
   });
 
-  it("keeps healthy bundles visible when a sibling has malformed AIR", async () => {
-    const bad = join(workspace.root, "broken");
-    mkdirSync(bad);
-    writeFileSync(join(bad, "air.yaml"), "not: [valid");
-    try {
-      const reply = await running.client.get("/api/workspace");
-      expect(reply.status).toBe(200);
-      const view = zWorkspace.parse(reply.json);
-      expect(view.bundles.map((bundle) => bundle.id)).toEqual(["payments"]);
-      expect(view.issues).toEqual([expect.objectContaining({ id: "broken" })]);
-    } finally {
-      rmSync(bad, { recursive: true });
-    }
+  it("regenerates all projections from current AIR without approving anything", async () => {
+    const air = loadAir(workspace.bundleDir);
+    const states = air.operations.map((op) => op.state);
+    const op = air.operations[0];
+    if (!op) throw new Error("No operations");
+    op.description = "A reviewed description applied to AIR.";
+    writeFileSync(join(workspace.bundleDir, "air.yaml"), airToYaml(air));
+    const result = await running.client.post(route("/regenerate"), { bundleHash: digest() });
+    expect(result.status).toBe(200);
+    expect(CONSOLE_ROUTES.regenerate.response.parse(result.json).projectionsChanged).toBe(true);
+    const projected = JSON.parse(
+      readFileSync(join(workspace.bundleDir, "mcp", "air.json"), "utf8"),
+    );
+    expect(projected.operations[0].description).toBe(op.description);
+    expect(loadAir(workspace.bundleDir).operations.map((op) => op.state)).toEqual(states);
+  });
+
+  it("isolates corrupt bundles so the remaining workspace stays usable", async () => {
+    mkdirSync(join(workspace.root, "broken"));
+    writeFileSync(join(workspace.root, "broken", "air.yaml"), "not: a bundle");
+    const response = await running.client.get("/api/workspace");
+    expect(response.status).toBe(200);
+    const workspaceView = CONSOLE_ROUTES.workspace.response.parse(response.json);
+    expect(workspaceView.bundles.map((b) => b.id)).toContain("payments");
+    expect(workspaceView.issues.map((b) => b.id)).toEqual(["broken"]);
+    expect(operationView(workspace.root, "payments", getId).operation.id).toBe(getId);
   });
 });

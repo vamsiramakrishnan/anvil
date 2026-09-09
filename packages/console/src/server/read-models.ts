@@ -73,6 +73,7 @@ export function workspaceView(root: string): Workspace {
     bundles: discoverBundles(root).flatMap((bundle) => {
       try {
         const { air, dir } = loadBundle(bundle);
+        const bundlePacks = packs.filter((pack) => pack.pack.service.id === air.service.id);
         return {
           id: bundle.id,
           path: dir,
@@ -86,8 +87,14 @@ export function workspaceView(root: string): Workspace {
             capabilities: countBy(air.capabilities.map((cap) => cap.lifecycle)),
             workflows: countBy(air.workflows.map((wf) => wf.state)),
           },
+          pendingDecisions:
+            air.operations.filter(
+              (op) => op.state === "generated" || op.state === "review_required",
+            ).length +
+            air.capabilities.filter((cap) => cap.lifecycle === "proposed").length +
+            bundlePacks.flatMap(packDecisions).length,
           hasBenchmark: existsSync(join(dir, "benchmark.report.json")),
-          packs: packs.filter((pack) => pack.pack.service.id === air.service.id).length,
+          packs: bundlePacks.length,
         };
       } catch (error) {
         issues.push({
@@ -140,6 +147,7 @@ export function bundleView(root: string, id: string): BundleInspector {
       id: op.id,
       canonicalName: op.canonicalName,
       displayName: op.displayName,
+      input: op.input,
       mcp: { toolName: op.mcp.toolName },
       cli: { command: op.cli.command },
       effect: op.effect,
@@ -396,7 +404,7 @@ export function driftView(root: string, id: string, against: string): DriftView 
 
 /** Full input details are loaded only when an operation is selected. */
 export function operationView(root: string, id: string, operationId: string) {
-  const { air } = loadBundle(findBundle(root, id));
+  const { air, files } = loadBundle(findBundle(root, id));
   const operation = air.operations.find((op) => op.id === operationId);
   if (!operation) throw notFound(`No operation '${operationId}' in bundle '${id}'.`);
   const cliFlags: Record<string, string> = {};
@@ -419,6 +427,8 @@ export function operationView(root: string, id: string, operationId: string) {
     cliFlags[safety.idempotencyKey] = "--idempotency-key";
   const { plan } = servedSurface(air);
   return {
+    bundleHash: bundleHash(files),
+    diagnostics: air.diagnostics.filter((d) => d.operationId === operationId),
     operation,
     inputSchema: schema,
     cliFlags,

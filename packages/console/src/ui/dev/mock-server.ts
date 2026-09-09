@@ -117,6 +117,32 @@ export function createMockConsole(
   };
 
   const handlers: { [R in ConsoleRoute]: Handler<R> } = {
+    createBundle: () => {
+      throw refuse(
+        409,
+        "console/refused",
+        "This development preview uses fixtures. Run anvil console to compile real source files.",
+      );
+    },
+    evidence: ({ id = "" }) => {
+      bundle(id);
+      return {
+        bundleHash: "a".repeat(64),
+        staticChecks: [],
+        certification: { valid: false, detail: "No certification in this fixture." },
+        executable: [],
+      };
+    },
+    preview: () => {
+      throw refuse(
+        409,
+        "console/refused",
+        "Request previews require a real compiled bundle. Run anvil console on a workspace.",
+      );
+    },
+    regenerate: () => {
+      throw refuse(409, "console/refused", "Regeneration requires a real bundle directory.");
+    },
     workspace: () => ({
       root: state.root,
       issues: [],
@@ -131,6 +157,10 @@ export function createMockConsole(
           capabilities: countBy(b.inspector.capabilities.map((cap) => cap.lifecycle)),
           workflows: countBy(b.inspector.workflows.map((wf) => wf.state)),
         },
+        pendingDecisions: b.queue.items.filter(
+          (item) =>
+            item.kind !== "workflow" && item.kind !== "refinement" && item.kind !== "cluster",
+        ).length,
         hasBenchmark: b.benchmark !== null,
         packs: b.packs.length,
       })),
@@ -155,6 +185,8 @@ export function createMockConsole(
       if (operation.confirmation.required) cliFlags.confirm = "--confirm";
       if (operation.idempotency.mode === "required") cliFlags.idempotency_key = "--idempotency-key";
       return {
+        bundleHash: "a".repeat(64),
+        diagnostics: [],
         operation,
         inputSchema,
         cliFlags,

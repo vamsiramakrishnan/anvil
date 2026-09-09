@@ -29,11 +29,15 @@ import {
 } from "@anvil/refinement";
 import { z } from "zod";
 import {
+  WORKBENCH_ROUTES,
   zArtifactQuery,
   zArtifactsView,
   zArtifactView,
   zAssuranceView,
   zOperationView,
+  zPreview,
+  zPreviewRequest,
+  zRegenerateRequest,
 } from "./workbench-contract.js";
 
 export {
@@ -274,6 +278,7 @@ export const zWorkspaceBundle = z.object({
     capabilities: zCapabilityLifecycleCounts,
     workflows: zOperationStateCounts,
   }),
+  pendingDecisions: z.number().int().nonnegative(),
   hasBenchmark: z.boolean(),
   /** Refinement pack directories found for this bundle. */
   packs: z.number().int().nonnegative(),
@@ -294,6 +299,7 @@ export const zOperationRow = z.object({
   id: Operation.shape.id,
   canonicalName: Operation.shape.canonicalName,
   displayName: Operation.shape.displayName,
+  input: Operation.shape.input.optional(),
   mcp: z.object({ toolName: Operation.shape.mcp.shape.toolName }),
   cli: z.object({ command: Operation.shape.cli.shape.command }),
   effect: Operation.shape.effect,
@@ -596,12 +602,8 @@ export const zApplyPackRequest = z.object({
 });
 
 /**
- * `applyPackToBundle` writes AIR only, and so does the console: exactly as
- * `anvil refine apply-pack` ends with "Regenerate the bundle with `anvil
- * compile`", the console has no reproject-after-apply route by design, and
- * its post-apply state tells the reviewer to recompile. `reprojection` is
- * therefore absent today; it is kept for a server that deliberately performs
- * one, never inferred.
+ * `applyPackToBundle` writes AIR only. Regeneration is a separate action bound
+ * to the viewed bundle digest; applying alone does not regenerate projections.
  */
 export const zApplyPackResponse = z.object({
   airPath: z.string(),
@@ -671,6 +673,21 @@ export const zImportTaskResponse = z.object({
  * read-only projection.
  */
 export const CONSOLE_ROUTES = {
+  ...WORKBENCH_ROUTES,
+  preview: {
+    method: "POST",
+    path: "/api/bundles/:id/operations/:operationId/preview",
+    mutates: true,
+    request: zPreviewRequest,
+    response: zPreview,
+  },
+  regenerate: {
+    method: "POST",
+    path: "/api/bundles/:id/regenerate",
+    mutates: true,
+    request: zRegenerateRequest,
+    response: zReprojection,
+  },
   workspace: { method: "GET", path: "/api/workspace", mutates: false, response: zWorkspace },
   bundle: {
     method: "GET",

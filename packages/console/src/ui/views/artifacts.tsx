@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ConsoleApi } from "../api.js";
-import { useLoad } from "../app.js";
 import { CodeBlock, DownloadButton, ErrorBox, Label } from "../components.js";
+import { useLoad } from "../hooks.js";
 import { href } from "../model.js";
 
 export function ArtifactsView({
@@ -68,7 +68,7 @@ export function ArtifactsView({
                 ))}
             </select>
           </div>
-          <nav className="file-list" aria-label="Generated files">
+          <nav className="file-list" aria-label="Artifact files">
             {visible.map((file) => (
               <a
                 key={file.path}
@@ -111,7 +111,7 @@ function Artifact({ api, bundleId, path }: { api: ConsoleApi; bundleId: string; 
     );
   const file = loaded.data;
   return (
-    <section className="stack artifact-content">
+    <section className="stack artifact-content" aria-label={`Contents of ${path}`}>
       <div className="code-head">
         <span className="row-id">{file.bytes.toLocaleString()} bytes</span>
         <DownloadButton

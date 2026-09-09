@@ -1,8 +1,8 @@
 import { useState } from "react";
 import type { ConsoleResponse } from "../../contract.js";
 import type { ConsoleApi } from "../api.js";
-import { useLoad } from "../app.js";
 import { Chip, CodeBlock, ErrorBox, KV, Label, Panel } from "../components.js";
+import { useLoad } from "../hooks.js";
 import { href, show } from "../model.js";
 import { inputDraft, requestDraft } from "../request-builder.js";
 

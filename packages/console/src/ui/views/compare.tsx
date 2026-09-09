@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ConsoleApi } from "../api.js";
-import { useLoad } from "../app.js";
 import { Chip, DownloadButton, ErrorBox, Label } from "../components.js";
+import { useLoad } from "../hooks.js";
 import { href, show } from "../model.js";
 
 const SEVERITY = ["blocking", "high", "medium", "low", "info"];

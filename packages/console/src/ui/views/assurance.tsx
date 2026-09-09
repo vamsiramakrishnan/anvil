@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ConsoleApi } from "../api.js";
-import { useLoad } from "../app.js";
 import { Chip, CodeBlock, DownloadButton, ErrorBox, Label, Panel } from "../components.js";
+import { useLoad } from "../hooks.js";
 import { shellQuote } from "../request-builder.js";
 
 export function AssuranceView({ api, bundleId }: { api: ConsoleApi; bundleId: string }) {

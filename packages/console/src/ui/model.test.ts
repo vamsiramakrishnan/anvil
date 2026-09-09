@@ -175,7 +175,7 @@ describe("routing and theme", () => {
     expect(parseHash("#/")).toEqual({ view: "workspace" });
     const route = parseHash(href("pay ments", "inspect", { against: "b2" }));
     expect(route.view).toBe("inspect");
-    if (route.view === "workspace") throw new Error("unreachable");
+    if (!("bundleId" in route)) throw new Error("unreachable");
     expect(route.bundleId).toBe("pay ments");
     expect(route.query.get("against")).toBe("b2");
     expect(parseHash("#/b/x/nope")).toEqual({ view: "workspace" });

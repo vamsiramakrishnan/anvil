@@ -1,0 +1,43 @@
+.page-heading, .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+.page-heading h1 { font-size: clamp(25px, 2.4vw, 36px); letter-spacing: -1.15px; margin: 7px 0 10px; line-height: 1.2; }
+.page-heading p, .section-heading p { color: var(--anvil-color-text-muted); font-size: 14px; margin: 6px 0 0; }
+.page-heading > .btn { white-space: nowrap; padding: 10px 16px; font-size: 13px; }
+.filter-bar { display: flex; align-items: center; gap: 12px; }
+.filter-bar > input { flex: 1; min-width: 100px; padding: 11px 14px; background: var(--anvil-color-surface); border-color: var(--anvil-color-hairline); }
+.filter-bar select { padding: 11px; border-color: var(--anvil-color-hairline); }
+.filter-bar .mono { color: var(--anvil-color-text-muted); white-space: nowrap; }
+.workbench-grid { display: grid; grid-template-columns: minmax(250px, 31%) minmax(0, 1fr); align-items: start; gap: 24px; }
+.operation-list { border: 1px solid var(--anvil-color-hairline); border-radius: 7px; overflow: hidden; }
+.operation-card { display: flex; flex-direction: column; gap: 6px; padding: 18px; color: var(--anvil-color-text); text-decoration: none; border-bottom: 1px solid var(--anvil-color-hairline); background: var(--anvil-color-surface); }
+.operation-card:hover { background: var(--anvil-color-surface-raised); }
+.operation-card.active { background: var(--anvil-color-accent-low); box-shadow: inset 3px 0 var(--anvil-color-text-accent); }
+.operation-card-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 5px; }
+.operation-card strong { font-weight: 600; font-size: 14px; }
+.operation-card code { font-size: 11px; overflow-wrap: anywhere; color: var(--anvil-color-text-secondary); }
+.operation-meta { font-size: 11px; color: var(--anvil-color-text-muted); }
+.effect-mark { font: 10px var(--anvil-mono-font); align-self: center; color: var(--anvil-status-passed-text); }
+.effect-mutation { color: var(--anvil-status-warning-text); }
+.operation-detail { min-width: 0; }
+.detail-heading { padding: 22px; background: var(--anvil-color-surface); border: 1px solid var(--anvil-color-hairline); border-radius: 7px; }
+.detail-heading h2 { font-size: 25px; margin-top: 14px; }
+.detail-heading > code { font-size: 11px; color: var(--anvil-color-text-muted); overflow-wrap: anywhere; }
+.detail-heading p { margin: 14px 0; color: var(--anvil-color-text-secondary); }
+.endpoint { display: flex; gap: 14px; background: var(--anvil-color-bg); border-radius: 5px; padding: 12px; font-size: 13px; }
+.endpoint span { color: var(--anvil-color-text-accent); font-family: var(--anvil-mono-font); }
+.endpoint code { overflow-wrap: anywhere; }
+.detail-tabs { display: flex; gap: 5px; border-bottom: 1px solid var(--anvil-color-hairline); padding-bottom: 8px; flex-wrap: wrap; }
+.detail-tabs button { background: transparent; cursor: pointer; font-size: 12px; }
+.detail-tabs button[aria-pressed="true"] { background: var(--anvil-color-accent-low); color: var(--anvil-color-text-accent); }
+.callout { border: 1px solid var(--anvil-color-hairline); border-left: 3px solid var(--anvil-color-text-accent); padding: 16px 18px; background: var(--anvil-color-surface); font-size: 13px; }
+.callout.warning { border-left-color: var(--anvil-status-warning); }
+.callout p { color: var(--anvil-color-text-secondary); margin: 6px 0 0; line-height: 1.65; }
+.callout .actions { margin-top: 16px; }
+.check-label { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.check-label input { width: auto; }
+.input-reference { display: grid; gap: 8px; max-height: 240px; overflow: auto; }
+.input-reference > div { padding: 10px 12px; border-bottom: 1px solid var(--anvil-color-hairline); font-size: 12px; }
+.input-reference span { float: right; color: var(--anvil-color-text-muted); font-size: 11px; }
+.input-reference p { margin: 6px 0 0; font-size: 11px; color: var(--anvil-color-text-muted); }
+.operation-detail .actions, .callout .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.loading-state { padding: 40px; color: var(--anvil-color-text-muted); }
+@media (max-width: 800px) { .workbench-grid { grid-template-columns: minmax(0, 1fr); } .page-heading, .filter-bar { flex-wrap: wrap; } .filter-bar input { flex-basis: 100%; } }

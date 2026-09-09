@@ -145,7 +145,13 @@ export function createConsoleApi(options: ConsoleApiOptions = {}) {
   }
 
   return {
+    preview: (id: string, operationId: string, body: ConsoleRequest<"preview">) =>
+      call("preview", { id, operationId }, body),
+    regenerate: (id: string, body: ConsoleRequest<"regenerate">) =>
+      call("regenerate", { id }, body),
     workspace: () => call("workspace", {}),
+    createBundle: (body: ConsoleRequest<"createBundle">) => call("createBundle", {}, body),
+    evidence: (id: string) => call("evidence", { id }),
     bundle: (id: string) => call("bundle", { id }),
     operation: (id: string, operationId: string) => call("operation", { id, operationId }),
     assurance: (id: string) => call("assurance", { id }),

@@ -179,6 +179,7 @@ describe("the console contract parses what the library produces", () => {
             capabilities: countBy(air.capabilities.map((cap) => cap.lifecycle)),
             workflows: countBy(air.workflows.map((wf) => wf.state)),
           },
+          pendingDecisions: 0,
           hasBenchmark: readBenchmarkReport(bundleDir) !== undefined,
           packs: 0,
         },

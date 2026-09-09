@@ -31,6 +31,7 @@
     "@anvil/design": "workspace:*",
     "@anvil/generators": "workspace:*",
     "@anvil/refinement": "workspace:*",
+    "@anvil/runtime": "workspace:*",
     "zod": "^4.4.3"
   },
   "devDependencies": {
