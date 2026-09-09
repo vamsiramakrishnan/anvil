@@ -100,6 +100,14 @@ export function buildCapabilityContract(
     .sort((a, b) => a.id.localeCompare(b.id));
 
   const withoutDigest: Omit<CapabilityContract, "digest"> = {
+    ...(air.business
+      ? {
+          business: {
+            ...air.business,
+            actions: air.business.actions.filter((a) => memberIds.has(a.id)),
+          },
+        }
+      : {}),
     schemaVersion: 1,
     id: spec.id,
     version: spec.version,

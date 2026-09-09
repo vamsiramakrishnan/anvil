@@ -537,6 +537,7 @@ async function invoke(
     (flags["protocol-facade"] as string | undefined) ?? env.ANVIL_PROTOCOL_FACADE;
 
   const ctx: ExecuteContext = {
+    remoteIdempotency: air.business !== undefined,
     transport: deps.transport ?? new FetchTransport(),
     serviceId: air.service.id,
     credentials: deps.credentials ?? resolveCredentials(config, { env }),

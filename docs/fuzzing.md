@@ -5,6 +5,10 @@ checks explicit properties, shrinks failures, and saves exact calls for replay.
 The reusable kernel is `packages/fuzz`; Anvil's adapters live in
 `packages/harness/src/fuzz`. Neither changes an operation's approval state.
 
+[Business capability execution](business-capabilities.md) adds owned returns,
+order-amendment, and account-access calibration against independent business
+state, using the same kernel and all seven generated-surface drivers.
+
 ## Run a campaign
 
 Build the workspace with `pnpm install` and `pnpm build`. Python SDK execution

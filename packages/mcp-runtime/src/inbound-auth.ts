@@ -17,7 +17,7 @@
  * JWT library. The JWKS fetch is injectable so the whole thing is unit-testable
  * offline, and keys are cached by URI.
  */
-import { createPublicKey, verify as cryptoVerify } from "node:crypto";
+import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { fetchPublicJson } from "@anvil/runtime";
 
 export type InboundAuthMode = "none" | "oidc" | "google_service_account";
@@ -427,4 +427,29 @@ export function protectedResourceMetadata(
     authorization_servers: config.issuer ? [config.issuer] : [],
     ...(config.requiredScopes ? { scopes_supported: config.requiredScopes } : {}),
   };
+}
+
+/** Stable session identity from already-verified claims; token rotation preserves it. */
+export function verifiedPrincipalFingerprint(claims: unknown): string | undefined {
+  if (!claims || typeof claims !== "object" || Array.isArray(claims)) return undefined;
+  const record = claims as Record<string, unknown>;
+  const issuer = typeof record.iss === "string" ? record.iss : undefined;
+  // sub is the standard principal. oid covers app-only Entra tokens, while
+  // azp / client_id identify a verified machine caller when no subject claim
+  // is issued. The verifier has already checked signature, issuer and audience.
+  const textClaim = (value: unknown) =>
+    typeof value === "string" && value.length > 0 ? value : undefined;
+  const sub = textClaim(record.sub);
+  const oid = textClaim(record.oid);
+  const authorizedParty = textClaim(record.azp) ?? textClaim(record.client_id);
+  if (!issuer || (!sub && !oid && !authorizedParty)) return undefined;
+  const tenant =
+    typeof record.tid === "string"
+      ? record.tid
+      : typeof record.tenant === "string"
+        ? record.tenant
+        : undefined;
+  return createHash("sha256")
+    .update(JSON.stringify({ issuer, sub, oid, authorizedParty, tenant }))
+    .digest("base64url");
 }

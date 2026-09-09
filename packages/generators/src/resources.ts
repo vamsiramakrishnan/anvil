@@ -1,4 +1,4 @@
-import type { AirDocument } from "@anvil/air";
+import type { AirDocument, BusinessPlan } from "@anvil/air";
 import type { ServedResource } from "@anvil/mcp-runtime";
 import { operationCatalog } from "./catalog.js";
 import { generateSkill } from "./skill.js";
@@ -19,6 +19,8 @@ import { generateSkill } from "./skill.js";
 export type ToolResource = ServedResource;
 
 export interface ResourceOptions {
+  /** Private generator input. Never included in served resources. */
+  businessPlan?: BusinessPlan;
   /** Where an installed CLI (and the agent) should reach this MCP server. */
   mcpEndpoint?: string;
   /** Published CLI package name for `npm i -g` next to the agent. */

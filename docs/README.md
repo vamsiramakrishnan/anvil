@@ -31,6 +31,8 @@ executed. Parsing and lowering can succeed while the wire path remains blocked.
 
 ## Use the result
 
+- [Business capabilities](business-capabilities.md): business contracts, private execution, and aligned agent interfaces.
+
 - [Client SDKs](client-sdks.md): TypeScript, Python, Go and Java applications.
 - [Target profiles](targets.md): platform-specific packaging and its limits.
 - [Wire protocols](wire-protocols.md): what executes and what is refused.

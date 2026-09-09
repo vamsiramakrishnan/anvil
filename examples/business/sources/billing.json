@@ -1,0 +1,116 @@
+{
+  "service": {
+    "id": "owned-billing",
+    "version": "1",
+    "source": {
+      "kind": "openapi"
+    },
+    "servers": [
+      {
+        "url": "http://127.0.0.1:1"
+      }
+    ]
+  },
+  "operations": [
+    {
+      "id": "raw_refund_write",
+      "canonicalName": "raw_refund_write",
+      "displayName": "raw_refund_write",
+      "sourceRef": {
+        "kind": "openapi",
+        "method": "post",
+        "path": "/internal/refunds"
+      },
+      "effect": {
+        "kind": "mutation",
+        "risk": "high",
+        "reversible": false
+      },
+      "input": {
+        "params": [],
+        "body": {
+          "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "txn": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minor": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "txn",
+              "minor"
+            ]
+          },
+          "required": true,
+          "projection": "fields",
+          "fields": [
+            {
+              "name": "txn",
+              "schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "required": true
+            },
+            {
+              "name": "minor",
+              "schema": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "required": true
+            }
+          ]
+        }
+      },
+      "output": {
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "refund_txn": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "refund_txn"
+          ]
+        }
+      },
+      "idempotency": {
+        "mode": "required",
+        "mechanism": "header",
+        "key": "X-Request-Token",
+        "keyDerivation": "client_supplied"
+      },
+      "retries": {
+        "mode": "none"
+      },
+      "confirmation": {
+        "required": true
+      },
+      "auth": {
+        "type": "none"
+      },
+      "cli": {
+        "command": "raw refund write"
+      },
+      "mcp": {
+        "toolName": "raw_refund_write"
+      },
+      "skill": {
+        "intentExamples": [
+          "raw_refund_write"
+        ]
+      },
+      "state": "approved"
+    }
+  ]
+}

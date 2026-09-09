@@ -218,6 +218,28 @@ Options:
 - `--review <file>` — apply an edited, digest-bound review manifest on a deterministic rerun
 - `--json` — also emit the complete audit report as JSON on stdout
 
+#### `anvil capability compile`  *(mutates)*
+`anvil capability compile [options] <definition>`
+
+Compile a business contract into aligned MCP, CLI, skill, and four SDKs.
+
+Compile explicit business inputs, outcomes, source authority, bindings, effects, and recovery against approved source AIR snapshots. The default state is proposed. Review the definition before marking actions approved. Public artifacts contain business actions; the private execution plan stays in runtime and generator inputs. The output must be a new directory.
+
+Options:
+- `--source <binding...>` — source bindings, each alias=bundle-directory-or-air-file
+- `--out <directory>` — new generated business bundle directory
+- `--json` — emit the business surface summary as JSON
+
+#### `anvil capability preview`
+`anvil capability preview [options] <bundle>`
+
+Preview the business surface or inspect its private execution plan.
+
+The default view shows agent inputs, outcomes, intent guidance, and effects. --execution shows operator-only source bindings, authority, preconditions, and recovery. This command never executes operations or grants approval.
+
+Options:
+- `--execution` — show the private operator execution view
+
 ### `anvil refine`  *(mutates)*
 `anvil refine [options] [command]`
 

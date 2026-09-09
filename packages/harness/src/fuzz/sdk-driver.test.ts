@@ -130,6 +130,27 @@ const mutants = {
   ],
 } as const;
 
+// Keep this mutation regression focused on the two things it must shrink:
+// unrelated reads and the refund amount. The campaigns above exercise gates,
+// conflicts, and lost responses. Combining those dimensions here makes each
+// shrinking candidate launch more JVMs and can exhaust the campaign budget
+// before it reaches the minimum on a shared CI runner.
+function replayScenarios() {
+  return fc.record({ amount: fc.integer({ min: 1, max: 250 }), noise: fc.boolean() }).map(
+    ({ amount, noise }): Scenario => ({
+      id: scenario.id,
+      steps: [
+        ...(noise ? [Step.parse({ ...scenario.steps[0], id: "noise-0" })] : []),
+        ...scenario.steps.map((step) => ({
+          ...step,
+          fault: undefined,
+          input: "amount" in step.input ? { ...step.input, amount } : step.input,
+        })),
+      ],
+    }),
+  );
+}
+
 describe.each(languages)("%s SDK regression replay", (language) => {
   let broken: Record<string, string>;
   beforeAll(async () => {
@@ -148,7 +169,7 @@ describe.each(languages)("%s SDK regression replay", (language) => {
     "shrinks a public-method key mutation, replays it, and verifies repaired source bytes",
     async () => {
       const report = await runCampaign({
-        arbitrary: paymentScenarios(air),
+        arbitrary: replayScenarios(),
         drivers: drivers(language, broken),
         properties: [paymentProperties(air)],
         seed: 39,
@@ -156,6 +177,7 @@ describe.each(languages)("%s SDK regression replay", (language) => {
         budgetMs: 25000,
       });
       expect(report.status, JSON.stringify(report)).toBe("failed");
+      expect(report.shrinks).toBeGreaterThan(0);
       expect(report.replay?.scenario.steps).toHaveLength(3);
       expect(report.replay?.scenario.steps.find((s) => s.id === "refund")?.input.amount).toBe(1);
       if (!report.replay) throw new Error("No replay");

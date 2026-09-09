@@ -77,6 +77,7 @@ const server = buildMcpServer(air, {
   contextFor: () => ({
     transport,
     serviceId: air.service.id,
+    remoteIdempotency: air.business !== undefined,
     credentials,
     ledger,
     observer,
@@ -172,6 +173,7 @@ const protocolFacade = process.env.ANVIL_PROTOCOL_FACADE;
 const mcpContext = () => ({
   ...deps,
   serviceId: air.service.id,
+    remoteIdempotency: air.business !== undefined,
   baseUrl,
   authProfile: config.authProfile,
   allowedHosts,

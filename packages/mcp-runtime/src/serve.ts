@@ -48,9 +48,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { recordWebhookCompletionIfIndexed } from "./async-completion.js";
+import { handleBusinessHttp } from "./business-http.js";
+import { createBusinessServing } from "./business-serving.js";
 import {
   loadInboundAuthConfig,
   protectedResourceMetadata,
+  verifiedPrincipalFingerprint,
   verifyInboundToken,
 } from "./inbound-auth.js";
 import { buildMcpServer } from "./server.js";
@@ -314,6 +317,7 @@ function mcpContext() {
     // The per-request caller identity (set by withInboundIdentity around dispatch);
     // the credential resolver uses it as the subject_token for OBO exchange.
     inbound: currentInboundIdentity(),
+    ...businessServing?.mcpContext(currentInboundIdentity()),
   };
 }
 
@@ -322,6 +326,19 @@ function mcpContext() {
 // validate it on every protected route rather than trusting the network. Mode
 // "none" (the default) admits everything, for local runs behind other controls.
 const inboundAuth = loadInboundAuthConfig();
+if (air.business && config.env !== "dev" && inboundAuth.mode === "none") {
+  throw new Error("Business gateways require verified inbound authentication outside development.");
+}
+const businessServing = air.business
+  ? createBusinessServing(air, readArtifactJson("business.plan.json"), {
+      ...deps,
+      serviceId: air.service.id,
+      baseUrl,
+      allowedHosts,
+      env: config.env,
+      timeoutMs: config.upstreamTimeoutMs,
+    })
+  : undefined;
 
 // The MCP Authorization discovery document, served unauthenticated so a client
 // can find the authorization server before it has a token.
@@ -395,30 +412,6 @@ async function authorized(req: IncomingMessage, res: ServerResponse): Promise<Au
     // using its session while a different principal cannot take it over.
     callerFingerprint,
   };
-}
-
-function verifiedPrincipalFingerprint(claims: unknown): string | undefined {
-  if (!claims || typeof claims !== "object" || Array.isArray(claims)) return undefined;
-  const record = claims as Claims;
-  const issuer = typeof record.iss === "string" ? record.iss : undefined;
-  // sub is the standard principal. oid covers app-only Entra tokens, while
-  // azp / client_id identify a verified machine caller when no subject claim
-  // is issued. The verifier has already checked signature, issuer and audience.
-  const textClaim = (value: unknown) =>
-    typeof value === "string" && value.length > 0 ? value : undefined;
-  const sub = textClaim(record.sub);
-  const oid = textClaim(record.oid);
-  const authorizedParty = textClaim(record.azp) ?? textClaim(record.client_id);
-  if (!issuer || (!sub && !oid && !authorizedParty)) return undefined;
-  const tenant =
-    typeof record.tid === "string"
-      ? record.tid
-      : typeof record.tenant === "string"
-        ? record.tenant
-        : undefined;
-  return createHash("sha256")
-    .update(JSON.stringify({ issuer, sub, oid, authorizedParty, tenant }))
-    .digest("base64url");
 }
 
 // The raw caller token + its verified claims → the OBO subject. The raw bearer is
@@ -561,6 +554,13 @@ const server = createServer(async (req, res) => {
     return handleWebhookRoute(req, res, route);
   }
   // Everything below exposes the tool surface — gate it on the inbound token.
+  if (url.pathname.startsWith("/business/") && businessServing) {
+    const auth = await authorized(req, res);
+    if (!auth.ok) return;
+    return handleBusinessHttp(req, res, url, businessServing.transportFor(auth.identity), () =>
+      readJsonBody(req, res),
+    );
+  }
   if (url.pathname === "/metrics") {
     if (!(await authorized(req, res)).ok) return;
     return json(res, 200, { records: observer.count });

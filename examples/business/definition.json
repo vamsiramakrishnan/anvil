@@ -1,0 +1,474 @@
+{
+  "schemaVersion": 1,
+  "id": "business-calibration",
+  "version": "1.0.0",
+  "displayName": "Business calibration",
+  "description": "Owned synthetic returns, order amendment, and account access contracts. Review and rebind against real approved sources before production use.",
+  "gatewayUrl": "http://127.0.0.1:8080",
+  "actions": [
+    {
+      "id": "complete_return",
+      "description": "Refund the full eligible amount for a delivered order and create its support record.",
+      "state": "approved",
+      "guidance": {
+        "intents": [
+          "Complete a full return for a delivered order"
+        ],
+        "counterIntents": [
+          "Change a shipping address"
+        ],
+        "clarify": [
+          "Confirm the order reference and full refund amount in minor currency units"
+        ],
+        "escalate": [
+          "Business identity is ambiguous",
+          "The gateway reports partial completion or an uncertain effect"
+        ]
+      },
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "order_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "refund_amount": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "order_ref",
+          "refund_amount"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "return_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "support_ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "return_ref",
+          "support_ref"
+        ]
+      },
+      "requiredScopes": [
+        "returns:write"
+      ],
+      "steps": [
+        {
+          "id": "order",
+          "source": "orders",
+          "operationId": "raw_order_lookup",
+          "authority": "The order service owns order identity, tenant, payment linkage, lifecycle, and revision.",
+          "input": {
+            "opaque_order_ref": {
+              "from": "input",
+              "pointer": "/order_ref"
+            }
+          },
+          "preconditions": [],
+          "failure": {
+            "message": "The order stage could not complete.",
+            "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+          }
+        },
+        {
+          "id": "refund",
+          "source": "billing",
+          "operationId": "raw_refund_write",
+          "authority": "Billing owns the financial refund ledger. The order service supplies the authoritative payment link.",
+          "input": {
+            "txn": {
+              "from": "step",
+              "step": "order",
+              "pointer": "/pay_txn"
+            },
+            "minor": {
+              "from": "input",
+              "pointer": "/refund_amount"
+            }
+          },
+          "preconditions": [
+            {
+              "value": {
+                "from": "step",
+                "step": "order",
+                "pointer": "/tenant_key"
+              },
+              "equals": {
+                "from": "context",
+                "field": "tenant"
+              },
+              "message": "Order does not belong to the current tenant."
+            },
+            {
+              "value": {
+                "from": "step",
+                "step": "order",
+                "pointer": "/lifecycle"
+              },
+              "equals": {
+                "from": "literal",
+                "value": "delivered"
+              },
+              "message": "Only delivered orders are eligible for this return action."
+            },
+            {
+              "value": {
+                "from": "step",
+                "step": "order",
+                "pointer": "/refundable_minor"
+              },
+              "equals": {
+                "from": "input",
+                "pointer": "/refund_amount"
+              },
+              "message": "The requested refund amount must match the full eligible amount."
+            }
+          ],
+          "effect": "Refund the full eligible amount",
+          "failure": {
+            "message": "The refund stage could not complete.",
+            "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+          }
+        },
+        {
+          "id": "case",
+          "source": "support",
+          "operationId": "raw_case_write",
+          "authority": "Support owns the return case; the refund receipt is supplied by billing.",
+          "input": {
+            "order_key": {
+              "from": "step",
+              "step": "order",
+              "pointer": "/wire_order_id"
+            },
+            "transaction_key": {
+              "from": "step",
+              "step": "refund",
+              "pointer": "/refund_txn"
+            }
+          },
+          "preconditions": [],
+          "effect": "Create the return support record",
+          "failure": {
+            "message": "The case stage could not complete.",
+            "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+          }
+        }
+      ],
+      "result": {
+        "return_ref": {
+          "from": "step",
+          "step": "refund",
+          "pointer": "/refund_txn"
+        },
+        "support_ref": {
+          "from": "step",
+          "step": "case",
+          "pointer": "/case_key"
+        }
+      }
+    },
+    {
+      "id": "amend_order",
+      "description": "Change the delivery address on an unshipped order while detecting concurrent changes.",
+      "state": "approved",
+      "guidance": {
+        "intents": [
+          "Change an unshipped order delivery address"
+        ],
+        "counterIntents": [
+          "Refund a delivered order"
+        ],
+        "clarify": [
+          "Confirm the order reference and the new delivery address"
+        ],
+        "escalate": [
+          "Business identity is ambiguous",
+          "The gateway reports partial completion or an uncertain effect"
+        ]
+      },
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "order_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "address": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "order_ref",
+          "address"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "order_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "delivery_address": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "order_ref",
+          "delivery_address"
+        ]
+      },
+      "requiredScopes": [
+        "orders:write"
+      ],
+      "steps": [
+        {
+          "id": "order",
+          "source": "orders",
+          "operationId": "raw_order_lookup",
+          "authority": "The order service owns order identity, tenant, payment linkage, lifecycle, and revision.",
+          "input": {
+            "opaque_order_ref": {
+              "from": "input",
+              "pointer": "/order_ref"
+            }
+          },
+          "preconditions": [],
+          "failure": {
+            "message": "The order stage could not complete.",
+            "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+          }
+        },
+        {
+          "id": "amend",
+          "source": "orders",
+          "operationId": "raw_order_patch",
+          "authority": "The order service owns the address and enforces its revision atomically.",
+          "input": {
+            "wire_order_id": {
+              "from": "step",
+              "step": "order",
+              "pointer": "/wire_order_id"
+            },
+            "revision": {
+              "from": "step",
+              "step": "order",
+              "pointer": "/revision"
+            },
+            "addressline": {
+              "from": "input",
+              "pointer": "/address"
+            }
+          },
+          "preconditions": [
+            {
+              "value": {
+                "from": "step",
+                "step": "order",
+                "pointer": "/tenant_key"
+              },
+              "equals": {
+                "from": "context",
+                "field": "tenant"
+              },
+              "message": "Order does not belong to the current tenant."
+            },
+            {
+              "value": {
+                "from": "step",
+                "step": "order",
+                "pointer": "/lifecycle"
+              },
+              "equals": {
+                "from": "literal",
+                "value": "pending"
+              },
+              "message": "Only unshipped orders can be amended."
+            }
+          ],
+          "effect": "Change the delivery address",
+          "failure": {
+            "message": "The amend stage could not complete.",
+            "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+          }
+        }
+      ],
+      "result": {
+        "order_ref": {
+          "from": "input",
+          "pointer": "/order_ref"
+        },
+        "delivery_address": {
+          "from": "input",
+          "pointer": "/address"
+        }
+      }
+    },
+    {
+      "id": "grant_account_access",
+      "description": "Grant an approved role to an account in the current tenant after manager and human approval.",
+      "state": "approved",
+      "humanApproval": true,
+      "guidance": {
+        "intents": [
+          "Grant an approved account role"
+        ],
+        "counterIntents": [
+          "Reset an account password"
+        ],
+        "clarify": [
+          "Confirm the account reference and the specific role requested"
+        ],
+        "escalate": [
+          "Business identity is ambiguous",
+          "The gateway reports partial completion or an uncertain effect"
+        ]
+      },
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "account_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "editor"
+            ]
+          }
+        },
+        "required": [
+          "account_ref",
+          "role"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "account_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "grant_ref": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "account_ref",
+          "grant_ref"
+        ]
+      },
+      "requiredScopes": [
+        "access:grant"
+      ],
+      "steps": [
+        {
+          "id": "account",
+          "source": "identity",
+          "operationId": "raw_directory_lookup",
+          "authority": "The directory owns account identity, tenant membership, and manager authorization.",
+          "input": {
+            "login": {
+              "from": "input",
+              "pointer": "/account_ref"
+            },
+            "tenant_key": {
+              "from": "context",
+              "field": "tenant"
+            }
+          },
+          "preconditions": [],
+          "failure": {
+            "message": "The account stage could not complete.",
+            "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+          }
+        },
+        {
+          "id": "grant",
+          "source": "identity",
+          "operationId": "raw_grant_write",
+          "authority": "The identity service owns role grants; account identity is directory-authoritative.",
+          "input": {
+            "person_id": {
+              "from": "step",
+              "step": "account",
+              "pointer": "/person_id"
+            },
+            "role": {
+              "from": "input",
+              "pointer": "/role"
+            },
+            "tenant_key": {
+              "from": "context",
+              "field": "tenant"
+            }
+          },
+          "preconditions": [
+            {
+              "value": {
+                "from": "step",
+                "step": "account",
+                "pointer": "/tenant_key"
+              },
+              "equals": {
+                "from": "context",
+                "field": "tenant"
+              },
+              "message": "Account does not belong to the current tenant."
+            },
+            {
+              "value": {
+                "from": "step",
+                "step": "account",
+                "pointer": "/manager_ok"
+              },
+              "equals": {
+                "from": "literal",
+                "value": true
+              },
+              "message": "Manager authorization is required."
+            }
+          ],
+          "effect": "Grant the requested account role",
+          "failure": {
+            "message": "The grant stage could not complete.",
+            "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+          }
+        }
+      ],
+      "result": {
+        "account_ref": {
+          "from": "input",
+          "pointer": "/account_ref"
+        },
+        "grant_ref": {
+          "from": "step",
+          "step": "grant",
+          "pointer": "/grant_key"
+        }
+      }
+    }
+  ]
+}
