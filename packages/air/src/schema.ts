@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentProjection } from "./agent-projection.js";
 import { authMechanicsIssues, TlsClientMaterialRefs } from "./auth-mechanics.js";
+import { BusinessSurface } from "./business-contract.js";
 import {
   AuthPrincipal,
   AuthType,
@@ -1503,6 +1504,8 @@ export type Diagnostic = z.infer<typeof Diagnostic>;
 export const AirDocument = z.object({
   anvilVersion: z.string().default("0.1.0"),
   service: Service,
+  /** Public business view; its digest binds a separately held, private execution plan. */
+  business: BusinessSurface.optional(),
   operations: z.array(Operation).default([]),
   /** Business capabilities — the primary abstraction, grouping operations. */
   capabilities: z.array(Capability).default([]),

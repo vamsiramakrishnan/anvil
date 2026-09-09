@@ -18,12 +18,15 @@ import {
   type Theme,
 } from "./model.js";
 import { ArtifactsView } from "./views/artifacts.js";
+import { AssuranceView } from "./views/assurance.js";
+import { CompareView } from "./views/compare.js";
 import { ConfusionView } from "./views/confusion.js";
 import { CreateView } from "./views/create.js";
 import { EvidenceView } from "./views/evidence.js";
 import { InspectView } from "./views/inspect.js";
 import { OverviewView } from "./views/overview.js";
 import { QueueView } from "./views/queue.js";
+import { WorkbenchView } from "./views/workbench.js";
 import { WorkspaceView } from "./views/workspace.js";
 import { Loading } from "./workbench-components.js";
 
@@ -152,6 +155,27 @@ function BundleFrame({
   };
   let view: ReactNode;
   switch (route.view) {
+    case "workbench":
+      view = (
+        <WorkbenchView
+          api={api}
+          bundleId={route.bundleId}
+          operationId={route.query.get("operation") ?? ""}
+        />
+      );
+      break;
+    case "assurance":
+      view = <AssuranceView api={api} bundleId={route.bundleId} />;
+      break;
+    case "compare":
+      view = (
+        <CompareView
+          api={api}
+          bundleId={route.bundleId}
+          against={route.query.get("against") ?? ""}
+        />
+      );
+      break;
     case "overview":
       view = <OverviewView inspector={inspector} />;
       break;
@@ -177,7 +201,9 @@ function BundleFrame({
       view = <EvidenceView api={api} inspector={inspector} />;
       break;
     case "artifacts":
-      view = <ArtifactsView api={api} inspector={inspector} path={route.query.get("path") ?? ""} />;
+      view = (
+        <ArtifactsView api={api} bundleId={route.bundleId} path={route.query.get("path") ?? ""} />
+      );
       break;
   }
   return <div key={route.view}>{view}</div>;

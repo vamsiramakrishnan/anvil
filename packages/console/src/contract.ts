@@ -28,7 +28,22 @@ import {
   zRefinementTask,
 } from "@anvil/refinement";
 import { z } from "zod";
-import { WORKBENCH_ROUTES } from "./workbench-contract.js";
+import {
+  WORKBENCH_ROUTES,
+  zArtifactQuery,
+  zArtifactsView,
+  zArtifactView,
+  zAssuranceView,
+  zOperationView,
+} from "./workbench-contract.js";
+
+export {
+  zArtifactQuery,
+  zArtifactsView,
+  zArtifactView,
+  zAssuranceView,
+  zOperationView,
+} from "./workbench-contract.js";
 
 /**
  * The console's HTTP API contract.
@@ -268,7 +283,7 @@ export const zWorkspaceBundle = z.object({
 export const zWorkspace = z.object({
   root: z.string(),
   bundles: z.array(zWorkspaceBundle),
-  issues: z.array(z.object({ id: zBundleId, message: z.string() })).optional(),
+  issues: z.array(z.object({ id: zBundleId, message: z.string() })).default([]),
 });
 export type Workspace = z.infer<typeof zWorkspace>;
 
@@ -665,6 +680,31 @@ export const CONSOLE_ROUTES = {
     path: "/api/bundles/:id",
     mutates: false,
     response: zBundleInspector,
+  },
+  operation: {
+    method: "GET",
+    path: "/api/bundles/:id/operations/:operationId",
+    mutates: false,
+    response: zOperationView,
+  },
+  assurance: {
+    method: "GET",
+    path: "/api/bundles/:id/assurance",
+    mutates: false,
+    response: zAssuranceView,
+  },
+  artifacts: {
+    method: "GET",
+    path: "/api/bundles/:id/artifacts",
+    mutates: false,
+    response: zArtifactsView,
+  },
+  artifact: {
+    method: "GET",
+    path: "/api/bundles/:id/artifact",
+    mutates: false,
+    query: zArtifactQuery,
+    response: zArtifactView,
   },
   queue: {
     method: "GET",

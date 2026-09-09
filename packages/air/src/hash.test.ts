@@ -24,6 +24,11 @@ const doc = {
 };
 
 describe("hashCanonical", () => {
+  it("includes JSON prototype-named properties in contract and approval identities", () => {
+    const input = JSON.parse('{"__proto__":{"authorized":true}}');
+    expect(hashCanonical(input)).not.toBe(hashCanonical({}));
+    expect(hashCanonical({ nested: input })).not.toBe(hashCanonical({ nested: {} }));
+  });
   it("is independent of object key insertion order", () => {
     expect(hashCanonical({ a: 1, b: { c: 2, d: 3 } })).toBe(
       hashCanonical({ b: { d: 3, c: 2 }, a: 1 }),

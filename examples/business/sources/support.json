@@ -1,0 +1,116 @@
+{
+  "service": {
+    "id": "owned-support",
+    "version": "1",
+    "source": {
+      "kind": "openapi"
+    },
+    "servers": [
+      {
+        "url": "http://127.0.0.1:1"
+      }
+    ]
+  },
+  "operations": [
+    {
+      "id": "raw_case_write",
+      "canonicalName": "raw_case_write",
+      "displayName": "raw_case_write",
+      "sourceRef": {
+        "kind": "openapi",
+        "method": "post",
+        "path": "/internal/cases"
+      },
+      "effect": {
+        "kind": "mutation",
+        "risk": "high",
+        "reversible": false
+      },
+      "input": {
+        "params": [],
+        "body": {
+          "schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "order_key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "transaction_key": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "order_key",
+              "transaction_key"
+            ]
+          },
+          "required": true,
+          "projection": "fields",
+          "fields": [
+            {
+              "name": "order_key",
+              "schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "required": true
+            },
+            {
+              "name": "transaction_key",
+              "schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "required": true
+            }
+          ]
+        }
+      },
+      "output": {
+        "schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "case_key": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "case_key"
+          ]
+        }
+      },
+      "idempotency": {
+        "mode": "required",
+        "mechanism": "header",
+        "key": "X-Request-Token",
+        "keyDerivation": "client_supplied"
+      },
+      "retries": {
+        "mode": "none"
+      },
+      "confirmation": {
+        "required": true
+      },
+      "auth": {
+        "type": "none"
+      },
+      "cli": {
+        "command": "raw case write"
+      },
+      "mcp": {
+        "toolName": "raw_case_write"
+      },
+      "skill": {
+        "intentExamples": [
+          "raw_case_write"
+        ]
+      },
+      "state": "approved"
+    }
+  ]
+}

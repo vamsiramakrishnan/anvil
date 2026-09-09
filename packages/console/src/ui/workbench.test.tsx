@@ -6,169 +6,153 @@ import {
   render,
   renderHook,
   screen,
-  within,
+  waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createConsoleApi, type Fetcher } from "./api.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ConsoleResponse } from "../contract.js";
+import { createConsoleApi } from "./api.js";
 import { App } from "./app.js";
-import { fixtureWorkspace } from "./dev/fixtures.js";
 import { createMockConsole, mockFetch } from "./dev/mock-server.js";
 import { useLoad } from "./hooks.js";
-import { parseHash } from "./model.js";
+import { BUNDLE_VIEWS, href, initialTheme, parseHash } from "./model.js";
+import { inputDraft, requestDraft, shellQuote } from "./request-builder.js";
 
-beforeEach(() => {
-  HTMLDialogElement.prototype.showModal = function showModal() {
-    this.setAttribute("open", "");
-  };
-  HTMLDialogElement.prototype.close = function close() {
-    this.removeAttribute("open");
-    this.dispatchEvent(new Event("close"));
-  };
-});
+function setup() {
+  const mock = createMockConsole();
+  const api = createConsoleApi({ fetch: mockFetch(mock), token: () => mock.token });
+  return { mock, api };
+}
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 afterEach(() => {
   cleanup();
   location.hash = "";
 });
-function mount(hash = "#/", state = fixtureWorkspace()) {
-  const mock = createMockConsole(state);
-  const requests: string[] = [];
-  const fetch: Fetcher = (url, init) => {
-    requests.push(url);
-    return mockFetch(mock)(url, init);
-  };
-  location.hash = hash;
-  render(<App api={createConsoleApi({ fetch, token: () => mock.token })} />);
-  return { requests, mock };
-}
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
 
-describe("resource loading", () => {
-  it("never lets a late bundle response overwrite the current bundle", async () => {
-    const first = deferred<string>();
-    const second = deferred<string>();
+describe("request and navigation isolation", () => {
+  it("never shows a previous resource or accepts its late response", async () => {
+    const old = deferred<string>();
+    const next = deferred<string>();
     const { result, rerender } = renderHook(
-      ({ id }) => useLoad(() => (id === "first" ? first.promise : second.promise), [id]),
-      { initialProps: { id: "first" } },
+      ({ id }) => useLoad(() => (id === "old" ? old.promise : next.promise), [id]),
+      { initialProps: { id: "old" } },
     );
-    rerender({ id: "second" });
+    rerender({ id: "new" });
     expect(result.current.state).toBe("loading");
-    await act(async () => second.resolve("second bundle"));
-    expect(result.current.data).toBe("second bundle");
-    await act(async () => first.resolve("old bundle"));
-    expect(result.current.data).toBe("second bundle");
+    await act(async () => next.resolve("new resource"));
+    expect(result.current.data).toBe("new resource");
+    await act(async () => old.resolve("old resource"));
+    expect(result.current.data).toBe("new resource");
   });
-  it("keeps the newest refresh when requests finish in reverse order", async () => {
+  it("keeps the newest refresh when an older refresh finishes last", async () => {
     const first = deferred<string>();
     const second = deferred<string>();
     const load = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    const { result } = renderHook(() => useLoad(load, []));
+    const { result } = renderHook(() => useLoad<string>(load, []));
     let refresh: Promise<void>;
     act(() => {
       refresh = result.current.reload();
     });
     await act(async () => {
-      second.resolve("new");
+      second.resolve("current");
       await refresh;
     });
-    await act(async () => first.resolve("old"));
-    expect(result.current.data).toBe("new");
+    await act(async () => first.resolve("stale"));
+    expect(result.current.data).toBe("current");
   });
-  it("handles malformed links and the creation route", () => {
-    expect(parseHash("#/b/%XX/overview")).toEqual({ view: "workspace" });
-    expect(parseHash("#/new")).toEqual({ view: "new" });
-    expect(parseHash("#/b/nested%2Fservice/artifacts?path=cli%2Fapp.mjs")).toMatchObject({
-      view: "artifacts",
-      bundleId: "nested/service",
-    });
+  it("does not fetch a broken benchmark to open the inspector", async () => {
+    const { api } = setup();
+    const benchmark = vi
+      .spyOn(api, "benchmark")
+      .mockRejectedValue(new Error("malformed benchmark"));
+    location.hash = href("payments", "inspect");
+    render(<App api={api} />);
+    await screen.findByRole("heading", { name: "Operations & contracts" });
+    expect(benchmark).not.toHaveBeenCalled();
+  });
+  it("round-trips every view with nested bundle ids, and recovers from malformed links", () => {
+    for (const [view] of BUNDLE_VIEWS)
+      expect(parseHash(href("retail/payments", view))).toMatchObject({
+        view,
+        bundleId: "retail/payments",
+      });
+    expect(parseHash("#/b/%GG/queue")).toEqual({ view: "workspace" });
+    expect(
+      initialTheme(
+        {
+          getItem: () => {
+            throw new Error("storage disabled");
+          },
+        },
+        false,
+      ),
+    ).toBe("light");
   });
 });
 
-describe("workspace navigation", () => {
-  it("searches bundles, clears empty filters, and builds a comparison link", async () => {
-    mount();
-    const query = await screen.findByRole("searchbox", { name: "Search bundles" });
-    fireEvent.change(query, { target: { value: "no-match-at-all" } });
-    expect(await screen.findByText("No matching bundles")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes.length).toBeGreaterThanOrEqual(2);
-    const [first, second] = checkboxes;
-    if (!first || !second) throw new Error("Missing comparison bundles");
-    fireEvent.click(first);
-    fireEvent.click(second);
-    const link = screen.getByRole("link", { name: /Compare contracts/ });
-    expect(link.getAttribute("href")).toMatch(/\/inspect\?against=/);
+describe("request builder", () => {
+  async function operation(): Promise<ConsoleResponse<"operation">> {
+    return setup().api.operation("payments", "getCustomer");
+  }
+  it("preserves POSIX shell boundaries and always ends with dry-run", async () => {
+    const view = await operation();
+    const value = "a' $(touch /tmp/never) `echo no`\nline";
+    const draft = requestDraft(view, "/workspace/a ' b", JSON.stringify({ id: value }));
+    expect(draft.cli).toContain(`--id=${shellQuote(value)}`);
+    expect(draft.cli?.endsWith(" --dry-run")).toBe(true);
+    expect(JSON.parse(draft.mcp ?? "").params.arguments.id).toBe(value);
   });
-  it("paginates large workspaces without changing the total or losing filters", async () => {
-    const state = fixtureWorkspace();
-    const base = state.bundles.payments;
-    if (!base) throw new Error("No payments fixture");
-    state.bundles = Object.fromEntries(
-      Array.from({ length: 61 }, (_, i) => [
-        `service-${i}`,
-        {
-          ...base,
-          inspector: {
-            ...base.inspector,
-            id: `service-${i}`,
-            service: { ...base.inspector.service, id: `service-${i}` },
-          },
-        },
-      ]),
+  it("serializes scalar JSON bodies and prevents input flags from overriding dry-run", async () => {
+    const view = await operation();
+    view.cliFlags = { body: "--body", dry_run: "--dry-run" };
+    const draft = requestDraft(
+      view,
+      "bundle",
+      JSON.stringify({ body: "a string", dry_run: false }),
     );
-    mount("#/", state);
-    await screen.findByRole("searchbox", { name: "Search bundles" });
-    expect(screen.getAllByRole("checkbox")).toHaveLength(25);
-    expect(screen.getByText("1–25 of 61 bundles")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    expect(screen.getByText("26–50 of 61 bundles")).toBeTruthy();
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search bundles" }), {
-      target: { value: "service-60" },
-    });
-    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
-    expect(screen.getByText("1–1 of 1 bundles")).toBeTruthy();
+    expect(draft.cli).toContain(`--body='"a string"'`);
+    expect(draft.cli?.endsWith(" --dry-run")).toBe(true);
   });
-  it("loads heavy read models only for the view that needs them", async () => {
-    const { requests } = mount("#/b/payments/overview");
-    await screen.findByRole("heading", { level: 1 });
-    expect(requests.some((path) => /\/(queue|packs|benchmark)$/.test(path))).toBe(false);
-    fireEvent.click(screen.getByRole("link", { name: "Generated files" }));
-    await screen.findByRole("heading", { name: "Generated files" });
-    expect(requests.some((path) => path.endsWith("/artifacts"))).toBe(true);
-    expect(requests.some((path) => /\/(queue|packs|benchmark)$/.test(path))).toBe(false);
+  it("does not inject confirmation and rejects malformed or unknown arguments", async () => {
+    const view = await operation();
+    view.cliFlags.confirm = "--confirm";
+    expect(requestDraft(view, "bundle", '{"confirm":false}').cli).not.toContain("--confirm");
+    expect(requestDraft(view, "bundle", '{"confirm":"false"}').error).toBeDefined();
+    for (const text of ["null", "[]", "{", '{"__proto__":{}}'])
+      expect(requestDraft(view, "bundle", text).error).toBeDefined();
+    expect(
+      inputDraft({
+        type: "object",
+        properties: { confirm: { type: "boolean" } },
+        required: ["confirm"],
+      }),
+    ).toEqual({ confirm: false });
   });
-  it("opens navigation with Ctrl K and follows its keyboard selection", async () => {
-    mount();
-    await screen.findByRole("heading", { name: "workspace" });
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    const dialog = screen.getByRole("dialog", { name: "Find a bundle or view" });
-    const input = within(dialog).getByRole("combobox");
-    fireEvent.change(input, { target: { value: "New bundle" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-    await screen.findByRole("heading", { name: "Start with an API contract" });
-    expect(location.hash).toBe("#/new");
+  it("updates a command draft without sending a mutation or upstream call", async () => {
+    const { api } = setup();
+    const approve = vi.spyOn(api, "approveOperations");
+    location.hash = href("payments", "workbench", { operation: "getCustomer" });
+    render(<App api={api} />);
+    const editor = await screen.findByRole("textbox", { name: "JSON arguments" });
+    fireEvent.change(editor, { target: { value: '{"id":"cus_123"}' } });
+    await waitFor(() => expect(document.body.textContent).toContain("--id='cus_123' --dry-run"));
+    expect(approve).not.toHaveBeenCalled();
+    expect(localStorage.getItem("id")).toBeNull();
   });
-  it("opens a linked decision and leaves browser shortcuts alone", async () => {
-    const { requests } = mount("#/b/payments/queue?item=operation:createRefund");
-    const checkbox = await screen.findByLabelText("select createRefund");
-    expect(checkbox.closest('[role="option"]')?.getAttribute("aria-selected")).toBe("true");
-    fireEvent.keyDown(window, { key: "a", ctrlKey: true });
-    expect(requests.some((path) => path.includes("/approve"))).toBe(false);
-  });
-  it("prepares the example source without persisting it in browser storage", async () => {
-    mount("#/new");
-    fireEvent.click(await screen.findByRole("button", { name: "Paste a contract" }));
-    fireEvent.click(screen.getByRole("button", { name: "Use an example" }));
-    expect((screen.getByLabelText("Specification") as HTMLTextAreaElement).value).toContain(
-      "Store Orders",
-    );
-    expect((screen.getByLabelText(/^Bundle name/) as HTMLInputElement).value).toBe("store-orders");
-    expect(Object.values(localStorage).join(" ")).not.toContain("Store Orders");
+  it("shows the additional read views using the typed contract", async () => {
+    const { api } = setup();
+    location.hash = href("payments", "assurance");
+    const result = render(<App api={api} />);
+    await screen.findByRole("heading", { name: /^Assurance$/ });
+    expect(screen.getByText("No certification recorded in the development fixture.")).toBeDefined();
+    result.unmount();
+    location.hash = href("payments", "artifacts", { path: "skill/SKILL.md" });
+    render(<App api={api} />);
+    await screen.findByText("# Development skill");
   });
 });

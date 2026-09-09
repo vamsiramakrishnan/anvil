@@ -71,14 +71,25 @@ export async function requestReplyWithTimeout(
   timeoutMs: number,
 ): Promise<QueueReply> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = performance.now() + timeoutMs;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
+    const expire = () => {
+      // Timer resolution can make the callback run before the requested
+      // interval has elapsed. Honor the reviewed deadline on a monotonic
+      // clock, even when the wall clock changes while waiting for a reply.
+      const remaining = deadline - performance.now();
+      if (remaining > 0) {
+        timer = setTimeout(expire, Math.ceil(remaining));
+        if (typeof timer.unref === "function") timer.unref();
+        return;
+      }
       reject(
         new QueueBrokerTimeoutError(
           `no reply from '${options.requestDestination}' within ${timeoutMs}ms`,
         ),
       );
-    }, timeoutMs);
+    };
+    timer = setTimeout(expire, timeoutMs);
     if (typeof timer.unref === "function") timer.unref();
   });
   try {

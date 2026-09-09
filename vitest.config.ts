@@ -13,6 +13,7 @@ export default defineConfig({
         new URL("./packages/compiler/src/legacy/index.ts", import.meta.url),
       ),
       "@anvil/air": pkg("air"),
+      "@anvil/fuzz": pkg("fuzz"),
       "@anvil/runtime": pkg("runtime"),
       "@anvil/compiler": pkg("compiler"),
       "@anvil/generators": pkg("generators"),

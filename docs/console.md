@@ -225,3 +225,7 @@ without the token is refused, and a page at another origin can read nothing.
   source and recompiled; the queue explains which step is refused and why.
 - **No report regeneration.** The benchmark and certification records are the
   CLI's to produce; the console shows them and says when they are stale.
+
+## Request drafts and comparison
+
+The Request builder projects the operation’s shared input schema into CLI dry-run and MCP request drafts. Drafts stay in memory and do not call an upstream API. Compare bundles shows contract and policy changes against another workspace bundle. Generated files exposes only generator-owned artifacts and named evidence reports, with a 256 KiB text preview limit; incomplete previews cannot be downloaded. The Assurance route also remains available for static-check filtering and JSON report downloads.

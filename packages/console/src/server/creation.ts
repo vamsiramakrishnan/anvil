@@ -17,8 +17,7 @@ import {
   verifyCertification,
 } from "@anvil/generators";
 import type { ConsoleResponse } from "../contract.js";
-import { zArtifactFile } from "../workbench-contract.js";
-import { ConsoleError, invalidRequest, notFound } from "./errors.js";
+import { ConsoleError, invalidRequest } from "./errors.js";
 import type { Request } from "./mutations.js";
 import { findBundle, resolveInsideRoot } from "./workspace.js";
 
@@ -141,76 +140,4 @@ export function evidenceView(root: string, id: string): ConsoleResponse<"evidenc
     },
     executable: Object.values(executableEvidenceStatuses(files)),
   };
-}
-
-// Expose generated text and evidence; unrelated local files and credentials
-// placed alongside a bundle are outside the artifact browser's inventory.
-const ARTIFACT_ROOTS = new Set([
-  "schemas",
-  "plugin",
-  ".claude-plugin",
-  ".agent",
-  "cli",
-  "mcp",
-  "sdk",
-  "skill",
-  "skills",
-  "hooks",
-  "tests",
-  "mock",
-  "mocks",
-  "evals",
-  "docs",
-  "deploy",
-  "targets",
-  "runtime",
-  "conformance",
-]);
-const ARTIFACT_FILES = new Set([
-  "air.yaml",
-  "air.json",
-  "generation.json",
-  "catalog.json",
-  "package.json",
-  "README.md",
-  "SKILL.md",
-  "certification.json",
-  "publication.json",
-  "selftest.report.json",
-  "conformance.report.json",
-  "simulation.report.json",
-  "benchmark.report.json",
-]);
-const MAX_ARTIFACT_BYTES = 1024 * 1024;
-
-function visibleArtifact(path: string): boolean {
-  return (
-    zArtifactFile.safeParse(path).success &&
-    (ARTIFACT_FILES.has(path) || ARTIFACT_ROOTS.has(path.split("/")[0] ?? ""))
-  );
-}
-
-export function artifactsView(root: string, id: string): ConsoleResponse<"artifacts"> {
-  const files = readBundleDir(findBundle(root, id).dir);
-  return {
-    files: Object.entries(files)
-      .filter(([path]) => visibleArtifact(path))
-      .map(([path, content]) => ({ path, bytes: Buffer.byteLength(content) }))
-      .sort((a, b) => a.path.localeCompare(b.path)),
-  };
-}
-
-export function artifactView(root: string, id: string, path: string): ConsoleResponse<"artifact"> {
-  if (!visibleArtifact(path)) throw notFound("Choose a file from the bundle's artifact inventory.");
-  const files = readBundleDir(findBundle(root, id).dir);
-  const content = files[path];
-  if (content === undefined) throw notFound(`Artifact '${path}' is not present in this bundle.`);
-  const bytes = Buffer.byteLength(content);
-  if (bytes > MAX_ARTIFACT_BYTES)
-    throw new ConsoleError(
-      "console/artifact_too_large",
-      413,
-      "This artifact exceeds the 1 MiB preview limit. Open it from the bundle directory.",
-    );
-  return { path, content, bytes };
 }

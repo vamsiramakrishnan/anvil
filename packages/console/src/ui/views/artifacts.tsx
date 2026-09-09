@@ -1,74 +1,58 @@
 import { useState } from "react";
 import type { ConsoleApi } from "../api.js";
-import { ErrorBox } from "../components.js";
+import { CodeBlock, DownloadButton, ErrorBox, Label } from "../components.js";
 import { useLoad } from "../hooks.js";
-import { href, type Inspector } from "../model.js";
-import { CopyButton, Loading, PageHeader } from "../workbench-components.js";
+import { href } from "../model.js";
 
-function size(bytes: number): string {
-  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
-}
 export function ArtifactsView({
   api,
-  inspector,
+  bundleId,
   path,
 }: {
   api: ConsoleApi;
-  inspector: Inspector;
+  bundleId: string;
   path: string;
 }) {
-  const loaded = useLoad(() => api.artifacts(inspector.id), [inspector.id]);
+  const loaded = useLoad(() => api.artifacts(bundleId), [bundleId]);
   const [query, setQuery] = useState("");
-  const [revision, setRevision] = useState(0);
-  const [group, setGroup] = useState("");
+  const [surface, setSurface] = useState("");
   const files = loaded.data?.files ?? [];
-  const selected =
-    path || files.find((file) => /SKILL\.md$/.test(file.path))?.path || files[0]?.path || "";
   const visible = files.filter(
     (file) =>
-      (!group || file.path.startsWith(`${group}/`)) &&
-      file.path.toLowerCase().includes(query.toLowerCase()),
+      file.path.toLowerCase().includes(query.toLowerCase()) &&
+      (!surface || file.path.startsWith(`${surface}/`)),
   );
   return (
     <div className="stack">
-      <PageHeader
-        eyebrow="Generated output"
-        title="Generated files"
-        description="Inspect the tools, client code, schemas, and evidence produced from this contract."
-        actions={
-          <button
-            type="button"
-            className="btn"
-            disabled={loaded.refreshing}
-            onClick={async () => {
-              await loaded.reload();
-              setRevision((n) => n + 1);
-            }}
-          >
-            Refresh files
-          </button>
-        }
-      />
-      {loaded.error ? (
-        <ErrorBox error={loaded.error} />
-      ) : !loaded.data ? (
-        <Loading label="Reading artifact inventory" />
-      ) : (
-        <div className="artifact-browser">
-          <aside className="artifact-sidebar" aria-label="Generated files">
+      <div className="view-head">
+        <div>
+          <Label>Client handoff</Label>
+          <h1>Generated files</h1>
+          <p className="sub">
+            Inspect the CLI, MCP server, SDKs, skills and evidence written to this bundle.
+          </p>
+        </div>
+        <button className="btn" type="button" onClick={() => void loaded.reload()}>
+          Refresh file list
+        </button>
+      </div>
+      {loaded.error ? <ErrorBox error={loaded.error} /> : null}
+      <div className="file-layout">
+        <section className="panel">
+          <div className="file-toolbar">
             <input
               type="search"
-              aria-label="Filter files"
-              placeholder="Find a file…"
+              aria-label="Find generated file"
+              placeholder="Filter files…"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(event) => setQuery(event.target.value)}
             />
             <select
-              aria-label="Artifact group"
-              value={group}
-              onChange={(e) => setGroup(e.target.value)}
+              aria-label="Artifact surface"
+              value={surface}
+              onChange={(event) => setSurface(event.target.value)}
             >
-              <option value="">All files · {files.length}</option>
+              <option value="">All surfaces</option>
               {[
                 ...new Set(
                   files
@@ -77,77 +61,75 @@ export function ArtifactsView({
                 ),
               ]
                 .sort()
-                .map((dir) => (
-                  <option key={dir} value={dir}>
-                    {dir}
+                .map((part) => (
+                  <option key={part} value={part}>
+                    {part}
                   </option>
                 ))}
             </select>
-            <nav aria-label="Artifact files">
-              {visible.map((file) => (
-                <a
-                  key={file.path}
-                  href={href(inspector.id, "artifacts", { path: file.path })}
-                  aria-current={file.path === selected ? "page" : undefined}
-                >
-                  <span>{file.path}</span>
-                  <small>{size(file.bytes)}</small>
-                </a>
-              ))}
-            </nav>
-            {!visible.length ? <p className="empty">No matching files.</p> : null}
-          </aside>
-          <div className="artifact-main">
-            {selected ? (
-              <Artifact
-                key={`${inspector.id}:${selected}:${revision}`}
-                api={api}
-                id={inspector.id}
-                path={selected}
-              />
-            ) : (
-              <p className="empty">No generated files in this bundle.</p>
-            )}
           </div>
-        </div>
-      )}
+          <nav className="file-list" aria-label="Artifact files">
+            {visible.map((file) => (
+              <a
+                key={file.path}
+                href={href(bundleId, "artifacts", { path: file.path })}
+                aria-current={file.path === path ? "page" : undefined}
+              >
+                <code>{file.path}</code>
+                <span className="row-id">{file.bytes.toLocaleString()} B</span>
+              </a>
+            ))}
+          </nav>
+          <p className="file-count" role="status">
+            {loaded.state === "loading" ? "Loading files…" : `${visible.length} files`}
+          </p>
+        </section>
+        {path ? (
+          <Artifact key={`${bundleId}:${path}`} api={api} bundleId={bundleId} path={path} />
+        ) : (
+          <div className="empty">
+            <h2>Choose a file</h2>
+            <p>Open an artifact to inspect or download its current contents.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
-function Artifact({ api, id, path }: { api: ConsoleApi; id: string; path: string }) {
-  const loaded = useLoad(() => api.artifact(id, path), [id, path]);
+
+function Artifact({ api, bundleId, path }: { api: ConsoleApi; bundleId: string; path: string }) {
+  const loaded = useLoad(() => api.artifact(bundleId, path), [bundleId, path]);
+  if (loaded.state === "loading") return <p role="status">Reading {path}…</p>;
   if (!loaded.data)
-    return loaded.error ? <ErrorBox error={loaded.error} /> : <Loading label="Opening file" />;
-  const file = loaded.data;
-  function download() {
-    const url = URL.createObjectURL(
-      new Blob([file?.content ?? ""], { type: "text/plain;charset=utf-8" }),
-    );
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = path.split("/").at(-1) ?? "artifact.txt";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-  return (
-    <>
-      <div className="artifact-head">
-        <strong className="mono">{file.path}</strong>
-        <span>{size(file.bytes)}</span>
-        <CopyButton text={file.content} />
-        <button className="btn btn-sm" type="button" onClick={download}>
-          Download
+    return (
+      <div>
+        {loaded.error ? <ErrorBox error={loaded.error} /> : null}
+        <button className="btn" type="button" onClick={() => void loaded.reload()}>
+          Retry
         </button>
       </div>
-      {/* A scrollable code region must be keyboard reachable. */}
-      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard access to the scrollable generated source */}
-      <section className="artifact-code" tabIndex={0} aria-label={`Contents of ${path}`}>
-        <pre>
-          <code>{file.content}</code>
-        </pre>
-      </section>
-    </>
+    );
+  const file = loaded.data;
+  return (
+    <section className="stack artifact-content" aria-label={`Contents of ${path}`}>
+      <div className="code-head">
+        <span className="row-id">{file.bytes.toLocaleString()} bytes</span>
+        <DownloadButton
+          content={file.content}
+          filename={path.split("/").pop() ?? "artifact.txt"}
+          disabled={file.truncated}
+        />
+        <button type="button" className="btn btn-sm" onClick={() => void loaded.reload()}>
+          Reload file
+        </button>
+      </div>
+      {file.truncated ? (
+        <p role="status">
+          Preview limited to 256 KiB. Open the full file on disk; downloading an incomplete file is
+          disabled.
+        </p>
+      ) : null}
+      <CodeBlock label={path} text={file.content} />
+    </section>
   );
 }

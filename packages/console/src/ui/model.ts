@@ -11,7 +11,16 @@ import type { ConsoleResponse } from "../contract.js";
 
 /* ------------------------------- routing --------------------------------- */
 
-export type View = "overview" | "queue" | "inspect" | "confusion" | "evidence" | "artifacts";
+export type View =
+  | "overview"
+  | "queue"
+  | "inspect"
+  | "confusion"
+  | "evidence"
+  | "artifacts"
+  | "workbench"
+  | "assurance"
+  | "compare";
 
 export type Route =
   | { view: "workspace" | "new" }
@@ -20,7 +29,10 @@ export type Route =
 export function parseHash(hash: string): Route {
   const [path = "", search = ""] = hash.replace(/^#/, "").split("?");
   if (path === "/new") return { view: "new" };
-  const match = /^\/b\/([^/]+)\/(overview|queue|inspect|confusion|evidence|artifacts)$/.exec(path);
+  const match =
+    /^\/b\/([^/]+)\/(overview|queue|inspect|confusion|evidence|artifacts|workbench|assurance|compare)$/.exec(
+      path,
+    );
   if (!match) return { view: "workspace" };
   try {
     return {
@@ -48,7 +60,12 @@ export function initialTheme(
   storage: Pick<Storage, "getItem"> | undefined,
   prefersDark: boolean,
 ): Theme {
-  const stored = storage?.getItem(THEME_KEY);
+  let stored: string | null | undefined;
+  try {
+    stored = storage?.getItem(THEME_KEY);
+  } catch {
+    /* Storage can be disabled. */
+  }
   if (stored === "light" || stored === "dark") return stored;
   return prefersDark ? "dark" : "light";
 }
@@ -233,7 +250,9 @@ export const BUNDLE_VIEWS: ReadonlyArray<readonly [View, string, string]> = [
   ["overview", "Overview", "01"],
   ["queue", "Decision queue", "02"],
   ["inspect", "Operations & contracts", "03"],
-  ["confusion", "Routing quality", "04"],
-  ["evidence", "Evidence & checks", "05"],
-  ["artifacts", "Generated files", "06"],
+  ["workbench", "Request builder", "04"],
+  ["compare", "Compare bundles", "05"],
+  ["confusion", "Routing quality", "06"],
+  ["evidence", "Evidence & checks", "07"],
+  ["artifacts", "Generated files", "08"],
 ];

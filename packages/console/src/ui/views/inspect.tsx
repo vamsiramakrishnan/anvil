@@ -310,6 +310,12 @@ function OperationRows({
               <div className="chips">
                 <a
                   className="btn btn-sm"
+                  href={href(inspector.id, "workbench", { operation: op.id })}
+                >
+                  Build a request
+                </a>
+                <a
+                  className="btn btn-sm"
                   href={href(inspector.id, "artifacts", { path: `schemas/${op.id}.schema.json` })}
                 >
                   Open input schema

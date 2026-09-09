@@ -276,7 +276,7 @@ test("6. the browser cannot drive a mutation without the token, and another orig
   request,
 }) => {
   await page.goto(`${state.url}/#/`);
-  await expect(page.getByRole("heading", { name: "workspace" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Bundles", exact: true })).toBeVisible();
 
   // The token is in the page — measured by length only, never read into a log.
   const tokenLength = await page.evaluate(
@@ -363,7 +363,7 @@ test("the workbench compiles a pasted contract and opens real artifacts and evid
   const document = loadBundleAir(directory, readBundleDir(directory));
   expect(document.service.id).toBe("store-orders");
   expect(document.service.source.snapshotId).toBeTruthy();
-  expect(document.operations.map((op) => op.id)).toContain("getOrder");
+  expect(document.operations.map((op) => op.id)).toContain("store-orders.orders.get");
   await page.getByRole("link", { name: "Open bundle →" }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(/Store Orders|store-orders/);
   await page.getByRole("link", { name: "Generated files", exact: true }).click();
