@@ -10,7 +10,7 @@ import {
   verifyCertification,
 } from "@anvil/generators";
 import type { ConsoleResponse } from "../contract.js";
-import { notFound } from "./errors.js";
+import { ConsoleError, notFound } from "./errors.js";
 import { findBundle } from "./workspace.js";
 
 function load(root: string, id: string) {
@@ -67,6 +67,12 @@ export function artifactView(root: string, id: string, path: string): ConsoleRes
   if (!Object.hasOwn(files, path))
     throw notFound(`No generated artifact '${path}' in bundle '${id}'.`);
   const bytes = Buffer.from(files[path] as string, "utf8");
+  if (bytes.length > 1024 * 1024)
+    throw new ConsoleError(
+      "console/artifact_too_large",
+      413,
+      "This artifact exceeds the 1 MiB preview limit. Open it from the bundle directory.",
+    );
   // Text is returned as JSON and rendered as text, never as executable HTML.
   return {
     path,

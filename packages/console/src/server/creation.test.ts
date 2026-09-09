@@ -267,11 +267,9 @@ describe("evidence and generated files", () => {
     expect(large.status).toBe(404);
     expect(zErrorEnvelope.parse(large.json).error.code).toBe("console/not_found");
     writeFileSync(join(dir, "mcp/server.js"), "x".repeat(1024 * 1024 + 1));
-    const preview = CONSOLE_ROUTES.artifact.response.parse(
-      (await client.get(`${url(created.id, "artifact")}?path=mcp%2Fserver.js`)).json,
-    );
-    expect(preview.truncated).toBe(true);
-    expect(Buffer.byteLength(preview.content)).toBe(256 * 1024);
+    const oversized = await client.get(`${url(created.id, "artifact")}?path=mcp%2Fserver.js`);
+    expect(oversized.status).toBe(413);
+    expect(zErrorEnvelope.parse(oversized.json).error.code).toBe("console/artifact_too_large");
   });
 
   it("keeps healthy bundles visible when another bundle is corrupt", async () => {
