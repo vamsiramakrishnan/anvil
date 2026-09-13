@@ -59,7 +59,7 @@ function fileCount(dir: string): number {
 
 async function openQueue(page: Page): Promise<void> {
   await page.goto(`${state.url}/#/b/${encodeURIComponent(state.bundleId)}/queue`);
-  await expect(page.getByRole("heading", { name: "Review" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Review", level: 1, exact: true })).toBeVisible();
 }
 
 async function expectPageFits(page: Page): Promise<void> {
@@ -108,6 +108,21 @@ test("1. the workspace lists the bundle with the counts on disk", async ({ page 
     "href",
     `#/b/${state.bundleId}/queue`,
   );
+});
+
+test("request builder opens the selected operation's review without changing approval", async ({
+  page,
+}) => {
+  const id = state.nonIdempotentMutation;
+  const before = readBundleDir(state.bundleDir);
+  await page.goto(
+    `${state.url}/#/b/${state.bundleId}/workbench?operation=${encodeURIComponent(id)}`,
+  );
+  await page.getByRole("link", { name: "Review this operation", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Review", level: 1, exact: true })).toBeVisible();
+  await expect(rowFor(page, id)).toHaveAttribute("aria-selected", "true");
+  await expect(detail(page)).toContainText(id);
+  expect(readBundleDir(state.bundleDir)).toEqual(before);
 });
 
 test("3. a non-idempotent financial mutation is barred from every bulk policy, and the row says why", async ({
@@ -237,7 +252,7 @@ test("7. j/k/x/a drive an approval with no mouse", async ({ page }) => {
 
   await openQueue(page);
   // Keys are handled on the window; make sure no field has focus first.
-  await page.getByRole("heading", { name: "Review" }).click();
+  await page.getByRole("heading", { name: "Review", level: 1, exact: true }).click();
   const selected = page.locator('[role="option"][aria-selected="true"]');
   const target = page.getByLabel(`select ${id}`, { exact: true });
   const rows = await page.getByRole("listbox", { name: "decisions" }).getByRole("option").count();
@@ -506,7 +521,7 @@ test("business projects import, review, save, and build through the real console
   await expect(
     page.getByRole("heading", { name: project.definition.displayName, exact: true }),
   ).toBeVisible();
-  const approval = page.getByRole("checkbox", { name: /I reviewed this action/ });
+  const approval = page.getByRole("checkbox", { name: /^Approve this action for agent use\./ });
   await expect(approval).not.toBeChecked();
   await expect(page.getByRole("textbox", { name: "Business outcome", exact: true })).toHaveValue(
     project.definition.actions[0].description,

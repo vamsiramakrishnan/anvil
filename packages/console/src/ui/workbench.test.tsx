@@ -7,6 +7,7 @@ import {
   renderHook,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConsoleResponse } from "../contract.js";
@@ -143,6 +144,40 @@ describe("request builder", () => {
     await waitFor(() => expect(document.body.textContent).toContain("--id='cus_123' --dry-run"));
     expect(approve).not.toHaveBeenCalled();
     expect(localStorage.getItem("id")).toBeNull();
+  });
+  it("opens the selected operation's review instead of the first pending decision", async () => {
+    const { api } = setup();
+    const queue = await api.queue("payments");
+    expect(queue.items[0]?.id).not.toBe("createRefund");
+    const approve = vi.spyOn(api, "approveOperations");
+    location.hash = href("payments", "workbench", { operation: "createRefund" });
+    render(<App api={api} />);
+    fireEvent.click(await screen.findByRole("link", { name: "Review this operation" }));
+    await screen.findByRole("heading", { name: "Review", level: 1 });
+    const selected = within(screen.getByRole("listbox", { name: "decisions" })).getByRole(
+      "option",
+      { selected: true },
+    );
+    expect(within(selected).getByLabelText("select createRefund")).toBeDefined();
+    expect(approve).not.toHaveBeenCalled();
+  });
+  it("opens a superseded approved operation in the catalog without offering another approval", async () => {
+    const { api } = setup();
+    const view = await api.operation("payments", "getPayment");
+    vi.spyOn(api, "operation").mockResolvedValue({ ...view, served: false });
+    const queue = vi.spyOn(api, "queue");
+    const approve = vi.spyOn(api, "approveOperations");
+    location.hash = href("payments", "workbench", { operation: "getPayment" });
+    render(<App api={api} />);
+    const inspect = await screen.findByRole("link", { name: "Inspect this operation" });
+    expect(screen.queryByRole("link", { name: "Review this operation" })).toBeNull();
+    fireEvent.click(inspect);
+    await screen.findByRole("heading", { name: "API operations", level: 1 });
+    const detail = await screen.findByRole("region", { name: "Operation details" });
+    expect(within(detail).getByRole("heading", { name: view.operation.displayName })).toBeDefined();
+    expect(within(detail).getByText("getPayment", { exact: true })).toBeDefined();
+    expect(queue).not.toHaveBeenCalled();
+    expect(approve).not.toHaveBeenCalled();
   });
   it("shows the additional read views using the typed contract", async () => {
     const { api } = setup();

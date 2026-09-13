@@ -192,8 +192,7 @@ export function ConfusionView({ api, bundleId, data, reload }: Props) {
           command={`anvil benchmark ${data.inspector.path} --json`}
         >
           The benchmark found no approved operations, so the served catalog was empty and there was
-          nothing to route. Approve operations in Review, recompile, then re-run the
-          benchmark.
+          nothing to route. Approve operations in Review, recompile, then re-run the benchmark.
         </Empty>
       ) : benchmark.confusion.clusters.length === 0 ? (
         <Empty
