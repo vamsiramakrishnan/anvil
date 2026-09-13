@@ -388,6 +388,8 @@ td {
 }
 
 .table-wrap {
+  /* Keep absolutely positioned screen-reader labels inside the scroller. */
+  position: relative;
   overflow-x: auto;
   max-width: 100%;
 }

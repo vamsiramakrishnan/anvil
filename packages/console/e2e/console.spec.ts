@@ -62,6 +62,21 @@ async function openQueue(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "decision queue" })).toBeVisible();
 }
 
+async function expectPageFits(page: Page): Promise<void> {
+  const layout = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    width: document.documentElement.scrollWidth,
+    outside: [...document.querySelectorAll("body *")]
+      .map((element) => ({
+        element: `${element.tagName}.${element.className}`,
+        right: element.getBoundingClientRect().right,
+      }))
+      .filter((element) => element.right > window.innerWidth)
+      .slice(0, 25),
+  }));
+  expect(layout.width, JSON.stringify(layout)).toBeLessThanOrEqual(layout.viewport);
+}
+
 const rowFor = (page: Page, id: string) =>
   page.getByRole("option").filter({ has: page.getByLabel(`select ${id}`, { exact: true }) });
 
@@ -410,9 +425,7 @@ test("workspace navigation and creation remain usable on a narrow viewport", asy
   await search.fill("New bundle");
   await search.press("Enter");
   await expect(page.getByRole("heading", { name: "Start with an API contract" })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
+  await expectPageFits(page);
 });
 
 test("8. catalog deep links preserve filters and preview an approved read without changing the bundle", async ({
@@ -470,18 +483,16 @@ test("10. workspace and request workbench fit a phone viewport in both themes", 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${state.url}/#/`);
   await expect(page.getByRole("heading", { name: "workspace" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Business capabilities", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Business capabilities", exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: /theme:/ })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
+  await expectPageFits(page);
   await page.screenshot({ path: test.info().outputPath("workspace-mobile.png"), fullPage: true });
   await page.getByRole("button", { name: /theme:/ }).click();
   await page.goto(`${state.url}/#/b/${state.bundleId}/catalog`);
   await expect(page.getByRole("heading", { name: "Operation catalog" })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
+  await expectPageFits(page);
   await page.screenshot({ path: test.info().outputPath("catalog-mobile.png"), fullPage: true });
 });
 
