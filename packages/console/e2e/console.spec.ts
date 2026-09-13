@@ -540,4 +540,8 @@ test("business projects import, review, save, and build through the real console
     JSON.parse(projected).operations.filter((op: { state: string }) => op.state === "approved"),
   ).toHaveLength(1);
   await page.screenshot({ path: testInfo.outputPath("business-workbench.png"), fullPage: true });
+  await page.getByRole("link", { name: "Business capabilities", exact: true }).click();
+  await expect(
+    page.locator(".business-project-card").filter({ hasText: project.definition.displayName }),
+  ).toBeVisible();
 });

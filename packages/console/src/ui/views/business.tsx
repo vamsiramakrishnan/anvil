@@ -9,7 +9,7 @@ import { Loading, PageHeader } from "../workbench-components.js";
 
 type View = ConsoleResponse<"businessProject">;
 export function BusinessProjectsView({ api, id }: { api: ConsoleApi; id?: string }) {
-  const projects = useLoad(() => api.businessProjects(), []);
+  const projects = useLoad(() => api.businessProjects(), [id]);
   if (id)
     return <ProjectEditor key={id} api={api} id={id} enabled={projects.data?.enabled ?? false} />;
   return (
