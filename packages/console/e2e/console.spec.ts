@@ -103,14 +103,7 @@ test("1. the workspace lists the bundle with the counts on disk", async ({ page 
   await expect(cells.nth(5)).toHaveText(String(approved));
   await expect(cells.nth(6)).toHaveText(String(blocked));
   await expect(row).toContainText(`${proposed} proposed capabilities · 1 packs`);
-  const pack = JSON.parse(readFileSync(join(state.packDir, "pack.json"), "utf8"));
-  const pendingRefinements = pack.refinements.filter(
-    (r: { approval: { tier: string }; status: string }) =>
-      r.approval.tier === "review" && ["improved", "neutral"].includes(r.status),
-  ).length;
-  await expect(
-    page.locator(".metric").filter({ hasText: "Pending decisions" }).locator("strong"),
-  ).toHaveText(String(review + generated + proposed + pendingRefinements));
+  await expect(page.getByRole("navigation", { name: "API to agent workflow" })).toBeVisible();
   await expect(row.getByRole("link", { name: "Review →" })).toHaveAttribute(
     "href",
     `#/b/${state.bundleId}/queue`,
@@ -299,7 +292,9 @@ test("6. the browser cannot drive a mutation without the token, and another orig
   request,
 }) => {
   await page.goto(`${state.url}/#/`);
-  await expect(page.getByRole("heading", { name: "workspace", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Turn APIs into agent actions", exact: true }),
+  ).toBeVisible();
 
   // The token is in the page — measured by length only, never read into a log.
   const tokenLength = await page.evaluate(
@@ -422,7 +417,7 @@ test("workspace navigation and creation remain usable on a narrow viewport", asy
   await expect(page.locator("tr[data-bundle-id]")).toHaveCount(1);
   await page.getByRole("button", { name: /Find a bundle or view/ }).click();
   const search = page.getByRole("combobox", { name: "Find a bundle or view" });
-  await search.fill("New bundle");
+  await search.fill("Import API");
   await search.press("Enter");
   await expect(page.getByRole("heading", { name: "Start with an API contract" })).toBeVisible();
   await expectPageFits(page);
@@ -482,9 +477,9 @@ test("10. workspace and request workbench fit a phone viewport in both themes", 
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${state.url}/#/`);
-  await expect(page.getByRole("heading", { name: "workspace" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Turn APIs into agent actions" })).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Business capabilities", exact: true }),
+    page.getByRole("link", { name: "Business actions", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /theme:/ })).toBeVisible();
   await expectPageFits(page);
@@ -558,7 +553,7 @@ test("business projects import, review, save, and build through the real console
     JSON.parse(projected).operations.filter((op: { state: string }) => op.state === "approved"),
   ).toHaveLength(1);
   await page.screenshot({ path: testInfo.outputPath("business-workbench.png"), fullPage: true });
-  await page.getByRole("link", { name: "Business capabilities", exact: true }).click();
+  await page.getByRole("link", { name: "Business actions", exact: true }).click();
   await expect(
     page.locator(".business-project-card").filter({ hasText: project.definition.displayName }),
   ).toBeVisible();

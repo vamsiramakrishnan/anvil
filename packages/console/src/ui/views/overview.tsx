@@ -23,6 +23,28 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
           </a>
         }
       />
+      <nav className="experience-steps" aria-label="Bundle workflow">
+        <a href={href(id, "catalog")}>
+          <span>01 · Explore</span>
+          <strong>Read the actions</strong>
+          <p>Inspect names, inputs, and behavior.</p>
+        </a>
+        <a href={href(id, "queue")}>
+          <span>02 · Review</span>
+          <strong>Choose what agents can call</strong>
+          <p>Resolve missing semantics and approvals.</p>
+        </a>
+        <a href={href(id, "workbench")}>
+          <span>03 · Try</span>
+          <strong>Preview a request</strong>
+          <p>Build a call without contacting the API.</p>
+        </a>
+        <a href={href(id, "artifacts")}>
+          <span>04 · Use</span>
+          <strong>Choose an interface</strong>
+          <p>Skill, CLI, MCP, SDK, or Gemini Enterprise.</p>
+        </a>
+      </nav>
       <div className="metrics">
         <Metric
           label="Operations"
@@ -48,7 +70,7 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
       </div>
       <div className="overview-grid">
         <Panel
-          title="What needs attention"
+          title="Prepare your actions"
           aside={
             <Tag>
               {errors.length + pending.length + blocked.length} operation reviews and errors

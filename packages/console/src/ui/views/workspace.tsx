@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import type { ConsoleResponse } from "../../contract.js";
-import { ErrorBox, Label, Tag } from "../components.js";
+import { ErrorBox, Tag } from "../components.js";
 import type { Loaded } from "../hooks.js";
 import { href } from "../model.js";
-import { Loading, Metric, PageHeader } from "../workbench-components.js";
+import { Loading, PageHeader } from "../workbench-components.js";
 
 type Bundle = ConsoleResponse<"workspace">["bundles"][number];
 const pending = (b: Bundle) =>
@@ -66,8 +66,8 @@ export function WorkspaceView({ loaded }: { loaded: Loaded<ConsoleResponse<"work
     <div className="stack workspace-view">
       <PageHeader
         eyebrow="API toolchain"
-        title="workspace"
-        description="Your API contracts, review work, and generated tools in one place."
+        title="Turn APIs into agent actions"
+        description="Bring a REST, SOAP / WSDL, gRPC, or GraphQL API. Use it through a skill, CLI, MCP server, SDK, or Gemini Enterprise connector."
         actions={
           <>
             <button
@@ -79,30 +79,33 @@ export function WorkspaceView({ loaded }: { loaded: Loaded<ConsoleResponse<"work
               {loaded.refreshing ? "Refreshing…" : "Refresh"}
             </button>
             <a className="btn btn-primary" href="#/new">
-              ＋ Create bundle
+              Import an API
             </a>
           </>
         }
       />
-      <div className="metrics">
-        <Metric label="Bundles" value={bundles.length} detail="Discovered in this workspace" />
-        <Metric
-          label="Operations"
-          value={bundles.reduce((n, b) => n + total(b), 0)}
-          detail="Across all source formats"
-        />
-        <Metric
-          label="Pending decisions"
-          value={bundles.reduce((n, b) => n + b.pendingDecisions, 0)}
-          tone="attention"
-          detail="Operations, capabilities and refinement items"
-        />
-        <Metric
-          label="Approved operations"
-          value={bundles.reduce((n, b) => n + (b.counts.operations.approved ?? 0), 0)}
-          detail="Available to generated tools"
-        />
-      </div>
+      <nav className="experience-steps" aria-label="API to agent workflow">
+        <a href="#/new">
+          <span>01 · Import</span>
+          <strong>Bring your API</strong>
+          <p>Upload a contract or use files in your workspace.</p>
+        </a>
+        <a href="#/projects">
+          <span>02 · Shape</span>
+          <strong>Define useful actions</strong>
+          <p>Give actions business names, inputs, and source bindings.</p>
+        </a>
+        <div>
+          <span>03 · Try</span>
+          <strong>Check an agent call</strong>
+          <p>Open a bundle to review actions and preview requests.</p>
+        </div>
+        <div>
+          <span>04 · Use</span>
+          <strong>Choose an interface</strong>
+          <p>Open Generated files for skills, commands, SDKs, and connectors.</p>
+        </div>
+      </nav>
       {loaded.data.issues?.length ? (
         <div className="error" role="alert">
           <strong>Some bundles could not be read</strong>
@@ -122,22 +125,8 @@ export function WorkspaceView({ loaded }: { loaded: Loaded<ConsoleResponse<"work
             Anvil keeps the source and generates aligned tools.
           </p>
           <a className="btn btn-primary" href="#/new">
-            Create your first bundle →
+            Import your first API →
           </a>
-          <div className="onboarding-steps">
-            <div>
-              <Label>01 · Import</Label>
-              <p>OpenAPI, SOAP, gRPC, GraphQL, OData, Postman, and captured traffic.</p>
-            </div>
-            <div>
-              <Label>02 · Review</Label>
-              <p>Inspect effects, idempotency, and the evidence behind each decision.</p>
-            </div>
-            <div>
-              <Label>03 · Use</Label>
-              <p>Browse the CLI, MCP server, skills, SDKs, and deployment files.</p>
-            </div>
-          </div>
         </div>
       ) : (
         <section className="bundle-list" aria-label="Bundles">

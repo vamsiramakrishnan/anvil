@@ -1,8 +1,20 @@
 # Console
 
-Use `anvil console` to turn source specifications into bundles, review pending
-decisions, compare contracts, and inspect the generated tools. The console reads
-the same workspace and calls the same libraries as the CLI.
+Use `anvil console` to turn an API into actions an agent can execute. Import a
+contract, shape the actions, try a request, and choose an interface.
+
+The opening page explains these four steps. **Import API** accepts REST
+contracts, SOAP / WSDL, gRPC, and GraphQL alongside the other supported formats.
+Expand **Input formats and execution support** for transport limits before
+importing. **Business actions** opens the action authoring workspace.
+
+Within a bundle, **Generated files** offers five interfaces: skill, CLI, MCP
+server, SDK, and Gemini Enterprise. Selecting a core interface filters the actual artifact inventory
+and shows setup guidance. Missing core files are stated explicitly. The Gemini
+Enterprise option links to the target setup guide; connector files are managed
+from the terminal and are not included in this browser’s artifact inventory.
+Gemini Enterprise requires a separate target generation step, deployment, and
+registration; an imported API is not automatically a deployed connector.
 
 The workspace lists services with searchable, filterable, paginated operation
 counts. Select two bundles to compare their contracts. A broken bundle appears
@@ -117,7 +129,7 @@ Unrelated local files and hidden credentials are excluded from the inventory.
 
 ## Create a bundle
 
-Open **New bundle** and choose one source:
+Open **Import API** and choose one source:
 
 - **Upload files** for a specification and its supporting files. Choose the
   containing folder to preserve nested `$ref`, protobuf, and WSDL/XSD paths.

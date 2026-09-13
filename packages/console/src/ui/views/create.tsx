@@ -142,11 +142,33 @@ export function CreateView({
       <PageHeader
         eyebrow="Create tools"
         title="Start with an API contract"
-        description="Import once. Generate the CLI, MCP server, skills, and client SDKs together."
+        description="REST, SOAP / WSDL, gRPC, or GraphQL. Import a contract, then review the actions your agent can call."
       />
       <div className="create-layout">
         <form className="create-form" onSubmit={(e) => void submit(e)}>
           <fieldset disabled={busy || reading}>
+            <details className="form-section">
+              <summary>Input formats and execution support</summary>
+              <dl className="format-reference">
+                <dt>REST</dt>
+                <dd>OpenAPI or Swagger. Execute HTTP + JSON requests.</dd>
+                <dt>SOAP / WSDL</dt>
+                <dd>
+                  WSDL 1.1 with local XSD files. Execute supported document/literal operations.
+                </dd>
+                <dt>gRPC</dt>
+                <dd>
+                  Proto3 with local imports. Execution requires a declared JSON transcoder;
+                  streaming RPCs are refused.
+                </dd>
+                <dt>GraphQL</dt>
+                <dd>SDL. Execute queries and mutations; subscriptions are refused.</dd>
+              </dl>
+              <p>
+                Also accepts Google Discovery, OData, and Postman. HAR captures provide review
+                candidates.
+              </p>
+            </details>
             <div className="form-section">
               <Label>01 · Source</Label>
               <h2>Where is your specification?</h2>
@@ -353,16 +375,16 @@ export function CreateView({
         </form>
         <aside className="create-guide">
           <Label>What you get</Label>
-          <h2>
-            One source of truth.
-            <br />
-            Every way to use it.
-          </h2>
+          <h2>Choose how agents use your API.</h2>
           {[
+            ["Skills", "Instructions that guide a coding agent through executable commands."],
             ["CLI", "Typed commands, structured errors, and dry runs."],
             ["MCP", "An aligned tool server for agent integrations."],
-            ["Skills", "Progressive disclosure for coding harnesses."],
             ["Client SDKs", "TypeScript, Python, Go, and Java clients."],
+            [
+              "Gemini Enterprise",
+              "Generate a connector kit after reviewing the bundle. Deployment and registration follow separately.",
+            ],
           ].map(([title, detail]) => (
             <div key={title}>
               <strong>{title}</strong>

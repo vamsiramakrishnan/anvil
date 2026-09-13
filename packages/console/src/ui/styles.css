@@ -1060,3 +1060,26 @@ details[open] > summary { margin-bottom: 1rem; }
 .change h3 { margin: 0.75rem 0 0.5rem; }
 .change details { margin-top: 1rem; }
 @media (max-width: 60rem) { .file-layout { grid-template-columns: minmax(0, 1fr); } .file-list { max-height: 18rem; } }
+
+/* Documentation-style workflow and interface reference. */
+.experience-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--anvil-color-hairline); }
+.experience-steps > * { padding: 22px 18px; min-width: 0; text-decoration: none; color: inherit; }
+.experience-steps > a:hover { background: var(--anvil-color-surface); }
+.experience-steps span { display: block; font-size: 12px; color: var(--anvil-color-text-muted); margin-bottom: 12px; }
+.experience-steps strong { font-size: 14px; font-weight: 600; }
+.experience-steps p { font-size: 13px; line-height: 1.6; color: var(--anvil-color-text-secondary); margin: 8px 0 0; }
+.output-guide > p { color: var(--anvil-color-text-muted); font-size: 13px; margin-top: 8px; }
+.output-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-block: 1px solid var(--anvil-color-hairline); }
+.output-options button { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 20px 14px; text-align: left; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; cursor: pointer; min-width: 0; }
+.output-options button[aria-pressed="true"] { border-bottom-color: var(--anvil-color-text-accent); background: var(--anvil-color-surface); }
+.output-options span, .output-options small { font-size: 12px; line-height: 1.6; color: var(--anvil-color-text-secondary); }
+.output-options small { margin-top: auto; color: var(--anvil-color-text-muted); }
+.output-instructions { padding: 20px 0; max-width: 760px; font-size: 13px; }
+.output-instructions p { margin: 8px 0 12px; line-height: 1.7; }
+.output-instructions .command { margin-top: 16px; }
+.format-reference { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; font-size: 13px; line-height: 1.7; }
+.format-reference dd { margin: 0; color: var(--anvil-color-text-secondary); }
+.workspace-view .page-header h1 { text-transform: none; }
+@media (max-width: 1100px) { .output-options { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 800px) { .experience-steps, .output-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } .create-guide { display: block; } }
+@media (max-width: 480px) { .experience-steps, .output-options { grid-template-columns: 1fr; } }

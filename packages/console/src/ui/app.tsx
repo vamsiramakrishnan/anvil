@@ -276,9 +276,9 @@ export function App({ api }: { api: ConsoleApi }) {
   const activeName =
     BUNDLE_VIEWS.find(([view]) => view === route.view)?.[1] ??
     (route.view === "new"
-      ? "New bundle"
+      ? "Import API"
       : route.view === "projects"
-        ? "Business capabilities"
+        ? "Business actions"
         : "Workspace");
   useEffect(() => {
     document.title = `${activeName}${bundleId ? ` · ${bundleId}` : ""} · Anvil`;
@@ -306,9 +306,6 @@ export function App({ api }: { api: ConsoleApi }) {
           <kbd>⌘ K</kbd>
         </button>
         <nav className="side-nav">
-          <a href="#/projects" aria-current={route.view === "projects" ? "page" : undefined}>
-            Business capabilities
-          </a>
           <a href="#/" aria-current={route.view === "workspace" ? "page" : undefined}>
             <span className="nav-mark" aria-hidden="true">
               ◫
@@ -319,7 +316,10 @@ export function App({ api }: { api: ConsoleApi }) {
             <span className="nav-mark" aria-hidden="true">
               ＋
             </span>
-            New bundle
+            Import API
+          </a>
+          <a href="#/projects" aria-current={route.view === "projects" ? "page" : undefined}>
+            Business actions
           </a>
         </nav>
         {bundleId ? (
@@ -344,15 +344,12 @@ export function App({ api }: { api: ConsoleApi }) {
               ))}
             </select>
             <nav className="side-nav" aria-label="bundle views">
-              {BUNDLE_VIEWS.map(([view, name, number]) => (
+              {BUNDLE_VIEWS.map(([view, name]) => (
                 <a
                   href={href(bundleId, view)}
                   aria-current={route.view === view ? "page" : undefined}
                   key={view}
                 >
-                  <span className="nav-mark" aria-hidden="true">
-                    {number}
-                  </span>
                   {name}
                 </a>
               ))}
@@ -360,8 +357,8 @@ export function App({ api }: { api: ConsoleApi }) {
           </div>
         ) : (
           <div className="sidebar-note">
-            <span className="label">One contract. Every surface.</span>
-            <p>Compile APIs into tools. Review the decisions. Inspect what ships.</p>
+            <span className="label">API → agent actions</span>
+            <p>Skills, CLI, MCP, SDKs, and Gemini Enterprise connectors from your API.</p>
           </div>
         )}
         <div className="sidebar-footer">
@@ -419,7 +416,7 @@ export function App({ api }: { api: ConsoleApi }) {
             </button>
           ) : null}
           <a className="btn btn-sm" href="#/new">
-            ＋ New bundle
+            ＋ Import API
           </a>
         </header>
         <main id="main-content" tabIndex={-1}>
