@@ -45,6 +45,15 @@ it("clears approval after editing and requires a fresh preview before saving", a
     target: { value: "A newly worded outcome" },
   });
   expect((approved as HTMLInputElement).checked).toBe(false);
+  const inputs = screen.getByRole("textbox", { name: "Public inputs" });
+  fireEvent.change(inputs, { target: { value: "null" } });
+  expect(inputs.getAttribute("aria-invalid")).toBe("true");
+  expect(inputs.getAttribute("aria-describedby")).toBe(screen.getByRole("alert").id);
+  fireEvent.change(inputs, {
+    target: { value: JSON.stringify(project.definition.actions[0]?.input) },
+  });
+  expect(inputs.getAttribute("aria-invalid")).toBe("false");
+  expect(screen.getByRole("textbox", { name: "Public inputs" })).toBe(inputs);
   expect(
     (screen.getByRole("button", { name: "Save revision" }) as HTMLButtonElement).disabled,
   ).toBe(true);

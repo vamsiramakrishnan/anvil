@@ -66,7 +66,7 @@ async function expectPageFits(page: Page): Promise<void> {
   const layout = await page.evaluate(() => ({
     viewport: window.innerWidth,
     width: document.documentElement.scrollWidth,
-    outside: [...document.querySelectorAll("body *")]
+    outside: Array.from(document.querySelectorAll("body *"))
       .map((element) => ({
         element: `${element.tagName}.${element.className}`,
         right: element.getBoundingClientRect().right,

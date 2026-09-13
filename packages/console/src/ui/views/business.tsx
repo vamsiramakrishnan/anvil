@@ -1,5 +1,5 @@
 import { BusinessAction, BusinessProject } from "@anvil/air";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ConsoleResponse } from "../../contract.js";
 import { type ConsoleApi, type ConsoleApiError, toConsoleApiError } from "../api.js";
 import { ErrorBox } from "../components.js";
@@ -67,6 +67,7 @@ function JsonField({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
+  const id = useId();
   const [text, setText] = useState(() => JSON.stringify(value, null, 2));
   const [error, setError] = useState("");
   const accepted = useRef(JSON.stringify(value));
@@ -81,10 +82,15 @@ function JsonField({
     }
   }, [value]);
   return (
-    <label className="field">
-      <span className="label">{label}</span>
+    <div className="field">
+      <label className="label" htmlFor={id}>
+        {label}
+      </label>
       <textarea
+        id={id}
         ref={field}
+        aria-invalid={!!error}
+        aria-describedby={error ? `${id}-error` : undefined}
         className="business-json"
         value={text}
         rows={7}
@@ -103,8 +109,12 @@ function JsonField({
           }
         }}
       />
-      {error ? <span role="alert">{error}</span> : null}
-    </label>
+      {error ? (
+        <span id={`${id}-error`} role="alert">
+          {error}
+        </span>
+      ) : null}
+    </div>
   );
 }
 function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enabled: boolean }) {
