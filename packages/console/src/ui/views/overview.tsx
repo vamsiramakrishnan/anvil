@@ -19,20 +19,20 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
         description={<span className="mono">{inspector.path}</span>}
         actions={
           <a className="btn btn-primary" href={href(id, "queue")}>
-            Review decisions →
+            Review operations →
           </a>
         }
       />
       <nav className="experience-steps" aria-label="Bundle workflow">
         <a href={href(id, "catalog")}>
           <span>01 · Explore</span>
-          <strong>Read the actions</strong>
-          <p>Inspect names, inputs, and behavior.</p>
+          <strong>Explore API operations</strong>
+          <p>Inspect source operations, inputs, and behavior.</p>
         </a>
         <a href={href(id, "queue")}>
           <span>02 · Review</span>
-          <strong>Choose what agents can call</strong>
-          <p>Resolve missing semantics and approvals.</p>
+          <strong>Review callable operations</strong>
+          <p>Review behavior and approve callable operations.</p>
         </a>
         <a href={href(id, "workbench")}>
           <span>03 · Try</span>
@@ -60,7 +60,7 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
         <Metric
           label="Served MCP tools"
           value={inspector.servedSurface.after.length}
-          detail="After workflow supersession"
+          detail="After workflows replace underlying tools"
         />
         <Metric
           label="Proposed capabilities"
@@ -70,7 +70,7 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
       </div>
       <div className="overview-grid">
         <Panel
-          title="Prepare your actions"
+          title="Prepare your API"
           aside={
             <Tag>
               {errors.length + pending.length + blocked.length} operation reviews and errors
@@ -126,7 +126,7 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
             <span>→</span>
           </a>
         </Panel>
-        <Panel title="Contract identity">
+        <Panel title="API details">
           <KV
             rows={[
               ["Service", service.id],

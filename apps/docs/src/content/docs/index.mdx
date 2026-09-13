@@ -24,19 +24,28 @@ hero:
 ## From API to agent
 
 1. **Import your API.** Supply a contract and its supporting files.
-2. **Shape the actions.** Review names, typed inputs, and behavior. Bind source
-   operations to business tasks where a task needs more than one call.
+2. **Review the operations.** Inspect names, typed inputs, and behavior. Approve
+   the operations agents may call.
 3. **Try a request.** Preview a call, then test the generated tools against a mock.
 4. **Use the output.** Choose the interface your agent or application needs.
 
 The console follows the same flow. Run `pnpm anvil console . --open` after
-building. Start with **Import API**. Each bundle's **Generated files** page
-shows the available interfaces and their setup steps.
+building. Start with **Import API**, then **Review**. Use **API operations**
+for request previews and **Request builder** for CLI and MCP drafts.
+**Interfaces** shows generated files and setup steps.
+
+An **API operation** is one call imported from a specification. A **bundle**
+contains the API’s contracts, generated files, and review state. An
+**interface** is how an agent or application calls those operations.
+
+**Business actions** is an optional, separate workflow for tasks that bind one
+or more API operations. It currently requires a project JSON with action
+definitions, source snapshots, and evaluation tasks.
 
 ## Compile your first API
 
 The payments example works locally without credentials. It includes a refund
-action with confirmation and idempotency requirements you can inspect and test.
+operation with confirmation and idempotency requirements you can inspect and test.
 
 After [installing from source](/anvil/cookbooks/install-anvil/):
 

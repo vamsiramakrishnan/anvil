@@ -1070,8 +1070,8 @@ details[open] > summary { margin-bottom: 1rem; }
 .experience-steps p { font-size: 13px; line-height: 1.6; color: var(--anvil-color-text-secondary); margin: 8px 0 0; }
 .output-guide > p { color: var(--anvil-color-text-muted); font-size: 13px; margin-top: 8px; }
 .output-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-block: 1px solid var(--anvil-color-hairline); }
-.output-options button { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 20px 14px; text-align: left; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; cursor: pointer; min-width: 0; }
-.output-options button[aria-pressed="true"] { border-bottom-color: var(--anvil-color-text-accent); background: var(--anvil-color-surface); }
+.output-options a { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 20px 14px; text-align: left; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; cursor: pointer; min-width: 0; }
+.output-options a[aria-current="page"] { border-bottom-color: var(--anvil-color-text-accent); background: var(--anvil-color-surface); }
 .output-options span, .output-options small { font-size: 12px; line-height: 1.6; color: var(--anvil-color-text-secondary); }
 .output-options small { margin-top: auto; color: var(--anvil-color-text-muted); }
 .output-instructions { padding: 20px 0; max-width: 760px; font-size: 13px; }
@@ -1083,3 +1083,22 @@ details[open] > summary { margin-bottom: 1rem; }
 @media (max-width: 1100px) { .output-options { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 800px) { .experience-steps, .output-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } .create-guide { display: block; } }
 @media (max-width: 480px) { .experience-steps, .output-options { grid-template-columns: 1fr; } }
+
+/* Task navigation uses the same hierarchy as the documentation. */
+.nav-section + .nav-section { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--anvil-color-hairline); }
+.nav-section-label { display: block; padding: 0 10px 8px; font-size: 11px; font-weight: 600; color: var(--anvil-color-text-muted); }
+.nav-section a { font-weight: 400; }
+.nav-section a[aria-current="page"] { font-weight: 600; }
+.output-options a { text-decoration: none; color: var(--anvil-color-text); }
+.output-options a:hover { background: var(--anvil-color-surface); }
+.output-options a:focus-visible { outline-offset: -3px; }
+.output-instructions li { margin-bottom: 10px; line-height: 1.7; }
+.concept-note { padding: 18px 22px; border-left: 2px solid var(--anvil-color-hairline-strong); background: var(--anvil-color-surface); font-size: 13px; }
+.concept-note p { max-width: 76ch; color: var(--anvil-color-text-secondary); line-height: 1.7; margin: 8px 0; }
+.form-help { color: var(--anvil-color-text-secondary); font-size: 13px; line-height: 1.7; }
+.form-section > summary { cursor: pointer; font-weight: 500; padding-block: 4px; }
+.form-section[open] > summary { margin-bottom: 18px; }
+.page-heading h1, .view-head h1 { font-size: clamp(26px, 2.4vw, 36px); font-weight: 500; line-height: 1.2; letter-spacing: -1.1px; }
+.view-head .sub { max-width: 72ch; line-height: 1.7; }
+.business-step > summary { padding-block: 8px; }
+@media (max-width: 800px) { .nav-section + .nav-section { margin-top: 12px; padding-top: 12px; } }

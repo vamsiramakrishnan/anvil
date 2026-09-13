@@ -253,12 +253,17 @@ export function tone(value: string): string {
 
 export const BUNDLE_VIEWS: ReadonlyArray<readonly [View, string, string]> = [
   ["overview", "Overview", "01"],
-  ["queue", "Decision queue", "02"],
-  ["inspect", "Operations & contracts", "03"],
-  ["catalog", "Operation catalog", "04"],
-  ["workbench", "Command drafts", "05"],
-  ["compare", "Compare bundles", "06"],
-  ["confusion", "Routing quality", "07"],
-  ["evidence", "Evidence & checks", "08"],
-  ["artifacts", "Generated files", "09"],
+  ["catalog", "API operations", "02"],
+  ["queue", "Review", "03"],
+  ["workbench", "Request builder", "04"],
+  ["artifacts", "Interfaces", "05"],
+  ["inspect", "Contract details", "06"],
+  ["compare", "Compare bundles", "07"],
+  ["confusion", "Routing quality", "08"],
+  ["evidence", "Checks & evidence", "09"],
 ];
+
+export const BUNDLE_NAV_GROUPS = [
+  { label: "Build and use", views: ["overview", "catalog", "queue", "workbench", "artifacts"] },
+  { label: "Inspect and improve", views: ["inspect", "compare", "confusion", "evidence"] },
+] as const;

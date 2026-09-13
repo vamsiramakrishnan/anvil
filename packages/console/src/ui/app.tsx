@@ -5,6 +5,7 @@ import { ErrorBox } from "./components.js";
 import { useLoad } from "./hooks.js";
 import {
   type Benchmark,
+  BUNDLE_NAV_GROUPS,
   BUNDLE_VIEWS,
   href,
   type Inspector,
@@ -207,7 +208,12 @@ function BundleFrame({
       break;
     case "artifacts":
       view = (
-        <ArtifactsView api={api} bundleId={route.bundleId} path={route.query.get("path") ?? ""} />
+        <ArtifactsView
+          api={api}
+          bundleId={route.bundleId}
+          path={route.query.get("path") ?? ""}
+          query={route.query}
+        />
       );
       break;
   }
@@ -344,14 +350,19 @@ export function App({ api }: { api: ConsoleApi }) {
               ))}
             </select>
             <nav className="side-nav" aria-label="bundle views">
-              {BUNDLE_VIEWS.map(([view, name]) => (
-                <a
-                  href={href(bundleId, view)}
-                  aria-current={route.view === view ? "page" : undefined}
-                  key={view}
-                >
-                  {name}
-                </a>
+              {BUNDLE_NAV_GROUPS.map((group) => (
+                <div className="nav-section" key={group.label}>
+                  <span className="nav-section-label">{group.label}</span>
+                  {group.views.map((view) => (
+                    <a
+                      href={href(bundleId, view)}
+                      aria-current={route.view === view ? "page" : undefined}
+                      key={view}
+                    >
+                      {BUNDLE_VIEWS.find(([id]) => id === view)?.[1]}
+                    </a>
+                  ))}
+                </div>
               ))}
             </nav>
           </div>

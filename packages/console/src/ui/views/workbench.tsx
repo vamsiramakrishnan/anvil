@@ -161,7 +161,7 @@ function RequestEditor({
             {op.state !== "approved"
               ? "Review its policy before approving it."
               : "An approved workflow supersedes it."}{" "}
-            <a href={href(bundleId, "queue")}>Open decision queue</a>
+            <a href={href(bundleId, "queue")}>Review this operation</a>
           </div>
         ) : null}
       </Panel>

@@ -230,7 +230,7 @@ export function CreateView({
                   {files.length > 0 ? (
                     <>
                       <label className="field">
-                        Entrypoint
+                        Main specification file
                         <select
                           value={entrypoint}
                           required
@@ -305,7 +305,7 @@ export function CreateView({
                     </span>
                   </label>
                   <label className="field">
-                    Entrypoint, if the directory contains several contracts
+                    Main specification file, if the folder has several contracts
                     <input
                       value={entrypoint}
                       placeholder="openapi.yaml"
@@ -318,6 +318,9 @@ export function CreateView({
             <div className="form-section">
               <Label>02 · Destination</Label>
               <h2>Name the bundle</h2>
+              <p className="form-help">
+                A bundle contains this API’s contracts, generated interfaces, and review state.
+              </p>
               <label className="field">
                 Bundle name
                 <input
@@ -335,7 +338,7 @@ export function CreateView({
               </label>
             </div>
             <details className="form-section">
-              <summary>Semantic overrides and approval policy</summary>
+              <summary>Names, behavior, and approval settings</summary>
               <label className="field">
                 Manifest (optional)
                 <textarea
@@ -367,7 +370,7 @@ export function CreateView({
                 className="btn btn-primary"
                 disabled={busy || reading || (mode === "upload" && (!files.length || !entrypoint))}
               >
-                {busy ? "Compiling bundle…" : reading ? "Reading files…" : "Compile bundle →"}
+                {busy ? "Generating bundle…" : reading ? "Reading files…" : "Generate bundle →"}
               </button>
               <span>Existing bundles are preserved.</span>
             </div>
@@ -399,19 +402,36 @@ export function CreateView({
       </div>
       {result ? (
         <section ref={resultRef} className="creation-result" role="status">
-          <Tag>Bundle created</Tag>
+          <Tag>
+            {result.diagnostics.some((d) => d.level === "error")
+              ? "Contract errors need attention"
+              : "Bundle generated"}
+          </Tag>
           <h2>{result.id}</h2>
           <p>
             {result.operations} operations · {result.generatedFiles} generated files ·{" "}
             {result.diagnostics.filter((d) => d.level === "error").length} errors ·{" "}
             {result.diagnostics.filter((d) => d.level === "warning").length} warnings
           </p>
+          <p>
+            {result.diagnostics.some((d) => d.level === "error")
+              ? "Inspect the contract errors before using the generated interfaces."
+              : "Review the imported API operations, then choose which ones agents can call."}
+          </p>
           <div className="chips">
-            <a className="btn btn-primary" href={href(result.id, "overview")}>
-              Open bundle →
+            <a
+              className="btn btn-primary"
+              href={href(
+                result.id,
+                result.diagnostics.some((d) => d.level === "error") ? "inspect" : "catalog",
+              )}
+            >
+              {result.diagnostics.some((d) => d.level === "error")
+                ? "Inspect contract errors →"
+                : "Review API operations →"}
             </a>
             <a className="btn" href={href(result.id, "queue")}>
-              Review decisions
+              Review operations
             </a>
           </div>
         </section>

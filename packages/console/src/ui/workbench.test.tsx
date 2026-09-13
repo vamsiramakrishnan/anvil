@@ -72,7 +72,7 @@ describe("request and navigation isolation", () => {
       .mockRejectedValue(new Error("malformed benchmark"));
     location.hash = href("payments", "inspect");
     render(<App api={api} />);
-    await screen.findByRole("heading", { name: "Operations & contracts" });
+    await screen.findByRole("heading", { name: "Contract details" });
     expect(benchmark).not.toHaveBeenCalled();
   });
   it("round-trips every view with nested bundle ids, and recovers from malformed links", () => {

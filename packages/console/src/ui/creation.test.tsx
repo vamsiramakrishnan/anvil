@@ -138,8 +138,8 @@ describe("workspace navigation", () => {
     const { requests } = mount("#/b/payments/overview");
     await screen.findByRole("heading", { level: 1 });
     expect(requests.some((path) => /\/(queue|packs|benchmark)$/.test(path))).toBe(false);
-    fireEvent.click(screen.getByRole("link", { name: "Generated files" }));
-    await screen.findByRole("heading", { name: "Generated files" });
+    fireEvent.click(screen.getByRole("link", { name: "Interfaces" }));
+    await screen.findByRole("heading", { name: "Interfaces" });
     expect(requests.some((path) => path.endsWith("/artifacts"))).toBe(true);
     expect(requests.some((path) => /\/(queue|packs|benchmark)$/.test(path))).toBe(false);
   });
@@ -147,16 +147,17 @@ describe("workspace navigation", () => {
     const { requests } = mount("#/b/payments/artifacts");
     const choices = await screen.findByRole("region", { name: "Choose an interface" });
     await screen.findByRole("link", { name: /skill\/SKILL.md/ });
-    fireEvent.click(within(choices).getByRole("button", { name: /^Gemini Enterprise/ }));
+    fireEvent.click(within(choices).getByRole("link", { name: /^Gemini Enterprise/ }));
+    await screen.findByRole("heading", { name: "Connect to Gemini Enterprise" });
     expect(screen.queryByRole("link", { name: /skill\/SKILL.md/ })).toBeNull();
-    expect(screen.getByText("Separate target setup")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Continue in your terminal" })).toBeTruthy();
+    expect(screen.getByText("Terminal setup")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Connect to Gemini Enterprise" })).toBeTruthy();
     expect(screen.getByText("anvil target gemini-enterprise --help")).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "Read the setup guide →" }).getAttribute("href"),
     ).toContain("connect-gemini-enterprise");
-    fireEvent.click(within(choices).getByRole("button", { name: "Skill" }));
-    expect(screen.getByRole("link", { name: /skill\/SKILL.md/ })).toBeTruthy();
+    fireEvent.click(within(choices).getByRole("link", { name: "Skill" }));
+    expect(await screen.findByRole("link", { name: /skill\/SKILL.md/ })).toBeTruthy();
     expect(requests.some((path) => /\/(approve|create|target)$/.test(path))).toBe(false);
   });
   it("opens navigation with Ctrl K and follows its keyboard selection", async () => {

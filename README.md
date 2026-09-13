@@ -6,9 +6,9 @@ Bring a REST, SOAP / WSDL, gRPC, or GraphQL contract. Anvil generates a skill,
 CLI, MCP server, and client SDKs. A separate target step produces a Gemini
 Enterprise connector kit.
 
-Define what the agent should do. Give actions clear names and typed inputs.
-Bind them to the source API, review their behavior, then generate the interfaces
-you need. The same action contract follows each interface.
+Review each API operation’s name, typed inputs, and behavior. Approve what
+agents may call. Generated interfaces share the operation contracts and
+execution policies.
 
 Source install · Node.js 22.17+ · pnpm · Apache-2.0
 
@@ -21,17 +21,24 @@ Source install · Node.js 22.17+ · pnpm · Apache-2.0
 | Step | What you do | What you get |
 |---|---|---|
 | Import | Supply an API contract and its supporting files | A captured source and generated bundle |
-| Shape | Review names, inputs, effects, and business actions | An action contract agents can use |
+| Review | Inspect operation names, inputs, and effects; approve callable operations | Reviewed operation contracts |
 | Try | Preview requests and run local checks | Evidence of how the generated tools behave |
 | Use | Choose a skill, CLI, MCP server, SDK, or connector | Files and setup instructions for your consumer |
 
 The console follows this flow: `pnpm anvil console . --open` after building.
-Open **Import API** to start. Open a bundle's **Generated files** to choose an
-interface and inspect its files.
+Open **Import API** to start, then **Review**. Use **API operations** to preview
+requests and **Request builder** to prepare CLI and MCP drafts. Open
+**Interfaces** for generated files and setup instructions.
 
-Business actions can bind several API operations to one task. A skill explains
-when and how to call those actions; executable composition belongs in the action
-contract so the CLI, MCP server, and SDKs can use it too.
+An **API operation** is one call imported from the source specification. A
+**bundle** contains its API’s contracts, generated files, and review state. An
+**interface** is how an agent or application uses those operations.
+
+A **business action** defines a task using one or more API operations. This is
+an optional, separate workflow: **Business actions** currently imports a project
+JSON containing action definitions, source snapshots, and evaluation tasks.
+A skill explains when and how to call an action; the action contract defines
+its executable steps.
 
 ## Compile a tool you can inspect
 

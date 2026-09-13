@@ -90,11 +90,11 @@ export function WorkspaceView({ loaded }: { loaded: Loaded<ConsoleResponse<"work
           <strong>Bring your API</strong>
           <p>Upload a contract or use files in your workspace.</p>
         </a>
-        <a href="#/projects">
-          <span>02 · Shape</span>
-          <strong>Define useful actions</strong>
-          <p>Give actions business names, inputs, and source bindings.</p>
-        </a>
+        <div>
+          <span>02 · Review</span>
+          <strong>Choose callable operations</strong>
+          <p>Open a bundle to review names, inputs, and behavior.</p>
+        </div>
         <div>
           <span>03 · Try</span>
           <strong>Check an agent call</strong>
@@ -103,9 +103,17 @@ export function WorkspaceView({ loaded }: { loaded: Loaded<ConsoleResponse<"work
         <div>
           <span>04 · Use</span>
           <strong>Choose an interface</strong>
-          <p>Open Generated files for skills, commands, SDKs, and connectors.</p>
+          <p>Open Interfaces for skills, commands, SDKs, and connector setup.</p>
         </div>
       </nav>
+      <aside className="concept-note">
+        <strong>Need a task that spans API operations?</strong>
+        <p>
+          A business action defines the agent’s task and binds its steps to source operations.
+          Manage those definitions in a separate project.
+        </p>
+        <a href="#/projects">Open business actions →</a>
+      </aside>
       {loaded.data.issues?.length ? (
         <div className="error" role="alert">
           <strong>Some bundles could not be read</strong>
