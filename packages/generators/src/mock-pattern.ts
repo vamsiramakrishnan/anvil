@@ -1,9 +1,31 @@
-/** Bounded deterministic witnesses for common OpenAPI regexes. Always validate the result. */
-export function patternExample(pattern: string): string | undefined {
+import { Script } from "node:vm";
+
+// Spec-controlled regexes execute only inside this interruptible call. A bound
+// on pattern/candidate length alone does not bound backtracking work.
+const matchCandidates = new Script(`
+  const regex = new RegExp(pattern);
+  candidates.find(value => regex.test(value));
+`);
+const witnessCache = new Map<string, string | undefined>();
+
+/** Bounded deterministic witnesses for common OpenAPI regexes. */
+export function patternExample(
+  pattern: string,
+  options: {
+    candidates?: string[];
+    minLength?: number;
+    maxLength?: number;
+    accept?: (value: string) => boolean;
+  } = {},
+): string | undefined {
   if (pattern.length > 1000) return undefined;
+  const minimum = Math.max(0, options.minLength ?? 0);
+  const maximum = Math.min(2048, options.maxLength ?? 2048);
+  if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum) || minimum > maximum)
+    return undefined;
   try {
-    const regex = new RegExp(pattern);
     const candidates = [
+      ...(options.candidates ?? []),
       "550e8400-e29b-41d4-a716-446655440000",
       "AA",
       "US",
@@ -77,7 +99,30 @@ export function patternExample(pattern: string): string | undefined {
     } catch {
       /* Known witnesses may still satisfy it. */
     }
-    return candidates.find((value) => regex.test(value));
+    const bounded = [
+      ...new Set(
+        candidates.flatMap((value) => [
+          value,
+          value.length && value.length < minimum
+            ? value.repeat(Math.ceil(minimum / value.length)).slice(0, minimum)
+            : value.slice(0, maximum),
+        ]),
+      ),
+    ].filter(
+      (value) =>
+        value.length >= minimum && value.length <= maximum && (options.accept?.(value) ?? true),
+    );
+    const key = JSON.stringify([pattern, bounded]);
+    if (witnessCache.has(key)) return witnessCache.get(key);
+    let witness: string | undefined;
+    try {
+      witness = matchCandidates.runInNewContext({ pattern, candidates: bounded }, { timeout: 50 });
+    } catch {
+      // Invalid or prohibitively expensive patterns have no generated witness.
+    }
+    if (witnessCache.size >= 128) witnessCache.clear();
+    witnessCache.set(key, witness);
+    return witness;
   } catch {
     return undefined;
   }

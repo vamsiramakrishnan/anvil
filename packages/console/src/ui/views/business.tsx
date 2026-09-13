@@ -339,6 +339,7 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                   <label className="field">
                     <span className="label">Business outcome</span>
                     <textarea
+                      aria-label="Business outcome"
                       value={action.description}
                       onChange={(e) => change({ ...action, description: e.target.value })}
                     />
@@ -372,6 +373,7 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                       <label className="field">
                         <span className="label">Why this source is authoritative</span>
                         <textarea
+                          aria-label={`Why this source is authoritative: ${step.id}`}
                           value={step.authority}
                           onChange={(e) =>
                             change({

@@ -8,7 +8,7 @@ import {
   operationSafetyInputKeys,
   resolveIdempotencyCarrier,
 } from "@anvil/air";
-import { patternExample } from "./mock-pattern.js";
+import { stringExample } from "./mock-string.js";
 
 /**
  * Mock generation with provenance (spec: "Mock generation"). Mocks are not
@@ -252,47 +252,6 @@ function ownExample(schema: JsonSchema, cache: Map<JsonSchema, unknown>, depth: 
       }
       if (Object.keys(schema).every((k) => ANNOTATION_KEYS.has(k))) return {};
       return null;
-    }
-  }
-}
-
-function stringExample(schema: JsonSchema): string {
-  if (typeof schema.pattern === "string") {
-    const witness = patternExample(schema.pattern);
-    if (witness !== undefined) return witness;
-  }
-  switch (schema.format) {
-    case "date":
-      return "2026-07-09";
-    case "date-time":
-      return "2026-07-09T00:00:00Z";
-    case "time":
-      return "00:00:00Z";
-    case "uuid":
-      return "550e8400-e29b-41d4-a716-446655440000";
-    case "email":
-      return "user@example.com";
-    case "uri":
-    case "url":
-      return "https://example.com/resource";
-    case "hostname":
-      return "api.example.com";
-    case "ipv4":
-      return "192.0.2.1";
-    case "ipv6":
-      return "2001:db8::1";
-    default: {
-      const base = "example";
-      const minimum =
-        typeof schema.minLength === "number" && Number.isSafeInteger(schema.minLength)
-          ? Math.max(0, schema.minLength)
-          : 0;
-      const maximum =
-        typeof schema.maxLength === "number" && Number.isSafeInteger(schema.maxLength)
-          ? Math.max(0, schema.maxLength)
-          : Number.POSITIVE_INFINITY;
-      const length = Math.max(minimum, Math.min(maximum, base.length));
-      return length <= base.length ? base.slice(0, length) : base.padEnd(length, "x");
     }
   }
 }

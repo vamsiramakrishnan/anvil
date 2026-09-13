@@ -515,6 +515,9 @@ test("business projects import, review, save, and build through the real console
   ).toBeVisible();
   const approval = page.getByRole("checkbox", { name: /I reviewed this action/ });
   await expect(approval).not.toBeChecked();
+  await expect(page.getByRole("textbox", { name: "Business outcome", exact: true })).toHaveValue(
+    project.definition.actions[0].description,
+  );
   // Invalid structured edits stay in the editor without corrupting its action model.
   const input = page.getByLabel("Public inputs", { exact: true });
   await input.fill("null");
