@@ -360,6 +360,8 @@ test("6. the browser cannot drive a mutation without the token, and another orig
 test("the workbench compiles a pasted contract and opens real artifacts and evidence", async ({
   page,
 }) => {
+  // Lower navigation entries must remain reachable on a short desktop window.
+  await page.setViewportSize({ width: 1280, height: 600 });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`${state.url}/#/new`);
@@ -468,6 +470,8 @@ test("10. workspace and request workbench fit a phone viewport in both themes", 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${state.url}/#/`);
   await expect(page.getByRole("heading", { name: "workspace" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Business capabilities", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /theme:/ })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
