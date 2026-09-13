@@ -1,5 +1,5 @@
 import type { JsonSchema, Operation } from "@anvil/air";
-import { operationInputSchema } from "@anvil/air";
+import { materializeSchemaBranches, operationInputSchema } from "@anvil/air";
 import { z } from "zod";
 
 /**
@@ -52,5 +52,7 @@ function jsonSchemaToZod(schema: JsonSchema): z.ZodType {
   // Zod's JSON-Schema converter preserves intersections, nested object rules,
   // formats, patterns, and additionalProperties. A hand-written type switch
   // would silently discard source constraints on an idempotency carrier.
-  return z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
+  return z.fromJSONSchema(
+    materializeSchemaBranches(schema) as Parameters<typeof z.fromJSONSchema>[0],
+  );
 }

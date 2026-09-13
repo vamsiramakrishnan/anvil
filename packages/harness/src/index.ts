@@ -8,6 +8,11 @@
 
 export * from "./agent.js";
 export * from "./bundle-driver.js";
+export * from "./business/comparison.js";
+export * from "./business/impact.js";
+export * from "./business/jobs.js";
+export * from "./business/owned-evaluator.js";
+export * from "./business/project.js";
 export * from "./conformance.js";
 export * from "./disclosure-reconcile.js";
 export * from "./drift-alarm.js";

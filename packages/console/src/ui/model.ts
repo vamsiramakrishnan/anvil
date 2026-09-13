@@ -25,10 +25,14 @@ export type View =
 
 export type Route =
   | { view: "workspace" | "new" }
+  | { view: "projects"; projectId?: string }
   | { view: View; bundleId: string; query: URLSearchParams };
 
 export function parseHash(hash: string): Route {
   const [path = "", search = ""] = hash.replace(/^#/, "").split("?");
+  if (path === "/projects") return { view: "projects" };
+  if (/^\/projects\/[a-z][a-z0-9-]{0,63}$/.test(path))
+    return { view: "projects", projectId: path.slice(10) };
   if (path === "/new") return { view: "new" };
   const match =
     /^\/b\/([^/]+)\/(overview|queue|inspect|confusion|evidence|artifacts|catalog|workbench|assurance|compare)$/.exec(

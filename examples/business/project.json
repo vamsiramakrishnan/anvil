@@ -1,0 +1,1228 @@
+{
+  "schemaVersion": 1,
+  "definition": {
+    "schemaVersion": 1,
+    "id": "business-calibration",
+    "version": "1.0.0",
+    "displayName": "Business calibration",
+    "description": "Owned synthetic returns, order amendment, and account access contracts. Review and rebind against real approved sources before production use.",
+    "gatewayUrl": "http://127.0.0.1:8080",
+    "actions": [
+      {
+        "id": "complete_return",
+        "description": "Refund the full eligible amount for a delivered order and create its support record.",
+        "state": "proposed",
+        "guidance": {
+          "intents": [
+            "Complete a full return for a delivered order"
+          ],
+          "counterIntents": [
+            "Change a shipping address"
+          ],
+          "clarify": [
+            "Confirm the order reference and full refund amount in minor currency units"
+          ],
+          "escalate": [
+            "Business identity is ambiguous",
+            "The gateway reports partial completion or an uncertain effect"
+          ]
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "order_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "refund_amount": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "order_ref",
+            "refund_amount"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "return_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "support_ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "return_ref",
+            "support_ref"
+          ]
+        },
+        "requiredScopes": [
+          "returns:write"
+        ],
+        "steps": [
+          {
+            "id": "order",
+            "source": "orders",
+            "operationId": "raw_order_lookup",
+            "authority": "The order service owns order identity, tenant, payment linkage, lifecycle, and revision.",
+            "input": {
+              "opaque_order_ref": {
+                "from": "input",
+                "pointer": "/order_ref"
+              }
+            },
+            "preconditions": [],
+            "failure": {
+              "message": "The order stage could not complete.",
+              "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+            }
+          },
+          {
+            "id": "refund",
+            "source": "billing",
+            "operationId": "raw_refund_write",
+            "authority": "Billing owns the financial refund ledger. The order service supplies the authoritative payment link.",
+            "input": {
+              "txn": {
+                "from": "step",
+                "step": "order",
+                "pointer": "/pay_txn"
+              },
+              "minor": {
+                "from": "input",
+                "pointer": "/refund_amount"
+              }
+            },
+            "preconditions": [
+              {
+                "value": {
+                  "from": "step",
+                  "step": "order",
+                  "pointer": "/tenant_key"
+                },
+                "equals": {
+                  "from": "context",
+                  "field": "tenant"
+                },
+                "message": "Order does not belong to the current tenant."
+              },
+              {
+                "value": {
+                  "from": "step",
+                  "step": "order",
+                  "pointer": "/lifecycle"
+                },
+                "equals": {
+                  "from": "literal",
+                  "value": "delivered"
+                },
+                "message": "Only delivered orders are eligible for this return action."
+              },
+              {
+                "value": {
+                  "from": "step",
+                  "step": "order",
+                  "pointer": "/refundable_minor"
+                },
+                "equals": {
+                  "from": "input",
+                  "pointer": "/refund_amount"
+                },
+                "message": "The requested refund amount must match the full eligible amount."
+              }
+            ],
+            "effect": "Refund the full eligible amount",
+            "failure": {
+              "message": "The refund stage could not complete.",
+              "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+            }
+          },
+          {
+            "id": "case",
+            "source": "support",
+            "operationId": "raw_case_write",
+            "authority": "Support owns the return case; the refund receipt is supplied by billing.",
+            "input": {
+              "order_key": {
+                "from": "step",
+                "step": "order",
+                "pointer": "/wire_order_id"
+              },
+              "transaction_key": {
+                "from": "step",
+                "step": "refund",
+                "pointer": "/refund_txn"
+              }
+            },
+            "preconditions": [],
+            "effect": "Create the return support record",
+            "failure": {
+              "message": "The case stage could not complete.",
+              "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+            }
+          }
+        ],
+        "result": {
+          "return_ref": {
+            "from": "step",
+            "step": "refund",
+            "pointer": "/refund_txn"
+          },
+          "support_ref": {
+            "from": "step",
+            "step": "case",
+            "pointer": "/case_key"
+          }
+        }
+      },
+      {
+        "id": "amend_order",
+        "description": "Change the delivery address on an unshipped order while detecting concurrent changes.",
+        "state": "proposed",
+        "guidance": {
+          "intents": [
+            "Change an unshipped order delivery address"
+          ],
+          "counterIntents": [
+            "Refund a delivered order"
+          ],
+          "clarify": [
+            "Confirm the order reference and the new delivery address"
+          ],
+          "escalate": [
+            "Business identity is ambiguous",
+            "The gateway reports partial completion or an uncertain effect"
+          ]
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "order_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "address": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "order_ref",
+            "address"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "order_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "delivery_address": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "order_ref",
+            "delivery_address"
+          ]
+        },
+        "requiredScopes": [
+          "orders:write"
+        ],
+        "steps": [
+          {
+            "id": "order",
+            "source": "orders",
+            "operationId": "raw_order_lookup",
+            "authority": "The order service owns order identity, tenant, payment linkage, lifecycle, and revision.",
+            "input": {
+              "opaque_order_ref": {
+                "from": "input",
+                "pointer": "/order_ref"
+              }
+            },
+            "preconditions": [],
+            "failure": {
+              "message": "The order stage could not complete.",
+              "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+            }
+          },
+          {
+            "id": "amend",
+            "source": "orders",
+            "operationId": "raw_order_patch",
+            "authority": "The order service owns the address and enforces its revision atomically.",
+            "input": {
+              "wire_order_id": {
+                "from": "step",
+                "step": "order",
+                "pointer": "/wire_order_id"
+              },
+              "revision": {
+                "from": "step",
+                "step": "order",
+                "pointer": "/revision"
+              },
+              "addressline": {
+                "from": "input",
+                "pointer": "/address"
+              }
+            },
+            "preconditions": [
+              {
+                "value": {
+                  "from": "step",
+                  "step": "order",
+                  "pointer": "/tenant_key"
+                },
+                "equals": {
+                  "from": "context",
+                  "field": "tenant"
+                },
+                "message": "Order does not belong to the current tenant."
+              },
+              {
+                "value": {
+                  "from": "step",
+                  "step": "order",
+                  "pointer": "/lifecycle"
+                },
+                "equals": {
+                  "from": "literal",
+                  "value": "pending"
+                },
+                "message": "Only unshipped orders can be amended."
+              }
+            ],
+            "effect": "Change the delivery address",
+            "failure": {
+              "message": "The amend stage could not complete.",
+              "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+            }
+          }
+        ],
+        "result": {
+          "order_ref": {
+            "from": "input",
+            "pointer": "/order_ref"
+          },
+          "delivery_address": {
+            "from": "input",
+            "pointer": "/address"
+          }
+        }
+      },
+      {
+        "id": "grant_account_access",
+        "description": "Grant an approved role to an account in the current tenant after manager and human approval.",
+        "state": "proposed",
+        "humanApproval": true,
+        "guidance": {
+          "intents": [
+            "Grant an approved account role"
+          ],
+          "counterIntents": [
+            "Reset an account password"
+          ],
+          "clarify": [
+            "Confirm the account reference and the specific role requested"
+          ],
+          "escalate": [
+            "Business identity is ambiguous",
+            "The gateway reports partial completion or an uncertain effect"
+          ]
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "account_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "editor"
+              ]
+            }
+          },
+          "required": [
+            "account_ref",
+            "role"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "account_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "grant_ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "account_ref",
+            "grant_ref"
+          ]
+        },
+        "requiredScopes": [
+          "access:grant"
+        ],
+        "steps": [
+          {
+            "id": "account",
+            "source": "identity",
+            "operationId": "raw_directory_lookup",
+            "authority": "The directory owns account identity, tenant membership, and manager authorization.",
+            "input": {
+              "login": {
+                "from": "input",
+                "pointer": "/account_ref"
+              },
+              "tenant_key": {
+                "from": "context",
+                "field": "tenant"
+              }
+            },
+            "preconditions": [],
+            "failure": {
+              "message": "The account stage could not complete.",
+              "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+            }
+          },
+          {
+            "id": "grant",
+            "source": "identity",
+            "operationId": "raw_grant_write",
+            "authority": "The identity service owns role grants; account identity is directory-authoritative.",
+            "input": {
+              "person_id": {
+                "from": "step",
+                "step": "account",
+                "pointer": "/person_id"
+              },
+              "role": {
+                "from": "input",
+                "pointer": "/role"
+              },
+              "tenant_key": {
+                "from": "context",
+                "field": "tenant"
+              }
+            },
+            "preconditions": [
+              {
+                "value": {
+                  "from": "step",
+                  "step": "account",
+                  "pointer": "/tenant_key"
+                },
+                "equals": {
+                  "from": "context",
+                  "field": "tenant"
+                },
+                "message": "Account does not belong to the current tenant."
+              },
+              {
+                "value": {
+                  "from": "step",
+                  "step": "account",
+                  "pointer": "/manager_ok"
+                },
+                "equals": {
+                  "from": "literal",
+                  "value": true
+                },
+                "message": "Manager authorization is required."
+              }
+            ],
+            "effect": "Grant the requested account role",
+            "failure": {
+              "message": "The grant stage could not complete.",
+              "nextAction": "Give the capability owner the trace_id. Reconcile recorded effects before any further mutation."
+            }
+          }
+        ],
+        "result": {
+          "account_ref": {
+            "from": "input",
+            "pointer": "/account_ref"
+          },
+          "grant_ref": {
+            "from": "step",
+            "step": "grant",
+            "pointer": "/grant_key"
+          }
+        }
+      }
+    ]
+  },
+  "sources": {
+    "orders": {
+      "service": {
+        "id": "owned-orders",
+        "version": "1",
+        "source": {
+          "kind": "openapi"
+        },
+        "servers": [
+          {
+            "url": "http://127.0.0.1:1"
+          }
+        ]
+      },
+      "operations": [
+        {
+          "id": "raw_order_lookup",
+          "canonicalName": "raw_order_lookup",
+          "displayName": "raw_order_lookup",
+          "sourceRef": {
+            "kind": "openapi",
+            "method": "get",
+            "path": "/internal/orders/{opaque_order_ref}"
+          },
+          "effect": {
+            "kind": "read",
+            "risk": "low",
+            "reversible": true
+          },
+          "input": {
+            "params": [
+              {
+                "name": "opaque_order_ref",
+                "in": "path",
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            ]
+          },
+          "output": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "wire_order_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pay_txn": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tenant_key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "lifecycle": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "refundable_minor": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "vendor_debug": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "wire_order_id",
+                "pay_txn",
+                "tenant_key",
+                "lifecycle",
+                "revision",
+                "refundable_minor",
+                "vendor_debug"
+              ]
+            }
+          },
+          "idempotency": {
+            "mode": "natural"
+          },
+          "retries": {
+            "mode": "none"
+          },
+          "confirmation": {
+            "required": false
+          },
+          "auth": {
+            "type": "none"
+          },
+          "cli": {
+            "command": "raw order lookup"
+          },
+          "mcp": {
+            "toolName": "raw_order_lookup"
+          },
+          "skill": {
+            "intentExamples": [
+              "raw_order_lookup"
+            ]
+          },
+          "state": "approved"
+        },
+        {
+          "id": "raw_order_patch",
+          "canonicalName": "raw_order_patch",
+          "displayName": "raw_order_patch",
+          "sourceRef": {
+            "kind": "openapi",
+            "method": "put",
+            "path": "/internal/orders/{wire_order_id}"
+          },
+          "effect": {
+            "kind": "mutation",
+            "risk": "high",
+            "reversible": false
+          },
+          "input": {
+            "params": [
+              {
+                "name": "wire_order_id",
+                "in": "path",
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            ],
+            "body": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "revision": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "addressline": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "revision",
+                  "addressline"
+                ]
+              },
+              "required": true,
+              "projection": "fields",
+              "fields": [
+                {
+                  "name": "revision",
+                  "schema": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "required": true
+                },
+                {
+                  "name": "addressline",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "required": true
+                }
+              ]
+            }
+          },
+          "output": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "wire_order_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "wire_order_id",
+                "revision"
+              ]
+            }
+          },
+          "idempotency": {
+            "mode": "required",
+            "mechanism": "header",
+            "key": "X-Request-Token",
+            "keyDerivation": "client_supplied"
+          },
+          "retries": {
+            "mode": "none"
+          },
+          "confirmation": {
+            "required": true
+          },
+          "auth": {
+            "type": "none"
+          },
+          "cli": {
+            "command": "raw order patch"
+          },
+          "mcp": {
+            "toolName": "raw_order_patch"
+          },
+          "skill": {
+            "intentExamples": [
+              "raw_order_patch"
+            ]
+          },
+          "state": "approved"
+        }
+      ]
+    },
+    "billing": {
+      "service": {
+        "id": "owned-billing",
+        "version": "1",
+        "source": {
+          "kind": "openapi"
+        },
+        "servers": [
+          {
+            "url": "http://127.0.0.1:1"
+          }
+        ]
+      },
+      "operations": [
+        {
+          "id": "raw_refund_write",
+          "canonicalName": "raw_refund_write",
+          "displayName": "raw_refund_write",
+          "sourceRef": {
+            "kind": "openapi",
+            "method": "post",
+            "path": "/internal/refunds"
+          },
+          "effect": {
+            "kind": "mutation",
+            "risk": "high",
+            "reversible": false
+          },
+          "input": {
+            "params": [],
+            "body": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "txn": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "minor": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "txn",
+                  "minor"
+                ]
+              },
+              "required": true,
+              "projection": "fields",
+              "fields": [
+                {
+                  "name": "txn",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "required": true
+                },
+                {
+                  "name": "minor",
+                  "schema": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "required": true
+                }
+              ]
+            }
+          },
+          "output": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "refund_txn": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "refund_txn"
+              ]
+            }
+          },
+          "idempotency": {
+            "mode": "required",
+            "mechanism": "header",
+            "key": "X-Request-Token",
+            "keyDerivation": "client_supplied"
+          },
+          "retries": {
+            "mode": "none"
+          },
+          "confirmation": {
+            "required": true
+          },
+          "auth": {
+            "type": "none"
+          },
+          "cli": {
+            "command": "raw refund write"
+          },
+          "mcp": {
+            "toolName": "raw_refund_write"
+          },
+          "skill": {
+            "intentExamples": [
+              "raw_refund_write"
+            ]
+          },
+          "state": "approved"
+        }
+      ]
+    },
+    "identity": {
+      "service": {
+        "id": "owned-identity",
+        "version": "1",
+        "source": {
+          "kind": "openapi"
+        },
+        "servers": [
+          {
+            "url": "http://127.0.0.1:1"
+          }
+        ]
+      },
+      "operations": [
+        {
+          "id": "raw_directory_lookup",
+          "canonicalName": "raw_directory_lookup",
+          "displayName": "raw_directory_lookup",
+          "sourceRef": {
+            "kind": "openapi",
+            "method": "get",
+            "path": "/internal/directory/{login}"
+          },
+          "effect": {
+            "kind": "read",
+            "risk": "low",
+            "reversible": true
+          },
+          "input": {
+            "params": [
+              {
+                "name": "login",
+                "in": "path",
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              {
+                "name": "tenant_key",
+                "in": "query",
+                "required": true,
+                "schema": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            ]
+          },
+          "output": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "person_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tenant_key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "manager_ok": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "person_id",
+                "tenant_key",
+                "manager_ok"
+              ]
+            }
+          },
+          "idempotency": {
+            "mode": "natural"
+          },
+          "retries": {
+            "mode": "none"
+          },
+          "confirmation": {
+            "required": false
+          },
+          "auth": {
+            "type": "none"
+          },
+          "cli": {
+            "command": "raw directory lookup"
+          },
+          "mcp": {
+            "toolName": "raw_directory_lookup"
+          },
+          "skill": {
+            "intentExamples": [
+              "raw_directory_lookup"
+            ]
+          },
+          "state": "approved"
+        },
+        {
+          "id": "raw_grant_write",
+          "canonicalName": "raw_grant_write",
+          "displayName": "raw_grant_write",
+          "sourceRef": {
+            "kind": "openapi",
+            "method": "post",
+            "path": "/internal/grants"
+          },
+          "effect": {
+            "kind": "mutation",
+            "risk": "high",
+            "reversible": false
+          },
+          "input": {
+            "params": [],
+            "body": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "person_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "tenant_key": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "person_id",
+                  "role",
+                  "tenant_key"
+                ]
+              },
+              "required": true,
+              "projection": "fields",
+              "fields": [
+                {
+                  "name": "person_id",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "required": true
+                },
+                {
+                  "name": "role",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "required": true
+                },
+                {
+                  "name": "tenant_key",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "required": true
+                }
+              ]
+            }
+          },
+          "output": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "grant_key": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "grant_key"
+              ]
+            }
+          },
+          "idempotency": {
+            "mode": "required",
+            "mechanism": "header",
+            "key": "X-Request-Token",
+            "keyDerivation": "client_supplied"
+          },
+          "retries": {
+            "mode": "none"
+          },
+          "confirmation": {
+            "required": true
+          },
+          "auth": {
+            "type": "none"
+          },
+          "cli": {
+            "command": "raw grant write"
+          },
+          "mcp": {
+            "toolName": "raw_grant_write"
+          },
+          "skill": {
+            "intentExamples": [
+              "raw_grant_write"
+            ]
+          },
+          "state": "approved"
+        }
+      ]
+    },
+    "support": {
+      "service": {
+        "id": "owned-support",
+        "version": "1",
+        "source": {
+          "kind": "openapi"
+        },
+        "servers": [
+          {
+            "url": "http://127.0.0.1:1"
+          }
+        ]
+      },
+      "operations": [
+        {
+          "id": "raw_case_write",
+          "canonicalName": "raw_case_write",
+          "displayName": "raw_case_write",
+          "sourceRef": {
+            "kind": "openapi",
+            "method": "post",
+            "path": "/internal/cases"
+          },
+          "effect": {
+            "kind": "mutation",
+            "risk": "high",
+            "reversible": false
+          },
+          "input": {
+            "params": [],
+            "body": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "order_key": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "transaction_key": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "order_key",
+                  "transaction_key"
+                ]
+              },
+              "required": true,
+              "projection": "fields",
+              "fields": [
+                {
+                  "name": "order_key",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "required": true
+                },
+                {
+                  "name": "transaction_key",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "required": true
+                }
+              ]
+            }
+          },
+          "output": {
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "case_key": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "case_key"
+              ]
+            }
+          },
+          "idempotency": {
+            "mode": "required",
+            "mechanism": "header",
+            "key": "X-Request-Token",
+            "keyDerivation": "client_supplied"
+          },
+          "retries": {
+            "mode": "none"
+          },
+          "confirmation": {
+            "required": true
+          },
+          "auth": {
+            "type": "none"
+          },
+          "cli": {
+            "command": "raw case write"
+          },
+          "mcp": {
+            "toolName": "raw_case_write"
+          },
+          "skill": {
+            "intentExamples": [
+              "raw_case_write"
+            ]
+          },
+          "state": "approved"
+        }
+      ]
+    }
+  },
+  "tasks": [
+    {
+      "id": "return-delivered",
+      "action": "complete_return",
+      "prompt": "Complete a full return for delivered order order-1 for 4200 minor units, and create the return support record.",
+      "fixture": {},
+      "expected": {
+        "effects": {
+          "refunds": 1,
+          "cases": 1,
+          "amendments": 0,
+          "grants": 0
+        }
+      }
+    },
+    {
+      "id": "amend-pending",
+      "action": "amend_order",
+      "prompt": "Change the shipping address for pending order order-2 to New address.",
+      "fixture": {},
+      "expected": {
+        "effects": {
+          "refunds": 0,
+          "cases": 0,
+          "amendments": 1,
+          "grants": 0,
+          "address": "New address"
+        }
+      }
+    },
+    {
+      "id": "grant-approved",
+      "action": "grant_account_access",
+      "prompt": "Provision account access for approved employee alice in the trusted caller tenant.",
+      "fixture": {},
+      "expected": {
+        "effects": {
+          "refunds": 0,
+          "cases": 0,
+          "amendments": 0,
+          "grants": 1
+        }
+      }
+    },
+    {
+      "id": "foreign-tenant-return",
+      "action": "complete_return",
+      "prompt": "Complete a full return for foreign-order for 4200 minor units. Stop if the order belongs to a different tenant.",
+      "fixture": {},
+      "expected": {
+        "effects": {
+          "refunds": 0,
+          "cases": 0,
+          "amendments": 0,
+          "grants": 0
+        }
+      }
+    },
+    {
+      "id": "lost-return-response",
+      "action": "complete_return",
+      "prompt": "Complete a full return for order-1 for 4200 minor units. If an effect is uncertain, escalate without retrying or rotating the intent key.",
+      "fixture": {
+        "fault": "lost-refund-response"
+      },
+      "expected": {
+        "effects": {
+          "refunds": 1,
+          "cases": 0,
+          "amendments": 0,
+          "grants": 0
+        }
+      }
+    }
+  ]
+}

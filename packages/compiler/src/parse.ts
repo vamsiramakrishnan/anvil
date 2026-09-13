@@ -91,7 +91,11 @@ export interface OpenApiDocument {
   openapi?: string;
   swagger?: string;
   info?: { title?: string; version?: string; [k: string]: unknown };
-  servers?: Array<{ url: string; description?: string }>;
+  servers?: Array<{
+    url: string;
+    description?: string;
+    variables?: Record<string, { default?: string }>;
+  }>;
   paths?: Record<string, Record<string, unknown>>;
   /**
    * OpenAPI 3.1 top-level `webhooks:` — a map of name → Path Item Object,
