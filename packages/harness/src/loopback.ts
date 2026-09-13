@@ -9,6 +9,7 @@ import {
   diff,
   ensureBundleNodeModules,
   expectedWire,
+  fullyDisclosedSource,
   hermeticCredentialEnv,
   MockControl,
   parseJson,
@@ -145,6 +146,7 @@ export async function runLoopback(
       },
       hints: { scope: [] },
     });
+    source = await fullyDisclosedSource(source, air);
     const src = source;
     const ctl = new MockControl(base);
     const call = (tool: string, args: Record<string, unknown>) =>
@@ -261,7 +263,21 @@ async function checkSurface(source: McpSource, approved: Operation[]): Promise<L
       const wantRequired = (schema.required as string[] | undefined) ?? [];
       const gotRequired = new Set((tool.inputSchema?.required as string[] | undefined) ?? []);
       for (const key of wantRequired) {
-        if (!gotRequired.has(key)) {
+        const property = (
+          schema.properties as Record<string, Record<string, unknown>> | undefined
+        )?.[key];
+        const servedProperty = (
+          tool.inputSchema?.properties as Record<string, Record<string, unknown>> | undefined
+        )?.[key];
+        // The MCP JSON-Schema converter applies declared defaults. Require either
+        // the argument itself or that exact default in the served schema.
+        const sameDefault =
+          property &&
+          Object.hasOwn(property, "default") &&
+          servedProperty &&
+          Object.hasOwn(servedProperty, "default") &&
+          JSON.stringify(property.default) === JSON.stringify(servedProperty.default);
+        if (!gotRequired.has(key) && !sameDefault) {
           problems.push(`${op.mcp.toolName}: input schema does not require "${key}"`);
         }
       }

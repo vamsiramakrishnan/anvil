@@ -18,6 +18,8 @@ import type { CliIO } from "../../io.js";
 import { reportPreservedStaleArtifacts } from "../approve.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
+import { registerBusinessExecution } from "./business-execution.js";
+import { registerBusinessProject } from "./business-project.js";
 import { registerCapabilityCompile } from "./capability-compile.js";
 import { registerCapabilityCompose } from "./capability-compose.js";
 
@@ -128,6 +130,8 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
 
   registerCapabilityCompose(capability, ctx);
   registerCapabilityCompile(capability, ctx);
+  registerBusinessProject(capability, ctx);
+  registerBusinessExecution(capability, ctx);
 }
 
 interface ShowOptions {

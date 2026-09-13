@@ -6,6 +6,7 @@
 
 export * from "./auth.js";
 export * from "./business.js";
+export * from "./business-journal.js";
 export * from "./business-transport.js";
 export * from "./config.js";
 export * from "./credentials.js";

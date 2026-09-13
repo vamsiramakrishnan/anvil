@@ -11,6 +11,7 @@ import {
   diff,
   ensureBundleNodeModules,
   expectedWire,
+  fullyDisclosedSource,
   hermeticCredentialEnv,
   MockControl,
   parseJson,
@@ -266,12 +267,13 @@ export async function runConformance(
       },
       hints: { scope: [] },
     });
+    source = await fullyDisclosedSource(source, air);
     const src = source;
     const mcpCall = (tool: string, args: Record<string, unknown>) =>
       withTimeout(src.callRaw(tool, args), timeoutMs, `mcp ${tool}`);
     const cli = (op: Operation, args: Record<string, unknown>, confirm: boolean) =>
       withTimeout(
-        driveCli(dir, base, op, args, confirm, credentialEnv),
+        driveCli(dir, air.service.id, base, op, args, confirm, credentialEnv),
         timeoutMs,
         `cli ${op.cli.command}`,
       );
@@ -760,13 +762,13 @@ async function checkGateAgreement(
 /** Drive the generated CLI entrypoint as a child, exactly as an agent would. */
 function driveCli(
   dir: string,
+  serviceId: string,
   base: string,
   op: Operation,
   args: Record<string, unknown>,
   confirm: boolean,
   credentialEnv: Record<string, string>,
 ): Promise<CliResult> {
-  const serviceId = op.cli.command.split(" ")[0] as string;
   const rest = op.cli.command.split(" ").slice(1); // <resource> <action>
   const argv = [
     join(dir, "cli", `${serviceId}.mjs`),

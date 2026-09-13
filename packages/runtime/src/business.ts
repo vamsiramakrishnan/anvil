@@ -12,6 +12,7 @@ import {
   operationSafetyInputKeys,
   validateBusinessValue,
 } from "@anvil/air";
+import type { BusinessJournal } from "./business-journal.js";
 import { type ExecuteContext, execute } from "./executor.js";
 import { type IdempotencyLedger, idempotencyKeyIsTransportSafe } from "./idempotency.js";
 
@@ -41,6 +42,7 @@ export interface BusinessResult {
 export interface BusinessHost {
   context: BusinessContext;
   ledger?: IdempotencyLedger;
+  journal?: BusinessJournal;
   env: "dev" | "staging" | "prod";
   /** Source credentials, grants, transport, timeout, policy, and observer remain host-owned. */
   contextFor(source: string, air: AirDocument, operation: Operation): ExecuteContext;
@@ -214,7 +216,42 @@ export async function executeBusiness(
       return refusal;
     }
   }
-  const outcome = await runSteps(plan, action, input, host, trace, key);
+  try {
+    await host.journal?.append(
+      trace,
+      {
+        kind: "started",
+        planDigest: plan.digest,
+        requestDigest: digest,
+        project: plan.definition.id,
+        action: action.id,
+        tenantDigest: hashCanonical(context.tenant),
+        principalDigest: hashCanonical(context.principal),
+      },
+      null,
+    );
+  } catch {
+    return result(
+      "reconciliation_required",
+      "The execution journal is unavailable. No source operation was started.",
+      "Restore the journal and reconcile the reserved intent before retrying.",
+    );
+  }
+  let outcome = await runSteps(plan, action, input, host, trace, key);
+  try {
+    await host.journal?.append(trace, {
+      kind: "finished",
+      status: outcome.status,
+      completedEffects: outcome.completed_effects,
+    });
+  } catch {
+    outcome = {
+      ...outcome,
+      status: "reconciliation_required",
+      message: "The execution journal could not record completion.",
+      next_action: "Inspect the attempted effects before any retry.",
+    };
+  }
   if (key && host.ledger) {
     try {
       await host.ledger.complete(key, outcome);
@@ -292,6 +329,16 @@ async function runSteps(
             ? undefined
             : { id: host.context.principal, scopes: [] }),
       };
+      await host.journal?.append(trace, {
+        kind: "attempted",
+        step: step.id,
+        source: step.source,
+        operation: op.id,
+        mutation: op.effect.kind === "mutation",
+        inputDigest: hashCanonical(stepInput),
+        ...(stepKey ? { keyDigest: hashCanonical(stepKey) } : {}),
+        ...(step.effect ? { effect: step.effect } : {}),
+      });
       mutationAttempted = op.effect.kind === "mutation";
       const output = await execute(
         op,
@@ -309,6 +356,11 @@ async function runSteps(
       if (op.output.schema && !validateBusinessValue(op.output.schema, output.data))
         return failure("An execution dependency returned an invalid result.", mutationAttempted);
       if (mutationAttempted && step.effect) completed.push(step.effect);
+      await host.journal?.append(trace, {
+        kind: "received",
+        step: step.id,
+        outputDigest: hashCanonical(output.data),
+      });
       outputs.set(step.id, output.data);
     }
     const data = project(action.result, input, host.context, outputs);

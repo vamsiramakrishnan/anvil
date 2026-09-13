@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { materializeSchemaBranches } from "./schema-branches.js";
 
 const Name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
 const Pointer = z
@@ -107,7 +108,9 @@ const validators = new WeakMap<object, z.ZodType>();
 export function validateBusinessValue(schema: Record<string, unknown>, value: unknown): boolean {
   let validator = validators.get(schema);
   if (!validator) {
-    validator = z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
+    validator = z.fromJSONSchema(
+      materializeSchemaBranches(schema) as Parameters<typeof z.fromJSONSchema>[0],
+    );
     validators.set(schema, validator);
   }
   return validator.safeParse(value).success;

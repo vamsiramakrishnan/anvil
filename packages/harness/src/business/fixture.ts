@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -147,11 +147,11 @@ export function ownedBusinessHost(backend: OwnedBusinessBackend): BusinessHost {
 
 /** Drives every real generated client against the same business engine and independent state model. */
 export const businessFuzzFixture: FuzzFixtureFactory = async (bundle, _seed, signal) => {
-  const plan: BusinessPlan = loadBusinessPlan(
-    JSON.parse(readFileSync(`${bundle}/runtime/business.plan.json`, "utf8")),
-  );
+  const plan: BusinessPlan | undefined = existsSync(`${bundle}/runtime/business.plan.json`)
+    ? loadBusinessPlan(JSON.parse(readFileSync(`${bundle}/runtime/business.plan.json`, "utf8")))
+    : undefined;
   const backend = new OwnedBusinessBackend();
-  const transport = new BusinessTransport(plan, ownedBusinessHost(backend));
+  const transport = plan ? new BusinessTransport(plan, ownedBusinessHost(backend)) : backend;
   const wire: JsonValue[] = [];
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -170,14 +170,18 @@ export const businessFuzzFixture: FuzzFixtureFactory = async (bundle, _seed, sig
       query: {},
       contentType: "application/json",
     });
-    const result = await transport.send({
-      method: request.method as HttpRequest["method"],
-      url: `http://127.0.0.1${request.url}`,
-      body,
-      headers,
-    });
-    response.writeHead(result.status, result.headers);
-    response.end(result.body);
+    try {
+      const result = await transport.send({
+        method: request.method as HttpRequest["method"],
+        url: `http://127.0.0.1${request.url}`,
+        body,
+        headers,
+      });
+      response.writeHead(result.status, result.headers);
+      response.end(result.body);
+    } catch {
+      response.destroy();
+    }
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const abort = () => server.closeAllConnections();

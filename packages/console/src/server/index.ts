@@ -2,7 +2,10 @@ import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { type BusinessEvaluator, BusinessJobs } from "@anvil/harness";
 import { artifactsView, artifactView, assuranceView } from "./assurance.js";
+import { businessHandlers } from "./business.js";
+import { businessExecutions } from "./business-executions.js";
 import * as creation from "./creation.js";
 import { createRequestListener, type Handlers } from "./http.js";
 import type { Request } from "./mutations.js";
@@ -22,6 +25,7 @@ import { assertDirectory } from "./workspace.js";
 export const CONSOLE_HOST = "127.0.0.1";
 
 export interface ConsoleServerOptions {
+  businessEvaluator?: BusinessEvaluator;
   /** Workspace root: bundles are discovered beneath it and every path stays inside it. */
   root: string;
   /** Per-process token; minted with `mintConsoleToken()` when omitted. */
@@ -87,7 +91,10 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
   let boundPort = requestedPort;
   const origin = () => `http://${CONSOLE_HOST}:${boundPort}`;
 
+  const businessJobs = new BusinessJobs(root, options.businessEvaluator);
   const handlers: Handlers = {
+    ...businessHandlers(root, businessJobs),
+    businessExecutions: ({ params }) => businessExecutions(root, param(params, "id")),
     preview: ({ params, body }) =>
       workbench.previewOperation(
         root,
@@ -186,6 +193,7 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
       }),
     close: () =>
       new Promise((resolveClose, reject) => {
+        businessJobs.close();
         server.closeAllConnections();
         server.close((error) => (error ? reject(error) : resolveClose()));
       }),

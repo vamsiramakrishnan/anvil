@@ -147,6 +147,7 @@ export async function runSkillTask(options: {
   maxCalls?: number;
   timeoutMs?: number;
   identity?: Record<string, string>;
+  signal?: AbortSignal;
 }): Promise<SkillRun> {
   const events: Event[] = [];
   const trace = { driver: options.driver.id, events };
@@ -163,33 +164,37 @@ export async function runSkillTask(options: {
   let session: DriverSession | undefined;
   let activeCall = false;
   try {
-    await bounded(async (signal) => {
-      session = await options.driver.open({ seed: options.seed ?? 42, signal });
-      if (signal.aborted) {
-        await session.close();
-        return;
-      }
-      await options.agent.execute(
-        options.task,
-        async (operation, input) => {
-          if (signal.aborted || activeCall || events.length >= maxCalls)
-            throw new Error("Agent call budget exceeded or concurrent invocation");
-          if (!allowed.has(operation)) throw new Error("Agent requested an undeclared operation");
-          const step = Step.parse({ id: `agent-${events.length}`, operation, input });
-          activeCall = true;
-          try {
-            const outcome = Outcome.parse(await (session as DriverSession).invoke(step, signal));
-            if (signal.aborted) throw new Error("Agent invocation aborted");
-            events.push({ step, input: step.input, outcome });
-            return outcome;
-          } finally {
-            activeCall = false;
-          }
-        },
-        signal,
-      );
-      if (activeCall) throw new Error("Agent completed with an outstanding invocation");
-    }, options.timeoutMs ?? 60_000);
+    await bounded(
+      async (signal) => {
+        session = await options.driver.open({ seed: options.seed ?? 42, signal });
+        if (signal.aborted) {
+          await session.close();
+          return;
+        }
+        await options.agent.execute(
+          options.task,
+          async (operation, input) => {
+            if (signal.aborted || activeCall || events.length >= maxCalls)
+              throw new Error("Agent call budget exceeded or concurrent invocation");
+            if (!allowed.has(operation)) throw new Error("Agent requested an undeclared operation");
+            const step = Step.parse({ id: `agent-${events.length}`, operation, input });
+            activeCall = true;
+            try {
+              const outcome = Outcome.parse(await (session as DriverSession).invoke(step, signal));
+              if (signal.aborted) throw new Error("Agent invocation aborted");
+              events.push({ step, input: step.input, outcome });
+              return outcome;
+            } finally {
+              activeCall = false;
+            }
+          },
+          signal,
+        );
+        if (activeCall) throw new Error("Agent completed with an outstanding invocation");
+      },
+      options.timeoutMs ?? 60_000,
+      options.signal,
+    );
   } catch {
     checks.push({
       id: "agent.execution",

@@ -201,6 +201,16 @@
         "disambiguation_suffix": 26
       },
       "overStrippedResources": 15
+    },
+    "github": {
+      "operations": 25,
+      "zeroOverlapResource": 0,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 2
     }
   }
 }

@@ -388,6 +388,8 @@ td {
 }
 
 .table-wrap {
+  /* Keep absolutely positioned screen-reader labels inside the scroller. */
+  position: relative;
   overflow-x: auto;
   max-width: 100%;
 }
@@ -799,7 +801,8 @@ dialog::backdrop {
 /* Workspace workbench: persistent navigation, bounded data surfaces, clear tasks. */
 html { font-family: var(--anvil-display-font); }
 .workbench { display: grid; grid-template-columns: 226px minmax(0, 1fr); min-height: 100vh; }
-.sidebar { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 26px; padding: 28px 16px 18px; background: var(--anvil-color-surface); border-right: 1px solid var(--anvil-color-hairline); }
+.sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; display: flex; flex-direction: column; gap: 26px; padding: 28px 16px 18px; background: var(--anvil-color-surface); border-right: 1px solid var(--anvil-color-hairline); }
+.sidebar > * { flex-shrink: 0; }
 .sidebar .wordmark { gap: 12px; padding-inline: 10px; font-size: 27px; line-height: 1; letter-spacing: -1.2px; }
 .sidebar .monogram { width: 34px; height: 36px; font-family: var(--anvil-display-font); font-size: 29px; border-radius: 6px 6px 2px 2px; }
 .wordmark-caption { display: block; margin-top: 6px; font: 500 9px var(--anvil-mono-font); color: var(--anvil-color-text-muted); letter-spacing: 2.2px; }
@@ -983,9 +986,11 @@ html { font-family: var(--anvil-display-font); }
 }
 @media (max-width: 760px) {
   .workbench { display: block; }
-  .sidebar { position: static; height: auto; gap: 14px; padding: 16px; border-right: 0; border-bottom: 1px solid var(--anvil-color-hairline); }
+  .sidebar { position: static; height: auto; overflow: visible; gap: 14px; padding: 16px; border-right: 0; border-bottom: 1px solid var(--anvil-color-hairline); }
   .sidebar .wordmark { font-size: 24px; }
-  .wordmark-caption, .sidebar-note, .sidebar-footer, .sidebar > .side-nav { display: none; }
+  .wordmark-caption, .sidebar-note, .sidebar-footer > .local-indicator, .sidebar-footer > .row-id { display: none; }
+  .sidebar > .side-nav { flex-direction: row; flex-wrap: wrap; }
+  .sidebar-footer { display: flex; justify-content: flex-end; margin: 0; padding: 0; }
   .sidebar .search-launch { position: absolute; right: 16px; top: 24px; width: 180px; }
   .bundle-navigation { border: 0; padding: 0; }
   .bundle-navigation > label, .bundle-navigation > select { display: none; }

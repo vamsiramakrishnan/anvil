@@ -116,7 +116,23 @@ export function createMockConsole(
     b.queue.items = b.queue.items.filter((item) => !(item.kind === kind && item.id === itemId));
   };
 
+  const businessUnavailable = (): never => {
+    throw refuse(
+      422,
+      "console/invalid_request",
+      "Business authoring requires a real local workspace. Run anvil console .",
+    );
+  };
   const handlers: { [R in ConsoleRoute]: Handler<R> } = {
+    businessProjects: () => ({ enabled: false, projects: [] }),
+    businessProject: businessUnavailable,
+    saveBusinessProject: businessUnavailable,
+    previewBusinessProject: businessUnavailable,
+    buildBusinessProject: businessUnavailable,
+    businessJobs: () => [],
+    businessExecutions: () => [],
+    evaluateBusinessProject: businessUnavailable,
+    cancelBusinessJob: businessUnavailable,
     createBundle: () => {
       throw refuse(
         409,

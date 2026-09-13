@@ -240,6 +240,76 @@ The default view shows agent inputs, outcomes, intent guidance, and effects. --e
 Options:
 - `--execution` — show the private operator execution view
 
+#### `anvil capability project`
+`anvil capability project [options] [command]`
+
+Author, build, and evaluate versioned business capability projects.
+
+##### `anvil capability project list`
+`anvil capability project list [options] <workspace>`
+
+List business projects in a workspace.
+
+##### `anvil capability project show`
+`anvil capability project show [options] <workspace> <id>`
+
+Inspect the public contract, private bindings, and semantic change impact.
+
+Options:
+- `--against <digest>` — compare with a saved revision
+
+##### `anvil capability project save`  *(mutates)*
+`anvil capability project save [options] <workspace> <file>`
+
+Validate and save an immutable project revision without replacing concurrent edits.
+
+Options:
+- `--expected <digest>` — current revision digest; omit only for a new project
+
+##### `anvil capability project build`  *(mutates)*
+`anvil capability project build [options] <workspace> <id>`
+
+Build all agent surfaces from one exact business project revision.
+
+Options:
+- `--expected <digest>` — reviewed project revision
+
+##### `anvil capability project evaluate`  *(mutates)*
+`anvil capability project evaluate [options] <workspace> <id>`
+
+Compare raw tools, business MCP, and business MCP with a skill using independent fixture oracles.
+
+Options:
+- `--expected <digest>` — reviewed project revision
+- `--adapter <module>` — trusted operator-owned evaluator module; executed locally
+- `--repeats <count>` — repeated trials per task and lane
+
+##### `anvil capability project jobs`
+`anvil capability project jobs [options] <workspace> <id>`
+
+Inspect persisted evaluation jobs and replayable failure traces.
+
+#### `anvil capability execution`
+`anvil capability execution [options] [command]`
+
+Inspect durable business execution journals and reconcile attempted effects.
+
+##### `anvil capability execution inspect`
+`anvil capability execution inspect [options] <journal> <trace>`
+
+Read a private execution journal and verify its integrity chain.
+
+##### `anvil capability execution reconcile`  *(mutates)*
+`anvil capability execution reconcile [options] <journal> <trace>`
+
+Record verified backend outcomes without replaying writes or clearing intent reservations.
+
+Options:
+- `--expected <digest>` — latest inspected journal record digest
+- `--reviewer <name>` — accountable reviewer
+- `--note <text>` — reconciliation rationale
+- `--verifier <module>` — trusted broker module: default async verify(records) returns authoritative receipt evidence
+
 ### `anvil refine`  *(mutates)*
 `anvil refine [options] [command]`
 
@@ -778,6 +848,7 @@ Serves a browser page on 127.0.0.1 that projects every bundle beneath the worksp
 
 Options:
 - `--port <n>` — port on 127.0.0.1 (default: a free port)
+- `--business-evaluator <module>` — trusted local evaluator module for business comparison jobs
 - `--open` — open the console in the default browser
 - `--json` — print one { url, port, root } document, then keep serving
 

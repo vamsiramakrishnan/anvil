@@ -145,6 +145,19 @@ export function createConsoleApi(options: ConsoleApiOptions = {}) {
   }
 
   return {
+    businessExecutions: (id: string) => call("businessExecutions", { id }),
+    businessProjects: () => call("businessProjects", {}),
+    businessProject: (id: string) => call("businessProject", { id }),
+    saveBusinessProject: (body: ConsoleRequest<"saveBusinessProject">) =>
+      call("saveBusinessProject", {}, body),
+    previewBusinessProject: (body: ConsoleRequest<"previewBusinessProject">) =>
+      call("previewBusinessProject", {}, body),
+    buildBusinessProject: (id: string, expectedDigest: string) =>
+      call("buildBusinessProject", { id }, { expectedDigest }),
+    businessJobs: (id: string) => call("businessJobs", { id }),
+    evaluateBusinessProject: (id: string, expectedDigest: string, repeats: number) =>
+      call("evaluateBusinessProject", { id }, { expectedDigest, repeats }),
+    cancelBusinessJob: (id: string, jobId: string) => call("cancelBusinessJob", { id, jobId }, {}),
     preview: (id: string, operationId: string, body: ConsoleRequest<"preview">) =>
       call("preview", { id, operationId }, body),
     regenerate: (id: string, body: ConsoleRequest<"regenerate">) =>

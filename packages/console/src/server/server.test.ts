@@ -98,6 +98,7 @@ describe("every route in the contract is registered", () => {
     const params = {
       operationId: ws.air.operations[0]!.id,
       id: ws.bundleId,
+      jobId: "00000000-0000-0000-0000-000000000000",
       capId: "x",
       hash: "0".repeat(64),
       clusterId: "cc_none",

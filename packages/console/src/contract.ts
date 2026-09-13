@@ -28,6 +28,7 @@ import {
   zRefinementTask,
 } from "@anvil/refinement";
 import { z } from "zod";
+import { BUSINESS_ROUTES } from "./business-contract.js";
 import {
   WORKBENCH_ROUTES,
   zArtifactQuery,
@@ -674,6 +675,7 @@ export const zImportTaskResponse = z.object({
  */
 export const CONSOLE_ROUTES = {
   ...WORKBENCH_ROUTES,
+  ...BUSINESS_ROUTES,
   preview: {
     method: "POST",
     path: "/api/bundles/:id/operations/:operationId/preview",

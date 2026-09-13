@@ -8,6 +8,7 @@ import {
   operationSafetyInputKeys,
   resolveIdempotencyCarrier,
 } from "@anvil/air";
+import { stringExample } from "./mock-string.js";
 
 /**
  * Mock generation with provenance (spec: "Mock generation"). Mocks are not
@@ -159,6 +160,7 @@ export function exampleFromSchema(
   depth = 0,
 ): unknown {
   if (!schema) return null;
+  if (Object.hasOwn(schema, "const")) return schema.const;
   const cached = cache.get(schema);
   if (cached !== undefined) return cached;
   // A literal `example: null` (HubSpot stamps one on nearly every schema) is an
@@ -199,6 +201,21 @@ export function exampleFromSchema(
     const branch = exampleFromSchema(alternatives[0], cache, depth + 1);
     if (schema.type === undefined && !isRecord(schema.properties)) return branch;
     const own = ownExample(schema, cache, depth);
+    if (Array.isArray(schema.oneOf) && isRecord(own) && isRecord(branch)) {
+      // oneOf branches with only `required` constrain a shared properties map.
+      // Emitting every sibling discriminator makes multiple branches match.
+      const chosen = alternatives[0] as JsonSchema;
+      const keys = new Set([
+        ...((schema.required as string[]) ?? []),
+        ...((chosen.required as string[]) ?? []),
+        ...Object.keys((chosen.properties as object) ?? {}),
+        ...Object.keys(branch),
+      ]);
+      const selected = Object.fromEntries(Object.entries(own).filter(([key]) => keys.has(key)));
+      const merged = deepMergeExamples(selected, branch);
+      cache.set(schema, merged);
+      return merged;
+    }
     if (isRecord(own) && isRecord(branch)) {
       const merged = deepMergeExamples(own, branch);
       cache.set(schema, merged);
@@ -235,43 +252,6 @@ function ownExample(schema: JsonSchema, cache: Map<JsonSchema, unknown>, depth: 
       }
       if (Object.keys(schema).every((k) => ANNOTATION_KEYS.has(k))) return {};
       return null;
-    }
-  }
-}
-
-function stringExample(schema: JsonSchema): string {
-  switch (schema.format) {
-    case "date":
-      return "2026-07-09";
-    case "date-time":
-      return "2026-07-09T00:00:00Z";
-    case "time":
-      return "00:00:00Z";
-    case "uuid":
-      return "550e8400-e29b-41d4-a716-446655440000";
-    case "email":
-      return "user@example.com";
-    case "uri":
-    case "url":
-      return "https://example.com/resource";
-    case "hostname":
-      return "api.example.com";
-    case "ipv4":
-      return "192.0.2.1";
-    case "ipv6":
-      return "2001:db8::1";
-    default: {
-      const base = "example";
-      const minimum =
-        typeof schema.minLength === "number" && Number.isSafeInteger(schema.minLength)
-          ? Math.max(0, schema.minLength)
-          : 0;
-      const maximum =
-        typeof schema.maxLength === "number" && Number.isSafeInteger(schema.maxLength)
-          ? Math.max(0, schema.maxLength)
-          : Number.POSITIVE_INFINITY;
-      const length = Math.max(minimum, Math.min(maximum, base.length));
-      return length <= base.length ? base.slice(0, length) : base.padEnd(length, "x");
     }
   }
 }

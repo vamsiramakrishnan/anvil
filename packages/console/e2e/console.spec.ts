@@ -62,6 +62,21 @@ async function openQueue(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "decision queue" })).toBeVisible();
 }
 
+async function expectPageFits(page: Page): Promise<void> {
+  const layout = await page.evaluate(() => ({
+    viewport: window.innerWidth,
+    width: document.documentElement.scrollWidth,
+    outside: Array.from(document.querySelectorAll("body *"))
+      .map((element) => ({
+        element: `${element.tagName}.${element.className}`,
+        right: element.getBoundingClientRect().right,
+      }))
+      .filter((element) => element.right > window.innerWidth)
+      .slice(0, 25),
+  }));
+  expect(layout.width, JSON.stringify(layout)).toBeLessThanOrEqual(layout.viewport);
+}
+
 const rowFor = (page: Page, id: string) =>
   page.getByRole("option").filter({ has: page.getByLabel(`select ${id}`, { exact: true }) });
 
@@ -284,7 +299,7 @@ test("6. the browser cannot drive a mutation without the token, and another orig
   request,
 }) => {
   await page.goto(`${state.url}/#/`);
-  await expect(page.getByRole("heading", { name: "Bundles", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "workspace", exact: true })).toBeVisible();
 
   // The token is in the page — measured by length only, never read into a log.
   const tokenLength = await page.evaluate(
@@ -360,6 +375,8 @@ test("6. the browser cannot drive a mutation without the token, and another orig
 test("the workbench compiles a pasted contract and opens real artifacts and evidence", async ({
   page,
 }) => {
+  // Lower navigation entries must remain reachable on a short desktop window.
+  await page.setViewportSize({ width: 1280, height: 600 });
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(`${state.url}/#/new`);
@@ -408,9 +425,7 @@ test("workspace navigation and creation remain usable on a narrow viewport", asy
   await search.fill("New bundle");
   await search.press("Enter");
   await expect(page.getByRole("heading", { name: "Start with an API contract" })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
+  await expectPageFits(page);
 });
 
 test("8. catalog deep links preserve filters and preview an approved read without changing the bundle", async ({
@@ -468,15 +483,83 @@ test("10. workspace and request workbench fit a phone viewport in both themes", 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${state.url}/#/`);
   await expect(page.getByRole("heading", { name: "workspace" })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
+  await expect(
+    page.getByRole("link", { name: "Business capabilities", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /theme:/ })).toBeVisible();
+  await expectPageFits(page);
   await page.screenshot({ path: test.info().outputPath("workspace-mobile.png"), fullPage: true });
   await page.getByRole("button", { name: /theme:/ }).click();
   await page.goto(`${state.url}/#/b/${state.bundleId}/catalog`);
   await expect(page.getByRole("heading", { name: "Operation catalog" })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
+  await expectPageFits(page);
   await page.screenshot({ path: test.info().outputPath("catalog-mobile.png"), fullPage: true });
+});
+
+test("business projects import, review, save, and build through the real console", async ({
+  page,
+}, testInfo) => {
+  const fixture = readFileSync(
+    new URL("../../../examples/business/project.json", import.meta.url),
+    "utf8",
+  );
+  const project = JSON.parse(fixture);
+  await page.goto(`${state.url}/#/projects/new`);
+  await page.getByLabel("Import project JSON").setInputFiles({
+    name: "business-project.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(fixture),
+  });
+  await expect(
+    page.getByRole("heading", { name: project.definition.displayName, exact: true }),
+  ).toBeVisible();
+  const approval = page.getByRole("checkbox", { name: /I reviewed this action/ });
+  await expect(approval).not.toBeChecked();
+  await expect(page.getByRole("textbox", { name: "Business outcome", exact: true })).toHaveValue(
+    project.definition.actions[0].description,
+  );
+  // Invalid structured edits stay in the editor without corrupting its action model.
+  const input = page.getByLabel("Public inputs", { exact: true });
+  await input.fill("null");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Enter valid project JSON" }),
+  ).toBeVisible();
+  await input.fill(JSON.stringify(project.definition.actions[0].input));
+  await approval.check();
+  await page.getByRole("button", { name: "Validate & preview", exact: true }).click();
+  const save = page.getByRole("button", { name: "Save revision", exact: true });
+  await expect(save).toBeEnabled();
+  await save.click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${project.definition.id}$`));
+  const stored = JSON.parse(
+    readFileSync(
+      join(state.root, ".anvil", "projects", project.definition.id, "project.json"),
+      "utf8",
+    ),
+  );
+  expect(stored.project.definition.actions[0].state).toBe("approved");
+  expect(
+    stored.project.definition.actions
+      .slice(1)
+      .every((action: { state: string }) => action.state === "proposed"),
+  ).toBe(true);
+  const build = page.getByRole("button", { name: "Build bundle", exact: true });
+  await expect(build).toBeEnabled();
+  await build.click();
+  await expect(page.getByRole("link", { name: "Inspect generated bundle →" })).toBeVisible();
+  const bundle = join(
+    state.root,
+    "generated",
+    `${project.definition.id}-${stored.digest.slice(0, 12)}`,
+  );
+  const projected = readFileSync(join(bundle, "air.json"), "utf8");
+  expect(projected).not.toContain("wire_order_id");
+  expect(
+    JSON.parse(projected).operations.filter((op: { state: string }) => op.state === "approved"),
+  ).toHaveLength(1);
+  await page.screenshot({ path: testInfo.outputPath("business-workbench.png"), fullPage: true });
+  await page.getByRole("link", { name: "Business capabilities", exact: true }).click();
+  await expect(
+    page.locator(".business-project-card").filter({ hasText: project.definition.displayName }),
+  ).toBeVisible();
 });
