@@ -8,6 +8,7 @@ import {
   operationSafetyInputKeys,
   resolveIdempotencyCarrier,
 } from "@anvil/air";
+import { patternExample } from "./mock-pattern.js";
 
 /**
  * Mock generation with provenance (spec: "Mock generation"). Mocks are not
@@ -159,6 +160,7 @@ export function exampleFromSchema(
   depth = 0,
 ): unknown {
   if (!schema) return null;
+  if (Object.hasOwn(schema, "const")) return schema.const;
   const cached = cache.get(schema);
   if (cached !== undefined) return cached;
   // A literal `example: null` (HubSpot stamps one on nearly every schema) is an
@@ -199,6 +201,21 @@ export function exampleFromSchema(
     const branch = exampleFromSchema(alternatives[0], cache, depth + 1);
     if (schema.type === undefined && !isRecord(schema.properties)) return branch;
     const own = ownExample(schema, cache, depth);
+    if (Array.isArray(schema.oneOf) && isRecord(own) && isRecord(branch)) {
+      // oneOf branches with only `required` constrain a shared properties map.
+      // Emitting every sibling discriminator makes multiple branches match.
+      const chosen = alternatives[0] as JsonSchema;
+      const keys = new Set([
+        ...((schema.required as string[]) ?? []),
+        ...((chosen.required as string[]) ?? []),
+        ...Object.keys((chosen.properties as object) ?? {}),
+        ...Object.keys(branch),
+      ]);
+      const selected = Object.fromEntries(Object.entries(own).filter(([key]) => keys.has(key)));
+      const merged = deepMergeExamples(selected, branch);
+      cache.set(schema, merged);
+      return merged;
+    }
     if (isRecord(own) && isRecord(branch)) {
       const merged = deepMergeExamples(own, branch);
       cache.set(schema, merged);
@@ -240,6 +257,10 @@ function ownExample(schema: JsonSchema, cache: Map<JsonSchema, unknown>, depth: 
 }
 
 function stringExample(schema: JsonSchema): string {
+  if (typeof schema.pattern === "string") {
+    const witness = patternExample(schema.pattern);
+    if (witness !== undefined) return witness;
+  }
   switch (schema.format) {
     case "date":
       return "2026-07-09";

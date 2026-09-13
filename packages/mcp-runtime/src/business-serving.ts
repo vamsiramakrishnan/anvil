@@ -7,6 +7,7 @@ import {
   type BusinessHost,
   BusinessTransport,
   type ExecuteContext,
+  FileBusinessJournal,
   type InboundIdentity,
 } from "@anvil/runtime";
 
@@ -72,12 +73,16 @@ export function createBusinessServing(
       scopes: (identity?.scope ?? "").split(/\s+/).filter(Boolean),
     };
   }
+  const journal = env.ANVIL_BUSINESS_JOURNAL_DIR
+    ? new FileBusinessJournal(env.ANVIL_BUSINESS_JOURNAL_DIR)
+    : undefined;
   function hostFor(identity?: InboundIdentity): BusinessHost {
     const context = contextFor(identity);
     return {
       context,
       env: base.env === "dev" ? "dev" : "prod",
       ledger: base.ledger,
+      journal,
       contextFor: (name, source) => {
         const config = sources[name];
         const baseUrl = config?.baseUrl ?? source.service.servers[0]?.url ?? "";

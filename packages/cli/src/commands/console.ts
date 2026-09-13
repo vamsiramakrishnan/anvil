@@ -5,6 +5,7 @@ import { type ConsoleServer, createConsoleServer } from "@anvil/console";
 import type { Command } from "commander";
 import { emitRefusal } from "../envelope.js";
 import type { CliIO } from "../io.js";
+import { loadBusinessEvaluator } from "./capability/business-project.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 
@@ -32,6 +33,10 @@ export function registerConsole(parent: Command, ctx: CommandContext): void {
         "workspace root or a single bundle directory (default: the current directory)",
       )
       .option("--port <n>", "port on 127.0.0.1 (default: a free port)", parsePort)
+      .option(
+        "--business-evaluator <module>",
+        "trusted local evaluator module for business comparison jobs",
+      )
       .option("--open", "open the console in the default browser")
       .option("--json", "print one { url, port, root } document, then keep serving")
       .action(async (path: string | undefined, opts: ConsoleOptions) => {
@@ -42,6 +47,7 @@ export function registerConsole(parent: Command, ctx: CommandContext): void {
 }
 
 interface ConsoleOptions {
+  businessEvaluator?: string;
   port?: number;
   open?: boolean;
   json?: boolean;
@@ -81,6 +87,9 @@ async function runConsole(
   try {
     server = await createConsoleServer({
       root,
+      businessEvaluator: opts.businessEvaluator
+        ? await loadBusinessEvaluator(opts.businessEvaluator)
+        : undefined,
       port: opts.port ?? 0,
       log: (line) => io.err(line),
     }).listen();

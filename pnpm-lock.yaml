@@ -234,6 +234,9 @@ importers:
       '@anvil/generators':
         specifier: workspace:*
         version: link:../generators
+      '@anvil/harness':
+        specifier: workspace:*
+        version: link:../harness
       '@anvil/refinement':
         specifier: workspace:*
         version: link:../refinement

@@ -19,6 +19,7 @@ import {
 } from "./model.js";
 import { ArtifactsView } from "./views/artifacts.js";
 import { AssuranceView } from "./views/assurance.js";
+import { BusinessProjectsView } from "./views/business.js";
 import { CatalogView } from "./views/catalog.js";
 import { CompareView } from "./views/compare.js";
 import { ConfusionView } from "./views/confusion.js";
@@ -274,7 +275,11 @@ export function App({ api }: { api: ConsoleApi }) {
   }, []);
   const activeName =
     BUNDLE_VIEWS.find(([view]) => view === route.view)?.[1] ??
-    (route.view === "new" ? "New bundle" : "Workspace");
+    (route.view === "new"
+      ? "New bundle"
+      : route.view === "projects"
+        ? "Business capabilities"
+        : "Workspace");
   useEffect(() => {
     document.title = `${activeName}${bundleId ? ` · ${bundleId}` : ""} · Anvil`;
   }, [activeName, bundleId]);
@@ -301,6 +306,9 @@ export function App({ api }: { api: ConsoleApi }) {
           <kbd>⌘ K</kbd>
         </button>
         <nav className="side-nav">
+          <a href="#/projects" aria-current={route.view === "projects" ? "page" : undefined}>
+            Business capabilities
+          </a>
           <a href="#/" aria-current={route.view === "workspace" ? "page" : undefined}>
             <span className="nav-mark" aria-hidden="true">
               ◫
@@ -419,6 +427,8 @@ export function App({ api }: { api: ConsoleApi }) {
             <WorkspaceView loaded={workspace} />
           ) : route.view === "new" ? (
             <CreateView api={api} onCreated={workspace.reload} />
+          ) : route.view === "projects" ? (
+            <BusinessProjectsView api={api} id={route.projectId} />
           ) : "bundleId" in route ? (
             <BundleFrame
               key={`${route.bundleId}:${bundleRevision}`}

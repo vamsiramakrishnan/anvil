@@ -9,7 +9,8 @@ service:
   owner: backtesting
   environment: prod
 auth:
-  type: oauth2
+  # Explicitly selected from the published HTTP security scheme; no OAuth grant is inferred.
+  type: jwt_bearer
   scopes: []
 operations:
   ShowContact: { state: approved }

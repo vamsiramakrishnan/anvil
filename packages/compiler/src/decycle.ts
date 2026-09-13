@@ -1,3 +1,4 @@
+import { collapseExpandable, compactLeafSchema } from "./schema-leaf.js";
 /**
  * Turn a fully `$ref`-dereferenced OpenAPI document into one that is both
  * JSON-safe and bounded in size, without losing real structure. This is a
@@ -728,42 +729,6 @@ function walk(
   return out;
 }
 
-/**
- * Collapse a vendor-declared "expandable" field (`x-expansionResources`
- * alongside an `anyOf`/`oneOf`) to just its non-expansion alternative(s) —
- * conservatively: only when at least one alternative is clearly *not* one of
- * the declared expansion variants, and at least one *is*, so this never
- * touches a plain `anyOf`/`oneOf` that isn't this specific pattern.
- */
-function collapseExpandable(node: Record<string, unknown>): Record<string, unknown> | undefined {
-  const expansion = node["x-expansionResources"];
-  if (expansion === null || typeof expansion !== "object") return undefined;
-  const variants = new Set<unknown>([
-    ...(Array.isArray((expansion as Record<string, unknown>).oneOf)
-      ? ((expansion as Record<string, unknown>).oneOf as unknown[])
-      : []),
-    ...(Array.isArray((expansion as Record<string, unknown>).anyOf)
-      ? ((expansion as Record<string, unknown>).anyOf as unknown[])
-      : []),
-  ]);
-  if (variants.size === 0) return undefined;
-  const key = Array.isArray(node.anyOf) ? "anyOf" : Array.isArray(node.oneOf) ? "oneOf" : undefined;
-  if (!key) return undefined;
-  const alternatives = node[key] as unknown[];
-  const compact = alternatives.filter((alt) => !variants.has(alt));
-  if (compact.length === 0 || compact.length === alternatives.length) return undefined;
-
-  const { "x-expansionResources": _drop, anyOf: _a, oneOf: _o, ...rest } = node;
-  const note =
-    "the full expanded object is available via the API's expand parameter; " +
-    "Anvil keeps the compact (actual runtime default) shape here";
-  return {
-    ...rest,
-    ...(compact.length === 1 ? (compact[0] as object) : { [key]: compact }),
-    description: typeof node.description === "string" ? `${node.description} (${note})` : note,
-  };
-}
-
 export interface MaterializeResult {
   schema: unknown;
   /** Named-schema chains cut off by the ref-depth bound (real cycles or very deep chains). */
@@ -856,7 +821,11 @@ function resolveRefs(
     if (name === undefined || !(name in namedSchemas)) return node; // unresolvable — leave as-is, never silently drop
     const cached = resolved.get(name);
     if (cached !== undefined && cached.refDepth <= refDepth) return cached.value;
-    if (ancestors.has(name) || refDepth >= maxRefDepth) {
+    if (
+      ancestors.has(name) ||
+      (refDepth >= maxRefDepth &&
+        !(/\.oneOf\[\d+\]$/.test(path) && compactLeafSchema(namedSchemas[name])))
+    ) {
       refDepthLimitedAt.push(path);
       const target = namedSchemas[name];
       const type =

@@ -865,7 +865,7 @@ function conformanceOne(sys, work) {
   // guardrail for a human approving a capability; here we only need a buildable
   // bundle to drive conformance over, and the built bundle still exposes only the
   // handful of reads we approved — so the escape hatch is the right call.
-  const capApproved = runNode([ANVIL, "capability", "approve", dir, cap, "--allow-large"], {
+  const capApproved = runNode([ANVIL, "capability", "approve", dir, cap, "--allow-large", "--note", "Corpus fixture: only inspected read operations are approved; no live backend calls."], {
     timeoutMs: 60_000,
   });
   if (capApproved.status !== 0)

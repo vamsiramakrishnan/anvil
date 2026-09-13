@@ -4,7 +4,9 @@ import { existsSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  type AirDocument,
   agentPropKey,
+  ladderPlan,
   type Operation,
   operationBusinessInputCliFlag,
   operationSafetyInputKeys,
@@ -21,6 +23,7 @@ import {
   loadRuntimeConfig,
   resolveCredentials,
 } from "@anvil/runtime";
+import type { McpSource } from "./mcp-source.js";
 
 /**
  * Shared machinery for booting a generated bundle and driving its surfaces
@@ -172,6 +175,11 @@ export function hermeticCredentialEnv(
           env[`${prefix}_ACTOR_TOKEN`] = "anvil-hermetic-actor-token";
         }
         break;
+      case "oauth2_authorization_code":
+        // A pre-issued synthetic token is sufficient for a wire fixture. This proves
+        // bearer forwarding only, never live login or caller identity readiness.
+        env[`${prefix}_TOKEN`] = "anvil-hermetic-authorization-code-token";
+        break;
       case "jwt_bearer":
         if (auth.provider?.grant === "jwt_bearer") {
           assertionKey ??= generateKeyPairSync("rsa", { modulusLength: 2048 })
@@ -185,7 +193,7 @@ export function hermeticCredentialEnv(
         }
         break;
       default:
-        // Authorization-code, mTLS, custom-header, and workload-identity
+        // mTLS, custom-header, and workload-identity
         // calls require caller/platform context that a wire-only self-test must
         // not fabricate. Their normal auth_required result stays visible.
         break;
@@ -629,4 +637,24 @@ export function packageDirOf(name: string, from = dirname(fileURLToPath(import.m
     }
     current = parent;
   }
+}
+
+/** Open only contract-declared disclosure cards; unknown tools remain visible to surface checks. */
+export async function fullyDisclosedSource(
+  source: McpSource,
+  air: AirDocument,
+): Promise<McpSource> {
+  const cards = new Set(ladderPlan(air).lanes.map((lane) => lane.entryToolName));
+  const initial = await source.listTools();
+  const opened = new Set<string>();
+  for (const tool of initial) {
+    if (!cards.has(tool.name)) continue;
+    const result = await source.callRaw(tool.name, {});
+    if (result.isError) throw new Error(`Disclosure card ${tool.name} could not be opened.`);
+    opened.add(tool.name);
+  }
+  return {
+    ...source,
+    listTools: async () => (await source.listTools()).filter((tool) => !opened.has(tool.name)),
+  };
 }

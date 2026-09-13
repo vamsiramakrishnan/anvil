@@ -51,5 +51,19 @@ agent harness. Fewer tools or lexical routing scores alone do not establish bett
 agent performance. Repository examples and tests live in examples/business and
 packages/harness/src/business; the complete guide is docs/business-capabilities.md.
 
+For versioned workspaces, use capability project save/list/show/build/evaluate/jobs.
+Save requires the prior revision digest; build and evaluate require the current one.
+The console's Business capabilities view uses the same services. Import project
+JSON, review each action, validate its public/private preview, then save and build.
+Evaluation adapters are operator-owned local modules. Compare raw/business/
+business-skill lanes with equal task, fixture seed, model configuration, and budgets.
+Inspect independent backend outcomes; a completed agent or worker is not success.
+Unsupported or inconclusive trials are not passes. See docs/business-workbench.md.
+
+ANVIL_BUSINESS_JOURNAL_DIR records attempted steps, response digests, and final
+status. Use capability execution inspect/reconcile with the latest record digest
+and an authoritative verifier. Reconciliation records findings; it never replays
+writes, clears intent reservations, or turns unknown effects into success.
+
 Existing capability compose remains an audit-only overlap review. It does not
 become executable choreography by renaming its output.
