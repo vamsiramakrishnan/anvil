@@ -1,5 +1,6 @@
 import type { AirDocument, Operation, Param } from "@anvil/air";
 import type { DeficiencyCode } from "../deficiency.js";
+import { hasFieldExample } from "../fields.js";
 import type { EvalFamily, EvalScore } from "../model.js";
 
 /**
@@ -42,14 +43,9 @@ function tokens(s: string): string[] {
  * not just documentation *about* the field, but something to actually fill it with.
  */
 function fieldHasValue(schema: Record<string, unknown>, param?: Param): boolean {
-  if (param?.example !== undefined) return true;
   const enumValues = schema.enum;
   if (Array.isArray(enumValues) && enumValues.length > 0) return true;
-  if (schema.example !== undefined) return true;
-  const examples = schema.examples;
-  if (Array.isArray(examples) && examples.length > 0) return true;
-  if (schema.default !== undefined) return true;
-  return false;
+  return hasFieldExample(schema, param?.example);
 }
 
 /** A field as an agent would actually see it, normalized across params and body fields. */

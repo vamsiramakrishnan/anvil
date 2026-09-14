@@ -494,6 +494,20 @@ describe("success emits one document, not prose plus a document", () => {
 });
 
 describe("refinement harness import keeps the operator JSON contract", () => {
+  it("returns a typed repair-controller refusal for an unreadable original", async () => {
+    const result = await run([
+      "refine",
+      "loop",
+      join(work, "missing-air.yaml"),
+      "--out",
+      join(work, "repair"),
+      "--json",
+    ]);
+    const envelope = expectRefusalContract(result, "repair controller unreadable input");
+    expect(envelope.reportType).toBe("anvil.repair-controller-error");
+    expect(envelope.code).toBe("repair/failed");
+  });
+
   it("returns a document even when its input files are unreadable", async () => {
     const result = await run([
       "refine",

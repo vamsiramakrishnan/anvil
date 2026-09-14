@@ -1,6 +1,6 @@
 import { type AirDocument, type Claim, loadAirDocument } from "@anvil/air";
 import { describe, expect, it } from "vitest";
-import { DEFICIENCY_CATALOG } from "../deficiency.js";
+import { DEFICIENCY_CATALOG, makeDeficiency } from "../deficiency.js";
 import { runDetectors } from "../detect.js";
 import { assembleContext } from "./context.js";
 import type { SkillContext, SkillProposal } from "./contract.js";
@@ -218,9 +218,27 @@ describe("generate-examples", () => {
   const skill = skillByName("generate-examples")!;
 
   it("lifts an example from the field's own schema and validates it", async () => {
-    const ctx = contextFor(
-      doc(),
-      (code, path) => code === "required_field_no_example" && path === "input.body.amount",
+    const air = doc();
+    expect(
+      runDetectors(air).some(
+        (d) =>
+          d.code === "required_field_no_example" &&
+          "path" in d.target &&
+          d.target.path === "input.body.amount",
+      ),
+    ).toBe(false);
+    // Exercise an explicitly requested normalization, even though no repair is needed.
+    const ctx = assembleContext(
+      air,
+      makeDeficiency(
+        "required_field_no_example",
+        {
+          kind: "field",
+          operationId: air.operations[0]!.id,
+          path: "input.body.amount",
+        },
+        "Normalize the schema-native example.",
+      ),
     );
     const proposal = await executor.execute(skill, ctx);
     expect(proposal?.patch.set.examples).toEqual([2500]);

@@ -27,6 +27,7 @@ import { type Command, Option } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
+import { registerRefineLoop } from "./refine-loop.js";
 
 /**
  * `anvil refine <subcommand>` — the quality flywheel.
@@ -57,6 +58,8 @@ export function registerRefine(parent: Command, ctx: CommandContext): void {
       ),
     { mutates: true },
   );
+
+  registerRefineLoop(refine, ctx);
 
   refine
     .command("plan")

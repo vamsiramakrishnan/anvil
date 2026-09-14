@@ -102,6 +102,10 @@ core decides. A proposal outside its skill's boundary, ungrounded by evidence, o
 that regresses any measured family is rejected — however confident you are.
 
 ## Three ways to execute a skill
+Run \`anvil refine loop <original-dir> --out <new-dir>\` for bounded auto-tier
+repairs with fixed evals and replayable checkpoints (\`--resume\`). It preserves
+grants and writes a separate bundle.
+
 - **Inline** — gather evidence and emit a proposal directly (cheap, deterministic-friendly).
 - **As a case** — for anything needing real repository investigation, open a *case*: an
   isolated directory Anvil materializes for one deficiency, with a brief, the target's

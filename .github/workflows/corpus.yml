@@ -98,6 +98,10 @@ jobs:
         if: always() && matrix.lane == 'enterprise'
         run: node tools/corpus/enterprise/smoke.mjs
 
+      - name: Evaluate bounded enterprise semantic repairs
+        if: always() && matrix.lane == 'enterprise'
+        run: node tools/corpus/enterprise/repair.mjs
+
       - name: Collect ${{ matrix.name }} report
         if: always()
         env:
@@ -112,7 +116,7 @@ jobs:
             report_files=(report.json summary.md)
           elif [[ "$CORPUS_LANE" == "enterprise" ]]; then
             source_dir="tools/corpus/enterprise/report"
-            report_files=(report.json summary.md smoke.json smoke-summary.md)
+            report_files=(report.json summary.md smoke.json smoke-summary.md repair/report.json)
           else
             source_dir="tools/corpus/report"
             report_files=(report.jsonl summary.md)
@@ -121,6 +125,7 @@ jobs:
           missing=0
           for report_file in "${report_files[@]}"; do
             if [[ -f "$source_dir/$report_file" ]]; then
+              mkdir -p "$(dirname "$destination/$report_file")"
               cp "$source_dir/$report_file" "$destination/$report_file"
             else
               echo "::error::Missing $source_dir/$report_file for $CORPUS_LANE"

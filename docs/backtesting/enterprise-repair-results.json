@@ -1,0 +1,2307 @@
+{
+  "version": 1,
+  "startedAt": "2026-09-14T01:20:34.006Z",
+  "gitHead": "35bcab3a4397e5befe60769ccb358146a77975dd",
+  "worktreeDirty": true,
+  "implementationSha256": "a506f297cee219532885b93710bb77fa1b55d3f828459e17ce743002d443c2c5",
+  "sourceRun": {
+    "startedAt": "2026-09-14T00:43:59.118Z",
+    "implementationSha256": "704e7769e9f124db4e3269b817581899ce1417a712fff3fd913e238c61b71c4d"
+  },
+  "budget": {
+    "maxRounds": 3,
+    "maxAttempts": 40,
+    "timeoutMs": 30000
+  },
+  "results": [
+    {
+      "id": "gmail",
+      "name": "Google Workspace — Gmail",
+      "sourceStatus": "pass",
+      "sourceSha256": "7591d33ec87e4ef83551f71630213a89ac349becebe9bd9b3e4ce3851dede0fe",
+      "status": "budget",
+      "operations": 79,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 185,
+      "remainingDeficiencies": 185,
+      "checks": {
+        "total": 1103,
+        "initialPassed": 579,
+        "currentPassed": 579
+      },
+      "originalHash": "09e5ea64224e924cfded2d7e36c8eb406974cc88270cf1710bf476106f2ac140",
+      "outputHash": "09e5ea64224e924cfded2d7e36c8eb406974cc88270cf1710bf476106f2ac140",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 1284
+    },
+    {
+      "id": "google_drive",
+      "name": "Google Workspace — Drive",
+      "sourceStatus": "pass",
+      "sourceSha256": "08610b0a577bfe7508a69d810433c1b818d9ebfc033fa8dc1a3c738de080b062",
+      "status": "budget",
+      "operations": 64,
+      "attempts": 40,
+      "decisions": {
+        "declined": 39,
+        "review": 1
+      },
+      "initialDeficiencies": 196,
+      "remainingDeficiencies": 196,
+      "checks": {
+        "total": 961,
+        "initialPassed": 422,
+        "currentPassed": 422
+      },
+      "originalHash": "f3239b110cd6cbb615b4598fde5e7daa560a80d42f3bea1dc306923749939fdb",
+      "outputHash": "f3239b110cd6cbb615b4598fde5e7daa560a80d42f3bea1dc306923749939fdb",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 1673
+    },
+    {
+      "id": "google_docs",
+      "name": "Google Workspace — Docs",
+      "sourceStatus": "pass",
+      "sourceSha256": "bb61f4357de15dcea58e45d329d19a0ec56cd719127f6409b15927758dc043ab",
+      "status": "stalled",
+      "operations": 3,
+      "attempts": 14,
+      "decisions": {
+        "declined": 10,
+        "rejected": 2,
+        "accepted": 2
+      },
+      "initialDeficiencies": 9,
+      "remainingDeficiencies": 7,
+      "checks": {
+        "total": 37,
+        "initialPassed": 17,
+        "currentPassed": 17
+      },
+      "originalHash": "ee0a3731bb1ae7463df4c61f0d986148b1a980a3212279c98eebc9eaffdba00f",
+      "outputHash": "1867783406208c601e5f82c790aafb73fe9b295d975d99cdc924a0c4d9707855",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_docs.documents.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_docs.documents.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new document",
+                "creates a blank document using the title given in the request. other fields in the request, including any provided content, are ignored. returns the created document."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_docs.documents.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_docs.documents.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a document by id",
+                "gets the latest version of the specified document."
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 405
+    },
+    {
+      "id": "google_sheets",
+      "name": "Google Workspace — Sheets",
+      "sourceStatus": "pass",
+      "sourceSha256": "88c2374fe8dd9a58ad3b8cfaef7b0f5ced1418e625ea0ce1abef45c9deb448bd",
+      "status": "budget",
+      "operations": 17,
+      "attempts": 40,
+      "decisions": {
+        "declined": 23,
+        "rejected": 14,
+        "accepted": 3
+      },
+      "initialDeficiencies": 61,
+      "remainingDeficiencies": 58,
+      "checks": {
+        "total": 235,
+        "initialPassed": 99,
+        "currentPassed": 99
+      },
+      "originalHash": "93ff060fa2aa7c388edbcfcdd28d46fb9a638711fd09c9e2cb3a088a8e50b64d",
+      "outputHash": "ddf37433c5fc37db37ebe27c1e27e77f07d96e068d29f6e0125efdc739f03411",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_sheets.developer_metadata.search",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_sheets.developer_metadata.search"
+            },
+            "set": {
+              "intent_examples": [
+                "find developerMetadatas matching a filter",
+                "returns all developer metadata matching the specified datafilter. for more information, see [read, write, and search metadata](https://developers.google.com/workspace/sheets/api/guides/metadata). if the provided datafilter represents a developermetadatalookup object, this will return all developermetadata entries selected by it. if the datafilter represents a location in a spreadsheet, this will return all developer metadata associated with locations intersecting that region."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_sheets.spreadsheets.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_sheets.spreadsheets.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new spreadsheet",
+                "creates a spreadsheet, returning the newly created spreadsheet."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_sheets.values.batch_clear_by_data_filter",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_sheets.values.batch_clear_by_data_filter"
+            },
+            "set": {
+              "intent_examples": [
+                "find values matching a filter",
+                "clears one or more ranges of values from a spreadsheet. for more information, see [read, write, and search metadata](https://developers.google.com/workspace/sheets/api/guides/metadata). the caller must specify the spreadsheet id and one or more datafilters. ranges matching any of the specified data filters will be cleared. only values are cleared -- all other properties of the cell (such as formatting, data validation, etc.) are kept."
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 1504
+    },
+    {
+      "id": "google_slides",
+      "name": "Google Workspace — Slides",
+      "sourceStatus": "pass",
+      "sourceSha256": "87e5e24eb6ed0bc1965055b77c0addbeb72275acf11f1f14cf23bf3e4ba8f25e",
+      "status": "stalled",
+      "operations": 5,
+      "attempts": 21,
+      "decisions": {
+        "declined": 15,
+        "accepted": 3,
+        "rejected": 3
+      },
+      "initialDeficiencies": 16,
+      "remainingDeficiencies": 13,
+      "checks": {
+        "total": 65,
+        "initialPassed": 28,
+        "currentPassed": 28
+      },
+      "originalHash": "9692f63afecd3de8ae5218a581e4f74618fd38ca3a26d335a4fcba909ab9ef88",
+      "outputHash": "363e6d7a2106752139e24a06f9fceaa8dae897c79be71eadc1dcd20162f1c41d",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_slides.pages.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_slides.pages.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a page by id",
+                "gets the latest version of the specified page in the presentation."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_slides.presentations.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_slides.presentations.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new presentation",
+                "creates a blank presentation using the title given in the request. if a `presentationid` is provided, it is used as the id of the new presentation. otherwise, a new id is generated. other fields in the request, including any provided content, are ignored. returns the created presentation."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_slides.presentations.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_slides.presentations.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a presentation by id",
+                "gets the latest version of the specified presentation."
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 324
+    },
+    {
+      "id": "google_calendar",
+      "name": "Google Workspace — Calendar",
+      "sourceStatus": "pass",
+      "sourceSha256": "99624ecfbe3a20d724a59c980dd391882d3a23ded23a74fcb18659aeb98a895e",
+      "status": "budget",
+      "operations": 38,
+      "attempts": 40,
+      "decisions": {
+        "declined": 30,
+        "rejected": 6,
+        "accepted": 4
+      },
+      "initialDeficiencies": 111,
+      "remainingDeficiencies": 107,
+      "checks": {
+        "total": 464,
+        "initialPassed": 165,
+        "currentPassed": 165
+      },
+      "originalHash": "b3788591f2e214311776f6c9d2af44b8ee85ca5378c0aeadefd1d182b29be469",
+      "outputHash": "1383b5236455c0b051344500c57fc8cecfe28cc0f1fe3bbe560ab3def5100247",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_calendar.acl.delete",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_calendar.acl.delete"
+            },
+            "set": {
+              "intent_examples": [
+                "delete a acl",
+                "deletes an access control rule."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_calendar.acl.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_calendar.acl.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a acl by id",
+                "returns an access control rule."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_calendar.acl.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_calendar.acl.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the acls",
+                "returns the rules in the access control list for the calendar."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_calendar.calendar_list.delete",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_calendar.calendar_list.delete"
+            },
+            "set": {
+              "intent_examples": [
+                "delete a calendarList",
+                "removes a calendar from the user's calendar list."
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 1808
+    },
+    {
+      "id": "google_admin",
+      "name": "Google Workspace — Admin Directory",
+      "sourceStatus": "compile-failed",
+      "sourceSha256": "0141933ab2d43cd1a963a8b0de188eba02ca66fc1373bc7b850c8c0a1f92239a",
+      "status": "budget",
+      "operations": 125,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 408,
+      "remainingDeficiencies": 408,
+      "checks": {
+        "total": 1782,
+        "initialPassed": 674,
+        "currentPassed": 674
+      },
+      "originalHash": "e6cd2828d430574c34c6c2126466648b25592baacbf28a9d63e15dca24b77c55",
+      "outputHash": "e6cd2828d430574c34c6c2126466648b25592baacbf28a9d63e15dca24b77c55",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "unresolvedConversion": "compile-failed",
+      "elapsedMs": 2290
+    },
+    {
+      "id": "google_classroom",
+      "name": "Google Classroom",
+      "sourceStatus": "pass",
+      "sourceSha256": "f5e5da2fdae9b0cc86db126229784e8d52d7591149336d2013e268d44cbcef13",
+      "status": "budget",
+      "operations": 104,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 420,
+      "remainingDeficiencies": 420,
+      "checks": {
+        "total": 1568,
+        "initialPassed": 525,
+        "currentPassed": 525
+      },
+      "originalHash": "22e2972002836ec687278bbf1a8be0ea044a0fe111785c06a60506d97be1c54e",
+      "outputHash": "22e2972002836ec687278bbf1a8be0ea044a0fe111785c06a60506d97be1c54e",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 1508
+    },
+    {
+      "id": "google_places",
+      "name": "Google Maps — Places",
+      "sourceStatus": "compile-failed",
+      "sourceSha256": "2353064e8ee8dc35c7b8220ead1c6bde9e37898e87087ee40f20949d7d8ee1f9",
+      "status": "stalled",
+      "operations": 4,
+      "attempts": 13,
+      "decisions": {
+        "declined": 9,
+        "rejected": 3,
+        "accepted": 1
+      },
+      "initialDeficiencies": 12,
+      "remainingDeficiencies": 11,
+      "checks": {
+        "total": 46,
+        "initialPassed": 21,
+        "currentPassed": 21
+      },
+      "originalHash": "059d23d3705a248d85913fca9ea01c1961e5f28964f70bd2910d9edf066d3c71",
+      "outputHash": "ff6c614a1e62f90f44cbfeb75a5a65cee6357970f441bdb559179c93230bec62",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:google_places.v1.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "google_places.v1.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a v1 by id",
+                "get the details of a place based on its resource name, which is a string in the `places/{place_id}` format."
+              ]
+            }
+          }
+        }
+      ],
+      "unresolvedConversion": "compile-failed",
+      "elapsedMs": 219
+    },
+    {
+      "id": "graph_mail",
+      "name": "Microsoft Graph — mail",
+      "sourceStatus": "pass",
+      "sourceSha256": "503db1b9d86b8538d5424b53aae3a82d7e75f24051f76ad4258b99cc42a80496",
+      "status": "budget",
+      "operations": 136,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 791,
+      "remainingDeficiencies": 791,
+      "checks": {
+        "total": 1279,
+        "initialPassed": 292,
+        "currentPassed": 292
+      },
+      "originalHash": "f24ed7fc0a50436ac46146cd0b45e0f1c4c17486d1ff70e6d15890af04bbb1ce",
+      "outputHash": "f24ed7fc0a50436ac46146cd0b45e0f1c4c17486d1ff70e6d15890af04bbb1ce",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 2839
+    },
+    {
+      "id": "graph_users",
+      "name": "Microsoft Graph — users",
+      "sourceStatus": "pass",
+      "sourceSha256": "bb15744f533c0eb8901a4115b0d8a276eb0ac7eb2fa62fa66dadd1d2fd5a4804",
+      "status": "budget",
+      "operations": 272,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 1049,
+      "remainingDeficiencies": 1049,
+      "checks": {
+        "total": 2247,
+        "initialPassed": 603,
+        "currentPassed": 603
+      },
+      "originalHash": "3293a200eb7f7a4c3843f04f82e50af4cff7c52d74cd707b6dbda3b16d4f717e",
+      "outputHash": "3293a200eb7f7a4c3843f04f82e50af4cff7c52d74cd707b6dbda3b16d4f717e",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 3806
+    },
+    {
+      "id": "graph_teams",
+      "name": "Microsoft Graph — teams",
+      "sourceStatus": "compile-failed",
+      "sourceSha256": "ff15016ec2342472f22dc4c84fff093f9e4c01bbcdaf808973a6c22acfc9a581",
+      "status": "budget",
+      "operations": 1421,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 6944,
+      "remainingDeficiencies": 6944,
+      "checks": {
+        "total": 12249,
+        "initialPassed": 3051,
+        "currentPassed": 3051
+      },
+      "originalHash": "bb4284a019dd3d42b80c6bf72d9e611ed6e2e4ead911baa2c04bbda79403088f",
+      "outputHash": "bb4284a019dd3d42b80c6bf72d9e611ed6e2e4ead911baa2c04bbda79403088f",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "unresolvedConversion": "compile-failed",
+      "elapsedMs": 19775
+    },
+    {
+      "id": "graph_calendar",
+      "name": "Microsoft Graph — calendar",
+      "sourceStatus": "pass",
+      "sourceSha256": "677638330614554db8c313ac487b63af194d125320c7e668329e6cb5c1674805",
+      "status": "budget",
+      "operations": 380,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 1795,
+      "remainingDeficiencies": 1795,
+      "checks": {
+        "total": 3449,
+        "initialPassed": 845,
+        "currentPassed": 845
+      },
+      "originalHash": "1715e9fd60eb5904f4da76f648eccaa6f287327b7c86f970dc285a13a489c200",
+      "outputHash": "1715e9fd60eb5904f4da76f648eccaa6f287327b7c86f970dc285a13a489c200",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 9711
+    },
+    {
+      "id": "graph_files",
+      "name": "Microsoft Graph — files",
+      "sourceStatus": "pass",
+      "sourceSha256": "d387990c3d4b519fb98630788591cfb5696595f51d0934080e8aacfe744767d6",
+      "status": "budget",
+      "operations": 1619,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 8361,
+      "remainingDeficiencies": 8361,
+      "checks": {
+        "total": 14575,
+        "initialPassed": 3494,
+        "currentPassed": 3494
+      },
+      "originalHash": "9bf6386522610840f8b9ffe636bd38334e24c66c9b55bf2bafa3f4b5056d9fae",
+      "outputHash": "9bf6386522610840f8b9ffe636bd38334e24c66c9b55bf2bafa3f4b5056d9fae",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 26848
+    },
+    {
+      "id": "canva",
+      "name": "Canva Connect",
+      "sourceStatus": "pass",
+      "sourceSha256": "76649231b2f607cafe2076e0b866962e045c866db359fbf9b502afba9f7f67ee",
+      "status": "budget",
+      "operations": 59,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 147,
+      "remainingDeficiencies": 147,
+      "checks": {
+        "total": 387,
+        "initialPassed": 202,
+        "currentPassed": 202
+      },
+      "originalHash": "f6f3fce4ab5e64dfbc268b836499c3b3385f36a8a4bce05361e80845b29663dc",
+      "outputHash": "f6f3fce4ab5e64dfbc268b836499c3b3385f36a8a4bce05361e80845b29663dc",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 740
+    },
+    {
+      "id": "slack",
+      "name": "Slack Web API",
+      "sourceStatus": "pass",
+      "sourceSha256": "742a5c977180a829df8767cf57bc417d99b3713583aee83741efb9c08ca731e7",
+      "status": "budget",
+      "operations": 174,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 604,
+      "remainingDeficiencies": 604,
+      "checks": {
+        "total": 1276,
+        "initialPassed": 349,
+        "currentPassed": 349
+      },
+      "originalHash": "81e4f9caa8f1a7e316a6da5af52a66e1c1153d2a2b361b23698ef14e47cb6805",
+      "outputHash": "81e4f9caa8f1a7e316a6da5af52a66e1c1153d2a2b361b23698ef14e47cb6805",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 2446
+    },
+    {
+      "id": "sap_successfactors",
+      "name": "SAP SuccessFactors — User",
+      "sourceStatus": "pass",
+      "sourceSha256": "8d5fe16c1552347ea17146eae89a2321b330a48160bebcddc8d1d62ef17cb901",
+      "status": "budget",
+      "operations": 4,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 299,
+      "remainingDeficiencies": 299,
+      "checks": {
+        "total": 302,
+        "initialPassed": 9,
+        "currentPassed": 9
+      },
+      "originalHash": "de57828bace7aa26d0b39dbc8b334a962662e30246c8878b46b4610956785866",
+      "outputHash": "de57828bace7aa26d0b39dbc8b334a962662e30246c8878b46b4610956785866",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 486
+    },
+    {
+      "id": "sap_s4hana",
+      "name": "SAP S/4HANA — Business Partner",
+      "sourceStatus": "pass",
+      "sourceSha256": "c69ba6253a3efdeb1878fc6030001c10ed6dec84c8a2124e2f20790c595aecae",
+      "status": "budget",
+      "operations": 198,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 2413,
+      "remainingDeficiencies": 2413,
+      "checks": {
+        "total": 2602,
+        "initialPassed": 397,
+        "currentPassed": 397
+      },
+      "originalHash": "376120d34c46d4bb6e64d28bcd45619d77f8174c269bf18701cef1c5fc2d5b52",
+      "outputHash": "376120d34c46d4bb6e64d28bcd45619d77f8174c269bf18701cef1c5fc2d5b52",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 2554
+    },
+    {
+      "id": "sap_btp",
+      "name": "SAP BTP — Destination Service",
+      "sourceStatus": "pass",
+      "sourceSha256": "ae1e77ad057fa0a1efa49f6eacd7b6c5bc00e28c34c85e32197c68b1664bea6e",
+      "status": "budget",
+      "operations": 47,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 140,
+      "remainingDeficiencies": 140,
+      "checks": {
+        "total": 519,
+        "initialPassed": 129,
+        "currentPassed": 129
+      },
+      "originalHash": "e28b06fdade1c20fdc021440e222e6b93d4b486fcd782638f1486c0a21330834",
+      "outputHash": "e28b06fdade1c20fdc021440e222e6b93d4b486fcd782638f1486c0a21330834",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 537
+    },
+    {
+      "id": "sap_ai_core",
+      "name": "SAP BTP — AI Core",
+      "sourceStatus": "pass",
+      "sourceSha256": "d47c3b229c8fb3d3db72f19829db54b4abcd99abc487118b67fd9be5f46b1dd2",
+      "status": "budget",
+      "operations": 89,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 196,
+      "remainingDeficiencies": 196,
+      "checks": {
+        "total": 635,
+        "initialPassed": 373,
+        "currentPassed": 373
+      },
+      "originalHash": "a6e9cfc9bccf6bd927b5dfa64d184e4945788bff3d5f83ed4ecea185ab912503",
+      "outputHash": "a6e9cfc9bccf6bd927b5dfa64d184e4945788bff3d5f83ed4ecea185ab912503",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 1144
+    },
+    {
+      "id": "sap_ariba",
+      "name": "SAP Ariba — Supplier Data with Pagination",
+      "sourceStatus": "pass",
+      "sourceSha256": "8a926c163e74b5c471bc8ade61faae744bad4e2d6597f01080f02f65e8de2c23",
+      "status": "budget",
+      "operations": 12,
+      "attempts": 40,
+      "decisions": {
+        "declined": 28,
+        "rejected": 6,
+        "accepted": 6
+      },
+      "initialDeficiencies": 45,
+      "remainingDeficiencies": 39,
+      "checks": {
+        "total": 126,
+        "initialPassed": 25,
+        "currentPassed": 25
+      },
+      "originalHash": "1e2b5fb81dac24de99af68895725021db87adbf376049a7220e37b27792c58d8",
+      "outputHash": "5339dc832e588d9eb29ea171cafffa838bfae77586de9d1df700c55e2339feaf",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba.certificates.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba.certificates.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the certificates",
+                "this api will fetch the certificate details for a given smvendorid."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba.qna.list.direct",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba.qna.list.direct"
+            },
+            "set": {
+              "intent_examples": [
+                "this api will fetch the question & answers \nfor a given vendor specified by smvendorid and workspace id."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba.qna.list.direct_2",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba.qna.list.direct_2"
+            },
+            "set": {
+              "intent_examples": [
+                "this api will fetch the question & answers \nfor a given vendor specified by smvendorid and for a given document id."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba.qna.list.direct_3",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba.qna.list.direct_3"
+            },
+            "set": {
+              "intent_examples": [
+                "this api will fetch the question & answers \nfor a given vendor specified by smvendorid."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba.vendors.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba.vendors.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new vendor",
+                "this api will fetch all the vendor details"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba.workspaces.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba.workspaces.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the workspaces",
+                "fetch workspaces by smvendorid"
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 384
+    },
+    {
+      "id": "sap_ariba_approvals",
+      "name": "SAP Ariba — Document Approval",
+      "sourceStatus": "pass",
+      "sourceSha256": "24c5addfc39f7633cfaa493d472396af4b67896ea8b5317fb6776ee8fad34566",
+      "status": "budget",
+      "operations": 7,
+      "attempts": 40,
+      "decisions": {
+        "declined": 33,
+        "accepted": 5,
+        "rejected": 2
+      },
+      "initialDeficiencies": 38,
+      "remainingDeficiencies": 33,
+      "checks": {
+        "total": 95,
+        "initialPassed": 15,
+        "currentPassed": 15
+      },
+      "originalHash": "8cbc80afc682faf0285b59f94088896c01e882a477cf4221467b37bd333dd11c",
+      "outputHash": "e04bb03ba7a320c32d93b20d2260afec9c93c8f48d7b4787e15f12b9694b7a68",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba_approvals.attachments.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba_approvals.attachments.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a attachment by id",
+                "get approvable attachment"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba_approvals.changes.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba_approvals.changes.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the changes",
+                "get changes"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba_approvals.members.list.groups",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba_approvals.members.list.groups"
+            },
+            "set": {
+              "intent_examples": [
+                "list the members"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba_approvals.pending_approvables.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba_approvals.pending_approvables.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the pendingApprovables",
+                "get all pending documents/task approvables"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:sap_ariba_approvals.rest.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "sap_ariba_approvals.rest.create"
+            },
+            "set": {
+              "intent_examples": [
+                "act on approvable"
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 228
+    },
+    {
+      "id": "jira",
+      "name": "Atlassian Jira Cloud v3 — historical export",
+      "sourceStatus": "policy-blocked",
+      "sourceSha256": "4a0f1e8a7948c473e6e3592f68dff5f00985e11d5b5d5379c303802e8f20bbfe",
+      "status": "budget",
+      "operations": 316,
+      "attempts": 40,
+      "decisions": {
+        "declined": 38,
+        "rejected": 2
+      },
+      "initialDeficiencies": 814,
+      "remainingDeficiencies": 814,
+      "checks": {
+        "total": 2509,
+        "initialPassed": 751,
+        "currentPassed": 751
+      },
+      "originalHash": "a8d30c0e698c7c78d6f3e19dd50a5b604b98246910e1d871b69c09fd53a8fe74",
+      "outputHash": "a8d30c0e698c7c78d6f3e19dd50a5b604b98246910e1d871b69c09fd53a8fe74",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "unresolvedConversion": "policy-blocked",
+      "elapsedMs": 3260
+    },
+    {
+      "id": "confluence",
+      "name": "Atlassian Confluence Cloud v1 — historical export",
+      "sourceStatus": "policy-blocked",
+      "sourceSha256": "36132acfce799795758e2e8459a84fa42fb1d6d8fd4f0bde191fed9146185bff",
+      "status": "budget",
+      "operations": 113,
+      "attempts": 40,
+      "decisions": {
+        "declined": 37,
+        "rejected": 2,
+        "review": 1
+      },
+      "initialDeficiencies": 316,
+      "remainingDeficiencies": 316,
+      "checks": {
+        "total": 913,
+        "initialPassed": 346,
+        "currentPassed": 346
+      },
+      "originalHash": "735afe3844cad4ebaef08a8c89adbcad45999775a25da0577c14f217fc74d0d1",
+      "outputHash": "735afe3844cad4ebaef08a8c89adbcad45999775a25da0577c14f217fc74d0d1",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "unresolvedConversion": "policy-blocked",
+      "elapsedMs": 1561
+    },
+    {
+      "id": "salesforce_orders",
+      "name": "Salesforce Commerce — Shopper Orders",
+      "sourceStatus": "pass",
+      "sourceSha256": "3c25ef935045c74c8b2a32e12ba27abbb93ef9ac8be13b12ba8eaed2eb1c2547",
+      "status": "budget",
+      "operations": 13,
+      "attempts": 40,
+      "decisions": {
+        "declined": 27,
+        "accepted": 8,
+        "rejected": 5
+      },
+      "initialDeficiencies": 37,
+      "remainingDeficiencies": 29,
+      "checks": {
+        "total": 195,
+        "initialPassed": 143,
+        "currentPassed": 143
+      },
+      "originalHash": "65f39ec397f0ec0d5835948e87336cce346bc1da17583e5695ec7fedd2ab8269",
+      "outputHash": "7bd58fa15b3bcb646a4b91d558182c42706d3d9a94324d3f02ad935ae501ed16",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_orders.fail.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_orders.fail.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new fail",
+                "fail an order."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_orders.oms_cancel_order.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_orders.oms_cancel_order.create"
+            },
+            "set": {
+              "intent_examples": [
+                "cancel oms-cancel-order",
+                "cancel an order that is integrated with order management (oms)."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_orders.oms_meta_data.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_orders.oms_meta_data.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the oms-meta-datas",
+                "retrieve order management (oms) configuration data needed to render cancel and return experiences."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_orders.oms_return_order.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_orders.oms_return_order.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new oms-return-order",
+                "initiate the return of one or more items of an order that is integrated with order management (oms)."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_orders.orders.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_orders.orders.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new order",
+                "submits an order for a basket."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_orders.payment_instruments.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_orders.payment_instruments.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new payment-instrument",
+                "add a payment instrument to an order."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_orders.payment_instruments.update",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_orders.payment_instruments.update"
+            },
+            "set": {
+              "intent_examples": [
+                "update an existing payment-instrument",
+                "update payment instrument details for an order."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_orders.taxes.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_orders.taxes.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the taxes",
+                "retrieve external taxation data for an order."
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 1113
+    },
+    {
+      "id": "salesforce_customers",
+      "name": "Salesforce Commerce — Shopper Customers",
+      "sourceStatus": "pass",
+      "sourceSha256": "36f9af232d2f008999cab3ae587f071f4bfdba64cfae96f897cfd91f03bf74d1",
+      "status": "budget",
+      "operations": 33,
+      "attempts": 40,
+      "decisions": {
+        "declined": 27,
+        "accepted": 9,
+        "rejected": 4
+      },
+      "initialDeficiencies": 106,
+      "remainingDeficiencies": 97,
+      "checks": {
+        "total": 523,
+        "initialPassed": 328,
+        "currentPassed": 328
+      },
+      "originalHash": "a4d0c5ce3ccccde7a018e9b5f0939865639e91a843232887869e212003b34a2d",
+      "outputHash": "51862ba63ed8fcb44b38a7fa9ab194ffcb80b80555fabca6b51e98a033c4cb8b",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_customers.addresses.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_customers.addresses.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new address",
+                "create a new address with the given name for the customer. this endpoint only accepts a registered customer shoppertoken (jwt)."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_customers.addresses.delete",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_customers.addresses.delete"
+            },
+            "set": {
+              "intent_examples": [
+                "delete a address",
+                "delete a customer's address by address name. this endpoint only accepts a registered customer shoppertoken (jwt)."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_customers.addresses.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_customers.addresses.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a address by id",
+                "retrieve a customer's address by address name. this endpoint only accepts a registered customer shoppertoken (jwt)."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_customers.addresses.update",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_customers.addresses.update"
+            },
+            "set": {
+              "intent_examples": [
+                "update an existing address",
+                "update a customer's address by address name. this endpoint only accepts a registered customer shoppertoken (jwt)."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_customers.baskets.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_customers.baskets.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the baskets",
+                "get the baskets for a customer. this endpoint accepts a registered customer shoppertoken (jwt) or a guest customer shoppertoken."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_customers.customers.update",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_customers.customers.update"
+            },
+            "set": {
+              "intent_examples": [
+                "update an existing customer",
+                "update a customer. this endpoint only accepts a registered customer shoppertoken (jwt)."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_customers.external_profile.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_customers.external_profile.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the external-profiles",
+                "gets the new external profile for a customer. this endpoint only accepts a registered customer shoppertoken (jwt)."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_customers.items.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_customers.items.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new item",
+                "add an item to the customer's product list."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:salesforce_customers.items.delete",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "salesforce_customers.items.delete"
+            },
+            "set": {
+              "intent_examples": [
+                "delete a item",
+                "remove an item from a customer product list. this endpoint accepts a registered customer shoppertoken (jwt) or a guest customer shoppertoken."
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 2030
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "sourceStatus": "pass",
+      "sourceSha256": "f0e0fc8fffbffda45bf5f3df59846443c1d47a3cfcbfae232eedf4743124ebee",
+      "status": "budget",
+      "operations": 594,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 2195,
+      "remainingDeficiencies": 2195,
+      "checks": {
+        "total": 3070,
+        "initialPassed": 1242,
+        "currentPassed": 1242
+      },
+      "originalHash": "ee4ce2e33fcfb94f4df5bde591162d4c612961904bbbd87be057033ad15b9165",
+      "outputHash": "ee4ce2e33fcfb94f4df5bde591162d4c612961904bbbd87be057033ad15b9165",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 16759
+    },
+    {
+      "id": "plaid",
+      "name": "Plaid",
+      "sourceStatus": "pass",
+      "sourceSha256": "141de8aaaad29c9b81c4d9d3b681711562fb729fe6c45208aaba65fe94852846",
+      "status": "budget",
+      "operations": 351,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 929,
+      "remainingDeficiencies": 929,
+      "checks": {
+        "total": 1764,
+        "initialPassed": 816,
+        "currentPassed": 816
+      },
+      "originalHash": "13c71c8810d1ce13491ec4d4fd4b046b741174cc40ab17f34eb588008f7c4705",
+      "outputHash": "13c71c8810d1ce13491ec4d4fd4b046b741174cc40ab17f34eb588008f7c4705",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 14132
+    },
+    {
+      "id": "adyen",
+      "name": "Adyen Checkout v71",
+      "sourceStatus": "pass",
+      "sourceSha256": "fd59f89f18d134f901d6d42b7aabad1c8afd4e2eb733823ba50944c034f1095a",
+      "status": "budget",
+      "operations": 28,
+      "attempts": 40,
+      "decisions": {
+        "declined": 35,
+        "review": 3,
+        "rejected": 1,
+        "accepted": 1
+      },
+      "initialDeficiencies": 104,
+      "remainingDeficiencies": 103,
+      "checks": {
+        "total": 220,
+        "initialPassed": 81,
+        "currentPassed": 81
+      },
+      "originalHash": "cab0654508e5620489611bb160c7cdfa30e3b7d35df729c056a055b18d191d9a",
+      "outputHash": "80587073eaf77f3f1474a3f894083d8ba4936831c524c69f361da266011c484d",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:adyen.balance.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "adyen.balance.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new balance",
+                "get the balance of a gift card"
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 2007
+    },
+    {
+      "id": "docusign",
+      "name": "DocuSign eSignature",
+      "sourceStatus": "compile-failed",
+      "sourceSha256": "77f1998c313d69701eca52cb80e860c2a4b7e97bdceea11fd0427f9405f06c2e",
+      "status": "budget",
+      "operations": 414,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 1565,
+      "remainingDeficiencies": 1565,
+      "checks": {
+        "total": 3333,
+        "initialPassed": 829,
+        "currentPassed": 829
+      },
+      "originalHash": "0d1627113bacde3d8401e706ca29db9ac61d9d55d0af12d373bb9a523365c6df",
+      "outputHash": "0d1627113bacde3d8401e706ca29db9ac61d9d55d0af12d373bb9a523365c6df",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "unresolvedConversion": "compile-failed",
+      "elapsedMs": 13124
+    },
+    {
+      "id": "okta",
+      "name": "Okta Management",
+      "sourceStatus": "policy-blocked",
+      "sourceSha256": "78e8dfd0c67b6f651b216bc5cf9522ca2127a6c84d623871b61815a42fef8c15",
+      "status": "budget",
+      "operations": 734,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 2147,
+      "remainingDeficiencies": 2147,
+      "checks": {
+        "total": 5976,
+        "initialPassed": 3019,
+        "currentPassed": 3019
+      },
+      "originalHash": "9bbf80e83a56ed7a54157bb1cb5f8a75af801bad90ee72fba639a53b5c852ad9",
+      "outputHash": "9bbf80e83a56ed7a54157bb1cb5f8a75af801bad90ee72fba639a53b5c852ad9",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "unresolvedConversion": "policy-blocked",
+      "elapsedMs": 13007
+    },
+    {
+      "id": "shopware",
+      "name": "Shopware Admin",
+      "sourceStatus": "pass",
+      "sourceSha256": "be653e0c3d5ee616d51974434bdbd3392d4a40c275e589bf2cbf74dc0cd795b9",
+      "status": "budget",
+      "operations": 1117,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 3421,
+      "remainingDeficiencies": 3421,
+      "checks": {
+        "total": 6476,
+        "initialPassed": 2556,
+        "currentPassed": 2556
+      },
+      "originalHash": "1d9b7b9fac8b0443750c1c415de7d4f06968b9725cc78fed9b151fa581ec4e32",
+      "outputHash": "1d9b7b9fac8b0443750c1c415de7d4f06968b9725cc78fed9b151fa581ec4e32",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 18109
+    },
+    {
+      "id": "bigcommerce",
+      "name": "BigCommerce Orders v2",
+      "sourceStatus": "pass",
+      "sourceSha256": "65433a2b6246bfa0bc431bec00faa5782708f8390963bbf5c9f47aeadb6d1a7a",
+      "status": "budget",
+      "operations": 27,
+      "attempts": 40,
+      "decisions": {
+        "declined": 12,
+        "review": 1,
+        "accepted": 15,
+        "rejected": 12
+      },
+      "initialDeficiencies": 67,
+      "remainingDeficiencies": 52,
+      "checks": {
+        "total": 170,
+        "initialPassed": 68,
+        "currentPassed": 68
+      },
+      "originalHash": "de2930eed4e5f85f4d5968f441b5c966d78fc11ba9f96671a2abc1f235d396ca",
+      "outputHash": "9216b0bddac161c9c1dc036bda9e6ac999efecfdccaf14f779397d3dbe23c924",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.consignments.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.consignments.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the consignments",
+                "get consignments"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.coupons.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.coupons.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the coupons",
+                "list order coupons"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.messages.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.messages.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the messages",
+                "get order messages"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.order_statuses.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.order_statuses.get"
+            },
+            "set": {
+              "intent_examples": [
+                "poll order status",
+                "get a single order status by id"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.orders.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.orders.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new order",
+                "create an order"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.orders.list.direct",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.orders.list.direct"
+            },
+            "set": {
+              "intent_examples": [
+                "list the orders",
+                "get all orders"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.products.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.products.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a product by id",
+                "get an order product"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.products.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.products.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the products",
+                "list order products"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.shipments.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.shipments.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new shipment",
+                "create order shipment"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.shipments.delete.by_shipment_id",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.shipments.delete.by_shipment_id"
+            },
+            "set": {
+              "intent_examples": [
+                "delete a shipment",
+                "delete an order shipment"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.shipments.list.direct",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.shipments.list.direct"
+            },
+            "set": {
+              "intent_examples": [
+                "list the shipments",
+                "get order shipments"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.shipping_addresses.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.shipping_addresses.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a shipping address by id",
+                "get a shipping address"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.shipping_addresses.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.shipping_addresses.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the shipping addresses",
+                "get order shipping addresses"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.shipping_quotes.list.shipping",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.shipping_quotes.list.shipping"
+            },
+            "set": {
+              "intent_examples": [
+                "list the shipping quotes",
+                "get consignment shipping quotes"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:bigcommerce.taxes.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "bigcommerce.taxes.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the taxes",
+                "get all order taxes"
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 2570
+    },
+    {
+      "id": "xero",
+      "name": "Xero Accounting",
+      "sourceStatus": "policy-blocked",
+      "sourceSha256": "0458b4ef9ed72d53fdab89a6c31422b155516115cfa8146ac451f51d778f4582",
+      "status": "budget",
+      "operations": 235,
+      "attempts": 40,
+      "decisions": {
+        "rejected": 11,
+        "declined": 29
+      },
+      "initialDeficiencies": 371,
+      "remainingDeficiencies": 371,
+      "checks": {
+        "total": 1829,
+        "initialPassed": 1723,
+        "currentPassed": 1723
+      },
+      "originalHash": "7d0cf2431fc3c4c3934d4169aab7c256b0ea100a3f40e0f07b910daea27d198a",
+      "outputHash": "7d0cf2431fc3c4c3934d4169aab7c256b0ea100a3f40e0f07b910daea27d198a",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "unresolvedConversion": "policy-blocked",
+      "elapsedMs": 5513
+    },
+    {
+      "id": "box",
+      "name": "Box",
+      "sourceStatus": "pass",
+      "sourceSha256": "0f8794edec1caf44761777f791b36388ec997f4220233a1a0166712e0d3b0a06",
+      "status": "budget",
+      "operations": 297,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 537,
+      "remainingDeficiencies": 537,
+      "checks": {
+        "total": 1972,
+        "initialPassed": 1578,
+        "currentPassed": 1578
+      },
+      "originalHash": "991756bff0c1723aae84f35b9573b54c94534a0ce03e23c8ed5697fcb924498c",
+      "outputHash": "991756bff0c1723aae84f35b9573b54c94534a0ce03e23c8ed5697fcb924498c",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 4845
+    },
+    {
+      "id": "hubspot",
+      "name": "HubSpot CRM — Deals",
+      "sourceStatus": "pass",
+      "sourceSha256": "dcc02ed2d358e462d7be06cf68636ddfa90cbb9822f175197e20740c5f5b1158",
+      "status": "budget",
+      "operations": 12,
+      "attempts": 40,
+      "decisions": {
+        "declined": 20,
+        "rejected": 7,
+        "review": 8,
+        "accepted": 5
+      },
+      "initialDeficiencies": 32,
+      "remainingDeficiencies": 27,
+      "checks": {
+        "total": 48,
+        "initialPassed": 45,
+        "currentPassed": 45
+      },
+      "originalHash": "f102933885c952eb0bac5abe3dd3b15c1d2f09dc7a246e2a981bad3863ab0b22",
+      "outputHash": "35989ae257ee514896c959220b4319ba83d1d81de6cd3dd4881b12791fd5c919",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:hubspot.0_3.delete",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "hubspot.0_3.delete"
+            },
+            "set": {
+              "intent_examples": [
+                "delete a 0-3",
+                "archive"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:hubspot.0_3.search",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "hubspot.0_3.search"
+            },
+            "set": {
+              "intent_examples": [
+                "search for deals using various filters and criteria to retrieve specific records."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:hubspot.0_3.update",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "hubspot.0_3.update"
+            },
+            "set": {
+              "intent_examples": [
+                "update an existing 0-3",
+                "update"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:hubspot.batch.create.v3_create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "hubspot.batch.create.v3_create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new batch",
+                "create a batch of deals"
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:hubspot.merge.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "hubspot.merge.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new merge",
+                "merge two deals with same type"
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 600
+    },
+    {
+      "id": "samsara",
+      "name": "Samsara Connected Operations",
+      "sourceStatus": "pass",
+      "sourceSha256": "26655bccb648fc764c78ec5b7a55d860fab18dbf6f56ac356ab9fb4e3ef43473",
+      "status": "budget",
+      "operations": 148,
+      "attempts": 40,
+      "decisions": {
+        "declined": 40
+      },
+      "initialDeficiencies": 480,
+      "remainingDeficiencies": 480,
+      "checks": {
+        "total": 1138,
+        "initialPassed": 364,
+        "currentPassed": 364
+      },
+      "originalHash": "125bc784ba372809aad3a1a5a6c7f2e17c649cfccf5b39dff0cd20f03274010c",
+      "outputHash": "125bc784ba372809aad3a1a5a6c7f2e17c649cfccf5b39dff0cd20f03274010c",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [],
+      "elapsedMs": 2566
+    },
+    {
+      "id": "workday_common",
+      "name": "Workday — Common v1",
+      "sourceStatus": "pass",
+      "sourceSha256": "2372e6c2622918edeaafa2c7f7579ac514f8b370a572172acccf2dd757d3c1b2",
+      "status": "budget",
+      "operations": 40,
+      "attempts": 40,
+      "decisions": {
+        "declined": 8,
+        "review": 8,
+        "accepted": 12,
+        "rejected": 12
+      },
+      "initialDeficiencies": 100,
+      "remainingDeficiencies": 88,
+      "checks": {
+        "total": 368,
+        "initialPassed": 81,
+        "currentPassed": 81
+      },
+      "originalHash": "fccf4859fd480c1a61d64ea52a1c90c022dc155fb92bda9e22b665c00c328786",
+      "outputHash": "7164325ecd5739cc9edc0b7c0a2a28c3e62fd6ca0dae7dd6e97367696726d595",
+      "invariantsPreserved": true,
+      "inputUnchanged": true,
+      "accepted": [
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.activities.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.activities.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a activity by id",
+                "retrieves an activity instance for a specific customer."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.business_title_changes.create.business_title_changes",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.business_title_changes.create.business_title_changes"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new businessTitleChange",
+                "creates a business title change instance with the specified data."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.currencies.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.currencies.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a currency by id",
+                "retrieves a currency instance."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.customers.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.customers.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a customer by id",
+                "retrieves a customer instance."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.direct_reports.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.direct_reports.get"
+            },
+            "set": {
+              "intent_examples": [
+                "export directReport",
+                "retrieves a direct report instance for a specific worker."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.history.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.history.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a history by id",
+                "retrieves a history instance for a specific worker."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.inbox_tasks.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.inbox_tasks.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a inboxTask by id",
+                "retrieves an inbox task instance for a specific worker."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.job_change_reasons.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.job_change_reasons.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a jobChangeReason by id",
+                "retrieves a job change reason instance."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.job_change_reasons.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.job_change_reasons.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the jobChangeReasons",
+                "retrieves a collection of job change reasons."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.job_changes.create",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.job_changes.create"
+            },
+            "set": {
+              "intent_examples": [
+                "create a new jobChange",
+                "creates a job change instance with the specified data."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.organization_types.get",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.organization_types.get"
+            },
+            "set": {
+              "intent_examples": [
+                "get a organizationType by id",
+                "retrieves an organization type instance."
+              ]
+            }
+          }
+        },
+        {
+          "deficiency": "operation_lacks_intent_examples:operation:workday_common.organization_types.list",
+          "round": 1,
+          "patch": {
+            "target": {
+              "kind": "operation",
+              "operationId": "workday_common.organization_types.list"
+            },
+            "set": {
+              "intent_examples": [
+                "list the organizationTypes",
+                "retrieves a collection of organization types."
+              ]
+            }
+          }
+        }
+      ],
+      "elapsedMs": 1491
+    },
+    {
+      "id": "workday",
+      "name": "Workday HCM",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Export the selected Staffing/Person/Absence REST service OpenAPI from Workday REST API Explorer. Include its service version and tenant extensions.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "oracle_hcm",
+      "name": "Oracle Fusion HCM",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Download the release-specific HCM Swagger from the REST API guide, or export tenant /hcmRestApi/resources/<version>/describe with the OpenAPI media type when supported. The public release and tenant flexfields are different scopes.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "oracle_ebs",
+      "name": "Oracle E-Business Suite",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Export the deployed Integrated SOA Gateway REST service. EBS commonly describes REST using WADL, which Anvil does not accept. Supply an actual OpenAPI or reviewed Postman export; a WADL is an adapter gap, not a passing REST conversion.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "netsuite_rest",
+      "name": "Oracle NetSuite — REST records",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Export /services/rest/record/v1/metadata-catalog for the selected record types with application/swagger+json. The account's enabled features and custom records affect this contract. The existing SOAP backtest does not cover REST.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "moodle",
+      "name": "Moodle Workplace / LMS",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Export the site's enabled external functions and installed-plugin contracts as reviewed OpenAPI. Moodle core REST is a function-dispatch endpoint, not a vendor-wide OpenAPI. A generic /webservice/rest/server.php skeleton does not establish function coverage.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "dynamics365",
+      "name": "Microsoft Dynamics 365 / Dataverse",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Export the tenant Web API /api/data/v9.2/$metadata, including custom tables. OData reference services are not Dynamics coverage.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "business_central",
+      "name": "Microsoft Dynamics 365 Business Central",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Export /api/v2.0/$metadata for the selected environment and any extension APIs.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "salesforce_crm",
+      "name": "Salesforce CRM — sObjects and custom objects",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Export the reviewed org-specific REST contract or Postman collection, including /sobjects describes. Commerce Cloud contracts do not validate Sales/Service Cloud custom objects.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "servicenow",
+      "name": "ServiceNow — ITSM / industry workflows",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Export OpenAPI from REST API Explorer for the instance, plugins and tables under test. Include table-specific fields and query constraints.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "teamcenter",
+      "name": "Siemens Teamcenter X",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Obtain the licensed deployment's REST API specification from its administrator. Capture version, modules and configuration.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "windchill",
+      "name": "PTC Windchill REST Services",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Export the selected WRS domain's OData $metadata, such as Product Management. Include custom domains separately.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "infor",
+      "name": "Infor CloudSuite / ION API",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Export authorized API-suite Swagger from the tenant's ION API gateway. Record CloudSuite edition, suite and version.",
+      "elapsedMs": 0
+    },
+    {
+      "id": "coupa",
+      "name": "Coupa Procurement",
+      "sourceStatus": "needs-export",
+      "status": "needs-source",
+      "detail": "Obtain a reviewed contract for the selected Core API resources and tenant custom fields.",
+      "elapsedMs": 0
+    }
+  ],
+  "finishedAt": "2026-09-14T01:23:39.301Z"
+}

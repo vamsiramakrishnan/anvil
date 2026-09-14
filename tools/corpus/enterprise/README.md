@@ -129,3 +129,10 @@ accounting tests run in ordinary PR CI without downloading vendor contracts:
 ```bash
 pnpm exec vitest run tools/corpus/enterprise/enterprise.test.ts
 ```
+## Autonomous semantic repair
+
+After generating the corpus, run `node tools/corpus/enterprise/repair.mjs`.
+Use `--systems google_docs,workday_common,slack` for a subset. This preserves each
+original bundle and records repair decisions under `report/repair/`. It does not
+call vendor APIs or approve operations. See
+[controller behavior and limits](../../../docs/backtesting/repair-controller.md).

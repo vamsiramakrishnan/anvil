@@ -17,6 +17,16 @@ function enumOf(schema: Record<string, unknown> | undefined): unknown[] | undefi
   return Array.isArray(values) && values.length > 0 ? values : undefined;
 }
 
+/** One definition shared by detection and evaluation, including refinement-written examples. */
+export function hasFieldExample(schema: Record<string, unknown>, example?: unknown): boolean {
+  return (
+    example !== undefined ||
+    schema.example !== undefined ||
+    schema.default !== undefined ||
+    (Array.isArray(schema.examples) && schema.examples.length > 0)
+  );
+}
+
 /** Parameters and projected body fields that an agent can address directly. */
 export function surfacedFields(operation: Operation): FieldRef[] {
   const fields: FieldRef[] = operation.input.params.map((param: Param) => ({
@@ -27,7 +37,7 @@ export function surfacedFields(operation: Operation): FieldRef[] {
     required: param.required,
     description: param.description,
     enumValues: enumOf(param.schema),
-    hasExample: param.example !== undefined,
+    hasExample: hasFieldExample(param.schema, param.example),
   }));
   if (operation.input.body?.projection !== "fields") return fields;
   for (const field of operation.input.body.fields as BodyField[]) {
@@ -39,8 +49,7 @@ export function surfacedFields(operation: Operation): FieldRef[] {
       required: field.required,
       description: field.description,
       enumValues: enumOf(field.schema),
-      // BodyField has no example slot.
-      hasExample: false,
+      hasExample: hasFieldExample(field.schema),
     });
   }
   return fields;
