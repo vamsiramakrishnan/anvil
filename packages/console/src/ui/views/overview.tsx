@@ -19,10 +19,32 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
         description={<span className="mono">{inspector.path}</span>}
         actions={
           <a className="btn btn-primary" href={href(id, "queue")}>
-            Review decisions →
+            Review operations →
           </a>
         }
       />
+      <nav className="experience-steps" aria-label="Bundle workflow">
+        <a href={href(id, "catalog")}>
+          <span>01 · Explore</span>
+          <strong>Explore API operations</strong>
+          <p>Inspect source operations, inputs, and behavior.</p>
+        </a>
+        <a href={href(id, "queue")}>
+          <span>02 · Review</span>
+          <strong>Review callable operations</strong>
+          <p>Review behavior and approve callable operations.</p>
+        </a>
+        <a href={href(id, "workbench")}>
+          <span>03 · Try</span>
+          <strong>Preview a request</strong>
+          <p>Build a call without contacting the API.</p>
+        </a>
+        <a href={href(id, "artifacts")}>
+          <span>04 · Use</span>
+          <strong>Choose an interface</strong>
+          <p>Skill, CLI, MCP, SDK, or Gemini Enterprise.</p>
+        </a>
+      </nav>
       <div className="metrics">
         <Metric
           label="Operations"
@@ -38,7 +60,7 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
         <Metric
           label="Served MCP tools"
           value={inspector.servedSurface.after.length}
-          detail="After workflow supersession"
+          detail="After workflows replace underlying tools"
         />
         <Metric
           label="Proposed capabilities"
@@ -48,7 +70,7 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
       </div>
       <div className="overview-grid">
         <Panel
-          title="What needs attention"
+          title="Prepare your API"
           aside={
             <Tag>
               {errors.length + pending.length + blocked.length} operation reviews and errors
@@ -104,7 +126,7 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
             <span>→</span>
           </a>
         </Panel>
-        <Panel title="Contract identity">
+        <Panel title="API details">
           <KV
             rows={[
               ["Service", service.id],

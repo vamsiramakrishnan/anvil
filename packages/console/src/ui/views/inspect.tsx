@@ -32,7 +32,7 @@ export function InspectView({ api, bundleId, data, against }: Props) {
     <div className="stack">
       <PageHeader
         eyebrow="Contract inspector"
-        title="Operations & contracts"
+        title="Contract details"
         description="Inspect the shape, behavior, and exposure of every operation."
       />
       <nav className="list-tabs inspector-tabs" aria-label="Inspector sections">

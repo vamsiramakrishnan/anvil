@@ -1,13 +1,12 @@
 ---
 title: Anvil
-description: Compile an API description and reviewed policy into aligned agent tools, client SDKs, and local assurance tests.
-template: splash
+description: Turn REST, SOAP, gRPC, and GraphQL APIs into executable agent actions delivered through skills, CLI, MCP, SDKs, and Gemini Enterprise connector kits.
 hero:
-  title: Your API. One policy. Every agent interface.
+  title: Turn your API into actions an agent can execute.
   tagline: >-
-    Generate a CLI, MCP server, and TypeScript, Python, Go, and Java clients
-    from the same reviewed operation model. Test their behavior before connecting
-    a real service.
+    Bring a REST, SOAP / WSDL, gRPC, or GraphQL contract. Generate skills,
+    a CLI, an MCP server, and client SDKs. Add a Gemini Enterprise connector
+    kit when you are ready to connect your app.
   actions:
     - text: Compile the payments example
       link: /anvil/start/quickstart/
@@ -22,12 +21,31 @@ hero:
       variant: minimal
 ---
 
-## Try the behavior before the architecture
+## From API to agent
 
-The payments fixture includes a refund operation with explicit confirmation
-and idempotency requirements. Compile it, omit those requirements, and inspect
-the refusal. Supply them and inspect the redacted request plan. Both paths
-work without credentials or an upstream payment service.
+1. **Import your API.** Supply a contract and its supporting files.
+2. **Review the operations.** Inspect names, typed inputs, and behavior. Approve
+   the operations agents may call.
+3. **Try a request.** Preview a call, then test the generated tools against a mock.
+4. **Use the output.** Choose the interface your agent or application needs.
+
+The console follows the same flow. Run `pnpm anvil console . --open` after
+building. Start with **Import API**, then **Review**. Use **API operations**
+for request previews and **Request builder** for CLI and MCP drafts.
+**Interfaces** shows generated files and setup steps.
+
+An **API operation** is one call imported from a specification. A **bundle**
+contains the API’s contracts, generated files, and review state. An
+**interface** is how an agent or application calls those operations.
+
+**Business actions** is an optional, separate workflow for tasks that bind one
+or more API operations. It currently requires a project JSON with action
+definitions, source snapshots, and evaluation tasks.
+
+## Compile your first API
+
+The payments example works locally without credentials. It includes a refund
+operation with confirmation and idempotency requirements you can inspect and test.
 
 After [installing from source](/anvil/cookbooks/install-anvil/):
 
@@ -51,7 +69,12 @@ and test the generated MCP server against a mock.
 | Four client SDKs | TypeScript, Python, Go, Java application | Generated operation methods and gates |
 | Skill and hooks | Coding harness | Operation guidance and supported early refusals |
 | Mocks and assurance records | CI or reviewer | Executable checks tied to the bundle hash |
+| Gemini Enterprise connector kit | Gemini Enterprise app | MCP integration with explicit authentication and registration setup |
 | Deployment inputs | Operator | Configuration and release plans |
+
+The Gemini Enterprise kit is generated separately after reviewing the bundle.
+Follow [Connect Gemini Enterprise](/anvil/cookbooks/connect-gemini-enterprise/)
+to generate, deploy, and register the connector.
 
 The CLI and MCP runtime require installed or linked Anvil packages. The SDK
 trees can be vendored independently. [SDK details](/anvil/guides/client-sdks/).

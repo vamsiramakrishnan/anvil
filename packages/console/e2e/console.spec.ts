@@ -59,7 +59,7 @@ function fileCount(dir: string): number {
 
 async function openQueue(page: Page): Promise<void> {
   await page.goto(`${state.url}/#/b/${encodeURIComponent(state.bundleId)}/queue`);
-  await expect(page.getByRole("heading", { name: "decision queue" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Review", level: 1, exact: true })).toBeVisible();
 }
 
 async function expectPageFits(page: Page): Promise<void> {
@@ -103,18 +103,26 @@ test("1. the workspace lists the bundle with the counts on disk", async ({ page 
   await expect(cells.nth(5)).toHaveText(String(approved));
   await expect(cells.nth(6)).toHaveText(String(blocked));
   await expect(row).toContainText(`${proposed} proposed capabilities · 1 packs`);
-  const pack = JSON.parse(readFileSync(join(state.packDir, "pack.json"), "utf8"));
-  const pendingRefinements = pack.refinements.filter(
-    (r: { approval: { tier: string }; status: string }) =>
-      r.approval.tier === "review" && ["improved", "neutral"].includes(r.status),
-  ).length;
-  await expect(
-    page.locator(".metric").filter({ hasText: "Pending decisions" }).locator("strong"),
-  ).toHaveText(String(review + generated + proposed + pendingRefinements));
+  await expect(page.getByRole("navigation", { name: "API to agent workflow" })).toBeVisible();
   await expect(row.getByRole("link", { name: "Review →" })).toHaveAttribute(
     "href",
     `#/b/${state.bundleId}/queue`,
   );
+});
+
+test("request builder opens the selected operation's review without changing approval", async ({
+  page,
+}) => {
+  const id = state.nonIdempotentMutation;
+  const before = readBundleDir(state.bundleDir);
+  await page.goto(
+    `${state.url}/#/b/${state.bundleId}/workbench?operation=${encodeURIComponent(id)}`,
+  );
+  await page.getByRole("link", { name: "Review this operation", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Review", level: 1, exact: true })).toBeVisible();
+  await expect(rowFor(page, id)).toHaveAttribute("aria-selected", "true");
+  await expect(detail(page)).toContainText(id);
+  expect(readBundleDir(state.bundleDir)).toEqual(before);
 });
 
 test("3. a non-idempotent financial mutation is barred from every bulk policy, and the row says why", async ({
@@ -244,7 +252,7 @@ test("7. j/k/x/a drive an approval with no mouse", async ({ page }) => {
 
   await openQueue(page);
   // Keys are handled on the window; make sure no field has focus first.
-  await page.getByRole("heading", { name: "decision queue" }).click();
+  await page.getByRole("heading", { name: "Review", level: 1, exact: true }).click();
   const selected = page.locator('[role="option"][aria-selected="true"]');
   const target = page.getByLabel(`select ${id}`, { exact: true });
   const rows = await page.getByRole("listbox", { name: "decisions" }).getByRole("option").count();
@@ -299,7 +307,9 @@ test("6. the browser cannot drive a mutation without the token, and another orig
   request,
 }) => {
   await page.goto(`${state.url}/#/`);
-  await expect(page.getByRole("heading", { name: "workspace", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Turn APIs into agent actions", exact: true }),
+  ).toBeVisible();
 
   // The token is in the page — measured by length only, never read into a log.
   const tokenLength = await page.evaluate(
@@ -382,17 +392,17 @@ test("the workbench compiles a pasted contract and opens real artifacts and evid
   await page.goto(`${state.url}/#/new`);
   await page.getByRole("button", { name: "Paste a contract" }).click();
   await page.getByRole("button", { name: "Use an example" }).click();
-  await page.getByRole("button", { name: "Compile bundle →" }).click();
+  await page.getByRole("button", { name: "Generate bundle →" }).click();
   await expect(page.getByRole("heading", { name: "generated/store-orders" })).toBeVisible();
   const directory = join(state.root, "generated/store-orders");
   const document = loadBundleAir(directory, readBundleDir(directory));
   expect(document.service.id).toBe("store-orders");
   expect(document.service.source.snapshotId).toBeTruthy();
   expect(document.operations.map((op) => op.id)).toContain("store-orders.orders.get");
-  await page.getByRole("link", { name: "Open bundle →" }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(/Store Orders|store-orders/);
-  await page.getByRole("link", { name: "Generated files", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Generated files" })).toBeVisible();
+  await page.getByRole("link", { name: "Review API operations →" }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("API operations");
+  await page.getByRole("link", { name: "Interfaces", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Interfaces" })).toBeVisible();
   await page
     .getByRole("navigation", { name: "Artifact files" })
     .getByRole("link")
@@ -409,7 +419,7 @@ test("the workbench compiles a pasted contract and opens real artifacts and evid
   expect(readFileSync(downloadedPath, "utf8")).toBe(
     readFileSync(join(directory, "cli/store-orders.mjs"), "utf8"),
   );
-  await page.getByRole("link", { name: "Evidence & checks", exact: true }).click();
+  await page.getByRole("link", { name: "Checks & evidence", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Current static checks" })).toBeVisible();
   await expect(page.getByText("missing", { exact: true })).toHaveCount(3);
   expect(errors).toEqual([]);
@@ -422,7 +432,7 @@ test("workspace navigation and creation remain usable on a narrow viewport", asy
   await expect(page.locator("tr[data-bundle-id]")).toHaveCount(1);
   await page.getByRole("button", { name: /Find a bundle or view/ }).click();
   const search = page.getByRole("combobox", { name: "Find a bundle or view" });
-  await search.fill("New bundle");
+  await search.fill("Import API");
   await search.press("Enter");
   await expect(page.getByRole("heading", { name: "Start with an API contract" })).toBeVisible();
   await expectPageFits(page);
@@ -436,7 +446,7 @@ test("8. catalog deep links preserve filters and preview an approved read withou
   await page.goto(
     `${state.url}/#/b/${state.bundleId}/catalog?state=approved&op=${encodeURIComponent(id)}`,
   );
-  await expect(page.getByRole("heading", { name: "Operation catalog" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "API operations" })).toBeVisible();
   await expect(page.getByLabel("Operation state")).toHaveValue("approved");
   await page.getByRole("button", { name: "Preview request", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("validation_error");
@@ -462,7 +472,7 @@ test("9. artifact source is displayed as text, and keyboard search opens a bundl
   page,
 }) => {
   await page.goto(`${state.url}/#/b/${state.bundleId}/artifacts?path=skill%2FSKILL.md`);
-  await expect(page.getByRole("heading", { name: "Generated files", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Interfaces", exact: true })).toBeVisible();
   await expect(page.locator(".artifact-content pre")).toContainText("name:");
   await page.screenshot({ path: test.info().outputPath("evidence.png"), fullPage: true });
   await page.getByRole("button", { name: /Find a bundle or view/ }).click();
@@ -482,16 +492,14 @@ test("10. workspace and request workbench fit a phone viewport in both themes", 
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${state.url}/#/`);
-  await expect(page.getByRole("heading", { name: "workspace" })).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Business capabilities", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Turn APIs into agent actions" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Business actions", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /theme:/ })).toBeVisible();
   await expectPageFits(page);
   await page.screenshot({ path: test.info().outputPath("workspace-mobile.png"), fullPage: true });
   await page.getByRole("button", { name: /theme:/ }).click();
   await page.goto(`${state.url}/#/b/${state.bundleId}/catalog`);
-  await expect(page.getByRole("heading", { name: "Operation catalog" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "API operations" })).toBeVisible();
   await expectPageFits(page);
   await page.screenshot({ path: test.info().outputPath("catalog-mobile.png"), fullPage: true });
 });
@@ -513,7 +521,7 @@ test("business projects import, review, save, and build through the real console
   await expect(
     page.getByRole("heading", { name: project.definition.displayName, exact: true }),
   ).toBeVisible();
-  const approval = page.getByRole("checkbox", { name: /I reviewed this action/ });
+  const approval = page.getByRole("checkbox", { name: /^Approve this action for agent use\./ });
   await expect(approval).not.toBeChecked();
   await expect(page.getByRole("textbox", { name: "Business outcome", exact: true })).toHaveValue(
     project.definition.actions[0].description,
@@ -558,7 +566,7 @@ test("business projects import, review, save, and build through the real console
     JSON.parse(projected).operations.filter((op: { state: string }) => op.state === "approved"),
   ).toHaveLength(1);
   await page.screenshot({ path: testInfo.outputPath("business-workbench.png"), fullPage: true });
-  await page.getByRole("link", { name: "Business capabilities", exact: true }).click();
+  await page.getByRole("link", { name: "Business actions", exact: true }).click();
   await expect(
     page.locator(".business-project-card").filter({ hasText: project.definition.displayName }),
   ).toBeVisible();

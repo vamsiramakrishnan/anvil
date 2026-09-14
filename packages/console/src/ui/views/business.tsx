@@ -15,17 +15,19 @@ export function BusinessProjectsView({ api, id }: { api: ConsoleApi; id?: string
   return (
     <div className="stack">
       <PageHeader
-        title="Business capabilities"
-        eyebrow="AUTHOR → PROVE → SHIP"
-        description="Give agents a business outcome they can ask for. Keep source authority, bindings, and recovery explicit."
+        title="Business actions"
+        eyebrow="SHAPE"
+        description="Combine API operations into a task an agent can complete, such as returning an order or provisioning access."
       />
       <div className="toolbar">
         <a className="btn btn-primary" href="#/projects/new">
-          Import a project
+          Import business project
         </a>
       </div>
       {projects.error ? <ErrorBox error={projects.error} /> : null}
-      {projects.data?.projects.length ? (
+      {projects.state === "loading" ? (
+        <Loading label="Loading business projects" />
+      ) : projects.data?.projects.length ? (
         <div className="business-project-grid">
           {projects.data.projects.map((p) => (
             <a
@@ -36,22 +38,22 @@ export function BusinessProjectsView({ api, id }: { api: ConsoleApi; id?: string
               <span className="label">{p.actions} BUSINESS ACTIONS</span>
               <h2>{p.name}</h2>
               <p className="muted">{p.id}</p>
-              <code>{p.digest.slice(0, 12)}</code>
-              <span>Open workbench →</span>
+              <span className="muted">Saved revision {p.digest.slice(0, 12)}</span>
+              <span>Edit business actions →</span>
             </a>
           ))}
         </div>
       ) : (
         <div className="panel">
-          <h2>Start with a business contract</h2>
+          <h2>Give agents a task, with the API steps behind it</h2>
           <p>
-            Import a project JSON containing a definition, reviewed source AIR snapshots, and
-            held-out tasks. The repository includes <code>examples/business/project.json</code> with
-            returns, order amendments, and access provisioning.
+            Import a business project JSON with action definitions, reviewed API sources, and
+            evaluation tasks. Start from <code>examples/business/project.json</code> in the
+            repository for returns, order amendments, and access provisioning.
           </p>
           <p>
-            Every action starts as a proposal. Review each source’s authority and its declared
-            effects before exposing it.
+            Define the inputs and result the agent sees. Review the API steps behind each action,
+            then build a bundle from the approved actions.
           </p>
         </div>
       )}
@@ -178,6 +180,7 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
   }
   function edit(next: BusinessProject) {
     setProject(next);
+    setSelected((current) => Math.min(current, Math.max(0, next.definition.actions.length - 1)));
     setPreview(undefined);
     setBundle("");
   }
@@ -196,18 +199,23 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
   const action = project?.definition.actions[selected];
   const activeError = error ?? loaded.error;
   const clean = !!preview && preview.digest === digest;
+  const approvedCount =
+    project?.definition.actions.filter((item) => item.state === "approved").length ?? 0;
   return (
     <div className="stack">
       <PageHeader
         title={project?.definition.displayName ?? "Import a business project"}
-        eyebrow="BUSINESS WORKBENCH"
-        description="Author the public promise, review its private execution, then measure how reliably agents complete the task."
+        eyebrow="BUSINESS ACTIONS"
+        description="Define what the agent can ask for. Review the API steps that fulfill it. Validate and save before building your bundle."
       />
       {activeError ? <ErrorBox error={activeError} /> : null}
-      {!project ? (
+      {!project && loaded.state === "loading" ? (
+        <Loading label="Opening business project" />
+      ) : !project ? (
         <div className="panel stack">
+          <h2>Import a business project</h2>
           <label className="field">
-            <span className="label">Project JSON</span>
+            <span className="label">Business project JSON · up to 1 MiB</span>
             <input
               aria-label="Import project JSON"
               type="file"
@@ -230,83 +238,118 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
             />
           </label>
           <p>
-            Source snapshots stay private. Imported actions are proposals until you review them
-            here.
+            Choose a project file containing actions, API source snapshots, and evaluation tasks.
+            For a working example, use <code>examples/business/project.json</code> from the
+            repository. Imported actions need your review before agents can use them.
           </p>
-          {loaded.state === "loading" ? <Loading label="Opening project" /> : null}
         </div>
       ) : (
         <>
-          <div className="toolbar">
-            <button
-              type="button"
-              className="btn"
-              disabled={busy}
-              onClick={() =>
-                void perform(async () =>
-                  setPreview(
-                    await api.previewBusinessProject({ project, against: digest ?? undefined }),
-                  ),
-                )
-              }
-            >
-              Validate & preview
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || !preview}
-              onClick={() =>
-                void perform(async () => {
-                  const saved = await api.saveBusinessProject({ project, expectedDigest: digest });
-                  setProject(saved.project);
-                  setDigest(saved.digest);
-                  setPreview(saved);
-                  setMessage("Saved an immutable revision.");
-                  if (id === "new") location.hash = `#/projects/${saved.project.definition.id}`;
-                })
-              }
-            >
-              Save revision
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={busy || !clean}
-              onClick={() =>
-                void perform(async () => {
-                  const result = await api.buildBusinessProject(
-                    project.definition.id,
-                    digest ?? "",
-                  );
-                  setBundle(result.bundleId);
-                })
-              }
-            >
-              Build bundle
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={busy || !clean || !enabled || !project.tasks.length}
-              onClick={() =>
-                void perform(async () => {
-                  await api.evaluateBusinessProject(project.definition.id, digest ?? "", 3);
-                  setJobs(await api.businessJobs(project.definition.id));
-                  setMessage("Comparative evaluation submitted.");
-                })
-              }
-            >
-              Evaluate 3 lanes
-            </button>
-          </div>
-          {!enabled ? (
-            <p className="muted">
-              To run evaluations, start the console with{" "}
-              <code>--business-evaluator path/to/adapter.mjs</code>. The operator module supplies
-              the model and independent fixture oracle.
+          <div className="panel stack">
+            <p role="status">
+              <strong>
+                {clean ? "Revision saved." : preview ? "Validation complete." : "Draft changes."}
+              </strong>{" "}
+              {clean
+                ? `${approvedCount} of ${project.definition.actions.length} actions approved. Build a bundle to use them.`
+                : preview
+                  ? "Save this revision to build a bundle or run evaluations."
+                  : "Validate and preview your changes before saving. Editing an action resets its approval."}
             </p>
-          ) : null}
+            <div className="toolbar">
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={() =>
+                  void perform(async () =>
+                    setPreview(
+                      await api.previewBusinessProject({ project, against: digest ?? undefined }),
+                    ),
+                  )
+                }
+              >
+                Validate & preview
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy || !preview}
+                onClick={() =>
+                  void perform(async () => {
+                    const saved = await api.saveBusinessProject({
+                      project,
+                      expectedDigest: digest,
+                    });
+                    setProject(saved.project);
+                    setDigest(saved.digest);
+                    setPreview(saved);
+                    setMessage("Revision saved.");
+                    if (id === "new") location.hash = `#/projects/${saved.project.definition.id}`;
+                  })
+                }
+              >
+                Save revision
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={busy || !clean}
+                onClick={() =>
+                  void perform(async () => {
+                    const result = await api.buildBusinessProject(
+                      project.definition.id,
+                      digest ?? "",
+                    );
+                    setBundle(result.bundleId);
+                  })
+                }
+              >
+                Build bundle
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={busy || !clean || !enabled || !project.tasks.length}
+                onClick={() =>
+                  void perform(async () => {
+                    await api.evaluateBusinessProject(project.definition.id, digest ?? "", 3);
+                    setJobs(await api.businessJobs(project.definition.id));
+                    setMessage("Evaluation queued. Results will appear below.");
+                  })
+                }
+              >
+                Run evaluations
+              </button>
+            </div>
+          </div>
+          <details className="panel">
+            <summary>
+              Evaluation setup
+              {!enabled
+                ? " · evaluator not configured"
+                : !project.tasks.length
+                  ? " · add tasks to begin"
+                  : ""}
+            </summary>
+            <p>
+              Compare how reliably an agent completes the same tasks using API operations, business
+              actions, and business actions with a skill.
+            </p>
+            {!project.tasks.length ? (
+              <p>Add evaluation tasks below before running an evaluation.</p>
+            ) : null}
+            {!enabled ? (
+              <p className="muted">
+                Start the console with <code>--business-evaluator path/to/adapter.mjs</code>. This
+                adapter supplies the model and an independent check of the expected outcomes.
+              </p>
+            ) : (
+              <p className="muted">
+                Evaluator configured. Validate and save any changes before running.
+              </p>
+            )}
+          </details>
           {message ? <p role="status">{message}</p> : null}
           {bundle ? (
             <a className="btn" href={href(bundle, "overview")}>
@@ -315,17 +358,19 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
           ) : null}
           <div className="business-layout">
             <aside className="panel">
-              <h2>Business actions</h2>
+              <h2>Actions ({project.definition.actions.length})</h2>
               {project.definition.actions.map((a, i) => (
                 <button
                   type="button"
                   className={`business-action ${i === selected ? "active" : ""}`}
                   key={a.id}
+                  aria-pressed={i === selected}
                   onClick={() => setSelected(i)}
                 >
                   <strong>{a.id.replaceAll("_", " ")}</strong>
                   <span>
-                    {a.state} · {a.steps.length} steps
+                    {a.state === "approved" ? "Approved" : "Needs review"} · {a.steps.length} API
+                    steps
                   </span>
                 </button>
               ))}
@@ -334,7 +379,7 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
             {action ? (
               <section className="stack">
                 <div className="panel stack">
-                  <span className="label">AGENT CONTRACT</span>
+                  <span className="label">WHAT THE AGENT SEES</span>
                   <h2>{action.id.replaceAll("_", " ")}</h2>
                   <label className="field">
                     <span className="label">Business outcome</span>
@@ -344,6 +389,10 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                       onChange={(e) => change({ ...action, description: e.target.value })}
                     />
                   </label>
+                  <p className="muted">
+                    Describe the task and its result in business terms. The API steps stay in the
+                    execution plan below.
+                  </p>
                   <div className="business-columns">
                     <JsonField
                       label="Public inputs"
@@ -356,15 +405,24 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                       onChange={(output) => change(BusinessAction.parse({ ...action, output }))}
                     />
                   </div>
-                  <JsonField
-                    label="When to use, clarify, and escalate"
-                    value={action.guidance}
-                    onChange={(guidance) => change(BusinessAction.parse({ ...action, guidance }))}
-                  />
+                  <details>
+                    <summary>Usage guidance</summary>
+                    <p className="muted">
+                      Explain when to use this action, when to ask a question, and when to escalate.
+                    </p>
+                    <JsonField
+                      label="When to use, clarify, and escalate"
+                      value={action.guidance}
+                      onChange={(guidance) => change(BusinessAction.parse({ ...action, guidance }))}
+                    />
+                  </details>
                 </div>
                 <div className="panel stack">
-                  <span className="label">PRIVATE EXECUTION</span>
-                  <h2>Authority, effects & recovery</h2>
+                  <span className="label">HOW IT RUNS</span>
+                  <h2>API execution plan</h2>
+                  <p className="muted">
+                    Review each source, the changes it makes, and what happens if a step fails.
+                  </p>
                   {action.steps.map((step, index) => (
                     <details className="business-step" key={step.id} open={index === 0}>
                       <summary>
@@ -392,25 +450,34 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                         <strong>If it fails:</strong> {step.failure.message}{" "}
                         {step.failure.nextAction}
                       </p>
-                      <JsonField
-                        label={`${step.id} bindings, guards & failure contract`}
-                        value={step}
-                        onChange={(next) =>
-                          change(
-                            BusinessAction.parse({
-                              ...action,
-                              steps: action.steps.map((s, i) => (i === index ? next : s)),
-                            }),
-                          )
-                        }
-                      />
+                      <details>
+                        <summary>Edit step configuration</summary>
+                        <p className="muted">
+                          Map inputs to this API operation and define checks and failure handling.
+                        </p>
+                        <JsonField
+                          label={`${step.id} bindings, guards & failure contract`}
+                          value={step}
+                          onChange={(next) =>
+                            change(
+                              BusinessAction.parse({
+                                ...action,
+                                steps: action.steps.map((s, i) => (i === index ? next : s)),
+                              }),
+                            )
+                          }
+                        />
+                      </details>
                     </details>
                   ))}
-                  <JsonField
-                    label="Result bindings"
-                    value={action.result}
-                    onChange={(result) => change(BusinessAction.parse({ ...action, result }))}
-                  />
+                  <details>
+                    <summary>Map API results to the action result</summary>
+                    <JsonField
+                      label="Result bindings"
+                      value={action.result}
+                      onChange={(result) => change(BusinessAction.parse({ ...action, result }))}
+                    />
+                  </details>
                   <label>
                     <input
                       type="checkbox"
@@ -422,17 +489,15 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                         )
                       }
                     />{" "}
-                    I reviewed this action’s source authority, effects, guards, and recovery and
-                    approve its exposure.
+                    Approve this action for agent use. I reviewed its sources, effects, checks, and
+                    failure handling.
                   </label>
                 </div>
               </section>
             ) : null}
           </div>
           <details className="panel">
-            <summary>
-              Held-out tasks & independent expected outcomes ({project.tasks.length})
-            </summary>
+            <summary>Evaluation tasks ({project.tasks.length})</summary>
             <JsonField
               label="Evaluation tasks (private to the evaluator)"
               value={project.tasks}
@@ -442,7 +507,7 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
             />
           </details>
           <details className="panel">
-            <summary>Complete project and source snapshots</summary>
+            <summary>Advanced: edit project JSON and API sources</summary>
             <JsonField
               label="Business project"
               value={project}
@@ -459,7 +524,7 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
           {preview ? (
             <div className="business-columns">
               <section className="panel">
-                <h2>Agent-visible preview</h2>
+                <h2>What the agent will see</h2>
                 <pre className="business-preview">{show(preview.public)}</pre>
               </section>
               <section className="panel">
@@ -487,13 +552,24 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
       )}
       {id !== "new" ? (
         <section className="panel stack">
-          <h2>Execution journal</h2>
-          <p className="muted">
-            Configure the business runtime’s ANVIL_BUSINESS_JOURNAL_DIR to this workspace’s
-            .anvil/executions directory to inspect its receipts here.
-          </p>
+          <h2>Run history</h2>
+          {executions.state === "loading" ? (
+            <Loading label="Loading runs" />
+          ) : executions.data?.length === 0 ? (
+            <p className="muted">
+              No runs recorded. Execute a business action with run history configured to inspect
+              each step here.
+            </p>
+          ) : null}
+          <details>
+            <summary>Configure run history</summary>
+            <p className="muted">
+              Configure the business runtime’s ANVIL_BUSINESS_JOURNAL_DIR to this workspace’s
+              .anvil/executions directory to inspect its receipts here.
+            </p>
+          </details>
           <button type="button" className="btn" onClick={() => void executions.reload()}>
-            Refresh executions
+            Refresh runs
           </button>
           {executions.error ? <ErrorBox error={executions.error} /> : null}
           {executions.data?.map((execution) => (
@@ -522,7 +598,7 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
       ) : null}
       {jobs.length ? (
         <section className="panel stack">
-          <h2>Evaluation jobs</h2>
+          <h2>Evaluations</h2>
           {jobs.map((job) => (
             <details key={job.id}>
               <summary>
@@ -547,7 +623,7 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                   <table>
                     <thead>
                       <tr>
-                        <th>Surface</th>
+                        <th>Agent tools</th>
                         <th>Passed</th>
                         <th>Failed</th>
                         <th>Inconclusive</th>
@@ -558,7 +634,13 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                     <tbody>
                       {job.report.summary.map((row) => (
                         <tr key={row.lane}>
-                          <td>{row.lane}</td>
+                          <td>
+                            {row.lane === "raw"
+                              ? "API operations"
+                              : row.lane === "business"
+                                ? "Business actions"
+                                : "Business actions + skill"}
+                          </td>
                           <td>
                             {row.passed}/{row.total}
                           </td>

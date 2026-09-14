@@ -14,7 +14,7 @@ export function EvidenceView({ api, inspector }: { api: ConsoleApi; inspector: I
     <div className="stack">
       <PageHeader
         eyebrow="Verification"
-        title="Evidence & checks"
+        title="Checks & evidence"
         description="Each report is checked against the current generated files. Static checks are computed now."
         actions={
           <button

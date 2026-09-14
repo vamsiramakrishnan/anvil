@@ -6,7 +6,7 @@ import { App } from "./app.js";
 import { createMockConsole, mockFetch } from "./dev/mock-server.js";
 
 /**
- * The decision queue rendered over the contract mock: policy bulk actions
+ * The Review rendered over the contract mock: policy bulk actions
  * cannot reach barred rows, pack and capability decisions stay disabled until
  * the contract's required fields are typed, and the key map drives it all.
  */
@@ -49,7 +49,7 @@ afterEach(() => {
   location.hash = "";
 });
 
-describe("the decision queue", () => {
+describe("the Review", () => {
   it("lists every pending kind with the evidence the reviewer needs", async () => {
     mount();
     const row = await rowFor("createRefund");

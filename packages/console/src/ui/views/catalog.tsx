@@ -50,8 +50,10 @@ export function CatalogView({
       <div className="page-heading">
         <div>
           <Label>EXPLORE / {service.id}</Label>
-          <h1>Operation catalog</h1>
-          <p>Find a tool. Inspect its contract. Preview the request it would make.</p>
+          <h1>API operations</h1>
+          <p>
+            Explore operations imported from your API. Review their inputs and preview a request.
+          </p>
         </div>
         <button className="btn" type="button" onClick={() => void loaded.reload()}>
           Refresh
@@ -72,7 +74,11 @@ export function CatalogView({
         >
           <option value="">All states</option>
           {["approved", "review_required", "generated", "blocked", "deprecated"].map((value) => (
-            <option key={value}>{value}</option>
+            <option key={value} value={value}>
+              {value === "review_required"
+                ? "Needs review"
+                : value.charAt(0).toUpperCase() + value.slice(1)}
+            </option>
           ))}
         </select>
         <select
@@ -323,7 +329,9 @@ function RequestPreview({
           <p>
             You can inspect its schema now. The runtime will refuse a preview until it is approved.
           </p>
-          <a href={href(bundleId, "queue")}>Open decision queue →</a>
+          <a href={href(bundleId, "queue", { item: `operation:${op.id}` })}>
+            Review this operation →
+          </a>
         </div>
       ) : null}
       <div className="input-reference">

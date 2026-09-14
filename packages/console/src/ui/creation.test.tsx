@@ -138,14 +138,31 @@ describe("workspace navigation", () => {
     const { requests } = mount("#/b/payments/overview");
     await screen.findByRole("heading", { level: 1 });
     expect(requests.some((path) => /\/(queue|packs|benchmark)$/.test(path))).toBe(false);
-    fireEvent.click(screen.getByRole("link", { name: "Generated files" }));
-    await screen.findByRole("heading", { name: "Generated files" });
+    fireEvent.click(screen.getByRole("link", { name: "Interfaces" }));
+    await screen.findByRole("heading", { name: "Interfaces" });
     expect(requests.some((path) => path.endsWith("/artifacts"))).toBe(true);
     expect(requests.some((path) => /\/(queue|packs|benchmark)$/.test(path))).toBe(false);
   });
+  it("filters interface files and gives setup steps without claiming a missing connector exists", async () => {
+    const { requests } = mount("#/b/payments/artifacts");
+    const choices = await screen.findByRole("region", { name: "Choose an interface" });
+    await screen.findByRole("link", { name: /skill\/SKILL.md/ });
+    fireEvent.click(within(choices).getByRole("link", { name: /^Gemini Enterprise/ }));
+    await screen.findByRole("heading", { name: "Connect to Gemini Enterprise" });
+    expect(screen.queryByRole("link", { name: /skill\/SKILL.md/ })).toBeNull();
+    expect(screen.getByText("Terminal setup")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Connect to Gemini Enterprise" })).toBeTruthy();
+    expect(screen.getByText("anvil target gemini-enterprise --help")).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Read the setup guide →" }).getAttribute("href"),
+    ).toContain("connect-gemini-enterprise");
+    fireEvent.click(within(choices).getByRole("link", { name: "Skill" }));
+    expect(await screen.findByRole("link", { name: /skill\/SKILL.md/ })).toBeTruthy();
+    expect(requests.some((path) => /\/(approve|create|target)$/.test(path))).toBe(false);
+  });
   it("opens navigation with Ctrl K and follows its keyboard selection", async () => {
     mount();
-    await screen.findByRole("heading", { name: "workspace" });
+    await screen.findByRole("heading", { name: "Turn APIs into agent actions" });
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     const dialog = screen.getByRole("dialog", { name: "Find a bundle or view" });
     const input = within(dialog).getByRole("combobox");

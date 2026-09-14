@@ -12,7 +12,7 @@ anvil capability project list .
 anvil console .
 ```
 
-Open **Business capabilities** in the console. Select an action, edit its public outcome, input and result schemas, and intent guidance. Review the private source authority, explicit bindings, guards, effects, and failure instructions. The complete-project editor also supports adding actions and changing source snapshots.
+Open **Business actions** in the console. Select an action, edit its public outcome, input and result schemas, and intent guidance. Review the private source authority, explicit bindings, guards, effects, and failure instructions. The complete-project editor also supports adding actions and changing source snapshots.
 
 Imported actions are proposals. The review checkbox approves exposure of the selected action; changing an action clears that checkbox. Approval does not establish facts about a backend. The reviewer must establish source authority and inspect the actual effects. The compiler refuses unresolved bindings, unapproved source operations, and incompatible schemas.
 

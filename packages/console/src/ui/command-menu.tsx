@@ -29,7 +29,12 @@ export function CommandMenu({
   }, [open]);
   const entries = [
     { name: "Workspace", detail: "Browse and compare bundles", href: "#/" },
-    { name: "New bundle", detail: "Import an API contract", href: "#/new" },
+    { name: "Import API", detail: "New bundle from an API contract", href: "#/new" },
+    {
+      name: "Business actions",
+      detail: "Define actions and bind source operations",
+      href: "#/projects",
+    },
     ...(bundleId
       ? BUNDLE_VIEWS.map(([view, name]) => ({ name, detail: bundleId, href: href(bundleId, view) }))
       : []),

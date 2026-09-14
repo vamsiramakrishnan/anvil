@@ -47,7 +47,7 @@ const stale = (r: { reprojection: { stale: { records: string[]; targetFiles: str
 
 /** Applying a pack writes AIR; regeneration is a separate, explicit action. */
 const RECOMPILE_AFTER_APPLY =
-  "AIR was written; applying a pack does not reproject. You can recompile the bundle (anvil compile) or open Evidence & checks to regenerate its projections.";
+  "AIR was written; applying a pack does not reproject. You can recompile the bundle (anvil compile) or open Checks & evidence to regenerate its projections.";
 
 type PackRow = Extract<DecisionRow, { kind: "pack" }>;
 
@@ -367,16 +367,14 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
     return (
       <div>
         <div className="view-head">
-          <h1>decision queue</h1>
-          <span className="sub">nothing awaits a decision</span>
+          <h1>Review</h1>
+          <span className="sub">No pending decisions</span>
         </div>
         <Empty
-          title="every operation, capability, and pack is decided"
+          title="No pending reviews"
           command={`anvil refine run ${data.inspector.path} --out <pack-dir>`}
         >
-          New decisions arrive when a recompile finds review-tier operations,{" "}
-          <code>anvil capability propose</code> groups the estate, or a refinement pack is written
-          for review.
+          New imports and proposed changes appear here when they need a decision.
         </Empty>
         {packsPanel}
         {receipt ? <Receipt>{receipt}</Receipt> : null}
@@ -388,7 +386,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
   return (
     <div>
       <div className="view-head">
-        <h1>decision queue</h1>
+        <h1>Review</h1>
         <span className="sub">
           {rows.length} pending · {selected.size} selected
         </span>
