@@ -1,16 +1,20 @@
 import type {
   Diagnostic,
   ErrorSpec,
-  HttpMethod,
   JsonSchema,
   Operation,
   Param,
   ParamLocation,
   PathGrammar,
   PathGrammarClassification,
-  RequestBody,
 } from "@anvil/air";
-import { resolveAsyncContract, StreamContractSchema, snakeCase, WireBinding } from "@anvil/air";
+import {
+  HttpMethod,
+  resolveAsyncContract,
+  StreamContractSchema,
+  snakeCase,
+  WireBinding,
+} from "@anvil/air";
 import type { AsyncResponseSignals, LongRunningDetection } from "./classify.js";
 import {
   classifyArchetype,
@@ -26,6 +30,7 @@ import {
 import { materializeSchema } from "./decycle.js";
 import { deriveNames, estatePathContext, singularize } from "./naming.js";
 import { resolveAuth } from "./normalize-auth.js";
+import { buildRequestBody } from "./normalize-body.js";
 import type { ParsedSpec } from "./parse.js";
 import {
   classifyPathGrammar,
@@ -38,7 +43,7 @@ import {
   webhookPathItems,
 } from "./protocols/webhooks.js";
 
-const HTTP_METHODS: HttpMethod[] = ["get", "put", "post", "delete", "patch", "head"];
+const HTTP_METHODS = HttpMethod.options;
 
 interface RawParam {
   name: string;
@@ -147,70 +152,6 @@ function toParam(raw: RawParam, namedSchemas: Record<string, unknown>): Param | 
     example: raw.example,
     inferred: false,
   };
-}
-
-const SCALAR_TYPES = new Set(["string", "integer", "number", "boolean"]);
-
-/** A body field is flag-projectable when it is a scalar (or an enum of scalars). */
-function isScalarField(schema: JsonSchema): boolean {
-  if (Array.isArray(schema.oneOf) || Array.isArray(schema.anyOf) || Array.isArray(schema.allOf)) {
-    return false;
-  }
-  if (Array.isArray(schema.enum)) return true;
-  if (schema.const !== undefined) return true;
-  return typeof schema.type === "string" && SCALAR_TYPES.has(schema.type);
-}
-
-/**
- * Build the preserved request body plus its surface projection (spec: "preserve
- * the body as a body, derive the CLI projection separately"). The body schema is
- * kept verbatim; a flat object of scalars is additionally projected into
- * per-field flags, while anything richer (nesting, arrays, unions) is surfaced
- * whole so nothing is lost.
- */
-function buildRequestBody(
-  content: Record<string, { schema?: JsonSchema }> | undefined,
-  required: boolean,
-  namedSchemas: Record<string, unknown>,
-): RequestBody | undefined {
-  if (!content) return undefined;
-  const contentType = content["application/json"]
-    ? "application/json"
-    : (Object.keys(content)[0] ?? "application/json");
-  const rawSchema = content["application/json"]?.schema ?? Object.values(content)[0]?.schema;
-  if (!rawSchema) return undefined;
-  // `bundleDocument` (decycle.ts) left named-schema references as `$ref`
-  // pointers so the whole spec's schema graph is only ever walked once; this
-  // is the one place a body needs its own fields directly inspectable
-  // (`.properties`, `.type`), so resolve back to a small, self-contained
-  // schema scoped to just this operation before doing anything else with it.
-  const schema = materializeSchema(rawSchema, namedSchemas).schema as JsonSchema;
-
-  const props = schema.properties as Record<string, JsonSchema> | undefined;
-  const requiredList = (schema.required as string[] | undefined) ?? [];
-  const noCompositor =
-    !Array.isArray(schema.oneOf) && !Array.isArray(schema.anyOf) && !Array.isArray(schema.allOf);
-  const flat =
-    schema.type === "object" &&
-    props !== undefined &&
-    noCompositor &&
-    Object.values(props).every(isScalarField);
-
-  if (flat && props) {
-    return {
-      contentType,
-      required,
-      schema,
-      projection: "fields",
-      fields: Object.entries(props).map(([name, propSchema]) => ({
-        name,
-        required: requiredList.includes(name),
-        schema: propSchema,
-        description: propSchema.description as string | undefined,
-      })),
-    };
-  }
-  return { contentType, required, schema, projection: "whole", fields: [] };
 }
 
 function jsonSchemaOf(
@@ -573,6 +514,7 @@ export function normalize(
         raw.requestBody?.content,
         raw.requestBody?.required ?? false,
         namedSchemas,
+        params,
       );
 
       // Parsed rather than trusted, like the wire binding beside it: the

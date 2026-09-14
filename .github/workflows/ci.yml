@@ -73,6 +73,9 @@ jobs:
         # SDK compiler processes share the runner with the test workers.
         run: pnpm test --concurrency=2 -- --maxWorkers=2
 
+      - name: Test enterprise corpus acquisition and accounting
+        run: pnpm exec vitest run tools/corpus/enterprise/enterprise.test.ts
+
       # The mutation runner edits source files while proving that the declared
       # tests detect each removed control. Keep it after the normal suite and
       # never run it concurrently with tests.

@@ -78,6 +78,8 @@ export function airToYaml(air: AirDocument): string {
     lineWidth: 0,
     aliasDuplicateObjects: false,
     blockQuote: false,
+    defaultStringType: "QUOTE_DOUBLE",
+    doubleQuotedAsJSON: true,
   });
   if (parsesBack(quoted)) return quoted;
   throw new Error(

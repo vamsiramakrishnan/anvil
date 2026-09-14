@@ -1,0 +1,500 @@
+{
+  "version": 1,
+  "startedAt": "2026-09-14T00:52:26.807Z",
+  "scope": "Reviewed reads over local mocks. No upstream requests, real credentials, or deployed Gemini Enterprise registration.",
+  "results": [
+    {
+      "system": "workday_common",
+      "operationId": "GET /workers/{ID}",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 1825,
+          "summary": {
+            "pass": 4,
+            "fail": 0,
+            "skipped": 1
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 2572,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "gmail",
+      "operationId": "gmail.users.getProfile",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 1840,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 2649,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "google_docs",
+      "operationId": "docs.documents.get",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 2236,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 4015,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "google_sheets",
+      "operationId": "sheets.spreadsheets.get",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 1692,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 2751,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "google_slides",
+      "operationId": "slides.presentations.get",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 1765,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 3977,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "graph_mail",
+      "operationId": "user_GetInferenceClassification",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 1841,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 2871,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "graph_users",
+      "operationId": "user_GetUser",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 1917,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 2945,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "canva",
+      "operationId": "getDesignAnalytics",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 2859,
+          "summary": {
+            "pass": 4,
+            "fail": 0,
+            "skipped": 1
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 3668,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "slack",
+      "operationId": "admin_apps_approved_list",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 2263,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 2788,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "sap_successfactors",
+      "operationId": "get_User",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 1624,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 2624,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "sap_s4hana",
+      "operationId": "get_A_AddressEmailAddress",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 1813,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 3031,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "sap_ariba",
+      "operationId": "getAllQuestionAnswers",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 1851,
+          "summary": {
+            "pass": 4,
+            "fail": 0,
+            "skipped": 1
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 2764,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "sap_ai_core",
+      "operationId": "artifact.get",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 1812,
+          "summary": {
+            "pass": 4,
+            "fail": 0,
+            "skipped": 1
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 3025,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "salesforce_customers",
+      "operationId": "getCustomer",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 2869,
+          "summary": {
+            "pass": 4,
+            "fail": 0,
+            "skipped": 1
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 4560,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    }
+  ],
+  "conversionImplementationSha256": "704e7769e9f124db4e3269b817581899ce1417a712fff3fd913e238c61b71c4d",
+  "sourceSha256": {
+    "gmail": "7591d33ec87e4ef83551f71630213a89ac349becebe9bd9b3e4ce3851dede0fe",
+    "google_docs": "bb61f4357de15dcea58e45d329d19a0ec56cd719127f6409b15927758dc043ab",
+    "google_sheets": "88c2374fe8dd9a58ad3b8cfaef7b0f5ced1418e625ea0ce1abef45c9deb448bd",
+    "google_slides": "87e5e24eb6ed0bc1965055b77c0addbeb72275acf11f1f14cf23bf3e4ba8f25e",
+    "graph_mail": "503db1b9d86b8538d5424b53aae3a82d7e75f24051f76ad4258b99cc42a80496",
+    "graph_users": "bb15744f533c0eb8901a4115b0d8a276eb0ac7eb2fa62fa66dadd1d2fd5a4804",
+    "canva": "76649231b2f607cafe2076e0b866962e045c866db359fbf9b502afba9f7f67ee",
+    "slack": "742a5c977180a829df8767cf57bc417d99b3713583aee83741efb9c08ca731e7",
+    "sap_successfactors": "8d5fe16c1552347ea17146eae89a2321b330a48160bebcddc8d1d62ef17cb901",
+    "sap_s4hana": "c69ba6253a3efdeb1878fc6030001c10ed6dec84c8a2124e2f20790c595aecae",
+    "sap_ai_core": "d47c3b229c8fb3d3db72f19829db54b4abcd99abc487118b67fd9be5f46b1dd2",
+    "sap_ariba": "8a926c163e74b5c471bc8ade61faae744bad4e2d6597f01080f02f65e8de2c23",
+    "salesforce_customers": "36f9af232d2f008999cab3ae587f071f4bfdba64cfae96f897cfd91f03bf74d1",
+    "workday_common": "2372e6c2622918edeaafa2c7f7579ac514f8b370a572172acccf2dd757d3c1b2"
+  }
+}

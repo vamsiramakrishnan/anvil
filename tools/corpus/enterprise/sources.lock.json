@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "sources": {
+    "gmail": {
+      "sha256": "7591d33ec87e4ef83551f71630213a89ac349becebe9bd9b3e4ce3851dede0fe",
+      "bytes": 217686,
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/gmail.v1.json",
+      "acquiredAt": "2026-09-14T00:38:53.535Z"
+    },
+    "google_drive": {
+      "sha256": "08610b0a577bfe7508a69d810433c1b818d9ebfc033fa8dc1a3c738de080b062",
+      "bytes": 269468,
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/drive.v3.json",
+      "acquiredAt": "2026-09-14T00:39:10.725Z"
+    },
+    "google_docs": {
+      "sha256": "bb61f4357de15dcea58e45d329d19a0ec56cd719127f6409b15927758dc043ab",
+      "bytes": 236939,
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/docs.v1.json",
+      "acquiredAt": "2026-09-14T00:39:22.725Z"
+    },
+    "google_sheets": {
+      "sha256": "88c2374fe8dd9a58ad3b8cfaef7b0f5ced1418e625ea0ce1abef45c9deb448bd",
+      "bytes": 377970,
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/sheets.v4.json",
+      "acquiredAt": "2026-09-14T00:39:26.371Z"
+    },
+    "google_slides": {
+      "sha256": "87e5e24eb6ed0bc1965055b77c0addbeb72275acf11f1f14cf23bf3e4ba8f25e",
+      "bytes": 227919,
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/slides.v1.json",
+      "acquiredAt": "2026-09-14T00:39:31.814Z"
+    },
+    "google_calendar": {
+      "sha256": "99624ecfbe3a20d724a59c980dd391882d3a23ded23a74fcb18659aeb98a895e",
+      "bytes": 169815,
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/calendar.v3.json",
+      "acquiredAt": "2026-09-14T00:39:36.528Z"
+    },
+    "google_admin": {
+      "sha256": "0141933ab2d43cd1a963a8b0de188eba02ca66fc1373bc7b850c8c0a1f92239a",
+      "bytes": 386774,
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/admin.directory_v1.json",
+      "acquiredAt": "2026-09-14T00:39:43.895Z"
+    },
+    "google_classroom": {
+      "sha256": "f5e5da2fdae9b0cc86db126229784e8d52d7591149336d2013e268d44cbcef13",
+      "bytes": 351137,
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/classroom.v1.json",
+      "acquiredAt": "2026-09-14T00:39:46.907Z"
+    },
+    "google_places": {
+      "sha256": "2353064e8ee8dc35c7b8220ead1c6bde9e37898e87087ee40f20949d7d8ee1f9",
+      "bytes": 148499,
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/places.v1.json",
+      "acquiredAt": "2026-09-14T00:39:55.254Z"
+    },
+    "graph_mail": {
+      "sha256": "503db1b9d86b8538d5424b53aae3a82d7e75f24051f76ad4258b99cc42a80496",
+      "bytes": 279416,
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Mail.yml",
+      "acquiredAt": "2026-09-14T00:26:04.813Z"
+    },
+    "graph_users": {
+      "sha256": "bb15744f533c0eb8901a4115b0d8a276eb0ac7eb2fa62fa66dadd1d2fd5a4804",
+      "bytes": 1321974,
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Users.yml",
+      "acquiredAt": "2026-09-14T00:26:12.403Z"
+    },
+    "graph_teams": {
+      "sha256": "ff15016ec2342472f22dc4c84fff093f9e4c01bbcdaf808973a6c22acfc9a581",
+      "bytes": 3005278,
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Teams.yml",
+      "acquiredAt": "2026-09-14T00:26:32.108Z"
+    },
+    "graph_calendar": {
+      "sha256": "677638330614554db8c313ac487b63af194d125320c7e668329e6cb5c1674805",
+      "bytes": 700340,
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Calendar.yml",
+      "acquiredAt": "2026-09-14T00:26:55.554Z"
+    },
+    "graph_files": {
+      "sha256": "d387990c3d4b519fb98630788591cfb5696595f51d0934080e8aacfe744767d6",
+      "bytes": 3330809,
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Files.yml",
+      "acquiredAt": "2026-09-14T00:27:13.572Z"
+    },
+    "canva": {
+      "sha256": "76649231b2f607cafe2076e0b866962e045c866db359fbf9b502afba9f7f67ee",
+      "bytes": 437025,
+      "url": "https://raw.githubusercontent.com/canva-sdks/canva-connect-api-starter-kit/f121e3d0736260962ae8445935bd370c61bb09d0/openapi/spec.yml",
+      "acquiredAt": "2026-09-14T00:28:13.322Z"
+    },
+    "slack": {
+      "sha256": "742a5c977180a829df8767cf57bc417d99b3713583aee83741efb9c08ca731e7",
+      "bytes": 1237332,
+      "url": "https://raw.githubusercontent.com/slackapi/slack-api-specs/bc08db49625630e3585bf2f1322128ea04f2a7f3/web-api/slack_web_openapi_v2.json",
+      "acquiredAt": "2026-09-14T00:28:19.928Z"
+    },
+    "sap_successfactors": {
+      "sha256": "8d5fe16c1552347ea17146eae89a2321b330a48160bebcddc8d1d62ef17cb901",
+      "bytes": 55177,
+      "url": "https://raw.githubusercontent.com/SAP/task-management-sample-app-sfsf-solutions/1a6fcf83abaee8a8045499dfb8fb1e89122c3080/task-management-app/edmx/User.edmx",
+      "acquiredAt": "2026-09-14T00:28:31.257Z"
+    },
+    "sap_s4hana": {
+      "sha256": "c69ba6253a3efdeb1878fc6030001c10ed6dec84c8a2124e2f20790c595aecae",
+      "bytes": 359549,
+      "url": "https://raw.githubusercontent.com/SAP-samples/cloud-sdk-js/45804ef28874b32e93a3b95f0146aa841a701e82/samples/cds-sample-application/resources/service-specs/API_BUSINESS_PARTNER.edmx",
+      "acquiredAt": "2026-09-14T00:28:35.080Z"
+    },
+    "sap_btp": {
+      "sha256": "ae1e77ad057fa0a1efa49f6eacd7b6c5bc00e28c34c85e32197c68b1664bea6e",
+      "bytes": 237704,
+      "url": "https://raw.githubusercontent.com/SAP/cloud-sdk-python/0ccb34bb4a9dd3019d4e46908e8c0e98058ec070/src/sap_cloud_sdk/destination/spec/api_spec.yaml",
+      "acquiredAt": "2026-09-14T00:28:43.302Z"
+    },
+    "sap_ai_core": {
+      "sha256": "d47c3b229c8fb3d3db72f19829db54b4abcd99abc487118b67fd9be5f46b1dd2",
+      "bytes": 246361,
+      "url": "https://raw.githubusercontent.com/SAP/ai-sdk-js/2d0a51f8fb610ac7dc48052ce13468ac5dd7a52d/packages/ai-api/src/spec/AI_CORE_API.yaml",
+      "acquiredAt": "2026-09-14T00:28:48.833Z"
+    },
+    "sap_ariba": {
+      "sha256": "8a926c163e74b5c471bc8ade61faae744bad4e2d6597f01080f02f65e8de2c23",
+      "bytes": 82146,
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/SAP%20Ariba/SAP%20Ariba%20Supplier%20Data%20with%20Pagination%20REST%20API%20v2.json",
+      "acquiredAt": "2026-09-14T00:28:56.009Z"
+    },
+    "sap_ariba_approvals": {
+      "sha256": "24c5addfc39f7633cfaa493d472396af4b67896ea8b5317fb6776ee8fad34566",
+      "bytes": 46934,
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/SAP%20Ariba/SAP%20Ariba%20Document%20Approval%20REST%20API%20v1.json",
+      "acquiredAt": "2026-09-14T00:29:00.094Z"
+    },
+    "jira": {
+      "sha256": "4a0f1e8a7948c473e6e3592f68dff5f00985e11d5b5d5379c303802e8f20bbfe",
+      "bytes": 1255032,
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/Atlassian/Atlassian%20JIRA%20Cloud%20REST%20API%20v3.json",
+      "acquiredAt": "2026-09-14T00:29:04.458Z"
+    },
+    "confluence": {
+      "sha256": "36132acfce799795758e2e8459a84fa42fb1d6d8fd4f0bde191fed9146185bff",
+      "bytes": 493127,
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/Atlassian/Atlassian%20Confluence%20Cloud%20REST%20API%20v1.json",
+      "acquiredAt": "2026-09-14T00:29:10.234Z"
+    },
+    "salesforce_orders": {
+      "sha256": "3c25ef935045c74c8b2a32e12ba27abbb93ef9ac8be13b12ba8eaed2eb1c2547",
+      "bytes": 202473,
+      "url": "https://raw.githubusercontent.com/SalesforceCommerceCloud/commerce-sdk/05ffab5636f9e0dae34bb689ece3b5e5736fd1ed/apis/shopper-orders-oas-1.20.1/shopper-orders-oas-v1-public.yaml",
+      "acquiredAt": "2026-09-14T00:29:12.693Z"
+    },
+    "salesforce_customers": {
+      "sha256": "36f9af232d2f008999cab3ae587f071f4bfdba64cfae96f897cfd91f03bf74d1",
+      "bytes": 284815,
+      "url": "https://raw.githubusercontent.com/SalesforceCommerceCloud/commerce-sdk/05ffab5636f9e0dae34bb689ece3b5e5736fd1ed/apis/shopper-customers-oas-1.9.0/shopper-customers-oas-v1-public.yaml",
+      "acquiredAt": "2026-09-14T00:29:18.855Z"
+    },
+    "stripe": {
+      "sha256": "f0e0fc8fffbffda45bf5f3df59846443c1d47a3cfcbfae232eedf4743124ebee",
+      "bytes": 8028700,
+      "url": "https://raw.githubusercontent.com/stripe/openapi/ab25fedb464c6b8866a81dd4217c7305d07790a8/openapi/spec3.json",
+      "acquiredAt": "2026-09-14T00:29:25.889Z"
+    },
+    "plaid": {
+      "sha256": "141de8aaaad29c9b81c4d9d3b681711562fb729fe6c45208aaba65fe94852846",
+      "bytes": 3163817,
+      "url": "https://raw.githubusercontent.com/plaid/plaid-openapi/457d08b92a569289195312aec8daa712d3324cab/2020-09-14.yml",
+      "acquiredAt": "2026-09-14T00:30:20.026Z"
+    },
+    "adyen": {
+      "sha256": "fd59f89f18d134f901d6d42b7aabad1c8afd4e2eb733823ba50944c034f1095a",
+      "bytes": 935759,
+      "url": "https://raw.githubusercontent.com/Adyen/adyen-openapi/c4e0d44cf6c0f3dcdff65be8e250fdbfa9da1076/json/CheckoutService-v71.json",
+      "acquiredAt": "2026-09-14T00:30:50.680Z"
+    },
+    "docusign": {
+      "sha256": "77f1998c313d69701eca52cb80e860c2a4b7e97bdceea11fd0427f9405f06c2e",
+      "bytes": 4846375,
+      "url": "https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/858a3ae59b0edbc8beea4fa3a6d7fe803833dd68/esignature.rest.swagger-v2.1.json",
+      "acquiredAt": "2026-09-14T00:31:02.486Z"
+    },
+    "okta": {
+      "sha256": "78e8dfd0c67b6f651b216bc5cf9522ca2127a6c84d623871b61815a42fef8c15",
+      "bytes": 3469033,
+      "url": "https://raw.githubusercontent.com/okta/okta-management-openapi-spec/74fcd17fad54332caee96ebbb11fd7f203b03e4f/dist/current/management-minimal.yaml",
+      "acquiredAt": "2026-09-14T00:31:22.053Z"
+    },
+    "shopware": {
+      "sha256": "be653e0c3d5ee616d51974434bdbd3392d4a40c275e589bf2cbf74dc0cd795b9",
+      "bytes": 4254864,
+      "url": "https://raw.githubusercontent.com/shopware/admin-api-reference/da5e2cabd6be0cd06ace06fc88dc8aedebb62f56/adminapi.json",
+      "acquiredAt": "2026-09-14T00:31:36.730Z"
+    },
+    "bigcommerce": {
+      "sha256": "65433a2b6246bfa0bc431bec00faa5782708f8390963bbf5c9f47aeadb6d1a7a",
+      "bytes": 211484,
+      "url": "https://raw.githubusercontent.com/bigcommerce/api-specs/dcf48407308710b882374ffafbeefdb0b3598abe/reference/orders.v2.oas2.yml",
+      "acquiredAt": "2026-09-14T00:31:40.283Z"
+    },
+    "xero": {
+      "sha256": "0458b4ef9ed72d53fdab89a6c31422b155516115cfa8146ac451f51d778f4582",
+      "bytes": 933096,
+      "url": "https://raw.githubusercontent.com/XeroAPI/Xero-OpenAPI/448060d7829cae23166a2e443be48c2f2422280f/xero_accounting.yaml",
+      "acquiredAt": "2026-09-14T00:31:49.927Z"
+    },
+    "box": {
+      "sha256": "0f8794edec1caf44761777f791b36388ec997f4220233a1a0166712e0d3b0a06",
+      "bytes": 1780704,
+      "url": "https://raw.githubusercontent.com/box/box-openapi/933ec4c5d9f4dbdaaa823efa3a083cf177aecbde/openapi.json",
+      "acquiredAt": "2026-09-14T00:31:53.621Z"
+    },
+    "hubspot": {
+      "sha256": "dcc02ed2d358e462d7be06cf68636ddfa90cbb9822f175197e20740c5f5b1158",
+      "bytes": 77526,
+      "url": "https://raw.githubusercontent.com/HubSpot/HubSpot-public-api-spec-collection/2dec5364fd6765bcfa9cf62ea4d06e22aa789d59/PublicApiSpecs/CRM/Deals/Rollouts/424/v3/deals.json",
+      "acquiredAt": "2026-09-14T00:32:11.326Z"
+    },
+    "samsara": {
+      "sha256": "26655bccb648fc764c78ec5b7a55d860fab18dbf6f56ac356ab9fb4e3ef43473",
+      "bytes": 1415660,
+      "url": "https://raw.githubusercontent.com/samsarahq/api-docs/263d92d9209b174c3d7409db31b45470dbda002a/swagger.json",
+      "acquiredAt": "2026-09-14T00:32:18.346Z"
+    },
+    "workday_common": {
+      "sha256": "2372e6c2622918edeaafa2c7f7579ac514f8b370a572172acccf2dd757d3c1b2",
+      "bytes": 171236,
+      "url": "https://raw.githubusercontent.com/rapid7/r7-surcom-connectors/cc84ab48722310b3e3182f35ae6c4937597547a3/connectors/rapid7/workday/refdocs/supervisory_organization_swagger.json",
+      "acquiredAt": "2026-09-14T00:42:59.681Z"
+    }
+  }
+}

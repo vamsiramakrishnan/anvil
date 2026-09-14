@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "system": "workday_common",
+      "path": "/workers/{ID}",
+      "method": "get",
+      "review": "Inspected GET worker-by-ID: one required ID path input, worker response, documented 400/401/403/404 errors, no write. The historical source omits operationId and machine-readable auth despite documenting Workday permissions. Approval is only for a disposable local-mock bundle; it makes no claim about tenant authentication or worker-data access."
+    },
+    {
+      "system": "gmail",
+      "operationId": "gmail.users.getProfile",
+      "path": "/gmail/v1/users/{userId}/profile",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "google_docs",
+      "operationId": "docs.documents.get",
+      "path": "/v1/documents/{documentId}",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "google_sheets",
+      "operationId": "sheets.spreadsheets.get",
+      "path": "/v4/spreadsheets/{spreadsheetId}",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "google_slides",
+      "operationId": "slides.presentations.get",
+      "path": "/v1/presentations/{presentationId}",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "graph_mail",
+      "operationId": "user_GetInferenceClassification",
+      "path": "/users/{user-id}/inferenceClassification",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "graph_users",
+      "operationId": "user_GetUser",
+      "path": "/users/{user-id}",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "canva",
+      "operationId": "getDesignAnalytics",
+      "path": "/v1/designs/{designId}/analytics",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "slack",
+      "operationId": "admin_apps_approved_list",
+      "path": "/admin.apps.approved.list",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "sap_successfactors",
+      "operationId": "get_User",
+      "path": "/User('{userId}')",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "sap_s4hana",
+      "operationId": "get_A_AddressEmailAddress",
+      "path": "/A_AddressEmailAddress(AddressID='{AddressID}',Person='{Person}',OrdinalNumber='{OrdinalNumber}')",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "sap_ariba",
+      "operationId": "getAllQuestionAnswers",
+      "path": "/smv1/vendors/{vendorId}/workspaces/documents/qna",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "sap_ai_core",
+      "operationId": "artifact.get",
+      "path": "/lm/artifacts/{artifactId}",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    },
+    {
+      "system": "salesforce_customers",
+      "operationId": "getCustomer",
+      "path": "/organizations/{organizationId}/customers/{customerId}",
+      "method": "get",
+      "review": "Read-only retrieval in the downloaded contract. Approval is confined to a disposable loopback test bundle; no vendor execution or tenant authorization is inferred."
+    }
+  ]
+}

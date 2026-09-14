@@ -106,6 +106,8 @@ export function validate(operations: Operation[]): ValidationResult {
         }
         checkPublicInput(agentPropKey(field), `body:${field.name}`);
       }
+    } else if (op.input.body?.projection === "whole") {
+      checkPublicInput("body", "request body");
     }
     if (op.output.agentProjection) {
       for (const issue of agentProjectionIssues(op.output.agentProjection, op.output.schema)) {

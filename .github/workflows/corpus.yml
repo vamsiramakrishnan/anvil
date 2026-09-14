@@ -38,6 +38,8 @@ jobs:
             name: Legacy estate
           - lane: sweep
             name: API universe sweep
+          - lane: enterprise
+            name: Enterprise application contracts
 
     steps:
       - name: Check out repository
@@ -83,11 +85,18 @@ jobs:
             sweep)
               node tools/corpus/run.mjs sweep --limit 150 --seed 42
               ;;
+            enterprise)
+              pnpm corpus:enterprise
+              ;;
             *)
               echo "::error::Unknown corpus lane: $CORPUS_LANE"
               exit 2
               ;;
           esac
+
+      - name: Exercise reviewed enterprise reads
+        if: always() && matrix.lane == 'enterprise'
+        run: node tools/corpus/enterprise/smoke.mjs
 
       - name: Collect ${{ matrix.name }} report
         if: always()
@@ -101,6 +110,9 @@ jobs:
           if [[ "$CORPUS_LANE" == "legacy-estate" ]]; then
             source_dir="tools/legacy-corpus/report"
             report_files=(report.json summary.md)
+          elif [[ "$CORPUS_LANE" == "enterprise" ]]; then
+            source_dir="tools/corpus/enterprise/report"
+            report_files=(report.json summary.md smoke.json smoke-summary.md)
           else
             source_dir="tools/corpus/report"
             report_files=(report.jsonl summary.md)
