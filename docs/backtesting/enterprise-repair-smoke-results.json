@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "startedAt": "2026-09-14T01:24:03.942Z",
+  "scope": "Reviewed reads over local mocks. No upstream requests, real credentials, or deployed Gemini Enterprise registration.",
+  "results": [
+    {
+      "system": "workday_common",
+      "operationId": "GET /workers/{ID}",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 4670,
+          "summary": {
+            "pass": 4,
+            "fail": 0,
+            "skipped": 1
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 4093,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "google_docs",
+      "operationId": "docs.documents.get",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 4885,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 4537,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    },
+    {
+      "system": "slack",
+      "operationId": "admin_apps_approved_list",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "selftest",
+          "ok": true,
+          "ms": 3566,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 2
+          },
+          "detail": "fidelity passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "conformance",
+          "ok": true,
+          "ms": 7260,
+          "summary": {
+            "pass": 3,
+            "fail": 0,
+            "skipped": 0
+          },
+          "detail": "wire-agreement passed for the reviewed operation against local mocks"
+        },
+        {
+          "name": "gemini-enterprise-kit",
+          "ok": true,
+          "detail": "OAuth registration artifacts generated; no deployment"
+        }
+      ]
+    }
+  ],
+  "controllerInputs": [
+    {
+      "system": "workday_common",
+      "baselineHash": "fccf4859fd480c1a61d64ea52a1c90c022dc155fb92bda9e22b665c00c328786",
+      "repairedHash": "7164325ecd5739cc9edc0b7c0a2a28c3e62fd6ca0dae7dd6e97367696726d595",
+      "accepted": 12,
+      "stop": "budget"
+    },
+    {
+      "system": "google_docs",
+      "baselineHash": "ee0a3731bb1ae7463df4c61f0d986148b1a980a3212279c98eebc9eaffdba00f",
+      "repairedHash": "1867783406208c601e5f82c790aafb73fe9b295d975d99cdc924a0c4d9707855",
+      "accepted": 2,
+      "stop": "stalled"
+    },
+    {
+      "system": "slack",
+      "baselineHash": "81e4f9caa8f1a7e316a6da5af52a66e1c1153d2a2b361b23698ef14e47cb6805",
+      "repairedHash": "81e4f9caa8f1a7e316a6da5af52a66e1c1153d2a2b361b23698ef14e47cb6805",
+      "accepted": 0,
+      "stop": "budget"
+    }
+  ]
+}

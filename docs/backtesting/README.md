@@ -1,5 +1,10 @@
 # Backtesting Anvil against real APIs and mature MCP servers
 
+Enterprise application REST coverage has a separate
+[full-contract corpus](enterprise-corpus.md), including Microsoft Graph, Google
+Workspace, SAP, Workday, Salesforce Commerce, Slack, Atlassian and Canva, plus
+explicit tenant-export requirements. Its raw conversion lane approves no operations.
+
 Legacy application-server and broker discovery has its own reproducible
 [GitHub corpus](legacy-corpus.md): 13 pinned WebLogic, WebSphere, WildFly, WCF,
 IBM MQ, Artemis, RabbitMQ, Kafka, and AsyncAPI specimens run twice through the

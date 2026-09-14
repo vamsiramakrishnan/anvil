@@ -172,7 +172,7 @@ export function adaptProtocol(
     case "wsdl":
       return adaptWsdl(text, imports.wsdl, imports.sourcePath, diagnostics);
     case "discovery":
-      return adaptDiscovery(text);
+      return adaptDiscovery(text, diagnostics);
     case "postman":
       return adaptPostman(text, diagnostics);
     case "odata":

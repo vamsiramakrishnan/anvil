@@ -28,33 +28,13 @@ import type {
   JsonValue,
   RefinementSkill,
   SkillContext,
+  SkillExecutor,
   SkillProposal,
-  VerifiableArtifact,
 } from "./contract.js";
 import { claimsAsserting, claimsFor, proposal, strongestValue } from "./proposal-helpers.js";
 import { proposeResourceRehome } from "./rehome.js";
 
-/**
- * A **skill executor** turns a skill's context into a proposal. It is deliberately
- * separate from the skill's semantics: the same `describe-field` contract can be
- * run by Claude Code, Codex, Antigravity, or the deterministic transformer below,
- * and the validators judge every executor's output by the same rules. An executor
- * may return `null` — the honest "nothing to propose" — and it must never be
- * trusted: whatever it returns is validated before it can matter.
- */
-export interface SkillExecutor {
-  name: string;
-  execute(skill: RefinementSkill, context: SkillContext): Promise<SkillProposal | null>;
-  /**
-   * The frozen evidence artifacts backing a proposal this executor produced, if it
-   * grounds proposals in a frozen evidence report. Executors with no frozen report (the
-   * heuristic transformer) omit this; the case-backed executor implements it so
-   * `runRefinements` can carry the artifacts into verification-aware validation and
-   * approval instead of silently losing them at this seam. Returning `undefined` leaves
-   * the verification check inert (correct for the heuristic path).
-   */
-  evidenceArtifactsFor?(proposal: SkillProposal): VerifiableArtifact[] | undefined;
-}
+export type { SkillExecutor } from "./contract.js";
 
 // `pluralize`, `singularize` (the compiler-mirrored copy — see vocabulary.ts for
 // why it is mirrored rather than imported), `projectRoutingNames`,

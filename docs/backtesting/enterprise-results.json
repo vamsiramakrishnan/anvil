@@ -1,0 +1,4171 @@
+{
+  "version": 1,
+  "startedAt": "2026-09-14T00:43:59.118Z",
+  "gitTree": "7dada19a75b9af4359e6aa0c2a23d313e27146f0",
+  "implementationSha256": "704e7769e9f124db4e3269b817581899ce1417a712fff3fd913e238c61b71c4d",
+  "worktreeDirty": true,
+  "results": [
+    {
+      "id": "gmail",
+      "name": "Google Workspace — Gmail",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/gmail.v1.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "79/79 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "79 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "79 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "79 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "7591d33ec87e4ef83551f71630213a89ac349becebe9bd9b3e4ce3851dede0fe",
+        "bytes": 217686,
+        "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/gmail.v1.json",
+        "acquiredAt": "2026-09-14T00:38:53.535Z"
+      },
+      "inventory": {
+        "kind": "discovery",
+        "version": "v1",
+        "revision": "20260727",
+        "count": 79
+      },
+      "compileMs": 3894,
+      "metrics": {
+        "operations": 79,
+        "approved": 0,
+        "reviewRequired": 79,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 30,
+        "writes": 49,
+        "airBytes": 1374955,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 79,
+          "naming_collision_resolved": 6,
+          "naming_dialect": 1,
+          "service_prefix_stutter": 1,
+          "unproven_idempotency": 31
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "google_drive",
+      "name": "Google Workspace — Drive",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/drive.v3.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "64/64 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "64 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "64 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "64 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "08610b0a577bfe7508a69d810433c1b818d9ebfc033fa8dc1a3c738de080b062",
+        "bytes": 269468,
+        "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/drive.v3.json",
+        "acquiredAt": "2026-09-14T00:39:10.725Z"
+      },
+      "inventory": {
+        "kind": "discovery",
+        "version": "v3",
+        "revision": "20260901",
+        "count": 64
+      },
+      "compileMs": 3997,
+      "metrics": {
+        "operations": 64,
+        "approved": 0,
+        "reviewRequired": 64,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 28,
+        "writes": 36,
+        "airBytes": 1872943,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 64,
+          "naming_collision_resolved": 2,
+          "naming_dialect": 1,
+          "schema_depth_truncated": 1,
+          "service_prefix_stutter": 1,
+          "unproven_idempotency": 28
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "google_docs",
+      "name": "Google Workspace — Docs",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/docs.v1.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "3/3 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "3 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "3 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "3 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "bb61f4357de15dcea58e45d329d19a0ec56cd719127f6409b15927758dc043ab",
+        "bytes": 236939,
+        "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/docs.v1.json",
+        "acquiredAt": "2026-09-14T00:39:22.725Z"
+      },
+      "inventory": {
+        "kind": "discovery",
+        "version": "v1",
+        "revision": "20260902",
+        "count": 3
+      },
+      "compileMs": 1293,
+      "metrics": {
+        "operations": 3,
+        "approved": 0,
+        "reviewRequired": 3,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 1,
+        "writes": 2,
+        "airBytes": 292038,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 3,
+          "naming_dialect": 1,
+          "service_prefix_stutter": 1,
+          "unproven_idempotency": 2
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "google_sheets",
+      "name": "Google Workspace — Sheets",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/sheets.v4.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "17/17 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "17 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "17 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "17 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "88c2374fe8dd9a58ad3b8cfaef7b0f5ced1418e625ea0ce1abef45c9deb448bd",
+        "bytes": 377970,
+        "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/sheets.v4.json",
+        "acquiredAt": "2026-09-14T00:39:26.371Z"
+      },
+      "inventory": {
+        "kind": "discovery",
+        "version": "v4",
+        "revision": "20260610",
+        "count": 17
+      },
+      "compileMs": 1584,
+      "metrics": {
+        "operations": 17,
+        "approved": 0,
+        "reviewRequired": 17,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 10,
+        "writes": 7,
+        "airBytes": 692073,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 17,
+          "naming_dialect": 1,
+          "schema_depth_truncated": 1,
+          "service_prefix_stutter": 1,
+          "unproven_idempotency": 6
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "google_slides",
+      "name": "Google Workspace — Slides",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/slides.v1.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "5/5 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "5 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "5 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "5 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "87e5e24eb6ed0bc1965055b77c0addbeb72275acf11f1f14cf23bf3e4ba8f25e",
+        "bytes": 227919,
+        "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/slides.v1.json",
+        "acquiredAt": "2026-09-14T00:39:31.814Z"
+      },
+      "inventory": {
+        "kind": "discovery",
+        "version": "v1",
+        "revision": "20260408",
+        "count": 5
+      },
+      "compileMs": 1305,
+      "metrics": {
+        "operations": 5,
+        "approved": 0,
+        "reviewRequired": 5,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 3,
+        "writes": 2,
+        "airBytes": 289350,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 5,
+          "naming_dialect": 1,
+          "service_prefix_stutter": 1,
+          "unproven_idempotency": 2
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "google_calendar",
+      "name": "Google Workspace — Calendar",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/calendar.v3.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "38/38 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "38 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "38 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "38 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "99624ecfbe3a20d724a59c980dd391882d3a23ded23a74fcb18659aeb98a895e",
+        "bytes": 169815,
+        "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/calendar.v3.json",
+        "acquiredAt": "2026-09-14T00:39:36.528Z"
+      },
+      "inventory": {
+        "kind": "discovery",
+        "version": "v3",
+        "revision": "20260708",
+        "count": 38
+      },
+      "compileMs": 2560,
+      "metrics": {
+        "operations": 38,
+        "approved": 0,
+        "reviewRequired": 38,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 12,
+        "writes": 26,
+        "airBytes": 1137352,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 38,
+          "naming_collision_resolved": 4,
+          "naming_dialect": 1,
+          "schema_depth_truncated": 1,
+          "service_prefix_stutter": 1,
+          "unproven_idempotency": 18
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "google_admin",
+      "name": "Google Workspace — Admin Directory",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/admin.directory_v1.json",
+      "status": "compile-failed",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": false,
+          "detail": "125/128 operations; missing: admin.customers.chrome.printers.delete, admin.customers.chrome.printers.get, admin.customers.chrome.printers.patch; extra: none"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "0141933ab2d43cd1a963a8b0de188eba02ca66fc1373bc7b850c8c0a1f92239a",
+        "bytes": 386774,
+        "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/admin.directory_v1.json",
+        "acquiredAt": "2026-09-14T00:39:43.895Z"
+      },
+      "inventory": {
+        "kind": "discovery",
+        "version": "directory_v1",
+        "revision": "20260902",
+        "count": 128
+      },
+      "compileMs": 2827,
+      "detail": "discovery_endpoint_collision",
+      "metrics": {
+        "operations": 125,
+        "approved": 0,
+        "reviewRequired": 125,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 45,
+        "writes": 80,
+        "airBytes": 2560137,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 125,
+          "discovery_endpoint_collision": 3,
+          "naming_collision_resolved": 10,
+          "naming_dialect": 1,
+          "schema_depth_truncated": 1,
+          "service_prefix_stutter": 1,
+          "unproven_idempotency": 49
+        }
+      },
+      "compilerErrors": [
+        {
+          "level": "error",
+          "code": "discovery_endpoint_collision",
+          "message": "Discovery methods 'admin.customers.chrome.printServers.delete' and 'admin.customers.chrome.printers.delete' share DELETE /admin/directory/v1/{name}. Their resource templates require distinct bindings; conversion would lose an operation.",
+          "path": "/admin/directory/v1/{name}"
+        },
+        {
+          "level": "error",
+          "code": "discovery_endpoint_collision",
+          "message": "Discovery methods 'admin.customers.chrome.printServers.get' and 'admin.customers.chrome.printers.get' share GET /admin/directory/v1/{name}. Their resource templates require distinct bindings; conversion would lose an operation.",
+          "path": "/admin/directory/v1/{name}"
+        },
+        {
+          "level": "error",
+          "code": "discovery_endpoint_collision",
+          "message": "Discovery methods 'admin.customers.chrome.printServers.patch' and 'admin.customers.chrome.printers.patch' share PATCH /admin/directory/v1/{name}. Their resource templates require distinct bindings; conversion would lose an operation.",
+          "path": "/admin/directory/v1/{name}"
+        }
+      ]
+    },
+    {
+      "id": "google_classroom",
+      "name": "Google Classroom",
+      "industries": [
+        "education"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/classroom.v1.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "104/104 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "104 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "104 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "104 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "f5e5da2fdae9b0cc86db126229784e8d52d7591149336d2013e268d44cbcef13",
+        "bytes": 351137,
+        "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/classroom.v1.json",
+        "acquiredAt": "2026-09-14T00:39:46.907Z"
+      },
+      "inventory": {
+        "kind": "discovery",
+        "version": "v1",
+        "revision": "20260825",
+        "count": 104
+      },
+      "compileMs": 2706,
+      "metrics": {
+        "operations": 104,
+        "approved": 0,
+        "reviewRequired": 104,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 43,
+        "writes": 61,
+        "airBytes": 2122322,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 104,
+          "naming_collision_resolved": 30,
+          "naming_dialect": 1,
+          "service_prefix_stutter": 1,
+          "unproven_idempotency": 42
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "google_places",
+      "name": "Google Maps — Places",
+      "industries": [
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/places.v1.json",
+      "status": "compile-failed",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": false,
+          "detail": "4/5 operations; missing: places.places.photos.getMedia; extra: none"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "2353064e8ee8dc35c7b8220ead1c6bde9e37898e87087ee40f20949d7d8ee1f9",
+        "bytes": 148499,
+        "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/places.v1.json",
+        "acquiredAt": "2026-09-14T00:39:55.254Z"
+      },
+      "inventory": {
+        "kind": "discovery",
+        "version": "v1",
+        "revision": "20260729",
+        "count": 5
+      },
+      "compileMs": 2742,
+      "detail": "discovery_endpoint_collision",
+      "metrics": {
+        "operations": 4,
+        "approved": 0,
+        "reviewRequired": 4,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 3,
+        "writes": 1,
+        "airBytes": 257031,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 4,
+          "discovery_endpoint_collision": 1,
+          "naming_dialect": 1,
+          "unproven_idempotency": 1
+        }
+      },
+      "compilerErrors": [
+        {
+          "level": "error",
+          "code": "discovery_endpoint_collision",
+          "message": "Discovery methods 'places.places.get' and 'places.places.photos.getMedia' share GET /v1/{name}. Their resource templates require distinct bindings; conversion would lose an operation.",
+          "path": "/v1/{name}"
+        }
+      ]
+    },
+    {
+      "id": "graph_mail",
+      "name": "Microsoft Graph — mail",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor-module",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Mail.yml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "136/136 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "136 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "136 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "136 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "503db1b9d86b8538d5424b53aae3a82d7e75f24051f76ad4258b99cc42a80496",
+        "bytes": 279416,
+        "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Mail.yml",
+        "acquiredAt": "2026-09-14T00:26:04.813Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "v1.0",
+        "specificationVersion": "3.0.4",
+        "count": 136
+      },
+      "compileMs": 3134,
+      "metrics": {
+        "operations": 136,
+        "approved": 0,
+        "reviewRequired": 136,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 51,
+        "writes": 85,
+        "airBytes": 2151869,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 136,
+          "naming_collision_resolved": 119,
+          "naming_dialect": 1,
+          "no_declared_scopes": 85,
+          "unproven_idempotency": 65
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "graph_users",
+      "name": "Microsoft Graph — users",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor-module",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Users.yml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "272/272 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "272 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "272 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "272 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "bb15744f533c0eb8901a4115b0d8a276eb0ac7eb2fa62fa66dadd1d2fd5a4804",
+        "bytes": 1321974,
+        "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Users.yml",
+        "acquiredAt": "2026-09-14T00:26:12.403Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "v1.0",
+        "specificationVersion": "3.0.4",
+        "count": 272
+      },
+      "compileMs": 5814,
+      "metrics": {
+        "operations": 272,
+        "approved": 0,
+        "reviewRequired": 272,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 177,
+        "writes": 95,
+        "airBytes": 4008640,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 272,
+          "naming_collision_resolved": 128,
+          "naming_dialect": 1,
+          "no_declared_scopes": 95,
+          "unproven_idempotency": 51
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "graph_teams",
+      "name": "Microsoft Graph — teams",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor-module",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Teams.yml",
+      "status": "compile-failed",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "1421/1421 operations; missing: none; extra: none"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "ff15016ec2342472f22dc4c84fff093f9e4c01bbcdaf808973a6c22acfc9a581",
+        "bytes": 3005278,
+        "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Teams.yml",
+        "acquiredAt": "2026-09-14T00:26:32.108Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "v1.0",
+        "specificationVersion": "3.0.4",
+        "count": 1421
+      },
+      "compileMs": 20293,
+      "detail": "duplicate_agent_input_name",
+      "metrics": {
+        "operations": 1421,
+        "approved": 0,
+        "reviewRequired": 1419,
+        "generated": 0,
+        "blocked": 2,
+        "reads": 647,
+        "writes": 774,
+        "airBytes": 16500973,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 1421,
+          "duplicate_agent_input_name": 2,
+          "naming_collision_resolved": 1366,
+          "naming_dialect": 1,
+          "no_declared_scopes": 774,
+          "unproven_idempotency": 546
+        }
+      },
+      "compilerErrors": [
+        {
+          "level": "error",
+          "code": "duplicate_agent_input_name",
+          "message": "Operation 'graph_teams.microsoft_graph.does_user_have_access.users_channels' maps wire inputs 'path:user-id' and 'query:userId' to agent input 'user_id'.",
+          "operationId": "graph_teams.microsoft_graph.does_user_have_access.users_channels"
+        },
+        {
+          "level": "error",
+          "code": "duplicate_agent_input_name",
+          "message": "Operation 'graph_teams.microsoft_graph.does_user_have_access.users_primary_channel' maps wire inputs 'path:user-id' and 'query:userId' to agent input 'user_id'.",
+          "operationId": "graph_teams.microsoft_graph.does_user_have_access.users_primary_channel"
+        }
+      ]
+    },
+    {
+      "id": "graph_calendar",
+      "name": "Microsoft Graph — calendar",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor-module",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Calendar.yml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "380/380 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "380 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "380 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "380 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "677638330614554db8c313ac487b63af194d125320c7e668329e6cb5c1674805",
+        "bytes": 700340,
+        "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Calendar.yml",
+        "acquiredAt": "2026-09-14T00:26:55.554Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "v1.0",
+        "specificationVersion": "3.0.4",
+        "count": 380
+      },
+      "compileMs": 6196,
+      "metrics": {
+        "operations": 380,
+        "approved": 0,
+        "reviewRequired": 380,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 192,
+        "writes": 188,
+        "airBytes": 4459271,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 380,
+          "naming_collision_resolved": 332,
+          "naming_dialect": 1,
+          "no_declared_scopes": 188,
+          "unproven_idempotency": 144
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "graph_files",
+      "name": "Microsoft Graph — files",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor-module",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Files.yml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "1619/1619 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "1619 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "1619 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "1619 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "d387990c3d4b519fb98630788591cfb5696595f51d0934080e8aacfe744767d6",
+        "bytes": 3330809,
+        "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Files.yml",
+        "acquiredAt": "2026-09-14T00:27:13.572Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "v1.0",
+        "specificationVersion": "3.0.4",
+        "count": 1619
+      },
+      "compileMs": 18300,
+      "metrics": {
+        "operations": 1619,
+        "approved": 0,
+        "reviewRequired": 1619,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 837,
+        "writes": 782,
+        "airBytes": 18564288,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 1619,
+          "naming_collision_resolved": 1618,
+          "naming_dialect": 1,
+          "no_declared_scopes": 782,
+          "unproven_idempotency": 520
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "canva",
+      "name": "Canva Connect",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/canva-sdks/canva-connect-api-starter-kit/f121e3d0736260962ae8445935bd370c61bb09d0/openapi/spec.yml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "59/59 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "59 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "59 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "59 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "76649231b2f607cafe2076e0b866962e045c866db359fbf9b502afba9f7f67ee",
+        "bytes": 437025,
+        "url": "https://raw.githubusercontent.com/canva-sdks/canva-connect-api-starter-kit/f121e3d0736260962ae8445935bd370c61bb09d0/openapi/spec.yml",
+        "acquiredAt": "2026-09-14T00:28:13.322Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "2024-06-18",
+        "specificationVersion": "3.0.0",
+        "count": 59
+      },
+      "compileMs": 2780,
+      "metrics": {
+        "operations": 59,
+        "approved": 0,
+        "reviewRequired": 55,
+        "generated": 3,
+        "blocked": 1,
+        "reads": 34,
+        "writes": 25,
+        "airBytes": 851919,
+        "diagnostics": {
+          "auth/alternative_selected": 3,
+          "auth/alternatives_unmodeled": 1,
+          "auth/end_user_flow_unexecutable": 52,
+          "naming_collision_resolved": 12,
+          "naming_dialect": 1,
+          "no_declared_scopes": 3,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 23
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "slack",
+      "name": "Slack Web API",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor-archived",
+      "url": "https://raw.githubusercontent.com/slackapi/slack-api-specs/bc08db49625630e3585bf2f1322128ea04f2a7f3/web-api/slack_web_openapi_v2.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "174/174 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "174 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "174 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "174 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "742a5c977180a829df8767cf57bc417d99b3713583aee83741efb9c08ca731e7",
+        "bytes": 1237332,
+        "url": "https://raw.githubusercontent.com/slackapi/slack-api-specs/bc08db49625630e3585bf2f1322128ea04f2a7f3/web-api/slack_web_openapi_v2.json",
+        "acquiredAt": "2026-09-14T00:28:19.928Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "1.7.0",
+        "specificationVersion": "2.0",
+        "count": 174
+      },
+      "compileMs": 4107,
+      "metrics": {
+        "operations": 174,
+        "approved": 0,
+        "reviewRequired": 174,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 80,
+        "writes": 94,
+        "airBytes": 2159900,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 174,
+          "naming_dialect": 1,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 94
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "sap_successfactors",
+      "name": "SAP SuccessFactors — User",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor-sample-export",
+      "url": "https://raw.githubusercontent.com/SAP/task-management-sample-app-sfsf-solutions/1a6fcf83abaee8a8045499dfb8fb1e89122c3080/task-management-app/edmx/User.edmx",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "1 entity sets; missing: none. Operation-count equality is not asserted for OData."
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "4 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "4 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "4 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "8d5fe16c1552347ea17146eae89a2321b330a48160bebcddc8d1d62ef17cb901",
+        "bytes": 55177,
+        "url": "https://raw.githubusercontent.com/SAP/task-management-sample-app-sfsf-solutions/1a6fcf83abaee8a8045499dfb8fb1e89122c3080/task-management-app/edmx/User.edmx",
+        "acquiredAt": "2026-09-14T00:28:31.257Z"
+      },
+      "inventory": {
+        "kind": "entities",
+        "count": 1
+      },
+      "compileMs": 1261,
+      "metrics": {
+        "operations": 4,
+        "approved": 0,
+        "reviewRequired": 2,
+        "generated": 2,
+        "blocked": 0,
+        "reads": 2,
+        "writes": 2,
+        "airBytes": 301855,
+        "diagnostics": {
+          "naming_dialect": 1,
+          "unproven_idempotency": 2
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "sap_s4hana",
+      "name": "SAP S/4HANA — Business Partner",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor-sample-export",
+      "url": "https://raw.githubusercontent.com/SAP-samples/cloud-sdk-js/45804ef28874b32e93a3b95f0146aa841a701e82/samples/cds-sample-application/resources/service-specs/API_BUSINESS_PARTNER.edmx",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "43 entity sets; missing: none. Operation-count equality is not asserted for OData."
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "198 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "198 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "198 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "c69ba6253a3efdeb1878fc6030001c10ed6dec84c8a2124e2f20790c595aecae",
+        "bytes": 359549,
+        "url": "https://raw.githubusercontent.com/SAP-samples/cloud-sdk-js/45804ef28874b32e93a3b95f0146aa841a701e82/samples/cds-sample-application/resources/service-specs/API_BUSINESS_PARTNER.edmx",
+        "acquiredAt": "2026-09-14T00:28:35.080Z"
+      },
+      "inventory": {
+        "kind": "entities",
+        "count": 43
+      },
+      "compileMs": 2396,
+      "metrics": {
+        "operations": 198,
+        "approved": 0,
+        "reviewRequired": 80,
+        "generated": 118,
+        "blocked": 0,
+        "reads": 86,
+        "writes": 112,
+        "airBytes": 2508764,
+        "diagnostics": {
+          "naming_dialect": 1,
+          "unproven_idempotency": 80
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "sap_btp",
+      "name": "SAP BTP — Destination Service",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/SAP/cloud-sdk-python/0ccb34bb4a9dd3019d4e46908e8c0e98058ec070/src/sap_cloud_sdk/destination/spec/api_spec.yaml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "47/47 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "47 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "47 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "47 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "ae1e77ad057fa0a1efa49f6eacd7b6c5bc00e28c34c85e32197c68b1664bea6e",
+        "bytes": 237704,
+        "url": "https://raw.githubusercontent.com/SAP/cloud-sdk-python/0ccb34bb4a9dd3019d4e46908e8c0e98058ec070/src/sap_cloud_sdk/destination/spec/api_spec.yaml",
+        "acquiredAt": "2026-09-14T00:28:43.302Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "1.0.0",
+        "specificationVersion": "3.0.1",
+        "count": 47
+      },
+      "compileMs": 2825,
+      "metrics": {
+        "operations": 47,
+        "approved": 0,
+        "reviewRequired": 9,
+        "generated": 38,
+        "blocked": 0,
+        "reads": 20,
+        "writes": 27,
+        "airBytes": 566869,
+        "diagnostics": {
+          "naming_collision_resolved": 13,
+          "naming_dialect": 1,
+          "no_declared_scopes": 27,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 9
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "sap_ai_core",
+      "name": "SAP BTP — AI Core",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/SAP/ai-sdk-js/2d0a51f8fb610ac7dc48052ce13468ac5dd7a52d/packages/ai-api/src/spec/AI_CORE_API.yaml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "89/89 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "89 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "89 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "89 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "d47c3b229c8fb3d3db72f19829db54b4abcd99abc487118b67fd9be5f46b1dd2",
+        "bytes": 246361,
+        "url": "https://raw.githubusercontent.com/SAP/ai-sdk-js/2d0a51f8fb610ac7dc48052ce13468ac5dd7a52d/packages/ai-api/src/spec/AI_CORE_API.yaml",
+        "acquiredAt": "2026-09-14T00:28:48.833Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "2.42.0",
+        "specificationVersion": "3.0.0",
+        "count": 89
+      },
+      "compileMs": 3377,
+      "metrics": {
+        "operations": 89,
+        "approved": 0,
+        "reviewRequired": 25,
+        "generated": 64,
+        "blocked": 0,
+        "reads": 52,
+        "writes": 37,
+        "airBytes": 960231,
+        "diagnostics": {
+          "header_param_ignored": 46,
+          "naming_collision_resolved": 27,
+          "naming_dialect": 1,
+          "no_declared_scopes": 37,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 25
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "sap_ariba",
+      "name": "SAP Ariba — Supplier Data with Pagination",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "Informatica-export",
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/SAP%20Ariba/SAP%20Ariba%20Supplier%20Data%20with%20Pagination%20REST%20API%20v2.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "12/12 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "12 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "12 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "12 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "8a926c163e74b5c471bc8ade61faae744bad4e2d6597f01080f02f65e8de2c23",
+        "bytes": 82146,
+        "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/SAP%20Ariba/SAP%20Ariba%20Supplier%20Data%20with%20Pagination%20REST%20API%20v2.json",
+        "acquiredAt": "2026-09-14T00:28:56.009Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "2.0.0",
+        "specificationVersion": "2.0",
+        "count": 12
+      },
+      "compileMs": 1516,
+      "metrics": {
+        "operations": 12,
+        "approved": 0,
+        "reviewRequired": 2,
+        "generated": 10,
+        "blocked": 0,
+        "reads": 10,
+        "writes": 2,
+        "airBytes": 154683,
+        "diagnostics": {
+          "naming_collision_resolved": 6,
+          "naming_dialect": 1,
+          "no_declared_scopes": 2,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 2
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "sap_ariba_approvals",
+      "name": "SAP Ariba — Document Approval",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "Informatica-export",
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/SAP%20Ariba/SAP%20Ariba%20Document%20Approval%20REST%20API%20v1.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "7/7 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "7 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "7 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "7 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "24c5addfc39f7633cfaa493d472396af4b67896ea8b5317fb6776ee8fad34566",
+        "bytes": 46934,
+        "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/SAP%20Ariba/SAP%20Ariba%20Document%20Approval%20REST%20API%20v1.json",
+        "acquiredAt": "2026-09-14T00:29:00.094Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "1.0",
+        "specificationVersion": "2.0",
+        "count": 7
+      },
+      "compileMs": 1486,
+      "metrics": {
+        "operations": 7,
+        "approved": 0,
+        "reviewRequired": 1,
+        "generated": 6,
+        "blocked": 0,
+        "reads": 6,
+        "writes": 1,
+        "airBytes": 99521,
+        "diagnostics": {
+          "naming_collision_resolved": 2,
+          "naming_dialect": 1,
+          "no_declared_scopes": 1,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 1
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "jira",
+      "name": "Atlassian Jira Cloud v3 — historical export",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "Informatica-export",
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/Atlassian/Atlassian%20JIRA%20Cloud%20REST%20API%20v3.json",
+      "status": "policy-blocked",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "316/316 operations; missing: none; extra: none"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "4a0f1e8a7948c473e6e3592f68dff5f00985e11d5b5d5379c303802e8f20bbfe",
+        "bytes": 1255032,
+        "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/Atlassian/Atlassian%20JIRA%20Cloud%20REST%20API%20v3.json",
+        "acquiredAt": "2026-09-14T00:29:04.458Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "1001.0.0-SNAPSHOT",
+        "specificationVersion": "2.0",
+        "count": 316
+      },
+      "compileMs": 5894,
+      "detail": "query_language_passthrough",
+      "metrics": {
+        "operations": 316,
+        "approved": 0,
+        "reviewRequired": 50,
+        "generated": 264,
+        "blocked": 2,
+        "reads": 163,
+        "writes": 153,
+        "airBytes": 3708863,
+        "diagnostics": {
+          "naming_collision_resolved": 120,
+          "naming_dialect": 1,
+          "no_declared_scopes": 55,
+          "query_language_passthrough": 2,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 50,
+          "weak_operation_name": 1
+        }
+      },
+      "compilerErrors": [
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'jira.issue.delete.field' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "jira.issue.delete.field"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'jira.search.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "jira.search.list"
+        }
+      ]
+    },
+    {
+      "id": "confluence",
+      "name": "Atlassian Confluence Cloud v1 — historical export",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "Informatica-export",
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/Atlassian/Atlassian%20Confluence%20Cloud%20REST%20API%20v1.json",
+      "status": "policy-blocked",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "113/113 operations; missing: none; extra: none"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "36132acfce799795758e2e8459a84fa42fb1d6d8fd4f0bde191fed9146185bff",
+        "bytes": 493127,
+        "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/Atlassian/Atlassian%20Confluence%20Cloud%20REST%20API%20v1.json",
+        "acquiredAt": "2026-09-14T00:29:10.234Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "1.0.0",
+        "specificationVersion": "2.0",
+        "count": 113
+      },
+      "compileMs": 3021,
+      "detail": "query_language_passthrough",
+      "metrics": {
+        "operations": 113,
+        "approved": 0,
+        "reviewRequired": 21,
+        "generated": 90,
+        "blocked": 2,
+        "reads": 59,
+        "writes": 54,
+        "airBytes": 1395685,
+        "diagnostics": {
+          "naming_collision_resolved": 42,
+          "naming_dialect": 1,
+          "no_declared_scopes": 54,
+          "query_language_passthrough": 2,
+          "unproven_idempotency": 21,
+          "weak_operation_name": 1
+        }
+      },
+      "compilerErrors": [
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'confluence.content.search' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "confluence.content.search"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'confluence.search.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "confluence.search.list"
+        }
+      ]
+    },
+    {
+      "id": "salesforce_orders",
+      "name": "Salesforce Commerce — Shopper Orders",
+      "industries": [
+        "retail"
+      ],
+      "provenance": "vendor-module",
+      "url": "https://raw.githubusercontent.com/SalesforceCommerceCloud/commerce-sdk/05ffab5636f9e0dae34bb689ece3b5e5736fd1ed/apis/shopper-orders-oas-1.20.1/shopper-orders-oas-v1-public.yaml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "13/13 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "13 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "13 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "13 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "3c25ef935045c74c8b2a32e12ba27abbb93ef9ac8be13b12ba8eaed2eb1c2547",
+        "bytes": 202473,
+        "url": "https://raw.githubusercontent.com/SalesforceCommerceCloud/commerce-sdk/05ffab5636f9e0dae34bb689ece3b5e5736fd1ed/apis/shopper-orders-oas-1.20.1/shopper-orders-oas-v1-public.yaml",
+        "acquiredAt": "2026-09-14T00:29:12.693Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "1.20.1",
+        "specificationVersion": "3.0.3",
+        "count": 13
+      },
+      "compileMs": 2198,
+      "metrics": {
+        "operations": 13,
+        "approved": 0,
+        "reviewRequired": 0,
+        "generated": 0,
+        "blocked": 13,
+        "reads": 5,
+        "writes": 8,
+        "airBytes": 550396,
+        "diagnostics": {
+          "auth/alternatives_unmodeled": 12,
+          "auth/oauth_flow_ambiguous": 1,
+          "naming_dialect": 1,
+          "no_declared_scopes": 8,
+          "schema_cycle_truncated": 3,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 7
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "salesforce_customers",
+      "name": "Salesforce Commerce — Shopper Customers",
+      "industries": [
+        "retail"
+      ],
+      "provenance": "vendor-module",
+      "url": "https://raw.githubusercontent.com/SalesforceCommerceCloud/commerce-sdk/05ffab5636f9e0dae34bb689ece3b5e5736fd1ed/apis/shopper-customers-oas-1.9.0/shopper-customers-oas-v1-public.yaml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "33/33 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "33 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "33 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "33 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "36f9af232d2f008999cab3ae587f071f4bfdba64cfae96f897cfd91f03bf74d1",
+        "bytes": 284815,
+        "url": "https://raw.githubusercontent.com/SalesforceCommerceCloud/commerce-sdk/05ffab5636f9e0dae34bb689ece3b5e5736fd1ed/apis/shopper-customers-oas-1.9.0/shopper-customers-oas-v1-public.yaml",
+        "acquiredAt": "2026-09-14T00:29:18.855Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "1.9.0",
+        "specificationVersion": "3.0.3",
+        "count": 33
+      },
+      "compileMs": 2001,
+      "metrics": {
+        "operations": 33,
+        "approved": 0,
+        "reviewRequired": 12,
+        "generated": 0,
+        "blocked": 21,
+        "reads": 13,
+        "writes": 20,
+        "airBytes": 832146,
+        "diagnostics": {
+          "auth/alternatives_unmodeled": 18,
+          "auth/end_user_flow_unexecutable": 12,
+          "auth/oauth_flow_ambiguous": 3,
+          "naming_collision_resolved": 6,
+          "naming_dialect": 1,
+          "no_declared_scopes": 9,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 14
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "industries": [
+        "fsi",
+        "retail"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/stripe/openapi/ab25fedb464c6b8866a81dd4217c7305d07790a8/openapi/spec3.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "594/594 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "594 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "594 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "594 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "f0e0fc8fffbffda45bf5f3df59846443c1d47a3cfcbfae232eedf4743124ebee",
+        "bytes": 8028700,
+        "url": "https://raw.githubusercontent.com/stripe/openapi/ab25fedb464c6b8866a81dd4217c7305d07790a8/openapi/spec3.json",
+        "acquiredAt": "2026-09-14T00:29:25.889Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "2026-08-26.dahlia",
+        "specificationVersion": "3.0.0",
+        "count": 594
+      },
+      "compileMs": 16368,
+      "metrics": {
+        "operations": 594,
+        "approved": 0,
+        "reviewRequired": 594,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 265,
+        "writes": 329,
+        "airBytes": 18923971,
+        "diagnostics": {
+          "auth/alternative_selected": 594,
+          "naming_collision_resolved": 273,
+          "naming_dialect": 1,
+          "no_declared_scopes": 329,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 297,
+          "weak_operation_name": 297
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "plaid",
+      "name": "Plaid",
+      "industries": [
+        "fsi"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/plaid/plaid-openapi/457d08b92a569289195312aec8daa712d3324cab/2020-09-14.yml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "351/351 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "351 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "351 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "351 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "141de8aaaad29c9b81c4d9d3b681711562fb729fe6c45208aaba65fe94852846",
+        "bytes": 3163817,
+        "url": "https://raw.githubusercontent.com/plaid/plaid-openapi/457d08b92a569289195312aec8daa712d3324cab/2020-09-14.yml",
+        "acquiredAt": "2026-09-14T00:30:20.026Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "2020-09-14_1.740.1",
+        "specificationVersion": "3.0.0",
+        "count": 351
+      },
+      "compileMs": 9681,
+      "metrics": {
+        "operations": 351,
+        "approved": 0,
+        "reviewRequired": 1,
+        "generated": 0,
+        "blocked": 350,
+        "reads": 8,
+        "writes": 343,
+        "airBytes": 7331768,
+        "diagnostics": {
+          "auth/alternatives_unmodeled": 6,
+          "auth/composite_unmodeled": 344,
+          "naming_collision_resolved": 253,
+          "naming_dialect": 1,
+          "no_declared_scopes": 342,
+          "unproven_idempotency": 342,
+          "weak_operation_name": 8
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "adyen",
+      "name": "Adyen Checkout v71",
+      "industries": [
+        "fsi",
+        "retail"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/Adyen/adyen-openapi/c4e0d44cf6c0f3dcdff65be8e250fdbfa9da1076/json/CheckoutService-v71.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "28/28 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "28 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "28 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "28 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "fd59f89f18d134f901d6d42b7aabad1c8afd4e2eb733823ba50944c034f1095a",
+        "bytes": 935759,
+        "url": "https://raw.githubusercontent.com/Adyen/adyen-openapi/c4e0d44cf6c0f3dcdff65be8e250fdbfa9da1076/json/CheckoutService-v71.json",
+        "acquiredAt": "2026-09-14T00:30:50.680Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "71",
+        "specificationVersion": "3.1.0",
+        "count": 28
+      },
+      "compileMs": 3139,
+      "metrics": {
+        "operations": 28,
+        "approved": 0,
+        "reviewRequired": 28,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 3,
+        "writes": 25,
+        "airBytes": 1985157,
+        "diagnostics": {
+          "auth/alternative_selected": 27,
+          "naming_collision_resolved": 4,
+          "naming_dialect": 1,
+          "no_declared_scopes": 24,
+          "schema_depth_truncated": 1,
+          "schema_structure_hoisted": 1,
+          "unproven_idempotency": 24,
+          "weak_operation_name": 23
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "docusign",
+      "name": "DocuSign eSignature",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/858a3ae59b0edbc8beea4fa3a6d7fe803833dd68/esignature.rest.swagger-v2.1.json",
+      "status": "compile-failed",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "414/414 operations; missing: none; extra: none"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "77f1998c313d69701eca52cb80e860c2a4b7e97bdceea11fd0427f9405f06c2e",
+        "bytes": 4846375,
+        "url": "https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/858a3ae59b0edbc8beea4fa3a6d7fe803833dd68/esignature.rest.swagger-v2.1.json",
+        "acquiredAt": "2026-09-14T00:31:02.486Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "v2.1",
+        "specificationVersion": "2.0",
+        "count": 414
+      },
+      "compileMs": 10687,
+      "detail": "duplicate_agent_input_name",
+      "metrics": {
+        "operations": 414,
+        "approved": 0,
+        "reviewRequired": 65,
+        "generated": 348,
+        "blocked": 1,
+        "reads": 167,
+        "writes": 247,
+        "airBytes": 10206695,
+        "diagnostics": {
+          "duplicate_agent_input_name": 1,
+          "naming_collision_resolved": 218,
+          "naming_dialect": 1,
+          "unproven_idempotency": 65
+        }
+      },
+      "compilerErrors": [
+        {
+          "level": "error",
+          "code": "duplicate_agent_input_name",
+          "message": "Operation 'docusign.consumer_disclosure.get.envelopes' maps wire inputs 'path:langCode' and 'query:langCode' to agent input 'lang_code'.",
+          "operationId": "docusign.consumer_disclosure.get.envelopes"
+        }
+      ]
+    },
+    {
+      "id": "okta",
+      "name": "Okta Management",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/okta/okta-management-openapi-spec/74fcd17fad54332caee96ebbb11fd7f203b03e4f/dist/current/management-minimal.yaml",
+      "status": "policy-blocked",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "734/734 operations; missing: none; extra: none"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "78e8dfd0c67b6f651b216bc5cf9522ca2127a6c84d623871b61815a42fef8c15",
+        "bytes": 3469033,
+        "url": "https://raw.githubusercontent.com/okta/okta-management-openapi-spec/74fcd17fad54332caee96ebbb11fd7f203b03e4f/dist/current/management-minimal.yaml",
+        "acquiredAt": "2026-09-14T00:31:22.053Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "2026.08.4",
+        "specificationVersion": "3.0.3",
+        "count": 734
+      },
+      "compileMs": 10655,
+      "detail": "query_language_passthrough",
+      "metrics": {
+        "operations": 734,
+        "approved": 0,
+        "reviewRequired": 16,
+        "generated": 8,
+        "blocked": 710,
+        "reads": 290,
+        "writes": 444,
+        "airBytes": 8841630,
+        "diagnostics": {
+          "auth/alternatives_unmodeled": 710,
+          "auth/end_user_flow_unexecutable": 15,
+          "header_param_ignored": 2,
+          "naming_collision_resolved": 333,
+          "naming_dialect": 1,
+          "no_declared_scopes": 433,
+          "query_language_passthrough": 2,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 248
+        }
+      },
+      "compilerErrors": [
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'okta.federated_claims.create' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "okta.federated_claims.create"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'okta.federated_claims.replace' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "okta.federated_claims.replace"
+        }
+      ]
+    },
+    {
+      "id": "shopware",
+      "name": "Shopware Admin",
+      "industries": [
+        "retail"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/shopware/admin-api-reference/da5e2cabd6be0cd06ace06fc88dc8aedebb62f56/adminapi.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "1117/1117 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "1117 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "1117 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "1117 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "be653e0c3d5ee616d51974434bdbd3392d4a40c275e589bf2cbf74dc0cd795b9",
+        "bytes": 4254864,
+        "url": "https://raw.githubusercontent.com/shopware/admin-api-reference/da5e2cabd6be0cd06ace06fc88dc8aedebb62f56/adminapi.json",
+        "acquiredAt": "2026-09-14T00:31:36.730Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "6.7.9999999-dev",
+        "specificationVersion": "3.2.0",
+        "count": 1117
+      },
+      "compileMs": 14525,
+      "metrics": {
+        "operations": 1117,
+        "approved": 0,
+        "reviewRequired": 0,
+        "generated": 0,
+        "blocked": 1117,
+        "reads": 472,
+        "writes": 645,
+        "airBytes": 17961683,
+        "diagnostics": {
+          "auth/oauth_flow_ambiguous": 1117,
+          "naming_collision_resolved": 322,
+          "naming_dialect": 1,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 493,
+          "weak_operation_name": 2
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "bigcommerce",
+      "name": "BigCommerce Orders v2",
+      "industries": [
+        "retail"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/bigcommerce/api-specs/dcf48407308710b882374ffafbeefdb0b3598abe/reference/orders.v2.oas2.yml",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "27/27 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "27 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "27 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "27 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "65433a2b6246bfa0bc431bec00faa5782708f8390963bbf5c9f47aeadb6d1a7a",
+        "bytes": 211484,
+        "url": "https://raw.githubusercontent.com/bigcommerce/api-specs/dcf48407308710b882374ffafbeefdb0b3598abe/reference/orders.v2.oas2.yml",
+        "acquiredAt": "2026-09-14T00:31:40.283Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "",
+        "specificationVersion": "3.0.0",
+        "count": 27
+      },
+      "compileMs": 1909,
+      "metrics": {
+        "operations": 27,
+        "approved": 0,
+        "reviewRequired": 2,
+        "generated": 25,
+        "blocked": 0,
+        "reads": 18,
+        "writes": 9,
+        "airBytes": 456777,
+        "diagnostics": {
+          "header_param_ignored": 31,
+          "naming_collision_resolved": 10,
+          "naming_dialect": 1,
+          "no_declared_scopes": 9,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 2
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "xero",
+      "name": "Xero Accounting",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/XeroAPI/Xero-OpenAPI/448060d7829cae23166a2e443be48c2f2422280f/xero_accounting.yaml",
+      "status": "policy-blocked",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "235/235 operations; missing: none; extra: none"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "0458b4ef9ed72d53fdab89a6c31422b155516115cfa8146ac451f51d778f4582",
+        "bytes": 933096,
+        "url": "https://raw.githubusercontent.com/XeroAPI/Xero-OpenAPI/448060d7829cae23166a2e443be48c2f2422280f/xero_accounting.yaml",
+        "acquiredAt": "2026-09-14T00:31:49.927Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "19.0.0",
+        "specificationVersion": "3.0.0",
+        "count": 235
+      },
+      "compileMs": 3333,
+      "detail": "query_language_passthrough",
+      "metrics": {
+        "operations": 235,
+        "approved": 0,
+        "reviewRequired": 215,
+        "generated": 0,
+        "blocked": 20,
+        "reads": 126,
+        "writes": 109,
+        "airBytes": 2470434,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 235,
+          "naming_collision_resolved": 133,
+          "naming_dialect": 1,
+          "query_language_passthrough": 20,
+          "unproven_idempotency": 46
+        }
+      },
+      "compilerErrors": [
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.accounts.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.accounts.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.batch_payments.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.batch_payments.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.bank_transactions.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.bank_transactions.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.bank_transfers.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.bank_transfers.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.contacts.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.contacts.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.contact_groups.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.contact_groups.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.credit_notes.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.credit_notes.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.currencies.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.currencies.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.expense_claims.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.expense_claims.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.invoices.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.invoices.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.items.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.items.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.manual_journals.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.manual_journals.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.overpayments.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.overpayments.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.payments.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.payments.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.prepayments.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.prepayments.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.receipts.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.receipts.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.repeating_invoices.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.repeating_invoices.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.tax_rates.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.tax_rates.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.tracking_categories.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.tracking_categories.list"
+        },
+        {
+          "level": "error",
+          "code": "query_language_passthrough",
+          "message": "Operation 'xero.users.list' accepts unconstrained query-language injection; must be explicitly reviewed and approved.",
+          "operationId": "xero.users.list"
+        }
+      ]
+    },
+    {
+      "id": "box",
+      "name": "Box",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/box/box-openapi/933ec4c5d9f4dbdaaa823efa3a083cf177aecbde/openapi.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "297/297 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "297 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "297 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "297 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "0f8794edec1caf44761777f791b36388ec997f4220233a1a0166712e0d3b0a06",
+        "bytes": 1780704,
+        "url": "https://raw.githubusercontent.com/box/box-openapi/933ec4c5d9f4dbdaaa823efa3a083cf177aecbde/openapi.json",
+        "acquiredAt": "2026-09-14T00:31:53.621Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "2024.0",
+        "specificationVersion": "3.0.2",
+        "count": 297
+      },
+      "compileMs": 5098,
+      "metrics": {
+        "operations": 297,
+        "approved": 0,
+        "reviewRequired": 295,
+        "generated": 2,
+        "blocked": 0,
+        "reads": 132,
+        "writes": 165,
+        "airBytes": 4760063,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 292,
+          "naming_collision_resolved": 80,
+          "naming_dialect": 1,
+          "no_declared_scopes": 162,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 76,
+          "weak_operation_name": 77
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "hubspot",
+      "name": "HubSpot CRM — Deals",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor-module",
+      "url": "https://raw.githubusercontent.com/HubSpot/HubSpot-public-api-spec-collection/2dec5364fd6765bcfa9cf62ea4d06e22aa789d59/PublicApiSpecs/CRM/Deals/Rollouts/424/v3/deals.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "12/12 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "12 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "12 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "12 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "dcc02ed2d358e462d7be06cf68636ddfa90cbb9822f175197e20740c5f5b1158",
+        "bytes": 77526,
+        "url": "https://raw.githubusercontent.com/HubSpot/HubSpot-public-api-spec-collection/2dec5364fd6765bcfa9cf62ea4d06e22aa789d59/PublicApiSpecs/CRM/Deals/Rollouts/424/v3/deals.json",
+        "acquiredAt": "2026-09-14T00:32:11.326Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "v3",
+        "specificationVersion": "3.0.1",
+        "count": 12
+      },
+      "compileMs": 1779,
+      "metrics": {
+        "operations": 12,
+        "approved": 0,
+        "reviewRequired": 12,
+        "generated": 0,
+        "blocked": 0,
+        "reads": 3,
+        "writes": 9,
+        "airBytes": 192823,
+        "diagnostics": {
+          "auth/end_user_flow_unexecutable": 12,
+          "naming_collision_resolved": 3,
+          "naming_dialect": 1,
+          "path_grammar_ambiguous": 1,
+          "unproven_idempotency": 8,
+          "weak_operation_name": 8
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "samsara",
+      "name": "Samsara Connected Operations",
+      "industries": [
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "vendor",
+      "url": "https://raw.githubusercontent.com/samsarahq/api-docs/263d92d9209b174c3d7409db31b45470dbda002a/swagger.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "148/148 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "148 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "148 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "148 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "26655bccb648fc764c78ec5b7a55d860fab18dbf6f56ac356ab9fb4e3ef43473",
+        "bytes": 1415660,
+        "url": "https://raw.githubusercontent.com/samsarahq/api-docs/263d92d9209b174c3d7409db31b45470dbda002a/swagger.json",
+        "acquiredAt": "2026-09-14T00:32:18.346Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "2021-06-09",
+        "specificationVersion": "2.0",
+        "count": 148
+      },
+      "compileMs": 4357,
+      "metrics": {
+        "operations": 148,
+        "approved": 0,
+        "reviewRequired": 44,
+        "generated": 104,
+        "blocked": 0,
+        "reads": 90,
+        "writes": 58,
+        "airBytes": 2513780,
+        "diagnostics": {
+          "naming_collision_resolved": 41,
+          "naming_dialect": 1,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 44
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "workday_common",
+      "name": "Workday — Common v1",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "Rapid7-export",
+      "url": "https://raw.githubusercontent.com/rapid7/r7-surcom-connectors/cc84ab48722310b3e3182f35ae6c4937597547a3/connectors/rapid7/workday/refdocs/supervisory_organization_swagger.json",
+      "status": "pass",
+      "checks": [
+        {
+          "name": "source-coverage",
+          "ok": true,
+          "detail": "40/40 operations; missing: none; extra: none"
+        },
+        {
+          "name": "unique-operation-ids",
+          "ok": true,
+          "detail": "40 names checked"
+        },
+        {
+          "name": "unique-mcp-names",
+          "ok": true,
+          "detail": "40 names checked"
+        },
+        {
+          "name": "unique-cli-commands",
+          "ok": true,
+          "detail": "40 names checked"
+        },
+        {
+          "name": "unsafe-writes-held",
+          "ok": true,
+          "detail": "0 unproven writes approved"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "AIR JSON → YAML → model contract hash"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "Two independent compilations of identical input bytes"
+        },
+        {
+          "name": "cli-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "mcp-alignment",
+          "ok": true,
+          "detail": "Projected AIR matches the canonical contract"
+        },
+        {
+          "name": "generated-surfaces",
+          "ok": true,
+          "detail": "CLI, MCP, skill, and four SDKs generated"
+        },
+        {
+          "name": "sdk-exposure-count",
+          "ok": true,
+          "detail": "0 SDK methods for 0 approved operations"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "No lint errors"
+        }
+      ],
+      "source": {
+        "status": "acquired",
+        "transport": "local-export",
+        "sha256": "2372e6c2622918edeaafa2c7f7579ac514f8b370a572172acccf2dd757d3c1b2",
+        "bytes": 171236,
+        "url": "https://raw.githubusercontent.com/rapid7/r7-surcom-connectors/cc84ab48722310b3e3182f35ae6c4937597547a3/connectors/rapid7/workday/refdocs/supervisory_organization_swagger.json",
+        "acquiredAt": "2026-09-14T00:42:59.681Z"
+      },
+      "inventory": {
+        "kind": "http",
+        "version": "v1",
+        "specificationVersion": "2.0",
+        "count": 40
+      },
+      "compileMs": 2440,
+      "metrics": {
+        "operations": 40,
+        "approved": 0,
+        "reviewRequired": 4,
+        "generated": 36,
+        "blocked": 0,
+        "reads": 36,
+        "writes": 4,
+        "airBytes": 458784,
+        "diagnostics": {
+          "naming_collision_resolved": 12,
+          "naming_dialect": 1,
+          "schema_depth_truncated": 1,
+          "unproven_idempotency": 4
+        }
+      },
+      "execution": {
+        "status": "not-run",
+        "detail": "Raw import; no additional operation approvals or vendor requests. See the separate reviewed smoke lane."
+      }
+    },
+    {
+      "id": "workday",
+      "name": "Workday HCM",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://community.workday.com/sites/default/files/file-hosting/restapi/index.html",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Export the selected Staffing/Person/Absence REST service OpenAPI from Workday REST API Explorer. Include its service version and tenant extensions."
+      },
+      "detail": "Export the selected Staffing/Person/Absence REST service OpenAPI from Workday REST API Explorer. Include its service version and tenant extensions."
+    },
+    {
+      "id": "oracle_hcm",
+      "name": "Oracle Fusion HCM",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://docs.oracle.com/en/cloud/saas/human-resources/",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Download the release-specific HCM Swagger from the REST API guide, or export tenant /hcmRestApi/resources/<version>/describe with the OpenAPI media type when supported. The public release and tenant flexfields are different scopes."
+      },
+      "detail": "Download the release-specific HCM Swagger from the REST API guide, or export tenant /hcmRestApi/resources/<version>/describe with the OpenAPI media type when supported. The public release and tenant flexfields are different scopes."
+    },
+    {
+      "id": "oracle_ebs",
+      "name": "Oracle E-Business Suite",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://docs.oracle.com/cd/E26401_01/index.htm",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Export the deployed Integrated SOA Gateway REST service. EBS commonly describes REST using WADL, which Anvil does not accept. Supply an actual OpenAPI or reviewed Postman export; a WADL is an adapter gap, not a passing REST conversion."
+      },
+      "detail": "Export the deployed Integrated SOA Gateway REST service. EBS commonly describes REST using WADL, which Anvil does not accept. Supply an actual OpenAPI or reviewed Postman export; a WADL is an adapter gap, not a passing REST conversion."
+    },
+    {
+      "id": "netsuite_rest",
+      "name": "Oracle NetSuite — REST records",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Export /services/rest/record/v1/metadata-catalog for the selected record types with application/swagger+json. The account's enabled features and custom records affect this contract. The existing SOAP backtest does not cover REST."
+      },
+      "detail": "Export /services/rest/record/v1/metadata-catalog for the selected record types with application/swagger+json. The account's enabled features and custom records affect this contract. The existing SOAP backtest does not cover REST."
+    },
+    {
+      "id": "moodle",
+      "name": "Moodle Workplace / LMS",
+      "industries": [
+        "education",
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://moodledev.io/docs/5.0/apis/subsystems/external",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Export the site's enabled external functions and installed-plugin contracts as reviewed OpenAPI. Moodle core REST is a function-dispatch endpoint, not a vendor-wide OpenAPI. A generic /webservice/rest/server.php skeleton does not establish function coverage."
+      },
+      "detail": "Export the site's enabled external functions and installed-plugin contracts as reviewed OpenAPI. Moodle core REST is a function-dispatch endpoint, not a vendor-wide OpenAPI. A generic /webservice/rest/server.php skeleton does not establish function coverage."
+    },
+    {
+      "id": "dynamics365",
+      "name": "Microsoft Dynamics 365 / Dataverse",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/web-api-service-documents",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Export the tenant Web API /api/data/v9.2/$metadata, including custom tables. OData reference services are not Dynamics coverage."
+      },
+      "detail": "Export the tenant Web API /api/data/v9.2/$metadata, including custom tables. OData reference services are not Dynamics coverage."
+    },
+    {
+      "id": "business_central",
+      "name": "Microsoft Dynamics 365 Business Central",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/api-reference/v2.0/",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Export /api/v2.0/$metadata for the selected environment and any extension APIs."
+      },
+      "detail": "Export /api/v2.0/$metadata for the selected environment and any extension APIs."
+    },
+    {
+      "id": "salesforce_crm",
+      "name": "Salesforce CRM — sObjects and custom objects",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_rest.htm",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Export the reviewed org-specific REST contract or Postman collection, including /sobjects describes. Commerce Cloud contracts do not validate Sales/Service Cloud custom objects."
+      },
+      "detail": "Export the reviewed org-specific REST contract or Postman collection, including /sobjects describes. Commerce Cloud contracts do not validate Sales/Service Cloud custom objects."
+    },
+    {
+      "id": "servicenow",
+      "name": "ServiceNow — ITSM / industry workflows",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://www.servicenow.com/docs/r/api-reference/rest-api-reference.html",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Export OpenAPI from REST API Explorer for the instance, plugins and tables under test. Include table-specific fields and query constraints."
+      },
+      "detail": "Export OpenAPI from REST API Explorer for the instance, plugins and tables under test. Include table-specific fields and query constraints."
+    },
+    {
+      "id": "teamcenter",
+      "name": "Siemens Teamcenter X",
+      "industries": [
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://plm.sw.siemens.com/en-US/teamcenter/solutions/plm-cloud-saas/",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Obtain the licensed deployment's REST API specification from its administrator. Capture version, modules and configuration."
+      },
+      "detail": "Obtain the licensed deployment's REST API specification from its administrator. Capture version, modules and configuration."
+    },
+    {
+      "id": "windchill",
+      "name": "PTC Windchill REST Services",
+      "industries": [
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://support.ptc.com/help/windchill_rest_services/r2.7/en/",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Export the selected WRS domain's OData $metadata, such as Product Management. Include custom domains separately."
+      },
+      "detail": "Export the selected WRS domain's OData $metadata, such as Product Management. Include custom domains separately."
+    },
+    {
+      "id": "infor",
+      "name": "Infor CloudSuite / ION API",
+      "industries": [
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://docs.infor.com/",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Export authorized API-suite Swagger from the tenant's ION API gateway. Record CloudSuite edition, suite and version."
+      },
+      "detail": "Export authorized API-suite Swagger from the tenant's ION API gateway. Record CloudSuite edition, suite and version."
+    },
+    {
+      "id": "coupa",
+      "name": "Coupa Procurement",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "provenance": "tenant-or-release-export-required",
+      "url": "https://compass.coupa.com/en-us/products/product-documentation/integration-technical-documentation/the-coupa-core-api",
+      "status": "needs-export",
+      "checks": [],
+      "source": {
+        "status": "needs-export",
+        "detail": "Obtain a reviewed contract for the selected Core API resources and tenant custom fields."
+      },
+      "detail": "Obtain a reviewed contract for the selected Core API resources and tenant custom fields."
+    }
+  ],
+  "finishedAt": "2026-09-14T00:52:17.445Z",
+  "snapshotNote": "Source inventory counts retained; individual source operation lists and raw logs are available from replay."
+}

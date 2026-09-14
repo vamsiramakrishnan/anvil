@@ -317,6 +317,19 @@ Detect, propose, measure, and apply refinements to AIR (the quality flywheel).
 
 `anvil refine plan` runs Anvil's deterministic detectors and reports a refinement plan — documentation gaps, weak naming/routing, unproven safety semantics, and mock/eval coverage holes — grouped by severity, category, and the narrow skill that owns each fix. `anvil refine skills` lists those skills as typed contracts (trigger, evidence policy, output boundary, validation), whose executor is kept separate from their semantics. `anvil refine run` routes each in-scope deficiency to its skill, proposes an evidence-backed semantic patch, validates it, then MEASURES only the eval families it affects — with a safety guard that must never regress — and reconciles the result through an auto-approval policy into a reviewable refinement pack (--severity/--skill/--safe-only/--out). `export-task` and `import-proposal` expose those same rails as portable JSON, so any coding harness can investigate without importing Anvil's TypeScript package. They also carry GROUP scope: `export-task <dir> group:<cluster-id>` reads the benchmark report's measured confusion clusters and exports one hash-bound task asking the harness for a higher-order shape — EITHER a workflow whose supersedes (⊆ its own steps) shrinks the served surface, OR an authored capability over the members, OR an honest decline with a reason. On import, a validated group proposal is SCORED before review: the deterministic lexical router re-routes the same intent tasks over the current vs hypothetical served surface; a negative delta is refused with the numbers, and a non-negative delta attaches as evidence (routing-delta.json) on a proposal that still lands at review — the measured uplift is information for the human, never an approval. `anvil refine review <pack-dir>` prints the human review. `approve`/`reject` write hash-bound decisions, and `apply-pack` applies those exact reviewed bytes without rerunning investigation. `anvil refine apply` remains the shortcut for auto-approved refinements.
 
+#### `anvil refine loop`  *(mutates)*
+`anvil refine loop [options] <path>`
+
+Run bounded autonomous semantic repair with fixed evals and replayable checkpoints.
+
+Options:
+- `--out <dir>` — new controller output directory (checkpoint and regenerated bundle)
+- `--resume` — revalidate checkpoint.json in the output directory before continuing
+- `--max-rounds <n>` — total round budget, including checkpoint history
+- `--max-attempts <n>` — total investigation budget, including checkpoint history
+- `--timeout-ms <n>` — time budget for this invocation
+- `--json` — print the controller checkpoint as JSON
+
 #### `anvil refine plan`
 `anvil refine plan [options] <path>`
 

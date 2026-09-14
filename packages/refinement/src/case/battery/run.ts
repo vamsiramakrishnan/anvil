@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type AirDocument, loadAirDocument } from "@anvil/air";
-import type { Deficiency } from "../../deficiency.js";
+import { type Deficiency, makeDeficiency } from "../../deficiency.js";
 import type { ApprovalTier, Refinement, RefinementStatus } from "../../model.js";
 import { buildRefinementPlan } from "../../plan.js";
 import { assembleContext, evidenceForTarget } from "../../skills/context.js";
@@ -110,6 +110,19 @@ function findDeficiency(air: AirDocument, s: FieldScenario): Deficiency {
   const d = plan.deficiencies.find(
     (x) => targetKey(x.target) === key && skillFor(x.code)?.name === s.skill,
   );
+  // This exemplar explicitly requests schema-example normalization. A default
+  // already satisfies coverage, so the autonomous detector correctly finds no gap.
+  if (!d && s.class === "direct_example" && s.field) {
+    return makeDeficiency(
+      "required_field_no_example",
+      {
+        kind: "field",
+        operationId: OP_ID,
+        path: `input.${s.field.in === "param" ? "params" : "body"}.${s.field.name}`,
+      },
+      "Explicit example-normalization skill exercise; baseline already has a value.",
+    );
+  }
   if (!d) {
     throw new Error(
       `scenario '${s.id}': no ${s.skill} deficiency at ${key} (got: ${plan.deficiencies

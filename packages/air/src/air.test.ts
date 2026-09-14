@@ -173,6 +173,18 @@ describe("AirDocument", () => {
     expect(airFromYaml(yaml).operations[0]?.description).toBe("line one\nline two\nline three");
   });
 
+  it("preserves whitespace-only lines when quoted YAML would insert a literal backslash", () => {
+    const base = loadAirDocument(doc);
+    const description =
+      "Export entries.\n" +
+      "Use the selected media type ".repeat(5) +
+      "\n      for the returned list.\n    \n\n\n\nEnd of export.\n" +
+      "Supported modes:\n \n- `email`: Send a code.\n \n- `sms`: Send a message.\n \n";
+    (base.operations[0] as Operation).description = description;
+    const serialized = airToYaml(base);
+    expect(airFromYaml(serialized).operations[0]?.description).toBe(description);
+  });
+
   it("rejects unknown enum values", () => {
     const bad = structuredClone(doc) as { operations: { effect: { kind: string } }[] };
     bad.operations[0]!.effect.kind = "teleport";

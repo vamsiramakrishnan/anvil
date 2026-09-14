@@ -13,6 +13,8 @@ coverage/
 
 # corpus harness run output (regenerated every run; see tools/corpus/README.md)
 tools/corpus/report/
+tools/corpus/enterprise/report/
+tools/corpus/enterprise/.cache/
 tools/legacy-corpus/report/
 gen/
 

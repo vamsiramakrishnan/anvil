@@ -50,7 +50,9 @@ const PAGES = [
   },
   { src: "docs/simulation-and-backtesting.md", dest: "concepts/simulation-and-backtesting.md", order: 7 },
   { src: "docs/backtesting/legacy-corpus.md", dest: "concepts/legacy-corpus.md", order: 8 },
-  { src: GLOSSARY_SRC, dest: "concepts/glossary.md", order: 9, title: "Glossary" },
+  { src: "docs/backtesting/enterprise-corpus.md", dest: "concepts/enterprise-corpus.md", order: 9 },
+  { src: "docs/backtesting/repair-controller.md", dest: "concepts/repair-controller.md", order: 10 },
+  { src: GLOSSARY_SRC, dest: "concepts/glossary.md", order: 10, title: "Glossary" },
   {
     src: "skills/anvil/SKILL.md",
     dest: "guides/operating-anvil.md",

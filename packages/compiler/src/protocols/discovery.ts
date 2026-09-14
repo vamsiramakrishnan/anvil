@@ -14,6 +14,7 @@
  * resolves it exactly like any OpenAPI source. Effect/idempotency/naming are
  * then inferred by the same protocol-agnostic pipeline as every other format.
  */
+import type { Diagnostic } from "@anvil/air";
 import type { OpenApiDocument } from "../parse.js";
 
 interface DiscoveryParam {
@@ -56,6 +57,8 @@ interface DiscoveryDoc {
   servicePath?: string;
   documentationLink?: string;
   resources?: Record<string, DiscoveryResource>;
+  methods?: Record<string, DiscoveryMethod>;
+  parameters?: Record<string, DiscoveryParam>;
   schemas?: Record<string, unknown>;
   auth?: { oauth2?: { scopes?: Record<string, { description?: string }> } };
 }
@@ -95,7 +98,21 @@ function toOpenApiParam(name: string, p: DiscoveryParam): Record<string, unknown
   const base: Record<string, unknown> = { type: p.type ?? "string" };
   if (p.format) base.format = p.format;
   if (p.enum) base.enum = p.enum;
-  if (p.default !== undefined) base.default = p.default;
+  if (p.default !== undefined) {
+    // Discovery serializes scalar defaults as strings, including booleans and
+    // numbers. JSON Schema defaults must retain the declared value's type.
+    let value = p.default;
+    if (typeof value === "string") {
+      if (p.type === "boolean" && /^(true|false)$/.test(value)) value = value === "true";
+      else if (
+        (p.type === "integer" || p.type === "number") &&
+        value.trim() !== "" &&
+        Number.isFinite(Number(value))
+      )
+        value = Number(value);
+    }
+    base.default = value;
+  }
   // Discovery marks a list-valued param with `repeated: true`, not an array type.
   const schema = p.repeated ? { type: "array", items: base } : base;
   return {
@@ -119,7 +136,7 @@ function* eachMethod(
   }
 }
 
-export function adaptDiscovery(text: string): OpenApiDocument {
+export function adaptDiscovery(text: string, diagnostics?: Diagnostic[]): OpenApiDocument {
   let doc: DiscoveryDoc;
   try {
     doc = JSON.parse(text) as DiscoveryDoc;
@@ -128,7 +145,13 @@ export function adaptDiscovery(text: string): OpenApiDocument {
   }
 
   const paths: Record<string, Record<string, unknown>> = {};
-  for (const method of eachMethod(doc.resources)) {
+  const commonParameters = { ...doc.parameters };
+  if (Object.keys(doc.auth?.oauth2?.scopes ?? {}).length > 0) {
+    // These are alternative credential carriers. The OAuth security scheme
+    // below supplies auth; do not project tokens into ordinary agent inputs.
+    for (const name of ["access_token", "oauth_token", "key"]) delete commonParameters[name];
+  }
+  for (const method of [...Object.values(doc.methods ?? {}), ...eachMethod(doc.resources)]) {
     // Discovery's `path` uses RFC 6570 level-2 reserved expansion (`{+projectId}`)
     // for segments that may contain slashes, and its placeholder names ARE the
     // declared parameter names (`projectId`, `datasetId`, …). Normalize the `+`
@@ -145,8 +168,8 @@ export function adaptDiscovery(text: string): OpenApiDocument {
     const path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
     const verb = method.httpMethod.toLowerCase();
 
-    const parameters = Object.entries(method.parameters ?? {}).map(([name, p]) =>
-      toOpenApiParam(name, p),
+    const parameters = Object.entries({ ...commonParameters, ...method.parameters }).map(
+      ([name, p]) => toOpenApiParam(name, p),
     );
 
     const operation: Record<string, unknown> = {
@@ -186,6 +209,17 @@ export function adaptDiscovery(text: string): OpenApiDocument {
     }
 
     const pathItem = paths[path] ?? {};
+    // Reserved resource templates can denote different operations at the same
+    // verb/path (Places get and photos.getMedia both publish v1/{+name}). The
+    // OpenAPI path map cannot express that distinction. Refuse the lossy
+    // conversion instead of overwriting whichever method appeared first.
+    if (pathItem[verb]) {
+      const previous = pathItem[verb] as Record<string, unknown>;
+      const message = `Discovery methods '${previous.operationId}' and '${method.id}' share ${verb.toUpperCase()} ${path}. Their resource templates require distinct bindings; conversion would lose an operation.`;
+      if (!diagnostics) throw new Error(message);
+      diagnostics.push({ level: "error", code: "discovery_endpoint_collision", message, path });
+      continue;
+    }
     pathItem[verb] = operation;
     paths[path] = pathItem;
   }

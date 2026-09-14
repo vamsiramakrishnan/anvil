@@ -1,0 +1,955 @@
+{
+  "researchDate": "2026-09-14",
+  "selection": "Enterprise integration priorities for financial services, retail and manufacturing, plus the explicitly requested education APIs. This is a coverage shortlist, not a market-share ranking.",
+  "systems": [
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "discovery",
+      "id": "gmail",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Google Workspace — Gmail",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "b90bd4a7967518e9ca6b4c20c1a329e96a3d39fc",
+      "sourceBytes": 217686,
+      "sourcePath": "discoveries/gmail.v1.json",
+      "sourceRepository": "googleapis/discovery-artifact-manager",
+      "sourceRevision": "4a575a58ada5884c295d604baa39465b7892b40b",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/gmail.v1.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "discovery",
+      "id": "google_drive",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Google Workspace — Drive",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "d45c48b59d4005b146520da2155578b1fe877ff3",
+      "sourceBytes": 269468,
+      "sourcePath": "discoveries/drive.v3.json",
+      "sourceRepository": "googleapis/discovery-artifact-manager",
+      "sourceRevision": "4a575a58ada5884c295d604baa39465b7892b40b",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/drive.v3.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "discovery",
+      "id": "google_docs",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Google Workspace — Docs",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "7dfa73c1bd415e207a84c6b7057f5d680c387b96",
+      "sourceBytes": 236939,
+      "sourcePath": "discoveries/docs.v1.json",
+      "sourceRepository": "googleapis/discovery-artifact-manager",
+      "sourceRevision": "4a575a58ada5884c295d604baa39465b7892b40b",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/docs.v1.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "discovery",
+      "id": "google_sheets",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Google Workspace — Sheets",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "dc482bfa8ff521e729fd872faa21815935d3f03b",
+      "sourceBytes": 377970,
+      "sourcePath": "discoveries/sheets.v4.json",
+      "sourceRepository": "googleapis/discovery-artifact-manager",
+      "sourceRevision": "4a575a58ada5884c295d604baa39465b7892b40b",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/sheets.v4.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "discovery",
+      "id": "google_slides",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Google Workspace — Slides",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "8af7d6ad8b08c21aa644ce07d1600b7588afcb6f",
+      "sourceBytes": 227919,
+      "sourcePath": "discoveries/slides.v1.json",
+      "sourceRepository": "googleapis/discovery-artifact-manager",
+      "sourceRevision": "4a575a58ada5884c295d604baa39465b7892b40b",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/slides.v1.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "discovery",
+      "id": "google_calendar",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Google Workspace — Calendar",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "f122bdf9d6ae52b33d403fa4e7e52c1b3d6dca3f",
+      "sourceBytes": 169815,
+      "sourcePath": "discoveries/calendar.v3.json",
+      "sourceRepository": "googleapis/discovery-artifact-manager",
+      "sourceRevision": "4a575a58ada5884c295d604baa39465b7892b40b",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/calendar.v3.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "discovery",
+      "id": "google_admin",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Google Workspace — Admin Directory",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "36f3e5560334b24361eb74e0eaa7c526ed783dfe",
+      "sourceBytes": 386774,
+      "sourcePath": "discoveries/admin.directory_v1.json",
+      "sourceRepository": "googleapis/discovery-artifact-manager",
+      "sourceRevision": "4a575a58ada5884c295d604baa39465b7892b40b",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/admin.directory_v1.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "discovery",
+      "id": "google_classroom",
+      "industries": [
+        "education"
+      ],
+      "name": "Google Classroom",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "10736b871e0f7dd5ebec272986c2403e07e95277",
+      "sourceBytes": 351137,
+      "sourcePath": "discoveries/classroom.v1.json",
+      "sourceRepository": "googleapis/discovery-artifact-manager",
+      "sourceRevision": "4a575a58ada5884c295d604baa39465b7892b40b",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/classroom.v1.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "discovery",
+      "id": "google_places",
+      "industries": [
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Google Maps — Places",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "40e9f6c4bdfcdddfa445ba948971c2243324ee25",
+      "sourceBytes": 148499,
+      "sourcePath": "discoveries/places.v1.json",
+      "sourceRepository": "googleapis/discovery-artifact-manager",
+      "sourceRevision": "4a575a58ada5884c295d604baa39465b7892b40b",
+      "url": "https://raw.githubusercontent.com/googleapis/discovery-artifact-manager/4a575a58ada5884c295d604baa39465b7892b40b/discoveries/places.v1.json"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "graph_mail",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Microsoft Graph — mail",
+      "provenance": "vendor-module",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "e1a19a44755a1c5a2f61ef2c8ebe88cc0949551b",
+      "sourceBytes": 279416,
+      "sourcePath": "openApiDocs/v1.0/Mail.yml",
+      "sourceRepository": "microsoftgraph/msgraph-sdk-powershell",
+      "sourceRevision": "11d2801bd3d9043c7b1d074f7442f98c2347aeaa",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Mail.yml"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "graph_users",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Microsoft Graph — users",
+      "provenance": "vendor-module",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "03b843e10f885214421291795514c28ca45c81a9",
+      "sourceBytes": 1321974,
+      "sourcePath": "openApiDocs/v1.0/Users.yml",
+      "sourceRepository": "microsoftgraph/msgraph-sdk-powershell",
+      "sourceRevision": "11d2801bd3d9043c7b1d074f7442f98c2347aeaa",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Users.yml"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "graph_teams",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Microsoft Graph — teams",
+      "provenance": "vendor-module",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "4a0f018e23524a39b4cd1fe00dab69a9e1843c05",
+      "sourceBytes": 3005278,
+      "sourcePath": "openApiDocs/v1.0/Teams.yml",
+      "sourceRepository": "microsoftgraph/msgraph-sdk-powershell",
+      "sourceRevision": "11d2801bd3d9043c7b1d074f7442f98c2347aeaa",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Teams.yml"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "graph_calendar",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Microsoft Graph — calendar",
+      "provenance": "vendor-module",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "7103e6e3a02ff3a5b63e577910ea0863516b468c",
+      "sourceBytes": 700340,
+      "sourcePath": "openApiDocs/v1.0/Calendar.yml",
+      "sourceRepository": "microsoftgraph/msgraph-sdk-powershell",
+      "sourceRevision": "11d2801bd3d9043c7b1d074f7442f98c2347aeaa",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Calendar.yml"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "graph_files",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Microsoft Graph — files",
+      "provenance": "vendor-module",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "ec4c76f6eba8b2807db10a6de315eb21ed7a072c",
+      "sourceBytes": 3330809,
+      "sourcePath": "openApiDocs/v1.0/Files.yml",
+      "sourceRepository": "microsoftgraph/msgraph-sdk-powershell",
+      "sourceRevision": "11d2801bd3d9043c7b1d074f7442f98c2347aeaa",
+      "url": "https://raw.githubusercontent.com/microsoftgraph/msgraph-sdk-powershell/11d2801bd3d9043c7b1d074f7442f98c2347aeaa/openApiDocs/v1.0/Files.yml"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "canva",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Canva Connect",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "a5c594a4160450c44bbca1f3d0192247cdc0d9b8",
+      "sourceBytes": 437025,
+      "sourcePath": "openapi/spec.yml",
+      "sourceRepository": "canva-sdks/canva-connect-api-starter-kit",
+      "sourceRevision": "f121e3d0736260962ae8445935bd370c61bb09d0",
+      "url": "https://raw.githubusercontent.com/canva-sdks/canva-connect-api-starter-kit/f121e3d0736260962ae8445935bd370c61bb09d0/openapi/spec.yml"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "slack",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Slack Web API",
+      "provenance": "vendor-archived",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "72c5dfb431e05f5d6fa2aa28ebcd60d503a67886",
+      "sourceBytes": 1237332,
+      "sourcePath": "web-api/slack_web_openapi_v2.json",
+      "sourceRepository": "slackapi/slack-api-specs",
+      "sourceRevision": "bc08db49625630e3585bf2f1322128ea04f2a7f3",
+      "url": "https://raw.githubusercontent.com/slackapi/slack-api-specs/bc08db49625630e3585bf2f1322128ea04f2a7f3/web-api/slack_web_openapi_v2.json"
+    },
+    {
+      "access": "public",
+      "extension": "edmx",
+      "format": "odata",
+      "id": "sap_successfactors",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "SAP SuccessFactors — User",
+      "provenance": "vendor-sample-export",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "b504ab1a0dd24e65e4541c788b7da14384a63efb",
+      "sourceBytes": 55177,
+      "sourcePath": "task-management-app/edmx/User.edmx",
+      "sourceRepository": "SAP/task-management-sample-app-sfsf-solutions",
+      "sourceRevision": "1a6fcf83abaee8a8045499dfb8fb1e89122c3080",
+      "url": "https://raw.githubusercontent.com/SAP/task-management-sample-app-sfsf-solutions/1a6fcf83abaee8a8045499dfb8fb1e89122c3080/task-management-app/edmx/User.edmx"
+    },
+    {
+      "access": "public",
+      "extension": "edmx",
+      "format": "odata",
+      "id": "sap_s4hana",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "SAP S/4HANA — Business Partner",
+      "provenance": "vendor-sample-export",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "d6f3fa2deb61d923fd5202d7eb2746f38493b412",
+      "sourceBytes": 359549,
+      "sourcePath": "samples/cds-sample-application/resources/service-specs/API_BUSINESS_PARTNER.edmx",
+      "sourceRepository": "SAP-samples/cloud-sdk-js",
+      "sourceRevision": "45804ef28874b32e93a3b95f0146aa841a701e82",
+      "url": "https://raw.githubusercontent.com/SAP-samples/cloud-sdk-js/45804ef28874b32e93a3b95f0146aa841a701e82/samples/cds-sample-application/resources/service-specs/API_BUSINESS_PARTNER.edmx"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "sap_btp",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "SAP BTP — Destination Service",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "db2f85245339962467ea714c115f47f637798185",
+      "sourceBytes": 237704,
+      "sourcePath": "src/sap_cloud_sdk/destination/spec/api_spec.yaml",
+      "sourceRepository": "SAP/cloud-sdk-python",
+      "sourceRevision": "0ccb34bb4a9dd3019d4e46908e8c0e98058ec070",
+      "url": "https://raw.githubusercontent.com/SAP/cloud-sdk-python/0ccb34bb4a9dd3019d4e46908e8c0e98058ec070/src/sap_cloud_sdk/destination/spec/api_spec.yaml"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "sap_ai_core",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "SAP BTP — AI Core",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "231368bbbe1ae4a31070be2c60055eea44fc13dd",
+      "sourceBytes": 246361,
+      "sourcePath": "packages/ai-api/src/spec/AI_CORE_API.yaml",
+      "sourceRepository": "SAP/ai-sdk-js",
+      "sourceRevision": "2d0a51f8fb610ac7dc48052ce13468ac5dd7a52d",
+      "url": "https://raw.githubusercontent.com/SAP/ai-sdk-js/2d0a51f8fb610ac7dc48052ce13468ac5dd7a52d/packages/ai-api/src/spec/AI_CORE_API.yaml"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "sap_ariba",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "SAP Ariba — Supplier Data with Pagination",
+      "provenance": "Informatica-export",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "ce585362c5abdd4dfc3945111bda61616e443452",
+      "sourceBytes": 82146,
+      "sourcePath": "SAP Ariba/SAP Ariba Supplier Data with Pagination REST API v2.json",
+      "sourceRepository": "InformaticaCloudApplicationIntegration/Service-Connectors",
+      "sourceRevision": "fe7834cfc5234aab55bb08289aedee850eebe82a",
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/SAP%20Ariba/SAP%20Ariba%20Supplier%20Data%20with%20Pagination%20REST%20API%20v2.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "sap_ariba_approvals",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "SAP Ariba — Document Approval",
+      "provenance": "Informatica-export",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "b34b8be8b55b0500deb92d6d14761c0efb567924",
+      "sourceBytes": 46934,
+      "sourcePath": "SAP Ariba/SAP Ariba Document Approval REST API v1.json",
+      "sourceRepository": "InformaticaCloudApplicationIntegration/Service-Connectors",
+      "sourceRevision": "fe7834cfc5234aab55bb08289aedee850eebe82a",
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/SAP%20Ariba/SAP%20Ariba%20Document%20Approval%20REST%20API%20v1.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "jira",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Atlassian Jira Cloud v3 — historical export",
+      "provenance": "Informatica-export",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "df0064f379d3faf3bbea502a130c1055bf37e961",
+      "sourceBytes": 1255032,
+      "sourcePath": "Atlassian/Atlassian JIRA Cloud REST API v3.json",
+      "sourceRepository": "InformaticaCloudApplicationIntegration/Service-Connectors",
+      "sourceRevision": "fe7834cfc5234aab55bb08289aedee850eebe82a",
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/Atlassian/Atlassian%20JIRA%20Cloud%20REST%20API%20v3.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "confluence",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Atlassian Confluence Cloud v1 — historical export",
+      "provenance": "Informatica-export",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "194a8a3ecae8dc41d2900cbb712b5cdd4e73a4fe",
+      "sourceBytes": 493127,
+      "sourcePath": "Atlassian/Atlassian Confluence Cloud REST API v1.json",
+      "sourceRepository": "InformaticaCloudApplicationIntegration/Service-Connectors",
+      "sourceRevision": "fe7834cfc5234aab55bb08289aedee850eebe82a",
+      "url": "https://raw.githubusercontent.com/InformaticaCloudApplicationIntegration/Service-Connectors/fe7834cfc5234aab55bb08289aedee850eebe82a/Atlassian/Atlassian%20Confluence%20Cloud%20REST%20API%20v1.json"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "salesforce_orders",
+      "industries": [
+        "retail"
+      ],
+      "name": "Salesforce Commerce — Shopper Orders",
+      "provenance": "vendor-module",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "18cf5ba75c7464c8a222c47ca53b131b3dd637bc",
+      "sourceBytes": 202473,
+      "sourcePath": "apis/shopper-orders-oas-1.20.1/shopper-orders-oas-v1-public.yaml",
+      "sourceRepository": "SalesforceCommerceCloud/commerce-sdk",
+      "sourceRevision": "05ffab5636f9e0dae34bb689ece3b5e5736fd1ed",
+      "url": "https://raw.githubusercontent.com/SalesforceCommerceCloud/commerce-sdk/05ffab5636f9e0dae34bb689ece3b5e5736fd1ed/apis/shopper-orders-oas-1.20.1/shopper-orders-oas-v1-public.yaml"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "salesforce_customers",
+      "industries": [
+        "retail"
+      ],
+      "name": "Salesforce Commerce — Shopper Customers",
+      "provenance": "vendor-module",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "df367f6ab7a9978239702123758d453633b66bd3",
+      "sourceBytes": 284815,
+      "sourcePath": "apis/shopper-customers-oas-1.9.0/shopper-customers-oas-v1-public.yaml",
+      "sourceRepository": "SalesforceCommerceCloud/commerce-sdk",
+      "sourceRevision": "05ffab5636f9e0dae34bb689ece3b5e5736fd1ed",
+      "url": "https://raw.githubusercontent.com/SalesforceCommerceCloud/commerce-sdk/05ffab5636f9e0dae34bb689ece3b5e5736fd1ed/apis/shopper-customers-oas-1.9.0/shopper-customers-oas-v1-public.yaml"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "stripe",
+      "industries": [
+        "fsi",
+        "retail"
+      ],
+      "name": "Stripe",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "622c8d69a50f470944ab6713c7f27e216cb45d97",
+      "sourceBytes": 8028700,
+      "sourcePath": "openapi/spec3.json",
+      "sourceRepository": "stripe/openapi",
+      "sourceRevision": "ab25fedb464c6b8866a81dd4217c7305d07790a8",
+      "url": "https://raw.githubusercontent.com/stripe/openapi/ab25fedb464c6b8866a81dd4217c7305d07790a8/openapi/spec3.json"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "plaid",
+      "industries": [
+        "fsi"
+      ],
+      "name": "Plaid",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "eb2fcdc3c77ee14c6dd8f4c2b9e02c2689b78791",
+      "sourceBytes": 3163817,
+      "sourcePath": "2020-09-14.yml",
+      "sourceRepository": "plaid/plaid-openapi",
+      "sourceRevision": "457d08b92a569289195312aec8daa712d3324cab",
+      "url": "https://raw.githubusercontent.com/plaid/plaid-openapi/457d08b92a569289195312aec8daa712d3324cab/2020-09-14.yml"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "adyen",
+      "industries": [
+        "fsi",
+        "retail"
+      ],
+      "name": "Adyen Checkout v71",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "bbc28477fcc96864158a97625759545a57c72e40",
+      "sourceBytes": 935759,
+      "sourcePath": "json/CheckoutService-v71.json",
+      "sourceRepository": "Adyen/adyen-openapi",
+      "sourceRevision": "c4e0d44cf6c0f3dcdff65be8e250fdbfa9da1076",
+      "url": "https://raw.githubusercontent.com/Adyen/adyen-openapi/c4e0d44cf6c0f3dcdff65be8e250fdbfa9da1076/json/CheckoutService-v71.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "docusign",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "DocuSign eSignature",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "2161e5483484122e328c39e384fa2fd8b6e41297",
+      "sourceBytes": 4846375,
+      "sourcePath": "esignature.rest.swagger-v2.1.json",
+      "sourceRepository": "docusign/OpenAPI-Specifications",
+      "sourceRevision": "858a3ae59b0edbc8beea4fa3a6d7fe803833dd68",
+      "url": "https://raw.githubusercontent.com/docusign/OpenAPI-Specifications/858a3ae59b0edbc8beea4fa3a6d7fe803833dd68/esignature.rest.swagger-v2.1.json"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "okta",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Okta Management",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "8843ac38b0ab88c192a22e8831b8d3d9f429f6df",
+      "sourceBytes": 3469033,
+      "sourcePath": "dist/current/management-minimal.yaml",
+      "sourceRepository": "okta/okta-management-openapi-spec",
+      "sourceRevision": "74fcd17fad54332caee96ebbb11fd7f203b03e4f",
+      "url": "https://raw.githubusercontent.com/okta/okta-management-openapi-spec/74fcd17fad54332caee96ebbb11fd7f203b03e4f/dist/current/management-minimal.yaml"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "shopware",
+      "industries": [
+        "retail"
+      ],
+      "name": "Shopware Admin",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "beab9c01655e2cff34ce26f4dcfe05f4e371ff77",
+      "sourceBytes": 4254864,
+      "sourcePath": "adminapi.json",
+      "sourceRepository": "shopware/admin-api-reference",
+      "sourceRevision": "da5e2cabd6be0cd06ace06fc88dc8aedebb62f56",
+      "url": "https://raw.githubusercontent.com/shopware/admin-api-reference/da5e2cabd6be0cd06ace06fc88dc8aedebb62f56/adminapi.json"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "bigcommerce",
+      "industries": [
+        "retail"
+      ],
+      "name": "BigCommerce Orders v2",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "22bdc2e3a1af3159508466d70c2d9e743a28dc40",
+      "sourceBytes": 211484,
+      "sourcePath": "reference/orders.v2.oas2.yml",
+      "sourceRepository": "bigcommerce/api-specs",
+      "sourceRevision": "dcf48407308710b882374ffafbeefdb0b3598abe",
+      "url": "https://raw.githubusercontent.com/bigcommerce/api-specs/dcf48407308710b882374ffafbeefdb0b3598abe/reference/orders.v2.oas2.yml"
+    },
+    {
+      "access": "public",
+      "extension": "yaml",
+      "format": "openapi",
+      "id": "xero",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Xero Accounting",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "7a5bd0584fc54fd7ab57dce613a54de8653f2816",
+      "sourceBytes": 933096,
+      "sourcePath": "xero_accounting.yaml",
+      "sourceRepository": "XeroAPI/Xero-OpenAPI",
+      "sourceRevision": "448060d7829cae23166a2e443be48c2f2422280f",
+      "url": "https://raw.githubusercontent.com/XeroAPI/Xero-OpenAPI/448060d7829cae23166a2e443be48c2f2422280f/xero_accounting.yaml"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "box",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Box",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "34f35ed1e5a0b1c83cd9936e9cefd1b4e6c10d8a",
+      "sourceBytes": 1780704,
+      "sourcePath": "openapi.json",
+      "sourceRepository": "box/box-openapi",
+      "sourceRevision": "933ec4c5d9f4dbdaaa823efa3a083cf177aecbde",
+      "url": "https://raw.githubusercontent.com/box/box-openapi/933ec4c5d9f4dbdaaa823efa3a083cf177aecbde/openapi.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "hubspot",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "HubSpot CRM — Deals",
+      "provenance": "vendor-module",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "2cba216c63156c0c31d6580494ccd35b7ed86943",
+      "sourceBytes": 77526,
+      "sourcePath": "PublicApiSpecs/CRM/Deals/Rollouts/424/v3/deals.json",
+      "sourceRepository": "HubSpot/HubSpot-public-api-spec-collection",
+      "sourceRevision": "2dec5364fd6765bcfa9cf62ea4d06e22aa789d59",
+      "url": "https://raw.githubusercontent.com/HubSpot/HubSpot-public-api-spec-collection/2dec5364fd6765bcfa9cf62ea4d06e22aa789d59/PublicApiSpecs/CRM/Deals/Rollouts/424/v3/deals.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "openapi",
+      "id": "samsara",
+      "industries": [
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Samsara Connected Operations",
+      "provenance": "vendor",
+      "scope": "Complete published contract at the selected module/version; no operation trimming.",
+      "sourceBlob": "5c9b63dbf0dcc969f42b84d0ebf2bd1ecdb3711e",
+      "sourceBytes": 1415660,
+      "sourcePath": "swagger.json",
+      "sourceRepository": "samsarahq/api-docs",
+      "sourceRevision": "263d92d9209b174c3d7409db31b45470dbda002a",
+      "url": "https://raw.githubusercontent.com/samsarahq/api-docs/263d92d9209b174c3d7409db31b45470dbda002a/swagger.json"
+    },
+    {
+      "access": "public",
+      "extension": "json",
+      "format": "swagger",
+      "id": "workday_common",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "name": "Workday — Common v1",
+      "provenance": "Rapid7-export",
+      "scope": "Complete historical common/v1 export published by Rapid7 with a Workday documentation source; tenant host remains a placeholder. Does not cover all HCM services or tenant extensions.",
+      "sourceBlob": "3de9bc44648c519ffe576a515c7227a8919499d2",
+      "sourceBytes": 171236,
+      "sourcePath": "connectors/rapid7/workday/refdocs/supervisory_organization_swagger.json",
+      "sourceRepository": "rapid7/r7-surcom-connectors",
+      "sourceRevision": "cc84ab48722310b3e3182f35ae6c4937597547a3",
+      "url": "https://raw.githubusercontent.com/rapid7/r7-surcom-connectors/cc84ab48722310b3e3182f35ae6c4937597547a3/connectors/rapid7/workday/refdocs/supervisory_organization_swagger.json"
+    },
+    {
+      "access": "export-required",
+      "extension": "json",
+      "format": "openapi",
+      "id": "workday",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Export the selected Staffing/Person/Absence REST service OpenAPI from Workday REST API Explorer. Include its service version and tenant extensions.",
+      "name": "Workday HCM",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://community.workday.com/sites/default/files/file-hosting/restapi/index.html"
+    },
+    {
+      "access": "export-required",
+      "extension": "json",
+      "format": "openapi",
+      "id": "oracle_hcm",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Download the release-specific HCM Swagger from the REST API guide, or export tenant /hcmRestApi/resources/<version>/describe with the OpenAPI media type when supported. The public release and tenant flexfields are different scopes.",
+      "name": "Oracle Fusion HCM",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://docs.oracle.com/en/cloud/saas/human-resources/"
+    },
+    {
+      "access": "export-required",
+      "extension": "json",
+      "format": "openapi",
+      "id": "oracle_ebs",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Export the deployed Integrated SOA Gateway REST service. EBS commonly describes REST using WADL, which Anvil does not accept. Supply an actual OpenAPI or reviewed Postman export; a WADL is an adapter gap, not a passing REST conversion.",
+      "name": "Oracle E-Business Suite",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://docs.oracle.com/cd/E26401_01/index.htm"
+    },
+    {
+      "access": "export-required",
+      "extension": "json",
+      "format": "openapi",
+      "id": "netsuite_rest",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Export /services/rest/record/v1/metadata-catalog for the selected record types with application/swagger+json. The account's enabled features and custom records affect this contract. The existing SOAP backtest does not cover REST.",
+      "name": "Oracle NetSuite — REST records",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/"
+    },
+    {
+      "access": "export-required",
+      "extension": "json",
+      "format": "openapi",
+      "id": "moodle",
+      "industries": [
+        "education",
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Export the site's enabled external functions and installed-plugin contracts as reviewed OpenAPI. Moodle core REST is a function-dispatch endpoint, not a vendor-wide OpenAPI. A generic /webservice/rest/server.php skeleton does not establish function coverage.",
+      "name": "Moodle Workplace / LMS",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://moodledev.io/docs/5.0/apis/subsystems/external"
+    },
+    {
+      "access": "export-required",
+      "extension": "edmx",
+      "format": "odata",
+      "id": "dynamics365",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Export the tenant Web API /api/data/v9.2/$metadata, including custom tables. OData reference services are not Dynamics coverage.",
+      "name": "Microsoft Dynamics 365 / Dataverse",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/web-api-service-documents"
+    },
+    {
+      "access": "export-required",
+      "extension": "edmx",
+      "format": "odata",
+      "id": "business_central",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Export /api/v2.0/$metadata for the selected environment and any extension APIs.",
+      "name": "Microsoft Dynamics 365 Business Central",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/api-reference/v2.0/"
+    },
+    {
+      "access": "export-required",
+      "extension": "json",
+      "format": "openapi",
+      "id": "salesforce_crm",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Export the reviewed org-specific REST contract or Postman collection, including /sobjects describes. Commerce Cloud contracts do not validate Sales/Service Cloud custom objects.",
+      "name": "Salesforce CRM — sObjects and custom objects",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_rest.htm"
+    },
+    {
+      "access": "export-required",
+      "extension": "json",
+      "format": "openapi",
+      "id": "servicenow",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Export OpenAPI from REST API Explorer for the instance, plugins and tables under test. Include table-specific fields and query constraints.",
+      "name": "ServiceNow — ITSM / industry workflows",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://www.servicenow.com/docs/r/api-reference/rest-api-reference.html"
+    },
+    {
+      "access": "export-required",
+      "extension": "json",
+      "format": "openapi",
+      "id": "teamcenter",
+      "industries": [
+        "manufacturing"
+      ],
+      "instructions": "Obtain the licensed deployment's REST API specification from its administrator. Capture version, modules and configuration.",
+      "name": "Siemens Teamcenter X",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://plm.sw.siemens.com/en-US/teamcenter/solutions/plm-cloud-saas/"
+    },
+    {
+      "access": "export-required",
+      "extension": "edmx",
+      "format": "odata",
+      "id": "windchill",
+      "industries": [
+        "manufacturing"
+      ],
+      "instructions": "Export the selected WRS domain's OData $metadata, such as Product Management. Include custom domains separately.",
+      "name": "PTC Windchill REST Services",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://support.ptc.com/help/windchill_rest_services/r2.7/en/"
+    },
+    {
+      "access": "export-required",
+      "extension": "json",
+      "format": "openapi",
+      "id": "infor",
+      "industries": [
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Export authorized API-suite Swagger from the tenant's ION API gateway. Record CloudSuite edition, suite and version.",
+      "name": "Infor CloudSuite / ION API",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://docs.infor.com/"
+    },
+    {
+      "access": "export-required",
+      "extension": "json",
+      "format": "openapi",
+      "id": "coupa",
+      "industries": [
+        "fsi",
+        "retail",
+        "manufacturing"
+      ],
+      "instructions": "Obtain a reviewed contract for the selected Core API resources and tenant custom fields.",
+      "name": "Coupa Procurement",
+      "provenance": "tenant-or-release-export-required",
+      "scope": "Not exercised until a genuine contract is supplied.",
+      "url": "https://compass.coupa.com/en-us/products/product-documentation/integration-technical-documentation/the-coupa-core-api"
+    }
+  ],
+  "version": 1
+}
