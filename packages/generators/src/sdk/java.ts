@@ -8,7 +8,7 @@ import {
 } from "./java-core.js";
 import { invokerFile, safetyFile } from "./java-invoke.js";
 import { jsonFile } from "./java-json.js";
-import type { SdkField, SdkOperation, SdkPlan } from "./plan.js";
+import type { SdkField, SdkOperation, SdkPager, SdkPlan } from "./plan.js";
 import { safetyNotes, wrap } from "./shared.js";
 import { JAVA_SOAP } from "./soap.js";
 
@@ -312,9 +312,112 @@ ${setters}
 `;
 }
 
+/**
+ * The paging helper: collects pages in order under a caller-chosen bound.
+ * Every style advances the same way — see `SdkPager` in plan.ts — and every
+ * one stops on a repeated continuation.
+ */
+function javaPager(op: SdkOperation, pager: SdkPager): string[] {
+  const k = q(pager.cursorKey);
+  const items = pager.itemsField ? `Invoker.field(page, ${q(pager.itemsField)})` : "null";
+  const short =
+    pager.pageSizeKey && pager.itemsField
+      ? `      Object requested = payload.get(${q(pager.pageSizeKey)});\n      boolean shortPage = requested instanceof Number && items instanceof List && ((List<?>) items).size() < ((Number) requested).longValue();`
+      : "      boolean shortPage = false;";
+  let advance = "";
+  switch (pager.style) {
+    case "cursor":
+      advance = `      Object raw = Invoker.field(page, ${q(pager.nextField ?? "")});\n      if (raw instanceof String && !((String) raw).isEmpty()) {\n        next = raw;\n      }`;
+      break;
+    case "link":
+      advance = `      Object raw = Invoker.field(page, ${q(pager.nextField ?? "")});\n      // Only the continuation value is read out of the link; the URL itself is\n      // never fetched, so paging can never leave the compiled base URL.\n      if (raw instanceof String && !((String) raw).isEmpty()) {\n        next = pagerLinkParam((String) raw, ${q(pager.cursorParam)});\n      }`;
+      break;
+    case "page":
+    case "offset": {
+      const step = pager.style === "page" ? "1L" : "(long) ((List<?>) items).size()";
+      advance = pager.nextField
+        ? `      Object raw = Invoker.field(page, ${q(pager.nextField)});\n      if (raw instanceof Number) {\n        next = raw;\n      } else if (raw instanceof String && !((String) raw).isEmpty()) {\n        next = raw;\n      }`
+        : `      if (items instanceof List && !((List<?>) items).isEmpty() && !shortPage && cursor instanceof Number) {\n        next = Long.valueOf(((Number) cursor).longValue() + ${step});\n      }`;
+      break;
+    }
+  }
+  const startValue =
+    pager.start !== undefined
+      ? `\n    if (cursor == null) {\n      cursor = Long.valueOf(${pager.start}L);\n    }`
+      : "";
+  const clamp =
+    pager.pageSizeKey && pager.maxPageSize
+      ? `\n      Object size = payload.get(${q(pager.pageSizeKey)});\n      if (size instanceof Number && ((Number) size).longValue() > ${pager.maxPageSize}L) {\n        payload.put(${q(pager.pageSizeKey)}, Long.valueOf(${pager.maxPageSize}L));\n      }`
+      : "";
+  return [
+    "  /**",
+    `   * Page through ${op.canonicalName} (${pager.style} pagination) until the upstream stops`,
+    "   * handing back a continuation, collecting every page in order.",
+    "   *",
+    "   * @param maxPages a hard bound, so a misbehaving upstream cannot page forever.",
+    "   */",
+    `  public List<Object> ${op.names.camel}Pages(${op.names.pascal}Input input, CallOptions options, int maxPages) {`,
+    "    List<Object> pages = new ArrayList<Object>();",
+    "    List<String> seen = new ArrayList<String>();",
+    `    Object cursor = input.payload().get(${k});${startValue}`,
+    "    for (int index = 0; index < maxPages; index++) {",
+    "      java.util.Map<String, Object> payload = input.payload();",
+    "      if (cursor != null) {",
+    `        payload.put(${k}, cursor);`,
+    `      }${clamp}`,
+    `      Object page = Invoker.invoke(config, Operations.get(${q(op.names.camel)}), payload, options);`,
+    "      pages.add(page);",
+    `      Object items = ${items};`,
+    short,
+    "      Object next = null;",
+    advance,
+    "      // A server that echoes its own continuation would page the same page forever.",
+    "      if (next == null) {",
+    "        break;",
+    "      }",
+    "      String key = String.valueOf(next);",
+    "      if (seen.contains(key)) {",
+    "        break;",
+    "      }",
+    "      seen.add(key);",
+    "      cursor = next;",
+    "    }",
+    "    return pages;",
+    "  }",
+  ];
+}
+
+const JAVA_LINK_HELPER = `
+  /** The continuation parameter of a next-page link, read without ever fetching the link. */
+  private static String pagerLinkParam(String link, String name) {
+    try {
+      String query = java.net.URI.create(link).getRawQuery();
+      if (query == null) {
+        return null;
+      }
+      for (String pair : query.split("&")) {
+        int at = pair.indexOf('=');
+        String key = at < 0 ? pair : pair.substring(0, at);
+        if (java.net.URLDecoder.decode(key, java.nio.charset.StandardCharsets.UTF_8).equals(name)) {
+          String value = at < 0 ? "" : pair.substring(at + 1);
+          value = java.net.URLDecoder.decode(value, java.nio.charset.StandardCharsets.UTF_8);
+          return value.isEmpty() ? null : value;
+        }
+      }
+      return null;
+    } catch (IllegalArgumentException e) {
+      return null;
+    }
+  }
+`;
+
 function clientFile(pkg: string, plan: SdkPlan): string {
   const name = clientName(plan);
-  const methods = plan.operations.map((op) => javaMethod(op)).join("\n\n");
+  const anyLinkPager = plan.operations.some((op) => op.pager?.style === "link");
+  const methods = [
+    ...plan.operations.map((op) => javaMethod(op)),
+    ...(anyLinkPager ? [JAVA_LINK_HELPER] : []),
+  ].join("\n\n");
   const tls = plan.auth.tls;
   const refresh = plan.auth.tokenRefresh;
   return `// Generated by Anvil. Do not edit — regenerate from AIR.
@@ -546,41 +649,9 @@ function javaMethod(op: SdkOperation): string {
       "  }",
     );
   }
-  const page = op.pagination;
-  if (page?.cursorKey && page.nextField) {
-    lines.push(
-      "",
-      "  /**",
-      `   * Page through ${op.canonicalName} until the upstream stops handing back a`,
-      "   * continuation, collecting every page in order.",
-      "   *",
-      "   * @param maxPages a hard bound, so a misbehaving upstream cannot page forever.",
-      "   */",
-      `  public List<Object> ${op.names.camel}Pages(${op.names.pascal}Input input, CallOptions options, int maxPages) {`,
-      "    List<Object> pages = new ArrayList<Object>();",
-      "    List<String> seen = new ArrayList<String>();",
-      `    Object cursor = input.payload().get(${q(page.cursorKey)});`,
-      "    for (int index = 0; index < maxPages; index++) {",
-      "      java.util.Map<String, Object> payload = input.payload();",
-      "      if (cursor != null) {",
-      `        payload.put(${q(page.cursorKey)}, cursor);`,
-      "      }",
-      `      Object page = Invoker.invoke(config, Operations.get(${q(op.names.camel)}), payload, options);`,
-      "      pages.add(page);",
-      `      Object next = Invoker.field(page, ${q(page.nextField)});`,
-      "      if (!(next instanceof String) || ((String) next).isEmpty()) {",
-      "        break;",
-      "      }",
-      // A server that echoes its own cursor would page the same page forever.
-      "      if (seen.contains(next)) {",
-      "        break;",
-      "      }",
-      "      seen.add((String) next);",
-      "      cursor = next;",
-      "    }",
-      "    return pages;",
-      "  }",
-    );
+  const pager = op.pager;
+  if (pager) {
+    lines.push("", ...javaPager(op, pager));
   }
   const contract = op.async;
   if (contract?.statusMethodBase && contract.statusJobIdKey && contract.terminalStates.length > 0) {

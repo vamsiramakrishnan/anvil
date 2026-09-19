@@ -586,4 +586,172 @@ describe("pagination and completion helpers follow the contract, not a guess", (
   it("emits no paginated variant when AIR declares none", () => {
     expect(files["sdk/go/client.go"]).not.toContain("Paginated");
   });
+
+  /** A listing with the given pagination contract, so every style is exercised. */
+  function withStyle(pagination: Record<string, unknown>): AirDocument {
+    const listing = OperationSchema.parse({
+      ...(air.operations.find((op) => op.id === "payments.customers.get") as object),
+      id: "payments.customers.list",
+      canonicalName: "list_customers",
+      displayName: "List customers",
+      cli: { command: "payments customers list", aliases: [] },
+      mcp: { toolName: "payments_list_customers" },
+      sourceRef: { kind: "openapi", method: "get", path: "/customers" },
+      input: {
+        params: [
+          { name: "page", in: "query", required: false, schema: { type: "integer" } },
+          { name: "offset", in: "query", required: false, schema: { type: "integer" } },
+          { name: "cursor", in: "query", required: false, schema: { type: "string" } },
+          { name: "per_page", in: "query", required: false, schema: { type: "integer" } },
+        ],
+      },
+      pagination,
+    });
+    return { ...air, operations: [...air.operations, listing] };
+  }
+
+  const clientSources = (doc: AirDocument) => {
+    const emitted = generateSdks(doc);
+    return {
+      typescript: emitted["sdk/typescript/src/client.ts"] ?? "",
+      python: Object.entries(emitted).find(([path]) => path.endsWith("client.py"))?.[1] ?? "",
+      go: emitted["sdk/go/client.go"] ?? "",
+      java: Object.entries(emitted).find(([path]) => path.endsWith("Client.java"))?.[1] ?? "",
+      manifest: JSON.parse(emitted["sdk/manifest.json"] ?? "{}") as {
+        methods: Array<{ operationId: string; paginated: boolean }>;
+      },
+    };
+  };
+
+  const helperNames = {
+    typescript: "listCustomersPaginated",
+    python: "list_customers_paginated",
+    go: "ListCustomersPaginated",
+    java: "listCustomersPages",
+  } as const;
+
+  it.each([
+    [
+      "page numbers advanced while items keep coming",
+      {
+        style: "page",
+        cursorParam: "page",
+        itemsField: "data",
+        pageSizeParam: "per_page",
+        maxPageSize: 100,
+      },
+      {
+        typescript: "Number(cursor) + 1",
+        python: "int(cursor) + 1",
+        go: "next = n + 1",
+        java: "longValue() + 1L",
+      },
+    ],
+    [
+      "page numbers taken from a declared next field",
+      { style: "page", cursorParam: "page", nextField: "next_page", itemsField: "data" },
+      {
+        typescript: 'page["next_page"]',
+        python: 'page.get("next_page")',
+        go: 'field(result, "next_page")',
+        java: 'field(page, "next_page")',
+      },
+    ],
+    [
+      "offsets advanced by the items returned",
+      { style: "offset", cursorParam: "offset", itemsField: "items", pageSizeParam: "per_page" },
+      {
+        typescript: "Number(cursor) + items.length",
+        python: "int(cursor) + len(items)",
+        go: "next = n + float64(len(items))",
+        java: "((List<?>) items).size()",
+      },
+    ],
+    [
+      "links read for their continuation parameter, never fetched",
+      { style: "link", cursorParam: "cursor", nextField: "next_url", itemsField: "data" },
+      {
+        typescript: 'searchParams.get("cursor")',
+        python: 'parse_qs(urlsplit(raw).query).get("cursor")',
+        go: 'pagerLinkParam(s, "cursor")',
+        java: 'pagerLinkParam((String) raw, "cursor")',
+      },
+    ],
+  ] as const)("pages by %s in every language", (_label, pagination, markers) => {
+    const doc = withStyle(pagination as Record<string, unknown>);
+    const sources = clientSources(doc);
+    for (const language of ["typescript", "python", "go", "java"] as const) {
+      expect(sources[language], language).toContain(helperNames[language]);
+      expect(sources[language], `${language} advance`).toContain(markers[language]);
+    }
+    const method = sources.manifest.methods.find(
+      (m) => m.operationId === "payments.customers.list",
+    );
+    expect(method?.paginated).toBe(true);
+  });
+
+  it("clamps a requested page size to the contract's maximum in every language", () => {
+    const sources = clientSources(
+      withStyle({
+        style: "page",
+        cursorParam: "page",
+        itemsField: "data",
+        pageSizeParam: "per_page",
+        maxPageSize: 100,
+      }),
+    );
+    expect(sources.typescript).toContain('request["per_page"] = 100');
+    expect(sources.python).toContain('request["per_page"] = 100');
+    expect(sources.go).toContain('payload["per_page"] = float64(100)');
+    expect(sources.java).toContain('payload.put("per_page", Long.valueOf(100L))');
+  });
+
+  it("emits no helper, and says so in the manifest, when a style lacks the field it needs", () => {
+    // A link style with no next field, a page style with neither a next field
+    // nor an items field, and a cursor style with no continuation param: none can
+    // be paged without guessing, so none get a helper — and `paginated` is false,
+    // not merely "declared".
+    for (const pagination of [
+      { style: "link", cursorParam: "cursor" },
+      { style: "page", cursorParam: "page" },
+      { style: "cursor", nextField: "next" },
+    ]) {
+      const sources = clientSources(withStyle(pagination));
+      for (const language of ["typescript", "python", "go", "java"] as const) {
+        expect(sources[language], `${language} ${pagination.style}`).not.toContain(
+          helperNames[language],
+        );
+      }
+      const method = sources.manifest.methods.find(
+        (m) => m.operationId === "payments.customers.list",
+      );
+      expect(method?.paginated, pagination.style).toBe(false);
+    }
+  });
+
+  it("certification refuses a manifest that drops a pager or a completion helper", () => {
+    const doc = withStyle({
+      style: "cursor",
+      cursorParam: "cursor",
+      nextField: "next",
+      itemsField: "data",
+    });
+    const emitted = generateSdks(doc);
+    const manifest = JSON.parse(emitted["sdk/manifest.json"] as string) as {
+      methods: Array<Record<string, unknown>>;
+    };
+    const listing = manifest.methods.find((m) => m.operationId === "payments.customers.list");
+    expect(listing?.paginated).toBe(true);
+    if (listing) listing.paginated = false;
+    const tampered = {
+      ...generateBundle(doc).files,
+      ...emitted,
+      "sdk/manifest.json": `${JSON.stringify(manifest, null, 2)}\n`,
+    };
+    const check = certifyBundle(tampered, doc).checks.find(
+      (candidate) => candidate.id === "safety.sdk-gates-match",
+    );
+    expect(check?.status).toBe("failed");
+    expect(check?.detail).toContain("paginated");
+  });
 });

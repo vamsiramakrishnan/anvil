@@ -7,18 +7,23 @@ import {
   MAX_RETRY_DELAY_MS,
   resolveAsyncContract,
 } from "@anvil/air";
+import { SERVING_ENV_CONTRACT } from "@anvil/mcp-runtime";
 import {
+  CREDENTIAL_ENV_DESCRIPTION,
+  CREDENTIAL_ENV_PATTERN,
   credentialProfileName,
   credentialRequirement,
   DEFAULT_FIRESTORE_TIMEOUT_MS,
   DEFAULT_LEDGER_RESULT_TTL_SECONDS,
   DEFAULT_UPSTREAM_TIMEOUT_MS,
+  envVarJsonSchema,
   firestoreLedgerCollection,
   MAX_FIRESTORE_COMPLETE_SEGMENT_MS,
   MAX_FIRESTORE_RESERVE_SEGMENT_MS,
   MAX_LEDGER_RESULT_BYTES,
   MAX_UPSTREAM_TIMEOUT_MS,
   MIN_UPSTREAM_TIMEOUT_MS,
+  RUNTIME_ENV_CONTRACT,
 } from "@anvil/runtime";
 import { stringify as toYaml } from "yaml";
 import { z } from "zod";
@@ -1423,6 +1428,18 @@ terraform -chdir="$TF_WORK" show -no-color tfplan  # compare to reviewed tfplan.
 terraform -chdir="$TF_WORK" apply tfplan           # exact reviewed plan; no -var here
 \`\`\`
 
+## Runtime extensions and telemetry
+Operator code and telemetry are configuration, not a fork of the runtime.
+\`ANVIL_EXTENSIONS\` names one or more ES modules loaded at boot (policy
+hooks, an execution-record observer, a durable ledger or credential backend,
+a transport wrapper); copy them into the image beside \`runtime/\` and set the
+variable through \`var.env\`. A module that fails to load refuses the boot, and
+every loaded module is reported on \`/healthz\` with its sha256.
+\`ANVIL_OTEL_EXPORTER\` (set to \`cloud_trace\` by this Terraform) selects where
+records go — \`stdout\` structured logs, \`otlp\` to a collector, or Cloud Trace —
+and \`/metrics\` serves OpenMetrics counters to a scraper that asks for them.
+\`deploy/env.schema.json\` documents every variable the runtime reads.
+
 ## Upstream credentials (outbound)
 How the runtime reaches the API it fronts. \`deploy/credentials.required.yaml\`
 lists the exact env vars per auth shape (names only) — provision each secret in
@@ -1552,83 +1569,46 @@ runtime env contract.
 `;
 }
 
-function envSchema(host: string | undefined, deploymentEnvironment: string): unknown {
+/**
+ * `deploy/env.schema.json`, DERIVED from the environment contracts declared
+ * beside the code that reads each variable (`RUNTIME_ENV_CONTRACT` in
+ * `@anvil/runtime`, `SERVING_ENV_CONTRACT` in `@anvil/mcp-runtime`). This
+ * used to be a hand-written literal that had drifted from the runtime by a
+ * dozen variables — every `ANVIL_INBOUND_*` among them. Only the two
+ * per-bundle facts are decided here: the deployment environment's enum and
+ * default, and the compiled upstream host as the allowlist example.
+ */
+export function envSchema(host: string | undefined, deploymentEnvironment: string): unknown {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const v of [...RUNTIME_ENV_CONTRACT, ...SERVING_ENV_CONTRACT]) {
+    let property = envVarJsonSchema(v);
+    if (v.name === "ANVIL_ENV") {
+      property = {
+        ...property,
+        enum: [...new Set([...(v.enum ?? []), deploymentEnvironment])],
+        default: deploymentEnvironment,
+      };
+    }
+    if (v.name === "ANVIL_ALLOWED_HOSTS" && host) {
+      property = { ...property, examples: [host] };
+    }
+    properties[v.name] = property;
+    if (v.required) required.push(v.name);
+  }
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     type: "object",
-    required: ["ANVIL_SERVICE_ID", "ANVIL_ENV", "ANVIL_ALLOWED_HOSTS"],
-    properties: {
-      ANVIL_SERVICE_ID: { type: "string" },
-      ANVIL_ARTIFACT_VERSION: { type: "string" },
-      ANVIL_ENV: {
-        type: "string",
-        enum: [...new Set(["dev", "staging", "prod", deploymentEnvironment])],
-        default: deploymentEnvironment,
-      },
-      ANVIL_ALLOWED_HOSTS: {
-        type: "string",
-        description: "Comma-separated egress allowlist.",
-        examples: [host ?? "api.internal.example.com"],
-      },
-      ANVIL_BASE_URL: {
-        type: "string",
-        description:
-          "Override the compiled-in upstream base URL (loopback self-test, staging smoke). When set without ANVIL_ALLOWED_HOSTS, egress pins to this URL's host.",
-      },
-      ANVIL_LEDGER: {
-        type: "string",
-        description:
-          "Durable idempotency ledger backend URI (firestore://PROJECT/DATABASE/SERVICE_NAMESPACE). Required outside dev for required-idempotency mutations.",
-      },
-      ANVIL_LEDGER_RESULT_TTL_SECONDS: {
-        type: "string",
-        pattern: "^[1-9][0-9]*$",
-        default: String(DEFAULT_LEDGER_RESULT_TTL_SECONDS),
-        description:
-          "Completed replay-result retention in seconds (60..31536000). In-progress reservations never expire automatically.",
-      },
-      ANVIL_UPSTREAM_TIMEOUT_MS: {
-        type: "string",
-        pattern: "^[1-9][0-9]*$",
-        default: String(DEFAULT_UPSTREAM_TIMEOUT_MS),
-        description:
-          `Per-attempt upstream timeout in milliseconds ` +
-          `(${MIN_UPSTREAM_TIMEOUT_MS}..${MAX_UPSTREAM_TIMEOUT_MS}).`,
-      },
-      ANVIL_AUTH_PROFILE: {
-        type: "string",
-        description:
-          "Selects the upstream credential profile: the ANVIL_<PROFILE>_* prefix. Defaults per env (e.g. prod → ANVIL_PROD_*).",
-      },
-      ANVIL_POLICY_BUNDLE: { type: "string" },
-      ANVIL_OTEL_EXPORTER: { type: "string", examples: ["cloud_trace"] },
-      ANVIL_CREDENTIALS: {
-        type: "string",
-        enum: ["env", "secret_manager"],
-        description:
-          "Storage selector for static api-key/basic/bearer values. OAuth grants and delegated identity always route per operation. Unset defaults static values to Secret Manager references.",
-      },
-      ANVIL_SECRET_PROJECT: {
-        type: "string",
-        description:
-          "Default GCP project for shorthand `sm://<secret>` credential references. Full `sm://projects/…` references do not need it.",
-      },
-      ANVIL_CREDENTIAL_HOSTS: {
-        type: "string",
-        description:
-          "Comma-separated exact public host allowlist for token endpoints imported from API specifications. Not needed when ANVIL_<PROFILE>_TOKEN_ENDPOINT is explicitly operator-configured.",
-      },
-    },
+    required,
+    properties,
     // Per-profile upstream credential env vars (names by convention). Any value
     // may be a Secret Manager reference (`sm://…`), dereferenced at call time.
     // See deploy/credentials.required.yaml for exactly which apply to this surface.
     patternProperties: {
-      "^ANVIL_[A-Z0-9_]+_(TOKEN|API_KEY|API_KEY_HEADER|API_KEY_QUERY|USERNAME|PASSWORD|TOKEN_ENDPOINT|CLIENT_ID|CLIENT_SECRET|CLIENT_ASSERTION_KEY|AUDIENCE|RESOURCE|SCOPES|ACTOR_TOKEN)$":
-        {
-          type: "string",
-          description:
-            "Upstream credential (ANVIL_<PROFILE>_*). Static schemes (api_key/basic/bearer) read directly; OAuth grants (client_credentials, RFC 8693 OBO, RFC 7523 jwt-bearer) mint a token from *_TOKEN_ENDPOINT. Provision secrets as `sm://` references.",
-        },
+      [CREDENTIAL_ENV_PATTERN]: {
+        type: "string",
+        description: CREDENTIAL_ENV_DESCRIPTION,
+      },
     },
   };
 }

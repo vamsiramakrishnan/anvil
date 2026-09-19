@@ -182,14 +182,20 @@ describe("MCP server entrypoints — two transports, one runtime", () => {
     expect(sse).toContain('url.pathname === "/sse"');
     expect(sse).toContain('url.pathname === "/messages"');
     expect(sse).toContain("sessionId");
-    // Same safety runtime on both: build from @anvil/mcp-runtime + the runtime deps.
+    // Same safety runtime on both: build from @anvil/mcp-runtime + the ONE
+    // composition root (`bootRuntimeFromEnv`, @anvil/runtime) every serving
+    // surface boots through — extensions, exporter, transport, the fail-closed
+    // credential selector, and the ledger, in that order — so neither
+    // transport can be wired differently from the other or from runtime/server.js.
     for (const src of [stdio, sse]) {
       expect(src).toContain("buildMcpServer");
-      expect(src).toContain("allowedHostsFor");
+      expect(src).toContain("bootRuntimeFromEnv({");
+      expect(src).toContain("...boot.contextDeps");
+      expect(src).toContain("boot.baseUrlFor(air.service.servers[0]?.url)");
       expect(src).toContain("timeoutMs: config.upstreamTimeoutMs");
-      // Both now resolve credentials through the fail-closed selector (static env,
-      // Secret Manager sm:// refs, or RFC 8693 OBO) rather than a hardcoded env resolver.
-      expect(src).toContain("resolveCredentials");
+      // No per-surface dependency assembly survives in the template.
+      expect(src).not.toContain("resolveLedger(");
+      expect(src).not.toContain("new FetchTransport(");
     }
   });
 

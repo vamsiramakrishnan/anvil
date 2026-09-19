@@ -250,8 +250,26 @@ under `schemas/` in the bundle.
 
 ## Pagination and long-running operations
 
-An operation with a declared pagination contract gets a paging helper. The
-helper stops at the final page and rejects a repeated cursor.
+An operation with a declared pagination contract gets a paging helper in
+every language: an async generator in TypeScript, a generator in Python, a
+pager with `Next` in Go, and a bounded page collector in Java. All four
+advance the same way for each style:
+
+| Style | Continuation |
+| --- | --- |
+| `cursor` | The response's `nextField` token. |
+| `page` | The response's `nextField` when declared, else the page number incremented while `itemsField` is non-empty. |
+| `offset` | The response's `nextField` when declared, else the offset advanced by the number of items returned. |
+| `link` | The `cursorParam` query value read out of the URL in `nextField`. The URL is never fetched, so paging cannot leave the compiled base URL. |
+
+A requested page size above the contract's `maxPageSize` is clamped before
+the request leaves. Every helper stops on a repeated continuation. A style
+whose contract lacks the field it needs gets no helper, and `sdk/manifest.json`
+records `paginated: false` for it rather than a helper that would guess.
+Certification fails a manifest that drops a pager or a completion helper.
+`packages/generators/src/sdk-compile.test.ts` drives the pager in all four
+languages against a paging upstream and asserts they issued the same page
+requests in the same order.
 
 An operation with a complete asynchronous contract gets a `waitFor…` helper.
 The helper polls the declared status operation until a declared terminal state.

@@ -8,6 +8,7 @@ import {
   evidenceConfidence,
   idempotencyModeUsesCarrier,
   type JsonSchema,
+  nearestMatch,
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
@@ -16,15 +17,13 @@ import { exampleInput, MCP_RESERVED } from "@anvil/generators";
 import {
   AnvilError,
   allowedHostsFor,
+  bootRuntime,
   type CredentialResolver,
   type ErrorEnvelope,
   type ExecuteContext,
   execute,
-  FetchTransport,
   loadRuntimeConfig,
   parseUpstreamTimeoutMs,
-  resolveCredentials,
-  resolveLedger,
   type Transport,
   unapprovedOperationError,
 } from "@anvil/runtime";
@@ -536,19 +535,36 @@ async function invoke(
   const protocolFacade =
     (flags["protocol-facade"] as string | undefined) ?? env.ANVIL_PROTOCOL_FACADE;
 
+  // The same composition root the MCP servers boot through (`bootRuntime`,
+  // @anvil/runtime): runtime extensions (ANVIL_EXTENSIONS / ANVIL_POLICY_BUNDLE)
+  // contribute policy hooks, an observer, a transport wrapper, or ledger and
+  // credential backends; ANVIL_OTEL_EXPORTER selects the record exporter; the
+  // idempotency ledger is wired so replay protection actually works from the
+  // CLI (ANVIL_LEDGER selects a durable backend; without one the executor fails
+  // closed on required-idempotency mutations outside dev). A configured
+  // extension that cannot load refuses the call, exactly as it refuses a boot.
+  let boot: Awaited<ReturnType<typeof bootRuntime>>;
+  try {
+    boot = await bootRuntime(config, {
+      env,
+      serviceId: air.service.id,
+      serviceVersion: air.service.version,
+      transport: deps.transport,
+      credentials: deps.credentials,
+      ledger: deps.ledger,
+      log: (line) => io.err(line),
+      // stdout is the command's own output: records go to stderr.
+      recordWrite: (line) => io.err(line),
+    });
+  } catch (err) {
+    return cliValidationError(io, op.id, err instanceof Error ? err.message : String(err), {
+      runtime_boot: "failed",
+    });
+  }
   const ctx: ExecuteContext = {
     remoteIdempotency: air.business !== undefined,
-    transport: deps.transport ?? new FetchTransport(),
+    ...boot.contextDeps,
     serviceId: air.service.id,
-    credentials: deps.credentials ?? resolveCredentials(config, { env }),
-    // Wire the idempotency ledger so replay protection actually works from the
-    // CLI. ANVIL_LEDGER selects a durable backend; without one the executor
-    // fails closed on required-idempotency mutations outside dev.
-    ledger:
-      deps.ledger ??
-      resolveLedger(config.ledger, {
-        resultTtlMs: config.ledgerResultTtlSeconds * 1000,
-      }),
     baseUrl,
     authProfile: (flags["auth-profile"] as string) ?? config.authProfile,
     allowedHosts,
@@ -989,38 +1005,8 @@ function knownFlagsFor(op: Operation): Set<string> {
   return known;
 }
 
-/** Levenshtein distance — inputs are short flag/command names, O(n·m) is fine. */
-function editDistance(a: string, b: string): number {
-  const prev: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    let diag = prev[0] as number;
-    prev[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const tmp = prev[j] as number;
-      prev[j] = Math.min(
-        tmp + 1,
-        (prev[j - 1] as number) + 1,
-        diag + (a[i - 1] === b[j - 1] ? 0 : 1),
-      );
-      diag = tmp;
-    }
-  }
-  return prev[b.length] as number;
-}
-
-/** Nearest candidate within a plausible-typo distance, or undefined. */
-function nearest(typed: string, candidates: Iterable<string>): string | undefined {
-  let best: { candidate: string; distance: number } | undefined;
-  for (const candidate of candidates) {
-    const distance = editDistance(typed, candidate);
-    if (!best || distance < best.distance) best = { candidate, distance };
-  }
-  if (!best) return undefined;
-  // A "suggestion" further than ~a third of the candidate is noise, not a typo.
-  return best.distance <= Math.max(2, Math.ceil(best.candidate.length / 3))
-    ? best.candidate
-    : undefined;
-}
+/** Nearest candidate within a plausible-typo distance, or undefined (shared with the compiler's diagnostics). */
+const nearest = nearestMatch;
 
 /** Nearest approved command tail for an unknown command ("did you mean …?"). */
 function nearestCommand(ops: Operation[], positionals: string[]): string | undefined {

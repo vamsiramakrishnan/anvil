@@ -6,6 +6,7 @@ import {
   type Capability,
   type Diagnostic,
   MAX_RETRY_ATTEMPTS,
+  nearestMatch,
   type Operation,
   type RetryCondition,
   SQL_DIALECTS,
@@ -17,21 +18,21 @@ import {
   type Workflow,
 } from "@anvil/air";
 import { analyzeTemplate, lexicalFamily } from "@anvil/grammar";
-import { parse as parseYaml } from "yaml";
+import { isMap, LineCounter, parseDocument, parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { decideAuthorizationCodeApproval, manifestReviewAnnotation } from "./auth-approval.js";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
 import { projectRoutingNames, singularize } from "./naming.js";
 import { analyzeSqlTemplate, supportedSqlDialects } from "./sql-grammar.js";
 
-const ManifestAuthProvider = z.object({
+const ManifestAuthProvider = z.strictObject({
   token_endpoint: z.string().url().optional(),
   grant: z.enum(["token_exchange", "client_credentials", "jwt_bearer"]).optional(),
   client_auth: z.enum(["client_secret_basic", "client_secret_post", "private_key_jwt"]).optional(),
   resource: z.string().optional(),
   subject_token_type: z.enum(["access_token", "jwt", "id_token"]).optional(),
   requested_token_type: z.enum(["access_token", "jwt", "id_token"]).optional(),
-  api_key: z.object({ in: z.enum(["header", "query"]), name: z.string() }).optional(),
+  api_key: z.strictObject({ in: z.enum(["header", "query"]), name: z.string() }).optional(),
   /**
    * Authorization-code mechanics (RFC 6749 §4.1, PKCE per RFC 7636). Declaring
    * these is what lets `anvil auth login` run the interactive step and the
@@ -45,7 +46,7 @@ const ManifestAuthProvider = z.object({
 });
 type ManifestAuthProvider = z.infer<typeof ManifestAuthProvider>;
 
-const ManifestOperationAuth = z.object({
+const ManifestOperationAuth = z.strictObject({
   type: AuthType.optional(),
   credential_profile: z
     .string()
@@ -59,7 +60,7 @@ const ManifestOperationAuth = z.object({
   audience: z.string().optional(),
   /** Exact on-wire credential carrier after any token acquisition/exchange. */
   carrier: z
-    .object({
+    .strictObject({
       in: z.enum(["header", "query"]),
       name: z.string().min(1),
       scheme: z.string().min(1).optional(),
@@ -75,7 +76,7 @@ const ManifestOperationAuth = z.object({
    * refuses this on any other type and refuses `mtls` without it.
    */
   tls: z
-    .object({
+    .strictObject({
       client_cert_ref: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
       client_key_ref: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
       ca_ref: z
@@ -134,25 +135,25 @@ export function airAuthProviderToManifest(provider: AuthProvider): ManifestAuthP
  * (`docs/backtesting/reproduce/manifests/stripe.anvil.yaml`).
  */
 const ManifestWebhookSignatureVerification = z.discriminatedUnion("scheme", [
-  z.object({
+  z.strictObject({
     scheme: z.literal("hmac_sha256_header"),
     header_name: z.string(),
     encoding: z.enum(["hex", "base64"]),
     value_prefix: z.string().optional(),
     secret_ref: z.string(),
   }),
-  z.object({
+  z.strictObject({
     scheme: z.literal("provider_sdk"),
     provider: z.enum(["stripe", "twilio", "github", "shopify"]),
     secret_ref: z.string(),
   }),
-  z.object({
+  z.strictObject({
     scheme: z.literal("remote_verify"),
     provider: z.literal("paypal"),
     verify_endpoint_ref: z.string(),
     credential_ref: z.string(),
   }),
-  z.object({
+  z.strictObject({
     scheme: z.literal("oidc_jwt"),
     header_name: z.string(),
     expected_issuer: z.string(),
@@ -204,7 +205,7 @@ export function manifestWebhookVerificationToAir(
  * evidence for a human to read, never a value the compiler writes on its own,
  * so the manifest always states the final field paths explicitly.
  */
-const ManifestWebhookContract = z.object({
+const ManifestWebhookContract = z.strictObject({
   operation: z.string(),
   job_id_field: z.string(),
   state_field: z.string().optional(),
@@ -232,7 +233,7 @@ export function manifestWebhookContractToAir(m: ManifestWebhookContract): Webhoo
  * see `normalize.ts#attachWebhookLinks`) but can NEVER complete alone, because
  * `signature_verification` has no spec-native source for any real vendor.
  */
-const ManifestAsyncContract = z.object({
+const ManifestAsyncContract = z.strictObject({
   status_operation: z.string().optional(),
   status_job_id_param: z.string().optional(),
   job_id_field: z.string().optional(),
@@ -249,7 +250,7 @@ export type ManifestAsyncContract = z.infer<typeof ManifestAsyncContract>;
  * humans or classifiers enrich the model. Enrichment is explicit, diffable, and
  * overrides inference. Matching is by operationId, canonicalName, or AIR id.
  */
-export const OperationManifest = z.object({
+export const OperationManifest = z.strictObject({
   side_effect: z.enum(["read", "mutation"]).optional(),
   risk: z.enum(["none", "low", "medium", "high", "financial", "destructive"]).optional(),
   reversible: z.boolean().optional(),
@@ -263,7 +264,7 @@ export const OperationManifest = z.object({
    */
   intent_examples: z.array(z.string()).optional(),
   idempotency: z
-    .object({
+    .strictObject({
       strategy: z
         .enum(["natural", "required_request_key", "key_supported", "client_id", "none"])
         .optional(),
@@ -280,7 +281,7 @@ export const OperationManifest = z.object({
     })
     .optional(),
   confirmation: z
-    .object({
+    .strictObject({
       required: z.boolean().optional(),
       risk: z.enum(["none", "low", "medium", "high", "financial", "destructive"]).optional(),
       reason: z.string().optional(),
@@ -326,7 +327,7 @@ export const OperationManifest = z.object({
    * as identity. Set either axis; the other is read from the current name.
    */
   name: z
-    .object({
+    .strictObject({
       resource: z.string().optional(),
       verb: z.string().optional(),
     })
@@ -334,7 +335,7 @@ export const OperationManifest = z.object({
   /** Whose authority the call runs under, and how it is credentialed. */
   auth: ManifestOperationAuth.optional(),
   retries: z
-    .object({
+    .strictObject({
       enabled: z.boolean().optional(),
       only_on: z.array(z.string()).optional(),
       max_attempts: z.number().int().min(1).max(MAX_RETRY_ATTEMPTS).optional(),
@@ -348,7 +349,7 @@ export const OperationManifest = z.object({
    * off `blocked` to `review_required`, never straight to `approved`.
    */
   query_policy: z
-    .object({
+    .strictObject({
       query_param: z.string(),
       dialect: z.enum(SQL_DIALECTS).default("ansi"),
       allowed_statements: z
@@ -380,15 +381,15 @@ export const OperationManifest = z.object({
    * the intelligence the harness gathered.
    */
   query_schema: z
-    .object({
+    .strictObject({
       tables: z
         .array(
-          z.object({
+          z.strictObject({
             name: z.string(),
             description: z.string().optional(),
             columns: z
               .array(
-                z.object({
+                z.strictObject({
                   name: z.string(),
                   type: z.string().optional(),
                   description: z.string().optional(),
@@ -399,8 +400,8 @@ export const OperationManifest = z.object({
           }),
         )
         .optional(),
-      example_queries: z.array(z.object({ intent: z.string(), sql: z.string() })).optional(),
-      glossary: z.array(z.object({ term: z.string(), definition: z.string() })).optional(),
+      example_queries: z.array(z.strictObject({ intent: z.string(), sql: z.string() })).optional(),
+      glossary: z.array(z.strictObject({ term: z.string(), definition: z.string() })).optional(),
     })
     .optional(),
   /**
@@ -418,7 +419,7 @@ export const OperationManifest = z.object({
    * parameter would teach every surface to pass an argument the wire ignores.
    */
   pagination: z
-    .object({
+    .strictObject({
       style: z.enum(["cursor", "page", "offset", "link"]),
       cursor_param: z.string().optional(),
       next_field: z.string().optional(),
@@ -438,7 +439,7 @@ export const OperationManifest = z.object({
    * so a manifest cannot author what a hand-edited document would be refused.
    */
   stream: z
-    .object({
+    .strictObject({
       max_events: z.number().int().min(1).max(STREAM_MAX_EVENTS_CEILING).optional(),
       max_seconds: z.number().int().min(1).max(STREAM_MAX_SECONDS_CEILING).optional(),
     })
@@ -478,7 +479,7 @@ export function manifestIdempotencyKey(
  * business logic; this is how a human/harness declares it. Each step names an
  * operation (by operationId / canonicalName / AIR id).
  */
-export const WorkflowManifest = z.object({
+export const WorkflowManifest = z.strictObject({
   display_name: z.string().optional(),
   description: z.string().optional(),
   /** Capability id/name to attach to. Defaults to the first step's capability. */
@@ -497,7 +498,7 @@ export const WorkflowManifest = z.object({
   supersedes: z.array(z.string()).optional(),
   steps: z
     .array(
-      z.object({
+      z.strictObject({
         operation: z.string(),
         description: z.string().optional(),
         optional: z.boolean().optional(),
@@ -530,7 +531,7 @@ export type WorkflowManifest = z.infer<typeof WorkflowManifest>;
  * lifecycle untouched.
  */
 export const CapabilityReviewManifest = z
-  .object({
+  .strictObject({
     state: z.enum(["approved", "rejected"]).optional(),
     note: z.string().optional(),
     /** Deliberate override for approval above the hard tool-disclosure budget. */
@@ -611,13 +612,13 @@ export type CapabilityReviewManifest = z.infer<typeof CapabilityReviewManifest>;
  * those constraints as much as on the template text.
  */
 export const QueryTemplateManifest = z
-  .object({
+  .strictObject({
     operation: z.string(),
     template: z.string(),
     target_param: z.string(),
     params: z.record(
       z.string(),
-      z.object({
+      z.strictObject({
         schema: z.record(z.string(), z.unknown()),
         description: z.string().optional(),
       }),
@@ -700,9 +701,9 @@ export const QueryTemplateManifest = z
   });
 export type QueryTemplateManifest = z.infer<typeof QueryTemplateManifest>;
 
-export const AnvilManifest = z.object({
+export const AnvilManifest = z.strictObject({
   service: z
-    .object({
+    .strictObject({
       name: z.string().optional(),
       display_name: z.string().optional(),
       owner: z.string().optional(),
@@ -735,8 +736,221 @@ export const AnvilManifest = z.object({
 });
 export type AnvilManifest = z.infer<typeof AnvilManifest>;
 
+/**
+ * Every manifest object is `strictObject`: a key the schema does not know is
+ * an error, never silently dropped. The manifest is the one file a human
+ * writes to change what an operation MEANS — a misspelled `idempotency` or
+ * `side_effect` that compiled clean and applied nothing was the worst kind of
+ * failure this tool can have, because the reviewer believed a safety overlay
+ * was in force. (`side_effect` and `idempotancy` were both real.)
+ */
+export interface ManifestIssue {
+  /** JSON-pointer-style path into the manifest (`operations.createRefund.idempotency`). */
+  path: string;
+  message: string;
+  /** 1-based position in the YAML source, when the offending node could be located. */
+  line?: number;
+  col?: number;
+  /** For an unknown key: the closest key the schema does accept, when one is plausible. */
+  suggestion?: string;
+}
+
+export class ManifestParseError extends Error {
+  readonly issues: readonly ManifestIssue[];
+  constructor(issues: readonly ManifestIssue[]) {
+    super(
+      `Manifest is invalid:\n${issues.map((issue) => `  ${formatManifestIssue(issue)}`).join("\n")}`,
+    );
+    this.name = "ManifestParseError";
+    this.issues = issues;
+  }
+}
+
+/** `line:col path: message (did you mean …?)` — one line per issue. */
+export function formatManifestIssue(issue: ManifestIssue, file?: string): string {
+  const where =
+    issue.line !== undefined
+      ? `${file ?? "manifest"}:${issue.line}:${issue.col ?? 1} `
+      : file
+        ? `${file} `
+        : "";
+  const at = issue.path ? `${issue.path}: ` : "";
+  const hint = issue.suggestion ? ` (did you mean '${issue.suggestion}'?)` : "";
+  return `${where}${at}${issue.message}${hint}`;
+}
+
+export type ManifestParseResult =
+  | { ok: true; manifest: AnvilManifest }
+  | { ok: false; issues: ManifestIssue[] };
+
+/**
+ * Parse a manifest and report every problem with its position in the source,
+ * instead of throwing a raw schema error. YAML syntax errors, schema
+ * violations, and unknown keys all come back as `ManifestIssue`s, each located
+ * to a line and column where the YAML node can be found.
+ */
+export function parseManifestDetailed(text: string): ManifestParseResult {
+  const counter = new LineCounter();
+  const doc = parseDocument(text, { lineCounter: counter, keepSourceTokens: true });
+  if (doc.errors.length > 0) {
+    return {
+      ok: false,
+      issues: doc.errors.map((error) => {
+        const offset = error.pos?.[0];
+        const pos = offset !== undefined ? counter.linePos(offset) : undefined;
+        return {
+          path: "",
+          message: error.message.split("\n")[0] ?? error.message,
+          ...(pos ? { line: pos.line, col: pos.col } : {}),
+        };
+      }),
+    };
+  }
+  const raw = doc.toJS() as unknown;
+  const parsed = AnvilManifest.safeParse(raw ?? {});
+  if (parsed.success) return { ok: true, manifest: parsed.data };
+  // The position of the KEY at `path` (where a reviewer's eye lands), falling
+  // back to the value, then to the nearest located ancestor.
+  const locate = (path: readonly PropertyKey[]): { line: number; col: number } | undefined => {
+    let probe: readonly PropertyKey[] = path;
+    while (true) {
+      const last = probe[probe.length - 1];
+      const parentPath = probe.slice(0, -1);
+      const parent =
+        parentPath.length > 0 ? doc.getIn(parentPath as (string | number)[], true) : doc.contents;
+      if (last !== undefined && isMap(parent)) {
+        const pair = parent.items.find(
+          (item) => String((item.key as { value?: unknown })?.value ?? item.key) === String(last),
+        );
+        const keyRange = (pair?.key as { range?: [number, number, number] } | undefined)?.range;
+        if (keyRange) return counter.linePos(keyRange[0]);
+      }
+      const node = probe.length > 0 ? doc.getIn(probe as (string | number)[], true) : doc.contents;
+      const range = (node as { range?: [number, number, number] } | null | undefined)?.range;
+      if (range) return counter.linePos(range[0]);
+      if (probe.length === 0) return undefined;
+      probe = parentPath;
+    }
+  };
+  const issues: ManifestIssue[] = [];
+  for (const issue of parsed.error.issues) {
+    const path = issue.path.map(String);
+    if (issue.code === "unrecognized_keys") {
+      const known = knownKeysAt(AnvilManifest, path);
+      for (const key of issue.keys) {
+        const pos = locate([...issue.path, key]);
+        const suggestion = known ? nearestMatch(key, known) : undefined;
+        issues.push({
+          path: [...path, key].join("."),
+          message: "unknown key",
+          ...(pos ?? {}),
+          ...(suggestion ? { suggestion } : {}),
+        });
+      }
+      continue;
+    }
+    const pos = locate(issue.path);
+    issues.push({ path: path.join("."), message: issue.message, ...(pos ?? {}) });
+  }
+  return { ok: false, issues };
+}
+
+/**
+ * The keys a strict object schema accepts at `path`, walked through optionals,
+ * defaults, records, and unions. Undefined when the path does not land on an
+ * object (or the walk meets a shape this helper does not know), in which case
+ * no suggestion is offered rather than a wrong one.
+ */
+function knownKeysAt(schema: unknown, path: readonly string[]): string[] | undefined {
+  let current: unknown = schema;
+  const unwrap = (value: unknown): unknown => {
+    let node = value;
+    for (let i = 0; i < 8; i++) {
+      const def = (node as { def?: { type?: string; innerType?: unknown } } | undefined)?.def;
+      if (!def) return node;
+      if (def.type === "optional" || def.type === "default" || def.type === "nullable") {
+        node = def.innerType;
+        continue;
+      }
+      return node;
+    }
+    return node;
+  };
+  for (const segment of path) {
+    const node = unwrap(current) as {
+      def?: {
+        type?: string;
+        shape?: Record<string, unknown>;
+        valueType?: unknown;
+        options?: unknown[];
+      };
+    };
+    const def = node?.def;
+    if (!def) return undefined;
+    if (def.type === "object" && def.shape) {
+      current = def.shape[segment];
+      if (current === undefined) return undefined;
+      continue;
+    }
+    if (def.type === "record") {
+      current = def.valueType;
+      continue;
+    }
+    if (def.type === "union" && def.options) {
+      const objects = def.options.map(unwrap).filter((o) => {
+        const d = (o as { def?: { type?: string } }).def;
+        return d?.type === "object";
+      });
+      if (objects.length !== 1) return undefined;
+      current = objects[0];
+      const shape = (current as { def: { shape: Record<string, unknown> } }).def.shape;
+      current = shape[segment];
+      if (current === undefined) return undefined;
+      continue;
+    }
+    return undefined;
+  }
+  const leaf = unwrap(current) as { def?: { type?: string; shape?: Record<string, unknown> } };
+  return leaf?.def?.type === "object" && leaf.def.shape ? Object.keys(leaf.def.shape) : undefined;
+}
+
 export function parseManifest(text: string): AnvilManifest {
-  return AnvilManifest.parse(parseYaml(text));
+  const result = parseManifestDetailed(text);
+  if (result.ok) return result.manifest;
+  throw new ManifestParseError(result.issues);
+}
+
+/**
+ * Manifest entries that matched nothing. `operations`, `capabilities`, and
+ * `query_templates` are keyed by operation id, canonical name, or source
+ * operation id; a key that matches no operation used to be ignored without a
+ * word, so a typo'd id meant the override the reviewer wrote never applied and
+ * nothing said so. Every such key is an error, with the nearest real id when
+ * one is plausible.
+ */
+export function unresolvedManifestEntries(
+  manifest: AnvilManifest,
+  operations: readonly Operation[],
+): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  const candidates = [
+    ...new Set(
+      operations.flatMap((op) => [op.id, op.canonicalName, op.sourceRef.operationId ?? ""]),
+    ),
+  ].filter((c) => c.length > 0);
+  for (const key of Object.keys(manifest.operations)) {
+    if (operations.some((op) => matches(op, key))) continue;
+    const suggestion = nearestMatch(key, candidates);
+    diagnostics.push({
+      level: "error",
+      code: "manifest_operation_unresolved",
+      message:
+        `Manifest entry operations.${key} matches no operation in this source` +
+        (suggestion ? `; did you mean '${suggestion}'?` : ".") +
+        " The overrides it declares were not applied.",
+    });
+  }
+  return diagnostics;
 }
 
 const STRATEGY_TO_MODE = {

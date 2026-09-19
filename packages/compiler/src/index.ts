@@ -20,6 +20,7 @@ export * from "./disclosure-metric.js";
 export * from "./drift.js";
 export * from "./gateway/index.js";
 export * from "./manifest.js";
+export * from "./manifest-schema.js";
 export * from "./naming.js";
 export * from "./normalize.js";
 export * from "./parse.js";

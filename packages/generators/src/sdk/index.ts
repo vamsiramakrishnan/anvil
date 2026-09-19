@@ -108,7 +108,9 @@ export function sdkManifest(plan: SdkPlan): SdkManifest {
       confirmationRequired: op.confirmation.required,
       humanApproval: op.confirmation.humanApproval,
       idempotencyKeyRequired: op.idempotency.callerKeyRequired,
-      paginated: op.pagination !== undefined,
+      // True only when a pager is actually emitted — a declared style the
+      // helper cannot page safely is not "paginated" on the SDK surface.
+      paginated: op.pager !== undefined,
       awaitable: op.async?.statusMethodBase !== undefined,
       methods: {
         typescript: op.names.camel,

@@ -28,6 +28,7 @@ import {
   buildWorkflows,
   manifestAuthProviderToAir,
   parseManifest,
+  unresolvedManifestEntries,
 } from "./manifest.js";
 import { critiqueNames, resolveNameCollisions, servicePrefixStutterDiagnostic } from "./naming.js";
 import { normalize } from "./normalize.js";
@@ -424,6 +425,8 @@ async function buildAir(
     validated,
     capabilities,
   );
+  // A manifest entry that matched no operation applied nothing — say so.
+  const manifestEntryDiagnostics = unresolvedManifestEntries(manifest, validated);
 
   // Build derived operations from query templates. Each template produces a new
   // operation that safely wraps an unconstrained query-language parameter.
@@ -487,6 +490,7 @@ async function buildAir(
         ...diagnostics,
         ...namingDiagnostics,
         ...workflowDiagnostics,
+        ...manifestEntryDiagnostics,
         ...queryTemplateDiagnostics,
         ...overlayDiagnostics,
       ],

@@ -28,15 +28,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildMcpServer } from "@anvil/mcp-runtime";
-import {
-  allowedHostsFor,
-  FetchTransport,
-  InMemoryObserver,
-  JsonlRecordSpool,
-  loadRuntimeConfig,
-  resolveCredentials,
-  resolveLedger,
-} from "@anvil/runtime";
+import { bootRuntimeFromEnv } from "@anvil/runtime";
 import { loadAirDocument } from "@anvil/air";
 
 const air = loadAirDocument(
@@ -45,42 +37,32 @@ const air = loadAirDocument(
 const resources = JSON.parse(
   readFileSync(fileURLToPath(new URL("./resources.json", import.meta.url)), "utf8"),
 );
-const config = loadRuntimeConfig();
-const transport = new FetchTransport();
-const credentials = resolveCredentials(config);
-const ledger = resolveLedger(config.ledger, {
-  resultTtlMs: config.ledgerResultTtlSeconds * 1000,
+// One composition root, shared with runtime/server.js and \`anvil serve mcp\`:
+// runtime extensions (ANVIL_EXTENSIONS / ANVIL_POLICY_BUNDLE) load first and
+// may contribute policy hooks, an observer, a transport wrapper, or ledger and
+// credential backends; then the execution-record exporter (ANVIL_OTEL_EXPORTER,
+// plus the ANVIL_RECORDS_DIR spool for anvil observe --from-records); then
+// transport, credentials, and the idempotency ledger. A missing extension or an
+// unknown exporter refuses to boot rather than serving without it. stdout is
+// the MCP transport here, so the stdout exporter and boot diagnostics go to
+// stderr.
+const boot = await bootRuntimeFromEnv({
+  serviceId: air.service.id,
+  serviceVersion: air.service.version,
+  recordWrite: (line) => process.stderr.write(\`\${line}\\n\`),
 });
-// ANVIL_RECORDS_DIR spools every execution record (no secrets, no payloads --
-// ExecutionRecord's own contract) to JSONL for anvil observe --from-records,
-// which folds real traffic back into evidence. Unset, records stay in memory.
-const observer = process.env.ANVIL_RECORDS_DIR
-  ? new JsonlRecordSpool(process.env.ANVIL_RECORDS_DIR)
-  : new InMemoryObserver();
-
+const config = boot.config;
 // ANVIL_BASE_URL is a deliberate operator override (loopback self-test, staging
 // smoke tests); when set without an explicit allowlist, egress pins to its host.
-const baseUrl = process.env.ANVIL_BASE_URL ?? air.service.servers[0]?.url ?? "";
-const allowedHosts = allowedHostsFor(
-  config.allowedHosts,
-  baseUrl,
-  process.env.ANVIL_BASE_URL !== undefined,
-);
-// A non-HTTP/JSON source (SOAP, GraphQL, gRPC, an adopted MCP tool) reaches the
-// runtime with a coordinate Anvil synthesized. Set ANVIL_PROTOCOL_FACADE to the
-// reason ANVIL_BASE_URL really does serve those coordinates over HTTP+JSON; the
-// runtime refuses those operations otherwise, and records this reason when it
-// does not. It is a declaration, never an inference.
-const protocolFacade = process.env.ANVIL_PROTOCOL_FACADE;
+// ANVIL_PROTOCOL_FACADE is the operator's declaration that the base URL really
+// serves a non-HTTP/JSON source's synthesized coordinates over HTTP+JSON.
+const { baseUrl, allowedHosts, protocolFacade } = boot.baseUrlFor(air.service.servers[0]?.url);
 const server = buildMcpServer(air, {
   resources,
   contextFor: () => ({
-    transport,
+    ...boot.contextDeps,
     serviceId: air.service.id,
     remoteIdempotency: air.business !== undefined,
-    credentials,
-    ledger,
-    observer,
     baseUrl,
     authProfile: config.authProfile,
     allowedHosts,
@@ -128,15 +110,9 @@ import {
   verifyInboundToken,
 } from "@anvil/mcp-runtime";
 import {
-  allowedHostsFor,
+  bootRuntimeFromEnv,
   currentInboundIdentity,
-  FetchTransport,
-  InMemoryObserver,
-  JsonlRecordSpool,
-  loadRuntimeConfig,
   probeLedgerReadiness,
-  resolveCredentials,
-  resolveLedger,
   withInboundIdentity,
 } from "@anvil/runtime";
 import { loadAirDocument } from "@anvil/air";
@@ -147,33 +123,19 @@ const air = loadAirDocument(
 const resources = JSON.parse(
   readFileSync(fileURLToPath(new URL("./resources.json", import.meta.url)), "utf8"),
 );
-const config = loadRuntimeConfig();
-const deps = {
-  transport: new FetchTransport(),
-  credentials: resolveCredentials(config),
-  ledger: resolveLedger(config.ledger, {
-    resultTtlMs: config.ledgerResultTtlSeconds * 1000,
-  }),
-  observer: process.env.ANVIL_RECORDS_DIR
-    ? new JsonlRecordSpool(process.env.ANVIL_RECORDS_DIR)
-    : new InMemoryObserver(),
-};
-const baseUrl = process.env.ANVIL_BASE_URL ?? air.service.servers[0]?.url ?? "";
-const allowedHosts = allowedHostsFor(
-  config.allowedHosts,
-  baseUrl,
-  process.env.ANVIL_BASE_URL !== undefined,
-);
-// A non-HTTP/JSON source (SOAP, GraphQL, gRPC, an adopted MCP tool) reaches the
-// runtime with a coordinate Anvil synthesized. Set ANVIL_PROTOCOL_FACADE to the
-// reason ANVIL_BASE_URL really does serve those coordinates over HTTP+JSON; the
-// runtime refuses those operations otherwise, and records this reason when it
-// does not. It is a declaration, never an inference.
-const protocolFacade = process.env.ANVIL_PROTOCOL_FACADE;
-const mcpContext = () => ({
-  ...deps,
+// Same composition root as mcp/server.js and runtime/server.js (see there):
+// extensions, exporter, transport, credentials, ledger — in that order.
+const boot = await bootRuntimeFromEnv({
   serviceId: air.service.id,
-    remoteIdempotency: air.business !== undefined,
+  serviceVersion: air.service.version,
+});
+const config = boot.config;
+const deps = boot.contextDeps;
+const { baseUrl, allowedHosts, protocolFacade } = boot.baseUrlFor(air.service.servers[0]?.url);
+const mcpContext = () => ({
+  ...boot.contextDeps,
+  serviceId: air.service.id,
+  remoteIdempotency: air.business !== undefined,
   baseUrl,
   authProfile: config.authProfile,
   allowedHosts,
@@ -252,7 +214,12 @@ function send(res, status, body) {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
-  if (url.pathname === "/healthz") return send(res, 200, { status: "ok" });
+  if (url.pathname === "/healthz")
+    return send(res, 200, {
+      status: "ok",
+      exporter: boot.exporter,
+      extensions: boot.extensions.loaded,
+    });
   if (url.pathname === "/readyz") {
     const ledger = await probeLedgerReadiness(
       deps.ledger,
