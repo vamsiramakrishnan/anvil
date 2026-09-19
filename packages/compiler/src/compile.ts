@@ -27,9 +27,8 @@ import {
   buildQueryTemplates,
   buildWorkflows,
   manifestAuthProviderToAir,
-  parseManifest,
-  unresolvedManifestEntries,
 } from "./manifest.js";
+import { parseManifest, unresolvedManifestEntries } from "./manifest-parse.js";
 import { critiqueNames, resolveNameCollisions, servicePrefixStutterDiagnostic } from "./naming.js";
 import { normalize } from "./normalize.js";
 import { type ParsedSpec, parseSource } from "./parse.js";

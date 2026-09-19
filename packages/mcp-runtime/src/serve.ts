@@ -109,16 +109,11 @@ function computeRuntimeArtifactHash(): string {
 const artifactHash = computeRuntimeArtifactHash();
 const config = loadRuntimeConfig();
 const catalog = readArtifactJson("operations.manifest.json");
-// One composition root for every serving surface (`bootRuntime`,
-// @anvil/runtime): runtime extensions first (ANVIL_EXTENSIONS /
-// ANVIL_POLICY_BUNDLE — operator modules that may register the ledger and
-// credential backends selected next, contribute policy hooks, an observer, or
-// a transport wrapper), then the execution-record exporter
-// (ANVIL_OTEL_EXPORTER, plus the ANVIL_RECORDS_DIR spool for
-// `anvil observe --from-records`), then transport, credentials, and the
-// idempotency ledger. A configured extension that cannot load, or an exporter
-// that does not exist, refuses the boot here — before `listen` — rather than
-// serving without the policy or telemetry the operator believes is installed.
+// One composition root for every serving surface (`bootRuntime`, @anvil/runtime):
+// extensions (ANVIL_EXTENSIONS / ANVIL_POLICY_BUNDLE), then the record exporter
+// (ANVIL_OTEL_EXPORTER, plus the ANVIL_RECORDS_DIR spool), then transport,
+// credentials, and the ledger. A missing extension or unknown exporter refuses
+// the boot here, before `listen`, rather than serving without it.
 const boot = await bootRuntime(config, {
   serviceId: air.service.id,
   serviceVersion: air.service.version,

@@ -2,7 +2,7 @@ import type { AirDocument } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { diffCapability } from "./capability-review.js";
 import { compile } from "./compile.js";
-import { parseManifest } from "./manifest.js";
+import { parseManifest } from "./manifest-parse.js";
 
 /**
  * Capability authoring — the write path for `CapabilitySource: "manifest"`.

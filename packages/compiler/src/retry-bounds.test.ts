@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseManifest } from "./manifest.js";
+import { parseManifest } from "./manifest-parse.js";
 
 describe("manifest retry safety bounds", () => {
   it("rejects an override beyond the AIR/runtime attempt ceiling", () => {

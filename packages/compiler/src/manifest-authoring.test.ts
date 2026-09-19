@@ -7,7 +7,7 @@ import {
   ManifestParseError,
   parseManifest,
   parseManifestDetailed,
-} from "./manifest.js";
+} from "./manifest-parse.js";
 import { manifestJsonSchema } from "./manifest-schema.js";
 
 /**

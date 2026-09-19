@@ -550,6 +550,12 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "scopes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "additionalProperties": false
