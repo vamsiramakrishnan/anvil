@@ -2,7 +2,7 @@
 // future llms.txt endpoints — one source, no hand-mirrored copies.
 export const SITE_TITLE = "Anvil";
 export const SITE_DESCRIPTION =
-  "Anvil compiles API contracts into aligned CLI, MCP, skill, and hook artifacts, and inventories legacy application evidence for reviewed capability refinement.";
+  "Make your legacy APIs agent-ready. Anvil compiles REST, SOAP, gRPC, GraphQL, and OData contracts into agent-ready SDKs, a CLI, an MCP server, and a skill from one reviewed model.";
 
 // GitHub Pages coordinates. `site` + `base` produce the published URL
 // https://vamsiramakrishnan.github.io/anvil/ and every absolute link the theme

@@ -1,15 +1,17 @@
 # Anvil
 
-**Turn APIs into actions an agent can execute.**
+**Make your legacy APIs agent-ready.**
 
-Anvil compiles API contracts into a skill, CLI, MCP server, and TypeScript,
-Python, Go, and Java SDKs. A target command generates a Gemini Enterprise
-connector kit. Names, input types, and execution policies come from one reviewed
-model.
+Bring the API contract you already have (REST/OpenAPI, SOAP/WSDL, gRPC, GraphQL,
+OData, or a gateway export). Anvil compiles it into agent-ready SDKs and tools: a
+skill, a CLI, an MCP server, and TypeScript, Python, Go, and Java clients, all
+generated from one reviewed model, so every surface agrees on what each
+operation does and whether it is safe to retry. A target command adds a Gemini
+Enterprise connector kit.
 
-Start with REST/OpenAPI, SOAP/WSDL, gRPC/proto3, or GraphQL. Review the operations
-an agent may call. When a task spans several calls or systems, define a business
-action with its own inputs, result, and execution plan.
+Review the operations an agent may call before anything is exposed. When a task
+spans several calls or systems, define a business action with its own inputs,
+result, and execution plan.
 
 [Quickstart](#try-it-locally) · [Business actions](#define-business-actions) ·
 [Documentation](https://vamsiramakrishnan.github.io/anvil/) ·

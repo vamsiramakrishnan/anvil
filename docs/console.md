@@ -1,6 +1,6 @@
 # Console
 
-Use `anvil console` to turn an API into actions an agent can execute. Import a
+Use `anvil console` to make an API agent-ready from the browser. Import a
 contract, review its operations, try a request, and choose an interface.
 
 The opening page explains these four steps. **Import API** accepts REST
