@@ -98,6 +98,24 @@ Options:
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
 - `--human-approval <policy>` — require explicit human approval on gated mutations: none | unsafe | all (per-op manifest `human_approval` overrides)
 - `--root <ws>` — workspace root for .anvil/sources
+- `--json` — emit one JSON document (the compile report or a typed refusal)
+
+### `anvil schema`
+`anvil schema [options] [command]`
+
+Emit the JSON Schema for files a reviewer hand-writes.
+
+Prints machine-readable schemas derived from the same definitions the compiler validates with, for editor completion and validation.
+
+#### `anvil schema manifest`
+`anvil schema manifest [options]`
+
+The JSON Schema for the anvil.yaml manifest.
+
+Emits draft 2020-12 JSON Schema for the manifest (`--manifest` to `anvil compile`). Add `# yaml-language-server: $schema=<path>` as the first line of a manifest to get completion and validation in an editor. Keys are strict: an unknown key is a compile error, and this schema says which keys exist.
+
+Options:
+- `--out <file>` — write the schema to a file instead of stdout
 
 ### `anvil status`
 `anvil status [options] <path>`
