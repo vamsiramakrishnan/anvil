@@ -313,8 +313,12 @@ describe("tri-surface conformance (banking, WSDL)", () => {
     const report = await runConformance(dir, { cliPackageDir: CLI_PACKAGE_DIR });
     expect(ConformanceReport.parse(report)).toEqual(report);
     expect(byId(report, "surface-agreement")[0]?.status).toBe("pass");
-    expect(byId(report, "wire-agreement").every((c) => c.status === "pass")).toBe(true);
-    expect(report.summary.fail).toBe(0);
+    // Name the check that did not pass: a bare boolean hides which operation
+    // and which surface diverged, which is exactly what an intermittent CI
+    // failure needs recorded.
+    const notPassing = byId(report, "wire-agreement").filter((c) => c.status !== "pass");
+    expect(notPassing, JSON.stringify(notPassing, null, 2)).toEqual([]);
+    expect(report.summary.fail, JSON.stringify(report.checks, null, 2)).toBe(0);
   }, 120_000);
 });
 
