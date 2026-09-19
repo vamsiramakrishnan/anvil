@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../compile.js";
-import { parseManifest } from "../manifest.js";
+import { parseManifest } from "../manifest-parse.js";
 import { ephemeralCompilerSource } from "../source/compiler-source.js";
 import { overlayDigest } from "./digest.js";
 import type { PolicyOverlay, SemanticOverlayAssertion } from "./model.js";

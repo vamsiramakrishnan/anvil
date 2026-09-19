@@ -163,9 +163,8 @@ configuration, not by regeneration.
 
 ## Open recommendations (not changed here)
 
-- **No `.nvmrc`** despite `engines.node >= 22.17`. A newcomer on an older Node
-  gets a mid-build failure rather than an upfront nudge. A one-line `.nvmrc`
-  (or `mise`/`asdf` file) would fail fast.
+- ~~**No `.nvmrc`** despite `engines.node >= 22.17`.~~ Landed: a one-line
+  `.nvmrc` (`22.17`) now fails fast on an older Node.
 - **`baseline.json` timings are machine-specific.** Already documented in
   `tools/corpus/README.md`, but the 4 new entries were recorded on a dev box; if
   CI time-budget flaps, refresh from a CI run per the existing note.

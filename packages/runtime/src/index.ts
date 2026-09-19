@@ -5,13 +5,16 @@
  */
 
 export * from "./auth.js";
+export * from "./boot.js";
 export * from "./business.js";
 export * from "./business-journal.js";
 export * from "./business-transport.js";
 export * from "./config.js";
 export * from "./credentials.js";
+export * from "./env-contract.js";
 export * from "./errors.js";
 export * from "./executor.js";
+export * from "./extensions.js";
 export * from "./idempotency.js";
 export * from "./inbound-identity.js";
 export * from "./job-answer.js";

@@ -32,6 +32,7 @@ import { registerPublish } from "./commands/publish.js";
 import { registerRefine } from "./commands/refine.js";
 import { registerReview } from "./commands/review.js";
 import { registerRun } from "./commands/run.js";
+import { registerSchema } from "./commands/schema.js";
 import { registerSdk } from "./commands/sdk.js";
 import { registerSelftest } from "./commands/selftest.js";
 import { registerServe } from "./commands/serve.js";
@@ -90,6 +91,8 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerAgentify(program, ctx);
   registerAdopt(program, ctx);
   registerCompile(program, ctx);
+  // The manifest schema sits beside compile: it describes the file compile reads.
+  registerSchema(program, ctx);
   registerStatus(program, ctx);
   registerInspect(program, ctx);
   registerAssess(program, ctx);

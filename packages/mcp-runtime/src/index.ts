@@ -7,6 +7,7 @@
  */
 
 export * from "./async-completion.js";
+export * from "./env-contract.js";
 export * from "./fleet.js";
 export * from "./inbound-auth.js";
 export * from "./lane.js";

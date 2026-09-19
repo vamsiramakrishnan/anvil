@@ -31,6 +31,31 @@ anvil distill generated/service \
 Resolve the highest-risk gaps with the API owner. A missing description and an
 unproven retry contract are not equivalent.
 
+## Validate as you write
+
+Manifest keys are strict. An unknown key is a compile error that names the
+line, the column, and the nearest key the schema does accept, so a misspelled
+`idempotency` can no longer compile clean and silently apply nothing. An
+`operations` entry that matches no operation is also an error, with the
+nearest real id.
+
+Emit the JSON Schema for editor completion and validation:
+
+```bash
+anvil schema manifest --out schemas/anvil-manifest.schema.json
+```
+
+Then point a YAML language server at it from the first line of the manifest:
+
+```yaml
+# yaml-language-server: $schema=../../schemas/anvil-manifest.schema.json
+```
+
+The schema is derived from the definition `anvil compile` parses with, so the
+two cannot disagree. Cross-field rules, such as an idempotency key needing a
+carrier, are still enforced by the compiler. The repository keeps a generated
+copy at `schemas/anvil-manifest.schema.json`.
+
 ## Minimal example
 
 ```yaml

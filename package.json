@@ -2,7 +2,7 @@
   "name": "@anvil/workspace",
   "version": "0.1.0",
   "private": true,
-  "description": "Anvil — an agent toolchain compiler. Compiles API contracts into aligned CLI, MCP, SDK, skill, hook, test, and deployment artifacts.",
+  "description": "Anvil makes legacy APIs agent-ready: it compiles API contracts into aligned CLI, MCP, SDK, skill, hook, test, and deployment artifacts from one reviewed model.",
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "engines": {

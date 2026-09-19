@@ -20,7 +20,22 @@ export interface RuntimeConfig {
   /** Per-attempt upstream deadline. Always bounded, including local serving paths. */
   upstreamTimeoutMs: number;
   authProfile?: string;
+  /**
+   * Runtime extension modules (`ANVIL_EXTENSIONS`, comma- or semicolon-
+   * separated ES module specifiers) loaded at boot before the ledger and
+   * credential resolvers are chosen. See `extensions.ts`.
+   */
+  extensions?: string;
+  /**
+   * One more extension module, conventionally policy-only. The slot predates
+   * `ANVIL_EXTENSIONS`; it is loaded after it (`extensionSpecifiersFromConfig`).
+   */
   policyBundle?: string;
+  /**
+   * Execution-record exporter (`ANVIL_OTEL_EXPORTER`): `memory` (default),
+   * `stdout`, `otlp`, or `cloud_trace`. Resolved by `resolveObserver`, which
+   * refuses an unknown value at boot rather than silently exporting nothing.
+   */
   otelExporter?: string;
   /**
    * Durable idempotency ledger backend URI
@@ -100,6 +115,7 @@ export function loadRuntimeConfig(
       .filter(Boolean),
     upstreamTimeoutMs,
     authProfile: env.ANVIL_AUTH_PROFILE,
+    extensions: env.ANVIL_EXTENSIONS,
     policyBundle: env.ANVIL_POLICY_BUNDLE,
     otelExporter: env.ANVIL_OTEL_EXPORTER,
     ledger: env.ANVIL_LEDGER,

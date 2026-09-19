@@ -33,15 +33,12 @@ import { fileURLToPath } from "node:url";
 import { loadAirDocument, resolveAsyncContract } from "@anvil/air";
 import {
   allowedHostsFor,
+  bootRuntime,
   currentInboundIdentity,
-  FetchTransport,
   handleWebhook,
-  InMemoryObserver,
-  JsonlRecordSpool,
   loadRuntimeConfig,
+  OPENMETRICS_CONTENT_TYPE,
   probeLedgerReadiness,
-  resolveCredentials,
-  resolveLedger,
   withInboundIdentity,
 } from "@anvil/runtime";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -112,27 +109,17 @@ function computeRuntimeArtifactHash(): string {
 const artifactHash = computeRuntimeArtifactHash();
 const config = loadRuntimeConfig();
 const catalog = readArtifactJson("operations.manifest.json");
-// ANVIL_RECORDS_DIR spools every execution record (no secrets, no payloads --
-// ExecutionRecord's own contract) to JSONL for anvil observe --from-records,
-// which folds real traffic back into evidence. Unset, records stay in memory.
-const observer = process.env.ANVIL_RECORDS_DIR
-  ? new JsonlRecordSpool(process.env.ANVIL_RECORDS_DIR)
-  : new InMemoryObserver();
-// Resolve the idempotency ledger once at boot. ANVIL_LEDGER selects a durable
-// backend; without one, required-idempotency mutations fail closed outside dev
-// (enforced in the executor) — a horizontally-scaled runtime never silently
-// trusts a process-local ledger.
-const deps = {
-  transport: new FetchTransport(),
-  // ANVIL_CREDENTIALS / per-op AuthRequirement selects the resolver: static env
-  // (default), Secret Manager references (sm://…), or RFC 8693 OBO token exchange
-  // using the inbound caller token threaded below. Dev stays byte-identical.
-  credentials: resolveCredentials(config),
-  ledger: resolveLedger(config.ledger, {
-    resultTtlMs: config.ledgerResultTtlSeconds * 1000,
-  }),
-  observer,
-};
+// One composition root for every serving surface (`bootRuntime`, @anvil/runtime):
+// extensions (ANVIL_EXTENSIONS / ANVIL_POLICY_BUNDLE), then the record exporter
+// (ANVIL_OTEL_EXPORTER, plus the ANVIL_RECORDS_DIR spool), then transport,
+// credentials, and the ledger. A missing extension or unknown exporter refuses
+// the boot here, before `listen`, rather than serving without it.
+const boot = await bootRuntime(config, {
+  serviceId: air.service.id,
+  serviceVersion: air.service.version,
+});
+const deps = boot.contextDeps;
+const observer = boot.observer;
 // Whether readiness must prove a durable ledger: any approved mutation that
 // requires an idempotency key needs one outside dev. Derived from the same AIR
 // the server serves, at boot — it used to be a boolean literal the generator
@@ -519,6 +506,8 @@ const server = createServer(async (req, res) => {
       status: "ok",
       service: air.service.id,
       artifactHash,
+      exporter: boot.exporter,
+      extensions: boot.extensions.loaded,
     });
   if (url.pathname === "/readyz") {
     const ledger = await probeLedgerReadiness(
@@ -563,6 +552,16 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname === "/metrics") {
     if (!(await authorized(req, res)).ok) return;
+    // OpenMetrics for a scraper (Prometheus, a collector sidecar) that asks
+    // for it; the JSON count every existing probe reads otherwise.
+    const accept = String(req.headers.accept ?? "");
+    if (
+      /openmetrics|text\/plain/i.test(accept) ||
+      url.searchParams.get("format") === "openmetrics"
+    ) {
+      res.writeHead(200, { "content-type": OPENMETRICS_CONTENT_TYPE });
+      return res.end(boot.metrics.render());
+    }
     return json(res, 200, { records: observer.count });
   }
   if (url.pathname === "/openapi") {
@@ -780,6 +779,8 @@ async function shutdown(): Promise<void> {
   await Promise.allSettled([...liveSessionEntries].map((entry) => closeSession(entry)));
   server.closeIdleConnections?.();
   await serverClosed;
+  // The last batch of execution records leaves before the process does.
+  await boot.flush();
   clearTimeout(forceClose);
 }
 
@@ -787,4 +788,11 @@ process.once("SIGTERM", () => void shutdown());
 process.once("SIGINT", () => void shutdown());
 
 const port = process.env.PORT ? Number(process.env.PORT) : 8080;
-server.listen(port, () => console.error(air.service.id, "listening"));
+server.listen(port, () =>
+  console.error(
+    air.service.id,
+    "listening",
+    `exporter=${boot.exporter}`,
+    `extensions=${boot.extensions.loaded.map((e) => e.name).join(",") || "none"}`,
+  ),
+);

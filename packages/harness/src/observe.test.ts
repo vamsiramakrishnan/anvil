@@ -93,7 +93,7 @@ const MANIFEST = `operations:
   getWidgetAudit: { state: approved }
   createWidget:
     state: approved
-    idempotency: { mode: natural }
+    idempotency: { strategy: natural }
 `;
 
 let bundleDir: string;

@@ -81,6 +81,60 @@ export interface SdkPagination {
   maxPageSize?: number;
 }
 
+/**
+ * How a generated pager advances — resolved once here so the four languages
+ * page the same way, from the same facts.
+ *
+ * Every style needs a continuation PARAMETER (`cursorKey`) the client can set
+ * on the next request; what changes is where the next value comes from:
+ *   - `cursor`: the response's `nextField` (an opaque token).
+ *   - `page`:   the response's `nextField` when declared, else the page number
+ *               incremented while the response's `itemsField` is non-empty.
+ *   - `offset`: the response's `nextField` when declared, else the offset
+ *               advanced by the number of items returned.
+ *   - `link`:   the `cursorParam` query value of the URL in `nextField`. The
+ *               URL itself is never followed: a client that fetched whatever
+ *               address the upstream handed back would bypass the base URL the
+ *               contract compiled in, so only the continuation value is read.
+ * A contract that declares a style without the field that style needs gets no
+ * pager — a helper that guessed would page wrong silently.
+ */
+export interface SdkPager {
+  style: "cursor" | "page" | "offset" | "link";
+  /** The agent-facing input key that carries the continuation. */
+  cursorKey: string;
+  /** The wire name of that parameter (needed to read it back out of a link). */
+  cursorParam: string;
+  nextField?: string;
+  itemsField?: string;
+  pageSizeKey?: string;
+  maxPageSize?: number;
+  /** The first value sent when the caller passed none: 1 for page numbers, 0 for offsets. */
+  start?: number;
+}
+
+export function pagerOf(page: SdkPagination | undefined): SdkPager | undefined {
+  if (!page?.cursorKey || !page.cursorParam) return undefined;
+  const base = {
+    cursorKey: page.cursorKey,
+    cursorParam: page.cursorParam,
+    ...(page.nextField ? { nextField: page.nextField } : {}),
+    ...(page.itemsField ? { itemsField: page.itemsField } : {}),
+    ...(page.pageSizeKey ? { pageSizeKey: page.pageSizeKey } : {}),
+    ...(page.maxPageSize ? { maxPageSize: page.maxPageSize } : {}),
+  };
+  switch (page.style) {
+    case "cursor":
+      return page.nextField ? { style: "cursor", ...base } : undefined;
+    case "page":
+      return page.nextField || page.itemsField ? { style: "page", ...base, start: 1 } : undefined;
+    case "offset":
+      return page.nextField || page.itemsField ? { style: "offset", ...base, start: 0 } : undefined;
+    case "link":
+      return page.nextField ? { style: "link", ...base } : undefined;
+  }
+}
+
 export interface SdkAsync {
   /** Absent for a webhook-only contract — there is nothing to poll. */
   statusOperationId?: string;
@@ -138,6 +192,8 @@ export interface SdkOperation {
   confirmation: { required: boolean; humanApproval: boolean; reason?: string };
   auth: { type: string; scopes: string[] };
   pagination?: SdkPagination;
+  /** The resolved paging strategy; absent when the contract cannot be paged safely. */
+  pager?: SdkPager;
   async?: SdkAsync;
   /** The aligned bindings on the other surfaces, carried for cross-surface docs. */
   cliCommand: string;
@@ -570,6 +626,7 @@ export function sdkPlan(air: AirDocument): SdkPlan {
       },
       auth: { type: op.auth.type, scopes: op.auth.scopes },
       pagination: paginationOf(op),
+      pager: pagerOf(paginationOf(op)),
       async: asyncOf(op, byId),
       safetyKeys: operationSafetyInputKeys(op),
       cliCommand: op.cli.command,

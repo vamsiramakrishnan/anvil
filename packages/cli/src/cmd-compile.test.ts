@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -168,5 +168,93 @@ describe("anvil compile — the snapshot is the compiler input", () => {
     const unknown = await cli("compile", "--source", "src-ghost");
     expect(unknown.code).toBe(1);
     expect(unknown.io.text()).toContain("source/not_found");
+  });
+});
+
+describe("anvil compile — manifest authoring errors are located, never raw", () => {
+  const payments = join(examples, "payments", "openapi.yaml");
+
+  it("refuses a missing --manifest with a typed code instead of an ENOENT stack", async () => {
+    const { code, io } = await cli("compile", payments, "--manifest", join(root, "missing.yaml"));
+    expect(code).toBe(1);
+    expect(io.stderr.join("\n")).toContain("manifest/not_found");
+    expect(io.stderr.join("\n")).not.toContain("ENOENT");
+    const asJson = await cli(
+      "compile",
+      payments,
+      "--manifest",
+      join(root, "missing.yaml"),
+      "--json",
+    );
+    expect(asJson.code).toBe(1);
+    const envelope = JSON.parse(asJson.io.stdout.join("\n"));
+    expect(envelope.reportType).toBe("anvil.compile-error");
+    expect(envelope.code).toBe("manifest/not_found");
+    expect(envelope.stage).toBe("manifest");
+  });
+
+  it("points at the line and column of an unknown manifest key and suggests the real one", async () => {
+    const manifest = join(root, "anvil.yaml");
+    writeFileSync(
+      manifest,
+      "operations:\n  createRefund:\n    risk: financial\n    idempotancy:\n      strategy: natural\n",
+    );
+    const { code, io } = await cli(
+      "compile",
+      payments,
+      "--manifest",
+      manifest,
+      "--out",
+      join(root, "out"),
+    );
+    expect(code).toBe(1);
+    const stderr = io.stderr.join("\n");
+    expect(stderr).toContain("manifest/invalid");
+    expect(stderr).toContain(`${manifest}:4:5`);
+    expect(stderr).toContain("did you mean 'idempotency'?");
+    expect(existsSync(join(root, "out"))).toBe(false);
+  });
+
+  it("emits one JSON report on success, with the operation and diagnostic counts", async () => {
+    const out = join(root, "out");
+    const { code, io } = await cli(
+      "compile",
+      payments,
+      "--manifest",
+      join(examples, "payments", "anvil.yaml"),
+      "--service",
+      "payments",
+      "--out",
+      out,
+      "--json",
+    );
+    expect(code).toBe(0);
+    const report = JSON.parse(io.stdout.join("\n"));
+    expect(report.reportType).toBe("anvil.compile");
+    expect(report.ok).toBe(true);
+    expect(report.service).toBe("payments");
+    expect(report.outDir).toBe(out);
+    expect(report.files).toBeGreaterThan(20);
+    expect(report.operations.total).toBeGreaterThan(0);
+    expect(report.operations.approved + report.operations.review_required).toBeLessThanOrEqual(
+      report.operations.total,
+    );
+    expect(Array.isArray(report.diagnostics)).toBe(true);
+  });
+
+  it("fails a compile whose manifest names an operation that does not exist, naming the nearest", async () => {
+    const manifest = join(root, "anvil.yaml");
+    writeFileSync(manifest, "operations:\n  createRefundz:\n    risk: financial\n");
+    const { code, io } = await cli(
+      "compile",
+      payments,
+      "--manifest",
+      manifest,
+      "--out",
+      join(root, "out"),
+    );
+    expect(code).toBe(1);
+    expect(io.stderr.join("\n")).toContain("manifest_operation_unresolved");
+    expect(io.stderr.join("\n")).toContain("did you mean 'createRefund'");
   });
 });

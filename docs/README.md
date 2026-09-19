@@ -35,6 +35,9 @@ executed. Parsing and lowering can succeed while the wire path remains blocked.
 
 - [Client SDKs](client-sdks.md): TypeScript, Python, Go and Java applications.
 - [Target profiles](targets.md): platform-specific packaging and its limits.
+- [Runtime extensions and telemetry](runtime-extensions.md): operator policy
+  hooks, custom ledger and credential backends, trace exporters, and metrics
+  on every serving surface.
 - [Wire protocols](wire-protocols.md): what executes and what is refused.
 - [Review console](console.md): inspect pending decisions in the workspace.
 - [Fleet operations](fleet.md): manage repeated work across integrations.

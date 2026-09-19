@@ -39,8 +39,7 @@ async function runServeMcp(dir: string, io: CliIO): Promise<number> {
   const { buildMcpServer, buildToolResources, readBundleDir, resolveBundleDir } = await import(
     "@anvil/generators"
   );
-  const { allowedHostsFor, FetchTransport, loadRuntimeConfig, resolveCredentials, resolveLedger } =
-    await import("@anvil/runtime");
+  const { bootRuntimeFromEnv } = await import("@anvil/runtime");
   // The same measured accuracy delta `anvil status`/`anvil inspect` would show
   // for this bundle right now (`measuredAccuracyFromReport`), so `auto` mode's
   // decision here and what an operator was told to expect can never disagree.
@@ -49,29 +48,30 @@ async function runServeMcp(dir: string, io: CliIO): Promise<number> {
   const bundleDir = resolveBundleDir(dir);
   const measuredAccuracy = measuredAccuracyFromReport(bundleDir, readBundleDir(bundleDir));
   const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
-  const config = loadRuntimeConfig();
-  const transport = new FetchTransport();
-  const credentials = resolveCredentials(config);
-  const ledger = resolveLedger(config.ledger, {
-    resultTtlMs: config.ledgerResultTtlSeconds * 1000,
+  // The same composition root the generated mcp/server.js and the deployed
+  // runtime/server.js boot through: extensions (ANVIL_EXTENSIONS /
+  // ANVIL_POLICY_BUNDLE), the record exporter (ANVIL_OTEL_EXPORTER), transport,
+  // credentials, ledger — in that order — so a bundle served here cannot behave
+  // differently from the same bundle served by its own entrypoint.
+  const boot = await bootRuntimeFromEnv({
+    serviceId: air.service.id,
+    serviceVersion: air.service.version,
+    log: (line) => io.err(line),
+    // stdout is the MCP transport: records and diagnostics go to stderr.
+    recordWrite: (line) => io.err(line),
   });
+  const config = boot.config;
   // ANVIL_BASE_URL is a deliberate operator override (loopback self-test,
   // staging smoke); when set without an allowlist, egress pins to its host.
-  const baseUrl = process.env.ANVIL_BASE_URL ?? air.service.servers[0]?.url ?? "";
-  const allowedHosts = allowedHostsFor(
-    config.allowedHosts,
-    baseUrl,
-    process.env.ANVIL_BASE_URL !== undefined,
-  );
+  const { baseUrl, allowedHosts, protocolFacade } = boot.baseUrlFor(air.service.servers[0]?.url);
   const server = buildMcpServer(air, {
     resources: buildToolResources(air),
     measuredAccuracy,
     contextFor: () => ({
-      transport,
+      ...boot.contextDeps,
       serviceId: air.service.id,
-      credentials,
-      ledger,
       baseUrl,
+      ...(protocolFacade !== undefined ? { protocolFacade } : {}),
       authProfile: config.authProfile,
       allowedHosts,
       env: config.env,
@@ -123,22 +123,21 @@ export async function buildFleetForWorkspace(
   const { buildToolResources, readBundleDir, verifyCertification } = await import(
     "@anvil/generators"
   );
-  const {
-    allowedHostsFor,
-    buildLimitsGate,
-    FetchTransport,
-    loadRuntimeConfig,
-    resolveCredentials,
-    resolveLedger,
-    resolvePrincipalForEnv,
-  } = await import("@anvil/runtime");
+  const { allowedHostsFor, bootRuntimeFromEnv, buildLimitsGate, resolvePrincipalForEnv } =
+    await import("@anvil/runtime");
 
-  const config = loadRuntimeConfig(env);
-  const transport = new FetchTransport();
-  const credentials = resolveCredentials(config);
-  const ledger = resolveLedger(config.ledger, {
-    resultTtlMs: config.ledgerResultTtlSeconds * 1000,
+  // Same composition root as every other serving surface (see runServeMcp).
+  // A fleet mounts many bundles on one process, so its extensions and its
+  // exporter are per-process: records from every bundle reach one sink, and
+  // one policy hook set sees every call, keyed by `ctx.operation`.
+  const boot = await bootRuntimeFromEnv({
+    env,
+    serviceId: "fleet",
+    log: (line) => console.error(line),
+    // stdout is the MCP transport: records and diagnostics go to stderr.
+    recordWrite: (line) => console.error(line),
   });
+  const config = boot.config;
   // One session, one principal for the lifetime of this stdio process — the
   // same rule a single-bundle stdio server would follow if it opted in.
   // Unconfigured (`ANVIL_PRINCIPALS` unset, or `ANVIL_PRINCIPAL` unset/
@@ -204,10 +203,8 @@ export async function buildFleetForWorkspace(
         resources: buildToolResources(air),
         measuredAccuracy,
         contextFor: () => ({
-          transport,
+          ...boot.contextDeps,
           serviceId: air.service.id,
-          credentials,
-          ledger,
           baseUrl,
           authProfile,
           allowedHosts,

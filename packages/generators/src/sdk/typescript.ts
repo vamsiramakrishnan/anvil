@@ -1,4 +1,4 @@
-import type { SdkOperation, SdkPlan } from "./plan.js";
+import type { SdkOperation, SdkPager, SdkPlan } from "./plan.js";
 import { docLines, inputTypeName, requiredCallOptions } from "./shared.js";
 import { needsSoap, TYPESCRIPT_SOAP } from "./soap.js";
 import {
@@ -433,37 +433,9 @@ function clientMethod(op: SdkOperation): string {
     `    return invoke(OPERATIONS.${op.names.camel}, input as unknown as Record<string, unknown>, options, this.context);`,
     "  }",
   ];
-  const page = op.pagination;
-  if (page?.cursorKey && page.nextField) {
-    const itemsField = page.itemsField;
-    lines.push(
-      "",
-      `  /**
-   * Page through \`${op.canonicalName}\` until the upstream stops handing back a
-   * continuation. Each yielded value is one ${itemsField ? `item from \`${itemsField}\`` : "page"}.
-   */`,
-      `  async *${op.names.camel}Paginated(input: ${inputType}, options: CallOptions = {}): AsyncGenerator<unknown, void, undefined> {`,
-      "    const seen = new Set<string>();",
-      `    let cursor: string | undefined = (input as Record<string, unknown>)[${j(page.cursorKey)}] as string | undefined;`,
-      "    for (;;) {",
-      `      const page = (await this.${op.names.camel}(`,
-      `        { ...input, ...(cursor === undefined ? {} : { ${page.cursorKey}: cursor }) } as ${inputType},`,
-      "        options,",
-      "      )) as Record<string, unknown> | null;",
-      '      if (page === null || typeof page !== "object") return;',
-      itemsField
-        ? `      const items = page[${j(itemsField)}];\n      if (Array.isArray(items)) { for (const item of items) yield item; } else if (items !== undefined) { yield items; }`
-        : "      yield page;",
-      `      const next = page[${j(page.nextField)}];`,
-      '      if (typeof next !== "string" || next.length === 0) return;',
-      // A server that echoes its own cursor would spin this loop forever; stop
-      // instead of paging the same page until the process is killed.
-      "      if (seen.has(next)) return;",
-      "      seen.add(next);",
-      "      cursor = next;",
-      "    }",
-      "  }",
-    );
+  const pager = op.pager;
+  if (pager) {
+    lines.push("", ...tsPager(op, pager, inputType));
   }
   const async = op.async;
   if (async?.statusMethodBase && async.statusJobIdKey && async.terminalStates.length > 0) {
@@ -515,6 +487,70 @@ function camelOf(canonicalName: string): string {
     .filter(Boolean)
     .map((word, index) => (index === 0 ? word : word.charAt(0).toUpperCase() + word.slice(1)))
     .join("");
+}
+
+/**
+ * The paging helper: an async generator that yields items (or whole pages when
+ * the contract names no items field) until the upstream stops handing back a
+ * continuation. Every style advances the same way — see `SdkPager` in plan.ts —
+ * and every one stops on a repeated continuation, so a server that echoes its
+ * own cursor cannot spin the loop forever.
+ */
+function tsPager(op: SdkOperation, pager: SdkPager, inputType: string): string[] {
+  const k = j(pager.cursorKey);
+  const items = pager.itemsField ? `page[${j(pager.itemsField)}]` : "undefined";
+  const shortPage = pager.pageSizeKey
+    ? `const size = request[${j(pager.pageSizeKey)}];\n      const short = typeof size === "number" && Array.isArray(items) && items.length < size;`
+    : "const short = false;";
+  let advance = "";
+  switch (pager.style) {
+    case "cursor":
+      advance = `const raw = page[${j(pager.nextField ?? "")}];\n      const next: unknown = typeof raw === "string" && raw.length > 0 ? raw : undefined;`;
+      break;
+    case "link":
+      advance = `const raw = page[${j(pager.nextField ?? "")}];\n      // Only the continuation value is read out of the link; the URL itself is\n      // never fetched, so paging can never leave the compiled base URL.\n      const next: unknown =\n        typeof raw === "string" && raw.length > 0\n          ? (new URL(raw, "http://anvil.invalid/").searchParams.get(${j(pager.cursorParam)}) ?? undefined)\n          : undefined;`;
+      break;
+    case "page":
+    case "offset": {
+      const step = pager.style === "page" ? "1" : "items.length";
+      advance = pager.nextField
+        ? `const raw = page[${j(pager.nextField)}];\n      const next: unknown =\n        typeof raw === "number" ? raw : typeof raw === "string" && raw.length > 0 ? raw : undefined;`
+        : `const next: unknown =\n        Array.isArray(items) && items.length > 0 && !short ? Number(cursor) + ${step} : undefined;`;
+      break;
+    }
+  }
+  const startValue =
+    pager.start !== undefined ? `\n    if (cursor === undefined) cursor = ${pager.start};` : "";
+  const clamp =
+    pager.pageSizeKey && pager.maxPageSize
+      ? `\n      if (typeof request[${j(pager.pageSizeKey)}] === "number" && (request[${j(pager.pageSizeKey)}] as number) > ${pager.maxPageSize}) {\n        request[${j(pager.pageSizeKey)}] = ${pager.maxPageSize};\n      }`
+      : "";
+  return [
+    `  /**
+   * Page through \`${op.canonicalName}\` (${pager.style} pagination) until the upstream
+   * stops handing back a continuation. Each yielded value is one ${pager.itemsField ? `item from \`${pager.itemsField}\`` : "page"}.
+   */`,
+    `  async *${op.names.camel}Paginated(input: ${inputType}, options: CallOptions = {}): AsyncGenerator<unknown, void, undefined> {`,
+    "    const seen = new Set<string>();",
+    `    let cursor: unknown = (input as Record<string, unknown>)[${k}];${startValue}`,
+    "    for (;;) {",
+    `      const request: Record<string, unknown> = { ...input, ...(cursor === undefined ? {} : { ${k}: cursor }) };${clamp}`,
+    `      const page = (await this.${op.names.camel}(request as ${inputType}, options)) as Record<string, unknown> | null;`,
+    '      if (page === null || typeof page !== "object") return;',
+    `      const items = ${items};`,
+    pager.itemsField
+      ? "      if (Array.isArray(items)) { for (const item of items) yield item; } else if (items !== undefined) { yield items; }"
+      : "      yield page;",
+    `      ${shortPage}`,
+    `      ${advance}`,
+    "      if (next === undefined) return;",
+    "      const key = String(next);",
+    "      if (seen.has(key)) return;",
+    "      seen.add(key);",
+    "      cursor = next;",
+    "    }",
+    "  }",
+  ];
 }
 
 function methodDoc(op: SdkOperation): string {

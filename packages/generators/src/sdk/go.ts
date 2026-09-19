@@ -1,6 +1,6 @@
 import { errorsFile, goPackage, mtlsFile, oauthFile, specFile } from "./go-core.js";
 import { invokeFile, safetyFile } from "./go-invoke.js";
-import type { SdkField, SdkOperation, SdkPlan } from "./plan.js";
+import type { SdkField, SdkOperation, SdkPager, SdkPlan } from "./plan.js";
 import { safetyNotes, wrap } from "./shared.js";
 import { GO_SOAP } from "./soap.js";
 
@@ -187,9 +187,145 @@ ${rows.join("\n")}
 `;
 }
 
+/**
+ * The paging helper: a pager whose `Next` returns whole pages until the
+ * upstream stops handing back a continuation. Every style advances the same
+ * way — see `SdkPager` in plan.ts — and every one stops on a repeated
+ * continuation, so a server that echoes its own cursor cannot spin forever.
+ */
+function goPager(op: SdkOperation, pager: SdkPager): string {
+  const name = op.names.pascal;
+  const k = g(pager.cursorKey);
+  const items = pager.itemsField
+    ? `\titems, _ := field(result, ${g(pager.itemsField)}).([]any)`
+    : "\tvar items []any";
+  const short =
+    pager.pageSizeKey && pager.itemsField
+      ? `\tshort := false\n\tif size, ok := pagerNumber(payload[${g(pager.pageSizeKey)}]); ok && float64(len(items)) < size {\n\t\tshort = true\n\t}`
+      : "\tshort := false";
+  let advance = "";
+  switch (pager.style) {
+    case "cursor":
+      advance = `\tif s, ok := field(result, ${g(pager.nextField ?? "")}).(string); ok && s != "" {\n\t\tnext = s\n\t}`;
+      break;
+    case "link":
+      advance = `\t// Only the continuation value is read out of the link; the URL itself is\n\t// never fetched, so paging can never leave the compiled base URL.\n\tif s, ok := field(result, ${g(pager.nextField ?? "")}).(string); ok && s != "" {\n\t\tif v := pagerLinkParam(s, ${g(pager.cursorParam)}); v != "" {\n\t\t\tnext = v\n\t\t}\n\t}`;
+      break;
+    case "page":
+    case "offset": {
+      const step = pager.style === "page" ? "1" : "float64(len(items))";
+      advance = pager.nextField
+        ? `\tswitch v := field(result, ${g(pager.nextField)}).(type) {\n\tcase float64:\n\t\tnext = v\n\tcase string:\n\t\tif v != "" {\n\t\t\tnext = v\n\t\t}\n\t}`
+        : `\tif n, ok := pagerNumber(p.cursor); ok && len(items) > 0 && !short {\n\t\tnext = n + ${step}\n\t}`;
+      break;
+    }
+  }
+  const startValue =
+    pager.start !== undefined
+      ? `\n\tif p.cursor == nil {\n\t\tp.cursor = float64(${pager.start})\n\t}`
+      : "";
+  const clamp =
+    pager.pageSizeKey && pager.maxPageSize
+      ? `\n\tif size, ok := pagerNumber(payload[${g(pager.pageSizeKey)}]); ok && size > ${pager.maxPageSize} {\n\t\tpayload[${g(pager.pageSizeKey)}] = float64(${pager.maxPageSize})\n\t}`
+      : "";
+  return `// ${name}Pager pages through ${op.canonicalName} (${pager.style} pagination) until the
+// upstream stops handing back a continuation.
+type ${name}Pager struct {
+	client  *Client
+	input   ${name}Input
+	options CallOptions
+	cursor  any
+	done    bool
+	seen    map[string]bool
+}
+
+// ${name}Paginated builds a pager over ${op.canonicalName}.
+func (c *Client) ${name}Paginated(in ${name}Input, options ...CallOptions) *${name}Pager {
+	p := &${name}Pager{client: c, input: in, options: firstCallOptions(options), seen: map[string]bool{}}
+	p.cursor = in.payload()[${k}]${startValue}
+	return p
+}
+
+// Next returns the next page. The second result is false once the upstream
+// stops handing back a continuation.
+func (p *${name}Pager) Next(ctx context.Context) (any, bool, error) {
+	if p.done {
+		return nil, false, nil
+	}
+	payload := p.input.payload()
+	if p.cursor != nil {
+		payload[${k}] = p.cursor
+	}${clamp}
+	result, err := invoke(ctx, p.client.config, Operations[${g(name)}], payload, p.options)
+	if err != nil {
+		return nil, false, err
+	}
+${items}
+${short}
+	var next any
+${advance}
+	// A server that echoes its own continuation would page the same page
+	// forever; stop instead of paging until the process is killed.
+	if next == nil {
+		p.done = true
+		return result, true, nil
+	}
+	key := fmt.Sprint(next)
+	if p.seen[key] {
+		p.done = true
+		return result, true, nil
+	}
+	p.seen[key] = true
+	p.cursor = next
+	return result, true, nil
+}`;
+}
+
+const GO_PAGER_HELPERS = `
+// pagerNumber reads a page number, offset, or page size however the caller
+// or the upstream typed it.
+func pagerNumber(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case string:
+		if f, err := strconv.ParseFloat(n, 64); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}
+`;
+
+const GO_LINK_HELPER = `
+// pagerLinkParam reads the continuation parameter out of a next-page link
+// without ever fetching the link.
+func pagerLinkParam(link, name string) string {
+	u, err := url.Parse(link)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get(name)
+}
+`;
+
 function clientFile(plan: SdkPlan): string {
   const pkg = goPackage(plan);
-  const methods = plan.operations.map((op) => goMethod(op)).join("\n\n");
+  const anyPager = plan.operations.some((op) => op.pager !== undefined);
+  const anyLinkPager = plan.operations.some((op) => op.pager?.style === "link");
+  const methods = [
+    ...plan.operations.map((op) => goMethod(op)),
+    ...(anyPager ? [GO_PAGER_HELPERS] : []),
+    ...(anyLinkPager ? [GO_LINK_HELPER] : []),
+  ].join("\n\n");
   const inputs = plan.operations.map((op) => goInputStruct(op)).join("\n\n");
   const tls = plan.auth.tls;
   const refresh = plan.auth.tokenRefresh;
@@ -198,10 +334,10 @@ function clientFile(plan: SdkPlan): string {
 package ${pkg}
 
 import (
-	"context"
+	"context"${anyPager ? '\n\t"fmt"' : ""}
 	"math/rand"
-	"net/http"
-	"os"
+	"net/http"${anyLinkPager ? '\n\t"net/url"' : ""}
+	"os"${anyPager ? '\n\t"strconv"' : ""}
 	"time"
 )
 
@@ -458,52 +594,9 @@ function goMethod(op: SdkOperation): string {
     "}",
   ];
 
-  const page = op.pagination;
-  if (page?.cursorKey && page.nextField) {
-    lines.push(
-      "",
-      `// ${op.names.pascal}Pager pages through ${op.canonicalName} until the upstream stops`,
-      "// handing back a continuation.",
-      `type ${op.names.pascal}Pager struct {
-	client  *Client
-	input   ${op.names.pascal}Input
-	options CallOptions
-	cursor  string
-	done    bool
-	seen    map[string]bool
-}
-
-// ${op.names.pascal}Paginated builds a pager over ${op.canonicalName}.
-func (c *Client) ${op.names.pascal}Paginated(in ${op.names.pascal}Input, options ...CallOptions) *${op.names.pascal}Pager {
-	return &${op.names.pascal}Pager{client: c, input: in, options: firstCallOptions(options), seen: map[string]bool{}}
-}
-
-// Next returns the next page. The second result is false once the upstream
-// stops handing back a continuation.
-func (p *${op.names.pascal}Pager) Next(ctx context.Context) (any, bool, error) {
-	if p.done {
-		return nil, false, nil
-	}
-	payload := p.input.payload()
-	if p.cursor != "" {
-		payload[${g(page.cursorKey)}] = p.cursor
-	}
-	result, err := invoke(ctx, p.client.config, Operations[${g(op.names.pascal)}], payload, p.options)
-	if err != nil {
-		return nil, false, err
-	}
-	next, ok := field(result, ${g(page.nextField)}).(string)
-	// A server that echoes its own cursor would spin this loop forever; stop
-	// instead of paging the same page until the process is killed.
-	if !ok || next == "" || p.seen[next] {
-		p.done = true
-	} else {
-		p.seen[next] = true
-		p.cursor = next
-	}
-	return result, true, nil
-}`,
-    );
+  const pager = op.pager;
+  if (pager) {
+    lines.push("", goPager(op, pager));
   }
 
   const contract = op.async;

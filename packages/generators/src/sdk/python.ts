@@ -1,4 +1,4 @@
-import type { SdkOperation, SdkPlan } from "./plan.js";
+import type { SdkOperation, SdkPager, SdkPlan } from "./plan.js";
 import {
   errorsModule,
   invokeModule,
@@ -183,8 +183,89 @@ ${rows.join("\n")}
 `;
 }
 
+/**
+ * The paging helper: a generator that yields items (or whole pages when the
+ * contract names no items field) until the upstream stops handing back a
+ * continuation. Every style advances the same way — see `SdkPager` in
+ * plan.ts — and every one stops on a repeated continuation.
+ */
+function pythonPager(
+  op: SdkOperation,
+  pager: SdkPager,
+  args: Array<{ name: string; annotation: string; default?: string }>,
+  safety: string[],
+  payload: string,
+): string[] {
+  const k = p(pager.cursorKey);
+  const items = pager.itemsField ? `page.get(${p(pager.itemsField)})` : "None";
+  const short =
+    pager.pageSizeKey && pager.itemsField
+      ? `            requested = request.get(${p(pager.pageSizeKey)})\n            short = isinstance(requested, (int, float)) and not isinstance(requested, bool) and isinstance(items, list) and len(items) < requested`
+      : "            short = False";
+  let advance = "";
+  switch (pager.style) {
+    case "cursor":
+      advance = `            raw = page.get(${p(pager.nextField ?? "")})\n            nxt = raw if isinstance(raw, str) and raw else None`;
+      break;
+    case "link":
+      advance = `            raw = page.get(${p(pager.nextField ?? "")})\n            nxt = None\n            # Only the continuation value is read out of the link; the URL itself is\n            # never fetched, so paging can never leave the compiled base URL.\n            if isinstance(raw, str) and raw:\n                values = parse_qs(urlsplit(raw).query).get(${p(pager.cursorParam)})\n                nxt = values[0] if values and values[0] else None`;
+      break;
+    case "page":
+    case "offset": {
+      const step = pager.style === "page" ? "1" : "len(items)";
+      advance = pager.nextField
+        ? `            raw = page.get(${p(pager.nextField)})\n            nxt = raw if ((isinstance(raw, (int, float)) and not isinstance(raw, bool)) or (isinstance(raw, str) and raw)) else None`
+        : `            nxt = (int(cursor) + ${step}) if (isinstance(items, list) and items and not short and isinstance(cursor, (int, float))) else None`;
+      break;
+    }
+  }
+  const startValue =
+    pager.start !== undefined
+      ? `\n        if cursor is None:\n            cursor = ${pager.start}`
+      : "";
+  const clamp =
+    pager.pageSizeKey && pager.maxPageSize
+      ? `\n            requested_size = request.get(${p(pager.pageSizeKey)})\n            if isinstance(requested_size, (int, float)) and not isinstance(requested_size, bool) and requested_size > ${pager.maxPageSize}:\n                request[${p(pager.pageSizeKey)}] = ${pager.maxPageSize}`
+      : "";
+  return [
+    `    def ${op.names.snake}_paginated(`,
+    "        self,",
+    "        *,",
+    ...args.map(
+      (arg) => `        ${arg.name}: ${arg.annotation}${arg.default ? ` = ${arg.default}` : ""},`,
+    ),
+    ...safety,
+    "    ) -> Iterator[Any]:",
+    `        """Page through ${op.canonicalName} (${pager.style} pagination) until the upstream stops`,
+    `        handing back a continuation. Yields one ${pager.itemsField ? `item from '${pager.itemsField}'` : "page"} at a time."""`,
+    `        payload = ${payload}`,
+    "        seen: List[str] = []",
+    `        cursor: Any = payload.get(${k})${startValue}`,
+    "        while True:",
+    `            request = dict(payload, **({} if cursor is None else {${k}: cursor}))${clamp}`,
+    `            page = self._call(${p(op.names.snake)}, request, ${op.safetyKeys.confirm}, ${op.safetyKeys.idempotencyKey}, headers, timeout)`,
+    "            if not isinstance(page, dict):",
+    "                return",
+    `            items = ${items}`,
+    pager.itemsField
+      ? "            if isinstance(items, list):\n                for item in items:\n                    yield item\n            elif items is not None:\n                yield items"
+      : "            yield page",
+    short,
+    advance,
+    "            # A server that echoes its own continuation would page the same page forever.",
+    "            if nxt is None:",
+    "                return",
+    "            key = str(nxt)",
+    "            if key in seen:",
+    "                return",
+    "            seen.append(key)",
+    "            cursor = nxt",
+  ];
+}
+
 function clientModule(plan: SdkPlan): string {
   const className = `${plan.service.names.pascal}Client`;
+  const anyLinkPager = plan.operations.some((op) => op.pager?.style === "link");
   const methods = plan.operations.map((op) => pythonMethod(op)).join("\n\n");
   const tls = plan.auth.tls;
   const refresh = plan.auth.tokenRefresh;
@@ -195,7 +276,7 @@ ${plan.service.description}
 
 import os
 from typing import Any, Callable, Dict, Iterator, List, Optional
-
+${anyLinkPager ? "from urllib.parse import parse_qs, urlsplit\n" : ""}
 from ._invoke import invoke
 ${tls ? "from ._mtls import build_mtls_opener\n" : ""}${refresh ? "from ._oauth import create_refreshing_token_provider\n" : ""}from .errors import AnvilError
 from .operations import OPERATIONS
@@ -433,39 +514,9 @@ function pythonMethod(op: SdkOperation): string {
   ];
   const lines = [...signature, docstring(op, args, 8), ...call];
 
-  const page = op.pagination;
-  if (page?.cursorKey && page.nextField) {
-    lines.push(
-      "",
-      `    def ${op.names.snake}_paginated(`,
-      "        self,",
-      "        *,",
-      ...args.map(
-        (arg) => `        ${arg.name}: ${arg.annotation}${arg.default ? ` = ${arg.default}` : ""},`,
-      ),
-      ...safety,
-      "    ) -> Iterator[Any]:",
-      `        """Page through ${op.canonicalName} until the upstream stops handing back a`,
-      `        continuation. Yields one ${page.itemsField ? `item from '${page.itemsField}'` : "page"} at a time."""`,
-      `        payload = ${payload}`,
-      "        seen: List[str] = []",
-      `        cursor = payload.get(${p(page.cursorKey)})`,
-      "        while True:",
-      `            page = self._call(${p(op.names.snake)}, dict(payload, **({} if cursor is None else {${p(page.cursorKey)}: cursor})), ${op.safetyKeys.confirm}, ${op.safetyKeys.idempotencyKey}, headers, timeout)`,
-      "            if not isinstance(page, dict):",
-      "                return",
-      page.itemsField
-        ? `            items = page.get(${p(page.itemsField)})\n            if isinstance(items, list):\n                for item in items:\n                    yield item\n            elif items is not None:\n                yield items`
-        : "            yield page",
-      `            nxt = page.get(${p(page.nextField)})`,
-      "            if not isinstance(nxt, str) or not nxt:",
-      "                return",
-      // A server that echoes its own cursor would spin this loop forever.
-      "            if nxt in seen:",
-      "                return",
-      "            seen.append(nxt)",
-      "            cursor = nxt",
-    );
+  const pager = op.pager;
+  if (pager) {
+    lines.push("", ...pythonPager(op, pager, args, safety, payload));
   }
 
   const contract = op.async;

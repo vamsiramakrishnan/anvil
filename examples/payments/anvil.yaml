@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../schemas/anvil-manifest.schema.json
 # Supplemental Anvil manifest (spec §4). Enriches semantics the OpenAPI spec
 # cannot express: idempotency contracts, confirmation policy, and approvals.
 service:

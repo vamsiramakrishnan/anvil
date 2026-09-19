@@ -84,6 +84,12 @@ const server = createServer((request, response) => {
       }) + "\\n",
     );
     response.writeHead(200, { "content-type": "application/json" });
+    // The listing pages by page number: three pages of two, then an empty one.
+    if (request.url.startsWith("/customers?") || request.url === "/customers") {
+      const page = Number(new URL(request.url, "http://x").searchParams.get("page") ?? "1");
+      response.end(JSON.stringify({ data: page <= 3 ? ["c" + page + "a", "c" + page + "b"] : [] }));
+      return;
+    }
     response.end(JSON.stringify({ id: "re_1", status: "succeeded" }));
   });
 });
@@ -163,11 +169,39 @@ function withQueryParameter(document: AirDocument): AirDocument {
       ],
     },
   });
+  // A page-numbered listing with a page-size cap of 2, so every language's
+  // pager is driven for real: four requests (three pages and the empty one that
+  // ends the walk), the requested size clamped to the contract's maximum.
+  const listing = OperationSchema.parse({
+    ...target,
+    id: "payments.customers.list",
+    canonicalName: "list_customers",
+    displayName: "List customers",
+    cli: { command: "payments customers list", aliases: [] },
+    mcp: { toolName: "payments_list_customers" },
+    sourceRef: { kind: "openapi", method: "get", path: "/customers" },
+    input: {
+      params: [
+        { name: "page", in: "query", required: false, schema: { type: "integer" } },
+        { name: "per_page", in: "query", required: false, schema: { type: "integer" } },
+      ],
+    },
+    pagination: {
+      style: "page",
+      cursorParam: "page",
+      itemsField: "data",
+      pageSizeParam: "per_page",
+      maxPageSize: 2,
+    },
+  });
   return {
     ...document,
-    operations: document.operations.map((op) => (op.id === target.id ? widened : op)),
+    operations: [...document.operations.map((op) => (op.id === target.id ? widened : op)), listing],
   };
 }
+
+/** The items every language's pager must yield, in order, from the fake upstream. */
+const PAGED = "c1a,c1b,c2a,c2b,c3a,c3b";
 
 /** The one call every language makes, so the four requests are comparable. */
 const REFUND = {
@@ -211,6 +245,9 @@ try {
 }
 await client.createRefund(input, { confirm: true, idempotencyKey: ${JSON.stringify(REFUND.idempotencyKey)} });
 await client.getCustomer({ customer_id: ${JSON.stringify(LOOKUP.customerId)}, expand: ${JSON.stringify(LOOKUP.expand)} });
+const items = [];
+for await (const item of client.listCustomersPaginated({ per_page: 5 })) items.push(item);
+console.log("paged:" + items.join(","));
 console.log("sent");
 `,
       "utf8",
@@ -218,6 +255,7 @@ console.log("sent");
     const output = run(process.execPath, ["drive.mjs", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
   }, 180_000);
@@ -247,6 +285,7 @@ for extra in ({}, {"confirm": True}):
         print("refused:" + error.code)
 client.create_refund(**kwargs, confirm=True, idempotency_key=${JSON.stringify(REFUND.idempotencyKey)})
 client.get_customer(customer_id=${JSON.stringify(LOOKUP.customerId)}, expand=${JSON.stringify(LOOKUP.expand)})
+print("paged:" + ",".join(client.list_customers_paginated(per_page=5)))
 print("sent")
 `,
       "utf8",
@@ -254,6 +293,7 @@ print("sent")
     const output = run("python3", ["drive.py", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
   }, 120_000);
@@ -277,6 +317,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	payments "github.com/anvil-sdk/payments"
 )
@@ -304,6 +345,22 @@ func main() {
 	if _, err := client.GetCustomer(context.Background(), payments.GetCustomerInput{CustomerId: ${JSON.stringify(LOOKUP.customerId)}, Expand: &expand}); err != nil {
 		panic(err)
 	}
+	perPage := int64(5)
+	pager := client.ListCustomersPaginated(payments.ListCustomersInput{PerPage: &perPage})
+	var items []string
+	for {
+		page, ok, err := pager.Next(context.Background())
+		if err != nil {
+			panic(err)
+		}
+		if !ok {
+			break
+		}
+		for _, item := range page.(map[string]any)["data"].([]any) {
+			items = append(items, item.(string))
+		}
+	}
+	fmt.Println("paged:" + strings.Join(items, ","))
 	fmt.Println("sent")
 }
 `,
@@ -312,6 +369,7 @@ func main() {
     const output = run("go", ["run", "./drive", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
   }, 180_000);
@@ -354,6 +412,13 @@ public class Drive {
         input(), CallOptions.none().confirm(true).idempotencyKey(${JSON.stringify(REFUND.idempotencyKey)}));
     client.getCustomer(
         new GetCustomerInput(${JSON.stringify(LOOKUP.customerId)}).expand(${JSON.stringify(LOOKUP.expand)}));
+    java.util.List<String> items = new java.util.ArrayList<String>();
+    for (Object page : client.listCustomersPages(new ListCustomersInput().perPage(5L), CallOptions.none(), 10)) {
+      for (Object item : (java.util.List<?>) ((java.util.Map<?, ?>) page).get("data")) {
+        items.add((String) item);
+      }
+    }
+    System.out.println("paged:" + String.join(",", items));
     System.out.println("sent");
   }
 
@@ -368,6 +433,7 @@ public class Drive {
     const output = run("java", ["-cp", classes(), "Drive", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
   }, 180_000);
@@ -421,7 +487,9 @@ describe("the four SDKs agree on the wire", () => {
   it("encoded the path and the query the same way in every language", () => {
     const ran = languagesThatRan();
     expect(ran).toBeGreaterThan(0);
-    const gets = normalize().filter((request) => request.method === "GET");
+    const gets = normalize().filter(
+      (request) => request.method === "GET" && request.url.startsWith("/customers/"),
+    );
     expect(gets.length).toBe(ran);
 
     const first = gets[0];
@@ -434,6 +502,22 @@ describe("the four SDKs agree on the wire", () => {
     expect(first?.authorization).toBe("Bearer tok");
     expect(first?.idempotencyKey).toBeUndefined();
     for (const request of gets) expect(request).toEqual(first);
+  });
+
+  it("paged the listing with the same requests, in the same order, in every language", () => {
+    const ran = languagesThatRan();
+    expect(ran).toBeGreaterThan(0);
+    const walks = normalize()
+      .filter((request) => request.method === "GET" && /^\/customers(\?|$)/.test(request.url))
+      .map((request) => request.url);
+    // Four requests per language: three pages of two and the empty page that
+    // ends the walk. The caller asked for five per page; the contract's cap of
+    // two is what every language actually sent.
+    expect(walks.length).toBe(4 * ran);
+    const expected = [1, 2, 3, 4].map((page) => `/customers?page=${page}&per_page=2`);
+    for (let language = 0; language < ran; language++) {
+      expect(walks.slice(language * 4, language * 4 + 4)).toEqual(expected);
+    }
   });
 });
 

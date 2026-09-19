@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parseManifest } from "../manifest.js";
+import { parseManifest } from "../manifest-parse.js";
 import {
   FileSystemGatewayImportReceiptStore,
   finalizeGatewayImportReceipt,

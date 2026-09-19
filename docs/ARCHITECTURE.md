@@ -219,7 +219,12 @@ deterministic order:
 
 Runtime policy hooks can deny at defined pre/post phases. They are not the same
 as harness hooks: runtime hooks execute inside the authority boundary, while
-harness hooks improve the caller experience before transport.
+harness hooks improve the caller experience before transport. An operator
+installs them, along with an observer, a ledger or credential backend, or a
+transport wrapper, through a runtime extension module named by
+`ANVIL_EXTENSIONS`. Every serving surface loads it through the same
+composition root (`bootRuntime`), and `ANVIL_OTEL_EXPORTER` selects where
+execution records go. See [Runtime extensions](runtime-extensions.md).
 
 ### Durable idempotency
 
@@ -301,7 +306,8 @@ New behavior should enter through a narrow seam:
   consumes only reviewed bindings and cannot widen their target or semantics;
 - new generated surface through a generator;
 - new agent platform through a target profile;
-- new durable store through the ledger interface;
+- new runtime policy, telemetry sink, durable store, or credential backend
+  through a runtime extension module loaded at boot;
 - new evidence source through an MCP-published connector and structured claims;
 - new harness through a thin adapter over shared hook decisions; and
 - new assurance rule through a structured check and stable diagnostic code.

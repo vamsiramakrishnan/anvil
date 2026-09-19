@@ -872,6 +872,8 @@ describe("anvil adopt speaks the operator envelope", () => {
  * offline" is a boundary. Only the second is a real exemption.
  */
 const UNEXERCISED: Record<string, string> = {
+  // Driven end to end (success, manifest refusals, compile errors) in cmd-compile.test.ts.
+  compile: "needs a source fixture; its --json envelopes are driven in cmd-compile.test.ts",
   // Need a compiled bundle plus lifecycle state to reach their refusal paths.
   agentify: "needs a compiled bundle fixture",
   certify: "needs a compiled bundle fixture",

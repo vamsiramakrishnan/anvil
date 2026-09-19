@@ -56,6 +56,7 @@ describe("root help", () => {
       "source",
       "agentify",
       "compile",
+      "schema",
       "inspect",
       "assess",
       "capability",
@@ -96,7 +97,8 @@ describe("root help", () => {
     // 53 -> 54 when `anvil auth` landed (one command, one line). Raised
     // 54 -> 55 when `anvil evals` landed (one command, one line).
     // 55 -> 56 when `anvil fuzz` landed (one command, one line).
-    expect(text.split("\n").length).toBeLessThan(56);
+    // 56 -> 57 when `anvil schema` landed (one command, one line).
+    expect(text.split("\n").length).toBeLessThan(57);
     expect(text).not.toContain("--manifest");
   });
 

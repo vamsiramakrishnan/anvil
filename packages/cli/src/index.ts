@@ -7,6 +7,7 @@
  */
 
 export * from "./anvil-cli.js";
+export * from "./api.js";
 export * from "./commands/meta.js";
 export * from "./explain.js";
 export * from "./io.js";

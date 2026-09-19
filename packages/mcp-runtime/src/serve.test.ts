@@ -44,6 +44,31 @@ describe("one runtime, no template", () => {
     ordered("refusing to serve a partial deployment", "const server = createServer(");
   });
 
+  it("boots every dependency through the one composition root, before it can listen", () => {
+    // Extensions (ANVIL_EXTENSIONS / ANVIL_POLICY_BUNDLE) and the exporter
+    // (ANVIL_OTEL_EXPORTER) are resolved by `bootRuntime` — the same root the
+    // generated mcp/server.js and `anvil serve mcp` use — and a failure there
+    // is a boot failure, never a server that serves without them.
+    expect(source).toContain("const boot = await bootRuntime(config, {");
+    expect(source).toContain("const deps = boot.contextDeps;");
+    expect(source).not.toContain("resolveLedger(");
+    expect(source).not.toContain("resolveCredentials(");
+    expect(source).not.toContain("new FetchTransport(");
+    ordered(
+      "const boot = await bootRuntime(",
+      "const server = createServer(",
+      "server.listen(port",
+    );
+    // What booted is observable: /healthz names the exporter and every extension.
+    expect(source).toContain("extensions: boot.extensions.loaded,");
+    expect(source).toContain("exporter: boot.exporter,");
+    // A scraper gets OpenMetrics; the JSON count every probe reads stays.
+    expect(source).toContain("OPENMETRICS_CONTENT_TYPE");
+    expect(source).toContain("return json(res, 200, { records: observer.count });");
+    // The last batch of records leaves before the process does.
+    ordered("await serverClosed;", "await boot.flush();");
+  });
+
   it("imports its own package relatively, so bundling it never resolves @anvil/mcp-runtime", () => {
     expect(source).toContain('from "./server.js"');
     expect(source).toContain('from "./inbound-auth.js"');

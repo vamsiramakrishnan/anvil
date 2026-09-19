@@ -1,17 +1,11 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import {
-  type CompilerSource,
-  compileSource,
-  type HumanApprovalPolicy,
-  type SourceDiagnostic,
-} from "@anvil/compiler";
-import { generateBundle, installGeneratedBundle } from "@anvil/generators";
+import type { HumanApprovalPolicy, SourceDiagnostic } from "@anvil/compiler";
 import type { Command } from "commander";
+import { type CompileBundleResult, compileBundle } from "../api.js";
+import { ENVELOPE_SCHEMA_VERSION, emitRefusal } from "../envelope.js";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
-import { printDiagnostics, sourceService } from "./source.js";
+import { printDiagnostics } from "./source.js";
 
 /** `anvil compile <spec>` — parse, classify, validate, and write the full bundle. */
 export function registerCompile(parent: Command, ctx: CommandContext): void {
@@ -41,6 +35,7 @@ export function registerCompile(parent: Command, ctx: CommandContext): void {
         "require explicit human approval on gated mutations: none | unsafe | all (per-op manifest `human_approval` overrides)",
       )
       .option("--root <ws>", "workspace root for .anvil/sources", ".")
+      .option("--json", "emit one JSON document (the compile report or a typed refusal)")
       .action(async (spec: string | undefined, opts: CompileOptions) => {
         ctx.code = await runCompile(spec, opts, ctx.io);
       }),
@@ -57,99 +52,101 @@ interface CompileOptions {
   endpoint?: string;
   humanApproval?: string;
   root?: string;
+  json?: boolean;
 }
 
 const HUMAN_APPROVAL_POLICIES: ReadonlySet<string> = new Set(["none", "unsafe", "all"]);
 
 /**
- * Resolve the one compiler input, whichever way it was named. There is a single
- * compiler path: a `--source` snapshot is opened directly; a spec path is
- * imported and locked into a snapshot first, then that snapshot is compiled.
- * The compiler never re-reads the original spec file.
+ * The command is a flag parser over `compileBundle` (`@anvil/cli`'s library
+ * entry point): lock the source, parse the manifest, compile, generate,
+ * install. Anything a script gets from `compileBundle` is what this prints.
  */
-async function resolveSource(
-  spec: string | undefined,
-  opts: CompileOptions,
-  io: CliIO,
-): Promise<{ source?: CompilerSource; diagnostics: SourceDiagnostic[] }> {
-  const service = sourceService(opts);
-  if (opts.source !== undefined) {
-    if (spec !== undefined) {
-      return fail("source/conflicting_input", "Pass either a spec path or --source, not both.");
-    }
-    return service.compilerSource(opts.source, opts.entrypoint);
-  }
-  if (spec === undefined) {
-    return fail(
-      "source/no_input",
-      "Provide a spec file to import, or --source <snapshot-id> to compile a locked snapshot.",
-    );
-  }
-  // Import-and-lock, then compile the snapshot — never the original path.
-  const added = await service.add([spec]);
-  if (added.snapshot?.status !== "valid") {
-    printDiagnostics(io, added.diagnostics);
-    return {
-      diagnostics: [
-        {
-          level: "error",
-          code: "source/not_compilable",
-          message: added.snapshot
-            ? `Snapshot ${added.snapshot.snapshotId} is ${added.snapshot.status}; nothing was compiled.`
-            : `'${spec}' could not be read; nothing was locked or compiled.`,
-        },
-      ],
-    };
-  }
-  return service.compilerSource(added.snapshot.snapshotId, opts.entrypoint);
-}
-
 async function runCompile(
   spec: string | undefined,
   opts: CompileOptions,
   io: CliIO,
 ): Promise<number> {
-  const { source, diagnostics } = await resolveSource(spec, opts, io);
-  if (!source) {
-    printDiagnostics(io, diagnostics);
-    return 1;
-  }
-
   if (opts.humanApproval !== undefined && !HUMAN_APPROVAL_POLICIES.has(opts.humanApproval)) {
-    io.err(`Invalid --human-approval '${opts.humanApproval}'. Use: none | unsafe | all.`);
-    return 1;
+    return emitRefusal(io, opts.json, {
+      reportType: "anvil.compile-error",
+      code: "compile/invalid_option",
+      message: `Invalid --human-approval '${opts.humanApproval}'. Use: none | unsafe | all.`,
+    });
   }
-  const manifest = opts.manifest ? readFileSync(opts.manifest, "utf8") : undefined;
-  const air = await compileSource(source, {
-    manifest,
+  const result = await compileBundle({
+    spec,
+    source: opts.source,
+    entrypoint: opts.entrypoint,
+    manifest: opts.manifest,
     serviceId: opts.service,
+    out: opts.out,
+    endpoint: opts.endpoint,
     humanApproval: opts.humanApproval as HumanApprovalPolicy | undefined,
-  });
-  const outDir = opts.out ?? join("generated", air.service.id);
-  const bundle = generateBundle(air, { mcpEndpoint: opts.endpoint });
-  const written = installGeneratedBundle(outDir, bundle, {
-    onCleanupWarning: (message) => io.err(`Warning: ${message}`),
+    root: opts.root,
+    onWarning: (message) => io.err(`Warning: ${message}`),
   });
 
-  const errors = air.diagnostics.filter((d) => d.level === "error");
-  const warnings = air.diagnostics.filter((d) => d.level === "warning");
-  const review = air.operations.filter((o) => o.state === "review_required").length;
-  io.out(
-    `Compiled ${air.operations.length} operations from ${source.snapshotId} (${air.service.source.kind}) → ${outDir} (${written.length} files).`,
-  );
-  io.out(
-    `  approved: ${air.operations.filter((o) => o.state === "approved").length}  review_required: ${review}`,
-  );
-  io.out(`  diagnostics: ${errors.length} error(s), ${warnings.length} warning(s)`);
-  if (review > 0)
-    io.out(`  Run \`anvil inspect ${outDir}\` then \`anvil approve\` to expose more operations.`);
-  return errors.length > 0 ? 1 : 0;
+  if (!result.ok) {
+    const first = result.diagnostics[0];
+    if (opts.json) {
+      return emitRefusal(io, true, {
+        reportType: "anvil.compile-error",
+        code: first?.code ?? `${result.stage}/failed`,
+        message: first?.message ?? `The ${result.stage} step failed.`,
+        details: {
+          stage: result.stage,
+          diagnostics: result.diagnostics,
+          ...(result.manifestIssues ? { manifestIssues: result.manifestIssues } : {}),
+        },
+      });
+    }
+    printDiagnostics(io, result.diagnostics as SourceDiagnostic[]);
+    return 1;
+  }
+  return reportAir(result, opts, io);
 }
 
-/** A single-diagnostic failure result. */
-function fail(
-  code: string,
-  message: string,
-): { source?: CompilerSource; diagnostics: SourceDiagnostic[] } {
-  return { diagnostics: [{ level: "error", code, message }] };
+function reportAir(
+  success: Extract<CompileBundleResult, { ok: true }>,
+  opts: CompileOptions,
+  io: CliIO,
+): number {
+  const air = success.air;
+  const errors = air.diagnostics.filter((d) => d.level === "error");
+  const warnings = air.diagnostics.filter((d) => d.level === "warning");
+  const approved = air.operations.filter((o) => o.state === "approved").length;
+  const review = air.operations.filter((o) => o.state === "review_required").length;
+  if (opts.json) {
+    io.out(
+      JSON.stringify(
+        {
+          schemaVersion: ENVELOPE_SCHEMA_VERSION,
+          reportType: "anvil.compile",
+          ok: errors.length === 0,
+          service: air.service.id,
+          sourceKind: air.service.source.kind,
+          snapshotId: success.snapshotId,
+          outDir: success.outDir,
+          files: success.written.length,
+          operations: { total: air.operations.length, approved, review_required: review },
+          diagnostics: air.diagnostics,
+        },
+        null,
+        2,
+      ),
+    );
+    return errors.length > 0 ? 1 : 0;
+  }
+  for (const diagnostic of errors) io.err(`[${diagnostic.code}] ${diagnostic.message}`);
+  io.out(
+    `Compiled ${air.operations.length} operations from ${success.snapshotId} (${air.service.source.kind}) → ${success.outDir} (${success.written.length} files).`,
+  );
+  io.out(`  approved: ${approved}  review_required: ${review}`);
+  io.out(`  diagnostics: ${errors.length} error(s), ${warnings.length} warning(s)`);
+  if (review > 0)
+    io.out(
+      `  Run \`anvil inspect ${success.outDir}\` then \`anvil approve\` to expose more operations.`,
+    );
+  return errors.length > 0 ? 1 : 0;
 }

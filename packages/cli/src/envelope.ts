@@ -22,7 +22,7 @@ import type { CliIO } from "./io.js";
  * and requires every `--json` command to declare its report types and to have
  * a refusal exercised against them.
  */
-const ENVELOPE_SCHEMA_VERSION = 1;
+export const ENVELOPE_SCHEMA_VERSION = 1;
 
 /** How a refusal renders on stderr when the operator did not ask for `--json`. */
 type HumanRefusalStyle =

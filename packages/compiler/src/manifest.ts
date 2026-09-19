@@ -17,21 +17,20 @@ import {
   type Workflow,
 } from "@anvil/air";
 import { analyzeTemplate, lexicalFamily } from "@anvil/grammar";
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { decideAuthorizationCodeApproval, manifestReviewAnnotation } from "./auth-approval.js";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
 import { projectRoutingNames, singularize } from "./naming.js";
 import { analyzeSqlTemplate, supportedSqlDialects } from "./sql-grammar.js";
 
-const ManifestAuthProvider = z.object({
+const ManifestAuthProvider = z.strictObject({
   token_endpoint: z.string().url().optional(),
   grant: z.enum(["token_exchange", "client_credentials", "jwt_bearer"]).optional(),
   client_auth: z.enum(["client_secret_basic", "client_secret_post", "private_key_jwt"]).optional(),
   resource: z.string().optional(),
   subject_token_type: z.enum(["access_token", "jwt", "id_token"]).optional(),
   requested_token_type: z.enum(["access_token", "jwt", "id_token"]).optional(),
-  api_key: z.object({ in: z.enum(["header", "query"]), name: z.string() }).optional(),
+  api_key: z.strictObject({ in: z.enum(["header", "query"]), name: z.string() }).optional(),
   /**
    * Authorization-code mechanics (RFC 6749 §4.1, PKCE per RFC 7636). Declaring
    * these is what lets `anvil auth login` run the interactive step and the
@@ -45,7 +44,7 @@ const ManifestAuthProvider = z.object({
 });
 type ManifestAuthProvider = z.infer<typeof ManifestAuthProvider>;
 
-const ManifestOperationAuth = z.object({
+const ManifestOperationAuth = z.strictObject({
   type: AuthType.optional(),
   credential_profile: z
     .string()
@@ -59,7 +58,7 @@ const ManifestOperationAuth = z.object({
   audience: z.string().optional(),
   /** Exact on-wire credential carrier after any token acquisition/exchange. */
   carrier: z
-    .object({
+    .strictObject({
       in: z.enum(["header", "query"]),
       name: z.string().min(1),
       scheme: z.string().min(1).optional(),
@@ -75,7 +74,7 @@ const ManifestOperationAuth = z.object({
    * refuses this on any other type and refuses `mtls` without it.
    */
   tls: z
-    .object({
+    .strictObject({
       client_cert_ref: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
       client_key_ref: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
       ca_ref: z
@@ -85,6 +84,8 @@ const ManifestOperationAuth = z.object({
     })
     .optional(),
   provider: ManifestAuthProvider.optional(),
+  /** Scopes a caller's principal must hold for this operation; declaring them only tightens access. */
+  scopes: z.array(z.string()).optional(),
 });
 
 export function manifestAuthProviderToAir(provider: ManifestAuthProvider): AuthProvider {
@@ -134,25 +135,25 @@ export function airAuthProviderToManifest(provider: AuthProvider): ManifestAuthP
  * (`docs/backtesting/reproduce/manifests/stripe.anvil.yaml`).
  */
 const ManifestWebhookSignatureVerification = z.discriminatedUnion("scheme", [
-  z.object({
+  z.strictObject({
     scheme: z.literal("hmac_sha256_header"),
     header_name: z.string(),
     encoding: z.enum(["hex", "base64"]),
     value_prefix: z.string().optional(),
     secret_ref: z.string(),
   }),
-  z.object({
+  z.strictObject({
     scheme: z.literal("provider_sdk"),
     provider: z.enum(["stripe", "twilio", "github", "shopify"]),
     secret_ref: z.string(),
   }),
-  z.object({
+  z.strictObject({
     scheme: z.literal("remote_verify"),
     provider: z.literal("paypal"),
     verify_endpoint_ref: z.string(),
     credential_ref: z.string(),
   }),
-  z.object({
+  z.strictObject({
     scheme: z.literal("oidc_jwt"),
     header_name: z.string(),
     expected_issuer: z.string(),
@@ -204,7 +205,7 @@ export function manifestWebhookVerificationToAir(
  * evidence for a human to read, never a value the compiler writes on its own,
  * so the manifest always states the final field paths explicitly.
  */
-const ManifestWebhookContract = z.object({
+const ManifestWebhookContract = z.strictObject({
   operation: z.string(),
   job_id_field: z.string(),
   state_field: z.string().optional(),
@@ -232,7 +233,7 @@ export function manifestWebhookContractToAir(m: ManifestWebhookContract): Webhoo
  * see `normalize.ts#attachWebhookLinks`) but can NEVER complete alone, because
  * `signature_verification` has no spec-native source for any real vendor.
  */
-const ManifestAsyncContract = z.object({
+const ManifestAsyncContract = z.strictObject({
   status_operation: z.string().optional(),
   status_job_id_param: z.string().optional(),
   job_id_field: z.string().optional(),
@@ -249,7 +250,7 @@ export type ManifestAsyncContract = z.infer<typeof ManifestAsyncContract>;
  * humans or classifiers enrich the model. Enrichment is explicit, diffable, and
  * overrides inference. Matching is by operationId, canonicalName, or AIR id.
  */
-export const OperationManifest = z.object({
+export const OperationManifest = z.strictObject({
   side_effect: z.enum(["read", "mutation"]).optional(),
   risk: z.enum(["none", "low", "medium", "high", "financial", "destructive"]).optional(),
   reversible: z.boolean().optional(),
@@ -263,7 +264,7 @@ export const OperationManifest = z.object({
    */
   intent_examples: z.array(z.string()).optional(),
   idempotency: z
-    .object({
+    .strictObject({
       strategy: z
         .enum(["natural", "required_request_key", "key_supported", "client_id", "none"])
         .optional(),
@@ -280,7 +281,7 @@ export const OperationManifest = z.object({
     })
     .optional(),
   confirmation: z
-    .object({
+    .strictObject({
       required: z.boolean().optional(),
       risk: z.enum(["none", "low", "medium", "high", "financial", "destructive"]).optional(),
       reason: z.string().optional(),
@@ -326,7 +327,7 @@ export const OperationManifest = z.object({
    * as identity. Set either axis; the other is read from the current name.
    */
   name: z
-    .object({
+    .strictObject({
       resource: z.string().optional(),
       verb: z.string().optional(),
     })
@@ -334,7 +335,7 @@ export const OperationManifest = z.object({
   /** Whose authority the call runs under, and how it is credentialed. */
   auth: ManifestOperationAuth.optional(),
   retries: z
-    .object({
+    .strictObject({
       enabled: z.boolean().optional(),
       only_on: z.array(z.string()).optional(),
       max_attempts: z.number().int().min(1).max(MAX_RETRY_ATTEMPTS).optional(),
@@ -348,7 +349,7 @@ export const OperationManifest = z.object({
    * off `blocked` to `review_required`, never straight to `approved`.
    */
   query_policy: z
-    .object({
+    .strictObject({
       query_param: z.string(),
       dialect: z.enum(SQL_DIALECTS).default("ansi"),
       allowed_statements: z
@@ -380,15 +381,15 @@ export const OperationManifest = z.object({
    * the intelligence the harness gathered.
    */
   query_schema: z
-    .object({
+    .strictObject({
       tables: z
         .array(
-          z.object({
+          z.strictObject({
             name: z.string(),
             description: z.string().optional(),
             columns: z
               .array(
-                z.object({
+                z.strictObject({
                   name: z.string(),
                   type: z.string().optional(),
                   description: z.string().optional(),
@@ -399,8 +400,8 @@ export const OperationManifest = z.object({
           }),
         )
         .optional(),
-      example_queries: z.array(z.object({ intent: z.string(), sql: z.string() })).optional(),
-      glossary: z.array(z.object({ term: z.string(), definition: z.string() })).optional(),
+      example_queries: z.array(z.strictObject({ intent: z.string(), sql: z.string() })).optional(),
+      glossary: z.array(z.strictObject({ term: z.string(), definition: z.string() })).optional(),
     })
     .optional(),
   /**
@@ -418,7 +419,7 @@ export const OperationManifest = z.object({
    * parameter would teach every surface to pass an argument the wire ignores.
    */
   pagination: z
-    .object({
+    .strictObject({
       style: z.enum(["cursor", "page", "offset", "link"]),
       cursor_param: z.string().optional(),
       next_field: z.string().optional(),
@@ -438,7 +439,7 @@ export const OperationManifest = z.object({
    * so a manifest cannot author what a hand-edited document would be refused.
    */
   stream: z
-    .object({
+    .strictObject({
       max_events: z.number().int().min(1).max(STREAM_MAX_EVENTS_CEILING).optional(),
       max_seconds: z.number().int().min(1).max(STREAM_MAX_SECONDS_CEILING).optional(),
     })
@@ -478,7 +479,7 @@ export function manifestIdempotencyKey(
  * business logic; this is how a human/harness declares it. Each step names an
  * operation (by operationId / canonicalName / AIR id).
  */
-export const WorkflowManifest = z.object({
+export const WorkflowManifest = z.strictObject({
   display_name: z.string().optional(),
   description: z.string().optional(),
   /** Capability id/name to attach to. Defaults to the first step's capability. */
@@ -497,7 +498,7 @@ export const WorkflowManifest = z.object({
   supersedes: z.array(z.string()).optional(),
   steps: z
     .array(
-      z.object({
+      z.strictObject({
         operation: z.string(),
         description: z.string().optional(),
         optional: z.boolean().optional(),
@@ -530,7 +531,7 @@ export type WorkflowManifest = z.infer<typeof WorkflowManifest>;
  * lifecycle untouched.
  */
 export const CapabilityReviewManifest = z
-  .object({
+  .strictObject({
     state: z.enum(["approved", "rejected"]).optional(),
     note: z.string().optional(),
     /** Deliberate override for approval above the hard tool-disclosure budget. */
@@ -611,13 +612,13 @@ export type CapabilityReviewManifest = z.infer<typeof CapabilityReviewManifest>;
  * those constraints as much as on the template text.
  */
 export const QueryTemplateManifest = z
-  .object({
+  .strictObject({
     operation: z.string(),
     template: z.string(),
     target_param: z.string(),
     params: z.record(
       z.string(),
-      z.object({
+      z.strictObject({
         schema: z.record(z.string(), z.unknown()),
         description: z.string().optional(),
       }),
@@ -700,9 +701,9 @@ export const QueryTemplateManifest = z
   });
 export type QueryTemplateManifest = z.infer<typeof QueryTemplateManifest>;
 
-export const AnvilManifest = z.object({
+export const AnvilManifest = z.strictObject({
   service: z
-    .object({
+    .strictObject({
       name: z.string().optional(),
       display_name: z.string().optional(),
       owner: z.string().optional(),
@@ -734,10 +735,6 @@ export const AnvilManifest = z.object({
   query_templates: z.record(z.string(), QueryTemplateManifest).default({}),
 });
 export type AnvilManifest = z.infer<typeof AnvilManifest>;
-
-export function parseManifest(text: string): AnvilManifest {
-  return AnvilManifest.parse(parseYaml(text));
-}
 
 const STRATEGY_TO_MODE = {
   natural: "natural",
@@ -940,6 +937,7 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     if (m.auth.carrier) op.auth.carrier = m.auth.carrier;
     if (m.auth.secret_source) op.auth.secretSource = m.auth.secret_source;
     if (m.auth.tenant) op.auth.tenant = m.auth.tenant;
+    if (m.auth.scopes) op.auth.scopes = [...m.auth.scopes];
     if (m.auth.actor || m.auth.subject) {
       op.auth.delegation = { actor: m.auth.actor, subject: m.auth.subject };
     }
