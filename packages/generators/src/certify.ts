@@ -1474,17 +1474,17 @@ export function verifyCertification(files: Record<string, string>): Certificatio
 /**
  * Read a bundle directory into the pure core's input shape: relative POSIX
  * paths → file contents. The only filesystem-touching entry to certification.
- * Install artifacts are not bundle content: `node_modules` (created by an
- * install, or linked in by `anvil selftest`) is skipped. Any other symlink is
- * refused so mutable or external link targets cannot sit outside the identity
- * that certification binds.
+ * Install artifacts are not bundle content: `node_modules` is skipped, and so
+ * is `.anvil/` at the bundle root — Anvil's private state (source locks, the
+ * approval record, retained generations): the bundle's history, not its bytes.
+ * Any other symlink is refused so a mutable or external target cannot escape it.
  */
 export function readBundleDir(dir: string): Record<string, string> {
   const files: Record<string, string> = {};
   const walk = (rel: string): void => {
     for (const entry of readdirSync(join(dir, rel), { withFileTypes: true })) {
       const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
-      if (entry.name === "node_modules") continue;
+      if (entry.name === "node_modules" || (rel === "" && entry.name === ".anvil")) continue;
       if (entry.isSymbolicLink()) {
         throw new Error(
           `Unexpected symlink in bundle at ${childRel}; certification cannot bind external or mutable link targets.`,

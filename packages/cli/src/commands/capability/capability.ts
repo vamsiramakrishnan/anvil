@@ -9,13 +9,18 @@ import {
   diffCapability,
   proposeCapabilities,
 } from "@anvil/compiler";
-import { approveCapabilityInBundle, rejectCapabilityInBundle } from "@anvil/generators";
+import {
+  approveCapabilityInBundle,
+  previewCapabilityDecision,
+  rejectCapabilityInBundle,
+  renderApprovalPreview,
+} from "@anvil/generators";
 import { runTraceCapabilities, type TraceCapabilityReport } from "@anvil/harness";
 import { loadAir, resolveAirPath } from "@anvil/refinement";
 import { type Command, Option } from "commander";
 import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
-import { reportPreservedStaleArtifacts } from "../approve.js";
+import { reportDecisionRecord, reportPreservedStaleArtifacts } from "../approve.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
 import { registerBusinessExecution } from "./business-execution.js";
@@ -105,7 +110,9 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
     .argument("<capability-id>", "the capability to approve")
     .option("--allow-large", "waive the >20-tool budget block (requires a non-empty --note)")
     .option("--note <note>", "review note persisted with the decision")
-    .action((path: string, id: string, opts: { allowLarge?: boolean; note?: string }) => {
+    .option("--reviewer <id>", "who is approving, recorded in .anvil/approvals.jsonl")
+    .option("--dry-run", "run the budget gate and print what would change; write nothing")
+    .action((path: string, id: string, opts: DecisionOptions & { allowLarge?: boolean }) => {
       ctx.code = runApprove(path, id, opts, ctx.io);
     });
 
@@ -115,7 +122,9 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
     .argument("<path>", "generated bundle directory or air.yaml")
     .argument("<capability-id>", "the capability to reject")
     .option("--reason <reason>", "rejection reason persisted with the decision")
-    .action((path: string, id: string, opts: { reason?: string }) => {
+    .option("--reviewer <id>", "who is rejecting, recorded in .anvil/approvals.jsonl")
+    .option("--dry-run", "print what would change; write nothing")
+    .action((path: string, id: string, opts: DecisionOptions & { reason?: string }) => {
       ctx.code = runReject(path, id, opts, ctx.io);
     });
 
@@ -132,6 +141,13 @@ export function registerCapability(parent: Command, ctx: CommandContext): void {
   registerCapabilityCompile(capability, ctx);
   registerBusinessProject(capability, ctx);
   registerBusinessExecution(capability, ctx);
+}
+
+/** The flags every capability decision shares: an identity to record, and a dry run. */
+interface DecisionOptions {
+  note?: string;
+  reviewer?: string;
+  dryRun?: boolean;
 }
 
 interface ShowOptions {
@@ -436,16 +452,26 @@ function runShow(path: string, id: string, opts: ShowOptions, io: CliIO): number
 function runApprove(
   path: string,
   id: string,
-  opts: { allowLarge?: boolean; note?: string },
+  opts: DecisionOptions & { allowLarge?: boolean },
   io: CliIO,
 ): number {
   let budget: CapabilityBudgetCheck;
   let result: ReturnType<typeof approveCapabilityInBundle>["reprojection"];
   try {
-    ({ budget, reprojection: result } = approveCapabilityInBundle(path, id, {
-      allowLarge: opts.allowLarge === true,
-      note: opts.note,
-    }));
+    if (opts.dryRun === true) {
+      const preview = previewCapabilityDecision(path, id, "approve", {
+        allowLarge: opts.allowLarge === true,
+        note: opts.note,
+      });
+      for (const line of renderApprovalPreview(preview)) io.out(line);
+      return 0;
+    }
+    ({ budget, reprojection: result } = approveCapabilityInBundle(
+      path,
+      id,
+      { allowLarge: opts.allowLarge === true, note: opts.note },
+      { reviewer: opts.reviewer, note: opts.note },
+    ));
   } catch (err) {
     if (err instanceof CapabilityReviewError) {
       if (err.diagnostic) io.err(formatDiagnostic(err.diagnostic));
@@ -464,6 +490,7 @@ function runApprove(
     result.projectionsChanged,
     result.bundleDir,
   );
+  reportDecisionRecord(io, result.record, result.history);
   if (result.retainedBackup) {
     io.out(
       `  The replaced bundle backup could not be removed; it remains at ${result.retainedBackup}.`,
@@ -474,10 +501,20 @@ function runApprove(
 }
 
 /** `anvil capability reject` — record why the grouping is not the right unit. */
-function runReject(path: string, id: string, opts: { reason?: string }, io: CliIO): number {
+function runReject(
+  path: string,
+  id: string,
+  opts: DecisionOptions & { reason?: string },
+  io: CliIO,
+): number {
   let result: ReturnType<typeof rejectCapabilityInBundle>;
   try {
-    result = rejectCapabilityInBundle(path, id, opts.reason);
+    if (opts.dryRun === true) {
+      const preview = previewCapabilityDecision(path, id, "reject", { reason: opts.reason });
+      for (const line of renderApprovalPreview(preview)) io.out(line);
+      return 0;
+    }
+    result = rejectCapabilityInBundle(path, id, opts.reason, { reviewer: opts.reviewer });
   } catch (err) {
     if (err instanceof CapabilityReviewError) {
       io.err(`error ${err.code}: ${err.message}`);
@@ -494,6 +531,7 @@ function runReject(path: string, id: string, opts: { reason?: string }, io: CliI
     result.projectionsChanged,
     result.bundleDir,
   );
+  reportDecisionRecord(io, result.record, result.history);
   if (result.retainedBackup) {
     io.out(
       `  The replaced bundle backup could not be removed; it remains at ${result.retainedBackup}.`,

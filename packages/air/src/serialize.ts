@@ -1,13 +1,21 @@
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { AirDocument } from "./schema.js";
+import { type AirLoadOptions, migrateAir } from "./version.js";
 
-/** Validate and normalize an arbitrary object into a canonical AirDocument. */
-export function loadAirDocument(data: unknown): AirDocument {
-  return AirDocument.parse(data);
+/**
+ * Validate and normalize an arbitrary object into a canonical AirDocument.
+ * Every reader of an AIR document passes through here, so this is where the
+ * format version is checked (a newer major version is refused, an older one
+ * warns through `options.onWarning`) and where registered migrations run —
+ * before schema validation, on the raw object, because a shape change is
+ * exactly what the current schema cannot parse.
+ */
+export function loadAirDocument(data: unknown, options: AirLoadOptions = {}): AirDocument {
+  return AirDocument.parse(migrateAir(data, options));
 }
 
 /** Parse an AIR document from YAML text (defaults applied, structure validated). */
-export function airFromYaml(text: string): AirDocument {
+export function airFromYaml(text: string, options: AirLoadOptions = {}): AirDocument {
   // The AIR is Anvil's OWN trusted, self-generated document — not an untrusted
   // upload. A large bundle legitimately repeats sub-structures (shared retry
   // condition lists, error shapes, schema fragments), and the `yaml` parser's
@@ -19,12 +27,12 @@ export function airFromYaml(text: string): AirDocument {
   // protection. Combined with `aliasDuplicateObjects: false` in `airToYaml`,
   // freshly generated bundles carry no aliases at all — this keeps already
   // written (or older) bundles loadable too.
-  return loadAirDocument(parseYaml(text, { maxAliasCount: -1 }));
+  return loadAirDocument(parseYaml(text, { maxAliasCount: -1 }), options);
 }
 
 /** Parse an AIR document from JSON text. */
-export function airFromJson(text: string): AirDocument {
-  return loadAirDocument(JSON.parse(text));
+export function airFromJson(text: string, options: AirLoadOptions = {}): AirDocument {
+  return loadAirDocument(JSON.parse(text), options);
 }
 
 /**

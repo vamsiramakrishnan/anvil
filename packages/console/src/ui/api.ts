@@ -174,6 +174,12 @@ export function createConsoleApi(options: ConsoleApiOptions = {}) {
     packs: (id: string) => call("packs", { id }),
     benchmark: (id: string) => call("benchmark", { id }),
     drift: (id: string, against: string) => call("drift", { id }, undefined, { against }),
+    history: (id: string) => call("history", { id }),
+    manifest: (id: string) => call("manifest", { id }),
+    validateManifest: (id: string, body: ConsoleRequest<"validateManifest">) =>
+      call("validateManifest", { id }, body),
+    writeManifest: (id: string, body: ConsoleRequest<"writeManifest">) =>
+      call("writeManifest", { id }, body),
     approveOperations: (id: string, body: ConsoleRequest<"approveOperations">) =>
       call("approveOperations", { id }, body),
     approveCapability: (id: string, capId: string, body: ConsoleRequest<"approveCapability">) =>

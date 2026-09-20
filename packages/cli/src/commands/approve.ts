@@ -1,4 +1,12 @@
-import { approveOperationsInBundle, type ReprojectionDeps } from "@anvil/generators";
+import {
+  type ApprovalRecord,
+  approveOperationsInBundle,
+  type HistoryEntry,
+  previewOperationApproval,
+  type ReprojectionDeps,
+  type ReviewIdentity,
+  renderApprovalPreview,
+} from "@anvil/generators";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
@@ -19,6 +27,11 @@ const DERIVED_RECORD_FILES = new Set([
   "simulation.report.json",
 ]);
 
+export interface ApproveOptions extends ReviewIdentity {
+  /** Stage the approval in memory and print what would change; write nothing. */
+  dryRun?: boolean;
+}
+
 /** `anvil approve` — approve and atomically re-project the complete bundle. */
 export function registerApprove(parent: Command, ctx: CommandContext): void {
   annotate(
@@ -26,12 +39,21 @@ export function registerApprove(parent: Command, ctx: CommandContext): void {
       .command("approve")
       .summary("Approve operations so they are exposed by the generated artifacts.")
       .description(
-        "Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together. Receipt-bound gateway imports refuse in-place approval and provide the exact manifest re-import command so import-to-approval lineage stays immutable.",
+        "Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together; the replaced generation is retained under .anvil/history (see `anvil rollback`) and the decision is appended to .anvil/approvals.jsonl with the reviewer, the states that moved, and the bundle hash before and after. Receipt-bound gateway imports refuse in-place approval and provide the exact manifest re-import command so import-to-approval lineage stays immutable.",
       )
       .argument("<path>", "generated bundle directory or air.yaml")
       .argument("<operation-ids...>", "operation ids to approve")
-      .action((path: string, ids: string[]) => {
-        ctx.code = runApprove(path, ids, ctx.io);
+      .option(
+        "--reviewer <id>",
+        "who is approving, recorded verbatim in the approval record (absent records 'unrecorded')",
+      )
+      .option("--note <note>", "review note persisted with the decision")
+      .option(
+        "--dry-run",
+        "run every gate and print what would change across the MCP, CLI, and skill surfaces; write nothing",
+      )
+      .action((path: string, ids: string[], opts: ApproveOptions) => {
+        ctx.code = runApprove(path, ids, ctx.io, {}, opts);
       }),
     { mutates: true },
   );
@@ -46,12 +68,17 @@ export function runApprove(
   ids: string[],
   io: CliIO,
   deps: ReprojectionDeps = {},
+  opts: ApproveOptions = {},
 ): number {
+  if (opts.dryRun === true) {
+    for (const line of renderApprovalPreview(previewOperationApproval(path, ids))) io.out(line);
+    return 0;
+  }
   const {
     requested,
     newlyApproved,
     reprojection: result,
-  } = approveOperationsInBundle(path, ids, deps);
+  } = approveOperationsInBundle(path, ids, deps, { reviewer: opts.reviewer, note: opts.note });
 
   io.out(
     `Approved ${newlyApproved.length} new operation(s) (${requested.length} requested) and atomically regenerated ${result.generatedFileCount} bundle files in ${result.bundleDir}.`,
@@ -65,12 +92,27 @@ export function runApprove(
     result.projectionsChanged,
     result.bundleDir,
   );
+  reportDecisionRecord(io, result.record, result.history);
   if (result.retainedBackup) {
     io.out(
       `  The replaced bundle backup could not be removed; it remains at ${result.retainedBackup}.`,
     );
   }
   return 0;
+}
+
+/** The record line every decision prints: who, when, and which generation was retained. */
+export function reportDecisionRecord(
+  io: CliIO,
+  record: ApprovalRecord,
+  history: HistoryEntry | undefined,
+): void {
+  io.out(
+    `  Recorded by ${record.reviewer} at ${record.recordedAt} (bundle ${record.bundleHash.before.slice(0, 12)} → ${record.bundleHash.after.slice(0, 12)}) in .anvil/approvals.jsonl.`,
+  );
+  if (history) {
+    io.out(`  Retained the replaced generation as ${history.id}; \`anvil rollback\` restores it.`);
+  }
 }
 
 export function reportPreservedStaleArtifacts(

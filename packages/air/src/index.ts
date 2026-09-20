@@ -32,5 +32,6 @@ export * from "./schema.js";
 export * from "./schema-branches.js";
 export * from "./serialize.js";
 export * from "./text.js";
+export * from "./version.js";
 export * from "./wire.js";
 export * from "./workflow-surface.js";

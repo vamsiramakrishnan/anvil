@@ -1,4 +1,4 @@
-import { type Diagnostic, nearestMatch, type Operation } from "@anvil/air";
+import { airCompatibility, type Diagnostic, nearestMatch, type Operation } from "@anvil/air";
 import { isMap, LineCounter, parseDocument } from "yaml";
 import { AnvilManifest, operationMatchesKey } from "./manifest.js";
 
@@ -78,7 +78,31 @@ export function parseManifestDetailed(text: string): ManifestParseResult {
   }
   const raw = doc.toJS() as unknown;
   const parsed = AnvilManifest.safeParse(raw ?? {});
-  if (parsed.success) return { ok: true, manifest: parsed.data };
+  if (parsed.success) {
+    // A manifest written for a newer toolchain may use keys this one does not
+    // know; the strict-key rule already refuses those, but a `version` that
+    // says so outright is refused first, with the reason, rather than as a
+    // scatter of "unknown key" issues.
+    const compatibility =
+      parsed.data.version === undefined ? undefined : airCompatibility(parsed.data.version);
+    if (
+      compatibility &&
+      (compatibility.verdict === "newer_major" || compatibility.verdict === "unparseable")
+    ) {
+      const pos = doc.getIn(["version"], true) as { range?: [number, number, number] } | undefined;
+      return {
+        ok: false,
+        issues: [
+          {
+            path: "version",
+            message: compatibility.message.replace(/^AIR anvilVersion/, "manifest version"),
+            ...(pos?.range ? counter.linePos(pos.range[0]) : {}),
+          },
+        ],
+      };
+    }
+    return { ok: true, manifest: parsed.data };
+  }
   // The position of the KEY at `path` (where a reviewer's eye lands), falling
   // back to the value, then to the nearest located ancestor.
   const locate = (path: readonly PropertyKey[]): { line: number; col: number } | undefined => {

@@ -702,6 +702,8 @@ export const QueryTemplateManifest = z
 export type QueryTemplateManifest = z.infer<typeof QueryTemplateManifest>;
 
 export const AnvilManifest = z.strictObject({
+  /** The toolchain format version the manifest was written for (`AIR_VERSION`); a newer major is refused. */
+  version: z.string().optional(),
   service: z
     .strictObject({
       name: z.string().optional(),

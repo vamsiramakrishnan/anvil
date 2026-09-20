@@ -5,10 +5,15 @@
  * skill + CLI to agents over MCP resources.
  */
 
+export * from "./approval-preview.js";
+export * from "./approval-record.js";
 export * from "./bundle.js";
 export * from "./bundle-discovery.js";
+export * from "./bundle-history.js";
 export * from "./bundle-io.js";
+export * from "./bundle-manifest.js";
 export * from "./bundle-reproject.js";
+export * from "./bundle-rollback.js";
 export * from "./bundle-transaction.js";
 export * from "./capability-view.js";
 export * from "./catalog.js";
@@ -25,4 +30,5 @@ export * from "./mock.js";
 export * from "./plugins.js";
 export * from "./resources.js";
 export * from "./sdk/index.js";
+export * from "./served-surface.js";
 export * from "./skill.js";

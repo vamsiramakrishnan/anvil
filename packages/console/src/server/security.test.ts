@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -243,6 +243,28 @@ describe("5. JSON bodies only, capped, validated", () => {
       reason: "",
     });
     expect(decision.status).toBe(400);
+  });
+});
+
+describe("the manifest write is a mutation like any other", () => {
+  it("is refused without the token or from another origin, and the file is never touched", async () => {
+    const path = join(ws.bundleDir, ".anvil", "manifest.yaml");
+    const body = { text: "operations: {}\n" };
+    const noToken = await client.post("/api/bundles/payments/manifest", body, { token: null });
+    expect(noToken.status).toBe(403);
+    expect(zErrorEnvelope.parse(noToken.json).error.code).toBe("console/forbidden");
+    const otherOrigin = await client.post("/api/bundles/payments/manifest", body, {
+      origin: "http://localhost:1",
+    });
+    expect(otherOrigin.status).toBe(403);
+    const validate = await client.post("/api/bundles/payments/manifest/validate", body, {
+      token: null,
+    });
+    expect(validate.status).toBe(403);
+    expect(existsSync(path)).toBe(false);
+    const ok = await client.post("/api/bundles/payments/manifest", body);
+    expect(ok.status, ok.text).toBe(200);
+    expect(existsSync(path)).toBe(true);
   });
 });
 

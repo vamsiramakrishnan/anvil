@@ -1,6 +1,13 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AirDocument, airFromJson, airFromYaml, airToJson, airToYaml } from "@anvil/air";
+import {
+  type AirDocument,
+  type AirLoadOptions,
+  airFromJson,
+  airFromYaml,
+  airToJson,
+  airToYaml,
+} from "@anvil/air";
 
 /**
  * The canonical AIR document on disk: resolve it, read it, write it back in
@@ -26,11 +33,15 @@ export function resolveAirPath(path?: string): string {
   return path;
 }
 
-/** Load and validate the AIR document at a file or generated-directory path. */
-export function loadAir(path?: string): AirDocument {
+/**
+ * Load and validate the AIR document at a file or generated-directory path.
+ * The format-version gate runs inside the parse (`options.onWarning` hears
+ * about an older document; a newer-major one is refused).
+ */
+export function loadAir(path?: string, options: AirLoadOptions = {}): AirDocument {
   const resolved = resolveAirPath(path);
   const text = readFileSync(resolved, "utf8");
-  return resolved.endsWith(".json") ? airFromJson(text) : airFromYaml(text);
+  return resolved.endsWith(".json") ? airFromJson(text, options) : airFromYaml(text, options);
 }
 
 /**

@@ -3,14 +3,12 @@ import { join } from "node:path";
 import {
   type AirDocument,
   agentPropKey,
-  type Operation,
   operationBusinessInputCliFlag,
   operationInputSchema,
   operationSafetyInputKeys,
-  planWorkflowSurface,
 } from "@anvil/air";
 import { capabilityDisclosureBudget, diffContracts } from "@anvil/compiler";
-import { bundleHash, loadBundleAir, readBundleDir } from "@anvil/generators";
+import { bundleHash, loadBundleAir, readBundleDir, servedSurface } from "@anvil/generators";
 import {
   buildRefinementPlan,
   describeTarget,
@@ -107,24 +105,8 @@ export function workspaceView(root: string): Workspace {
   };
 }
 
-function servedSurface(air: AirDocument) {
-  const opsById = new Map(air.operations.map((op) => [op.id, op]));
-  const approved = new Map<string, Operation>(
-    [...opsById].filter(([, op]) => op.state === "approved"),
-  );
-  const plan = planWorkflowSurface(air.workflows, approved, opsById);
-  const before = [...approved.values()].map((op) => op.mcp.toolName);
-  const after = [
-    ...[...approved.values()]
-      .filter((op) => !plan.superseded.has(op.id))
-      .map((op) => op.mcp.toolName),
-    ...plan.registrations
-      .filter((r) => r.skipReason === undefined)
-      .map((r) => r.workflow.id.replace(/[^A-Za-z0-9_-]/g, "_")),
-  ];
-  return { plan, before, after };
-}
-
+// The served surface (`servedSurface`) is the generators' one computation of
+// "which tools would an agent see", shared with the approval preview.
 function planVerdict(plan: ReturnType<typeof servedSurface>["plan"], workflowId: string) {
   const skipReason = plan.registrations.find((r) => r.workflow.id === workflowId)?.skipReason;
   return {

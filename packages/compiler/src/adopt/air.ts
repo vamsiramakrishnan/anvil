@@ -9,6 +9,7 @@
  * auto-retry) — unknown side effect beats assumed safety.
  */
 import {
+  AIR_VERSION,
   type AirDocument,
   type AuthRequirement,
   type Effect,
@@ -139,7 +140,7 @@ export function airFromMcpSurface(
   const operations = snapshot.tools.map((t) => operationFromTool(serviceId, capabilityId, t));
 
   return loadAirDocument({
-    anvilVersion: "0.1.0",
+    anvilVersion: AIR_VERSION,
     service: {
       id: serviceId,
       version: snapshot.server.version || "0.0.0",

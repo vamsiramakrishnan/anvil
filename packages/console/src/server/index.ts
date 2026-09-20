@@ -7,7 +7,9 @@ import { artifactsView, artifactView, assuranceView } from "./assurance.js";
 import { businessHandlers } from "./business.js";
 import { businessExecutions } from "./business-executions.js";
 import * as creation from "./creation.js";
+import { historyView } from "./history.js";
 import { createRequestListener, type Handlers } from "./http.js";
+import * as manifest from "./manifest.js";
 import type { Request } from "./mutations.js";
 import * as mutations from "./mutations.js";
 import * as views from "./read-models.js";
@@ -119,6 +121,12 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
     benchmark: ({ params }) => views.benchmarkView(root, param(params, "id")),
     drift: ({ params, query }) =>
       views.driftView(root, param(params, "id"), query.get("against") ?? ""),
+    history: ({ params }) => historyView(root, param(params, "id")),
+    manifest: ({ params }) => manifest.manifestView(root, param(params, "id")),
+    validateManifest: ({ params, body }) =>
+      manifest.validateManifest(root, param(params, "id"), body as Request<"validateManifest">),
+    writeManifest: ({ params, body }) =>
+      manifest.writeManifest(root, param(params, "id"), body as Request<"writeManifest">),
     // Bodies reach a handler only after `dispatchApi` validated them against the
     // route's own request schema, so each cast names a shape already proven.
     approveOperations: ({ params, body }) =>
