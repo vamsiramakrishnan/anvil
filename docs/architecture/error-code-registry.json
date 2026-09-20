@@ -25,9 +25,9 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 414,
-  "asserted": 298,
-  "unasserted": 116,
+  "total": 426,
+  "asserted": 304,
+  "unasserted": 122,
   "codes": {
     "apiconnect/empty_export": {
       "packages": [
@@ -1395,6 +1395,78 @@
       "asserted": false
     },
     "legacy/bridge_plan_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/bridge_serve_broker_unreachable": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/bridge_serve_conformance_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_serve_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_serve_host_refused": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_serve_invalid_broker": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/bridge_serve_invalid_port": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/bridge_serve_listen_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_serve_not_conformant": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/bridge_serve_reply_destination_missing": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": true
+    },
+    "legacy/bridge_serve_report_failed": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_serve_report_lineage_mismatch": {
+      "packages": [
+        "cli"
+      ],
+      "asserted": false
+    },
+    "legacy/bridge_serve_report_mismatch": {
       "packages": [
         "cli"
       ],

@@ -1,5 +1,6 @@
 import type { ConsoleServer } from "@anvil/console";
 import type { TransportFactory } from "@anvil/harness";
+import type { LegacyBridgeServer } from "@anvil/legacy-bridge";
 import type { AgentDriver } from "@anvil/refinement";
 import type { CliIO } from "../io.js";
 import type { ToolCliDeps } from "../tool-cli.js";
@@ -15,6 +16,8 @@ export interface AnvilCliDeps extends ToolCliDeps {
   cleanupGatewayBundleBackup?: (path: string) => void;
   /** Receives the running `anvil console` server so a test can drive and close it. */
   onConsoleServer?: (server: ConsoleServer) => void;
+  /** Receives the running `anvil legacy bridge serve` server so a test can drive and close it. */
+  onLegacyBridgeServer?: (server: LegacyBridgeServer) => void;
 }
 
 /**

@@ -24,12 +24,24 @@
  * What is and is not exercised by this package's tests: `encodeStompFrame`
  * and `parseStompFrames` are pure functions with no I/O, and are unit tested
  * directly. `StompClient.connect`/`requestReply`, which open a real
- * `node:net` socket, are NEVER called by any test in this package — per the
- * lane's own rule, nothing here connects to a real broker, ever, including a
- * locally spun-up fake one. `broker-double.ts`'s `InProcessBrokerDouble` is
- * what conformance and the facade actually run against; this class exists so
- * a real deployment has a genuine transport to configure, not so a test can
- * exercise it.
+ * `node:net` socket, are driven end to end in `stomp-client.socket.test.ts`
+ * against `stomp-server-double.ts` — an in-process STOMP 1.2 server double
+ * that listens on a loopback port for exactly as long as one test runs. That
+ * is still never a real broker: nothing in this package, its tests, or the
+ * CLI commands built on it opens a connection to anything outside the test
+ * process. `broker-double.ts`'s `InProcessBrokerDouble` remains the default
+ * conformance fixture; the server double exists so the socket path this
+ * class owns (framing across chunk boundaries, correlation under concurrency,
+ * peer close, credential refusal) is proven rather than assumed.
+ *
+ * Lifecycle, stated once: a client connects at most once and never
+ * reconnects. When the peer closes the socket — after an ERROR frame, on a
+ * broker restart, on a network fault — every in-flight exchange is rejected
+ * with a transport error and the client is finished: `requestReply` refuses
+ * from then on, and so does a second `connect()`. Silently re-dialling would
+ * re-subscribe a reply destination and resume answering for a binding under
+ * conditions nobody reviewed; a deployment-local bridge that lost its broker
+ * is restarted by an operator, not by itself.
  */
 import { Socket } from "node:net";
 import {
@@ -181,8 +193,8 @@ export interface StompClientOptions {
 
 /**
  * A real STOMP 1.2 request/reply client. Constructing one is safe (no I/O);
- * `connect()` and `requestReply()` open and use a real socket and are never
- * called by this package's own tests — see the file header.
+ * `connect()` and `requestReply()` open and use a real socket — see the file
+ * header for how they are tested and for the no-reconnect lifecycle.
  */
 export class StompClient implements QueueBrokerClient {
   private socket: Socket | undefined;
@@ -191,22 +203,56 @@ export class StompClient implements QueueBrokerClient {
     string,
     { resolve: (reply: QueueReply) => void; reject: (error: Error) => void }
   >();
-  private connected = false;
+  private state: "idle" | "connecting" | "connected" | "closed" = "idle";
 
   constructor(private readonly options: StompClientOptions) {}
 
+  /** `true` between a successful `connect()` and the moment either side
+   *  closes the socket. */
+  get isConnected(): boolean {
+    return this.state === "connected";
+  }
+
   async connect(): Promise<void> {
+    if (this.state !== "idle") {
+      throw new QueueBrokerTransportError(
+        this.state === "closed"
+          ? "STOMP client was closed and never reconnects — construct a new client"
+          : "STOMP client is already connected",
+      );
+    }
+    this.state = "connecting";
     const timeoutMs = this.options.connectTimeoutMs ?? 10_000;
     await new Promise<void>((resolve, reject) => {
       const socket = new Socket();
       this.socket = socket;
-      const timer = setTimeout(() => {
-        socket.destroy();
-        reject(new QueueBrokerTransportError(`STOMP connect to ${this.options.host} timed out`));
-      }, timeoutMs);
-      socket.once("error", (err) => {
+      let settled = false;
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
-        reject(new QueueBrokerTransportError(`STOMP transport error: ${err.message}`));
+        this.state = "closed";
+        socket.destroy();
+        reject(error);
+      };
+      const succeed = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.state = "connected";
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        fail(new QueueBrokerTransportError(`STOMP connect to ${this.options.host} timed out`));
+      }, timeoutMs);
+      socket.on("error", (err) => {
+        fail(new QueueBrokerTransportError(`STOMP transport error: ${err.message}`));
+        this.failPending(`STOMP transport error: ${err.message}`);
+      });
+      socket.on("close", () => {
+        fail(new QueueBrokerTransportError("STOMP connection closed before CONNECTED"));
+        this.state = "closed";
+        this.failPending("STOMP connection closed by the broker");
       });
       socket.once("connect", () => {
         socket.write(
@@ -218,24 +264,30 @@ export class StompClient implements QueueBrokerClient {
           }),
         );
       });
-      socket.on("data", (chunk) => this.onData(chunk, resolve, reject, timer));
+      socket.on("data", (chunk) => this.onData(chunk, succeed, fail));
       socket.connect(this.options.port, this.options.host);
     });
+  }
+
+  /** Reject every in-flight exchange: the socket is gone, so no reply can
+   *  ever arrive for them. Idempotent — safe to call from both `error` and
+   *  the `close` that always follows it. */
+  private failPending(reason: string): void {
+    const waiters = [...this.pending.values()];
+    this.pending.clear();
+    for (const waiter of waiters) waiter.reject(new QueueBrokerTransportError(reason));
   }
 
   private onData(
     chunk: Buffer,
     onConnected: () => void,
     onConnectError: (err: Error) => void,
-    connectTimer: ReturnType<typeof setTimeout>,
   ): void {
     this.buffer = Buffer.concat([this.buffer, chunk]);
     const { frames, remaining } = parseStompFrames(this.buffer);
     this.buffer = remaining;
     for (const frame of frames) {
-      if (frame.command === "CONNECTED" && !this.connected) {
-        this.connected = true;
-        clearTimeout(connectTimer);
+      if (frame.command === "CONNECTED" && this.state === "connecting") {
         this.socket?.write(
           encodeStompFrame("SUBSCRIBE", {
             id: "legacy-bridge-replies",
@@ -246,8 +298,7 @@ export class StompClient implements QueueBrokerClient {
         onConnected();
         continue;
       }
-      if (frame.command === "ERROR" && !this.connected) {
-        clearTimeout(connectTimer);
+      if (frame.command === "ERROR" && this.state === "connecting") {
         onConnectError(new QueueBrokerTransportError(frame.body || "STOMP CONNECT refused"));
         continue;
       }
@@ -261,6 +312,9 @@ export class StompClient implements QueueBrokerClient {
         continue;
       }
       if (frame.command === "ERROR") {
+        // A broker sends ERROR and then closes the connection (spec §4.2).
+        // Reject the correlated exchange with the broker's own reason now;
+        // the close that follows rejects everything else still in flight.
         const correlationId = frame.headers["correlation-id"];
         const waiter = correlationId ? this.pending.get(correlationId) : undefined;
         if (waiter) {
@@ -272,7 +326,7 @@ export class StompClient implements QueueBrokerClient {
   }
 
   async requestReply(options: QueueRequestReplyOptions): Promise<QueueReply> {
-    if (!this.socket || !this.connected) {
+    if (!this.socket || this.state !== "connected") {
       throw new QueueBrokerTransportError("STOMP client is not connected");
     }
     const socket = this.socket;
@@ -295,8 +349,10 @@ export class StompClient implements QueueBrokerClient {
   }
 
   close(): void {
-    this.socket?.end();
+    const socket = this.socket;
     this.socket = undefined;
-    this.connected = false;
+    this.state = "closed";
+    this.failPending("STOMP client closed");
+    socket?.end();
   }
 }

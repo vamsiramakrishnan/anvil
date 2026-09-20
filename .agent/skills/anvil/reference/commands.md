@@ -789,6 +789,22 @@ Options:
 - `--out <file>` — write without overwriting different content
 - `--json` — emit the complete conformance report
 
+##### `anvil legacy bridge serve`  *(mutates)*
+`anvil legacy bridge serve [options] <binding>`
+
+Host the conformance-passed facade on 127.0.0.1 over one STOMP broker connection.
+
+Serves POST /invoke and GET /readyz for exactly one reviewed binding. Refuses unless the binding's runtime status is conformance_passed and --conformance is the exact, fully-passed report that promoted it — a binding edited by hand to claim the status cannot start. Connects one STOMP 1.2 client to --broker with credentials read from ANVIL_LEGACY_BROKER_LOGIN and ANVIL_LEGACY_BROKER_PASSCODE (never from a flag or the URL, never printed). Binds 127.0.0.1 unless --host names another address, which is served with a warning: the facade is unauthenticated HTTP meant to sit beside the runtime as its protocol facade. One transport shape only: a message binding whose reply mode is reply_to or fixed_destination. Serving proves nothing about live readiness that conformance did not — the broker, destination, and identity are still the unverified live facts the bridge plan lists. Stops on SIGTERM or SIGINT.
+
+Options:
+- `--conformance <file>` — the conformance report that promoted the binding
+- `--broker <url>` — STOMP broker as stomp://host[:port] (default port 61613); credentials come from the environment, never from this URL
+- `--reply-destination <destination>` — reply destination this bridge subscribes to (required unless the binding pins one)
+- `--vhost <name>` — STOMP virtual host (default: the broker host)
+- `--port <n>` — port on the bind address (default: a free port)
+- `--host <address>` — bind address (default: 127.0.0.1); a non-loopback address is served only when given here, with a warning
+- `--json` — print one { url, port } document, then keep serving
+
 #### `anvil legacy plan`  *(mutates)*
 `anvil legacy plan [options] <manifest>`
 

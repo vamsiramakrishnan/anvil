@@ -182,15 +182,40 @@ exactly one broker exchange, never an internal retry) against a deterministic
 in-process broker double, and — only on a full pass — emits the binding
 promoted from `not_implemented` to `conformance_passed`, addressed to that
 exact report. It never connects to a real broker, in this command or in any
-test that exercises it.
+test that exercises it. The report records which double it ran against:
+`in_process_double` (a fake at the bridge's broker-client seam) or
+`stomp_server_double` (a STOMP 1.2 server fake on a loopback port, so the
+bridge's real STOMP client is the transport under test — what the SDK's
+`stompServerBrokerHarness()` selects).
+
+Host the proven facade only from the promoted binding and its report:
+
+```bash
+ANVIL_LEGACY_BROKER_LOGIN=... ANVIL_LEGACY_BROKER_PASSCODE=... \
+anvil legacy bridge serve binding.conformance-passed.json \
+  --conformance conformance.json --broker stomp://broker.internal:61613 \
+  --reply-destination /queue/bridge.replies --json
+```
+
+`serve` refuses a binding whose runtime status is not `conformance_passed`,
+a report whose hash is not the one the binding names, and a report that was
+not earned by the same reviewed capability — editing the JSON cannot start
+it. Broker credentials come from those two environment variable names only
+and are never printed. It binds 127.0.0.1; `--host` serves another address
+with a warning. It prints `{ url, port }` under `--json`, serves
+`POST /invoke` and `GET /readyz`, and stops on SIGTERM. Serving is the
+first live connection in this workflow, and it proves nothing conformance
+did not: the broker, destination, and identity are still the plan's
+unverified live facts until the deployment observes them.
 
 The honest limits: one protocol client (a zero-dependency STOMP 1.2 client
 over `node:net`, chosen — and documented in its own file header — as the
 client that keeps this package's dependency contract as honest as the four
-generated SDKs'), one transport (message request/reply), and no live broker
-was ever reached to produce this result. `conformance_passed` proves the
-bridge's own logic against a double, not that a real IBM MQ, JMS, or AMQP
-broker accepts a real connection. WebLogic/WebSphere/JBoss remote EJB, WCF,
-MSMQ, JCA resource adapters, stored procedures, and batch/scheduler jobs
-remain exactly as undescribed as the rest of this page says: a bridge plan
-and nothing that executes it.
+generated SDKs'), one transport (message request/reply over `reply_to` or
+`fixed_destination`), and no live broker was ever reached to produce a
+conformance result. `conformance_passed` proves the bridge's own logic
+against a double, not that a real IBM MQ, JMS, or AMQP broker accepts a real
+connection. WebLogic/WebSphere/JBoss remote EJB, WCF, MSMQ, JCA resource
+adapters, stored procedures, and batch/scheduler jobs remain exactly as
+undescribed as the rest of this page says: a bridge plan and nothing that
+executes it.

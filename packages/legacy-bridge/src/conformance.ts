@@ -10,7 +10,13 @@ import {
   legacyBridgeConformancePassed,
   promoteLegacyCapabilityBindingToConformancePassed,
 } from "@anvil/compiler/legacy";
-import { InProcessBrokerDouble, type LegacyBrokerHandler } from "./broker-double.js";
+import type { LegacyBrokerHandler } from "./broker-double.js";
+import {
+  type BrokerDoubleAccounting,
+  type ConformanceBrokerHarness,
+  type ConformanceBrokerOptions,
+  inProcessBrokerHarness,
+} from "./conformance-broker.js";
 import { createLegacyBridgeFacade, type LegacyBridgeTelemetryRecord } from "./facade.js";
 import { buildQueueWireBinding } from "./wire-binding.js";
 
@@ -21,44 +27,63 @@ export interface LegacyBridgeConformanceResult {
   promotedBinding?: LegacyCapabilityBinding;
 }
 
+export interface LegacyBridgeConformanceOptions {
+  /** Which broker double to drive every scenario against. Defaults to the
+   *  in-process double; `stompServerBrokerHarness()` runs the same scenarios
+   *  through the real STOMP client over a loopback server double instead.
+   *  Neither is ever a real broker. */
+  broker?: ConformanceBrokerHarness;
+}
+
 /** A pure echo — never a stand-in for reviewed business logic. It exists to
  *  make round-tripping observable (the reply IS the request), which is what
  *  the wire-serialization and reply-correlation checks below need and all
  *  they are entitled to invent. */
 const ECHO_HANDLER: LegacyBrokerHandler = (body) => body;
 
+type ScenarioRunner = (
+  binding: LegacyCapabilityBinding,
+  wireBinding: QueueRequestReplyWireBinding,
+  broker: ConformanceBrokerHarness,
+) => Promise<string>;
+
 interface Scenario {
-  run(binding: LegacyCapabilityBinding, wireBinding: QueueRequestReplyWireBinding): Promise<string>;
+  run: ScenarioRunner;
 }
 
 async function withFacade<T>(
   binding: LegacyCapabilityBinding,
   wireBinding: QueueRequestReplyWireBinding,
+  broker: ConformanceBrokerHarness,
   handler: LegacyBrokerHandler,
-  brokerOptions: ConstructorParameters<typeof InProcessBrokerDouble>[1],
+  brokerOptions: ConformanceBrokerOptions,
   use: (ctx: {
     baseUrl: string;
-    double: InProcessBrokerDouble;
+    double: BrokerDoubleAccounting;
     telemetry: LegacyBridgeTelemetryRecord[];
   }) => Promise<T>,
 ): Promise<T> {
-  const double = new InProcessBrokerDouble(handler, brokerOptions);
+  const session = await broker.open(handler, brokerOptions, wireBinding);
   const telemetry: LegacyBridgeTelemetryRecord[] = [];
-  const listener = createLegacyBridgeFacade({
-    binding,
-    wireBinding,
-    client: double,
-    onTelemetry: (record) => telemetry.push(record),
-  });
-  const server = createServer(listener);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("facade server has no port");
-  const baseUrl = `http://127.0.0.1:${address.port}`;
   try {
-    return await use({ baseUrl, double, telemetry });
+    const listener = createLegacyBridgeFacade({
+      binding,
+      wireBinding,
+      client: session.client,
+      onTelemetry: (record) => telemetry.push(record),
+    });
+    const server = createServer(listener);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("facade server has no port");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      return await use({ baseUrl, double: session.accounting, telemetry });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await session.close();
   }
 }
 
@@ -81,21 +106,28 @@ function assertCheck(condition: boolean, message: string): void {
 
 const SCENARIOS: Record<string, Scenario> = {
   "legacy-bridge/target_binding": {
-    async run(binding, wireBinding) {
-      return withFacade(binding, wireBinding, ECHO_HANDLER, {}, async ({ baseUrl, double }) => {
-        const res = await invoke(baseUrl, '{"probe":true}');
-        assertCheck(res.status === 200, `expected 200, got ${res.status}`);
-        assertCheck(
-          double.requestDestinations.at(-1) === binding.transport.target,
-          "the bridge sent to a destination other than the reviewed target",
-        );
-        return `sent to reviewed target '${binding.transport.target}'`;
-      });
+    async run(binding, wireBinding, broker) {
+      return withFacade(
+        binding,
+        wireBinding,
+        broker,
+        ECHO_HANDLER,
+        {},
+        async ({ baseUrl, double }) => {
+          const res = await invoke(baseUrl, '{"probe":true}');
+          assertCheck(res.status === 200, `expected 200, got ${res.status}`);
+          assertCheck(
+            double.requestDestinations.at(-1) === binding.transport.target,
+            "the bridge sent to a destination other than the reviewed target",
+          );
+          return `sent to reviewed target '${binding.transport.target}'`;
+        },
+      );
     },
   },
   "legacy-bridge/wire_serialization": {
-    async run(binding, wireBinding) {
-      return withFacade(binding, wireBinding, ECHO_HANDLER, {}, async ({ baseUrl }) => {
+    async run(binding, wireBinding, broker) {
+      return withFacade(binding, wireBinding, broker, ECHO_HANDLER, {}, async ({ baseUrl }) => {
         const payload = { refundId: "r-1", amountCents: 4200, nested: { keep: true } };
         const body = JSON.stringify(payload);
         const res = await invoke(baseUrl, body);
@@ -110,34 +142,41 @@ const SCENARIOS: Record<string, Scenario> = {
     },
   },
   "legacy-bridge/authorization": {
-    async run(binding, wireBinding) {
-      return withFacade(binding, wireBinding, ECHO_HANDLER, {}, async ({ baseUrl, double }) => {
-        const secret = "Bearer reviewer-must-never-see-this";
-        await invoke(baseUrl, '{"a":1}', { authorization: secret });
-        assertCheck(
-          double.requestDestinations.length === 1,
-          "the call did not reach the broker exactly once",
-        );
-        return (
-          `enforces '${binding.semantics.authorization.mode}': the inbound Authorization header ` +
-          "has no field on the queue exchange to travel through, so it structurally cannot reach the broker"
-        );
-      });
+    async run(binding, wireBinding, broker) {
+      return withFacade(
+        binding,
+        wireBinding,
+        broker,
+        ECHO_HANDLER,
+        {},
+        async ({ baseUrl, double }) => {
+          const secret = "Bearer reviewer-must-never-see-this";
+          await invoke(baseUrl, '{"a":1}', { authorization: secret });
+          assertCheck(
+            double.requestDestinations.length === 1,
+            "the call did not reach the broker exactly once",
+          );
+          return (
+            `enforces '${binding.semantics.authorization.mode}': the inbound Authorization header ` +
+            "has no field on the queue exchange to travel through, so it structurally cannot reach the broker"
+          );
+        },
+      );
     },
   },
   "legacy-bridge/timeout": {
-    async run(binding, wireBinding) {
-      return timeoutScenario(binding, wireBinding);
+    async run(binding, wireBinding, broker) {
+      return timeoutScenario(binding, wireBinding, broker);
     },
   },
   "legacy-bridge/stable_errors": {
-    async run(binding, wireBinding) {
-      return stableErrorScenario(binding, wireBinding);
+    async run(binding, wireBinding, broker) {
+      return stableErrorScenario(binding, wireBinding, broker);
     },
   },
   "legacy-bridge/completion": {
-    async run(binding, wireBinding) {
-      return withFacade(binding, wireBinding, ECHO_HANDLER, {}, async ({ baseUrl }) => {
+    async run(binding, wireBinding, broker) {
+      return withFacade(binding, wireBinding, broker, ECHO_HANDLER, {}, async ({ baseUrl }) => {
         const res = await invoke(baseUrl, '{"a":1}');
         assertCheck(res.status === 200, `expected 200, got ${res.status}`);
         assertCheck(
@@ -149,8 +188,8 @@ const SCENARIOS: Record<string, Scenario> = {
     },
   },
   "legacy-bridge/readiness": {
-    async run(binding, wireBinding) {
-      return withFacade(binding, wireBinding, ECHO_HANDLER, {}, async ({ baseUrl }) => {
+    async run(binding, wireBinding, broker) {
+      return withFacade(binding, wireBinding, broker, ECHO_HANDLER, {}, async ({ baseUrl }) => {
         const res = await fetch(`${baseUrl}/readyz`);
         assertCheck(res.status === 200, `expected /readyz 200, got ${res.status}`);
         return "readiness responds once constructed with a coherent binding and broker client";
@@ -158,41 +197,51 @@ const SCENARIOS: Record<string, Scenario> = {
     },
   },
   "legacy-bridge/telemetry": {
-    async run(binding, wireBinding) {
-      return withFacade(binding, wireBinding, ECHO_HANDLER, {}, async ({ baseUrl, telemetry }) => {
-        const secretMarker = "no-secrets-here-marker";
-        await invoke(baseUrl, JSON.stringify({ secret: secretMarker }));
-        assertCheck(telemetry.length === 1, "no telemetry record was emitted");
-        const record = telemetry[0];
-        const serialized = JSON.stringify(record);
-        assertCheck(!serialized.includes(secretMarker), "telemetry leaked request payload content");
-        assertCheck(
-          Object.keys(record ?? {})
-            .sort()
-            .join(",") === "latencyMs,operation,outcome,target",
-          "telemetry carries a field beyond operation, target, outcome, latency",
-        );
-        return "emits operation/target/outcome/latency telemetry with no payload content";
-      });
+    async run(binding, wireBinding, broker) {
+      return withFacade(
+        binding,
+        wireBinding,
+        broker,
+        ECHO_HANDLER,
+        {},
+        async ({ baseUrl, telemetry }) => {
+          const secretMarker = "no-secrets-here-marker";
+          await invoke(baseUrl, JSON.stringify({ secret: secretMarker }));
+          assertCheck(telemetry.length === 1, "no telemetry record was emitted");
+          const record = telemetry[0];
+          const serialized = JSON.stringify(record);
+          assertCheck(
+            !serialized.includes(secretMarker),
+            "telemetry leaked request payload content",
+          );
+          assertCheck(
+            Object.keys(record ?? {})
+              .sort()
+              .join(",") === "latencyMs,operation,outcome,target",
+            "telemetry carries a field beyond operation, target, outcome, latency",
+          );
+          return "emits operation/target/outcome/latency telemetry with no payload content";
+        },
+      );
     },
   },
   "legacy-bridge/idempotency": {
-    async run(binding, wireBinding) {
-      return idempotentReplayScenario(binding, wireBinding);
+    async run(binding, wireBinding, broker) {
+      return idempotentReplayScenario(binding, wireBinding, broker);
     },
   },
   "legacy-bridge/bounded_retry": {
-    async run(binding, wireBinding) {
+    async run(binding, wireBinding, broker) {
       // Bounded retry is only safe because a repeat with the same key never
       // re-executes the business side — proven exactly the way idempotent
       // replay is.
-      const detail = await idempotentReplayScenario(binding, wireBinding);
+      const detail = await idempotentReplayScenario(binding, wireBinding, broker);
       return `bounded retry is safe: ${detail}`;
     },
   },
   "legacy-bridge/reply_correlation": {
-    async run(binding, wireBinding) {
-      return withFacade(binding, wireBinding, ECHO_HANDLER, {}, async ({ baseUrl }) => {
+    async run(binding, wireBinding, broker) {
+      return withFacade(binding, wireBinding, broker, ECHO_HANDLER, {}, async ({ baseUrl }) => {
         const [a, b] = await Promise.all([
           invoke(baseUrl, JSON.stringify({ marker: "A" }), { "idempotency-key": "key-a" }),
           invoke(baseUrl, JSON.stringify({ marker: "B" }), { "idempotency-key": "key-b" }),
@@ -216,10 +265,12 @@ const SCENARIOS: Record<string, Scenario> = {
 async function timeoutScenario(
   binding: LegacyCapabilityBinding,
   wireBinding: QueueRequestReplyWireBinding,
+  broker: ConformanceBrokerHarness,
 ): Promise<string> {
   return withFacade(
     binding,
     wireBinding,
+    broker,
     ECHO_HANDLER,
     { silentDestinations: new Set([wireBinding.requestDestination]) },
     async ({ baseUrl }) => {
@@ -248,10 +299,12 @@ async function timeoutScenario(
 async function stableErrorScenario(
   binding: LegacyCapabilityBinding,
   wireBinding: QueueRequestReplyWireBinding,
+  broker: ConformanceBrokerHarness,
 ): Promise<string> {
   return withFacade(
     binding,
     wireBinding,
+    broker,
     ECHO_HANDLER,
     { refusedDestinations: new Set([wireBinding.requestDestination]) },
     async ({ baseUrl }) => {
@@ -274,35 +327,45 @@ async function stableErrorScenario(
 async function idempotentReplayScenario(
   binding: LegacyCapabilityBinding,
   wireBinding: QueueRequestReplyWireBinding,
+  broker: ConformanceBrokerHarness,
 ): Promise<string> {
   let counter = 0;
   const countingHandler: LegacyBrokerHandler = () => {
     counter += 1;
     return JSON.stringify({ executionNumber: counter });
   };
-  return withFacade(binding, wireBinding, countingHandler, {}, async ({ baseUrl, double }) => {
-    const first = await invoke(baseUrl, '{"a":1}', { "idempotency-key": "replay-key" });
-    const second = await invoke(baseUrl, '{"a":1}', { "idempotency-key": "replay-key" });
-    assertCheck(
-      first.status === 200 && second.status === 200,
-      "a replayed call must still succeed",
-    );
-    assertCheck(first.text === second.text, "a replayed call returned a different reply");
-    assertCheck(
-      double.handlerInvocations === 1,
-      `the business side executed ${double.handlerInvocations} times for one idempotency key, expected 1`,
-    );
-    return "a replayed idempotency key returns the identical cached reply without re-executing";
-  });
+  return withFacade(
+    binding,
+    wireBinding,
+    broker,
+    countingHandler,
+    {},
+    async ({ baseUrl, double }) => {
+      const first = await invoke(baseUrl, '{"a":1}', { "idempotency-key": "replay-key" });
+      const second = await invoke(baseUrl, '{"a":1}', { "idempotency-key": "replay-key" });
+      assertCheck(
+        first.status === 200 && second.status === 200,
+        "a replayed call must still succeed",
+      );
+      assertCheck(first.text === second.text, "a replayed call returned a different reply");
+      assertCheck(
+        double.handlerInvocations === 1,
+        `the business side executed ${double.handlerInvocations} times for one idempotency key, expected 1`,
+      );
+      return "a replayed idempotency key returns the identical cached reply without re-executing";
+    },
+  );
 }
 
 async function nonIdempotentNeverAutoRetriedScenario(
   binding: LegacyCapabilityBinding,
   wireBinding: QueueRequestReplyWireBinding,
+  broker: ConformanceBrokerHarness,
 ): Promise<string> {
   return withFacade(
     binding,
     wireBinding,
+    broker,
     ECHO_HANDLER,
     { refusedDestinations: new Set([wireBinding.requestDestination]) },
     async ({ baseUrl, double }) => {
@@ -317,10 +380,7 @@ async function nonIdempotentNeverAutoRetriedScenario(
   );
 }
 
-const INVARIANT_SCENARIOS: Record<
-  LegacyBridgeInvariant,
-  (binding: LegacyCapabilityBinding, wireBinding: QueueRequestReplyWireBinding) => Promise<string>
-> = {
+const INVARIANT_SCENARIOS: Record<LegacyBridgeInvariant, ScenarioRunner> = {
   idempotent_replay: idempotentReplayScenario,
   timeout_maps_to_structured_error: timeoutScenario,
   non_idempotent_never_auto_retried: nonIdempotentNeverAutoRetriedScenario,
@@ -328,15 +388,19 @@ const INVARIANT_SCENARIOS: Record<
 
 /**
  * Run every conformance case a bridge plan requires, plus the three fixed
- * safety invariants, against a fresh in-process broker double per scenario —
- * never a real broker, per the lane's own rule. Returns a content-addressed
- * report; when every check passed, also returns the binding promoted from
- * `not_implemented` to `conformance_passed`, addressed to that exact report.
+ * safety invariants, against a fresh broker double per scenario — the
+ * in-process double by default, or the real STOMP client over a loopback
+ * server double; never a real broker, per the lane's own rule. Returns a
+ * content-addressed report naming which double it ran against; when every
+ * check passed, also returns the binding promoted from `not_implemented` to
+ * `conformance_passed`, addressed to that exact report.
  */
 export async function runLegacyBridgeConformance(
   binding: LegacyCapabilityBinding,
   plan: LegacyBridgePlan,
+  options: LegacyBridgeConformanceOptions = {},
 ): Promise<LegacyBridgeConformanceResult> {
+  const broker = options.broker ?? inProcessBrokerHarness;
   if (plan.bindingId !== binding.bindingId || plan.bindingContentHash !== binding.contentHash) {
     throw new Error(
       `plan '${plan.planId}' is bound to a different binding than the one supplied for conformance`,
@@ -360,7 +424,7 @@ export async function runLegacyBridgeConformance(
       });
       continue;
     }
-    checks.push(await runOne(testCase.id, () => scenario.run(binding, wireBinding)));
+    checks.push(await runOne(testCase.id, () => scenario.run(binding, wireBinding, broker)));
   }
   if (plan.conformance.some((testCase) => testCase.id === "legacy-bridge/recorded_fixture")) {
     const allOthersPassed = checks.every((check) => check.status === "pass");
@@ -376,7 +440,9 @@ export async function runLegacyBridgeConformance(
     [LegacyBridgeInvariant, (typeof INVARIANT_SCENARIOS)[LegacyBridgeInvariant]]
   >) {
     checks.push(
-      await runOne(`legacy-bridge/invariant/${invariant}`, () => scenario(binding, wireBinding)),
+      await runOne(`legacy-bridge/invariant/${invariant}`, () =>
+        scenario(binding, wireBinding, broker),
+      ),
     );
   }
 
@@ -385,7 +451,7 @@ export async function runLegacyBridgeConformance(
     planId: plan.planId,
     bindingId: binding.bindingId,
     bindingContentHash: binding.contentHash,
-    brokerDouble: "in_process_double",
+    brokerDouble: broker.kind,
     checks: checks.sort((left, right) => left.id.localeCompare(right.id)),
   });
 

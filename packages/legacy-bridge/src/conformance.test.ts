@@ -1,7 +1,56 @@
 import { planLegacyBridge } from "@anvil/compiler/legacy";
 import { describe, expect, it, vi } from "vitest";
 import { runLegacyBridgeConformance } from "./conformance.js";
+import { inProcessBrokerHarness, stompServerBrokerHarness } from "./conformance-broker.js";
 import { fixtureLegacyCapabilityBinding } from "./test-fixtures.js";
+
+const INVARIANTS = [
+  "idempotent_replay",
+  "timeout_maps_to_structured_error",
+  "non_idempotent_never_auto_retried",
+] as const;
+
+describe("runLegacyBridgeConformance proves the same invariants against either broker double", () => {
+  it.each([
+    ["in_process_double", inProcessBrokerHarness],
+    ["stomp_server_double", stompServerBrokerHarness()],
+    [
+      "stomp_server_double with credentials and heartbeats",
+      stompServerBrokerHarness({
+        credentials: { login: "bridge", passcode: "conformance-passcode" },
+        heartbeatMs: 10,
+      }),
+    ],
+  ])("passes every required case and all three invariants over %s", async (_label, broker) => {
+    const binding = fixtureLegacyCapabilityBinding();
+    const plan = planLegacyBridge(binding);
+    const { report, promotedBinding } = await runLegacyBridgeConformance(binding, plan, { broker });
+    expect(report.brokerDouble).toBe(broker.kind);
+    const failed = report.checks.filter((check) => check.status === "fail");
+    expect(failed).toEqual([]);
+    for (const invariant of INVARIANTS) {
+      const check = report.checks.find((c) => c.id === `legacy-bridge/invariant/${invariant}`);
+      expect(check?.status, invariant).toBe("pass");
+    }
+    expect(promotedBinding?.runtime.status).toBe("conformance_passed");
+  });
+
+  it("records the double it ran against, so reports from the two are distinct proofs", async () => {
+    const binding = fixtureLegacyCapabilityBinding();
+    const plan = planLegacyBridge(binding);
+    const inProcess = await runLegacyBridgeConformance(binding, plan);
+    const overStomp = await runLegacyBridgeConformance(binding, plan, {
+      broker: stompServerBrokerHarness(),
+    });
+    expect(inProcess.report.brokerDouble).toBe("in_process_double");
+    expect(overStomp.report.brokerDouble).toBe("stomp_server_double");
+    expect(overStomp.report.contentHash).not.toBe(inProcess.report.contentHash);
+    // Every check id is present in both — the STOMP path proves nothing less.
+    expect(overStomp.report.checks.map((c) => c.id)).toEqual(
+      inProcess.report.checks.map((c) => c.id),
+    );
+  });
+});
 
 describe("runLegacyBridgeConformance", () => {
   it("passes every required case and the three fixed invariants, and promotes the binding", async () => {

@@ -455,8 +455,53 @@ bridgePlan.executionAllowed satisfies false;
 
 The plan derives required driver capabilities, conformance cases, and
 unverified live facts from the reviewed binding. Driver assessment compares a
-strict descriptor with that plan. It does not load a driver, generate code,
-run conformance tests, connect to a target, or permit execution.
+strict descriptor with that plan. It is static: it does not load a driver,
+generate code, connect to a target, or permit execution, and a `supported:
+true` assessment is not a conformance result.
+
+## 11. Run conformance and host the one executable shape
+
+Conformance execution is a separate step, in `@anvil/legacy-bridge`, and it
+exists today for exactly one transport shape: a message binding whose reply
+mode is `reply_to` or `fixed_destination`.
+
+```ts
+import {
+  runLegacyBridgeConformance,
+  serveLegacyBridge,
+  stompServerBrokerHarness,
+  StompClient,
+} from "@anvil/legacy-bridge";
+
+// Drives every required case from the plan plus three fixed invariants
+// against a broker double — the in-process double by default, or the real
+// STOMP client over a loopback STOMP server double. Never a real broker.
+const { report, promotedBinding } = await runLegacyBridgeConformance(
+  binding,
+  bridgePlan,
+  { broker: stompServerBrokerHarness() },
+);
+
+if (promotedBinding) {
+  promotedBinding.runtime.status satisfies "conformance_passed";
+  // Hosting refuses anything but a promoted binding with the exact report
+  // that promoted it, and binds 127.0.0.1 unless told otherwise.
+  const client = new StompClient({ host, port, vhost, replyDestination });
+  await client.connect();
+  const server = await serveLegacyBridge({
+    binding: promotedBinding,
+    conformanceReport: report,
+    client,
+  });
+  console.log(server.url); // POST /invoke, GET /readyz
+}
+```
+
+`report.brokerDouble` records which double the report was earned against.
+`conformance_passed` proves the bridge's own logic, not that a real broker
+exists, authorizes this identity, or delivers a reply — those remain the
+plan's `unverifiedLiveFacts` until a deployment observes them. Every other
+transport family stops at the plan.
 
 Read [Design a deployment-local legacy bridge](legacy-runtime-bridges.md) for
 the exact boundary.
@@ -479,6 +524,8 @@ the exact boundary.
 | `createReviewedLegacyCapabilityBinding` | Approved binding plan | Reviewed mapping; does not create a runtime |
 | `planLegacyBridge` | Non-executable bridge plan | Required capabilities and conformance obligations |
 | `assessLegacyBridgeDriver` | Static support assessment | Descriptor compatibility only; no live or executable proof |
+| `runLegacyBridgeConformance` (`@anvil/legacy-bridge`) | Conformance report; promoted binding on a full pass | Facade logic against a broker double for queue request/reply; never a real broker |
+| `serveLegacyBridge` (`@anvil/legacy-bridge`) | Running HTTP facade on 127.0.0.1 | Serves only a `conformance_passed` binding with its exact report; no live-readiness claim |
 
 ## Failure handling
 

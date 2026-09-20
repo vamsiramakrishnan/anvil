@@ -149,6 +149,22 @@ export const LegacyBridgeInvariant = z.enum([
 ]);
 export type LegacyBridgeInvariant = z.infer<typeof LegacyBridgeInvariant>;
 
+/**
+ * The deterministic stand-ins a conformance report can be earned against.
+ * Both live entirely inside the calling process; neither is a real broker:
+ *
+ * - `in_process_double` — a fake at the bridge's own broker-client seam; no
+ *   socket, no port.
+ * - `stomp_server_double` — a STOMP 1.2 server fake on a loopback port, so
+ *   the bridge's real STOMP client is the transport under test.
+ *
+ * `packages/legacy-bridge` refuses any transport that is not one of these
+ * two for conformance; a report naming either proves the bridge's own logic,
+ * never live readiness.
+ */
+export const LegacyBridgeBrokerDouble = z.enum(["in_process_double", "stomp_server_double"]);
+export type LegacyBridgeBrokerDouble = z.infer<typeof LegacyBridgeBrokerDouble>;
+
 export const LegacyBridgeConformanceCheck = z
   .object({
     /** Either `legacy-bridge/<case>` (one of the plan's own required cases) or
@@ -167,9 +183,8 @@ const LegacyBridgeConformanceReportCore = z
     bindingId: z.string().regex(/^lcb_[0-9a-f]{64}$/),
     bindingContentHash: LegacySha256,
     /** Identifies the broker double the checks below ran against. Never a
-     *  real broker — `packages/legacy-bridge` refuses any transport that is
-     *  not this deterministic, in-process fake. */
-    brokerDouble: z.literal("in_process_double"),
+     *  real broker — see `LegacyBridgeBrokerDouble`. */
+    brokerDouble: LegacyBridgeBrokerDouble,
     checks: z.array(LegacyBridgeConformanceCheck).min(1),
   })
   .strict();

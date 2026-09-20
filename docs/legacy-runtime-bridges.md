@@ -4,21 +4,24 @@ An approved capability binding can now be compiled into a deterministic bridge
 plan and assessed against a driver descriptor. For one transport — a message
 binding whose reply mode is `reply_to` or `fixed_destination` — it can also be
 *served*: `@anvil/legacy-bridge` is a real HTTP facade, proven by
-`anvil legacy bridge conformance` against a deterministic in-process broker
-double. Every other transport family described on this page is still exactly
-what it was: a bridge plan and nothing that executes it.
+`anvil legacy bridge conformance` against a deterministic broker double and
+hosted by `anvil legacy bridge serve` over one STOMP 1.2 connection. Every
+other transport family described on this page is still exactly what it was:
+a bridge plan and nothing that executes it.
 
 > **Current status:** `bridgePlan.executionAllowed` is still `false` for
 > every plan — planning never claims live readiness, for any transport. What
 > changed is narrower: one binding shape now has a real, conformance-tested
-> server behind it, and `anvil legacy bridge conformance` can move that
-> binding's `runtime.status` from `not_implemented` to `conformance_passed`.
-> That status is earned against a double, never against a real broker — see
-> [The first executable bridge](#the-first-executable-bridge-queue-requestreply)
-> below for exactly what it does and does not prove. WebLogic, WebSphere,
-> JBoss remote EJB, WCF, MSMQ, JCA resource adapters, stored procedures, and
-> batch/scheduler jobs remain fully undescribed by any generator, prepared
-> driver, or deployment path.
+> server behind it; `anvil legacy bridge conformance` can move that binding's
+> `runtime.status` from `not_implemented` to `conformance_passed`; and
+> `anvil legacy bridge serve` hosts exactly such a binding, refusing every
+> other. The status is earned against a double, never against a real broker
+> — see [The first executable bridge](#the-first-executable-bridge-queue-requestreply)
+> below for exactly what it does and does not prove, and
+> [Serve the facade](#serve-the-facade) for what hosting adds and what it
+> still cannot claim. WebLogic, WebSphere, JBoss remote EJB, WCF, MSMQ, JCA
+> resource adapters, stored procedures, and batch/scheduler jobs remain fully
+> undescribed by any generator, prepared driver, or deployment path.
 
 ## Start with the precise boundary
 
@@ -178,11 +181,21 @@ for a different, unreviewed, or since-changed candidate.
   client can honestly implement (AMQP 0-9-1/1.0 are binary, negotiated
   protocols with real implementation weight; STOMP is a text protocol most
   brokers this package's estates use already speak, natively or via a
-  gateway); and
+  gateway). The client connects once and never reconnects: a peer close
+  rejects every in-flight exchange and finishes the client, so a bridge that
+  lost its broker is restarted by an operator, never by itself;
 - runs conformance (`runLegacyBridgeConformance`, `anvil legacy bridge
-  conformance`) against `InProcessBrokerDouble`, a deterministic in-process
-  fake — never a real broker, in this package's own tests or in the CLI
-  command.
+  conformance`) against a deterministic double — never a real broker, in
+  this package's own tests or in the CLI command. Two doubles exist and the
+  report's `brokerDouble` names which one earned it: `in_process_double`
+  (`InProcessBrokerDouble`, a fake at the bridge's own broker-client seam,
+  no socket) and `stomp_server_double` (`StompServerDouble`, a STOMP 1.2
+  server fake on a loopback port, so the real `StompClient` is the transport
+  under test). The same required cases and the same three invariants pass
+  over both — that equivalence is what makes the seam-level fake an honest
+  stand-in for the socket path; and
+- hosts the facade (`serveLegacyBridge`, `anvil legacy bridge serve`) for a
+  `conformance_passed` binding only — see [Serve the facade](#serve-the-facade).
 
 This is exactly the "protocol facade" `docs/SOURCE_FORMATS.md` already
 documents for a gRPC JSON transcoder: the runtime's existing HTTP/JSON codec
@@ -229,6 +242,56 @@ first](#build-one-complete-vertical-slice-first) below — the queue
 request/reply slice is what this section describes, and it stops exactly
 where that section says a first slice should: proven logic, zero live
 connections.
+
+### Serve the facade
+
+```bash
+ANVIL_LEGACY_BROKER_LOGIN=bridge ANVIL_LEGACY_BROKER_PASSCODE=... \
+anvil legacy bridge serve binding.conformance-passed.json \
+  --conformance conformance.json \
+  --broker stomp://broker.internal:61613 \
+  --reply-destination /queue/bridge.replies \
+  --json
+```
+
+`serve` is the first command in this workflow that opens a live connection,
+and it is gated so that nothing short of the full chain above can reach it:
+
+- **Only a `conformance_passed` binding is served.** The binding's
+  `runtime.conformanceReportHash` must equal the supplied report's
+  `contentHash`, the report must have fully passed, and it must have been
+  earned by *this* reviewed capability: the report is addressed to the
+  pre-promotion binding, so that address is recomputed from the supplied
+  binding and compared. A binding edited by hand to say `conformance_passed`,
+  a report swapped for another binding's, or a promoted binding whose
+  reviewed facts were changed afterwards all refuse before any socket opens.
+- **Credentials by environment name only.** `ANVIL_LEGACY_BROKER_LOGIN` and
+  `ANVIL_LEGACY_BROKER_PASSCODE` are read from the process environment and
+  handed to the STOMP client. A `--broker` URL carrying userinfo is refused
+  without echoing it; no flag accepts a secret; no output — stdout, stderr,
+  the `--json` document, the exchange telemetry — ever contains one.
+- **Loopback by default.** The facade is unauthenticated HTTP meant to sit
+  beside the runtime as its protocol facade (`--protocol-facade` /
+  `ANVIL_PROTOCOL_FACADE`). It binds `127.0.0.1`; a non-loopback `--host` is
+  served only when given explicitly, with a warning on stderr.
+- **One process, one binding, one broker session.** `--json` prints one
+  `{ url, port, host, operation, bindingId, broker }` document and keeps
+  serving `POST /invoke` and `GET /readyz` until SIGTERM or SIGINT, then
+  stops accepting, lets in-flight exchanges finish within the reviewed
+  timeout, and closes the broker session.
+
+The honest limits are the same ones conformance has, plus one. One transport
+shape: a `message` binding with reply mode `reply_to` or
+`fixed_destination`; every other reply mode, and every other transport kind,
+refuses at `buildQueueWireBinding`. One protocol client: STOMP 1.2 — a JMS,
+IBM MQ, or AMQP-only broker needs a STOMP gateway in front of it. No
+reconnect: when the broker closes the session the bridge answers `502
+upstream_unavailable` for every later call until an operator restarts it.
+`/readyz` means "constructed with a coherent binding and a client that
+connected at startup," never "the broker will deliver" — it does not probe
+the session. And serving proves nothing conformance did
+not — the broker, the destination, and the identity are still the plan's
+`unverifiedLiveFacts` until the deployment observes them.
 
 ## Why the bridge belongs near the estate
 
