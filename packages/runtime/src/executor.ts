@@ -48,6 +48,7 @@ import {
   resolvePrincipal,
   UNRESOLVED_PRINCIPAL,
 } from "./policy.js";
+import { throwIfCancelled, transportFailureError } from "./cancellation.js";
 import { applyAgentProjection } from "./response-projection.js";
 import {
   computeBackoffMs,
@@ -131,6 +132,8 @@ export interface ExecuteContext {
   timeoutMs?: number;
   /** Set false to force single-attempt execution regardless of policy. */
   retries?: boolean;
+  /** The caller's abort signal: aborts the upstream request, refuses further attempts (cancellation.ts). */
+  signal?: AbortSignal;
   /**
    * An operator's stated reason that `baseUrl` is a protocol facade serving
    * the synthesized coordinates of a non-HTTP/JSON source over HTTP+JSON.
@@ -1113,6 +1116,7 @@ export async function execute(
       ctx.protocolFacade !== undefined,
     );
     if (ctx.timeoutMs) baseRequest.timeoutMs = ctx.timeoutMs;
+    if (ctx.signal) baseRequest.signal = ctx.signal;
 
     // 5. Dry-run short-circuits before any auth or side effect.
     if (args.dryRun) {
@@ -1311,6 +1315,7 @@ export async function execute(
       attempt += 1;
       record.retryCount = attempt - 1;
       try {
+        throwIfCancelled(ctx.signal);
         const res = await ctx.transport.send(request);
         lastResponse = res;
         record.responseBytes = byteLen(res.body);
@@ -1416,6 +1421,7 @@ export async function execute(
         if (!(err instanceof TransportError)) throw err;
         if (err.phase === "after_response") sawPostResponseFailure = true;
         const canRetry =
+          ctx.signal?.aborted !== true &&
           retriesEnabled &&
           attempt < maxAttempts &&
           conditionIsRetryable(err.condition, op.retries);
@@ -1423,17 +1429,7 @@ export async function execute(
           await sleep(computeBackoffMs(attempt, op.retries, ctx.rng));
           continue;
         }
-        const code = err.condition === "timeout" ? "upstream_timeout" : "upstream_unavailable";
-        finalError = new AnvilError({
-          code,
-          message: retrySafe
-            ? `Upstream transport failed for ${op.id}.`
-            : `Upstream transport failed for ${op.id} and this operation is not safe to auto-retry.`,
-          operation: op.id,
-          traceId,
-          retryable: true,
-          safeToRetry: retrySafe,
-        });
+        finalError = transportFailureError({ op, traceId, err, retrySafe, signal: ctx.signal });
         break;
       }
     }

@@ -40,6 +40,13 @@ export interface HttpRequest {
    * global fetch has no client-cert seam without reaching for undici's Agent).
    */
   tls?: TlsClientMaterial;
+  /**
+   * The caller's abort signal (`ExecuteContext.signal`), when it has one.
+   * Tripping it tears the upstream connection down at once instead of waiting
+   * out the deadline; the executor turns the resulting failure into its
+   * cancellation refusal (see cancellation.ts) and never retries it.
+   */
+  signal?: AbortSignal;
 }
 
 export interface HttpResponse {
@@ -94,6 +101,7 @@ export class FetchTransport implements Transport {
       : 0;
     const timeoutMs = Math.max(req.timeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS, streamCeilingMs);
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const unlink = linkAbortSignal(req.signal, controller);
     try {
       const res = await this.fetchImpl(req.url, {
         method: req.method,
@@ -136,8 +144,25 @@ export class FetchTransport implements Transport {
       throw classifyFetchError(err);
     } finally {
       clearTimeout(timeout);
+      unlink();
     }
   }
+}
+
+/**
+ * Forward a caller's abort onto the request's own controller. Returns the
+ * unlink so a completed request stops listening — a long-lived session signal
+ * would otherwise keep one listener per request it ever ran.
+ */
+function linkAbortSignal(signal: AbortSignal | undefined, controller: AbortController): () => void {
+  if (!signal) return () => {};
+  if (signal.aborted) {
+    controller.abort();
+    return () => {};
+  }
+  const onAbort = () => controller.abort();
+  signal.addEventListener("abort", onAbort, { once: true });
+  return () => signal.removeEventListener("abort", onAbort);
 }
 
 /**
@@ -252,6 +277,16 @@ function sendHttps(req: HttpRequest, tls: TlsClientMaterial): Promise<HttpRespon
       timedOut = true;
       nodeReq.destroy();
     });
+    // Same teardown as the fetch path's linked controller: a caller's abort
+    // destroys the socket, and the resulting error is classified as a timeout
+    // exactly like an aborted fetch is — the executor reads the signal itself
+    // to tell a cancellation from a deadline.
+    const abortController = new AbortController();
+    abortController.signal.addEventListener("abort", () => {
+      timedOut = true;
+      nodeReq.destroy();
+    });
+    nodeReq.on("close", linkAbortSignal(req.signal, abortController));
     nodeReq.on("error", (err: Error) => {
       finish(() =>
         reject(
