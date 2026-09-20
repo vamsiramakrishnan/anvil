@@ -80,15 +80,31 @@ describe("pass rate", () => {
     expect(report.passRate).toBe(50);
   });
 
-  it("grades a case that produced no answer rather than skipping it", () => {
-    // A run that never reached a case must not shrink its own denominator.
+  it("reports a case that produced no answer as ungraded rather than skipping it", () => {
+    // A run that never reached a case must not shrink its own denominator —
+    // and must not be graded as an empty answer either, which would pass the
+    // `must_not` (nothing forbidden appeared in nothing).
     const report = gradeSuite(
-      { suite: "s", cases: [{ case: "never_ran", expected: { must_call: ["anvil status"] } }] },
+      {
+        suite: "s",
+        cases: [
+          {
+            case: "never_ran",
+            expected: { must_call: ["anvil status"], must_not: ["approve_without_manifest"] },
+          },
+        ],
+      },
       {},
     );
-    expect(report.totals.total).toBe(1);
-    expect(report.totals.failed).toBe(1);
+    expect(report.totals).toMatchObject({ passed: 0, failed: 0, ungraded: 2, total: 2 });
     expect(report.passRate).toBe(0);
+    expect(report.cases[0]?.expectations.every((e) => e.method === "unanswered")).toBe(true);
+    // An EMPTY answer is still an answer, and grades as one.
+    const empty = gradeSuite(
+      { suite: "s", cases: [{ case: "c", expected: { must_call: ["anvil status"] } }] },
+      { c: "" },
+    );
+    expect(empty.totals.failed).toBe(1);
   });
 
   it("scores nothing for `allow`, which is permissive", () => {

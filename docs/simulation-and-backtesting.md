@@ -28,25 +28,44 @@ replays the same world — which is what makes a simulator run usable as evidenc
 ## Certification: use the simulator to attack the bundle
 
 `anvil certify` (ADR-0018, `@anvil/certification`) grades a bundle
-`failed | static_passed | certified | expired`. **Passing the static checks is
-never "certified."** To certify, the executable phase boots the simulator and
-exercises the tools for real:
+`failed | static_passed | simulator_exercised | certified | expired`. **Passing
+the static checks is never "certified."** By default `anvil certify` runs only
+the static phase and records `static_passed` under `assurance.engineStatus` in
+`certification.json`. With `anvil certify --executable`, the executable phase
+boots the simulator and exercises the tools for real:
 
 - live tools checked against the surface signature;
 - representative reads executed;
-- **confirmation refusal** exercised — a gated mutation must refuse to run
+- **confirmation refusal** exercised — every gated mutation must refuse to run
   without `confirm`;
+- **scope enforcement** exercised — a caller missing any one required scope
+  must be refused;
 - **idempotent replay** exercised — same key, no double effect;
+- **response shape** checked — every field the contract declares for an
+  item is present in what the surface serves;
 - faults injected, and every returned error checked against the model's
   `ErrorCode` taxonomy.
 
 Then the part that makes it a real test rather than a smoke test: the **mutation
 battery**. Each standard mutant deliberately weakens one control — removes a
 confirmation, enables an unsafe retry, drops an OAuth scope, downgrades a mutation
-to a read, corrupts an output schema. Certification requires every applicable
-mutant to be **killed** (detected — and safety mutants detected *as*
-safety-sensitive). A bundle whose controls can be silently weakened does not
-certify.
+to a read, corrupts an output schema. A mutant is **killed** only when two
+things both hold: the surface signature classifies the weakening (as
+safety-sensitive, for a safety mutant), *and* at least one certification check
+fails against the weakened contract — the static checks, plus the executable
+checks run by booting the weakened surface and holding it to the *certified*
+contract's expectations. Moving the digest alone is not a kill. Every killed
+mutant names the check that caught it; a safety mutant that changes the digest
+but fails no check is reported as a survivor with `survived: no check failed`,
+and that is a finding about the certification, not a pass. A mutant with
+nothing on the surface to weaken is inapplicable: neither killed nor survived.
+
+The status ladder then reads: every check passed and every applicable mutant
+killed, with at least one applicable *safety* mutant among them, is
+`certified`; the same with no applicable safety mutant (nothing to confirm, no
+scopes, no unproven mutation) is `simulator_exercised` — the surface was booted
+and held, but no safety-regression claim is proven. A bundle whose controls can
+be silently weakened does not certify.
 
 The attestation binds the pack, contract, capability, and surface-signature
 digests together, so a certification can't be replayed against artifacts that have
@@ -90,9 +109,10 @@ proof chain:
    human — that block automatic certification.
 3. **Simulate** — `defineSimulator` derives the simulator from the compiled
    model; it matches the would-be production MCP surface by construction.
-4. **Certify** — the executable phase exercises confirmation refusal, idempotent
-   replay, and fault handling against that simulator, and the mutation battery
-   proves the estate's controls can't be silently weakened.
+4. **Certify** — `anvil certify --executable` exercises confirmation refusal,
+   scope enforcement, idempotent replay, response shape, and fault handling
+   against that simulator, and the mutation battery proves the estate's
+   controls can't be silently weakened — each mutant killed by a named check.
 
 Cross-vendor honesty is itself tested: the same logical API expressed in Kong,
 WSO2, and Anvil's normalized Apigee, MuleSoft, and API Connect adapter inputs

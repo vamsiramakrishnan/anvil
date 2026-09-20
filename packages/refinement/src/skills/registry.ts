@@ -739,15 +739,15 @@ const reduceSchemaDisclosure: RefinementSkill = {
  * from; this arm is scored against them.
  *
  * Three boundaries make an unreliable harness safe here: the deterministic
- * group checks below — including `group_disambiguation_distinguishes`, which
- * refuses a reword leaving a member sharing every content word with its
- * siblings, since that could not change a router's pick; the approval policy
- * routing every group patch to review on the FIELD (approval.ts); and the
- * CLI's benchmark-scored admission, which refuses any proposal whose measured
- * routing delta is negative before a reviewer ever sees it. Evidence bar is
- * `single` for the same reason as `rename-operation`: the proposal is a
- * projection of surfaces the task itself carries (the operations' own names,
- * intents, and measured confusions); a second source could only restate them.
+ * group checks below (`group_disambiguation_distinguishes` refuses a reword
+ * leaving a member sharing every content word with its siblings); the approval
+ * policy routing every group patch to review on the FIELD (approval.ts); and
+ * the CLI's benchmark-scored admission, refusing a negative routing delta.
+ * Evidence bar is `single` (as `rename-operation`): the proposal projects
+ * surfaces the task carries. Deterministic fallback (disambiguate-cluster.ts):
+ * `disambiguate` only — append to a member's DESCRIPTION the word its
+ * canonicalName carries and no sibling does; never rename or touch intents;
+ * nothing unless every member has such a word and one lacks it when served.
  */
 const resolveConfusableCluster: RefinementSkill = {
   name: "resolve-confusable-cluster",

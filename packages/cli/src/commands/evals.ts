@@ -5,6 +5,7 @@ import type { Command } from "commander";
 import { parse as fromYaml } from "yaml";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
+import { type EvalsRunOptions, runEvalsRun } from "./evals-run.js";
 import { annotate } from "./meta.js";
 
 /**
@@ -34,9 +35,13 @@ import { annotate } from "./meta.js";
  * That is the same discipline the checks themselves demand — a report that
  * scored its own undecidable checks green would be the defect this command
  * exists to remove, one level up.
+ *
+ * `grade` takes answers somebody else produced; `run` (evals-run.ts) drives an
+ * agent process to produce them, optionally asks a judge process to settle the
+ * judge-only expectations, and writes `evals.report.json` into the bundle.
  */
 
-interface EvalsRunOptions {
+interface EvalsGradeOptions {
   answers?: string;
   json?: boolean;
   check?: boolean;
@@ -72,7 +77,7 @@ function loadAnswers(path: string | undefined, io: CliIO): Record<string, string
   return answers;
 }
 
-function runGrade(suitePath: string, opts: EvalsRunOptions, io: CliIO): number {
+function runGrade(suitePath: string, opts: EvalsGradeOptions, io: CliIO): number {
   const suite = loadSuite(suitePath);
   const report = gradeSuite(suite, loadAnswers(opts.answers, io));
   if (opts.json === true) {
@@ -141,10 +146,42 @@ export function registerEvals(parent: Command, ctx: CommandContext): void {
       .option("--answers <file>", "JSON object mapping case name to the harness's answer")
       .option("--check", "gate: exit non-zero when an expectation failed")
       .option("--json", "emit the full grading report as JSON")
-      .action((suite: string, opts: EvalsRunOptions) => {
+      .action((suite: string, opts: EvalsGradeOptions) => {
         ctx.code = runGrade(suite, opts, ctx.io);
       }),
     { mutates: false },
+  );
+
+  annotate(
+    evals
+      .command("run")
+      .summary("Drive an agent over a bundle's (or one) eval suite, then grade its answers.")
+      .description(
+        'Runs the behaviour checks a bundle ships. For every case in every `skill/evals/*.yaml` of a bundle (or in one suite file), spawns `--agent <command>` once with one JSON document on stdin — `{protocol: "anvil-evals-agent/v1", suite, case, prompt?, upstream?}`, never the expectations — and takes its stdout as the harness\'s answer; a failed, timed-out, or silent process leaves the case unanswered, which grades as UNGRADED. ' +
+          'The answers are then graded exactly as `evals grade` grades a supplied file. With `--judge <command>`, each judge-only expectation on an answered case is put to the judge (stdin `{protocol: "anvil-evals-judge/v1", kind, entry, term: {check, satisfiedBy, violatedBy}, answer}`, stdout `{"present": true|false}`); any other reply leaves it UNGRADED. Without --judge, judge-only expectations stay UNGRADED. ' +
+          "Writes evals.report.json into the bundle (answers, per-expectation outcomes, totals, bound to the bundle hash; a derived record, so it never invalidates certification) — for a bare suite file only with --out. " +
+          "Exits 0 unless `--check` is given and some expectation actually failed; UNGRADED never trips --check.",
+      )
+      .argument(
+        "<target>",
+        "generated bundle directory (or its air.yaml), or one emitted evals/*.yaml",
+      )
+      .option(
+        "--agent <command>",
+        "the harness: a command (with optional whitespace-separated args) that reads the case JSON on stdin and prints its answer",
+      )
+      .option(
+        "--judge <command>",
+        'optional judge for judge-only expectations: reads the request JSON on stdin and prints {"present": true|false}',
+      )
+      .option("--out <file>", "where to write the report (default: <bundle>/evals.report.json)")
+      .option("--timeout <ms>", "per-process timeout in milliseconds (default 60000)")
+      .option("--check", "gate: exit non-zero when an expectation failed")
+      .option("--json", "emit the full report as JSON")
+      .action(async (target: string, opts: EvalsRunOptions) => {
+        ctx.code = await runEvalsRun(target, opts, ctx.io);
+      }),
+    { mutates: true },
   );
 
   annotate(

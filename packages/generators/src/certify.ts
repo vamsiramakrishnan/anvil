@@ -20,13 +20,18 @@ import {
 // (digest + summary) it needs for freshness.
 import { BENCHMARK_REPORT_FILE, runDetectors, targetOperationId } from "@anvil/refinement";
 import { credentialRequirement } from "@anvil/runtime";
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import {
   GENERATION_METADATA_FILE,
   generateBundle,
   resourceOptionsFromGenerationMetadata,
 } from "./bundle.js";
+import {
+  EVALS_REPORT_FILE,
+  evalSuiteFailures,
+  evalSuiteFiles,
+  evalsEvidenceStatus,
+} from "./evals-evidence.js";
 import { sdkGateDrift, sdkPresenceFailures, sdkSurfaceOperations } from "./sdk/certify.js";
 import { SDK_LANGUAGES } from "./sdk/index.js";
 import { unresolvedReadiness } from "./semantic-readiness.js";
@@ -75,13 +80,16 @@ export const Certification = z.object({
   assuranceLevel: z.literal("static").default("static"),
   /**
    * Optional bridge to the canonical @anvil/certification attestation model.
+   * `level` is the phase the engine ran (`anvil certify --executable` boots the
+   * simulator and reaches `simulator_exercised`/`certified`); `assuranceLevel`
+   * above stays `static` because the four gates never execute a surface.
    * Older records omit it and remain readable.
    */
   assurance: z
     .object({
-      level: z.literal("static"),
+      level: z.enum(["static", "executable"]),
       engine: z.literal("@anvil/certification"),
-      engineStatus: z.enum(["failed", "static_passed"]),
+      engineStatus: z.enum(["failed", "static_passed", "simulator_exercised", "certified"]),
       recordDigest: z.string(),
       attestation: z.object({
         packDigest: z.string(),
@@ -182,6 +190,8 @@ export const DERIVED_RECORD_FILES: ReadonlySet<string> = new Set([
   // leaving it inside the identity meant running `anvil benchmark` silently
   // staled every OTHER lane's hash-bound evidence.
   BENCHMARK_REPORT_FILE,
+  // Likewise the eval run: a grading of the bundle, never part of what it is.
+  EVALS_REPORT_FILE,
 ]);
 
 /**
@@ -1184,25 +1194,12 @@ function runtimeChecks(files: Record<string, string>, air: AirDocument): Certifi
   }
 
   // Evals: the generated suites must exist and parse — they are the behavior
-  // contract the refinement loop measures against. Suites that derive zero
-  // cases are legitimately omitted (an empty file reads as phantom coverage),
-  // but a bundle with NO suites must carry the README documenting the omission.
-  const evalFiles = Object.keys(files).filter(
-    (rel) => rel.startsWith("skill/evals/") && rel.endsWith(".yaml"),
-  );
-  const evalFailures: string[] = [];
-  if (evalFiles.length === 0 && files["skill/evals/README.md"] === undefined)
-    evalFailures.push(
-      "no generated eval suites under skill/evals/ and no skill/evals/README.md documenting their omission",
-    );
-  for (const rel of evalFiles) {
-    try {
-      const doc = parseYaml(files[rel] ?? "") as { suite?: unknown };
-      if (typeof doc?.suite !== "string") evalFailures.push(`${rel} has no suite name`);
-    } catch {
-      evalFailures.push(`${rel} is not valid YAML`);
-    }
-  }
+  // contract the refinement loop measures against (evals-evidence.ts owns the
+  // rules). Whether they have been RUN is reported in the detail, never failed:
+  // a run needs an agent, and an undriven bundle is unfinished, not broken.
+  const evalFiles = evalSuiteFiles(files);
+  const evalFailures = evalSuiteFailures(files);
+  const evalsRun = evalsEvidenceStatus(files, bundleHash(files)).detail;
 
   // Conformance: the generated test must exist and point at the runtime
   // manifest it is supposed to verify.
@@ -1232,9 +1229,7 @@ function runtimeChecks(files: Record<string, string>, air: AirDocument): Certifi
       "runtime.evals-present",
       "runtime",
       evalFailures,
-      evalFiles.length === 0
-        ? "every eval suite derived zero cases; skill/evals/README.md documents the omission"
-        : "generated eval suites parse",
+      `${evalFiles.length === 0 ? "every eval suite derived zero cases; skill/evals/README.md documents the omission" : "generated eval suites parse"}; ${evalsRun}`,
     ),
     check(
       "runtime.conformance-present",

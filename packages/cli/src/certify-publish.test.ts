@@ -98,6 +98,41 @@ describe("anvil certify", () => {
     expect(io.text()).toContain("No generated surface was executed");
   });
 
+  it("--executable boots the simulator and records the executable phase, still writing certification.json", () => {
+    const io = bufferIO();
+    expect(runCertify(dir, { executable: true }, io, { now: clock("2026-07-10T00:00:00Z") })).toBe(
+      0,
+    );
+    const cert = JSON.parse(readFileSync(join(dir, "certification.json"), "utf8"));
+    expect(cert.status).toBe("passed");
+    // The four generated-byte gates are still static; the engine phase is not.
+    expect(cert.assuranceLevel).toBe("static");
+    expect(cert.assurance).toMatchObject({ level: "executable", engine: "@anvil/certification" });
+    expect(["simulator_exercised", "certified"]).toContain(cert.assurance.engineStatus);
+    const bridged = cert.checks.filter((c: { id: string }) =>
+      c.id.startsWith("contract.certification-core."),
+    );
+    expect(bridged.some((c: { id: string }) => c.id.includes(".exec."))).toBe(true);
+    const mutants = bridged.filter((c: { id: string }) => c.id.includes(".mutation."));
+    expect(mutants.length).toBeGreaterThan(0);
+    for (const m of mutants as Array<{ detail: string }>) {
+      expect(m.detail).toMatch(/^(killed by |inapplicable)/);
+    }
+    expect(io.text()).toContain("Executable assurance");
+    expect(io.text()).not.toContain("No generated surface was executed");
+    expect(io.text()).toContain("were not booted");
+    // The record's freshness binding is unchanged by the mode.
+    expect(verifyCertification(readBundleDir(dir)).ok).toBe(true);
+  });
+
+  it("--executable --json emits the certification as one document", () => {
+    const io = bufferIO();
+    expect(runCertify(join(dir, "air.yaml"), { executable: true, json: true }, io)).toBe(0);
+    const parsed = JSON.parse(io.stdout.join("\n"));
+    expect(parsed.assurance.level).toBe("executable");
+    expect(parsed.status).toBe("passed");
+  });
+
   it("re-certifying an unchanged bundle reproduces the certification (minus certifiedAt)", () => {
     certify(bufferIO(), clock("2026-07-10T00:00:00Z"));
     const first = JSON.parse(readFileSync(join(dir, "certification.json"), "utf8"));

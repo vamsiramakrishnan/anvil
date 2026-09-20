@@ -6,7 +6,10 @@
  * never merely because artifact files exist. See ADR-0018.
  */
 export * from "./certify.js";
+export * from "./check.js";
 export * from "./checks.js";
 export * from "./coverage.js";
+export * from "./executable-checks.js";
 export * from "./model.js";
 export * from "./mutate.js";
+export * from "./posture-checks.js";
