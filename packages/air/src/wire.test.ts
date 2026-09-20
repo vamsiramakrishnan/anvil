@@ -245,6 +245,21 @@ describe("wire protocol", () => {
     expect(verdict.nextAction).toContain("ANVIL_BASE_URL");
   });
 
+  it("refuses a GraphQL operation without a binding as not compiled, never as declined", () => {
+    // The compiler records a binding for every GraphQL root field; the only
+    // way to reach this refusal is an AIR document the compiler did not write
+    // (hand-edited, or older than wire bindings). The reason must say that,
+    // not send the operator hunting for a compile diagnostic that cannot exist.
+    const verdict = wireExecutability(
+      opWith({ kind: "graphql", path: "/graphql/Query/thing", method: "post" }),
+    );
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("expected a refusal");
+    expect(verdict.protocol).toBe("graphql");
+    expect(verdict.reason).toContain("Recompile from the SDL");
+    expect(verdict.reason).not.toContain("compile diagnostics");
+  });
+
   it("asks only about the surface that is actually exposed", () => {
     // An unapproved operation is already refused by the approval gate; asking
     // about it here would report a problem nobody can reach.

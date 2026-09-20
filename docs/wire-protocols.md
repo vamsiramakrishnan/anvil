@@ -144,6 +144,17 @@ The agent-facing response schema is intentionally bounded. That limit does not
 truncate the stored GraphQL document: the compiler derives the selection set
 from the full SDL before it creates the bounded projection.
 
+The selection set and the response schema come from one tree, so the schema
+cannot promise what the document does not ask for. A union or interface is
+selected through inline fragments — `{ __typename ... on Product { … } }` —
+and its schema is a `oneOf` of the members. A field that takes a required
+argument is selected nowhere and listed nowhere (`graphql_field_omitted_required_args`).
+Where the selection stops — four levels deep, or on re-entering a type — the
+document selects only `__typename`, the schema shows the `TypenameOnly`
+component at that position, and `graphql_selection_truncated` names it. A
+compiled operation always carries its binding; a GraphQL operation without
+one was not produced by this compiler, and the transport gate says so.
+
 GraphQL can return an `errors` array with HTTP 200. Anvil treats that response
 as a failure, including responses that contain both `data` and `errors`.
 
@@ -237,6 +248,12 @@ mutation is not recorded as complete in the idempotency ledger.
 Anvil rejects DTD and entity declarations while reading XML. This blocks
 external-entity expansion and entity-amplification payloads.
 
+An `xsd:choice` in the request type reaches the wire as whichever branch the
+caller sent, and only that one. The compiler lowers the choice to optional
+members under a `oneOf` admitting exactly one branch (`wsdl_choice_lowered`),
+and the envelope builder emits nothing for an absent member — never an empty
+tag, never a second branch.
+
 The current boundary is explicit:
 
 - SOAP 1.1 document/literal behavior is covered by the runtime and SDK tests.
@@ -245,6 +262,8 @@ The current boundary is explicit:
 - RPC/encoded bindings and messages described only by `type` remain
   unavailable, with or without a protocol facade: the compiler declined to
   encode the call at all, so there is no request for a facade to receive.
+- WSDL 2.0 is refused at compile time (`wsdl_version_unsupported`) and never
+  reaches this codec.
 
 ## gRPC
 

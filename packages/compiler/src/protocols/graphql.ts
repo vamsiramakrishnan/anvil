@@ -18,9 +18,12 @@
  * through a fake GET (a GET with a required body is un-executable by fetch).
  *
  * A field's arguments become the request body; its return type becomes the
- * response schema. Object/input/enum/union types become `components.schemas`
- * and are referenced with `$ref`, so recursion is resolved by the same
- * dereferencer the OpenAPI path uses.
+ * response schema. Object/input/enum/union/interface types become
+ * `components.schemas` and are referenced with `$ref`, so recursion is resolved
+ * by the same dereferencer the OpenAPI path uses. The response schema and the
+ * compiled query document are both rendered from one selection tree
+ * (`graphql-selection.ts`): where the document stops selecting, the schema
+ * stops promising.
  *
  * Parsing is delegated to the reference `graphql` implementation (`buildSchema`
  * + the type predicates); this module only walks the resulting schema and maps
@@ -49,21 +52,18 @@ import {
 } from "graphql";
 import type { OpenApiDocument } from "../parse.js";
 import { graphqlWireBinding } from "./graphql-binding.js";
+import {
+  buildSelection,
+  describeCut,
+  MAX_SELECTION_DEPTH,
+  requiresArguments,
+  responseSchemaFor,
+  scalarSchema,
+  TYPENAME_ONLY_SCHEMA,
+  typenameOnlySchema,
+} from "./graphql-selection.js";
 
 type JsonSchemaLike = Record<string, unknown>;
-
-const BUILTIN_SCALARS: Record<string, JsonSchemaLike> = {
-  Int: { type: "integer" },
-  Float: { type: "number" },
-  String: { type: "string" },
-  Boolean: { type: "boolean" },
-  ID: { type: "string", description: "GraphQL ID" },
-};
-
-function scalarSchema(name: string): JsonSchemaLike {
-  if (BUILTIN_SCALARS[name]) return { ...BUILTIN_SCALARS[name] };
-  return { type: "string", description: `custom scalar ${name}` };
-}
 
 /** Map a (possibly wrapped) GraphQL type to a JSON schema. */
 function typeToSchema(type: GraphQLType): JsonSchemaLike {
@@ -74,7 +74,14 @@ function typeToSchema(type: GraphQLType): JsonSchemaLike {
   return { $ref: `#/components/schemas/${type.name}` };
 }
 
-/** Object/input/interface → an object schema built from its fields. */
+/**
+ * Object/input/interface → an object schema built from its fields.
+ *
+ * An output field that takes a required argument is left out, exactly as the
+ * compiled document leaves it out (`requiresArguments`): a schema that listed
+ * it would promise data no request Anvil sends can return. Input fields have
+ * no arguments, so the check is a no-op for them.
+ */
 function fieldsSchema(
   fields: Record<string, GraphQLField<unknown, unknown> | GraphQLInputField>,
   description?: string | null,
@@ -82,6 +89,7 @@ function fieldsSchema(
   const properties: Record<string, JsonSchemaLike> = {};
   const required: string[] = [];
   for (const [name, field] of Object.entries(fields)) {
+    if ("args" in field && requiresArguments(field)) continue;
     const schema = typeToSchema(field.type);
     if (field.description) schema.description = field.description;
     properties[name] = schema;
@@ -95,8 +103,22 @@ function fieldsSchema(
   };
 }
 
-function namedTypeSchema(type: GraphQLNamedType): JsonSchemaLike | undefined {
-  if (isObjectType(type) || isInterfaceType(type)) {
+function namedTypeSchema(
+  schema: GraphQLSchema,
+  type: GraphQLNamedType,
+): JsonSchemaLike | undefined {
+  if (isInterfaceType(type)) {
+    // The document selects the interface's fields plus an inline fragment per
+    // implementation, so what comes back is one implementation's fields — the
+    // component says so. An interface nothing implements is its own fields.
+    const implementations = schema.getPossibleTypes(type);
+    if (implementations.length === 0) return fieldsSchema(type.getFields(), type.description);
+    return {
+      oneOf: implementations.map((t) => ({ $ref: `#/components/schemas/${t.name}` })),
+      ...(type.description ? { description: type.description } : {}),
+    };
+  }
+  if (isObjectType(type)) {
     return fieldsSchema(type.getFields(), type.description);
   }
   if (isInputObjectType(type)) {
@@ -144,35 +166,83 @@ function argsSchema(args: readonly GraphQLArgument[]): JsonSchemaLike | undefine
 const DEFAULT_STREAM_MAX_EVENTS = 100;
 const DEFAULT_STREAM_MAX_SECONDS = 30;
 
+interface RootContext {
+  schema: GraphQLSchema;
+  paths: Record<string, Record<string, unknown>>;
+  diagnostics: Diagnostic[] | undefined;
+  /** The component cut positions point at; registered only once one exists. */
+  typenameOnlyName: string;
+  cutsSeen: boolean;
+}
+
+/**
+ * Two things the lowering loses are stated where they happen, once per
+ * operation, because no later stage can recover them from the output: a field
+ * omitted for its required arguments, and a position where the selection
+ * stopped. Both change what the operation returns, and an operator reading
+ * the response schema deserves to know why a field they can see in the SDL is
+ * not in it.
+ */
+function reportSelection(
+  ctx: RootContext,
+  kind: string,
+  path: string,
+  fieldName: string,
+  selection: ReturnType<typeof buildSelection>,
+): void {
+  if (selection.omittedRequiredArgs.length > 0) {
+    const listed = selection.omittedRequiredArgs;
+    ctx.diagnostics?.push({
+      level: "warning",
+      code: "graphql_field_omitted_required_args",
+      path,
+      message:
+        `Anvil left ${listed.length} field(s) that take required arguments out of GraphQL ${kind} ` +
+        `'${fieldName}' — ${listed.join(", ")} — from both the compiled document and the ` +
+        `response schema, because selecting one would mean inventing argument values. Expose ` +
+        `such a field through a root field of its own, or give its arguments defaults in the SDL.`,
+    });
+  }
+  if (selection.cuts.length > 0) {
+    ctx.cutsSeen = true;
+    const sample = selection.cuts.slice(0, 5).map(describeCut).join("; ");
+    ctx.diagnostics?.push({
+      level: "warning",
+      code: "graphql_selection_truncated",
+      path,
+      message:
+        `Anvil's compiled document for GraphQL ${kind} '${fieldName}' stops at ` +
+        `${selection.cuts.length} position(s) and selects only __typename there: ${sample}` +
+        `${selection.cuts.length > 5 ? "; …" : ""}. The selection is bounded to ` +
+        `${MAX_SELECTION_DEPTH} levels and never re-enters a type. The response schema marks ` +
+        `each such position as '${ctx.typenameOnlyName}' where it is rendered inline; past the ` +
+        `inline bound it falls back to the type's component, which describes the type rather ` +
+        `than what this position returns.`,
+    });
+  }
+}
+
 function addRoot(
-  paths: Record<string, Record<string, unknown>>,
+  ctx: RootContext,
   root: GraphQLObjectType | null | undefined,
   kind: "query" | "mutation" | "subscription",
-  diagnostics?: Diagnostic[],
 ): void {
   if (!root) return;
   for (const [fieldName, field] of Object.entries(root.getFields())) {
     const path = `/graphql/${root.name}/${fieldName}`;
     const reqSchema = argsSchema(field.args);
-    // The query document, compiled from the SDL rather than assembled per call.
-    const wire = graphqlWireBinding(kind, field);
-    if (!wire) {
-      diagnostics?.push({
-        level: "warning",
-        code: "graphql_binding_unencodable",
-        path: `${root.name}.${fieldName}`,
-        message:
-          `Anvil recorded no wire binding for GraphQL ${kind} '${fieldName}'. The operation still ` +
-          `compiles and can be driven against a facade, but Anvil's runtime will refuse to call ` +
-          `it directly.`,
-      });
-    }
+    // The selection tree is decided once; the query document and the response
+    // schema are both projections of it, so neither can promise what the
+    // other does not deliver.
+    const selection = buildSelection(ctx.schema, field);
+    reportSelection(ctx, kind, `${root.name}.${fieldName}`, fieldName, selection);
+    const wire = graphqlWireBinding(kind, field, selection);
     // A subscription is observed through a bounded window rather than held
     // open: the call collects events until one of these ceilings and returns
     // them. Without a bound there is no single result, so this contract is
     // exactly what `wireExecutability` requires before it will allow the call.
     const stream =
-      kind === "subscription" && wire
+      kind === "subscription"
         ? {
             transport: "graphql_sse",
             delivery: "at_most_once",
@@ -189,12 +259,16 @@ function addRoot(
       responses: {
         "200": {
           description: `${fieldName} result`,
-          content: { "application/json": { schema: typeToSchema(field.type) } },
+          content: {
+            "application/json": {
+              schema: responseSchemaFor(field, selection, ctx.typenameOnlyName),
+            },
+          },
         },
       },
       "x-graphql-operation": kind,
       ...(stream ? { "x-anvil-stream": stream } : {}),
-      ...(wire ? { "x-anvil-wire-binding": wire } : {}),
+      "x-anvil-wire-binding": wire,
       "x-graphql-field": fieldName,
       // Queries/subscriptions are definitionally reads — an adapter assertion
       // classify.ts honors regardless of the (truthful, POST) wire method.
@@ -206,7 +280,7 @@ function addRoot(
         content: { "application/json": { schema: reqSchema } },
       };
     }
-    paths[path] = { post: op };
+    ctx.paths[path] = { post: op };
   }
 }
 
@@ -227,10 +301,19 @@ export function adaptGraphql(
   const mutation = schema.getMutationType();
   const subscription = schema.getSubscriptionType();
 
-  const paths: Record<string, Record<string, unknown>> = {};
-  addRoot(paths, query, "query", diagnostics);
-  addRoot(paths, mutation, "mutation", diagnostics);
-  addRoot(paths, subscription, "subscription", diagnostics);
+  const ctx: RootContext = {
+    schema,
+    paths: {},
+    diagnostics,
+    // A user type could, in principle, carry the stand-in's name; step aside.
+    typenameOnlyName: schema.getType(TYPENAME_ONLY_SCHEMA)
+      ? `Anvil_${TYPENAME_ONLY_SCHEMA}`
+      : TYPENAME_ONLY_SCHEMA,
+    cutsSeen: false,
+  };
+  addRoot(ctx, query, "query");
+  addRoot(ctx, mutation, "mutation");
+  addRoot(ctx, subscription, "subscription");
 
   const rootNames = new Set(
     [query, mutation, subscription].filter(Boolean).map((t) => (t as GraphQLObjectType).name),
@@ -240,14 +323,15 @@ export function adaptGraphql(
     if (name.startsWith("__")) continue; // introspection types
     if (rootNames.has(name)) continue; // edge-only root types
     const namedType = getNamedType(type);
-    const lowered = namedTypeSchema(namedType);
+    const lowered = namedTypeSchema(schema, namedType);
     if (lowered) schemas[name] = lowered;
   }
+  if (ctx.cutsSeen) schemas[ctx.typenameOnlyName] = typenameOnlySchema();
 
   return {
     openapi: "3.0.3",
     info: { title, version: "1.0.0" },
-    paths,
+    paths: ctx.paths,
     components: { schemas: schemas as Record<string, unknown> },
   };
 }
