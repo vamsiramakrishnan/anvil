@@ -70,7 +70,9 @@ itself into a bundle, a log, or an error.
 
 | Scheme | What travels on the wire | Env vars an SDK reads | Notes |
 | --- | --- | --- | --- |
-| `api_key`, `basic`, `oauth2_client_credentials`, … (static bearer/API key) | A resolved token or key, in the carrier AIR declared (default `Authorization: Bearer` or `X-API-Key`) | `<SERVICE>_TOKEN` (or `_API_KEY`) | Unchanged by this page — the baseline every other scheme is described relative to. |
+| `api_key`, `basic`, … (static bearer/API key) | A resolved token or key, in the carrier AIR declared (default `Authorization: Bearer` or `X-API-Key`) | `<SERVICE>_TOKEN` (or `_API_KEY`) | Unchanged by this page — the baseline every other scheme is described relative to. |
+| `oauth2_client_credentials` | A bearer the SDK mints itself with the client-credentials grant (RFC 6749 §4.4), or a pre-minted one | `<SERVICE>_TOKEN` to replay a token you already hold; otherwise `<SERVICE>_CLIENT_ID` / `_CLIENT_SECRET` to mint, only when the contract names a token endpoint | See "Minting a client-credentials token" below. Without a declared token endpoint the SDK keeps reading `<SERVICE>_TOKEN`, exactly as before. |
+| `oauth2_on_behalf_of` | A bearer exchanged from the inbound caller's subject token (RFC 8693) | `<SERVICE>_CLIENT_ID` / `_CLIENT_SECRET` (the SDK's own client), `<SERVICE>_ACTOR_TOKEN` when the contract's delegation names an actor; the subject token is never an env var | See "On-behalf-of (token exchange)" below. `<SERVICE>_TOKEN` still replays a token you already hold. |
 | `custom_header` | The raw value, under the exact header (or query parameter) name AIR declared — **never** a `Bearer`/`Basic` scheme prefix | `<SERVICE>_HEADER_VALUE` | Same carrier plumbing as a bearer token; the only difference is the carrier scheme is empty. |
 | `mtls` | Nothing in a header — the client certificate is presented on the TLS handshake itself | Whatever names `auth.tls.clientCertRef` / `clientKeyRef` / `caRef` carry — there is no fixed `<SERVICE>_*` suffix for this scheme, because the names are the exact ones the manifest or compiler declared (e.g. `PAYMENTS_MTLS_CLIENT_CERT`), the same ones the runtime resolves for the same operation | A value is read as literal PEM text when it starts with `-----BEGIN`, otherwise as a file path. `caRef` is optional; when absent, the platform's default trust store is used instead of a private CA. |
 | `oauth2_authorization_code` | A bearer token, replayed or refreshed — the interactive PKCE step never runs inside a generated SDK | `<SERVICE>_TOKEN` to replay a token you already have; `<SERVICE>_REFRESH_TOKEN` / `_CLIENT_ID` / `_CLIENT_SECRET` for the optional refresh helper, only emitted when the contract names a token endpoint | See "Delegated tokens" below. |
@@ -135,7 +137,7 @@ way each language finds convenient:
 | --- | --- |
 | `client_secret_basic` (the default when the contract names none) | HTTP Basic, and **no** `client_id` in the form |
 | `client_secret_post` | `client_id` and `client_secret` in the form, and **no** Basic header |
-| `private_key_jwt` | Nothing — refused. No refresh helper mints an RFC 7523 assertion, so a contract that declares it is refused as incoherent before it can be approved, the runtime fails closed, and the generated helper raises rather than substituting a client secret the caller may not even have. (The client-credentials and token-exchange grants **do** implement the method.) |
+| `private_key_jwt` | Nothing — refused. No refresh helper mints an RFC 7523 assertion, so a contract that declares it is refused as incoherent before it can be approved, the runtime fails closed, and the generated helper raises rather than substituting a client secret the caller may not even have. (The runtime's client-credentials and token-exchange grants **do** implement the method; the generated SDKs' helpers for those grants refuse it the same way this one does.) |
 
 An identity provider registered for one method rejects the other, so this is
 not cosmetic: it is the same agreement the CLI and the MCP server make about
@@ -167,6 +169,74 @@ const client = new PaymentsClient({
 });
 ```
 
+### Minting a client-credentials token (`oauth2_client_credentials`)
+
+When the contract names a token endpoint (the payments example does), every
+SDK can mint the service's own bearer the way the runtime does — the same
+grant, to the same endpoint, under the same declared client authentication —
+rather than waiting for an operator to paste a pre-minted `<SERVICE>_TOKEN`.
+Precedence is the runtime's: an explicit token provider wins, then an explicit
+client credential, then a static `<SERVICE>_TOKEN`, then the client credential
+the environment names.
+
+| Language | Explicit client credential | Standalone provider |
+| --- | --- | --- |
+| TypeScript | `{ clientCredentials: { clientId, clientSecret, scopes? } }` | `createClientCredentialsTokenProvider(tokenEndpoint, {...})` |
+| Python | `client_id=`, `client_secret=`, `scopes=` | `create_client_credentials_token_provider(token_endpoint, client_id, client_secret, ...)` |
+| Go | `WithClientCredentials(clientID, clientSecret, scopes...)` | `NewClientCredentialsTokenProvider(tokenEndpoint, clientID, clientSecret, ClientCredentialsOptions{...})` |
+| Java | `.clientCredentials(clientId, clientSecret)` + `.scopes(...)` | `Oauth.clientCredentialsTokenProvider(tokenEndpoint, clientId, clientSecret, clientAuth, scopes, audience, resource)` |
+
+The grant carries the contract's scopes (a caller may narrow them, never
+widen), the contract's `audience`/`resource` when declared, and the client
+authentication `provider.clientAuth` names — the same
+`client_secret_basic`/`client_secret_post` table as the refresh helper above.
+`private_key_jwt` is refused by every helper: nothing in an SDK mints an
+RFC 7523 assertion, and the runtime's `<SERVICE>_CLIENT_SECRET` is not
+something a private-key client has. The minted token is cached in memory
+until shortly before it expires, and concurrent first calls share one mint
+(a promise in TypeScript, a lock in Python, a mutex in Go, a monitor in Java)
+rather than each opening a round trip.
+
+```ts
+const client = new PaymentsClient(); // reads PAYMENTS_CLIENT_ID / PAYMENTS_CLIENT_SECRET, mints, caches
+```
+
+`packages/generators/src/sdk-token-grants.test.ts` drives each language's real
+client against a local token endpoint and asserts the exact grant it sends,
+that the token is reused across calls, and that a static token still wins.
+
+### On-behalf-of (`oauth2_on_behalf_of`, RFC 8693 token exchange)
+
+An on-behalf-of contract acts under the inbound caller's authority. The SDK
+never carries that caller's token upstream as-is: the caller supplies it as
+the **subject token**, and the SDK exchanges it at the declared token endpoint
+with its own client credential, the way the runtime's credential resolver
+does for the same operation (`packages/runtime/src/credentials.ts`).
+
+| Language | Per-caller client | Shared exchanger (one cache across subjects) |
+| --- | --- | --- |
+| TypeScript | `{ subjectToken, actorToken? }` | `createTokenExchanger(tokenEndpoint, {...}).tokenProvider(subjectToken, actorToken?)` |
+| Python | `subject_token=`, `actor_token=` | `create_token_exchanger(token_endpoint, client_id, ...).token_provider(subject_token, actor_token)` |
+| Go | `WithSubjectToken(...)`, `WithActorToken(...)` | `NewTokenExchanger(tokenEndpoint, clientID, clientSecret, TokenExchangeOptions{...}).TokenProvider(subject, actor)` |
+| Java | `.subjectToken(...)`, `.actorToken(...)` | `Oauth.tokenExchanger(tokenEndpoint, clientId, clientSecret, clientAuth, options).tokenSupplier(subject, actor)` |
+
+The grant is `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with
+the subject token under the contract's `subjectTokenType`
+(`access_token` by default), the `requestedTokenType`, the declared
+`audience`/`resource`/scopes, and — only when the contract's `delegation`
+names an actor — `actor_token` from `<SERVICE>_ACTOR_TOKEN` (or the explicit
+option) with `actor_token_type` `jwt`. A contract that names an actor refuses
+to construct a client that has a subject but no actor, with `auth_required`,
+rather than send a grant the runtime would refuse to send. Exchanged tokens
+are cached per subject (and per actor) until shortly before they expire; two
+subjects never share a token. The exchanger is emitted only when the contract
+names a token endpoint.
+
+```ts
+const exchanger = createTokenExchanger(TOKEN_ENDPOINT, { clientId, clientSecret, clientAuth: TOKEN_CLIENT_AUTH });
+const forAlice = new PaymentsClient({ tokenProvider: exchanger.tokenProvider(aliceInboundToken) });
+```
+
 ## Safety rules
 
 | Condition | Client behavior |
@@ -180,6 +250,50 @@ const client = new PaymentsClient({
 
 All four clients use the same Anvil error taxonomy. Errors include a code,
 trace id, retryability, and whether retry is safe for that operation.
+
+## Dry run
+
+Every generated method can be previewed. A dry run runs the same local gates a
+real call runs — the transport gate, confirmation, the idempotency
+requirement, the retry-safety decision — and then returns the request plan
+instead of sending it. It is the same plan `anvil run --dry-run` prints and
+the MCP server returns for its reserved `anvil_dry_run` argument
+(`packages/runtime/src/executor.ts`'s `DryRunPlan`), so a call can be
+previewed on any surface and read the same way:
+
+```json
+{
+  "operation": "payments.refunds.create",
+  "method": "POST",
+  "url": "https://api.example.com/payments/p_1/refunds",
+  "headers": { "accept": "application/json", "content-type": "application/json", "Idempotency-Key": "refund-001" },
+  "body": { "amount": 4200, "currency": "usd" },
+  "idempotencyKeyPresent": true,
+  "retryPlan": { "enabled": true, "maxAttempts": 3 },
+  "confirmationRequired": true
+}
+```
+
+| Language | Dry run | Plan type |
+| --- | --- | --- |
+| TypeScript | `{ dryRun: true }` in `CallOptions` | `DryRunPlan` |
+| Python | `dry_run=True` (`anvil_dry_run=` when a business field is already called `dry_run`, the same allocation AIR gives `confirm`) | `dict` |
+| Go | `CallOptions{DryRun: true}` | `map[string]any` |
+| Java | `CallOptions.none().dryRun(true)` | `Map<String, Object>` |
+
+Two rules hold in every language. A dry run never resolves a credential: no
+static token is attached, no refresh or grant is minted, no token provider is
+called — the runtime short-circuits before auth, and so does the SDK, which is
+also what lets a call be previewed before any credential is configured.
+Credential-bearing headers that do reach a plan (a modeled `cookie` or
+`x-api-key` input, say) are redacted to `***`, the runtime's own set. And
+every gate still runs: a dry run of a call the SDK would refuse is the same
+refusal, not a plan. Omit `confirm` on a gated operation and the dry run
+raises `confirmation_required` exactly as the real call would.
+
+`packages/generators/src/sdk-compile.test.ts` previews the refund in all four
+languages through a client whose token provider throws, asserts the four
+plans are identical, and asserts the loopback upstream saw none of them.
 
 ## Call shape by language
 
@@ -284,11 +398,19 @@ bundle:
 pnpm anvil certify generated/payments
 ```
 
-Certification checks three properties:
+Certification checks four properties:
 
 1. `sdk/manifest.json` exposes exactly the approved operation set.
-2. Confirmation, human-approval, idempotency, and retry flags match AIR.
+2. Confirmation, human-approval, idempotency, retry, and dry-run flags match
+   AIR, and the manifest's `auth` block (carrier, env-var names, and any
+   refresh, client-credentials, or token-exchange grant) is the one a fresh
+   projection of AIR produces.
 3. Every language has its required build files and generated methods.
+4. Every language's source carries what the manifest promises: the dry-run
+   plan on its one call path, and — for a contract that names a token
+   endpoint — the grant helper, the client env-var names, the declared
+   client authentication, and (for on-behalf-of) the RFC 8693 grant type and
+   the actor env var.
 
 `anvil conformance` is a separate check for agreement among the generated CLI,
 MCP server, and skill. It does not execute the SDKs.

@@ -1,5 +1,10 @@
-import { errorsFile, goPackage, mtlsFile, oauthFile, specFile } from "./go-core.js";
-import { invokeFile, safetyFile } from "./go-invoke.js";
+import { goDryRunFile } from "./dry-run.js";
+import { goGrantConfigFields, goGrantConstants, goGrantOptions, goGrantWiring } from "./go-auth.js";
+import { errorsFile, goPackage, mtlsFile, specFile } from "./go-core.js";
+import { invokeFile } from "./go-invoke.js";
+import { safetyFile } from "./go-safety.js";
+import { needsOauth, oauthGrantsOf } from "./oauth-grants.js";
+import { oauthFile } from "./oauth-grants-go.js";
 import type { SdkField, SdkOperation, SdkPager, SdkPlan } from "./plan.js";
 import { safetyNotes, wrap } from "./shared.js";
 import { GO_SOAP } from "./soap.js";
@@ -21,11 +26,14 @@ export function generateGoSdk(plan: SdkPlan): Record<string, string> {
     [`${root}/spec.go`]: specFile(plan),
     [`${root}/operations.go`]: operationsFile(plan),
     [`${root}/invoke.go`]: invokeFile(plan),
-    // mTLS and the OAuth refresh helper are emitted only for the service
-    // that declared the scheme — a bearer/api-key service never carries
-    // crypto/tls plumbing or dead refresh-token code.
+    [`${root}/dryrun.go`]: goDryRunFile(goPackage(plan)),
+    // mTLS and the OAuth grants are emitted only for the service that
+    // declared the scheme — a bearer/api-key service never carries
+    // crypto/tls plumbing or dead token-endpoint code.
     ...(plan.auth.tls ? { [`${root}/mtls.go`]: mtlsFile(plan) } : {}),
-    ...(plan.auth.tokenRefresh ? { [`${root}/oauth.go`]: oauthFile(plan) } : {}),
+    ...(needsOauth(plan)
+      ? { [`${root}/oauth.go`]: oauthFile(goPackage(plan), oauthGrantsOf(plan)) }
+      : {}),
     [`${root}/client.go`]: clientFile(plan),
     // Always emitted, unlike the TypeScript one: `OperationSpec.Soap` is a
     // typed field, so `SoapBinding` has to exist even in a REST service. Go
@@ -124,6 +132,11 @@ Safety is not advisory: an operation that requires confirmation returns
 \`*Error\` with \`Code == "confirmation_required"\` before anything reaches the
 network, and a transient failure on a mutation that cannot prove idempotence
 returns \`"unsafe_retry_blocked"\` rather than being sent twice.
+
+Every call can be previewed: set \`CallOptions{DryRun: true}\` and the same
+gates run, then a redacted request plan (\`map[string]any\`) comes back
+instead of a response — nothing is sent and no credential is resolved. It is
+the plan \`anvil run --dry-run\` prints.
 
 See \`../README.md\` for the full cross-language contract.
 `;
@@ -376,7 +389,7 @@ const ClientSecretEnvVar = ${g(refresh.clientSecretEnvVar)}
 const TokenClientAuth = ${g(refresh.clientAuth)}
 `
     : ""
-}
+}${goGrantConstants(plan)}
 const userAgent = ${g(`anvil-sdk-${plan.service.id}/${plan.service.version} (go)`)}
 
 // AuthCarrier is where the credential travels on the wire.
@@ -403,7 +416,7 @@ type clientConfig struct {
 	// over a static token — the delegated-token source for
 	// oauth2_authorization_code. Never logged or echoed; only its resolved
 	// return value reaches the wire, and only as a header/query value.
-	tokenProvider func(context.Context) (string, error)
+	tokenProvider func(context.Context) (string, error)${goGrantConfigFields(plan)}
 	authCarrier   *AuthCarrier
 	timeout       time.Duration
 	httpClient    *http.Client
@@ -448,7 +461,7 @@ func WithTokenProvider(provider func(context.Context) (string, error)) Option {
 	return func(config *clientConfig) { config.tokenProvider = provider }
 }
 
-// WithHTTPClient injects a transport, for tests and embedders.
+${goGrantOptions(plan)}// WithHTTPClient injects a transport, for tests and embedders.
 func WithHTTPClient(httpClient *http.Client) Option {
 	return func(config *clientConfig) { config.httpClient = httpClient }
 }
@@ -525,7 +538,7 @@ ${
 	}
 `
     : ""
-}	if config.httpClient == nil {
+}${goGrantWiring(plan)}	if config.httpClient == nil {
 		config.httpClient = http.DefaultClient
 	}
 	if config.random == nil {
