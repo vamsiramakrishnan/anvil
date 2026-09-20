@@ -24,6 +24,7 @@ export * from "./jsonschema.js";
 export * from "./ladder.js";
 export * from "./mcp.js";
 export * from "./naming.js";
+export * from "./output-schema.js";
 export * from "./resolve.js";
 export * from "./schema.js";
 export * from "./schema-branches.js";
