@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type AuthRequirement, effectiveAuthCarrier, type TlsClientMaterialRefs } from "@anvil/air";
@@ -74,6 +74,13 @@ export class EnvCredentialResolver implements CredentialResolver {
   private readonly fileRefreshTokens: FileRefreshTokenSource;
   /** In-memory cache of tokens acquired via the authorization-code refresh grant. */
   private readonly authCodeCache = new Map<string, { token: string; expEpochMs: number }>();
+  /**
+   * Refresh tokens a provider rotated on use (RFC 6749 §6 permits issuing a
+   * new one, and Google, Okta and Entra invalidate the old one when they do).
+   * The rotated value must win over the configured one from then on, or the
+   * second refresh fails with the revoked token and nothing says why.
+   */
+  private readonly rotatedRefreshTokens = new Map<string, string>();
 
   constructor(
     private readonly env: NodeJS.ProcessEnv = process.env,
@@ -209,8 +216,11 @@ export class EnvCredentialResolver implements CredentialResolver {
       return { headers: { Authorization: `Bearer ${cached.token}` } };
     }
 
+    const configuredRefreshToken = this.env[`${prefix}_REFRESH_TOKEN`];
     const refreshToken =
-      this.env[`${prefix}_REFRESH_TOKEN`] ?? this.fileRefreshTokens.read(profileName);
+      this.rotatedRefreshTokens.get(profileName) ??
+      configuredRefreshToken ??
+      this.fileRefreshTokens.read(profileName);
     const clientId = this.env[`${prefix}_CLIENT_ID`];
     const tokenEndpoint = this.env[`${prefix}_TOKEN_ENDPOINT`] ?? auth.provider?.tokenEndpoint;
     if (!refreshToken || !clientId || !tokenEndpoint) return null;
@@ -238,13 +248,26 @@ export class EnvCredentialResolver implements CredentialResolver {
         body: body.toString(),
       });
       if (!res.ok) return null;
-      const json = (await res.json()) as { access_token?: unknown; expires_in?: unknown };
+      const json = (await res.json()) as {
+        access_token?: unknown;
+        expires_in?: unknown;
+        refresh_token?: unknown;
+      };
       if (typeof json.access_token !== "string") return null;
       const expiresIn = typeof json.expires_in === "number" ? json.expires_in : 3600;
       this.authCodeCache.set(profileName, {
         token: json.access_token,
         expEpochMs: this.now() + Math.max(expiresIn * 1000 - 60_000, 0),
       });
+      if (typeof json.refresh_token === "string" && json.refresh_token !== refreshToken) {
+        this.rotatedRefreshTokens.set(profileName, json.refresh_token);
+        // Persist only where the token came from a file this process owns; an
+        // env-configured token cannot be rewritten, so the in-memory copy
+        // carries this process and the operator is told at the file layer.
+        if (configuredRefreshToken === undefined) {
+          this.fileRefreshTokens.write(profileName, json.refresh_token);
+        }
+      }
       return { headers: { Authorization: `Bearer ${json.access_token}` } };
     } catch {
       return null;
@@ -267,6 +290,34 @@ export class FileRefreshTokenSource {
 
   constructor(dir?: string) {
     this.dir = dir ?? join(homedir(), ".anvil", "credentials");
+  }
+
+  /**
+   * Replace the stored refresh token after a provider rotated it. Atomic
+   * (temp file + rename), mode 0600, never throws, never logs the value; a
+   * failure here leaves the previous file in place and the process keeps the
+   * rotated token in memory.
+   */
+  write(profileName: string, refreshToken: string): boolean {
+    try {
+      mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      const path = join(this.dir, `${profileName}.json`);
+      const previous = existsSync(path)
+        ? (JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>)
+        : {};
+      const next = {
+        ...previous,
+        refresh_token: refreshToken,
+        rotated_at: new Date().toISOString(),
+      };
+      const temp = `${path}.${process.pid}.tmp`;
+      writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+      chmodSync(temp, 0o600);
+      renameSync(temp, path);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** The refresh token stored for `profileName`, or undefined. */

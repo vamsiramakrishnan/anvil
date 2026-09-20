@@ -36,6 +36,7 @@ import {
   resolveIdempotencyKey,
 } from "./idempotency.js";
 import type { InboundIdentity } from "./inbound-identity.js";
+import { jobSecondaryKey } from "./job-index.js";
 import { checkLimits, type LimitsGate } from "./limits.js";
 import { type ExecutionRecord, noopObserver, type Observer } from "./observability.js";
 import {
@@ -1353,14 +1354,13 @@ export async function execute(
           const data = applyAgentProjection(decoded, op.output.agentProjection);
           if (reservationOwned && ledgerKey && ctx.ledger) {
             try {
-              await ctx.ledger.complete(ledgerKey, data, res.status);
+              await ctx.ledger.complete(ledgerKey, data, res.status, jobSecondaryKey(op, data));
             } catch {
-              // The upstream acknowledged the write. Never release this
-              // reservation when persistence of the replay result is unknown:
-              // doing so could turn a ledger outage into a duplicate mutation.
-              // The reservation is now ambiguous/unconfirmed rather than
-              // merely reserved, matching the sawPostResponseFailure branch
-              // below.
+              // The upstream acknowledged the write. Never release this reservation
+              // when persistence of the replay result is unknown: that could turn
+              // a ledger outage into a duplicate mutation. The reservation is now
+              // ambiguous/unconfirmed rather than merely reserved, matching the
+              // sawPostResponseFailure branch below.
               record.ledger = "in_progress";
               await runHook(ctx.policy?.postResponse, request, res);
               await runHook(ctx.policy?.postExecute, request, res);

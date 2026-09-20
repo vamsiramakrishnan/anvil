@@ -18,6 +18,7 @@ export * from "./extensions.js";
 export * from "./idempotency.js";
 export * from "./inbound-identity.js";
 export * from "./job-answer.js";
+export * from "./job-index.js";
 export * from "./limits.js";
 export * from "./observability.js";
 export * from "./policy.js";

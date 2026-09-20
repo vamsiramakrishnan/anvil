@@ -128,10 +128,21 @@ Configure named principals with `ANVIL_PRINCIPALS`, either inline
 (`token:id:scope1,scope2;token2:id2:scope3`) or as JSON
 (`{"tok_abc": {"id": "alice", "scopes": ["orders.read"]}}`):
 
-- **streamable-http**: the caller's bearer token looks itself up in the
-  directory.
-- **stdio**: `ANVIL_PRINCIPAL=<token>` names one principal for the whole
-  session (one caller per process lifetime).
+- **streamable-http and SSE** (the deployed `runtime/server.js`, the
+  generated `mcp/server-sse.js`): the verified inbound caller looks itself up
+  in the directory, per request, by the first key that matches: the exact
+  bearer it presented, then `issuer:subject`, then `subject`, then `email`
+  (the last three come from the token `ANVIL_INBOUND_AUTH_MODE` verified, so
+  a rotating JWT still resolves to one principal). `ANVIL_PRINCIPAL` is never
+  consulted for an inbound caller.
+- **stdio and the generated CLI**: `ANVIL_PRINCIPAL=<token>` names one
+  principal for the whole session (one caller per process lifetime).
+
+Every serving surface resolves the caller through the same composition root
+(`bootRuntime`), so these variables, and the rate and spend limits below, are
+enforced identically by `anvil serve mcp` (with or without `--fleet`), the
+deployed Cloud Run server, both generated MCP entrypoints, and the generated
+CLI. A drift test in `@anvil/generators` fails if any surface stops doing so.
 
 **Once a directory IS configured, an unresolved caller is refused
 fail-closed — never anonymous.** A missing, mistyped, or unlisted

@@ -192,6 +192,9 @@ describe("MCP server entrypoints — two transports, one runtime", () => {
       expect(src).toContain("bootRuntimeFromEnv({");
       expect(src).toContain("...boot.contextDeps");
       expect(src).toContain("boot.baseUrlFor(air.service.servers[0]?.url)");
+      // The caller's principal (scopes, rate and spend limits) is resolved by
+      // the root, per request on the SSE server and per session on stdio.
+      expect(src).toContain("principal: boot.principalFor(");
       expect(src).toContain("timeoutMs: config.upstreamTimeoutMs");
       // No per-surface dependency assembly survives in the template.
       expect(src).not.toContain("resolveLedger(");
@@ -232,7 +235,8 @@ describe("MCP server entrypoints — two transports, one runtime", () => {
     expect(messagesAuth).toBeLessThan(messagesDispatch);
 
     // OBO credential resolution works on this transport too.
-    expect(sse).toContain("inbound: currentInboundIdentity()");
+    expect(sse).toContain("const inbound = currentInboundIdentity();");
+    expect(sse).toContain("principal: boot.principalFor(inbound)");
   });
 });
 

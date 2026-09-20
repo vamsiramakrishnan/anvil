@@ -170,12 +170,12 @@ export const RUNTIME_ENV_CONTRACT: readonly RuntimeEnvVar[] = [
   {
     name: "ANVIL_PRINCIPALS",
     description:
-      "Principal directory (fleet runtime): `token:id:scope1,scope2;…` pairs or a JSON object keyed by bearer token. Unset, every caller is the anonymous every-scope principal. Malformed input yields an empty directory (fail closed).",
+      "Principal directory, enforced on every serving surface: `token:id:scope1,scope2;…` pairs or a JSON object keyed by bearer token, `issuer:subject`, `subject`, or `email` (an inbound caller resolves by the first key that matches). Unset, every caller is the anonymous every-scope principal. Malformed input yields an empty directory (fail closed).",
   },
   {
     name: "ANVIL_PRINCIPAL",
     description:
-      "For a stdio session: the ANVIL_PRINCIPALS key naming this process's caller, resolved once at boot.",
+      "For a stdio session or the generated CLI: the ANVIL_PRINCIPALS key naming this process's caller, resolved once at boot. Never consulted for a verified inbound HTTP caller.",
   },
   {
     name: "ANVIL_RATE_LIMIT_CAPACITY",

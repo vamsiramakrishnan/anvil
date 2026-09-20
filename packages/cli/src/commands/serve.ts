@@ -123,8 +123,7 @@ export async function buildFleetForWorkspace(
   const { buildToolResources, readBundleDir, verifyCertification } = await import(
     "@anvil/generators"
   );
-  const { allowedHostsFor, bootRuntimeFromEnv, buildLimitsGate, resolvePrincipalForEnv } =
-    await import("@anvil/runtime");
+  const { allowedHostsFor, bootRuntimeFromEnv } = await import("@anvil/runtime");
 
   // Same composition root as every other serving surface (see runServeMcp).
   // A fleet mounts many bundles on one process, so its extensions and its
@@ -138,20 +137,13 @@ export async function buildFleetForWorkspace(
     recordWrite: (line) => console.error(line),
   });
   const config = boot.config;
-  // One session, one principal for the lifetime of this stdio process — the
-  // same rule a single-bundle stdio server would follow if it opted in.
-  // Unconfigured (`ANVIL_PRINCIPALS` unset, or `ANVIL_PRINCIPAL` unset/
-  // unmatched) resolves to `undefined` here, which `execute()` itself turns
-  // into the anonymous, every-scope principal — this call never invents a
-  // fallback of its own. `principalDirectoryConfigured` is the OTHER half of
-  // that contract: it tells `execute()` whether `ANVIL_PRINCIPALS` names any
-  // entries at all, so an unresolved `principal` here (mistyped/missing
-  // `ANVIL_PRINCIPAL`, or a token the directory doesn't name) is refused
-  // fail-closed instead of silently reproducing the anonymous default (see
-  // `execute()`'s principal-resolution gate, `@anvil/runtime`).
-  const principal = resolvePrincipalForEnv(config.principals, env);
-  const principalDirectoryConfigured = Object.keys(config.principals).length > 0;
-  const limits = buildLimitsGate(config.limits);
+  // One session, one principal for the lifetime of this stdio process,
+  // resolved by the composition root from ANVIL_PRINCIPAL against the
+  // ANVIL_PRINCIPALS directory (unconfigured resolves to `undefined`, which
+  // `execute()` turns into the anonymous, every-scope principal; a configured
+  // directory that does not name the caller is refused fail-closed there).
+  // The rate and spend limiters ride `boot.contextDeps` like every surface.
+  const principal = boot.principalFor();
 
   const fleetInputs = bundles.map((bundle) => {
     const air = loadAir(bundle.dir);
@@ -211,8 +203,6 @@ export async function buildFleetForWorkspace(
           env: config.env,
           timeoutMs: config.upstreamTimeoutMs,
           principal,
-          principalDirectoryConfigured,
-          limits,
         }),
       },
       certification: files ? readCertification(files, verifyCertification) : undefined,

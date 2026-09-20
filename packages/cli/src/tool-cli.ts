@@ -572,6 +572,7 @@ async function invoke(
     env: config.env,
     retries: flags["no-retries"] === true ? false : undefined,
     timeoutMs,
+    principal: boot.principalFor(),
     sleep: deps.sleep,
     now: deps.now,
   };
