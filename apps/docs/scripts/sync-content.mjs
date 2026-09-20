@@ -13,7 +13,15 @@
 //   4. emit `.md` (NOT `.mdx`) so raw prose tokens (`<`, `{`) never need escaping
 //
 //   node apps/docs/scripts/sync-content.mjs [--dry-run]
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { REPO_URL, SITE_BASE } from "../src/lib/site-meta.mjs";
@@ -23,6 +31,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
 const CONTENT = join(HERE, "..", "src", "content", "docs");
 const ASTRO_CONTENT_CACHE = join(HERE, "..", "node_modules", ".astro", "data-store.json");
+// Images the canonical docs embed (`docs/assets/**`) are copied under the
+// site's public tree (gitignored) and their links rewritten to that route.
+const ASSETS_SRC = "docs/assets";
+const ASSETS_DEST = join(HERE, "..", "public", "docs-assets");
+const ASSETS_ROUTE = `${SITE_BASE}/docs-assets`;
 const DRY_RUN = process.argv.includes("--dry-run");
 
 // The canonical glossary: every synced page gets its first mention of each
@@ -165,6 +178,10 @@ function rewriteRepositoryLinks(markdown, { src, routeMap }) {
     const siteRoute = routeMap.get(resolved);
     if (siteRoute) return `${label}(${siteRoute}${suffix}${title})`;
 
+    if (label.startsWith("!") && resolved.startsWith(`${ASSETS_SRC}/`)) {
+      return `${label}(${ASSETS_ROUTE}/${resolved.slice(ASSETS_SRC.length + 1)}${suffix}${title})`;
+    }
+
     if (!resolved.startsWith("../") && existsSync(join(REPO_ROOT, resolved))) {
       return `${label}(${REPO_URL}/blob/main/${resolved}${suffix}${title})`;
     }
@@ -239,7 +256,27 @@ function removeStalePages(directory, prefix, desired) {
   }
 }
 
+/** Mirror docs/assets into the site's public tree, replacing the previous copy. */
+function syncAssets() {
+  const src = join(REPO_ROOT, ASSETS_SRC);
+  if (DRY_RUN) {
+    console.log(`would mirror ${ASSETS_SRC} to public/docs-assets`);
+    return;
+  }
+  rmSync(ASSETS_DEST, { recursive: true, force: true });
+  if (!existsSync(src)) return;
+  const copy = (from, to) => {
+    mkdirSync(to, { recursive: true });
+    for (const entry of readdirSync(from, { withFileTypes: true })) {
+      if (entry.isDirectory()) copy(join(from, entry.name), join(to, entry.name));
+      else copyFileSync(join(from, entry.name), join(to, entry.name));
+    }
+  };
+  copy(src, ASSETS_DEST);
+}
+
 function run() {
+  syncAssets();
   const pages = [...PAGES, ...adrPages()];
   const routeMap = new Map(pages.map((page) => [page.src, routeForDest(page.dest)]));
   if (!DRY_RUN) {

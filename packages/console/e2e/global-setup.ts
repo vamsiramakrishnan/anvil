@@ -1,5 +1,5 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -107,6 +107,20 @@ async function waitFor(check: () => Promise<boolean>, what: string, ms = 20_000)
   throw new Error(`timed out waiting for ${what}`);
 }
 
+/**
+ * A fresh temporary workspace. `ANVIL_E2E_WORKSPACE` names a fixed path
+ * instead (the screenshot run sets it, so the paths the console prints do
+ * not change between regenerations); it is emptied first either way.
+ */
+function workspaceRoot(): string {
+  const fixed = process.env.ANVIL_E2E_WORKSPACE;
+  if (!fixed) return mkdtempSync(join(tmpdir(), "anvil-console-e2e-"));
+  const root = resolve(fixed);
+  rmSync(root, { recursive: true, force: true });
+  mkdirSync(root, { recursive: true });
+  return root;
+}
+
 /** Launch `anvil console --json` and parse the one document it prints. */
 async function launchConsole(root: string, port: number) {
   const child: ChildProcess = spawn(
@@ -159,7 +173,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     }
   }
 
-  const root = mkdtempSync(join(tmpdir(), "anvil-console-e2e-"));
+  const root = workspaceRoot();
   const specPath = join(root, "openapi.yaml");
   const manifestPath = join(root, "anvil.yaml");
   writeFileSync(specPath, specWithIndistinctSiblings(), "utf8");
