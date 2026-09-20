@@ -58,6 +58,9 @@ export interface SdkManifestMethod {
   soapAction?: string;
   /** Present for a GraphQL operation: the query document every client posts. */
   graphqlDocument?: string;
+  /** Present when the operation takes a body: the content type every client
+   *  must encode — or refuse, when it is one the clients do not speak. */
+  bodyContentType?: string;
   effect: string;
   idempotency: string;
   retrySafe: boolean;
@@ -102,6 +105,7 @@ export function sdkManifest(plan: SdkPlan): SdkManifest {
       ...(op.wireBinding?.protocol === "graphql"
         ? { graphqlDocument: op.wireBinding.document }
         : {}),
+      ...(op.body ? { bodyContentType: op.body.contentType } : {}),
       effect: op.effect,
       idempotency: op.idempotency.mode,
       retrySafe: op.retry.mode === "safe",

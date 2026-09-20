@@ -1,8 +1,9 @@
+import { wireFidelityCore } from "./wire-fidelity-core.js";
+
 /**
- * The Java SDK's call path: the retry gate and Retry-After arithmetic in
- * `Safety`, and the single `Invoker.invoke` every generated method funnels
- * through. Identical for every service, so a method that skipped a gate would
- * have to be a change here rather than a quiet difference in one emitted client.
+ * The Java SDK's call path: the retry gate and Retry-After arithmetic in `Safety`,
+ * and the single `Invoker.invoke` every generated method funnels through. Identical
+ * for every service, so a skipped gate would be a change here, not a quiet difference.
  */
 
 export function safetyFile(pkg: string): string {
@@ -266,10 +267,8 @@ final class Invoker {
 
   /** Headers the transport owns; a caller override would break the contract. */
   private static final Set<String> RESERVED_HEADERS =
-      new HashSet<String>(
-          Arrays.asList(
-              "authorization", "content-length", "content-type", "host", "transfer-encoding"));
-
+      new HashSet<String>(Arrays.asList("authorization", "content-length", "content-type", "host", "transfer-encoding"));
+${wireFidelityCore.java}
   private Invoker() {}
 
   @SuppressWarnings("unchecked")
@@ -517,16 +516,16 @@ final class Invoker {
         continue;
       }
       if ("path".equals(param.in)) {
-        path = path.replace("{" + param.wireName + "}", encodePath(scalar(value)));
+        path = path.replace("{" + param.wireName + "}", simpleParam(spec.id, param, value, true));
       } else if ("query".equals(param.in)) {
-        query.add(new String[] {param.wireName, scalar(value)});
+        query.addAll(queryParam(spec.id, param, value));
       } else if ("header".equals(param.in)) {
-        headers.put(param.wireName, scalar(value));
+        headers.put(param.wireName, simpleParam(spec.id, param, value, false));
       } else if ("cookie".equals(param.in)) {
         if (cookie.length() > 0) {
           cookie.append("; ");
         }
-        cookie.append(param.wireName).append('=').append(scalar(value));
+        cookie.append(cookiePairs(spec.id, param, value));
       } else if ("body".equals(param.in)) {
         body.put(param.wireName, value);
         hasBody = true;
@@ -676,6 +675,7 @@ final class Invoker {
   static Object invoke(
       Config config, OperationSpec spec, Map<String, Object> rawPayload, CallOptions options) {
     assertWireExecutable(spec, config);
+    assertEncodable(spec, rawPayload);
     assertConfirmed(spec, options);
     Map<String, Object> payload = new LinkedHashMap<String, Object>();
     for (Map.Entry<String, Object> entry : rawPayload.entrySet()) {

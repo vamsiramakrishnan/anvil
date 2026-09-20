@@ -116,6 +116,11 @@ type ParamSpec struct {
 	Key      string
 	In       string
 	Required bool
+	// Style is the OpenAPI serialization style the source declared, or "" for
+	// the location's default; ExplodeSet says whether Explode was declared.
+	Style      string
+	Explode    bool
+	ExplodeSet bool
 }
 
 // BodyFieldSpec is one projected top-level body field.

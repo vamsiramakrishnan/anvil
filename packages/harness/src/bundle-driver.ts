@@ -12,6 +12,8 @@ import {
   operationSafetyInputKeys,
   propKey,
   resolveIdempotencyCarrier,
+  serializeQueryParam,
+  serializeSimpleParam,
 } from "@anvil/air";
 import { exampleInput } from "@anvil/generators";
 import {
@@ -39,7 +41,8 @@ export interface CaptureRecord {
   method: string;
   url: string;
   path: string;
-  query: Record<string, string>;
+  /** A key repeated on the wire (an exploded array) is recorded as an array. */
+  query: Record<string, string | string[]>;
   headers: Record<string, string>;
   /** Secret-free proof of which credential family reached the mock. */
   credentialKind?: "none" | "hermetic_exchanged_bearer" | "redacted_other";
@@ -357,9 +360,18 @@ export function wireable(op: Operation): boolean {
 
 export interface ExpectedWire {
   path: string;
-  query: Record<string, string>;
+  /** Same shape as `CaptureRecord.query`: a repeated key is an array. */
+  query: Record<string, string | string[]>;
   headers: Record<string, string>;
   body: unknown;
+}
+
+/** Add one name/value pair the way the mock records it: a repeat becomes an array. */
+function addQueryPair(query: Record<string, string | string[]>, name: string, value: string): void {
+  const existing = query[name];
+  if (existing === undefined) query[name] = value;
+  else if (Array.isArray(existing)) existing.push(value);
+  else query[name] = [existing, value];
 }
 
 function withNestedValue(value: unknown, path: readonly string[], key: string): unknown {
@@ -386,17 +398,27 @@ function withNestedValue(value: unknown, path: readonly string[], key: string): 
  */
 export function expectedWire(op: Operation, args: Record<string, unknown>): ExpectedWire {
   let path = op.sourceRef.path ?? "/";
-  const query: Record<string, string> = {};
+  const query: Record<string, string | string[]> = {};
   const headers: Record<string, string> = {};
   const fields: Record<string, unknown> = {};
   let hasBody = false;
+  // Serialized by the one table in @anvil/air that the runtime binds through
+  // (`param-style.ts`), so this oracle asks for what the contract promises
+  // rather than agreeing with whatever the executor happened to send. A value
+  // the table refuses is left off the expectation: the runtime refuses the
+  // call before the wire, so no capture exists to compare it against.
   for (const p of op.input.params) {
     const value = args[agentPropKey(p)];
     if (value === undefined || value === null) continue;
-    if (p.in === "path") path = path.replace(`{${p.name}}`, encodeURIComponent(String(value)));
-    else if (p.in === "query") query[p.name] = String(value);
-    else if (p.in === "header" && !REDACTED_HEADERS.has(p.name.toLowerCase())) {
-      headers[p.name.toLowerCase()] = String(value);
+    if (p.in === "path") {
+      const bound = serializeSimpleParam(p, value, encodeURIComponent);
+      if (bound.ok) path = path.replace(`{${p.name}}`, bound.text);
+    } else if (p.in === "query") {
+      const bound = serializeQueryParam(p, value);
+      if (bound.ok) for (const [name, text] of bound.pairs) addQueryPair(query, name, text);
+    } else if (p.in === "header" && !REDACTED_HEADERS.has(p.name.toLowerCase())) {
+      const bound = serializeSimpleParam(p, value);
+      if (bound.ok) headers[p.name.toLowerCase()] = bound.text;
     } else if (p.in === "body") {
       fields[p.name] = value;
       hasBody = true;
@@ -438,6 +460,13 @@ export function expectedWire(op: Operation, args: Record<string, unknown>): Expe
     }
   }
   return { path, query, headers, body };
+}
+
+/** The mock's query capture shape from a URL: a repeated key becomes an array. */
+export function queryCapture(params: URLSearchParams): Record<string, string | string[]> {
+  const query: Record<string, string | string[]> = {};
+  for (const [name, value] of params) addQueryPair(query, name, value);
+  return query;
 }
 
 /** Structural diff producing loss entries with JSON paths; walks both sides. */

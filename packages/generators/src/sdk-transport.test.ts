@@ -192,6 +192,60 @@ describe("the SDK transport gate", () => {
     expect(sdkGateDrift(rest.files, rest.air)).toEqual([]);
   });
 
+  it("emits the encoding gate into all four cores, ahead of any token resolution", () => {
+    // A body the client cannot encode, or a parameter value no style gives a
+    // meaning to, is refused with the runtime's own code — and refused before
+    // a delegated token is resolved, so the refusal never costs a credential.
+    // The assertion is on ordering in the emitted call path, because ordering
+    // is what "before any credential is read" means.
+    const gates: Record<(typeof SDK_LANGUAGES)[number], [string, string, string]> = {
+      typescript: ["sdk/typescript/src/invoke.ts", "assertEncodable(spec, input)", "tokenProvider()"],
+      python: [
+        "sdk/python/anvil_banking/_invoke.py",
+        "assert_encodable(spec, payload)",
+        "token_provider()",
+      ],
+      go: ["sdk/go/invoke.go", "assertEncodable(spec, payload)", "tokenProvider(ctx)"],
+      java: [
+        "sdk/java/src/main/java/com/anvil/sdk/banking/Invoker.java",
+        "assertEncodable(spec, rawPayload)",
+        "tokenSupplier.get()",
+      ],
+    };
+    for (const language of SDK_LANGUAGES) {
+      const [path, gateCall, tokenRead] = gates[language];
+      const source = soap.files[path] ?? "";
+      const gate = source.indexOf(gateCall);
+      const token = source.indexOf(tokenRead);
+      expect(gate, `${language}: the call path never invokes the encoding gate`).toBeGreaterThanOrEqual(0);
+      expect(token, `${language}: no delegated token read to order against`).toBeGreaterThanOrEqual(0);
+      expect(gate, `${language}: the token is resolved before the encoding gate`).toBeLessThan(token);
+      // The gate refuses with the runtime's code, and only JSON bodies pass it.
+      expect(source).toContain('"unsupported_operation"');
+      expect(source).toContain("+json");
+    }
+  });
+
+  it("carries the body content type into the manifest, so a client that disagrees is caught", () => {
+    const manifest = sdkManifest(sdkPlan(rest.air));
+    const refund = manifest.methods.find((m) => m.operationId === "payments.refunds.create");
+    expect(refund?.bodyContentType).toBe("application/json");
+    expect(sdkGateDrift(rest.files, rest.air)).toEqual([]);
+
+    // Flip only the manifest's claim about the body: a client that believes a
+    // form body is JSON would send JSON labelled as a form.
+    const shipped = JSON.parse(rest.files["sdk/manifest.json"] ?? "{}");
+    const method = shipped.methods.find(
+      (m: { operationId: string }) => m.operationId === "payments.refunds.create",
+    );
+    method.bodyContentType = "application/x-www-form-urlencoded";
+    const drift = sdkGateDrift(
+      { ...rest.files, "sdk/manifest.json": JSON.stringify(shipped, null, 2) },
+      rest.air,
+    );
+    expect(drift.join(" ")).toContain("bodyContentType");
+  });
+
   it("refuses a subscription before the facade short-circuit, in all four cores", () => {
     // The defect this pins down: every gate once read `http_json || facade →
     // pass`, so declaring ANVIL_PROTOCOL_FACADE let a `graphql_sse` operation

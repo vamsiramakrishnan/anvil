@@ -143,7 +143,7 @@ describe("the SOAP codec puts a real envelope on the wire", () => {
       { input: { amount: 1, note: '</n:TransferFundsRequest><evil attr="1">' } },
       { ...baseCtx, transport, ledger: new InMemoryLedger() },
     );
-    const body = transport.requests[0]?.body ?? "";
+    const body = String(transport.requests[0]?.body ?? "");
     expect(body).toContain("&lt;/n:TransferFundsRequest&gt;");
     expect(body).not.toContain("<evil");
     // Exactly one request element — injection did not add a second.

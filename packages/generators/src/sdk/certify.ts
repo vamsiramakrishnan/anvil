@@ -127,6 +127,10 @@ export function sdkGateDrift(files: Record<string, string>, air: AirDocument): s
       // is asking a different question, which is the same class of divergence
       // the flags above catch and the same reason to catch it before it ships.
       "graphqlDocument",
+      // The body content type every client encodes or refuses. A client that
+      // believes a form body is JSON sends JSON labelled as a form — the exact
+      // silent divergence the runtime's body gate now refuses.
+      "bodyContentType",
       // The paging and completion helpers are part of what an SDK promises:
       // a manifest that drops one advertises a client that can only ever
       // read the first page, or return a job handle it cannot wait on.

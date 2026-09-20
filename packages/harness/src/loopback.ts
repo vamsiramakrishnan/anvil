@@ -343,7 +343,9 @@ async function checkFidelity(
     if (req.path !== want.path)
       losses.push({ path: "url.path", sent: want.path, received: req.path });
     for (const [k, v] of Object.entries(want.query)) {
-      if (req.query[k] !== v) losses.push({ path: `query.${k}`, sent: v, received: req.query[k] });
+      // A repeated key is an array on both sides; compare by value, not reference.
+      if (JSON.stringify(req.query[k]) !== JSON.stringify(v))
+        losses.push({ path: `query.${k}`, sent: v, received: req.query[k] });
     }
     for (const [k, v] of Object.entries(want.headers)) {
       if (req.headers[k] !== v)

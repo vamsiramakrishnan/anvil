@@ -185,7 +185,7 @@ function operationsFile(pkg: string, plan: SdkPlan): string {
     const params = op.params
       .map(
         (param) =>
-          `            new OperationSpec.Param(${q(param.wireName)}, ${q(param.key)}, ${q(param.in)}, ${param.required})`,
+          `            new OperationSpec.Param(${q(param.wireName)}, ${q(param.key)}, ${q(param.in)}, ${param.required}${param.style || param.explode !== undefined ? `, ${param.style ? q(param.style) : "null"}, ${param.explode === undefined ? "null" : param.explode ? "Boolean.TRUE" : "Boolean.FALSE"}` : ""})`,
       )
       .join(",\n");
     const body = op.body

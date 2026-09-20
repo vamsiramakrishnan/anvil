@@ -233,12 +233,21 @@ public final class OperationSpec {
     public final String key;
     public final String in;
     public final boolean required;
+    /** OpenAPI serialization, only when the source declared it; null means the location's default. */
+    public final String style;
+    public final Boolean explode;
 
     public Param(String wireName, String key, String in, boolean required) {
+      this(wireName, key, in, required, null, null);
+    }
+
+    public Param(String wireName, String key, String in, boolean required, String style, Boolean explode) {
       this.wireName = wireName;
       this.key = key;
       this.in = in;
       this.required = required;
+      this.style = style;
+      this.explode = explode;
     }
   }
 

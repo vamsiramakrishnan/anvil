@@ -166,6 +166,15 @@ function withQueryParameter(document: AirDocument): AirDocument {
       params: [
         ...target.input.params,
         { name: "expand", in: "query", required: false, schema: { type: "string" } },
+        // An array under OpenAPI's default (form, exploded) style: the key is
+        // repeated, and an item that is not a scalar is refused, in every
+        // language, before the wire.
+        {
+          name: "tags",
+          in: "query",
+          required: false,
+          schema: { type: "array", items: { type: "string" } },
+        },
       ],
     },
   });
@@ -212,8 +221,9 @@ const REFUND = {
   idempotencyKey: "key-1",
 };
 
-/** The read every language also makes: a space in the path and in the query. */
-const LOOKUP = { customerId: "c 1", expand: "a b" };
+/** The read every language also makes: a space in the path and in the query,
+ *  and an exploded array whose key every language must repeat. */
+const LOOKUP = { customerId: "c 1", expand: "a b", tags: ["x", "y z"] };
 
 const run = (command: string, args: string[], cwd: string): string =>
   execFileSync(command, args, { cwd, encoding: "utf8", timeout: 180_000 });
@@ -244,7 +254,13 @@ try {
   console.log("refused:" + (error instanceof AnvilError ? error.code : "wrong-type"));
 }
 await client.createRefund(input, { confirm: true, idempotencyKey: ${JSON.stringify(REFUND.idempotencyKey)} });
-await client.getCustomer({ customer_id: ${JSON.stringify(LOOKUP.customerId)}, expand: ${JSON.stringify(LOOKUP.expand)} });
+try {
+  await client.getCustomer({ customer_id: ${JSON.stringify(LOOKUP.customerId)}, tags: [{ a: 1 }] });
+  console.log("NOT REFUSED");
+} catch (error) {
+  console.log("refused:" + (error instanceof AnvilError ? error.code : "wrong-type"));
+}
+await client.getCustomer({ customer_id: ${JSON.stringify(LOOKUP.customerId)}, expand: ${JSON.stringify(LOOKUP.expand)}, tags: ${JSON.stringify(LOOKUP.tags)} });
 const items = [];
 for await (const item of client.listCustomersPaginated({ per_page: 5 })) items.push(item);
 console.log("paged:" + items.join(","));
@@ -255,6 +271,8 @@ console.log("sent");
     const output = run(process.execPath, ["drive.mjs", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    // The array-of-objects query value: refused by the encoding gate, before the wire.
+    expect(output).toContain("refused:unsupported_operation");
     expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
@@ -284,7 +302,12 @@ for extra in ({}, {"confirm": True}):
     except AnvilError as error:
         print("refused:" + error.code)
 client.create_refund(**kwargs, confirm=True, idempotency_key=${JSON.stringify(REFUND.idempotencyKey)})
-client.get_customer(customer_id=${JSON.stringify(LOOKUP.customerId)}, expand=${JSON.stringify(LOOKUP.expand)})
+try:
+    client.get_customer(customer_id=${JSON.stringify(LOOKUP.customerId)}, tags=[{"a": 1}])
+    print("NOT REFUSED")
+except AnvilError as error:
+    print("refused:" + error.code)
+client.get_customer(customer_id=${JSON.stringify(LOOKUP.customerId)}, expand=${JSON.stringify(LOOKUP.expand)}, tags=${JSON.stringify(LOOKUP.tags)})
 print("paged:" + ",".join(client.list_customers_paginated(per_page=5)))
 print("sent")
 `,
@@ -293,6 +316,8 @@ print("sent")
     const output = run("python3", ["drive.py", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    // The array-of-objects query value: refused by the encoding gate, before the wire.
+    expect(output).toContain("refused:unsupported_operation");
     expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
@@ -342,7 +367,14 @@ func main() {
 		panic(err)
 	}
 	expand := ${JSON.stringify(LOOKUP.expand)}
-	if _, err := client.GetCustomer(context.Background(), payments.GetCustomerInput{CustomerId: ${JSON.stringify(LOOKUP.customerId)}, Expand: &expand}); err != nil {
+	if _, err := client.GetCustomer(context.Background(), payments.GetCustomerInput{CustomerId: ${JSON.stringify(LOOKUP.customerId)}, Tags: []any{map[string]any{"a": 1}}}); err != nil {
+		if refusal, ok := err.(*payments.Error); ok {
+			fmt.Println("refused:" + refusal.Code)
+		}
+	} else {
+		fmt.Println("NOT REFUSED")
+	}
+	if _, err := client.GetCustomer(context.Background(), payments.GetCustomerInput{CustomerId: ${JSON.stringify(LOOKUP.customerId)}, Expand: &expand, Tags: []any{${LOOKUP.tags.map((tag) => JSON.stringify(tag)).join(", ")}}}); err != nil {
 		panic(err)
 	}
 	perPage := int64(5)
@@ -369,6 +401,8 @@ func main() {
     const output = run("go", ["run", "./drive", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    // The array-of-objects query value: refused by the encoding gate, before the wire.
+    expect(output).toContain("refused:unsupported_operation");
     expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
@@ -410,8 +444,18 @@ public class Drive {
     }
     client.createRefund(
         input(), CallOptions.none().confirm(true).idempotencyKey(${JSON.stringify(REFUND.idempotencyKey)}));
+    try {
+      client.getCustomer(
+          new GetCustomerInput(${JSON.stringify(LOOKUP.customerId)})
+              .tags(java.util.Arrays.<Object>asList(java.util.Collections.singletonMap("a", 1))));
+      System.out.println("NOT REFUSED");
+    } catch (AnvilException error) {
+      System.out.println("refused:" + error.code());
+    }
     client.getCustomer(
-        new GetCustomerInput(${JSON.stringify(LOOKUP.customerId)}).expand(${JSON.stringify(LOOKUP.expand)}));
+        new GetCustomerInput(${JSON.stringify(LOOKUP.customerId)})
+            .expand(${JSON.stringify(LOOKUP.expand)})
+            .tags(java.util.Arrays.<Object>asList(${LOOKUP.tags.map((tag) => JSON.stringify(tag)).join(", ")})));
     java.util.List<String> items = new java.util.ArrayList<String>();
     for (Object page : client.listCustomersPages(new ListCustomersInput().perPage(5L), CallOptions.none(), 10)) {
       for (Object item : (java.util.List<?>) ((java.util.Map<?, ?>) page).get("data")) {
@@ -433,6 +477,8 @@ public class Drive {
     const output = run("java", ["-cp", classes(), "Drive", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    // The array-of-objects query value: refused by the encoding gate, before the wire.
+    expect(output).toContain("refused:unsupported_operation");
     expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
@@ -498,7 +544,9 @@ describe("the four SDKs agree on the wire", () => {
     // are not interchangeable: `+` in a path means a literal plus. Java's
     // URLEncoder does form encoding for both, which is why this is asserted
     // rather than assumed.
-    expect(first?.url).toBe("/customers/c%201?expand=a+b");
+    // And an exploded array repeats its key, in every language, rather than
+    // arriving as one language's idea of an array's toString.
+    expect(first?.url).toBe("/customers/c%201?expand=a+b&tags=x&tags=y+z");
     expect(first?.authorization).toBe("Bearer tok");
     expect(first?.idempotencyKey).toBeUndefined();
     for (const request of gets) expect(request).toEqual(first);

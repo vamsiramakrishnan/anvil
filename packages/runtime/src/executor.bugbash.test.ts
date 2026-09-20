@@ -455,7 +455,7 @@ describe("idempotency body-carrier container validation", () => {
       { ...baseCtx, transport },
     );
     expect(res.outcome).toBe("success");
-    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({
+    expect(JSON.parse(String(transport.requests[0]?.body ?? "{}"))).toEqual({
       cartId: "cart_1",
       meta: { tracking: { idempotencyKey: "deep-key" } },
     });

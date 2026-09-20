@@ -21,6 +21,7 @@ export * from "./job-answer.js";
 export * from "./limits.js";
 export * from "./observability.js";
 export * from "./policy.js";
+export * from "./response-bytes.js";
 export * from "./response-projection.js";
 export * from "./retry.js";
 export * from "./safe-http.js";

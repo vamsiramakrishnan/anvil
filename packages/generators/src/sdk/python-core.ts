@@ -1,4 +1,5 @@
 import type { SdkPlan } from "./plan.js";
+import { wireFidelityCore } from "./wire-fidelity-core.js";
 
 /**
  * The Python SDK's decision core — the modules that are byte-identical for
@@ -335,7 +336,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from ._safety import (
     parse_retry_after,
@@ -347,10 +348,8 @@ from .errors import AnvilError, http_status_to_error_code, is_retryable_code
 from .spec import OperationSpec
 
 #: Headers the transport owns; a caller override would break the contract.
-RESERVED_HEADERS = frozenset(
-    ("authorization", "content-length", "content-type", "host", "transfer-encoding")
-)
-
+RESERVED_HEADERS = frozenset(("authorization", "content-length", "content-type", "host", "transfer-encoding"))
+${wireFidelityCore.python}
 
 def _trace_id() -> str:
     return str(uuid.uuid4())
@@ -471,15 +470,14 @@ def build_request(
             continue
         where = param["in"]
         if where == "path":
-            path = path.replace(
-                "{" + param["wireName"] + "}", urllib.parse.quote(str(value), safe="")
-            )
+            path = path.replace("{" + param["wireName"] + "}", simple_param(spec.id, param, value, _quote))
         elif where == "query":
-            query.append((param["wireName"], str(value)))
+            query.extend(query_param(spec.id, param, value))
         elif where == "header":
-            headers[param["wireName"]] = str(value)
+            headers[param["wireName"]] = simple_param(spec.id, param, value, _identity)
         elif where == "cookie":
-            cookie = (cookie + "; " if cookie else "") + param["wireName"] + "=" + str(value)
+            pairs = "; ".join(k + "=" + v for (k, v) in query_param(spec.id, param, value))
+            cookie = (cookie + "; " if cookie else "") + pairs
         elif where == "body":
             body[param["wireName"]] = value
             has_body = True
@@ -610,6 +608,7 @@ def invoke(
     caching does its own.
     """
     assert_wire_executable(spec, protocol_facade)
+    assert_encodable(spec, payload)
     assert_confirmed(spec, confirm)
     if token_provider is not None:
         token = token_provider()

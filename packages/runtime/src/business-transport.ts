@@ -24,11 +24,13 @@ export class BusinessTransport implements Transport {
     );
     if (request.method !== "POST" || !action)
       return reply(404, { error: "Unknown business action." });
-    if (Buffer.byteLength(request.body ?? "", "utf8") > 1_048_576)
+    // A business action is always posted as JSON text; bytes are not an input.
+    const text = typeof request.body === "string" ? request.body : "";
+    if (Buffer.byteLength(text, "utf8") > 1_048_576)
       return reply(413, { error: "Business input exceeds the size limit." });
     let input: unknown;
     try {
-      input = JSON.parse(request.body ?? "");
+      input = JSON.parse(text);
     } catch {
       return reply(400, { error: "Expected a JSON object." });
     }

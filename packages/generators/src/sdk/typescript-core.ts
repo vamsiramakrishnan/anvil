@@ -1,4 +1,5 @@
 import { SDK_ERROR_CODES } from "./plan.js";
+import { wireFidelityCore } from "./wire-fidelity-core.js";
 
 /**
  * The TypeScript SDK's decision core — the four modules that are byte-identical
@@ -304,6 +305,9 @@ export interface ParamSpec {
   key: string;
   in: ParamLocation;
   required: boolean;
+  /** OpenAPI serialization, only when the source declared it; the location's default otherwise. */
+  style?: string;
+  explode?: boolean;
 }
 
 export interface BodyFieldSpec {
@@ -395,7 +399,7 @@ export function invokeModule(withSoap: boolean): string {
 // The one call path. Every generated method funnels through \`invoke\`, so the
 // gates below cannot be bypassed by a method that forgot to check.
 import { AnvilError, httpStatusToErrorCode, isRetryableCode } from "./errors.js";
-import type { CallOptions, OperationSpec } from "./spec.js";
+import type { CallOptions, OperationSpec, ParamSpec } from "./spec.js";
 import {
   parseRetryAfter,
   resolveIdempotencyKey,
@@ -445,14 +449,8 @@ export interface ClientOptions {
 }
 
 /** Headers the transport owns; a caller override would break the contract. */
-const RESERVED_HEADERS = new Set([
-  "authorization",
-  "content-length",
-  "content-type",
-  "host",
-  "transfer-encoding",
-]);
-
+const RESERVED_HEADERS = new Set(["authorization", "content-length", "content-type", "host", "transfer-encoding"]);
+${wireFidelityCore.typescript}
 export interface InvokeContext {
   baseUrl: string;
   protocolFacade?: string;
@@ -607,16 +605,16 @@ export function buildRequest(
     if (value === undefined || value === null) continue;
     switch (param.in) {
       case "path":
-        path = path.replace("{" + param.wireName + "}", encodeURIComponent(String(value)));
+        path = path.replace("{" + param.wireName + "}", simpleParam(spec.id, param, value, encodeURIComponent));
         break;
       case "query":
-        query.set(param.wireName, String(value));
+        for (const [name, text] of queryParam(spec.id, param, value)) query.append(name, text);
         break;
       case "header":
-        headers[param.wireName] = String(value);
+        headers[param.wireName] = simpleParam(spec.id, param, value, identity);
         break;
       case "cookie":
-        cookie = (cookie ? cookie + "; " : "") + param.wireName + "=" + String(value);
+        cookie = (cookie ? cookie + "; " : "") + queryParam(spec.id, param, value).map(([name, text]) => name + "=" + text).join("; ");
         break;
       case "body":
         body[param.wireName] = value;
@@ -756,6 +754,7 @@ export async function invoke(
   context: InvokeContext,
 ): Promise<unknown> {
   assertWireExecutable(spec, context);
+  assertEncodable(spec, input);
   assertConfirmed(spec, options);
   const idempotencyKey = await resolveIdempotencyKey(spec, options.idempotencyKey, input);
   assertKeyed(spec, idempotencyKey);

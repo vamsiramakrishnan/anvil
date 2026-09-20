@@ -967,7 +967,7 @@ function single(reqs: CaptureRecord[]): CaptureRecord | undefined {
 function compareReq(
   mcp: CaptureRecord,
   cli: CaptureRecord,
-  want: { path: string; query: Record<string, string>; body: unknown },
+  want: { path: string; query: Record<string, string | string[]>; body: unknown },
   divergences: ConformanceDivergence[],
 ): void {
   const push = (path: string, left: unknown, right: unknown) =>
@@ -977,7 +977,8 @@ function compareReq(
   else if (mcp.path !== want.path) push("wire.path", mcp.path, `expected ${want.path}`);
   // Query: compare the two surfaces key-by-key.
   for (const key of new Set([...Object.keys(mcp.query), ...Object.keys(cli.query)])) {
-    if (mcp.query[key] !== cli.query[key])
+    // A repeated key is an array on both sides; compare by value, not reference.
+    if (JSON.stringify(mcp.query[key]) !== JSON.stringify(cli.query[key]))
       push(`wire.query.${key}`, mcp.query[key], cli.query[key]);
   }
   // Body: a structural diff between the two surfaces' bodies.

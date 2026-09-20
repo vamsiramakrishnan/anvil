@@ -10,6 +10,7 @@ import type {
 } from "@anvil/air";
 import {
   HttpMethod,
+  ParamStyle,
   resolveAsyncContract,
   StreamContractSchema,
   snakeCase,
@@ -52,6 +53,9 @@ interface RawParam {
   schema?: JsonSchema;
   description?: string;
   example?: unknown;
+  /** OpenAPI serialization, when the source declared it. */
+  style?: unknown;
+  explode?: unknown;
 }
 
 interface RawOperation {
@@ -143,6 +147,11 @@ function toParam(raw: RawParam, namedSchemas: Record<string, unknown>): Param | 
   const schema = raw.schema
     ? (materializeSchema(raw.schema, namedSchemas).schema as JsonSchema)
     : { type: "string" };
+  // Serialization is carried only when the source declared it, and only when
+  // it is a style OpenAPI defines: absent stays absent (the runtime resolves
+  // the per-location default at bind time), and an unknown style is dropped
+  // rather than lowered into a value no serializer could act on.
+  const style = ParamStyle.safeParse(raw.style).data;
   return {
     name: raw.name,
     in: loc,
@@ -151,6 +160,8 @@ function toParam(raw: RawParam, namedSchemas: Record<string, unknown>): Param | 
     description: raw.description,
     example: raw.example,
     inferred: false,
+    ...(style ? { style } : {}),
+    ...(typeof raw.explode === "boolean" ? { explode: raw.explode } : {}),
   };
 }
 

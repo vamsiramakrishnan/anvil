@@ -340,7 +340,7 @@ describe("idempotency gate", () => {
       { ...baseCtx, transport },
     );
     expect(res.outcome).toBe("success");
-    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({
+    expect(JSON.parse(String(transport.requests[0]?.body ?? "{}"))).toEqual({
       input: { cartId: "cart_1", idempotencyKey: "body-key" },
     });
     expect(body).toEqual({ input: { cartId: "cart_1" } });
@@ -418,7 +418,7 @@ describe("request body reconstruction", () => {
       { input: { payment_id: "pay_1", amount: 2500 }, confirm: true, idempotencyKey: "k1" },
       { ...baseCtx, transport },
     );
-    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({ amount: 2500 });
+    expect(JSON.parse(String(transport.requests[0]?.body ?? "{}"))).toEqual({ amount: 2500 });
     // payment_id is a path param — it must NOT leak into the body.
     expect(transport.requests[0]?.url).toContain("/payments/pay_1/refunds");
   });
@@ -445,7 +445,7 @@ describe("request body reconstruction", () => {
     const payload = { items: [{ sku: "a", qty: 2 }], note: "gift" };
     const res = await execute(wholeOp, { input: { body: payload } }, { ...baseCtx, transport });
     expect(res.outcome).toBe("success");
-    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual(payload);
+    expect(JSON.parse(String(transport.requests[0]?.body ?? "{}"))).toEqual(payload);
   });
 
   it("still honors legacy in:body params (older AIR bundles)", async () => {
@@ -468,7 +468,7 @@ describe("request body reconstruction", () => {
       { ...baseCtx, transport },
     );
     expect(res.outcome).toBe("success");
-    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({ amount: 2500 });
+    expect(JSON.parse(String(transport.requests[0]?.body ?? "{}"))).toEqual({ amount: 2500 });
   });
 
   it("fails closed when a required whole body is missing", async () => {
@@ -651,7 +651,7 @@ describe("agent-facing input bindings", () => {
     );
     expect(res.outcome).toBe("success");
     expect(transport.requests[0]?.url).toContain("/payments/pay_1/refunds");
-    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({ amount: 2500 });
+    expect(JSON.parse(String(transport.requests[0]?.body ?? "{}"))).toEqual({ amount: 2500 });
   });
 });
 
@@ -1484,7 +1484,7 @@ describe("idempotency key validation", () => {
 
     expect(res.outcome).toBe("success");
     expect(reservations).toBe(0);
-    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toMatchObject({
+    expect(JSON.parse(String(transport.requests[0]?.body ?? "{}"))).toMatchObject({
       idempotency_key: "business value ü",
     });
   });
