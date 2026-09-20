@@ -38,11 +38,7 @@ function isPrimitive(value: unknown): value is string | number | boolean | bigin
 }
 
 /** The refusal for a declared content type the runtime does not encode. */
-function bodyEncodingRefusal(
-  op: Operation,
-  contentType: string,
-  traceId: string,
-): AnvilError {
+function bodyEncodingRefusal(op: Operation, contentType: string, traceId: string): AnvilError {
   return new AnvilError({
     code: "unsupported_operation",
     message:
