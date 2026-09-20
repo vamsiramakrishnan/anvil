@@ -9,3 +9,6 @@ src/content/docs/concepts/
 src/content/docs/guides/
 src/content/docs/design/
 src/content/docs/reference/
+
+# Images mirrored from the repo's docs/assets by scripts/sync-content.mjs.
+public/docs-assets/

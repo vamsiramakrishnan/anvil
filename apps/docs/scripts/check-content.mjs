@@ -8,6 +8,7 @@ import { SITE_BASE } from "../src/lib/site-meta.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DOCS_ROOT = resolve(HERE, "..", "src", "content", "docs");
+const PUBLIC_ROOT = resolve(HERE, "..", "public");
 
 function filesUnder(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -69,7 +70,14 @@ for (const path of pages) {
 
     if (clean.startsWith("/")) {
       const route = clean.endsWith("/") || /\.[a-z0-9]+$/i.test(clean) ? clean : `${clean}/`;
-      if (!routes.has(route)) failures.push(`${name}: unresolved site route ${target}`);
+      // A site-absolute target is a page route or a file served from public/
+      // (the images sync-content.mjs mirrors from docs/assets).
+      const publicFile =
+        route.startsWith(`/${normalizedBase}/`) &&
+        existsSync(resolve(PUBLIC_ROOT, route.slice(normalizedBase.length + 2)));
+      if (!routes.has(route) && !publicFile) {
+        failures.push(`${name}: unresolved site route ${target}`);
+      }
       continue;
     }
 

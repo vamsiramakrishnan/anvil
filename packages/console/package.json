@@ -23,7 +23,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p src/ui/tsconfig.json && tsc --noEmit -p e2e/tsconfig.json",
     "test": "vitest run --root ../.. packages/console/src",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "screenshots": "playwright test --config e2e/screenshots.config.ts"
   },
   "dependencies": {
     "@anvil/air": "workspace:*",

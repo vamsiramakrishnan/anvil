@@ -96,6 +96,10 @@ operations** to inspect a call, **Request builder** to prepare CLI or MCP input,
 and **Interfaces** to browse generated files. **Review** contains pending
 decisions. [Console guide](docs/console.md).
 
+![The Anvil console's review queue: a refund mutation open with its effect, risk, idempotency, confirmation requirement, and the claims behind each](docs/assets/console/review.png)
+
+![The Interfaces view: skill, CLI, MCP server, SDK, and Gemini Enterprise, with the generated MCP server open](docs/assets/console/interfaces.png)
+
 For your own API, start with:
 
 ```bash
