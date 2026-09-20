@@ -136,6 +136,52 @@ describe("the SOAP codec puts a real envelope on the wire", () => {
     );
   });
 
+  it("carries only the branch of an xsd:choice that was sent", async () => {
+    // The compiler lowers a choice to optional members under a oneOf; the
+    // codec never invents the branch that was not sent, and never emits an
+    // empty tag for it — an absent optional element is absent.
+    const transport = new MockTransport(() => soapOk("<ok>true</ok>"));
+    await execute(
+      op({
+        input: {
+          params: [],
+          body: {
+            contentType: "application/json",
+            required: true,
+            schema: {
+              type: "object",
+              properties: {
+                amount: { type: "integer" },
+                card: { type: "string" },
+                bankAccount: { type: "string" },
+              },
+              required: ["amount"],
+              oneOf: [{ required: ["card"] }, { required: ["bankAccount"] }],
+            },
+            projection: "whole",
+            fields: [],
+          },
+        },
+      }),
+      // A body with a compositor is surfaced whole, so the branch arrives as
+      // structure rather than as flat fields.
+      { input: { body: { amount: 100, bankAccount: "GB29NWBK" } } },
+      { ...baseCtx, transport, ledger: new InMemoryLedger() },
+    );
+    expect(transport.requests[0]?.body).toBe(
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+        '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">' +
+        "<soap:Body>" +
+        '<n:TransferFundsRequest xmlns:n="http://example.com/banking">' +
+        "<n:amount>100</n:amount>" +
+        "<n:bankAccount>GB29NWBK</n:bankAccount>" +
+        "</n:TransferFundsRequest>" +
+        "</soap:Body>" +
+        "</soap:Envelope>",
+    );
+    expect(transport.requests[0]?.body).not.toContain("card");
+  });
+
   it("escapes values that would otherwise close the envelope", async () => {
     const transport = new MockTransport(() => soapOk("<ok>true</ok>"));
     await execute(

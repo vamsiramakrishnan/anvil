@@ -57,10 +57,16 @@ describe("GraphQL subscriptions", () => {
     expect(op["x-anvil-stream"]).toBeUndefined();
   });
 
-  it("no longer reports a subscription as unencodable", () => {
+  it("records a wire binding for every root field — there is no unencodable shape", () => {
+    // Every root field has a selection (at worst `{ __typename }`), so the
+    // builder cannot decline, and no diagnostic exists for it declining.
     const diagnostics: { code?: string }[] = [];
-    adaptGraphql(SDL, "svc", diagnostics as never);
-    expect(diagnostics.map((d) => d.code)).not.toContain("graphql_binding_unencodable");
+    const doc = adaptGraphql(SDL, "svc", diagnostics as never);
+    for (const item of Object.values(doc.paths ?? {})) {
+      const op = item?.post as Record<string, unknown>;
+      expect(op["x-anvil-wire-binding"]).toMatchObject({ document: expect.any(String) });
+    }
+    expect(diagnostics).toEqual([]);
   });
 });
 

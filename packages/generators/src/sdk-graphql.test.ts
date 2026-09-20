@@ -159,7 +159,7 @@ describe("the compiler built a real query document", () => {
     const subscription = streaming.operations.find((op) => op.id.includes("order_updated"));
     expect(subscription?.sourceRef.binding?.protocol).toBe("graphql_sse");
     expect(subscription?.stream).toMatchObject({ transport: "graphql_sse" });
-    expect(streaming.diagnostics.map((d) => d.code)).not.toContain("graphql_binding_unencodable");
+    expect(subscription?.sourceRef.binding).toMatchObject({ document: expect.any(String) });
 
     // The SDK gate speaks http_json, soap, and graphql — and nothing else.
     const speakable = ["http_json", "soap", "graphql"];

@@ -103,9 +103,12 @@ const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
     "encode wrongly — check the compile diagnostics for which",
   graphql:
     "Anvil speaks GraphQL for a query or a mutation over one JSON response, " +
-    "and for a subscription over a bounded Server-Sent Events window. This " +
-    "operation carries no wire binding at all, so the compiler declined to " +
-    "encode it — check the compile diagnostics for which shape and why",
+    "and for a subscription over a bounded Server-Sent Events window. The " +
+    "compiler records a wire binding for every root field it lowers — there " +
+    "is no GraphQL shape it declines — so an operation without one was not " +
+    "compiled from its SDL by this compiler: it was hand-written, or produced " +
+    "before wire bindings existed. Recompile from the SDL rather than editing " +
+    "a binding in by hand",
   grpc:
     "unlike the other protocols, this path is real — it is gRPC's own :path — " +
     "but a native call is length-prefixed protobuf over HTTP/2 with the status " +
