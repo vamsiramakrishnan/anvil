@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { type AirDocument, type AuthRequirement, Operation as OperationSchema } from "@anvil/air";
 import { compile } from "@anvil/compiler";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { generateSdks } from "./sdk/index.js";
+import { generateSdks, sdkPlan } from "./sdk/index.js";
 
 /**
  * The generated SDKs, put through each language's real toolchain.
@@ -45,6 +45,20 @@ const TOOLCHAIN = {
   go: has("go", ["version"]),
   java: has("javac", ["-version"]),
 };
+
+/**
+ * The SDK CI lane installs every toolchain and sets ANVIL_FUZZ_REQUIRE_SDKS,
+ * so a missing one there is a failure rather than a silent "not run" — the
+ * same guard `packages/harness/src/fuzz/sdk-driver.test.ts` carries.
+ */
+it("requires the declared SDK toolchains in the SDK CI lane", () => {
+  if (process.env.ANVIL_FUZZ_REQUIRE_SDKS === "true") {
+    const missing = Object.entries(TOOLCHAIN)
+      .filter(([, present]) => !present)
+      .map(([language]) => language);
+    expect(missing, "ANVIL_FUZZ_REQUIRE_SDKS is set but a toolchain is missing").toEqual([]);
+  }
+});
 
 interface CapturedRequest {
   method: string;
@@ -215,6 +229,20 @@ const REFUND = {
 /** The read every language also makes: a space in the path and in the query. */
 const LOOKUP = { customerId: "c 1", expand: "a b" };
 
+/**
+ * The dry-run plan each language printed for the refund, keyed by language.
+ * Every driver previews the refund through a client whose token provider
+ * throws, so a language that resolved a credential during a dry run — or
+ * sent the request — fails its own case before the plans are ever compared.
+ */
+const PLANS: Partial<Record<keyof typeof TOOLCHAIN, Record<string, unknown>>> = {};
+
+function planFrom(output: string, language: keyof typeof TOOLCHAIN): void {
+  const line = output.split("\n").find((candidate) => candidate.startsWith("dryrun:"));
+  expect(line, `${language} printed no dry-run plan`).toBeDefined();
+  PLANS[language] = JSON.parse((line as string).slice("dryrun:".length)) as Record<string, unknown>;
+}
+
 const run = (command: string, args: string[], cwd: string): string =>
   execFileSync(command, args, { cwd, encoding: "utf8", timeout: 180_000 });
 
@@ -243,6 +271,17 @@ try {
 } catch (error) {
   console.log("refused:" + (error instanceof AnvilError ? error.code : "wrong-type"));
 }
+const dry = new PaymentsClient({
+  baseUrl: process.argv[2],
+  tokenProvider: async () => { throw new Error("credential resolved during dry run"); },
+});
+try {
+  await dry.createRefund(input, { dryRun: true });
+  console.log("NOT REFUSED");
+} catch (error) {
+  console.log("dryrun-refused:" + (error instanceof AnvilError ? error.code : "wrong-type"));
+}
+console.log("dryrun:" + JSON.stringify(await dry.createRefund(input, { confirm: true, idempotencyKey: ${JSON.stringify(REFUND.idempotencyKey)}, dryRun: true })));
 await client.createRefund(input, { confirm: true, idempotencyKey: ${JSON.stringify(REFUND.idempotencyKey)} });
 await client.getCustomer({ customer_id: ${JSON.stringify(LOOKUP.customerId)}, expand: ${JSON.stringify(LOOKUP.expand)} });
 const items = [];
@@ -255,9 +294,11 @@ console.log("sent");
     const output = run(process.execPath, ["drive.mjs", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    expect(output).toContain("dryrun-refused:confirmation_required");
     expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
+    planFrom(output, "typescript");
   }, 180_000);
 });
 
@@ -271,7 +312,8 @@ describe.runIf(TOOLCHAIN.python)("the Python SDK", () => {
   it("refuses a gated call before it reaches the wire, then sends one request", () => {
     writeFileSync(
       join(root(), "drive.py"),
-      `import sys
+      `import json
+import sys
 sys.path.insert(0, ".")
 from anvil_payments import PaymentsClient, AnvilError
 
@@ -283,6 +325,20 @@ for extra in ({}, {"confirm": True}):
         print("NOT REFUSED")
     except AnvilError as error:
         print("refused:" + error.code)
+
+
+def poison():
+    raise RuntimeError("credential resolved during dry run")
+
+
+dry = PaymentsClient(base_url=sys.argv[1], token_provider=poison)
+try:
+    dry.create_refund(**kwargs, dry_run=True)
+    print("NOT REFUSED")
+except AnvilError as error:
+    print("dryrun-refused:" + error.code)
+plan = dry.create_refund(**kwargs, confirm=True, idempotency_key=${JSON.stringify(REFUND.idempotencyKey)}, dry_run=True)
+print("dryrun:" + json.dumps(plan, sort_keys=True))
 client.create_refund(**kwargs, confirm=True, idempotency_key=${JSON.stringify(REFUND.idempotencyKey)})
 client.get_customer(customer_id=${JSON.stringify(LOOKUP.customerId)}, expand=${JSON.stringify(LOOKUP.expand)})
 print("paged:" + ",".join(client.list_customers_paginated(per_page=5)))
@@ -293,9 +349,11 @@ print("sent")
     const output = run("python3", ["drive.py", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    expect(output).toContain("dryrun-refused:confirmation_required");
     expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
+    planFrom(output, "python");
   }, 120_000);
 });
 
@@ -315,6 +373,7 @@ describe.runIf(TOOLCHAIN.go)("the Go SDK", () => {
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -338,6 +397,25 @@ func main() {
 		}
 		fmt.Println("NOT REFUSED")
 	}
+	dry, err := payments.New(payments.WithBaseURL(os.Args[1]), payments.WithTokenProvider(func(context.Context) (string, error) {
+		return "", fmt.Errorf("credential resolved during dry run")
+	}))
+	if err != nil {
+		panic(err)
+	}
+	if _, err := dry.CreateRefund(context.Background(), input, payments.CallOptions{DryRun: true}); err != nil {
+		if refusal, ok := err.(*payments.Error); ok {
+			fmt.Println("dryrun-refused:" + refusal.Code)
+		}
+	} else {
+		fmt.Println("NOT REFUSED")
+	}
+	plan, err := dry.CreateRefund(context.Background(), input, payments.CallOptions{Confirm: true, IdempotencyKey: ${JSON.stringify(REFUND.idempotencyKey)}, DryRun: true})
+	if err != nil {
+		panic(err)
+	}
+	encoded, _ := json.Marshal(plan)
+	fmt.Println("dryrun:" + string(encoded))
 	if _, err := client.CreateRefund(context.Background(), input, payments.CallOptions{Confirm: true, IdempotencyKey: ${JSON.stringify(REFUND.idempotencyKey)}}); err != nil {
 		panic(err)
 	}
@@ -369,9 +447,11 @@ func main() {
     const output = run("go", ["run", "./drive", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    expect(output).toContain("dryrun-refused:confirmation_required");
     expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
+    planFrom(output, "go");
   }, 180_000);
 });
 
@@ -408,6 +488,29 @@ public class Drive {
         System.out.println("refused:" + error.code());
       }
     }
+    PaymentsClient dry =
+        PaymentsClient.builder()
+            .baseUrl(args[0])
+            .tokenSupplier(
+                () -> {
+                  throw new IllegalStateException("credential resolved during dry run");
+                })
+            .build();
+    try {
+      dry.createRefund(input(), CallOptions.none().dryRun(true));
+      System.out.println("NOT REFUSED");
+    } catch (AnvilException error) {
+      System.out.println("dryrun-refused:" + error.code());
+    }
+    System.out.println(
+        "dryrun:"
+            + Json.write(
+                dry.createRefund(
+                    input(),
+                    CallOptions.none()
+                        .confirm(true)
+                        .idempotencyKey(${JSON.stringify(REFUND.idempotencyKey)})
+                        .dryRun(true))));
     client.createRefund(
         input(), CallOptions.none().confirm(true).idempotencyKey(${JSON.stringify(REFUND.idempotencyKey)}));
     client.getCustomer(
@@ -433,9 +536,11 @@ public class Drive {
     const output = run("java", ["-cp", classes(), "Drive", baseUrl], root());
     expect(output).toContain("refused:confirmation_required");
     expect(output).toContain("refused:idempotency_required");
+    expect(output).toContain("dryrun-refused:confirmation_required");
     expect(output).toContain(`paged:${PAGED}`);
     expect(output).toContain("sent");
     expect(output).not.toContain("NOT REFUSED");
+    planFrom(output, "java");
   }, 180_000);
 });
 
@@ -502,6 +607,54 @@ describe("the four SDKs agree on the wire", () => {
     expect(first?.authorization).toBe("Bearer tok");
     expect(first?.idempotencyKey).toBeUndefined();
     for (const request of gets) expect(request).toEqual(first);
+  });
+
+  it("planned the same dry run in every language, and sent none of it", () => {
+    const ran = languagesThatRan();
+    expect(ran).toBeGreaterThan(0);
+    const planned = Object.entries(PLANS);
+    expect(planned.length, "every language that ran printed a plan").toBe(ran);
+    // Header names are compared case-insensitively (each language spells the
+    // carrier as AIR does; Java's HttpHeaders folds it), and the user agent is
+    // the one header that legitimately names the language.
+    const normalize = (plan: Record<string, unknown>) => {
+      const headers = Object.fromEntries(
+        Object.entries(plan.headers as Record<string, string>)
+          .filter(([name]) => name.toLowerCase() !== "user-agent")
+          .map(([name, value]) => [name.toLowerCase(), value]),
+      );
+      return { ...plan, headers };
+    };
+    const [firstLanguage, firstPlan] = planned[0] as [string, Record<string, unknown>];
+    const first = normalize(firstPlan);
+    // The plan is the runtime's DryRunPlan: the request that WOULD have gone
+    // out, credential never resolved, key present, confirmation recorded.
+    expect(first.operation).toBe("payments.refunds.create");
+    expect(first.method).toBe("POST");
+    expect(first.url).toBe(`${baseUrl}/payments/p%201/refunds`);
+    expect(first.headers).toEqual({
+      accept: "application/json",
+      "content-type": "application/json",
+      "idempotency-key": REFUND.idempotencyKey,
+    });
+    expect(first.body).toEqual({ amount: 100, currency: "usd", reason: "duplicate" });
+    expect(first.idempotencyKeyPresent).toBe(true);
+    expect(first.confirmationRequired).toBe(true);
+    // The key was supplied, so the retry gate's answer is the contract's own
+    // retry mode — the same arithmetic the runtime's plan reports.
+    const refund = sdkPlan(air).operations.find((op) => op.id === "payments.refunds.create");
+    if (!refund) throw new Error("fixture no longer has payments.refunds.create");
+    const retrySafe = refund.retry.mode === "safe";
+    expect(first.retryPlan).toEqual({
+      enabled: retrySafe,
+      maxAttempts: retrySafe ? refund.retry.maxAttempts : 1,
+    });
+    for (const [language, plan] of planned) {
+      expect(normalize(plan), `${language} vs ${firstLanguage}`).toEqual(first);
+    }
+    // Two previews per language (one refused, one planned), and not one of
+    // them reached the upstream: the only POSTs are the real refunds.
+    expect(captured().filter((request) => request.method === "POST").length).toBe(ran);
   });
 
   it("paged the listing with the same requests, in the same order, in every language", () => {

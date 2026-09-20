@@ -1,7 +1,7 @@
 import type { AirDocument } from "@anvil/air";
 import { generateGoSdk } from "./go.js";
 import { generateJavaSdk } from "./java.js";
-import { type SdkPlan, sdkPlan } from "./plan.js";
+import { type SdkOperation, type SdkPlan, sdkPlan } from "./plan.js";
 import { generatePythonSdk } from "./python.js";
 import { generateTypeScriptSdk } from "./typescript.js";
 
@@ -66,6 +66,13 @@ export interface SdkManifestMethod {
   idempotencyKeyRequired: boolean;
   paginated: boolean;
   awaitable: boolean;
+  /**
+   * Whether a call can be previewed without being sent: the same local gates
+   * run, then a redacted request plan comes back instead of a response. False
+   * only for a wire the client cannot build a request for at all (a GraphQL
+   * subscription), where there is no plan to show.
+   */
+  dryRunnable: boolean;
   /** Method identifier per language — the thing a caller actually types. */
   methods: Record<SdkLanguage, string>;
 }
@@ -76,6 +83,15 @@ export interface SdkManifest {
   languages: SdkLanguage[];
   auth: SdkPlan["auth"];
   methods: SdkManifestMethod[];
+}
+
+/**
+ * Whether an operation can be dry-run. Every gate an SDK runs locally runs
+ * before a request is built, so the only operation with nothing to preview is
+ * one whose wire the client refuses outright before building anything.
+ */
+export function dryRunnable(op: SdkOperation): boolean {
+  return op.wireProtocol !== "graphql_sse";
 }
 
 /** The language-neutral index of what every emitted SDK exposes. */
@@ -112,6 +128,7 @@ export function sdkManifest(plan: SdkPlan): SdkManifest {
       // helper cannot page safely is not "paginated" on the SDK surface.
       paginated: op.pager !== undefined,
       awaitable: op.async?.statusMethodBase !== undefined,
+      dryRunnable: dryRunnable(op),
       methods: {
         typescript: op.names.camel,
         python: op.names.snake,
@@ -159,9 +176,35 @@ Each SDK is zero-dependency and uses its platform's own HTTP client, so
 6. **One error taxonomy.** Every failure carries an Anvil error code, a trace
    id, and whether it is retryable — in all four languages.
 7. **Credentials are never logged, echoed, or included in an error.**
+8. **Every call can be previewed.** A dry run (\`{ dryRun: true }\`,
+   \`dry_run=True\`, \`CallOptions{DryRun: true}\`, \`.dryRun(true)\`) runs the
+   same gates, then returns the redacted request plan — the one
+   \`anvil run --dry-run\` prints — instead of sending. Nothing reaches the
+   wire and no credential is resolved.
 
 The credential is read from \`${plan.auth.envVar}\` when a client is constructed
-without one${plan.auth.carrier ? `, and travels as the \`${plan.auth.carrier.name}\` ${plan.auth.carrier.in}` : ""}.
+without one${plan.auth.carrier ? `, and travels as the \`${plan.auth.carrier.name}\` ${plan.auth.carrier.in}` : ""}.${
+    plan.auth.clientCredentials
+      ? `
+When it is unset, every SDK mints its own bearer with the client-credentials
+grant (RFC 6749 §4.4) at \`${plan.auth.clientCredentials.tokenEndpoint}\`, from
+\`${plan.auth.clientCredentials.clientIdEnvVar}\` / \`${plan.auth.clientCredentials.clientSecretEnvVar}\`
+(or an explicit client credential), authenticating as \`${plan.auth.clientCredentials.clientAuth}\` —
+the same grant, endpoint, and method the runtime uses — and caches it until
+shortly before it expires.`
+      : ""
+  }${
+    plan.auth.tokenExchange
+      ? `
+This service acts on behalf of a caller: give every SDK the inbound caller's
+subject token and it exchanges it (RFC 8693) at
+\`${plan.auth.tokenExchange.tokenEndpoint}\` with
+\`${plan.auth.tokenExchange.clientIdEnvVar}\` / \`${plan.auth.tokenExchange.clientSecretEnvVar}\`
+as \`${plan.auth.tokenExchange.clientAuth}\`${plan.auth.tokenExchange.actorTokenEnvVar ? `, with the actor token from \`${plan.auth.tokenExchange.actorTokenEnvVar}\`` : ""},
+caching the exchanged token per subject. The subject token itself is never
+sent upstream and never logged.`
+      : ""
+  }
 
 ## Regenerating
 

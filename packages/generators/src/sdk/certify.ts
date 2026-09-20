@@ -1,6 +1,7 @@
 import type { AirDocument } from "@anvil/air";
 import { SDK_LANGUAGES, type SdkLanguage, sdkManifest, sdkPlan } from "./index.js";
-import type { SdkPlan } from "./plan.js";
+import { GRANT_TOKEN_EXCHANGE } from "./oauth-grants.js";
+import type { SdkPlan, SdkTokenGrant } from "./plan.js";
 
 /**
  * Certification over the generated SDKs.
@@ -132,6 +133,10 @@ export function sdkGateDrift(files: Record<string, string>, air: AirDocument): s
       // read the first page, or return a job handle it cannot wait on.
       "paginated",
       "awaitable",
+      // Whether a call can be previewed without being sent. A client that
+      // dropped the preview would make "dry-run it first" — the posture every
+      // other surface offers — silently unavailable on this one.
+      "dryRunnable",
     ] as const) {
       if (got[gate] !== want[gate]) {
         drift.push(
@@ -163,6 +168,43 @@ export function sdkGateDrift(files: Record<string, string>, air: AirDocument): s
   // "recompute and refuse any difference" posture as the per-method gates
   // above, extended to custom_header, mtls, and oauth2_authorization_code.
   drift.push(...sdkAuthDrift(files, expected.auth, (actual as { auth?: unknown }).auth));
+  // Dry-run is a per-client capability, not a per-method one: every method
+  // funnels through the one call path that returns the plan, so the proof is
+  // that each language's source still carries that path.
+  if (expected.methods.some((method) => method.dryRunnable)) {
+    drift.push(...sdkDryRunDrift(files));
+  }
+  return drift;
+}
+
+/**
+ * The literal identifier each language names its dry-run plan builder by,
+ * as defined and as called — the parity claim is that all four define it,
+ * not just one, and that each client's one call path actually reaches it:
+ * the definition alone would be a helper nothing reaches, and a call alone
+ * would not compile.
+ */
+const SDK_DRY_RUN_SYMBOL: Record<SdkLanguage, { defined: string; called: string }> = {
+  typescript: { defined: "export function dryRunPlan(", called: "return dryRunPlan(" },
+  python: { defined: "def dry_run_plan(", called: "return dry_run_plan(" },
+  go: { defined: "func dryRunPlan(", called: "return dryRunPlan(" },
+  java: { defined: "final class DryRun", called: "return DryRun.plan(" },
+};
+
+/** Every language must carry the dry-run plan builder, and call it from its one call path. */
+export function sdkDryRunDrift(files: Record<string, string>): string[] {
+  const drift: string[] = [];
+  for (const language of SDK_LANGUAGES) {
+    const symbol = SDK_DRY_RUN_SYMBOL[language];
+    if (
+      !sdkLanguageContains(files, language, symbol.defined) ||
+      !sdkLanguageContains(files, language, symbol.called)
+    ) {
+      drift.push(
+        `the ${language} SDK does not carry a dry-run plan (${symbol.called.slice(7, -1)})`,
+      );
+    }
+  }
   return drift;
 }
 
@@ -230,6 +272,55 @@ const SDK_MTLS_SYMBOL: Record<SdkLanguage, string> = {
   java: "Mtls.buildContext",
 };
 
+/** The client-credentials minting helper (RFC 6749 §4.4), per language. */
+const SDK_CLIENT_CREDENTIALS_SYMBOL: Record<SdkLanguage, string> = {
+  typescript: "createClientCredentialsTokenProvider",
+  python: "create_client_credentials_token_provider",
+  go: "NewClientCredentialsTokenProvider",
+  java: "Oauth.clientCredentialsTokenProvider",
+};
+
+/** The RFC 8693 token exchanger, per language. */
+const SDK_TOKEN_EXCHANGE_SYMBOL: Record<SdkLanguage, string> = {
+  typescript: "createTokenExchanger",
+  python: "create_token_exchanger",
+  go: "NewTokenExchanger",
+  java: "Oauth.tokenExchanger",
+};
+
+/**
+ * A grant every language must be able to run: the helper is defined, the
+ * client id/secret env-var NAMES the manifest promises are read, and the
+ * declared token-endpoint client authentication is the one sent — a client
+ * registered for one method is rejected under the other, so a language that
+ * picked its own would disagree with the CLI and MCP server on the wire.
+ */
+function sdkGrantDrift(
+  files: Record<string, string>,
+  grant: SdkTokenGrant,
+  symbol: Record<SdkLanguage, string>,
+  what: string,
+): string[] {
+  const drift: string[] = [];
+  for (const language of SDK_LANGUAGES) {
+    if (!sdkLanguageContains(files, language, symbol[language])) {
+      drift.push(`the ${language} SDK does not carry a ${what} (${symbol[language]})`);
+    }
+    for (const envVar of [grant.clientIdEnvVar, grant.clientSecretEnvVar]) {
+      if (!sdkLanguageContains(files, language, envVar)) {
+        drift.push(`the ${language} SDK does not read the declared ${what} env var ${envVar}`);
+      }
+    }
+    const method = JSON.stringify(grant.clientAuth);
+    if (!sdkLanguageContains(files, language, method)) {
+      drift.push(
+        `the ${language} SDK does not carry the declared token-endpoint client auth ${method}`,
+      );
+    }
+  }
+  return drift;
+}
+
 /**
  * Auth drift, checked once per bundle rather than once per method: the
  * manifest's own `auth` block against a fresh projection of AIR, and — for
@@ -266,10 +357,12 @@ export function sdkAuthDrift(
       `sdk/manifest.json declares auth.tls=${JSON.stringify(actual.tls)}, AIR says ${JSON.stringify(expected.tls)}`,
     );
   }
-  if (JSON.stringify(actual.tokenRefresh) !== JSON.stringify(expected.tokenRefresh)) {
-    drift.push(
-      `sdk/manifest.json declares auth.tokenRefresh=${JSON.stringify(actual.tokenRefresh)}, AIR says ${JSON.stringify(expected.tokenRefresh)}`,
-    );
+  for (const grant of ["tokenRefresh", "clientCredentials", "tokenExchange"] as const) {
+    if (JSON.stringify(actual[grant]) !== JSON.stringify(expected[grant])) {
+      drift.push(
+        `sdk/manifest.json declares auth.${grant}=${JSON.stringify(actual[grant])}, AIR says ${JSON.stringify(expected[grant])}`,
+      );
+    }
   }
 
   if (expected.type === "mtls" && expected.tls) {
@@ -321,6 +414,36 @@ export function sdkAuthDrift(
             `the ${language} SDK does not carry the declared token-endpoint client auth ${method}`,
           );
         }
+      }
+    }
+  }
+
+  // The two grants a client runs on its own. Both keep the static token as
+  // the fallback the manifest's envVar already promises, so the check is that
+  // the minting path exists beside it, not instead of it.
+  if (expected.type === "oauth2_client_credentials" && expected.clientCredentials) {
+    drift.push(
+      ...sdkGrantDrift(
+        files,
+        expected.clientCredentials,
+        SDK_CLIENT_CREDENTIALS_SYMBOL,
+        "client-credentials grant",
+      ),
+    );
+  }
+  if (expected.type === "oauth2_on_behalf_of" && expected.tokenExchange) {
+    drift.push(
+      ...sdkGrantDrift(files, expected.tokenExchange, SDK_TOKEN_EXCHANGE_SYMBOL, "token exchange"),
+    );
+    for (const language of SDK_LANGUAGES) {
+      // The grant type is the whole difference between an exchange and a
+      // client-credentials mint sent to the same endpoint with the same client.
+      if (!sdkLanguageContains(files, language, GRANT_TOKEN_EXCHANGE)) {
+        drift.push(`the ${language} SDK does not send the RFC 8693 grant ${GRANT_TOKEN_EXCHANGE}`);
+      }
+      const actor = expected.tokenExchange.actorTokenEnvVar;
+      if (actor && !sdkLanguageContains(files, language, actor)) {
+        drift.push(`the ${language} SDK does not read the declared actor token env var ${actor}`);
       }
     }
   }
