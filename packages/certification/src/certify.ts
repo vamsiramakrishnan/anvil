@@ -2,8 +2,10 @@
  * The certification gate. `certify` runs static checks always, and — when
  * `executable` is requested — boots the simulator, exercises the live surface,
  * and runs the mutation battery. A pack is only `certified` when its surfaces were
- * started and exercised and every mutant was killed; static-only success is
- * `static_passed`, never `certified`.
+ * started and exercised, every applicable mutant was killed by a failing check
+ * (see `mutate.ts` for what a kill requires), and at least one applicable
+ * SAFETY mutant was among them; static-only success is `static_passed`, never
+ * `certified`.
  */
 import { type AirDocument, contractHash, hashCanonical } from "@anvil/air";
 import {
@@ -12,7 +14,8 @@ import {
   surfaceSignatureFor,
 } from "@anvil/compiler";
 import type { AgentSystemPack, PackContents } from "@anvil/system-pack";
-import { type CertificationDeployTarget, executableChecks, staticChecks } from "./checks.js";
+import { type CertificationDeployTarget, staticChecks } from "./checks.js";
+import { executableChecks } from "./executable-checks.js";
 import {
   CERTIFICATION_VERSION,
   type CertificationCheck,
@@ -61,14 +64,24 @@ export function certify(air: AirDocument, options: CertifyOptions = {}): Certifi
   if (!options.executable) {
     status = staticOk ? "static_passed" : "failed";
   } else {
-    checks.push(...executableChecks(air, options.seed ?? 1));
-    const mutants = runMutationBattery(air);
+    checks.push(...executableChecks(air, { seed: options.seed }));
+    const mutants = runMutationBattery(air, {
+      executable: true,
+      seed: options.seed,
+      deployTarget: options.deployTarget,
+    });
     for (const m of mutants) {
+      // An inapplicable mutant passes (nothing to kill), but only a KILLED
+      // applicable safety mutant counts toward `certified` below.
       checks.push({
         id: `mutation/${m.name}`,
         phase: "mutation",
-        ok: m.killed,
-        detail: m.applicable ? m.classification : "inapplicable",
+        ok: !m.applicable || m.killed,
+        detail: !m.applicable
+          ? "inapplicable: nothing on the surface to weaken"
+          : m.killed
+            ? `killed by ${(m.killedBy ?? []).join(", ")} (${m.classification})`
+            : `survived: ${m.survivedBy}`,
       });
     }
     if (!checks.every((c) => c.ok)) {

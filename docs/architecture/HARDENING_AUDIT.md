@@ -248,10 +248,11 @@ Ranked by (invariant at risk) × (evidence that it is real), not by module size.
 four-gate model, and `verifyCertification` — the gate `anvil publish` consults.
 `@anvil/certification` (ADR-0018, Accepted) owns a different record with a graded
 status ladder and an attestation binding. `certify(air, { executable: true })` —
-the only path to the `certified` and `simulator_exercised` statuses — has **no
-production caller anywhere in the workspace**; the sole caller is that package's
-own test. `@anvil/system-pack` accepts those statuses, so a pack can declare a
-level nothing can mint.
+the only path to the `certified` and `simulator_exercised` statuses — at the time
+of the audit had **no production caller anywhere in the workspace**; the sole
+caller was that package's own test. Since resolved: `anvil certify --executable`
+calls it and records the result in `certification.json` (see ADR-0018's
+implementation status).
 
 The merge rule between the two lives in `runCertify` in the CLI, and the other
 three `certifyBundle` call sites do not apply it.

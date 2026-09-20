@@ -1,10 +1,10 @@
 /**
- * The certification checks. Static checks confirm internal coherence; executable
- * checks *boot the simulator* (the in-process, contract-faithful surface from
- * Increment 7) and exercise it — live tools vs the signature, real reads,
- * confirmation refusal, idempotent replay, injected faults, and error
- * normalization. A check that has no applicable operation is a pass with a note,
- * so certification generalizes across contracts.
+ * The static certification checks: they confirm internal coherence of the
+ * contract (and pack) without booting anything. The executable checks — which
+ * *boot the simulator* and exercise it — live in `executable-checks.ts`, and the
+ * retry/effect posture checks in `posture-checks.ts`; both share this module's
+ * `check` helper. A check that has no applicable operation is a pass with a
+ * note, so certification generalizes across contracts.
  *
  * That convention is right *here* and wrong one layer over: a check asks "did
  * anything violate this?", where nothing to violate is genuine vacuous truth,
@@ -17,7 +17,6 @@ import {
   type AsyncContract,
   DEFAULT_SURFACE_DISCLOSURE_BUDGET_TOKENS,
   DEFAULT_TOOL_DISCLOSURE_BUDGET_TOKENS,
-  ErrorCode,
   type JsonSchema,
   type LadderPlan,
   ladderPlan,
@@ -31,9 +30,10 @@ import {
 } from "@anvil/air";
 import { surfaceSignatureFor } from "@anvil/compiler";
 import { hostIsAllowed } from "@anvil/runtime";
-import { type SimResult, Simulator, simulatorDefinitionFor } from "@anvil/simulator";
 import { type AgentSystemPack, type PackContents, verifyPack } from "@anvil/system-pack";
+import { check } from "./check.js";
 import type { CertificationCheck } from "./model.js";
+import { postureChecks } from "./posture-checks.js";
 
 /**
  * What certification needs to know about the deploy target to judge a
@@ -75,14 +75,6 @@ export interface CertificationDeployTarget {
    */
   resolveRef: (ref: string) => string | undefined;
 }
-
-const VALID_ERROR_CODES = new Set(ErrorCode.options);
-const check = (
-  id: string,
-  phase: CertificationCheck["phase"],
-  ok: boolean,
-  detail?: string,
-): CertificationCheck => ({ id, phase, ok, detail });
 
 /** Static coherence checks over the contract (and pack, when supplied). */
 export function staticChecks(
@@ -194,6 +186,7 @@ export function staticChecks(
     ),
   );
 
+  checks.push(...postureChecks(air));
   checks.push(...ladderChecks(air, approved));
   checks.push(...asyncContractChecks(air, approved, deployTarget));
 
@@ -1011,97 +1004,3 @@ function isSchemaRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Boot the simulator and exercise the live surface. */
-export function executableChecks(air: AirDocument, seed = 1): CertificationCheck[] {
-  const def = simulatorDefinitionFor(air, { seed });
-  const sim = new Simulator(air, def);
-  const signature = surfaceSignatureFor(air);
-  const served = air.operations.filter((o) => o.state === "approved");
-  const checks: CertificationCheck[] = [];
-  const results: SimResult[] = [];
-
-  const record = (r: SimResult) => {
-    results.push(r);
-    return r;
-  };
-  const principalFor = (op: Operation) =>
-    op.auth.scopes.length > 0 || op.auth.type !== "none" ? "admin" : undefined;
-  const tool = (op: Operation) => op.mcp.toolName;
-
-  // 1. Live tools match the declared signature.
-  const liveNames = new Set(served.map(tool));
-  const signatureNames = new Set(signature.operations.map((s) => s.publicName));
-  const toolsMatch =
-    signatureNames.size === liveNames.size && [...signatureNames].every((n) => liveNames.has(n));
-  checks.push(check("exec/live_tools_match_signature", "executable", toolsMatch));
-
-  // 2. Representative reads succeed.
-  const reads = served.filter((o) => o.effect.kind === "read");
-  if (reads.length === 0) {
-    checks.push(check("exec/reads", "executable", true, "no read operations"));
-  } else {
-    const ok = reads.every(
-      (op) => record(sim.invoke(tool(op), {}, { principalId: principalFor(op) })).ok,
-    );
-    checks.push(check("exec/reads", "executable", ok));
-  }
-
-  // 3. Confirmation refusal.
-  const needsConfirm = served.find((o) => o.confirmation.required);
-  if (!needsConfirm) {
-    checks.push(
-      check("exec/confirmation_refusal", "executable", true, "no confirmation-required operation"),
-    );
-  } else {
-    const r = record(
-      sim.invoke(tool(needsConfirm), {}, { principalId: principalFor(needsConfirm) }),
-    );
-    checks.push(
-      check(
-        "exec/confirmation_refusal",
-        "executable",
-        !r.ok && r.error.code === "confirmation_required",
-      ),
-    );
-  }
-
-  // 4. Idempotent replay.
-  const keyed = served.find((o) => o.effect.kind === "mutation" && o.idempotency.mode !== "none");
-  if (!keyed) {
-    checks.push(check("exec/idempotent_replay", "executable", true, "no key-supporting mutation"));
-  } else {
-    const ctx = { principalId: principalFor(keyed), confirm: true, idempotencyKey: "cert-key" };
-    const first = record(sim.invoke(tool(keyed), { id: "x" }, ctx));
-    const second = record(sim.invoke(tool(keyed), { id: "x" }, ctx));
-    checks.push(
-      check("exec/idempotent_replay", "executable", first.ok && second.ok && !!second.replayed),
-    );
-  }
-
-  // 5. Injected fault is normalized.
-  const anyOp = served.find((o) => o.effect.kind === "read") ?? served[0];
-  if (!anyOp) {
-    checks.push(check("exec/fault_injection", "executable", true, "no operations"));
-  } else {
-    const r = record(
-      sim.invoke(
-        tool(anyOp),
-        {},
-        {
-          principalId: principalFor(anyOp),
-          confirm: true,
-          idempotencyKey: "cert-fault-key",
-          faultScenario: "outage",
-        },
-      ),
-    );
-    checks.push(
-      check("exec/fault_injection", "executable", !r.ok && r.error.code === "upstream_unavailable"),
-    );
-  }
-
-  // 6. Every error returned uses the normalized taxonomy.
-  const normalized = results.every((r) => r.ok || VALID_ERROR_CODES.has(r.error.code));
-  checks.push(check("exec/error_normalization", "executable", normalized));
-
-  return checks;
-}

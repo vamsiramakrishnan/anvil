@@ -24,26 +24,26 @@ problem is that there are two.
 
 ## The three specific consequences
 
-**1. ADR-0018 documents a status the product cannot produce.** The ADR says a
-pack is `certified` "only after its generated surfaces were actually *started and
-exercised*, and if a deliberate safety regression cannot slip through it." That
-status comes only from `certify(air, { executable: true })`. Searching the
-workspace, the sole caller of that option is
-`packages/certification/src/certification.test.ts`. No shipped command reaches
-it, so `certified` and `simulator_exercised` are test-only values. `@anvil/system-pack`'s
-`CertificationRef.status` nonetheless accepts them, so a pack can declare a
-certification level nothing can mint.
-
-Knip does not see this because the symbols are exported from the package index
-and are therefore public API, not dead code.
+**1. (Resolved.) ADR-0018 documented a status the product could not produce.**
+The ADR says a pack is `certified` "only after its generated surfaces were
+actually *started and exercised*, and if a deliberate safety regression cannot
+slip through it." That status comes only from
+`certify(air, { executable: true })`, which for a long time had no caller outside
+`packages/certification/src/certification.test.ts`. It is now reached by
+`anvil certify --executable` (`packages/cli/src/commands/certify.ts`), which
+records `assurance.level: "executable"` and the engine's `engineStatus` in
+`certification.json`. The default `anvil certify` remains static. The battery's
+kill rule was tightened in the same change: a mutant counts as killed only when
+a check fails against the weakened contract, never on the digest alone.
 
 **2. The merge rule lives in a delivery adapter.** `runCertify`
-(`packages/cli/src/commands/certify.ts:58-86`) runs both engines, maps the
-canonical engine's checks into the generators engine's shape under a
+(`packages/cli/src/commands/certify.ts`) runs both engines, maps the canonical
+engine's checks into the generators engine's shape under a
 `contract.certification-core.` prefix, decides `if (canonical.status === "failed")
 cert.status = "failed"`, decides that a target-kit mismatch is a `contract`-gate
-failure, and throws if the canonical status is anything but the two it expects.
-That is certification policy, and it is in the CLI.
+failure, and throws if the canonical status is outside the set its mode allows
+(two statically, four with `--executable`). That is certification policy, and it
+is in the CLI.
 
 **3. Call sites disagree.** `approve.ts:388`, `capability-compose.ts:314`, and
 `idempotency-store.ts:49` call `certifyBundle` directly — no bridge, no
@@ -77,11 +77,9 @@ never was.
 
 ## Options
 
-**A. Reconcile the ADR to shipped reality.** Rewrite ADR-0018 to describe the
-pipeline that actually ships (four gates plus the three report lanes), and either
-delete the unreachable executable ladder from `@anvil/certification` or wire it
-to a command. Cheapest; stops the documentation making a safety claim the product
-does not honour. Does not fix the split.
+**A. Reconcile the ADR to shipped reality.** Done: the executable ladder is
+wired to `anvil certify --executable` and ADR-0018's implementation status
+describes what ships. Does not fix the split.
 
 **B. Consolidate onto `@anvil/certification`.** Certification owns the record,
 the status ladder, and the check registry over an abstract bundle view;
@@ -98,17 +96,13 @@ through it. Fixes consequences 2 and 3, leaves 1 to option A.
 
 ## Recommendation
 
-**A now, then C, and treat B as the destination only if the executable ladder is
-going to be wired up.** The ADR is making a safety claim the product does not
-honour, and that is worth fixing immediately and cheaply. The merge rule leaving
-the CLI (C) is the real architectural correction and is behaviour-preserving if
-the call sites are aligned deliberately rather than incidentally — which is a
-semantic decision, and so needs its own change and its own evidence.
+**A (done), then C, with B now a live option.** The merge rule leaving the CLI
+(C) is the real architectural correction and is behaviour-preserving if the call
+sites are aligned deliberately rather than incidentally — which is a semantic
+decision, and so needs its own change and its own evidence.
 
-B is only worth its cost if executable certification becomes reachable. If it
-never will be, the honest move is to delete the ladder rather than consolidate
-onto a model whose top two statuses nothing produces.
-
-The choice between "wire up executable certification" and "delete it" is a
-product decision about what Anvil promises when it says *certified*. It is not
-taken here.
+B was only worth its cost if executable certification became reachable. It has:
+`anvil certify --executable` mints `simulator_exercised` and `certified`, so
+consolidating the record onto `@anvil/certification` is no longer consolidating
+onto statuses nothing produces. Whether to take B is still a product decision
+about what `certification.json` is, and it is not taken here.

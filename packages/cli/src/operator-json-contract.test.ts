@@ -924,6 +924,7 @@ const UNEXERCISED: Record<string, string> = {
   "refine plan": "needs an AIR fixture with detectable deficiencies",
   "refine run": "needs an AIR fixture with detectable deficiencies",
   "refine skills": "needs an AIR fixture with detectable deficiencies",
+  "evals run": "needs a scripted agent process; its --json report is driven in cmd-evals.test.ts",
   // Need drift records.
   "drift accept": "needs a stored drift record",
   "drift list": "needs a stored drift record",

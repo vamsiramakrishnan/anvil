@@ -18,6 +18,7 @@ export * from "./deploy.js";
 export * from "./docs.js";
 export * from "./entrypoints.js";
 export * from "./evals.js";
+export * from "./evals-evidence.js";
 export * from "./gateway-workspace.js";
 export * from "./mcp.js";
 export * from "./mock.js";

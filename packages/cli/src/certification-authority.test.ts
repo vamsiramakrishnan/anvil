@@ -90,43 +90,41 @@ describe("certification authority is split across two engines", () => {
     expect(certify(air).status).toBe("static_passed");
   });
 
-  it("the canonical engine's `certified` status is unreachable from any shipped command", () => {
+  it("`anvil certify --executable` is the one shipped path to the engine's executable ladder", () => {
     // ADR-0018: "A pack is `certified` only after its generated surfaces were
     // booted and exercised and every safety mutant was killed." That status is
-    // produced solely by certify(air, { executable: true }), and nothing outside
-    // the certification package's own tests passes that option. `anvil simulate`
-    // reaches the same machinery by calling runMutationBattery and coverageMatrix
-    // directly, bypassing the record and its status ladder entirely.
-    //
-    // This test fails the moment executable certification is wired to a command,
-    // which is the point: at that moment the ADR stops being stale and this
-    // characterisation should be replaced by a real assertion.
-    const callers: string[] = [];
-    const walk = (current: string): void => {
-      for (const entry of readdirSync(current, { withFileTypes: true })) {
-        const full = join(current, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-          continue;
-        }
-        if (!entry.name.endsWith(".ts") || entry.name.endsWith(".test.ts")) continue;
-        if (/executable:\s*true/.test(readFileSync(full, "utf8"))) {
-          callers.push(full.slice(root.length));
-        }
-      }
-    };
-    walk(join(root, "packages"));
+    // minted by certify(air, { executable: true }); the CLI reaches it through
+    // `--executable`, records the phase it ran under `assurance.level`, and the
+    // engine's own status under `assurance.engineStatus`. The default stays
+    // static — the ladder is opt-in, never implied by a static run.
+    const io = bufferIO();
+    expect(runCertify(dir, { executable: true }, io, { now: () => "2026-07-10T00:00:00Z" })).toBe(
+      0,
+    );
+    const written = JSON.parse(readFileSync(join(dir, "certification.json"), "utf8"));
+    expect(written.assuranceLevel).toBe("static");
+    expect(written.assurance?.level).toBe("executable");
+    expect(["simulator_exercised", "certified"]).toContain(written.assurance?.engineStatus);
 
-    expect(
-      callers,
-      "Executable certification is now reachable from production code. Update ADR-0018 and " +
-        "docs/architecture/certification-authority.md, and replace this characterisation.",
-    ).toEqual([]);
+    // The engine's verdict is reproduced from the same contract, and the
+    // record carries both its executable and mutation phases.
+    const files = readBundleDir(dir);
+    const air = loadBundleAir(dir, files);
+    const direct = certify(air, { executable: true, seed: 1 });
+    expect(direct.status).toBe(written.assurance?.engineStatus);
+    expect(direct.digest).toBe(written.assurance?.recordDigest);
+    const ids = written.checks.map((c: { id: string }) => c.id);
+    expect(ids.some((id: string) => id.startsWith("contract.certification-core.exec."))).toBe(true);
+    expect(ids.some((id: string) => id.startsWith("contract.certification-core.mutation."))).toBe(
+      true,
+    );
+    expect(io.text()).toMatch(/^(CERTIFIED|SIMULATOR EXERCISED) — /m);
 
-    // Meanwhile the status is a value the system-pack schema will happily accept,
-    // so a pack can declare a certification level the product cannot produce.
-    const packModel = readFileSync(join(root, "packages/system-pack/src/model.ts"), "utf8");
-    expect(packModel).toContain('"certified"');
+    // Meanwhile a static run of the same bundle stays static.
+    runCertify(dir, {}, bufferIO());
+    const restatic = JSON.parse(readFileSync(join(dir, "certification.json"), "utf8"));
+    expect(restatic.assurance?.level).toBe("static");
+    expect(restatic.assurance?.engineStatus).toBe("static_passed");
   });
 
   it("publish's gate accepts a record the canonical engine never saw", () => {

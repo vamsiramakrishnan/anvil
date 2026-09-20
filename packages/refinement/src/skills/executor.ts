@@ -31,6 +31,7 @@ import type {
   SkillExecutor,
   SkillProposal,
 } from "./contract.js";
+import { proposeClusterDisambiguation } from "./disambiguate-cluster.js";
 import { claimsAsserting, claimsFor, proposal, strongestValue } from "./proposal-helpers.js";
 import { proposeResourceRehome } from "./rehome.js";
 
@@ -118,9 +119,9 @@ export class HeuristicSkillExecutor implements SkillExecutor {
       case "rename-operation":
         return this.renameOperation(skill, context);
       case "rehome-resource":
-        // The trivially-safe subset only (the singularizer over-strip repair);
-        // every grey area honestly proposes nothing — see rehome.ts.
         return proposeResourceRehome(skill, context);
+      case "resolve-confusable-cluster":
+        return proposeClusterDisambiguation(skill, context);
       case "disambiguate-operations":
         return this.disambiguateOperations(skill, context);
       case "describe-capability":

@@ -110,7 +110,7 @@ function servesItems(op: Operation): boolean {
  * on the operation, so a payload cannot be faithful to a schema no other part
  * of Anvil agrees exists.
  */
-function declaredItemSchema(air: AirDocument, op: Operation): JsonSchema | undefined {
+export function declaredItemSchema(air: AirDocument, op: Operation): JsonSchema | undefined {
   const declared = declaredResponseSchema(air, op);
   if (!declared) return undefined;
   const { schema } = materializeSchema(declared, air.schemas);
