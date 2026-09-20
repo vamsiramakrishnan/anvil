@@ -2,9 +2,12 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   bundleHash,
+  DEPLOYMENT_PLAN_TARGETS,
+  type DeploymentPlanTarget,
   type ExecutableEvidenceStatuses,
   executableEvidenceReady,
   executableEvidenceStatuses,
+  KUBERNETES_DEPLOY_FILES,
   loadBundleAir,
   PUBLICATION_FILE,
   type PublicationExecutableEvidence,
@@ -17,11 +20,12 @@ import { type Command, Option } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { printCloudRunPlan } from "./deploy.js";
+import { printKubernetesPlan } from "./deploy-kubernetes.js";
 import { annotate } from "./meta.js";
 
 /**
- * `anvil publish <dir> [--target cloud-run] [--env ENV]` prepares a gated
- * deployment plan. The compatibility verb "publish" does not publish or deploy
+ * `anvil publish <dir> [--target cloud-run|kubernetes] [--env ENV]` prepares a
+ * gated deployment plan. The compatibility verb "publish" does not publish or deploy
  * anything: it makes no cloud API calls.
  *
  * Gate policy: fresh static assurance plus fresh passing selftest, conformance,
@@ -34,12 +38,12 @@ export function registerPublish(parent: Command, ctx: CommandContext): void {
       .command("publish")
       .summary("Prepare a gated deployment plan; make no cloud API calls.")
       .description(
-        "Compatibility note: `publish` prepares a deployment plan; it does not publish, apply, deploy, or contact a cloud API. Fresh static assurance and fresh passing selftest, conformance, and simulation reports must all match the current bundle content. On success it prints the Cloud Run operator plan and writes publication.json with the evidence snapshot. `--allow-uncertified` and `--allow-incomplete-evidence` are explicit non-prod-only waivers; prod always fails closed. Cloud Run is the sole target and therefore the default.",
+        "Compatibility note: `publish` prepares a deployment plan; it does not publish, apply, deploy, or contact a cloud API. Fresh static assurance and fresh passing selftest, conformance, and simulation reports must all match the current bundle content. On success it prints the operator plan for the chosen target (Cloud Run by default, or the Kubernetes kustomize set — both gated identically) and writes publication.json with the evidence snapshot. `--allow-uncertified` and `--allow-incomplete-evidence` are explicit non-prod-only waivers; prod always fails closed.",
       )
       .argument("<dir>", "bundle directory")
       .addOption(
-        new Option("--target <target>", "publish target")
-          .choices(["cloud-run"])
+        new Option("--target <target>", "deploy target the plan is prepared for")
+          .choices([...DEPLOYMENT_PLAN_TARGETS])
           .default("cloud-run"),
       )
       .addOption(
@@ -63,7 +67,7 @@ export function registerPublish(parent: Command, ctx: CommandContext): void {
 }
 
 export interface PublishOptions {
-  target?: "cloud-run";
+  target?: DeploymentPlanTarget;
   env?: string;
   allowUncertified?: boolean;
   allowIncompleteEvidence?: boolean;
@@ -96,6 +100,7 @@ export function runPublish(
     return 1;
   }
   const env = requestedEnv;
+  const target: DeploymentPlanTarget = opts.target ?? "cloud-run";
   const allowUncertified = opts.allowUncertified === true;
   const allowIncompleteEvidence = opts.allowIncompleteEvidence === true;
 
@@ -197,8 +202,9 @@ export function runPublish(
   }
 
   // The deploy artifacts are the generator's output; publish only verifies and
-  // presents them — the same plan `anvil deploy cloud-run` prints.
-  const missing = DEPLOY_ARTIFACTS.filter((rel) => files[rel] === undefined);
+  // presents them — the same plan `anvil deploy cloud-run|kubernetes` prints.
+  const artifacts = DEPLOY_ARTIFACTS[target];
+  const missing = artifacts.filter((rel) => files[rel] === undefined);
   if (missing.length > 0) {
     io.err(
       `anvil publish: deploy artifacts missing (${missing.join(", ")}). Run \`anvil compile\` first.`,
@@ -209,7 +215,7 @@ export function runPublish(
   const record: PublicationRecord = {
     schemaVersion: 2,
     serviceId: air.service.id,
-    target: "cloud-run",
+    target,
     env,
     bundleHash: currentBundleHash,
     certification,
@@ -218,7 +224,7 @@ export function runPublish(
     plannedAt: (deps.now ?? (() => new Date().toISOString()))(),
     cloudCallsMade: false,
     operatorActionRequired: true,
-    artifacts: [...DEPLOY_ARTIFACTS],
+    artifacts: [...artifacts],
   };
   writeFileSync(join(dir, PUBLICATION_FILE), `${JSON.stringify(record, null, 2)}\n`, "utf8");
 
@@ -227,7 +233,7 @@ export function runPublish(
     return 0;
   }
   io.out(
-    `Deployment plan prepared for ${air.service.id} → cloud-run ('${env}')  bundle ${record.bundleHash.slice(0, 12)}…  ` +
+    `Deployment plan prepared for ${air.service.id} → ${target} ('${env}')  bundle ${record.bundleHash.slice(0, 12)}…  ` +
       (certification.status === "passed"
         ? `static assurance ${certification.certifiedAt}`
         : "UNCERTIFIED (waived)") +
@@ -237,7 +243,8 @@ export function runPublish(
   );
   io.out(`Plan record: ${join(dir, PUBLICATION_FILE)}`);
   io.out("No cloud call was made. Operator review and apply are still required.");
-  printCloudRunPlan(dir, env, io);
+  if (target === "kubernetes") printKubernetesPlan(dir, io);
+  else printCloudRunPlan(dir, env, io);
   return 0;
 }
 
@@ -262,17 +269,26 @@ function passingEvidenceSnapshot<Lane extends keyof PassingEvidenceRecords>(
   } as PassingEvidenceRecords[Lane];
 }
 
-/** The deploy artifacts a publication points at (emitted by `anvil compile`). */
-const DEPLOY_ARTIFACTS = [
-  "deploy/Dockerfile",
-  "deploy/cloudbuild.yaml",
-  "deploy/terraform/main.tf",
-  "deploy/terraform/variables.tf",
-  "deploy/idempotency-store.json",
-  "deploy/env.schema.json",
-  "deploy/secrets.required.yaml",
-  "deploy/README.md",
-] as const;
+/** The deploy artifacts a publication points at, per target (emitted by `anvil compile`). */
+const DEPLOY_ARTIFACTS = {
+  "cloud-run": [
+    "deploy/Dockerfile",
+    "deploy/cloudbuild.yaml",
+    "deploy/terraform/main.tf",
+    "deploy/terraform/variables.tf",
+    "deploy/idempotency-store.json",
+    "deploy/env.schema.json",
+    "deploy/secrets.required.yaml",
+    "deploy/README.md",
+  ],
+  kubernetes: [
+    "deploy/Dockerfile",
+    "deploy/idempotency-store.json",
+    "deploy/env.schema.json",
+    "deploy/credentials.required.yaml",
+    ...KUBERNETES_DEPLOY_FILES,
+  ],
+} as const satisfies Record<DeploymentPlanTarget, readonly string[]>;
 
 type PublicationEnvironment = "dev" | "staging" | "prod";
 

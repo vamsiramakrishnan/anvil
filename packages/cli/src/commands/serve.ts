@@ -1,21 +1,22 @@
 import { createServer } from "node:http";
 import type { CertificationVerdict } from "@anvil/generators";
-import type { FleetServer } from "@anvil/mcp-runtime";
+import type { FleetBundleInput, FleetServer } from "@anvil/mcp-runtime";
 import { loadAir } from "@anvil/refinement";
+import type { InboundIdentity, Principal, RuntimeConfig } from "@anvil/runtime";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { measuredAccuracyFromReport } from "./ladder-status.js";
 import { annotate } from "./meta.js";
 
-/** `anvil serve <dir> [--fleet]` — boot the generated MCP server over stdio. */
+/** `anvil serve mcp <dir> [--fleet [--http <port>]]` — boot the generated MCP server. */
 export function registerServe(parent: Command, ctx: CommandContext): void {
   const serve = annotate(
     parent
       .command("serve")
-      .summary("Serve the generated MCP server over stdio.")
+      .summary("Serve the generated MCP server over stdio (or a fleet over StreamableHTTP).")
       .description(
-        "Boots the MCP server for local agent use. The same server deploys to Cloud Run for remote use.",
+        "Boots the MCP server for local agent use over stdio. With --fleet --http it serves a whole workspace over StreamableHTTP behind the same inbound-auth gate the deployed server enforces. The same server deploys to Cloud Run or Kubernetes for remote use.",
       ),
     { mutates: false },
   );
@@ -29,9 +30,53 @@ export function registerServe(parent: Command, ctx: CommandContext): void {
       "treat <dir> as a workspace root and mount every bundle beneath it onto one MCP server, " +
         "each under a stable per-bundle tool prefix (see docs/fleet.md)",
     )
-    .action(async (dir: string, opts: { fleet?: boolean }) => {
+    .option(
+      "--http <port>",
+      "with --fleet: serve over StreamableHTTP on this port instead of stdio, with the deployed " +
+        "server's inbound-auth enforcement (ANVIL_INBOUND_*); /readyz and /healthz share the listener",
+    )
+    .option(
+      "--host <host>",
+      "with --http: the interface to bind (default 127.0.0.1); a non-loopback host requires inbound auth",
+    )
+    .action(async (dir: string, opts: { fleet?: boolean; http?: string; host?: string }) => {
+      if (opts.http !== undefined || opts.host !== undefined) {
+        ctx.code = await runServeFleetHttp(dir, opts, ctx.io);
+        return;
+      }
       ctx.code = opts.fleet ? await runServeFleet(dir, ctx.io) : await runServeMcp(dir, ctx.io);
     });
+}
+
+/** `--fleet --http <port> [--host]`: the fleet over StreamableHTTP (serve-fleet-http.ts). */
+async function runServeFleetHttp(
+  dir: string,
+  opts: { fleet?: boolean; http?: string; host?: string },
+  io: CliIO,
+): Promise<number> {
+  if (!opts.fleet) {
+    io.err(
+      "anvil: --http and --host apply to --fleet only; a single bundle serves HTTP through its own runtime/server.js.",
+    );
+    return 1;
+  }
+  const port = Number(opts.http);
+  if (opts.http === undefined || !Number.isInteger(port) || port < 1 || port > 65535) {
+    io.err("anvil: --http expects a port from 1 to 65535.");
+    return 1;
+  }
+  const { startFleetHttp } = await import("./serve-fleet-http.js");
+  const started = await startFleetHttp(dir, { host: opts.host ?? "127.0.0.1", port, io });
+  if (!started.ok) {
+    io.err(`anvil: ${started.message}.`);
+    return 1;
+  }
+  await new Promise<void>((resolve) => {
+    const stop = () => void started.handle.close().finally(resolve);
+    process.once("SIGTERM", stop);
+    process.once("SIGINT", stop);
+  });
+  return 0;
 }
 
 async function runServeMcp(dir: string, io: CliIO): Promise<number> {
@@ -100,16 +145,43 @@ export type BuildFleetResult =
   | { ok: true; fleet: FleetServer; bundleIds: string[] }
   | { ok: false; message: string };
 
+/** One discovered bundle, read and verified once, ready to be mounted into any number of fleet compositions. */
+interface PreparedBundle {
+  id: string;
+  air: ReturnType<typeof loadAir>;
+  baseUrl: string;
+  allowedHosts: string[];
+  authProfile: string | undefined;
+  measuredAccuracy: ReturnType<typeof measuredAccuracyFromReport>;
+  certification: FleetBundleInput["certification"];
+}
+
+export type PreparedFleet =
+  | {
+      ok: true;
+      bundleIds: string[];
+      config: RuntimeConfig;
+      principalDirectoryConfigured: boolean;
+      /** Resolve a session's caller: by verified inbound identity, else ANVIL_PRINCIPAL. */
+      principalFor: (inbound?: InboundIdentity) => Principal | undefined;
+      /** Compose one fleet server for one session/transport, under one principal. */
+      build(session: { principal: Principal | undefined }): Promise<FleetServer>;
+    }
+  | { ok: false; message: string };
+
 /**
  * Everything about `--fleet` that does not touch a live transport: discover
- * bundles, read each one's own certification, and build the fleet server.
- * Split out from `runServeFleet` so it is unit-testable against a real
- * workspace fixture without ever binding stdio or a port.
+ * bundles, boot the runtime, read each bundle's own certification, and hand
+ * back a builder that composes a fleet server per session. Split out from
+ * `runServeFleet` so it is unit-testable against a real workspace fixture
+ * without ever binding stdio or a port, and so the HTTP transport
+ * (`serve-fleet-http.ts`) can mount one composition per StreamableHTTP session
+ * — an McpServer binds to exactly one transport — without re-reading disk.
  */
-export async function buildFleetForWorkspace(
+export async function prepareFleetForWorkspace(
   workspaceRoot: string,
   env: NodeJS.ProcessEnv = process.env,
-): Promise<BuildFleetResult> {
+): Promise<PreparedFleet> {
   const { discoverBundles } = await import("@anvil/generators");
   const bundles = discoverBundles(workspaceRoot);
   if (bundles.length === 0) {
@@ -137,15 +209,16 @@ export async function buildFleetForWorkspace(
     recordWrite: (line) => console.error(line),
   });
   const config = boot.config;
-  // One session, one principal for the lifetime of this stdio process,
-  // resolved by the composition root from ANVIL_PRINCIPAL against the
-  // ANVIL_PRINCIPALS directory (unconfigured resolves to `undefined`, which
-  // `execute()` turns into the anonymous, every-scope principal; a configured
-  // directory that does not name the caller is refused fail-closed there).
-  // The rate and spend limiters ride `boot.contextDeps` like every surface.
-  const principal = boot.principalFor();
+  // Both caller gates come from the composition root, like every other
+  // serving surface: the rate and spend limiters ride `boot.contextDeps`, and
+  // `boot.principalFor` resolves the caller — from `ANVIL_PRINCIPAL` for a
+  // stdio session, or from the verified inbound identity for an HTTP one.
+  // `principalDirectoryConfigured` tells `execute()` whether `ANVIL_PRINCIPALS`
+  // names any entries at all, so an unresolved caller (a mistyped or missing
+  // credential, or one the directory does not name) is refused fail-closed
+  // instead of silently reproducing the anonymous default.
 
-  const fleetInputs = bundles.map((bundle) => {
+  const prepared: PreparedBundle[] = bundles.map((bundle) => {
     const air = loadAir(bundle.dir);
     const baseUrl = air.service.servers[0]?.url ?? "";
     const allowedHosts = allowedHostsFor(config.allowedHosts, baseUrl, false);
@@ -191,27 +264,67 @@ export async function buildFleetForWorkspace(
     return {
       id: bundle.id,
       air,
-      options: {
-        resources: buildToolResources(air),
-        measuredAccuracy,
-        contextFor: () => ({
-          ...boot.contextDeps,
-          serviceId: air.service.id,
-          baseUrl,
-          authProfile,
-          allowedHosts,
-          env: config.env,
-          timeoutMs: config.upstreamTimeoutMs,
-          principal,
-        }),
-      },
+      baseUrl,
+      allowedHosts,
+      authProfile,
+      measuredAccuracy,
       certification: files ? readCertification(files, verifyCertification) : undefined,
     };
   });
 
+  return {
+    ok: true,
+    bundleIds: bundles.map((b) => b.id),
+    config,
+    principalDirectoryConfigured: boot.contextDeps.principalDirectoryConfigured,
+    principalFor: boot.principalFor,
+    build: ({ principal }) =>
+      buildFleetServer(
+        prepared.map((bundle) => ({
+          id: bundle.id,
+          air: bundle.air,
+          options: {
+            resources: buildToolResources(bundle.air),
+            measuredAccuracy: bundle.measuredAccuracy,
+            contextFor: () => ({
+              ...boot.contextDeps,
+              serviceId: bundle.air.service.id,
+              baseUrl: bundle.baseUrl,
+              authProfile: bundle.authProfile,
+              allowedHosts: bundle.allowedHosts,
+              env: config.env,
+              timeoutMs: config.upstreamTimeoutMs,
+              principal,
+            }),
+          },
+          certification: bundle.certification,
+        })),
+        { name: "anvil-fleet", version: "0.1.0" },
+      ),
+  };
+}
+
+/**
+ * The stdio composition: one session, one principal for the lifetime of the
+ * process, resolved from `ANVIL_PRINCIPAL` — the same rule a single-bundle
+ * stdio server would follow if it opted in. Unconfigured (`ANVIL_PRINCIPALS`
+ * unset, or `ANVIL_PRINCIPAL` unset/unmatched) resolves to `undefined`, which
+ * `execute()` itself turns into the anonymous, every-scope principal (or a
+ * fail-closed refusal when a directory IS configured) — this call never
+ * invents a fallback of its own.
+ */
+export async function buildFleetForWorkspace(
+  workspaceRoot: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<BuildFleetResult> {
+  const prepared = await prepareFleetForWorkspace(workspaceRoot, env);
+  if (!prepared.ok) return prepared;
+  const { resolvePrincipalForEnv } = await import("@anvil/runtime");
   try {
-    const fleet = await buildFleetServer(fleetInputs, { name: "anvil-fleet", version: "0.1.0" });
-    return { ok: true, fleet, bundleIds: bundles.map((b) => b.id) };
+    const fleet = await prepared.build({
+      principal: resolvePrincipalForEnv(prepared.config.principals, env),
+    });
+    return { ok: true, fleet, bundleIds: prepared.bundleIds };
   } catch (error) {
     return { ok: false, message: (error as Error).message };
   }

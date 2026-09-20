@@ -918,7 +918,7 @@ Options:
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
 
 ### `anvil sdk`
-`anvil sdk [options] <path>`
+`anvil sdk [options] [command] <path>`
 
 Show or emit the generated client SDKs (TypeScript, Python, Go, Java).
 
@@ -928,6 +928,18 @@ Options:
 - `--lang <languages>` — comma-separated subset of typescript, python, go, java (default: all)
 - `--out <dir>` — write the SDK trees here instead of printing the method table
 - `--json` — emit the SDK manifest as JSON
+
+#### `anvil sdk publish-plan`
+`anvil sdk publish-plan [options] <path>`
+
+The per-registry publish plan for the generated SDKs (commands + preconditions).
+
+Reads each generated package's own manifest (package.json, pyproject.toml, go.mod, pom.xml) and emits the exact rehearsal-then-publish commands (npm pack/publish --dry-run, python -m build + twine, go mod tidy + tag, mvn deploy) with the registry and credential environment-variable NAMES each needs. Never runs a publish and never holds a credential.
+
+Options:
+- `--lang <languages>` — comma-separated subset of typescript, python, go, java (default: all)
+- `--out <dir>` — write <lang>/publish-plan.json and PUBLISHING.md here
+- `--json` — emit the whole plan as JSON
 
 ### `anvil review`  *(mutates)*
 `anvil review [options] <dir>`
@@ -1047,9 +1059,9 @@ Options:
 ### `anvil deploy`
 `anvil deploy [options] [command]`
 
-Inspect Cloud Run, credentials, and durable idempotency deployment plans.
+Inspect Cloud Run, Kubernetes, credentials, and durable idempotency deployment plans.
 
-Plan and inspection only: Anvil prints generated Dockerfile/Terraform/env instructions and verifies the generated durable idempotency-store contract. It does not call Cloud Run, Firestore, apply Terraform, or hold cloud credentials.
+Plan and inspection only: Anvil prints generated Dockerfile/Terraform/kustomize/env instructions and verifies the generated durable idempotency-store contract. It does not call Cloud Run, Kubernetes, Firestore, apply Terraform, or hold cloud credentials.
 
 #### `anvil deploy cloud-run`
 `anvil deploy cloud-run [options] <dir>`
@@ -1071,6 +1083,19 @@ Options:
 - `--project <id>` — GCP project id for links and sm:// references
 - `--json` — emit one machine-readable credential plan
 - `--tfvars` — emit only Terraform auto-tfvars JSON for an external plan work directory
+
+#### `anvil deploy kubernetes`
+`anvil deploy kubernetes [options] <dir>`
+
+The Kubernetes deployment plan (kustomize owns image/namespace; you apply).
+
+Prints the kubectl plan for the compiled deploy/kubernetes/ manifests, or with --out re-emits them with your image and namespace to an external directory. Same runtime image, env contract, and fail-closed ledger gate as Cloud Run; a durable ledger is required outside dev and /readyz keeps an unready rollout from completing. Never applies anything.
+
+Options:
+- `--out <dir>` — write the manifests (with --image/--namespace applied) here
+- `--namespace <name>` — Kubernetes namespace for the re-projected kustomization
+- `--image <ref>` — image reference (registry/repo[:tag|@digest]) built from deploy/Dockerfile
+- `--ci <provider>` — also write the release-gates workflow (never applies)
 
 #### `anvil deploy ledger`
 `anvil deploy ledger [options] <dir>`
@@ -1262,10 +1287,10 @@ Options:
 
 Prepare a gated deployment plan; make no cloud API calls.
 
-Compatibility note: `publish` prepares a deployment plan; it does not publish, apply, deploy, or contact a cloud API. Fresh static assurance and fresh passing selftest, conformance, and simulation reports must all match the current bundle content. On success it prints the Cloud Run operator plan and writes publication.json with the evidence snapshot. `--allow-uncertified` and `--allow-incomplete-evidence` are explicit non-prod-only waivers; prod always fails closed. Cloud Run is the sole target and therefore the default.
+Compatibility note: `publish` prepares a deployment plan; it does not publish, apply, deploy, or contact a cloud API. Fresh static assurance and fresh passing selftest, conformance, and simulation reports must all match the current bundle content. On success it prints the operator plan for the chosen target (Cloud Run by default, or the Kubernetes kustomize set — both gated identically) and writes publication.json with the evidence snapshot. `--allow-uncertified` and `--allow-incomplete-evidence` are explicit non-prod-only waivers; prod always fails closed.
 
 Options:
-- `--target <target>` — publish target
+- `--target <target>` — deploy target the plan is prepared for
 - `--env <env>` — target environment (default from ANVIL_ENV, else dev)
 - `--allow-uncertified` — waive static assurance for this plan (non-prod only)
 - `--allow-incomplete-evidence` — waive missing, stale, corrupt, or failing executable evidence (non-prod only)
@@ -1378,9 +1403,9 @@ Options:
 ### `anvil serve`
 `anvil serve [options] [command]`
 
-Serve the generated MCP server over stdio.
+Serve the generated MCP server over stdio (or a fleet over StreamableHTTP).
 
-Boots the MCP server for local agent use. The same server deploys to Cloud Run for remote use.
+Boots the MCP server for local agent use over stdio. With --fleet --http it serves a whole workspace over StreamableHTTP behind the same inbound-auth gate the deployed server enforces. The same server deploys to Cloud Run or Kubernetes for remote use.
 
 #### `anvil serve mcp`
 `anvil serve mcp [options] <dir>`
@@ -1389,6 +1414,8 @@ Serve one bundle's MCP server on stdio, or a whole workspace with --fleet.
 
 Options:
 - `--fleet` — treat <dir> as a workspace root and mount every bundle beneath it onto one MCP server, each under a stable per-bundle tool prefix (see docs/fleet.md)
+- `--http <port>` — with --fleet: serve over StreamableHTTP on this port instead of stdio, with the deployed server's inbound-auth enforcement (ANVIL_INBOUND_*); /readyz and /healthz share the listener
+- `--host <host>` — with --http: the interface to bind (default 127.0.0.1); a non-loopback host requires inbound auth
 
 ### `anvil package`  *(mutates)*
 `anvil package [options] [command]`

@@ -1,18 +1,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import {
-  generateSdks,
-  SDK_LANGUAGES,
-  type SdkLanguage,
-  sdkManifest,
-  sdkPlan,
-} from "@anvil/generators";
+import { generateSdks, SDK_LANGUAGES, sdkManifest, sdkPlan } from "@anvil/generators";
 import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import { emitRefusal } from "../envelope.js";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
+import { registerSdkPublishPlan, selectedLanguages } from "./sdk-publish-plan.js";
 
 /**
  * `anvil sdk <dir|air.yaml>` — the client SDKs, as a first-class surface.
@@ -24,7 +19,7 @@ import { annotate } from "./meta.js";
  * directory, a vendored copy — without dragging the whole bundle along.
  */
 export function registerSdk(parent: Command, ctx: CommandContext): void {
-  annotate(
+  const sdk = annotate(
     parent
       .command("sdk")
       .summary("Show or emit the generated client SDKs (TypeScript, Python, Go, Java).")
@@ -45,31 +40,13 @@ export function registerSdk(parent: Command, ctx: CommandContext): void {
     // annotating it as mutating would make every harness prompt for a listing.
     { mutates: false },
   );
+  registerSdkPublishPlan(sdk, ctx);
 }
 
 interface SdkOptions {
   lang?: string;
   out?: string;
   json?: boolean;
-}
-
-/** Parse `--lang`, refusing an unknown language rather than silently dropping it. */
-function selectedLanguages(raw: string | undefined): SdkLanguage[] | { error: string } {
-  if (raw === undefined) return [...SDK_LANGUAGES];
-  const requested = raw
-    .split(",")
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean);
-  if (requested.length === 0) return { error: "--lang was empty" };
-  const unknown = requested.filter(
-    (entry) => !(SDK_LANGUAGES as readonly string[]).includes(entry),
-  );
-  if (unknown.length > 0) {
-    return {
-      error: `unknown SDK language(s) ${unknown.join(", ")}; expected one of ${SDK_LANGUAGES.join(", ")}`,
-    };
-  }
-  return SDK_LANGUAGES.filter((language) => requested.includes(language));
 }
 
 function runSdk(path: string, opts: SdkOptions, io: CliIO): number {

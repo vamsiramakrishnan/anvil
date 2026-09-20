@@ -1,21 +1,28 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { GENERATION_METADATA_FILE, resourceOptionsFromGenerationMetadata } from "@anvil/generators";
+import {
+  GENERATION_METADATA_FILE,
+  isSecretCredentialEnvName,
+  resourceOptionsFromGenerationMetadata,
+} from "@anvil/generators";
 import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
+import { registerDeployKubernetes } from "./deploy-kubernetes.js";
 import { registerDeployLedger } from "./idempotency-store.js";
 import { annotate } from "./meta.js";
 
-/** `anvil deploy cloud-run <dir>` — print the Cloud Run deployment plan. */
+/** `anvil deploy cloud-run|kubernetes <dir>` — print a deployment plan; never apply one. */
 export function registerDeploy(parent: Command, ctx: CommandContext): void {
   const deploy = annotate(
     parent
       .command("deploy")
-      .summary("Inspect Cloud Run, credentials, and durable idempotency deployment plans.")
+      .summary(
+        "Inspect Cloud Run, Kubernetes, credentials, and durable idempotency deployment plans.",
+      )
       .description(
-        "Plan and inspection only: Anvil prints generated Dockerfile/Terraform/env instructions and verifies the generated durable idempotency-store contract. It does not call Cloud Run, Firestore, apply Terraform, or hold cloud credentials.",
+        "Plan and inspection only: Anvil prints generated Dockerfile/Terraform/kustomize/env instructions and verifies the generated durable idempotency-store contract. It does not call Cloud Run, Firestore, or a Kubernetes cluster, apply Terraform or a manifest, or hold cloud credentials.",
       ),
     { mutates: false },
   );
@@ -48,6 +55,7 @@ export function registerDeploy(parent: Command, ctx: CommandContext): void {
         ctx.code = await runDeployCredentials(dir, opts, ctx.io);
       },
     );
+  registerDeployKubernetes(deploy, ctx);
   registerDeployLedger(deploy, ctx);
 }
 
@@ -292,9 +300,7 @@ async function runDeployCredentials(
 }
 
 /** True when an env key names a secret value (vs a config value like an endpoint). */
-function isSecretKey(name: string): boolean {
-  return /_(CLIENT_SECRET|CLIENT_ASSERTION_KEY|TOKEN|PASSWORD|API_KEY)$/.test(name);
-}
+const isSecretKey = isSecretCredentialEnvName;
 
 /** A stable Secret Manager id scoped to the physical deployment namespace. */
 function secretIdFor(deploymentNamespace: string, envKey: string): string {

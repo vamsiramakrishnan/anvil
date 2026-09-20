@@ -32,6 +32,7 @@ import {
   evalSuiteFiles,
   evalsEvidenceStatus,
 } from "./evals-evidence.js";
+import { DeploymentPlanTarget } from "./deploy-targets.js";
 import { sdkGateDrift, sdkPresenceFailures, sdkSurfaceOperations } from "./sdk/certify.js";
 import { SDK_LANGUAGES } from "./sdk/index.js";
 import { unresolvedReadiness } from "./semantic-readiness.js";
@@ -1369,7 +1370,7 @@ const DeploymentPlanRecord = z
     schemaVersion: z.literal(2),
     recordKind: z.literal("deployment_plan"),
     serviceId: z.string().min(1),
-    target: z.literal("cloud-run"),
+    target: DeploymentPlanTarget,
     env: z.enum(["dev", "staging", "prod"]),
     /** Identity of the exact bundle content the plan was prepared for. */
     bundleHash: BundleDigest,

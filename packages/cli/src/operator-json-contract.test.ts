@@ -905,6 +905,7 @@ const UNEXERCISED: Record<string, string> = {
   "capability show": "needs a compiled bundle fixture",
   "capability compose": "needs two verified bundle fixtures",
   "deploy credentials": "needs a compiled bundle fixture",
+  "sdk publish-plan": "needs a compiled bundle fixture; driven in cmd-deploy-kubernetes.test.ts",
   "deploy ledger": "needs a compiled bundle fixture",
   "job answer": "needs a compiled bundle fixture with an approved human-decision operation",
   // Need a source/spec corpus.

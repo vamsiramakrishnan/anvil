@@ -427,5 +427,35 @@ Do not edit `sdk/` by hand. Anvil records the service version in each generated
 package, but it does not publish the packages to a registry. Package release
 and compatibility policy remain with the owning repository.
 
+## Publish plans
+
+`anvil sdk publish-plan <bundle>` prints, per language, the exact
+rehearsal-then-publish commands and the preconditions each registry has,
+read back from the generated package manifests (`package.json`,
+`pyproject.toml`, `go.mod`, `pom.xml`) rather than re-derived. A plan never
+names a version the package would not carry, and a mixed-version set is
+refused (`sdk_version_mismatch`).
+
+```bash
+pnpm anvil sdk publish-plan generated/payments                 # the README
+pnpm anvil sdk publish-plan generated/payments --json           # the plan object
+pnpm anvil sdk publish-plan generated/payments \
+  --lang typescript,python --out release/payments-sdk          # <lang>/publish-plan.json + PUBLISHING.md
+```
+
+| Language | Registry | Rehearsal | Mutating step | Credential names |
+| --- | --- | --- | --- | --- |
+| TypeScript | npm | `npm pack --dry-run`, `npm publish --dry-run` | `npm publish --access public` | `NPM_TOKEN` |
+| Python | PyPI | `python3 -m build`, `twine check`, TestPyPI upload | `twine upload dist/*` | `TWINE_USERNAME`, `TWINE_PASSWORD`, `TWINE_REPOSITORY_URL` |
+| Go | module proxy | `go mod tidy`, `go build`, `go vet` | `git tag vX.Y.Z && git push origin vX.Y.Z` | the runner's git identity, `GOPROXY`/`GOPRIVATE` |
+| Java | Maven | `mvn -B verify`, staging deploy | `mvn -B deploy` to the release repository | `MAVEN_USERNAME`, `MAVEN_PASSWORD`, `MAVEN_GPG_PASSPHRASE` |
+
+Credentials are named, never held: the plan lists environment-variable names
+and the values stay in your secret store. Every step before the one marked
+**MUTATES** runs without touching a registry, and Anvil itself makes no
+network call to prepare the plan. The `--out` files land outside the bundle
+because `sdk/` is compiler-owned: writing into it would invalidate
+certification, exactly as with `anvil sdk --out`.
+
 Read [wire protocol support](wire-protocols.md) before consuming a GraphQL,
 SOAP, or gRPC-derived client.

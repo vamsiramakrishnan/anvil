@@ -1613,7 +1613,7 @@ export function envSchema(host: string | undefined, deploymentEnvironment: strin
   };
 }
 
-function safeHost(url?: string): string | undefined {
+export function safeHost(url?: string): string | undefined {
   if (!url) return undefined;
   try {
     return new URL(url).hostname;
@@ -1622,7 +1622,7 @@ function safeHost(url?: string): string | undefined {
   }
 }
 
-function resolveDeploymentEnvironment(air: AirDocument): string {
+export function resolveDeploymentEnvironment(air: AirDocument): string {
   const environment = air.service.environment ?? "prod";
   if (!/^[A-Za-z0-9_.~-]{1,64}$/.test(environment)) {
     throw new Error(
@@ -1632,7 +1632,7 @@ function resolveDeploymentEnvironment(air: AirDocument): string {
   return environment;
 }
 
-function resolveDeploymentNamespace(
+export function resolveDeploymentNamespace(
   air: AirDocument,
   options: Pick<ResourceOptions, "deploymentNamespace">,
 ): string {
