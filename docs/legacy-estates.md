@@ -213,10 +213,17 @@ give a harness more transport authority than the business operation requires.
 ## Current product boundary
 
 Inventory, refinement, bridge-contract planning, and static driver-descriptor
-assessment are implemented. Driver code generation, packaging, deployment,
-conformance execution, live readiness, and invocation are not.
+assessment are implemented for every transport family. For exactly one
+shape — a message binding whose reply mode is `reply_to` or
+`fixed_destination` — conformance execution and hosting are implemented too:
+`anvil legacy bridge conformance` drives `@anvil/legacy-bridge`'s HTTP
+facade against a deterministic broker double, and `anvil legacy bridge
+serve` hosts that facade over one STOMP 1.2 connection. Driver code
+generation, packaging, deployment, and live readiness are not implemented
+for any transport, and every other transport family has neither conformance
+execution nor a serve path.
 
-An approved binding always records:
+An approved binding always starts with:
 
 ```json
 {
@@ -229,7 +236,25 @@ An approved binding always records:
 
 That value is not a placeholder to edit. It is a fail-closed statement that no
 tested WebLogic, WebSphere, JBoss, IBM MQ, MSMQ, WCF, JCA, stored-procedure, or
-batch adapter is present in this release.
+batch adapter is present in this release. The only way it changes is a full
+conformance pass, which emits a *new*, re-addressed binding:
+
+```json
+{
+  "runtime": {
+    "placement": "deployment_local_bridge",
+    "status": "conformance_passed",
+    "conformanceReportHash": "sha256:…"
+  }
+}
+```
+
+`conformanceReportHash` names the exact report that earned the status.
+`anvil legacy bridge serve` refuses any binding that is not
+`conformance_passed`, any report whose hash the binding does not name, and any
+report earned by a different reviewed capability — so hand-editing the status
+in still produces nothing that runs. `conformance_passed` is a statement about
+the bridge's own code against a double, never that a real broker was reached.
 
 Read [Designing deployment-local bridges](legacy-runtime-bridges.md) for the
 runtime contract and the capabilities still required before a binding can

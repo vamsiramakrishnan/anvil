@@ -31,8 +31,11 @@ Anvil produces:
 
 The legacy path instead produces a content-addressed inventory, reconciled
 technical candidates, hash-bound harness tasks and proposals, human review
-receipts, and an approved binding whose runtime status remains
-`not_implemented`.
+receipts, and an approved binding whose runtime status starts
+`not_implemented`. For one transport shape (queue request/reply) a full
+conformance pass against a broker double re-addresses the binding as
+`conformance_passed`, and only such a binding can be hosted — see
+[Legacy runtime bridges](legacy-runtime-bridges.md).
 
 Anvil does not convert unknown business meaning into authority.
 
@@ -147,7 +150,7 @@ deployment-local legacy adapter are outside the implemented boundary today.
 | Cloud deployment | Platform delivery system | Generate artifacts and a plan; never imply that planning equals deployment |
 | Live gateway capture | Gateway operator | Consume explicit offline exports at documented support tiers |
 | Live legacy capture | Middleware operator | Consume bounded offline exports; never use management access as business authority |
-| Legacy protocol execution | Platform and middleware teams | Preserve the reviewed binding and report `not_implemented` until a tested local adapter exists |
+| Legacy protocol execution | Platform and middleware teams | Preserve the reviewed binding; report `not_implemented` until conformance passes, and serve only a `conformance_passed` binding from a deployment-local bridge |
 | Observability backend | Platform team | Emit structured execution records compatible with telemetry pipelines |
 | Business workflow invention | Domain owner | Represent authored workflows and block unresolved steps |
 | Exactly-once execution | Upstream design and transactional architecture | Provide bounded idempotency/deduplication guarantees with explicit failure boundaries |
