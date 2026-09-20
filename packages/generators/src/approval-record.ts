@@ -1,5 +1,12 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import {
+  APPROVAL_RECORD_FILE,
+  ApprovalRecord,
+  type ApprovalRecordAction,
+  type ApprovalRecordSubject,
+  UNRECORDED_REVIEWER,
+} from "@anvil/air";
 import { z } from "zod";
 
 /**
@@ -20,41 +27,16 @@ import { z } from "zod";
  * reviewer is refused rather than coerced to either.
  */
 
-export const APPROVAL_RECORD_FILE = ".anvil/approvals.jsonl";
-export const UNRECORDED_REVIEWER = "unrecorded";
-
-export const ApprovalRecordSubject = z.object({
-  kind: z.enum(["operation", "capability", "generation"]),
-  id: z.string().min(1),
-  /** Prior state (an operation state, a capability lifecycle, or a bundle hash). */
-  from: z.string(),
-  /** New state. */
-  to: z.string(),
-});
-export type ApprovalRecordSubject = z.infer<typeof ApprovalRecordSubject>;
-
-export const ApprovalRecordAction = z.enum([
-  "approve_operations",
-  "approve_capability",
-  "reject_capability",
-  "reproject",
-  "rollback",
-]);
-export type ApprovalRecordAction = z.infer<typeof ApprovalRecordAction>;
-
-export const ApprovalRecord = z.object({
-  schemaVersion: z.literal(1),
-  recordedAt: z.string().refine((value) => !Number.isNaN(Date.parse(value)), "ISO timestamp"),
-  reviewer: z.string().min(1),
-  action: ApprovalRecordAction,
-  subjects: z.array(ApprovalRecordSubject),
-  bundleHash: z.object({
-    before: z.string().regex(/^[0-9a-f]{64}$/),
-    after: z.string().regex(/^[0-9a-f]{64}$/),
-  }),
-  note: z.string().optional(),
-});
-export type ApprovalRecord = z.infer<typeof ApprovalRecord>;
+// The record's shape lives in AIR so a browser bundle (the review console)
+// can validate one without importing this module's `node:fs`; the reading and
+// writing stay here, beside the reprojection that appends a line.
+export {
+  APPROVAL_RECORD_FILE,
+  ApprovalRecord,
+  type ApprovalRecordAction,
+  type ApprovalRecordSubject,
+  UNRECORDED_REVIEWER,
+} from "@anvil/air";
 
 /** What a caller knows about the decision; the reprojection fills in time and hashes. */
 export interface ApprovalRecordInput {

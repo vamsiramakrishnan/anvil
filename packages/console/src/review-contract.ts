@@ -1,15 +1,14 @@
-import { Capability, Diagnostic, Operation } from "@anvil/air";
+import { ApprovalRecord, Capability, Diagnostic, Operation } from "@anvil/air";
 import type {
   CapabilityBudgetCheck,
   CapabilityBudgetVerdict,
   ManifestIssue,
 } from "@anvil/compiler";
-import {
-  type ApprovalPreview,
-  ApprovalRecord,
-  type BundleManifest,
-  type BundleReprojectionResult,
-  type HistoryEntry,
+import type {
+  ApprovalPreview,
+  BundleManifest,
+  BundleReprojectionResult,
+  HistoryEntry,
 } from "@anvil/generators";
 import { z } from "zod";
 

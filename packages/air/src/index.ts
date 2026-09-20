@@ -8,6 +8,7 @@
  */
 
 export * from "./agent-projection.js";
+export * from "./approval-record.js";
 export * from "./async-contract.js";
 export * from "./auth-mechanics.js";
 export * from "./body-encoding.js";

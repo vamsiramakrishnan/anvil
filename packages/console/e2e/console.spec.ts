@@ -50,6 +50,10 @@ function projectedState(id: string): string | undefined {
 function fileCount(dir: string): number {
   let count = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    // `.anvil/` holds the bundle's own metadata — the approval log and the
+    // retained prior generations — which `readBundleDir` excludes from the
+    // bundle's bytes. The receipt counts projections, so this must too.
+    if (entry.name === ".anvil") continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) count += fileCount(full);
     else if (statSync(full).isFile()) count += 1;
