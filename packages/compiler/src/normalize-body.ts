@@ -1,4 +1,11 @@
-import { agentPropKey, type JsonSchema, type Param, type RequestBody, snakeCase } from "@anvil/air";
+import {
+  agentPropKey,
+  bodyEncodingFor,
+  type JsonSchema,
+  type Param,
+  type RequestBody,
+  snakeCase,
+} from "@anvil/air";
 import { materializeSchema } from "./decycle.js";
 
 const SCALAR_TYPES = new Set(["string", "integer", "number", "boolean"]);
@@ -27,10 +34,17 @@ export function buildRequestBody(
   params: readonly Param[],
 ): RequestBody | undefined {
   if (!content) return undefined;
-  const contentType = content["application/json"]
-    ? "application/json"
-    : (Object.keys(content)[0] ?? "application/json");
-  const rawSchema = content["application/json"]?.schema ?? Object.values(content)[0]?.schema;
+  // One body, one content type. JSON first because it is the wire the whole
+  // toolchain speaks best; then any other type the runtime can encode; then the
+  // source's first declaration, kept verbatim so the compile diagnostic and the
+  // runtime refusal both name the type the source actually declared.
+  const declared = Object.keys(content);
+  const contentType =
+    (content["application/json"] ? "application/json" : undefined) ??
+    declared.find((type) => bodyEncodingFor(type) !== undefined) ??
+    declared[0] ??
+    "application/json";
+  const rawSchema = content[contentType]?.schema;
   if (!rawSchema) return undefined;
   // `bundleDocument` (decycle.ts) left named-schema references as `$ref`
   // pointers so the whole spec's schema graph is only ever walked once; this

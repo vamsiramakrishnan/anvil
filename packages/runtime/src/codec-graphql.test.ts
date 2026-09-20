@@ -79,7 +79,7 @@ describe("the GraphQL codec posts a document, not a path", () => {
     expect(sent?.url).toBe("https://shop.example.com/graphql");
     expect(sent?.url).not.toContain("Mutation");
     expect(sent?.headers["content-type"]).toBe("application/json");
-    expect(JSON.parse(sent?.body ?? "{}")).toEqual({
+    expect(JSON.parse(String(sent?.body ?? "{}"))).toEqual({
       query: DOCUMENT,
       operationName: "Anvil_Checkout",
       variables: { input: { cartId: "c1" } },
@@ -95,7 +95,7 @@ describe("the GraphQL codec posts a document, not a path", () => {
       { input: { input: { cartId: '") { evil } #' } } },
       { ...baseCtx, transport, ledger: new InMemoryLedger() },
     );
-    const sent = JSON.parse(transport.requests[0]?.body ?? "{}") as { query: string };
+    const sent = JSON.parse(String(transport.requests[0]?.body ?? "{}")) as { query: string };
     expect(sent.query).toBe(DOCUMENT);
     expect(sent.query).not.toContain("evil");
   });

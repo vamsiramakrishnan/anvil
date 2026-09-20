@@ -9,6 +9,7 @@ import {
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
+  type ParamStyle,
   pascalCase,
   resolveAsyncContract,
   resolveIdempotencyCarrier,
@@ -44,6 +45,9 @@ export interface SdkField {
 
 export interface SdkParam extends SdkField {
   in: "path" | "query" | "header" | "cookie" | "body";
+  /** OpenAPI serialization, only when the source declared it (see @anvil/air's param-style.ts). */
+  style?: ParamStyle;
+  explode?: boolean;
 }
 
 export interface SdkIdempotency {
@@ -441,6 +445,8 @@ function paramsOf(op: Operation): SdkParam[] {
       type: typeKind(param.schema),
       description: commentLine(param.description) || undefined,
       enumValues: enumValues(param.schema),
+      ...(param.style ? { style: param.style } : {}),
+      ...(param.explode !== undefined ? { explode: param.explode } : {}),
     }));
 }
 

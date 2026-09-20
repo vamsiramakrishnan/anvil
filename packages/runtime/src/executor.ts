@@ -19,6 +19,7 @@ import {
   type CredentialResolver,
   credentialProfileName,
 } from "./auth.js";
+import { describeRequestBody, requestByteLength } from "./body-encoding.js";
 import { codecFor, isFaultAware } from "./codec.js";
 import {
   hostIsAllowed,
@@ -64,6 +65,7 @@ import {
   type Transport,
   TransportError,
 } from "./transport.js";
+import { bindParam } from "./param-serialization.js";
 import { wireFacadeDecision, wireGateError } from "./wire-gate.js";
 
 export interface DryRunPlan {
@@ -454,26 +456,16 @@ function buildRequest(
           ? idempotencyKey
           : input[agentPropKey(p)];
       if (value === undefined || value === null) continue;
-      switch (p.in) {
-        case "path":
-          path = path.replace(`{${p.name}}`, encodeURIComponent(String(value)));
-          break;
-        case "query":
-          query.set(p.name, String(value));
-          break;
-        case "header":
-          headers[p.name] = String(value);
-          break;
-        case "cookie":
-          headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${p.name}=${String(value)}`;
-          break;
-        case "body":
-          // Legacy AIR (bundles compiled before the body-model change) still carry
-          // body fields as in:"body" params. Honor them so an old bundle does not
-          // silently execute with an empty body; new AIR uses `input.body` below.
-          body[p.name] = value;
-          hasBody = true;
-          break;
+      if (p.in === "body") {
+        // Legacy AIR (bundles compiled before the body-model change) still carry
+        // body fields as in:"body" params. Honor them so an old bundle does not
+        // silently execute with an empty body; new AIR uses `input.body` below.
+        body[p.name] = value;
+        hasBody = true;
+      } else {
+        // Serialized per the parameter's declared (or OpenAPI-default) style;
+        // a shape no style encodes is refused here, never sent as its toString.
+        path = bindParam(path, { query, headers }, p, value, op.id, randomUUID());
       }
     }
   }
@@ -1135,7 +1127,7 @@ export async function execute(
           method: baseRequest.method,
           url: baseRequest.url,
           headers: redactHeaders(baseRequest.headers),
-          body: baseRequest.body ? JSON.parse(baseRequest.body) : undefined,
+          body: describeRequestBody(baseRequest),
           idempotencyKeyPresent: Boolean(key),
           retryPlan: {
             enabled: dryRunRetriesEnabled,
@@ -1207,7 +1199,7 @@ export async function execute(
     }
 
     record.upstreamEndpoint = `${request.method} ${new URL(request.url).pathname}`;
-    record.requestBytes = request.body ? byteLen(request.body) : 0;
+    record.requestBytes = requestByteLength(request.body);
 
     await runHook(ctx.policy?.preExecute, request);
 

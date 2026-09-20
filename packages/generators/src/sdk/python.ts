@@ -142,7 +142,7 @@ function operationsModule(plan: SdkPlan): string {
   const rows = plan.operations.map((op) => {
     const params = op.params.map(
       (param) =>
-        `{"wireName": ${p(param.wireName)}, "key": ${p(param.key)}, "in": ${p(param.in)}, "required": ${param.required ? "True" : "False"}}`,
+        `{"wireName": ${p(param.wireName)}, "key": ${p(param.key)}, "in": ${p(param.in)}, "required": ${param.required ? "True" : "False"}${param.style ? `, "style": ${p(param.style)}` : ""}${param.explode !== undefined ? `, "explode": ${param.explode ? "True" : "False"}` : ""}}`,
     );
     const body = op.body
       ? `{"required": ${op.body.required ? "True" : "False"}, "contentType": ${p(op.body.contentType)}, "projection": ${p(op.body.projection)}, "fields": [${op.body.fields

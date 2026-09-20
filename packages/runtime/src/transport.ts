@@ -2,6 +2,7 @@ import type { ClientRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import type { RetryCondition } from "@anvil/air";
 import { DEFAULT_UPSTREAM_TIMEOUT_MS } from "./config.js";
+import { materializeResponseBody } from "./response-bytes.js";
 
 export const MAX_UPSTREAM_RESPONSE_BYTES = 8 * 1024 * 1024;
 
@@ -21,7 +22,8 @@ export interface HttpRequest {
   method: string;
   url: string;
   headers: Record<string, string>;
-  body?: string;
+  /** Text for JSON, form, XML and GraphQL bodies; bytes for a multipart body. */
+  body?: string | Uint8Array;
   /** Per-attempt timeout in milliseconds. */
   timeoutMs?: number;
   /**
@@ -52,7 +54,14 @@ export interface HttpRequest {
 export interface HttpResponse {
   status: number;
   headers: Record<string, string>;
+  /** The decoded text of a textual body, or the base64 of a binary one. */
   body: string;
+  /**
+   * Present when the upstream's content type was not textual (see
+   * `response-bytes.ts`): `body` is then the raw bytes base64-encoded rather
+   * than text mangled through a UTF-8 decoder. Absent means text.
+   */
+  bodyEncoding?: "base64";
 }
 
 /** A transport-level failure, classified for retry and commit ambiguity. */
@@ -121,11 +130,14 @@ export class FetchTransport implements Transport {
           "after_response",
         );
       }
-      let body: string;
+      let body: Pick<HttpResponse, "body" | "bodyEncoding">;
       try {
         body = req.streamBound
-          ? await boundedStreamText(res, req.streamBound, MAX_UPSTREAM_RESPONSE_BYTES)
-          : await boundedResponseText(res, MAX_UPSTREAM_RESPONSE_BYTES);
+          ? { body: await boundedStreamText(res, req.streamBound, MAX_UPSTREAM_RESPONSE_BYTES) }
+          : materializeResponseBody(
+              await boundedResponseBytes(res, MAX_UPSTREAM_RESPONSE_BYTES),
+              res.headers.get("content-type"),
+            );
       } catch (err) {
         if (err instanceof TransportError) throw err;
         throw new TransportError(
@@ -138,7 +150,7 @@ export class FetchTransport implements Transport {
       res.headers.forEach((v, k) => {
         headers[k] = v;
       });
-      return { status: res.status, headers, body };
+      return { status: res.status, headers, ...body };
     } catch (err) {
       if (err instanceof TransportError) throw err;
       throw classifyFetchError(err);
@@ -258,7 +270,13 @@ function sendHttps(req: HttpRequest, tls: TlsClientMaterial): Promise<HttpRespon
             if (typeof v === "string") headers[k] = v;
             else if (Array.isArray(v)) headers[k] = v.join(", ");
           }
-          finish(() => resolve({ status, headers, body: Buffer.concat(chunks).toString("utf8") }));
+          finish(() =>
+            resolve({
+              status,
+              headers,
+              ...materializeResponseBody(Buffer.concat(chunks), headers["content-type"]),
+            }),
+          );
         });
         res.on("error", () => {
           finish(() =>
@@ -320,7 +338,8 @@ function classifyNodeHttpsError(err: unknown): TransportError {
   }
 }
 
-async function boundedResponseText(response: Response, maxBytes: number): Promise<string> {
+/** The whole response body as bytes, or a `TransportError` past the cap. */
+async function boundedResponseBytes(response: Response, maxBytes: number): Promise<Uint8Array> {
   const length = Number(response.headers.get("content-length"));
   if (Number.isFinite(length) && length > maxBytes) {
     throw new TransportError(
@@ -329,7 +348,7 @@ async function boundedResponseText(response: Response, maxBytes: number): Promis
       "after_response",
     );
   }
-  if (!response.body) return "";
+  if (!response.body) return new Uint8Array(0);
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -353,7 +372,7 @@ async function boundedResponseText(response: Response, maxBytes: number): Promis
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(bytes);
+  return bytes;
 }
 
 /**

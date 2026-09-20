@@ -237,6 +237,14 @@ export type HttpMethod = z.infer<typeof HttpMethod>;
 export const ParamLocation = z.enum(["path", "query", "header", "cookie", "body"]);
 export type ParamLocation = z.infer<typeof ParamLocation>;
 
+/**
+ * OpenAPI parameter serialization styles. Optional on a `Param` and never
+ * defaulted (so an AIR document from before the field hashes the same); the
+ * per-location default is resolved by `param-style.ts` at bind time.
+ */
+export const ParamStyle = z.enum(["form", "simple", "spaceDelimited", "pipeDelimited", "deepObject"]);
+export type ParamStyle = z.infer<typeof ParamStyle>;
+
 /** Source spec kinds Anvil can parse (only `openapi` is wired in the MVP).
  *  `mcp` is a captured MCP server surface adopted as a source (Increment 6).
  *  `har` is an HTTP Archive traffic capture — recorded requests, never a

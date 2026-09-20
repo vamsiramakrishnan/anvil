@@ -79,3 +79,57 @@ describe("bundle driver safety-input collisions", () => {
     expect(unconfirmed).not.toHaveProperty(safety.confirm);
   });
 });
+
+const STYLE_SPEC = `openapi: 3.0.0
+info: { title: catalog, version: 1.0.0 }
+paths:
+  /items/{ids}:
+    get:
+      operationId: listItems
+      tags: [items]
+      parameters:
+        - name: ids
+          in: path
+          required: true
+          schema: { type: array, items: { type: string } }
+        - name: tag
+          in: query
+          schema: { type: array, items: { type: string } }
+        - name: sort
+          in: query
+          style: pipeDelimited
+          schema: { type: array, items: { type: string } }
+        - name: filter
+          in: query
+          style: deepObject
+          schema: { type: object, additionalProperties: { type: string } }
+        - name: X-Meta
+          in: header
+          schema: { type: object, additionalProperties: { type: string } }
+      responses:
+        "200": { description: ok }
+`;
+
+describe("expectedWire serializes parameters by the shared style table", () => {
+  it("expects repeated keys, delimited lists, deep objects and simple headers", async () => {
+    const air = await compile({ spec: STYLE_SPEC, serviceId: "catalog" });
+    const op = air.operations.find((o) => o.sourceRef.operationId === "listItems");
+    if (!op) throw new Error("listItems not compiled");
+    const wire = expectedWire(op, {
+      ids: ["a b", "c"],
+      tag: ["x", "y"],
+      sort: ["name", "date"],
+      filter: { color: "red", size: "m" },
+      x_meta: { k: "v" },
+    });
+    expect(wire.path).toBe("/items/a%20b,c");
+    // Exactly the shape the mock records, so a repeat is an array on both sides.
+    expect(wire.query).toEqual({
+      tag: ["x", "y"],
+      sort: "name|date",
+      "filter[color]": "red",
+      "filter[size]": "m",
+    });
+    expect(wire.headers["x-meta"]).toBe("k,v");
+  });
+});

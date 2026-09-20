@@ -1,6 +1,7 @@
 import {
   agentProjectionIssues,
   agentPropKey,
+  bodyContentTypeIssue,
   type Diagnostic,
   idempotencyAuthCarrierIssue,
   isModeledIdempotencyCarrierInput,
@@ -66,6 +67,19 @@ export function validate(operations: Operation[]): ValidationResult {
       notes.push(
         `Wire protocol ${wire.protocol} is not executable by Anvil's HTTP/JSON runtime. ${wire.nextAction}`,
       );
+    }
+
+    // A body the runtime cannot encode is refused before a credential is read,
+    // on every surface — so an approval would expose a tool that can only ever
+    // fail. Unlike the transport warning above there is no facade to drive it
+    // against, so it holds the operation for review unless a manifest already
+    // decided; it never blocks, because re-declaring the content type is a
+    // legitimate manifest-level fix a human can make.
+    const bodyIssue = bodyContentTypeIssue(op);
+    if (bodyIssue) {
+      flag("warning", "body_content_type_unsupported", `Operation '${op.id}': ${bodyIssue}.`);
+      notes.push(`The request body cannot be encoded by Anvil's runtime: ${bodyIssue}.`);
+      mustReview = true;
     }
 
     const carrier = resolveIdempotencyCarrier(op);

@@ -208,6 +208,8 @@ function operationsModule(plan: SdkPlan): string {
         key: p.key,
         in: p.in,
         required: p.required,
+        ...(p.style ? { style: p.style } : {}),
+        ...(p.explode !== undefined ? { explode: p.explode } : {}),
       })),
       ...(op.body
         ? {

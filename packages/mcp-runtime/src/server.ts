@@ -55,7 +55,6 @@ import {
   takeProjectionArg,
   validateProjection,
 } from "./projection.js";
-import { type ResultBudget, truncateResultText } from "./truncation.js";
 import {
   bindStepInput,
   buildWorkflowInputShape,
@@ -63,6 +62,7 @@ import {
   type StepResult,
   stepTrace,
 } from "./workflow-tool.js";
+import { type ResultBudget, resultText, truncateResultText } from "./truncation.js";
 import { MCP_RESERVED, operationZodShape, reservedSafetyShape } from "./zodshape.js";
 
 /**
@@ -439,7 +439,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
             data = projected.data ?? null;
           }
 
-          let text = JSON.stringify(data, null, 2);
+          let text = resultText(data);
           text = truncateResultText(text, op, budget);
 
           // Measured on the raw response: a projection can drop the very fields
@@ -627,7 +627,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           }
           const result = outcome.result;
           if (result.outcome === "success") {
-            let text = JSON.stringify(result.data ?? null, null, 2);
+            let text = resultText(result.data ?? null);
             text = truncateResultText(text, decisionOp, budget);
             return responseResult(text, result.data ?? null, undefined);
           }

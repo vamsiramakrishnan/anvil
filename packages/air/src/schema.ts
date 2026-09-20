@@ -17,6 +17,7 @@ import {
   OperationAction,
   OperationState,
   ParamLocation,
+  ParamStyle,
   RetryBasis,
   RetryCondition,
   RetryMode,
@@ -516,12 +517,8 @@ export const SourceRef = z.object({
   /** JSON pointer / SDL coordinate / WSDL operation name, when applicable. */
   pointer: z.string().optional(),
   uri: z.string().optional(),
-  /**
-   * Optional, never defaulted. `contractHash` parses the whole `AirDocument`,
-   * so a `.default()` here would re-hash every stored AIR the moment it was
-   * re-parsed and expire every certification on disk. Absent must hash exactly
-   * as it did before this field existed.
-   */
+  /** Optional, never defaulted: `contractHash` parses the whole `AirDocument`, so
+   *  a `.default()` here would re-hash every stored AIR and expire every certification. */
   binding: WireBinding.optional(),
 });
 export type SourceRef = z.infer<typeof SourceRef>;
@@ -543,6 +540,9 @@ export const Param = z.object({
   inferred: z.boolean().default(false),
   /** CLI flag, e.g. --payment-id (derived from name). */
   cliFlag: z.string().optional(),
+  /** OpenAPI serialization, only when the source declared it; see param-style.ts. */
+  style: ParamStyle.optional(),
+  explode: z.boolean().optional(),
 });
 export type Param = z.infer<typeof Param>;
 

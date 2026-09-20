@@ -1,5 +1,6 @@
 import { goPackage } from "./go-core.js";
 import type { SdkPlan } from "./plan.js";
+import { wireFidelityCore } from "./wire-fidelity-core.js";
 
 /**
  * The Go SDK's call path: the single `invoke` every generated method funnels
@@ -28,20 +29,15 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
+	"sort"
 	"strings"
 	"time"
 )
 
-// reservedHeaders are owned by the transport; a caller override would break the
-// contract.
-var reservedHeaders = map[string]bool{
-	"authorization":     true,
-	"content-length":    true,
-	"content-type":      true,
-	"host":              true,
-	"transfer-encoding": true,
-}
-
+// reservedHeaders are owned by the transport; a caller override would break the contract.
+var reservedHeaders = map[string]bool{"authorization": true, "content-length": true, "content-type": true, "host": true, "transfer-encoding": true}
+${wireFidelityCore.go}
 func traceID() string {
 	buffer := make([]byte, 16)
 	if _, err := rand.Read(buffer); err != nil {
@@ -172,8 +168,7 @@ type builtRequest struct {
 	body    []byte
 }
 
-// buildRequest builds the upstream request from the operation spec and the
-// caller's payload.
+// buildRequest builds the upstream request from the operation spec and the caller's payload.
 func buildRequest(spec OperationSpec, payload map[string]any, config clientConfig, idempotencyKey string, extra map[string]string) builtRequest {
 	path := spec.Path
 	query := url.Values{}
@@ -194,16 +189,16 @@ func buildRequest(spec OperationSpec, payload map[string]any, config clientConfi
 		}
 		switch param.In {
 		case "path":
-			path = strings.ReplaceAll(path, "{"+param.WireName+"}", url.PathEscape(formatScalar(value)))
+			path = strings.ReplaceAll(path, "{"+param.WireName+"}", simpleText(spec.ID, param, value, url.PathEscape))
 		case "query":
-			query.Set(param.WireName, formatScalar(value))
+			bindQuery(query, spec.ID, param, value)
 		case "header":
-			headers[param.WireName] = formatScalar(value)
+			headers[param.WireName] = simpleText(spec.ID, param, value, identity)
 		case "cookie":
 			if cookie != "" {
 				cookie += "; "
 			}
-			cookie += param.WireName + "=" + formatScalar(value)
+			cookie += cookiePairs(spec.ID, param, value)
 		case "body":
 			body[param.WireName] = value
 			hasBody = true
@@ -354,6 +349,9 @@ func decode(raw []byte) any {
 // the contract proves retrying is safe.
 func invoke(ctx context.Context, config clientConfig, spec OperationSpec, payload map[string]any, options CallOptions) (any, error) {
 	if refusal := assertWireExecutable(spec, config); refusal != nil {
+		return nil, refusal
+	}
+	if refusal := assertEncodable(spec, payload); refusal != nil {
 		return nil, refusal
 	}
 	if refusal := assertConfirmed(spec, options); refusal != nil {

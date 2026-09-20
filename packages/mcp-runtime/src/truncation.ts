@@ -5,6 +5,20 @@ import {
   FALLBACK_CHARS_PER_TOKEN,
   type Operation,
 } from "@anvil/air";
+import { describeBinaryResult, isBinaryResult } from "@anvil/runtime";
+
+/**
+ * The text rendering of a successful result, before the truncation below.
+ *
+ * A binary result (a PDF, an image — see the runtime's `response-bytes.ts`)
+ * is rendered as one line saying what it is: megabytes of base64 in the text
+ * channel would be truncated into a fragment no agent could use, while the
+ * structured content beside it carries the bytes intact.
+ */
+export function resultText(data: unknown): string {
+  if (isBinaryResult(data)) return describeBinaryResult(data);
+  return JSON.stringify(data, null, 2);
+}
 
 /**
  * The truncation failsafe — deliberately the *failure* path, not the control

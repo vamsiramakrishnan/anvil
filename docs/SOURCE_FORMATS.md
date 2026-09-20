@@ -90,6 +90,21 @@ not carry fails the compile rather than silently dropping the definition.
 Review conversion diagnostics, especially around body/form parameters, security
 definitions, and response schemas.
 
+A request body's content type is carried verbatim into AIR. Where a source
+declares several, JSON is preferred, then any other type the runtime encodes
+(`application/x-www-form-urlencoded`, `multipart/form-data`), then the first
+declared. A body in any other content type compiles with the
+`body_content_type_unsupported` diagnostic and is held for review, because the
+runtime refuses to send it — see [request bodies](./wire-protocols.md#request-bodies)
+for what each encoding puts on the wire, including how a multipart file field
+(`type: string, format: binary`) is supplied as base64 and sent as bytes.
+
+A parameter's `style` and `explode` are carried into AIR only when the source
+declares them; an undeclared one is left absent and serialized by OpenAPI's
+per-location default at call time. The
+[serialization table](./wire-protocols.md#parameter-serialization) names what
+each style puts on the wire and which value shapes are refused.
+
 ### GraphQL SDL
 
 Anvil maps each root field to one operation:

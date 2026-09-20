@@ -147,7 +147,7 @@ function operationsFile(plan: SdkPlan): string {
     const params = op.params
       .map(
         (param) =>
-          `\t\t\t{WireName: ${g(param.wireName)}, Key: ${g(param.key)}, In: ${g(param.in)}, Required: ${param.required}},`,
+          `\t\t\t{WireName: ${g(param.wireName)}, Key: ${g(param.key)}, In: ${g(param.in)}, Required: ${param.required}${param.style ? `, Style: ${g(param.style)}` : ""}${param.explode !== undefined ? `, Explode: ${param.explode}, ExplodeSet: true` : ""}},`,
       )
       .join("\n");
     const body = op.body
