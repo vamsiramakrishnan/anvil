@@ -20,6 +20,7 @@ import {
   credentialProfileName,
 } from "./auth.js";
 import { describeRequestBody, requestByteLength } from "./body-encoding.js";
+import { throwIfCancelled, transportFailureError } from "./cancellation.js";
 import { codecFor, isFaultAware } from "./codec.js";
 import {
   hostIsAllowed,
@@ -40,6 +41,7 @@ import type { InboundIdentity } from "./inbound-identity.js";
 import { jobSecondaryKey } from "./job-index.js";
 import { checkLimits, type LimitsGate } from "./limits.js";
 import { type ExecutionRecord, noopObserver, type Observer } from "./observability.js";
+import { bindParam } from "./param-serialization.js";
 import {
   missingScopes,
   type PolicyContext,
@@ -49,7 +51,6 @@ import {
   resolvePrincipal,
   UNRESOLVED_PRINCIPAL,
 } from "./policy.js";
-import { throwIfCancelled, transportFailureError } from "./cancellation.js";
 import { applyAgentProjection } from "./response-projection.js";
 import {
   computeBackoffMs,
@@ -65,7 +66,6 @@ import {
   type Transport,
   TransportError,
 } from "./transport.js";
-import { bindParam } from "./param-serialization.js";
 import { wireFacadeDecision, wireGateError } from "./wire-gate.js";
 
 export interface DryRunPlan {

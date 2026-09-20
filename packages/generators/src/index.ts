@@ -33,6 +33,6 @@ export * from "./mock.js";
 export * from "./plugins.js";
 export * from "./resources.js";
 export * from "./sdk/index.js";
-export * from "./served-surface.js";
 export * from "./sdk-publish-plan.js";
+export * from "./served-surface.js";
 export * from "./skill.js";

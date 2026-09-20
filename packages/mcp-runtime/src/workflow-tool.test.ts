@@ -3,8 +3,14 @@ import type { HttpRequest, Transport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
+import type { z } from "zod";
 import { buildMcpServer } from "./server.js";
-import { bindStepInput, optionalStepFailure, STEP_FAILURE_KEY, stepTrace } from "./workflow-tool.js";
+import {
+  bindStepInput,
+  optionalStepFailure,
+  STEP_FAILURE_KEY,
+  stepTrace,
+} from "./workflow-tool.js";
 
 /**
  * `WorkflowStep.optional`: a failed optional step does not fail the run. Its
@@ -13,7 +19,7 @@ import { bindStepInput, optionalStepFailure, STEP_FAILURE_KEY, stepTrace } from 
  * a failed REQUIRED step still ends the run exactly where it always did.
  */
 
-function read(id: string, over: Partial<Operation> = {}): Operation {
+function read(id: string, over: Partial<z.input<typeof Operation>> = {}): Operation {
   const tool = id.replace(/\./g, "_");
   return Operation.parse({
     id,

@@ -242,7 +242,13 @@ export type ParamLocation = z.infer<typeof ParamLocation>;
  * defaulted (so an AIR document from before the field hashes the same); the
  * per-location default is resolved by `param-style.ts` at bind time.
  */
-export const ParamStyle = z.enum(["form", "simple", "spaceDelimited", "pipeDelimited", "deepObject"]);
+export const ParamStyle = z.enum([
+  "form",
+  "simple",
+  "spaceDelimited",
+  "pipeDelimited",
+  "deepObject",
+]);
 export type ParamStyle = z.infer<typeof ParamStyle>;
 
 /** Source spec kinds Anvil can parse (only `openapi` is wired in the MVP).

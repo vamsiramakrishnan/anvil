@@ -49,7 +49,7 @@ interface RollbackOptions {
   dryRun?: boolean;
 }
 
-export function runRollback(path: string, opts: RollbackOptions, io: CliIO): number {
+function runRollback(path: string, opts: RollbackOptions, io: CliIO): number {
   if (opts.list === true) {
     const entries = listBundleHistory(resolveBundleDir(path));
     if (entries.length === 0) {

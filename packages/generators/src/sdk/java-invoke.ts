@@ -2,10 +2,9 @@ import { wireFidelityCore } from "./wire-fidelity-core.js";
 
 /**
  * The Java SDK's call path: the single `Invoker.invoke` every generated method
- * funnels through (the retry gate and Retry-After arithmetic it reads live in
+ * funnels through (its retry gate and Retry-After arithmetic live in
  * `java-safety.ts`). Identical for every service, so a method that skipped a
- * gate would have to be a change here rather than a quiet difference in one
- * emitted client.
+ * gate would be a change here, not a quiet difference in one emitted client.
  */
 
 export function invokerFile(pkg: string): string {

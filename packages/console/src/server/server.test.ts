@@ -484,7 +484,7 @@ describe("mutations call the lifted library functions and report their result", 
     expect(envelope.error.issues?.[0]).toContain("manifest.yaml:3:");
     expect(existsSync(path)).toBe(false);
 
-    const valid = "operations:\n  createRefund:\n    confirmation: required\n";
+    const valid = "operations:\n  createRefund:\n    confirmation:\n      required: true\n";
     const written = CONSOLE_ROUTES.writeManifest.response.parse(
       (await client.post("/api/bundles/payments/manifest", { text: valid })).json,
     );

@@ -2,7 +2,11 @@ import { type AirDocument, loadAirDocument, Operation, type Workflow } from "@an
 import { type HttpRequest, InMemoryObserver, type Transport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { type ElicitRequest, ElicitRequestSchema, type ElicitResult } from "@modelcontextprotocol/sdk/types.js";
+import {
+  type ElicitRequest,
+  ElicitRequestSchema,
+  type ElicitResult,
+} from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, vi } from "vitest";
 import { buildMcpServer } from "./server.js";
 
@@ -23,7 +27,9 @@ function refund(over: Partial<Operation> = {}): Operation {
     description: "Refunds a payment.",
     sourceRef: { kind: "openapi", path: "/refunds", method: "post" },
     effect: { kind: "mutation", action: "create", resource: "refund", risk: "financial" },
-    input: { params: [{ name: "amount", in: "query", required: true, schema: { type: "integer" } }] },
+    input: {
+      params: [{ name: "amount", in: "query", required: true, schema: { type: "integer" } }],
+    },
     idempotency: { mode: "none", mechanism: "none" },
     retries: { mode: "none", maxAttempts: 1, backoff: "none", retryOn: [] },
     confirmation: { required: true, risk: "financial", reason: "Money leaves the account." },

@@ -32,9 +32,10 @@ afterEach(async () => {
 
 function serve(handler: Parameters<typeof createServer>[1]): Promise<string> {
   return new Promise((resolve) => {
-    server = createServer(handler);
-    server.listen(0, "127.0.0.1", () => {
-      const port = (server?.address() as { port: number }).port;
+    const listener = createServer(handler);
+    server = listener;
+    listener.listen(0, "127.0.0.1", () => {
+      const port = (listener.address() as { port: number }).port;
       resolve(`http://127.0.0.1:${port}`);
     });
   });
@@ -88,7 +89,11 @@ describe("FetchTransport with a binary upstream", () => {
       res.writeHead(200, { "content-type": "application/pdf", "content-length": PDF.length });
       res.end(PDF);
     });
-    const res = await new FetchTransport().send({ method: "GET", url: `${url}/report`, headers: {} });
+    const res = await new FetchTransport().send({
+      method: "GET",
+      url: `${url}/report`,
+      headers: {},
+    });
     expect(res.status).toBe(200);
     expect(res.bodyEncoding).toBe("base64");
     expect(Buffer.from(res.body, "base64").equals(PDF)).toBe(true);

@@ -37,8 +37,11 @@ describe("serving surfaces boot through one root", () => {
       expect(src, `${name} must spread boot.contextDeps`).toMatch(
         /\.\.\.(boot\.contextDeps|deps)\b/,
       );
-      expect(src, `${name} must resolve the caller via boot.principalFor`).toContain(
-        "boot.principalFor(",
+      // Either the surface resolves the caller itself, or it hands the root's
+      // resolver to the transport that owns the session (the fleet does the
+      // latter, because one HTTP session is one caller).
+      expect(src, `${name} must resolve the caller with boot.principalFor`).toMatch(
+        /boot\.principalFor[(,]|principalFor: boot\.principalFor/,
       );
       // The limiters and the directory flag ride contextDeps; a surface that
       // builds them by hand is the drift this test exists to catch.

@@ -70,7 +70,10 @@ function primitiveArray(name: string, value: unknown[]): WirePrimitive[] | strin
   return value as WirePrimitive[];
 }
 
-function flatObject(name: string, value: Record<string, unknown>): [string, WirePrimitive][] | string {
+function flatObject(
+  name: string,
+  value: Record<string, unknown>,
+): [string, WirePrimitive][] | string {
   const out: [string, WirePrimitive][] = [];
   for (const [key, item] of Object.entries(value)) {
     if (item === undefined || item === null) continue;

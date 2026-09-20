@@ -59,7 +59,7 @@ export interface EvalsRunOptions {
 }
 
 /** One graded suite plus the answers it was graded on. */
-export interface EvalsRunSuite extends SuiteReport {
+interface EvalsRunSuite extends SuiteReport {
   file: string;
   answers: Record<string, string>;
   /** Cases whose agent process failed, with why — they graded as unanswered. */

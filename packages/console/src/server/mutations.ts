@@ -83,7 +83,7 @@ export function summarizeReprojection(
 }
 
 /** The library's preview, minus the file pre-image (summarised as `stale`). */
-export function summarizePreview(preview: ApprovalPreview): z.infer<typeof zApprovalPreview> {
+function summarizePreview(preview: ApprovalPreview): z.infer<typeof zApprovalPreview> {
   const { existingFiles, ...rest } = preview;
   return { ...rest, stale: staleArtifacts(existingFiles) };
 }

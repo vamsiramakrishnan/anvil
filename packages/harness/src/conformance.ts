@@ -975,9 +975,8 @@ function compareReq(
   if (mcp.method !== cli.method) push("wire.method", mcp.method, cli.method);
   if (mcp.path !== cli.path) push("wire.path", mcp.path, cli.path);
   else if (mcp.path !== want.path) push("wire.path", mcp.path, `expected ${want.path}`);
-  // Query: compare the two surfaces key-by-key.
+  // Query: key-by-key, by value — a repeated key is an array on both sides.
   for (const key of new Set([...Object.keys(mcp.query), ...Object.keys(cli.query)])) {
-    // A repeated key is an array on both sides; compare by value, not reference.
     if (JSON.stringify(mcp.query[key]) !== JSON.stringify(cli.query[key]))
       push(`wire.query.${key}`, mcp.query[key], cli.query[key]);
   }

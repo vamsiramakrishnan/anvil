@@ -5,6 +5,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it, vi } from "vitest";
+import type { z } from "zod";
 import { buildMcpServer } from "./server.js";
 
 /**
@@ -14,7 +15,7 @@ import { buildMcpServer } from "./server.js";
  * hears nothing at all.
  */
 
-function read(over: Partial<Operation> = {}): Operation {
+function read(over: Partial<z.input<typeof Operation>> = {}): Operation {
   return Operation.parse({
     id: "things.get",
     canonicalName: "get_thing",

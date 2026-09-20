@@ -39,13 +39,18 @@ export function toolOutputSchema(op: Operation, budgetTokens: number): z.ZodType
 }
 
 /** The SDK-ready `outputSchema` for a workflow's composite tool. */
-export function workflowOutputSchema(lastStep: Operation, budgetTokens: number): z.ZodType | undefined {
+export function workflowOutputSchema(
+  lastStep: Operation,
+  budgetTokens: number,
+): z.ZodType | undefined {
   return toZod(publishedWorkflowOutputSchema(lastStep, budgetTokens).schema);
 }
 
 function toZod(schema: JsonSchema | undefined): z.ZodType | undefined {
   if (!schema) return undefined;
-  return z.fromJSONSchema(materializeSchemaBranches(schema) as Parameters<typeof z.fromJSONSchema>[0]);
+  return z.fromJSONSchema(
+    materializeSchemaBranches(schema) as Parameters<typeof z.fromJSONSchema>[0],
+  );
 }
 
 /**

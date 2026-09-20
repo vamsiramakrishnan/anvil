@@ -127,7 +127,9 @@ describe("publishedOutputSchema", () => {
       charsPerToken: 0.01,
       estimator: "test",
     };
-    expect(publishedOutputSchema(measured)).toEqual(publishedOutputSchema(operation({ schema: record })));
+    expect(publishedOutputSchema(measured)).toEqual(
+      publishedOutputSchema(operation({ schema: record })),
+    );
   });
 });
 

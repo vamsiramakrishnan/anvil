@@ -199,30 +199,49 @@ describe("the SDK transport gate", () => {
     // The assertion is on ordering in the emitted call path, because ordering
     // is what "before any credential is read" means.
     const gates: Record<(typeof SDK_LANGUAGES)[number], [string, string, string]> = {
-      typescript: ["sdk/typescript/src/invoke.ts", "assertEncodable(spec, input)", "tokenProvider()"],
+      typescript: [
+        "sdk/typescript/src/invoke.ts",
+        "assertEncodable(spec, input)",
+        "tokenProvider()",
+      ],
       python: [
         "sdk/python/anvil_banking/_invoke.py",
         "assert_encodable(spec, payload)",
         "token_provider()",
       ],
       go: ["sdk/go/invoke.go", "assertEncodable(spec, payload)", "tokenProvider(ctx)"],
+      // Java declares `buildRequest` (where the token is read) above `invoke`,
+      // so file order is not call order here: the ordering that matters is
+      // inside `invoke`, where the gate runs before `buildRequest` is reached.
       java: [
         "sdk/java/src/main/java/com/anvil/sdk/banking/Invoker.java",
         "assertEncodable(spec, rawPayload)",
-        "tokenSupplier.get()",
+        "buildRequest(",
       ],
     };
     for (const language of SDK_LANGUAGES) {
       const [path, gateCall, tokenRead] = gates[language];
-      const source = soap.files[path] ?? "";
+      const file = soap.files[path] ?? "";
+      // Order within the call path, not within the file: start at the gate's
+      // own function so a language that declares its helpers first still
+      // answers the question "does the gate run before a credential is read".
+      const from = language === "java" ? file.indexOf("static Object invoke(") : 0;
+      const source = file.slice(Math.max(from, 0));
       const gate = source.indexOf(gateCall);
       const token = source.indexOf(tokenRead);
-      expect(gate, `${language}: the call path never invokes the encoding gate`).toBeGreaterThanOrEqual(0);
-      expect(token, `${language}: no delegated token read to order against`).toBeGreaterThanOrEqual(0);
-      expect(gate, `${language}: the token is resolved before the encoding gate`).toBeLessThan(token);
+      expect(
+        gate,
+        `${language}: the call path never invokes the encoding gate`,
+      ).toBeGreaterThanOrEqual(0);
+      expect(token, `${language}: no delegated token read to order against`).toBeGreaterThanOrEqual(
+        0,
+      );
+      expect(gate, `${language}: the token is resolved before the encoding gate`).toBeLessThan(
+        token,
+      );
       // The gate refuses with the runtime's code, and only JSON bodies pass it.
-      expect(source).toContain('"unsupported_operation"');
-      expect(source).toContain("+json");
+      expect(file).toContain('"unsupported_operation"');
+      expect(file).toContain("+json");
     }
   });
 

@@ -671,7 +671,7 @@ describe("the four SDKs agree on the wire", () => {
           .filter(([name]) => name.toLowerCase() !== "user-agent")
           .map(([name, value]) => [name.toLowerCase(), value]),
       );
-      return { ...plan, headers };
+      return { ...plan, headers } as Record<string, unknown>;
     };
     const [firstLanguage, firstPlan] = planned[0] as [string, Record<string, unknown>];
     const first = normalize(firstPlan);

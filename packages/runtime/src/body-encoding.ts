@@ -38,7 +38,11 @@ function isPrimitive(value: unknown): value is string | number | boolean | bigin
 }
 
 /** The refusal for a declared content type the runtime does not encode. */
-export function bodyEncodingRefusal(op: Operation, contentType: string, traceId: string): AnvilError {
+function bodyEncodingRefusal(
+  op: Operation,
+  contentType: string,
+  traceId: string,
+): AnvilError {
   return new AnvilError({
     code: "unsupported_operation",
     message:
@@ -48,11 +52,20 @@ export function bodyEncodingRefusal(op: Operation, contentType: string, traceId:
     operation: op.id,
     traceId,
     retryable: false,
-    details: { body_content_type: contentType, required_action: "re-declare the body in an encodable content type" },
+    details: {
+      body_content_type: contentType,
+      required_action: "re-declare the body in an encodable content type",
+    },
   });
 }
 
-function unencodableField(op: Operation, contentType: string, field: string, reason: string, traceId: string) {
+function unencodableField(
+  op: Operation,
+  contentType: string,
+  field: string,
+  reason: string,
+  traceId: string,
+) {
   return new AnvilError({
     code: "unsupported_operation",
     message:
@@ -79,7 +92,13 @@ function fieldSchema(op: Operation, name: string): JsonSchema | undefined {
  */
 function encodeForm(op: Operation, value: unknown, contentType: string, traceId: string): string {
   if (!isRecord(value)) {
-    throw unencodableField(op, contentType, "body", "a form body must be an object of fields", traceId);
+    throw unencodableField(
+      op,
+      contentType,
+      "body",
+      "a form body must be an object of fields",
+      traceId,
+    );
   }
   const form = new URLSearchParams();
   for (const [name, item] of Object.entries(value)) {
@@ -110,9 +129,20 @@ interface MultipartPart {
 
 const BASE64 = /^[A-Za-z0-9+/\s]*={0,2}\s*$/;
 
-function multipartParts(op: Operation, value: unknown, contentType: string, traceId: string): MultipartPart[] {
+function multipartParts(
+  op: Operation,
+  value: unknown,
+  contentType: string,
+  traceId: string,
+): MultipartPart[] {
   if (!isRecord(value)) {
-    throw unencodableField(op, contentType, "body", "a multipart body must be an object of fields", traceId);
+    throw unencodableField(
+      op,
+      contentType,
+      "body",
+      "a multipart body must be an object of fields",
+      traceId,
+    );
   }
   const parts: MultipartPart[] = [];
   const text = (name: string, item: unknown): void => {
@@ -134,7 +164,8 @@ function multipartParts(op: Operation, value: unknown, contentType: string, trac
           details: { field: name, expected: "base64" },
         });
       }
-      const partType = typeof schema?.contentMediaType === "string" ? schema.contentMediaType : undefined;
+      const partType =
+        typeof schema?.contentMediaType === "string" ? schema.contentMediaType : undefined;
       parts.push({
         name,
         filename: name,
@@ -147,7 +178,11 @@ function multipartParts(op: Operation, value: unknown, contentType: string, trac
       for (const entry of item) text(name, entry);
     } else {
       // OpenAPI's default for an object inside multipart is a JSON part.
-      parts.push({ name, contentType: "application/json", bytes: Buffer.from(JSON.stringify(item), "utf8") });
+      parts.push({
+        name,
+        contentType: "application/json",
+        bytes: Buffer.from(JSON.stringify(item), "utf8"),
+      });
     }
   }
   return parts;
@@ -159,7 +194,12 @@ function quoted(name: string): string {
 }
 
 /** `multipart/form-data` (RFC 7578) with a random boundary, as real bytes. */
-function encodeMultipart(op: Operation, value: unknown, contentType: string, traceId: string): EncodedBody {
+function encodeMultipart(
+  op: Operation,
+  value: unknown,
+  contentType: string,
+  traceId: string,
+): EncodedBody {
   const parts = multipartParts(op, value, contentType, traceId);
   const boundary = `----AnvilFormBoundary${randomBytes(16).toString("hex")}`;
   const chunks: Uint8Array[] = [];

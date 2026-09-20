@@ -198,7 +198,9 @@ describe("bundle history", () => {
     const history = listBundleHistory(dir);
     expect(history).toHaveLength(2);
     // Newest first, and the newest entry is the generation just replaced.
-    expect(history[0]?.recordedAt > (history[1]?.recordedAt as string)).toBe(true);
+    const [newest, older] = history;
+    if (!newest || !older) throw new Error("expected two retained generations");
+    expect(newest.recordedAt > older.recordedAt).toBe(true);
     for (const entry of history) {
       expect(existsSync(join(entry.path, ".anvil", "history"))).toBe(false);
     }

@@ -319,11 +319,10 @@ export async function buildFleetForWorkspace(
 ): Promise<BuildFleetResult> {
   const prepared = await prepareFleetForWorkspace(workspaceRoot, env);
   if (!prepared.ok) return prepared;
-  const { resolvePrincipalForEnv } = await import("@anvil/runtime");
   try {
-    const fleet = await prepared.build({
-      principal: resolvePrincipalForEnv(prepared.config.principals, env),
-    });
+    // One stdio session, one caller: the root resolves it from ANVIL_PRINCIPAL
+    // exactly as it resolves an inbound one from a verified identity.
+    const fleet = await prepared.build({ principal: prepared.principalFor() });
     return { ok: true, fleet, bundleIds: prepared.bundleIds };
   } catch (error) {
     return { ok: false, message: (error as Error).message };

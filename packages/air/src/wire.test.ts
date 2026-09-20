@@ -81,7 +81,12 @@ describe("wire protocol", () => {
       kind: "protobuf",
       path: "/a.b.S/GetOrder",
       method: "post",
-      binding: { protocol: "grpc", service: "a.b.S", method: "GetOrder", transport: "json_transcoded" },
+      binding: {
+        protocol: "grpc",
+        service: "a.b.S",
+        method: "GetOrder",
+        transport: "json_transcoded",
+      },
     });
     const verdict = wireExecutability(transcoded);
     expect(verdict.ok).toBe(false);

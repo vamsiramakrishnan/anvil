@@ -27,7 +27,14 @@ function op(params: Param[]): Operation {
 }
 
 const param = (name: string, where: Param["in"], extra: Partial<Param> = {}): Param =>
-  ({ name, in: where, required: false, schema: { type: "string" }, inferred: false, ...extra }) as Param;
+  ({
+    name,
+    in: where,
+    required: false,
+    schema: { type: "string" },
+    inferred: false,
+    ...extra,
+  }) as Param;
 
 const ok = (): HttpResponse => ({ status: 200, headers: {}, body: "[]" });
 
@@ -42,7 +49,11 @@ const baseCtx = {
 
 async function send(params: Param[], input: Record<string, unknown>) {
   const transport = new MockTransport(() => ok());
-  const res = await execute(op(params), { input }, { ...baseCtx, transport, ledger: new InMemoryLedger() });
+  const res = await execute(
+    op(params),
+    { input },
+    { ...baseCtx, transport, ledger: new InMemoryLedger() },
+  );
   return { res, sent: transport.requests[0], transport };
 }
 
@@ -131,7 +142,12 @@ describe("path and header serialization", () => {
 
   it("keeps scalars exactly as before", async () => {
     const { sent } = await send(
-      [param("id", "path"), param("q", "query"), param("X-Tenant", "header"), param("sid", "cookie")],
+      [
+        param("id", "path"),
+        param("q", "query"),
+        param("X-Tenant", "header"),
+        param("sid", "cookie"),
+      ],
       { id: "w 1", q: "a b", x_tenant: "acme", sid: "s1" },
     );
     expect(sent?.url).toBe("https://catalog.example.com/items/w%201?q=a+b");

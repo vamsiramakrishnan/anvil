@@ -55,6 +55,7 @@ import {
   takeProjectionArg,
   validateProjection,
 } from "./projection.js";
+import { type ResultBudget, resultText, truncateResultText } from "./truncation.js";
 import {
   bindStepInput,
   buildWorkflowInputShape,
@@ -62,7 +63,6 @@ import {
   type StepResult,
   stepTrace,
 } from "./workflow-tool.js";
-import { type ResultBudget, resultText, truncateResultText } from "./truncation.js";
 import { MCP_RESERVED, operationZodShape, reservedSafetyShape } from "./zodshape.js";
 
 /**
@@ -186,7 +186,8 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
     { name: `${air.service.id}-tools`, version: air.service.version },
     { capabilities: { tools: { listChanged: true }, resources: {} } },
   );
-  const outputSchemaBudget = options.outputSchemaBudgetTokens ?? DEFAULT_OUTPUT_SCHEMA_BUDGET_TOKENS;
+  const outputSchemaBudget =
+    options.outputSchemaBudgetTokens ?? DEFAULT_OUTPUT_SCHEMA_BUDGET_TOKENS;
 
   // webhook_receiver operations are compiled and validated like any other
   // operation, but are never a directly-callable tool — receiver-only, per
@@ -288,7 +289,11 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
     const declaredOutput = hybridStatusOperationContracts.has(op.id)
       ? undefined
       : toolOutputSchema(op, outputSchemaBudget);
-    const inputShape = { ...operationZodShape(op), ...reservedSafetyShape(op), ...projectionShape() };
+    const inputShape = {
+      ...operationZodShape(op),
+      ...reservedSafetyShape(op),
+      ...projectionShape(),
+    };
     const registered = server.registerTool(
       op.mcp.toolName,
       {
@@ -535,7 +540,10 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           await report(0, 1, `${typeof jobId === "string" ? jobId : "job"}: pending`);
           return {
             content: [
-              { type: "text" as const, text: JSON.stringify({ status: "pending", jobId }, null, 2) },
+              {
+                type: "text" as const,
+                text: JSON.stringify({ status: "pending", jobId }, null, 2),
+              },
             ],
             structuredContent: { status: "pending" as const, jobId: jobId ?? null },
           };

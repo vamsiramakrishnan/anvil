@@ -51,6 +51,17 @@ export interface HttpRequest {
   signal?: AbortSignal;
 }
 
+/**
+ * A request body as text. `HttpRequest.body` carries bytes for the encodings
+ * that are not text (multipart, and any declared binary part), so a reader
+ * that wants to inspect or log a body decodes it here rather than assuming a
+ * string and producing "[object Uint8Array]".
+ */
+export function requestBodyText(body: string | Uint8Array | undefined): string | undefined {
+  if (body === undefined) return undefined;
+  return typeof body === "string" ? body : new TextDecoder().decode(body);
+}
+
 export interface HttpResponse {
   status: number;
   headers: Record<string, string>;

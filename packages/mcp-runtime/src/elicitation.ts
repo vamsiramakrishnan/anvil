@@ -59,7 +59,10 @@ export function relaxConfirmationForElicitingClients(
     previous?.();
     if (!clientCanElicit(server)) return;
     for (const { tool, shape, confirmKey } of tools) {
-      const confirm = shape[confirmKey];
+      // `ZodRawShape`'s values are typed as the internal `$ZodType`, which
+      // does not carry the builder methods; every value a shape is actually
+      // built from is a `ZodType`, which does.
+      const confirm = shape[confirmKey] as z.ZodType | undefined;
       if (confirm) tool.update({ paramsSchema: { ...shape, [confirmKey]: confirm.optional() } });
     }
   };
@@ -80,7 +83,7 @@ export interface ElicitedConfirmation {
 }
 
 /** Whether the connected client can answer a form elicitation at all. */
-export function clientCanElicit(server: McpServer): boolean {
+function clientCanElicit(server: McpServer): boolean {
   const elicitation = server.server.getClientCapabilities()?.elicitation;
   if (!elicitation || typeof elicitation !== "object") return false;
   // An empty capability object is the pre-`form`/`url` spelling of form support.

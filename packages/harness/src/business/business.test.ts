@@ -2,7 +2,12 @@ import { type BusinessPlan, loadBusinessPlan } from "@anvil/air";
 import { capabilityContractsFor, compileBusiness } from "@anvil/compiler";
 import { fc, type Property, runCampaign, runScenario, Step } from "@anvil/fuzz";
 import { certifyBundle, generateBundle } from "@anvil/generators";
-import { businessApprovalDigest, executeBusiness, InMemoryLedger } from "@anvil/runtime";
+import {
+  businessApprovalDigest,
+  executeBusiness,
+  InMemoryLedger,
+  requestBodyText,
+} from "@anvil/runtime";
 import { describe, expect, it } from "vitest";
 import { bundleFuzzDrivers } from "../fuzz/drivers.js";
 import {
@@ -229,7 +234,7 @@ describe("business semantics and private execution", () => {
     expect(
       (await executeBusiness(plan, "grant_account_access", input, host, "snapshot")).status,
     ).toBe("completed");
-    expect(JSON.parse(backend.calls.at(-1)?.body ?? "{}")).toMatchObject({
+    expect(JSON.parse(requestBodyText(backend.calls.at(-1)?.body) ?? "{}")).toMatchObject({
       role: "viewer",
       tenant_key: "tenant-a",
     });

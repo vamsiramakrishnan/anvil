@@ -20,7 +20,7 @@
  */
 
 /** The runtime's own redaction set, `REDACT` in executor.ts. */
-export const DRY_RUN_REDACTED_HEADERS = [
+const DRY_RUN_REDACTED_HEADERS = [
   "authorization",
   "x-api-key",
   "proxy-authorization",

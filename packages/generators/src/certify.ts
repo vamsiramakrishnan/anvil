@@ -26,13 +26,13 @@ import {
   generateBundle,
   resourceOptionsFromGenerationMetadata,
 } from "./bundle.js";
+import { DeploymentPlanTarget } from "./deploy-targets.js";
 import {
   EVALS_REPORT_FILE,
   evalSuiteFailures,
   evalSuiteFiles,
   evalsEvidenceStatus,
 } from "./evals-evidence.js";
-import { DeploymentPlanTarget } from "./deploy-targets.js";
 import { sdkGateDrift, sdkPresenceFailures, sdkSurfaceOperations } from "./sdk/certify.js";
 import { SDK_LANGUAGES } from "./sdk/index.js";
 import { unresolvedReadiness } from "./semantic-readiness.js";

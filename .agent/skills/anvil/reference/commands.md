@@ -209,6 +209,8 @@ Record the approval decision; the tool budget gates it.
 Options:
 - `--allow-large` — waive the >20-tool budget block (requires a non-empty --note)
 - `--note <note>` — review note persisted with the decision
+- `--reviewer <id>` — who is approving, recorded in .anvil/approvals.jsonl
+- `--dry-run` — run the budget gate and print what would change; write nothing
 
 #### `anvil capability reject`
 `anvil capability reject [options] <path> <capability-id>`
@@ -217,6 +219,8 @@ Record why the grouping is not the right unit.
 
 Options:
 - `--reason <reason>` — rejection reason persisted with the decision
+- `--reviewer <id>` — who is rejecting, recorded in .anvil/approvals.jsonl
+- `--dry-run` — print what would change; write nothing
 
 #### `anvil capability diff`
 `anvil capability diff [options] <path> <capability-id>`
@@ -884,7 +888,26 @@ Options:
 
 Approve operations so they are exposed by the generated artifacts.
 
-Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together. Receipt-bound gateway imports refuse in-place approval and provide the exact manifest re-import command so import-to-approval lineage stays immutable.
+Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together; the replaced generation is retained under .anvil/history (see `anvil rollback`) and the decision is appended to .anvil/approvals.jsonl with the reviewer, the states that moved, and the bundle hash before and after. Receipt-bound gateway imports refuse in-place approval and provide the exact manifest re-import command so import-to-approval lineage stays immutable.
+
+Options:
+- `--reviewer <id>` — who is approving, recorded verbatim in the approval record (absent records 'unrecorded')
+- `--note <note>` — review note persisted with the decision
+- `--dry-run` — run every gate and print what would change across the MCP, CLI, and skill surfaces; write nothing
+
+### `anvil rollback`  *(mutates)*
+`anvil rollback [options] <path>`
+
+Restore a retained prior generation of a bundle, atomically.
+
+Every approval, capability decision, and regeneration retains the generation it replaced under <bundle>/.anvil/history (bounded, default 5; ANVIL_BUNDLE_HISTORY_LIMIT overrides). This restores one of them — the newest by default, or the one `--to` names by bundle hash or hex prefix — through the same staged, byte-verified, surface-checked swap the approval used, records a `rollback` line in .anvil/approvals.jsonl with the reviewer and every operation or capability state that moved back, and retains the generation it replaced so the rollback can itself be undone. A retained generation this toolchain cannot reproduce from its own AIR is refused; recompile instead.
+
+Options:
+- `--to <hash>` — the retained generation's bundle hash (or a hex prefix)
+- `--list` — print the retained generations and exit
+- `--reviewer <id>` — who is restoring, recorded verbatim (absent records 'unrecorded')
+- `--note <note>` — why, persisted with the record
+- `--dry-run` — run every gate and print what would move back; write nothing
 
 ### `anvil console`  *(mutates)*
 `anvil console [options] [path]`
@@ -1061,7 +1084,7 @@ Options:
 
 Inspect Cloud Run, Kubernetes, credentials, and durable idempotency deployment plans.
 
-Plan and inspection only: Anvil prints generated Dockerfile/Terraform/kustomize/env instructions and verifies the generated durable idempotency-store contract. It does not call Cloud Run, Kubernetes, Firestore, apply Terraform, or hold cloud credentials.
+Plan and inspection only: Anvil prints generated Dockerfile/Terraform/kustomize/env instructions and verifies the generated durable idempotency-store contract. It does not call Cloud Run, Firestore, or a Kubernetes cluster, apply Terraform or a manifest, or hold cloud credentials.
 
 #### `anvil deploy cloud-run`
 `anvil deploy cloud-run [options] <dir>`
@@ -1116,11 +1139,12 @@ Options:
 ### `anvil certify`  *(mutates)*
 `anvil certify [options] <path>`
 
-Run static bundle-assurance gates and write certification.json.
+Run bundle-assurance gates (static, or --executable) and write certification.json.
 
-Static assurance only: four deterministic gates judge the bundle as emitted. CONTRACT re-validates AIR, generated-surface alignment, and persisted target-kit regeneration; SAFETY checks confirmation, retry/idempotency, and secret handling; SEMANTIC checks descriptions and routing; RUNTIME checks generated mocks, evals, conformance tests, and deploy artifacts. The record binds to a content hash, so generated-byte tampering invalidates it. It does not boot or invoke a surface; use `anvil selftest`, `anvil conformance`, and `anvil simulate` for executable evidence.
+Static assurance by default: four deterministic gates judge the bundle as emitted. CONTRACT re-validates AIR, generated-surface alignment, and persisted target-kit regeneration; SAFETY checks confirmation, retry/idempotency, and secret handling; SEMANTIC checks descriptions and routing; RUNTIME checks generated mocks, evals, conformance tests, and deploy artifacts. The record binds to a content hash, so generated-byte tampering invalidates it. With --executable the canonical certification engine also boots the contract-faithful simulator and exercises it (confirmation refusal, scope enforcement, idempotent replay, response shape, fault normalization), then runs the mutation battery — each weakened contract is booted and a check must fail against it — and records the engine's status in certification.json under assurance.engineStatus: `certified` when an applicable safety mutant was killed, `simulator_exercised` when the surface carried nothing safety-sensitive to weaken. Neither mode boots the generated MCP/CLI surfaces; use `anvil selftest` and `anvil conformance` for that evidence.
 
 Options:
+- `--executable` — boot the simulator, exercise the surface, and run the mutation battery (assurance.level executable)
 - `--json` — emit the full certification as JSON
 
 ### `anvil selftest`  *(mutates)*
@@ -1203,7 +1227,7 @@ Options:
 
 Drive the full safety matrix through the simulator and report coverage.
 
-Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination, and disclosure cost against the agent's context budget) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control and proving the surface signature detects it. Reports per-dimension coverage and mutants killed. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.
+Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination, and disclosure cost against the agent's context budget) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control, booting the weakened surface, and requiring a static or executable check to fail against it (a mutant that only moves the surface digest is reported as a survivor, naming why). Reports per-dimension coverage and, per mutant, the check that killed it. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.
 
 Options:
 - `--seed <n>` — deterministic simulator seed
@@ -1238,6 +1262,21 @@ Options:
 - `--answers <file>` — JSON object mapping case name to the harness's answer
 - `--check` — gate: exit non-zero when an expectation failed
 - `--json` — emit the full grading report as JSON
+
+#### `anvil evals run`  *(mutates)*
+`anvil evals run [options] <target>`
+
+Drive an agent over a bundle's (or one) eval suite, then grade its answers.
+
+Runs the behaviour checks a bundle ships. For every case in every `skill/evals/*.yaml` of a bundle (or in one suite file), spawns `--agent <command>` once with one JSON document on stdin — `{protocol: "anvil-evals-agent/v1", suite, case, prompt?, upstream?}`, never the expectations — and takes its stdout as the harness's answer; a failed, timed-out, or silent process leaves the case unanswered, which grades as UNGRADED. The answers are then graded exactly as `evals grade` grades a supplied file. With `--judge <command>`, each judge-only expectation on an answered case is put to the judge (stdin `{protocol: "anvil-evals-judge/v1", kind, entry, term: {check, satisfiedBy, violatedBy}, answer}`, stdout `{"present": true|false}`); any other reply leaves it UNGRADED. Without --judge, judge-only expectations stay UNGRADED. Writes evals.report.json into the bundle (answers, per-expectation outcomes, totals, bound to the bundle hash; a derived record, so it never invalidates certification) — for a bare suite file only with --out. Exits 0 unless `--check` is given and some expectation actually failed; UNGRADED never trips --check.
+
+Options:
+- `--agent <command>` — the harness: a command (with optional whitespace-separated args) that reads the case JSON on stdin and prints its answer
+- `--judge <command>` — optional judge for judge-only expectations: reads the request JSON on stdin and prints {"present": true|false}
+- `--out <file>` — where to write the report (default: <bundle>/evals.report.json)
+- `--timeout <ms>` — per-process timeout in milliseconds (default 60000)
+- `--check` — gate: exit non-zero when an expectation failed
+- `--json` — emit the full report as JSON
 
 #### `anvil evals vocabulary`
 `anvil evals vocabulary [options]`

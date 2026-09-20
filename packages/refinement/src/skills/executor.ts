@@ -80,12 +80,11 @@ function exampleFromSchema(field: FieldContext): { value: JsonValue; ref: string
  * The reference executor: deterministic, no LLM. It only ever proposes what its
  * context already grounds — descriptions and error semantics come from gathered
  * evidence, examples from evidence or the field's own spec schema — so it can
- * never invent business meaning. It is the executor the harness falls back to and
- * the fixture every richer executor is measured against.
+ * never invent business meaning. It is the harness's fallback and the fixture
+ * every richer executor is measured against.
  */
-// The corroboration tokenizer lives in ../vocabulary.js (one home for every
-// surface that asks "do these two names speak the same vocabulary"); re-exported
-// here because this module is where its first caller and its tests grew up.
+// The corroboration tokenizer lives in ../vocabulary.js — one home for every
+// surface asking "do two names speak the same vocabulary" — re-exported here.
 import { routingTokens } from "../vocabulary.js";
 
 export { routingTokens };

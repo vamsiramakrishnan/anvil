@@ -10,7 +10,10 @@ import { execute, type HttpResponse, InMemoryLedger, MockTransport } from "./ind
  * was never consulted: a body the runtime cannot encode is refused before the
  * secret it would have been sent with is read.
  */
-function op(body: Partial<RequestBody> & { contentType: string }, overrides: Record<string, unknown> = {}): Operation {
+function op(
+  body: Partial<RequestBody> & { contentType: string },
+  overrides: Record<string, unknown> = {},
+): Operation {
   return OperationSchema.parse({
     id: "files.upload.create",
     canonicalName: "create_upload",
@@ -19,7 +22,13 @@ function op(body: Partial<RequestBody> & { contentType: string }, overrides: Rec
     effect: { kind: "mutation", resource: "upload", risk: "low", reversible: true },
     input: {
       params: [],
-      body: { required: true, schema: { type: "object" }, projection: "whole", fields: [], ...body },
+      body: {
+        required: true,
+        schema: { type: "object" },
+        projection: "whole",
+        fields: [],
+        ...body,
+      },
     },
     idempotency: { mode: "natural", keyDerivation: "none" },
     retries: { mode: "none", maxAttempts: 1, backoff: "none", retryOn: [] },
@@ -33,7 +42,11 @@ function op(body: Partial<RequestBody> & { contentType: string }, overrides: Rec
   });
 }
 
-const ok = (body: unknown): HttpResponse => ({ status: 200, headers: {}, body: JSON.stringify(body) });
+const ok = (body: unknown): HttpResponse => ({
+  status: 200,
+  headers: {},
+  body: JSON.stringify(body),
+});
 
 function ctx(transport: MockTransport) {
   let credentialReads = 0;
@@ -132,7 +145,13 @@ describe("multipart bodies", () => {
       upload(),
       {
         input: {
-          body: { file: pdf.toString("base64"), note: "hi", pages: 2, public: true, meta: { k: "v" } },
+          body: {
+            file: pdf.toString("base64"),
+            note: "hi",
+            pages: 2,
+            public: true,
+            meta: { k: "v" },
+          },
         },
       },
       context,
@@ -191,7 +210,9 @@ describe("multipart bodies", () => {
     expect(res.outcome).toBe("dry_run");
     if (res.outcome !== "dry_run") throw new Error("expected a plan");
     expect(res.plan.body).toMatchObject({ bytes: expect.any(Number) });
-    expect((res.plan.body as { content_type: string }).content_type).toContain("multipart/form-data");
+    expect((res.plan.body as { content_type: string }).content_type).toContain(
+      "multipart/form-data",
+    );
     expect(transport.requests).toHaveLength(0);
   });
 });

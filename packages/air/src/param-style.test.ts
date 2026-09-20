@@ -30,9 +30,10 @@ describe("parameter serialization", () => {
       explode: false,
     });
     // A declared style keeps explode's default keyed to the style, not the location.
-    expect(resolveParamSerialization({ in: "query", name: "q", style: "pipeDelimited" })).toEqual(
-      { style: "pipeDelimited", explode: false },
-    );
+    expect(resolveParamSerialization({ in: "query", name: "q", style: "pipeDelimited" })).toEqual({
+      style: "pipeDelimited",
+      explode: false,
+    });
     expect(resolveParamSerialization({ in: "query", name: "q", explode: false })).toEqual({
       style: "form",
       explode: false,
@@ -53,12 +54,14 @@ describe("parameter serialization", () => {
       ok: true,
       pairs: [["id", "a,b,c"]],
     });
-    expect(
-      serializeQueryParam({ in: "query", name: "id", style: "spaceDelimited" }, ids),
-    ).toEqual({ ok: true, pairs: [["id", "a b c"]] });
-    expect(serializeQueryParam({ in: "query", name: "id", style: "pipeDelimited" }, ids)).toEqual(
-      { ok: true, pairs: [["id", "a|b|c"]] },
-    );
+    expect(serializeQueryParam({ in: "query", name: "id", style: "spaceDelimited" }, ids)).toEqual({
+      ok: true,
+      pairs: [["id", "a b c"]],
+    });
+    expect(serializeQueryParam({ in: "query", name: "id", style: "pipeDelimited" }, ids)).toEqual({
+      ok: true,
+      pairs: [["id", "a|b|c"]],
+    });
     // Numbers and booleans are atoms, never quoted or JSON-encoded.
     expect(serializeQueryParam({ in: "query", name: "n" }, [1, true])).toEqual({
       ok: true,
@@ -135,9 +138,9 @@ describe("parameter serialization", () => {
       ok: true,
       text: "x,1,y,2",
     });
-    expect(serializeSimpleParam({ in: "header", name: "h", explode: true }, { x: 1, y: 2 })).toEqual(
-      { ok: true, text: "x=1,y=2" },
-    );
+    expect(
+      serializeSimpleParam({ in: "header", name: "h", explode: true }, { x: 1, y: 2 }),
+    ).toEqual({ ok: true, text: "x=1,y=2" });
     // The encoder is applied per atom, so a path keeps its separating commas
     // literal while every item inside them is still percent-encoded.
     expect(

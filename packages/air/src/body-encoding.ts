@@ -49,5 +49,7 @@ export function isBinaryFieldSchema(schema: JsonSchema | undefined): boolean {
   const raw = schema.type;
   const type = Array.isArray(raw) ? raw.find((t) => t !== "null") : raw;
   if (type !== "string" && type !== undefined) return false;
-  return schema.format === "binary" || schema.format === "byte" || schema.contentEncoding === "base64";
+  return (
+    schema.format === "binary" || schema.format === "byte" || schema.contentEncoding === "base64"
+  );
 }

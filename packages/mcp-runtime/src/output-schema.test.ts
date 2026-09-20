@@ -10,6 +10,7 @@ import type { Transport } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
+import type { z } from "zod";
 import { buildMcpServer, type McpBuildOptions } from "./server.js";
 
 /**
@@ -30,7 +31,7 @@ const record: JsonSchema = {
   required: ["id", "amount"],
 };
 
-function operation(over: Partial<Operation> = {}): Operation {
+function operation(over: Partial<z.input<typeof Operation>> = {}): Operation {
   return Operation.parse({
     id: "things.get",
     canonicalName: "get_thing",
@@ -246,7 +247,10 @@ describe("results under a declared outputSchema", () => {
     const client = await connect(air([operation({ output: {} })]), { id: "t_1" });
     const dry = await client.callTool({ name: "get_thing", arguments: { anvil_dry_run: true } });
     expect(Object.keys(dry.structuredContent ?? {})).toEqual([MCP_OUTPUT_VIEWS.dryRun]);
-    const view = await client.callTool({ name: "get_thing", arguments: { anvil_projection: "id" } });
+    const view = await client.callTool({
+      name: "get_thing",
+      arguments: { anvil_projection: "id" },
+    });
     expect(view.structuredContent).toEqual({ [MCP_OUTPUT_VIEWS.projection]: "t_1" });
     const plain = await client.callTool({ name: "get_thing", arguments: {} });
     await client.close();
