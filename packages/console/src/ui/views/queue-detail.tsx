@@ -241,6 +241,7 @@ export function Actions({
   canCapReject,
   onApprove,
   onReject,
+  onPreview,
 }: {
   row: DecisionRow;
   busy: boolean;
@@ -249,23 +250,40 @@ export function Actions({
   canCapReject: boolean;
   onApprove: () => void;
   onReject: () => void;
+  /** The same decision with `dryRun: true`: the library stages it and writes nothing. */
+  onPreview: () => void;
 }) {
+  const preview = (
+    <button
+      type="button"
+      className="btn"
+      disabled={busy}
+      onClick={onPreview}
+      title="stage the decision in memory and show what would change; writes nothing"
+    >
+      preview <kbd>p</kbd>
+    </button>
+  );
   switch (row.kind) {
     case "operation":
       return (
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={busy || row.blocking}
-          onClick={onApprove}
-          title={row.blocking ? "blocked: resolve diagnostics and recompile" : undefined}
-        >
-          approve <kbd>a</kbd>
-        </button>
+        <>
+          {preview}
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || row.blocking}
+            onClick={onApprove}
+            title={row.blocking ? "blocked: resolve diagnostics and recompile" : undefined}
+          >
+            approve <kbd>a</kbd>
+          </button>
+        </>
       );
     case "capability":
       return (
         <>
+          {preview}
           <button
             type="button"
             className="btn btn-primary"

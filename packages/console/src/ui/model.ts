@@ -21,7 +21,8 @@ export type View =
   | "catalog"
   | "workbench"
   | "assurance"
-  | "compare";
+  | "compare"
+  | "manifest";
 
 export type Route =
   | { view: "workspace" | "new" }
@@ -35,7 +36,7 @@ export function parseHash(hash: string): Route {
     return { view: "projects", projectId: path.slice(10) };
   if (path === "/new") return { view: "new" };
   const match =
-    /^\/b\/([^/]+)\/(overview|queue|inspect|confusion|evidence|artifacts|catalog|workbench|assurance|compare)$/.exec(
+    /^\/b\/([^/]+)\/(overview|queue|inspect|confusion|evidence|artifacts|catalog|workbench|assurance|compare|manifest)$/.exec(
       path,
     );
   if (!match) return { view: "workspace" };
@@ -213,6 +214,7 @@ export const KEY_MAP: ReadonlyArray<readonly [string, string]> = [
   ["j / k", "next / previous row"],
   ["x", "select or deselect the row"],
   ["a", "approve the row (or focus what it still needs)"],
+  ["p", "preview what approving the row would change (writes nothing)"],
   ["r", "reject the row (or focus the reason)"],
   ["/", "focus the filter"],
   ["?", "this key map"],
@@ -261,9 +263,13 @@ export const BUNDLE_VIEWS: ReadonlyArray<readonly [View, string, string]> = [
   ["compare", "Compare bundles", "07"],
   ["confusion", "Routing quality", "08"],
   ["evidence", "Checks & evidence", "09"],
+  ["manifest", "Manifest", "10"],
 ];
 
 export const BUNDLE_NAV_GROUPS = [
   { label: "Build and use", views: ["overview", "catalog", "queue", "workbench", "artifacts"] },
-  { label: "Inspect and improve", views: ["inspect", "compare", "confusion", "evidence"] },
+  {
+    label: "Inspect and improve",
+    views: ["inspect", "compare", "confusion", "evidence", "manifest"],
+  },
 ] as const;

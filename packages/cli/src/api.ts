@@ -10,7 +10,7 @@ import {
   parseManifestDetailed,
   type SourceDiagnostic,
 } from "@anvil/compiler";
-import { generateBundle, installGeneratedBundle } from "@anvil/generators";
+import { generateBundle, installGeneratedBundle, recordBundleManifest } from "@anvil/generators";
 import { sourceService } from "./commands/source.js";
 
 /**
@@ -146,6 +146,10 @@ export async function compileBundle(options: CompileBundleOptions): Promise<Comp
   const written = installGeneratedBundle(outDir, bundle, {
     onCleanupWarning: (message) => options.onWarning?.(message),
   });
+  // The manifest is a compile input; a copy beside the bundle
+  // (<bundle>/.anvil/manifest.yaml) keeps it discoverable for the next
+  // compile and for the console's manifest editor. Outside the bundle's bytes.
+  recordBundleManifest(outDir, manifestText);
   return {
     ok: true,
     air,

@@ -10,9 +10,16 @@ import {
   approveOperationsInBundle,
   bundleHash,
   generateBundle,
+  listBundleHistory,
   loadBundleAir,
+  previewCapabilityDecision,
+  previewOperationApproval,
+  readApprovalRecords,
   readBundleDir,
+  readBundleManifest,
+  validateBundleManifest,
   writeBundle,
+  writeBundleManifest,
 } from "@anvil/generators";
 import {
   analyzeConfusion,
@@ -43,9 +50,11 @@ import {
   CONSOLE_ROUTES,
   type ConsoleResponse,
   zApplyPackResponse,
+  zApprovalPreview,
   zApproveCapabilityResponse,
   zApproveOperationsResponse,
   zBenchmarkView,
+  zBundleHistory,
   zBundleInspector,
   zDecisionItem,
   zDecisionKind,
@@ -54,6 +63,8 @@ import {
   zErrorEnvelope,
   zExportTaskResponse,
   zImportTaskResponse,
+  zManifestValidation,
+  zManifestView,
   zPackList,
   zWorkspace,
 } from "./contract.js";
@@ -484,9 +495,47 @@ describe("the console contract parses what the library produces", () => {
     expect(parsed.changes[0]?.after).toEqual(view.changes[0]?.after);
   });
 
+  it("dryRun — the library's preview, as the wire carries it, writes nothing", () => {
+    const proposed = air.capabilities.find((cap) => cap.lifecycle === "proposed");
+    if (!proposed) throw new Error("fixture has no proposed capability");
+    const before = readBundleDir(bundleDir);
+    const preview = previewCapabilityDecision(bundleDir, proposed.id, "approve");
+    const { existingFiles, ...rest } = preview;
+    const parsed = zApprovalPreview.parse({
+      ...rest,
+      stale: { targetFiles: [], records: [], gatewayReceipt: false },
+    });
+    expect(parsed.subjects).toEqual([
+      { kind: "capability", id: proposed.id, from: "proposed", to: "approved" },
+    ]);
+    expect(parsed.regeneratedFiles).toContain("air.yaml");
+    expect(Object.keys(existingFiles).length).toBeGreaterThan(0);
+    // The manifest fixture approves every operation, so an operation preview
+    // moves nothing and says so.
+    const approved = air.operations.find((op) => op.state === "approved");
+    if (!approved) throw new Error("fixture has no approved operation");
+    const operationPreview = previewOperationApproval(bundleDir, [approved.id]);
+    expect(operationPreview.subjects).toEqual([]);
+    expect(operationPreview.mcpTools.added).toEqual([]);
+    // A dry-run response carries the preview and no reprojection.
+    const view: ConsoleResponse<"approveCapability"> = {
+      capabilityId: proposed.id,
+      budget: capabilityDisclosureBudget(air, proposed.id),
+      written: false,
+      preview: parsed,
+    };
+    expect(zApproveCapabilityResponse.parse(view).written).toBe(false);
+    expect(readBundleDir(bundleDir)).toEqual(before);
+  });
+
   it("POST /api/bundles/:id/operations/approve", () => {
     const already = air.operations.filter((op) => op.state === "approved").map((op) => op.id);
-    const result = approveOperationsInBundle(bundleDir, already.slice(0, 2));
+    const result = approveOperationsInBundle(
+      bundleDir,
+      already.slice(0, 2),
+      {},
+      { reviewer: "ana" },
+    );
     const stale = {
       targetFiles: Object.keys(result.reprojection.existingFiles).filter((rel) =>
         rel.startsWith("targets/"),
@@ -500,18 +549,59 @@ describe("the console contract parses what the library produces", () => {
       approved: result.newlyApproved,
       alreadyApproved: result.requested.filter((id) => !result.newlyApproved.includes(id)),
       regeneratedFiles: result.reprojection.generatedFileCount,
+      written: true,
       reprojection: {
         bundleDir: result.reprojection.bundleDir,
         generatedFileCount: result.reprojection.generatedFileCount,
         projectionsChanged: result.reprojection.projectionsChanged,
         retainedBackup: result.reprojection.retainedBackup,
+        record: result.reprojection.record,
+        history: result.reprojection.history,
         stale,
       },
       refusals: [],
     };
     const parsed = zApproveOperationsResponse.parse(view);
     expect(parsed.alreadyApproved.length).toBe(2);
-    expect(parsed.reprojection.stale.records).toContain(BENCHMARK_REPORT_FILE);
+    expect(parsed.reprojection?.stale.records).toContain(BENCHMARK_REPORT_FILE);
+    // The record the library wrote is the record the wire carries, reviewer and all.
+    expect(parsed.reprojection?.record.reviewer).toBe("ana");
+    expect(parsed.reprojection?.record.action).toBe("approve_operations");
+    expect(parsed.reprojection?.record.subjects).toEqual([]);
+  });
+
+  it("GET /api/bundles/:id/history — the record and retained generations, verbatim", () => {
+    const view: ConsoleResponse<"history"> = {
+      bundleId: "payments",
+      records: readApprovalRecords(bundleDir),
+      generations: listBundleHistory(bundleDir),
+      rollbackCommand: `anvil rollback ${bundleDir} --reviewer <id>`,
+    };
+    const parsed = zBundleHistory.parse(view);
+    expect(parsed.records.length).toBeGreaterThan(0);
+    expect(parsed.records.every((record) => record.reviewer.length > 0)).toBe(true);
+    expect(parsed.generations.length).toBeGreaterThan(0);
+    expect(parsed.generations[0]?.bundleHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("GET/POST /api/bundles/:id/manifest — the compiler's positioned issues, verbatim", () => {
+    const absent = readBundleManifest(bundleDir);
+    expect(zManifestView.parse({ ...absent, recompileCommand: "anvil compile …" }).exists).toBe(
+      false,
+    );
+    const invalid = validateBundleManifest("operations:\n  x:\n    idempotancy: natural\n");
+    const parsedInvalid = zManifestValidation.parse(invalid);
+    expect(parsedInvalid.ok).toBe(false);
+    expect(parsedInvalid.issues[0]).toMatchObject({ line: 3, suggestion: "idempotency" });
+    expect(zManifestValidation.parse(validateBundleManifest(read("anvil.yaml"))).ok).toBe(true);
+    const path = writeBundleManifest(bundleDir, read("anvil.yaml"));
+    const present = zManifestView.parse({
+      ...readBundleManifest(bundleDir),
+      recompileCommand: "anvil compile …",
+    });
+    expect(present.path).toBe(path);
+    expect(present.exists).toBe(true);
+    expect(present.text).toBe(read("anvil.yaml"));
   });
 
   it("POST /api/bundles/:id/capabilities/:capId/approve", () => {
@@ -521,16 +611,24 @@ describe("the console contract parses what the library produces", () => {
     const view: ConsoleResponse<"approveCapability"> = {
       capabilityId: proposed.id,
       budget,
+      written: true,
       reprojection: {
         bundleDir: reprojection.bundleDir,
         generatedFileCount: reprojection.generatedFileCount,
         projectionsChanged: reprojection.projectionsChanged,
+        record: reprojection.record,
         stale: { targetFiles: [], records: [], gatewayReceipt: false },
       },
     };
     const parsed = zApproveCapabilityResponse.parse(view);
     expect(parsed.budget.verdict).toBe("ok");
-    expect(parsed.reprojection.projectionsChanged).toBe(true);
+    expect(parsed.reprojection?.projectionsChanged).toBe(true);
+    expect(parsed.reprojection?.record.subjects[0]).toEqual({
+      kind: "capability",
+      id: proposed.id,
+      from: "proposed",
+      to: "approved",
+    });
     const after = loadBundleAir(bundleDir, readBundleDir(bundleDir));
     expect(after.capabilities.find((cap) => cap.id === proposed.id)?.lifecycle).toBe("approved");
   });

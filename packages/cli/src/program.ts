@@ -31,6 +31,7 @@ import { registerPackage } from "./commands/package.js";
 import { registerPublish } from "./commands/publish.js";
 import { registerRefine } from "./commands/refine.js";
 import { registerReview } from "./commands/review.js";
+import { registerRollback } from "./commands/rollback.js";
 import { registerRun } from "./commands/run.js";
 import { registerSchema } from "./commands/schema.js";
 import { registerSdk } from "./commands/sdk.js";
@@ -105,6 +106,8 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerLegacy(program, ctx);
   registerSources(program, ctx);
   registerApprove(program, ctx);
+  // Undo the step above: every decision retains the generation it replaced.
+  registerRollback(program, ctx);
   // The console is the browser form of the review step just above it: it
   // approves through the same functions `approve` and `capability` call.
   registerConsole(program, ctx);

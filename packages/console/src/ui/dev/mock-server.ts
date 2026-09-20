@@ -102,14 +102,117 @@ export function createMockConsole(
     return found;
   };
 
+  /** The fixture's approval record and retained generations, appended per written decision. */
+  const history = new Map<string, ConsoleResponse<"history">>();
+  const historyOf = (id: string) => {
+    const b = bundle(id);
+    let entry = history.get(id);
+    if (!entry) {
+      entry = {
+        bundleId: id,
+        records: [],
+        generations: [],
+        rollbackCommand: `anvil rollback ${b.inspector.path} --reviewer <id>`,
+      };
+      history.set(id, entry);
+    }
+    return entry;
+  };
+  const record = (
+    id: string,
+    action: ConsoleResponse<"history">["records"][number]["action"],
+    subjects: ConsoleResponse<"history">["records"][number]["subjects"],
+    reviewer: string | undefined,
+    note: string | undefined,
+  ) => {
+    const entry = historyOf(id);
+    const before = "a".repeat(64 - String(entry.records.length).length) + entry.records.length;
+    const after =
+      "b".repeat(64 - String(entry.records.length + 1).length) + (entry.records.length + 1);
+    const line = {
+      schemaVersion: 1 as const,
+      recordedAt: new Date(Date.UTC(2026, 5, 12, 9, entry.records.length)).toISOString(),
+      reviewer: reviewer ?? "unrecorded",
+      action,
+      subjects,
+      bundleHash: { before, after },
+      ...(note ? { note } : {}),
+    };
+    entry.records.push(line);
+    const generation = {
+      id: `${line.recordedAt.replace(/[:.]/g, "-")}-${before.slice(0, 12)}`,
+      path: `${bundle(id).inspector.path}/.anvil/history/${line.recordedAt.replace(/[:.]/g, "-")}-${before.slice(0, 12)}`,
+      recordedAt: line.recordedAt,
+      bundleHash: before,
+    };
+    entry.generations = [generation, ...entry.generations].slice(0, 5);
+    entry.rollbackCommand = `anvil rollback ${bundle(id).inspector.path} --to ${before.slice(0, 12)} --reviewer <id>`;
+    return { line, generation };
+  };
+
   const reprojection = (
-    bundleDir: string,
-  ): ConsoleResponse<"approveCapability">["reprojection"] => ({
-    bundleDir,
+    id: string,
+    action: ConsoleResponse<"history">["records"][number]["action"],
+    subjects: ConsoleResponse<"history">["records"][number]["subjects"],
+    reviewer: string | undefined,
+    note: string | undefined,
+  ): NonNullable<ConsoleResponse<"approveCapability">["reprojection"]> => {
+    const { line, generation } = record(id, action, subjects, reviewer, note);
+    return {
+      bundleDir: bundle(id).inspector.path,
+      generatedFileCount: 42,
+      projectionsChanged: true,
+      record: line,
+      history: generation,
+      stale: { targetFiles: [], records: ["benchmark.report.json"], gatewayReceipt: false },
+    };
+  };
+
+  const previewOf = (
+    id: string,
+    subjects: ConsoleResponse<"history">["records"][number]["subjects"],
+    tools: string[],
+    commands: string[],
+  ): NonNullable<ConsoleResponse<"approveOperations">["preview"]> => ({
+    bundleDir: bundle(id).inspector.path,
+    subjects,
+    mcpTools: { added: tools, removed: [] },
+    cliCommands: { added: commands, removed: [] },
+    skillFiles: ["skill/SKILL.md"],
+    regeneratedFiles: ["air.yaml", "air.json", "mcp/air.json", "cli/air.json", "skill/SKILL.md"],
     generatedFileCount: 42,
-    projectionsChanged: true,
+    projectionsChanged: subjects.length > 0,
     stale: { targetFiles: [], records: ["benchmark.report.json"], gatewayReceipt: false },
   });
+
+  /** The manifest copy beside each fixture bundle, editable in memory. */
+  const manifests = new Map<string, string>([
+    [
+      "payments",
+      "operations:\n  createRefund:\n    idempotency: required_request_key\n    confirmation: required\n",
+    ],
+  ]);
+  const manifestPath = (id: string) => `${bundle(id).inspector.path}/.anvil/manifest.yaml`;
+  const recompile = (id: string) =>
+    `anvil compile --source snap_${id} --manifest ${manifestPath(id)} --out ${bundle(id).inspector.path} --root ${state.root}`;
+  const validateText = (text: string): ConsoleResponse<"validateManifest"> => {
+    // A miniature of the compiler's strict-key rule: the one misspelling the
+    // real parser is documented to catch, positioned to its line.
+    const issues: ConsoleResponse<"validateManifest">["issues"] = [];
+    text.split("\n").forEach((line, index) => {
+      const match = /^\s*(idempotancy|side_effect):/.exec(line);
+      if (match) {
+        issues.push({
+          path: `operations.*.${match[1]}`,
+          message: "unknown key",
+          line: index + 1,
+          col: line.indexOf(match[1] as string) + 1,
+          suggestion: match[1] === "idempotancy" ? "idempotency" : "effect",
+        });
+      }
+    });
+    return { ok: issues.length === 0, issues };
+  };
 
   const dropQueueItem = (id: string, kind: string, itemId: string) => {
     const b = bundle(id);
@@ -257,7 +360,31 @@ export function createMockConsole(
       return view;
     },
 
-    approveOperations: ({ id = "" }, { ids }) => {
+    history: ({ id = "" }) => historyOf(id),
+    manifest: ({ id = "" }) => ({
+      path: manifestPath(id),
+      exists: manifests.has(id),
+      text: manifests.get(id) ?? "",
+      recompileCommand: recompile(id),
+    }),
+    validateManifest: ({ id = "" }, { text }) => {
+      bundle(id);
+      return validateText(text);
+    },
+    writeManifest: ({ id = "" }, { text }) => {
+      const validation = validateText(text);
+      if (!validation.ok) {
+        throw refuse(422, "console/manifest_invalid", "The manifest was not written.", {
+          issues: validation.issues.map(
+            (i) => `manifest.yaml:${i.line}:${i.col} ${i.path}: ${i.message}`,
+          ),
+        });
+      }
+      manifests.set(id, text);
+      return { path: manifestPath(id), written: true, recompileCommand: recompile(id) };
+    },
+
+    approveOperations: ({ id = "" }, { ids, reviewer, note, dryRun }) => {
       const b = bundle(id);
       const unknown = ids.filter((opId) => !b.inspector.operations.some((op) => op.id === opId));
       if (unknown.length > 0) {
@@ -275,10 +402,30 @@ export function createMockConsole(
       }
       const approved: string[] = [];
       const alreadyApproved: string[] = [];
+      const subjects: ConsoleResponse<"history">["records"][number]["subjects"] = [];
+      const moving = b.inspector.operations.filter(
+        (op) => ids.includes(op.id) && op.state !== "approved",
+      );
+      if (dryRun) {
+        return {
+          approved: moving.map((op) => op.id),
+          alreadyApproved: ids.filter((opId) => !moving.some((op) => op.id === opId)),
+          regeneratedFiles: moving.length > 0 ? 5 : 0,
+          written: false,
+          preview: previewOf(
+            id,
+            moving.map((op) => ({ kind: "operation", id: op.id, from: op.state, to: "approved" })),
+            moving.map((op) => op.mcp.toolName),
+            moving.map((op) => op.cli.command),
+          ),
+          refusals: [],
+        };
+      }
       for (const op of b.inspector.operations) {
         if (!ids.includes(op.id)) continue;
         if (op.state === "approved") alreadyApproved.push(op.id);
         else {
+          subjects.push({ kind: "operation", id: op.id, from: op.state, to: "approved" });
           op.state = "approved";
           op.blockerNotes = [];
           approved.push(op.id);
@@ -289,12 +436,13 @@ export function createMockConsole(
         approved,
         alreadyApproved,
         regeneratedFiles: 42,
-        reprojection: reprojection(b.inspector.path),
+        written: true,
+        reprojection: reprojection(id, "approve_operations", subjects, reviewer, note),
         refusals: [],
       };
     },
 
-    approveCapability: ({ id = "", capId = "" }, { allowLarge, note }) => {
+    approveCapability: ({ id = "", capId = "" }, { allowLarge, note, reviewer, dryRun }) => {
       const b = bundle(id);
       const cap = b.inspector.capabilities.find((c) => c.id === capId);
       if (!cap) throw refuse(404, "capability_not_found", `no capability '${capId}'`);
@@ -315,22 +463,44 @@ export function createMockConsole(
           "--allow-large requires a non-empty note",
         );
       }
+      const subjects = [
+        { kind: "capability" as const, id: capId, from: cap.lifecycle, to: "approved" },
+      ];
+      if (dryRun) {
+        return {
+          capabilityId: capId,
+          budget: cap.budget,
+          written: false,
+          preview: previewOf(id, subjects, [], []),
+        };
+      }
       cap.lifecycle = "approved";
       dropQueueItem(id, "capability", capId);
       return {
         capabilityId: capId,
         budget: cap.budget,
-        reprojection: reprojection(b.inspector.path),
+        written: true,
+        reprojection: reprojection(id, "approve_capability", subjects, reviewer, note),
       };
     },
 
-    rejectCapability: ({ id = "", capId = "" }) => {
+    rejectCapability: ({ id = "", capId = "" }, { reason, reviewer, dryRun }) => {
       const b = bundle(id);
       const cap = b.inspector.capabilities.find((c) => c.id === capId);
       if (!cap) throw refuse(404, "capability_not_found", `no capability '${capId}'`);
+      const subjects = [
+        { kind: "capability" as const, id: capId, from: cap.lifecycle, to: "rejected" },
+      ];
+      if (dryRun) {
+        return { capabilityId: capId, written: false, preview: previewOf(id, subjects, [], []) };
+      }
       cap.lifecycle = "rejected";
       dropQueueItem(id, "capability", capId);
-      return { capabilityId: capId, reprojection: reprojection(b.inspector.path) };
+      return {
+        capabilityId: capId,
+        written: true,
+        reprojection: reprojection(id, "reject_capability", subjects, reviewer, reason),
+      };
     },
 
     packDecision: ({ id = "", hash = "" }, { decision, refinementIds, reviewer, reason }) => {

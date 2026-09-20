@@ -12,6 +12,7 @@ import {
   toRows,
 } from "../model.js";
 import { Actions, Detail, RowEvidence } from "./queue-detail.js";
+import { type ApprovalPreview, PreviewPanel } from "./queue-preview.js";
 
 /**
  * `#/b/:id/queue` — every pending decision in one list, the evidence beside
@@ -42,8 +43,18 @@ function readReviewer(): string {
   }
 }
 
-const stale = (r: { reprojection: { stale: { records: string[]; targetFiles: string[] } } }) =>
-  [...r.reprojection.stale.records, ...r.reprojection.stale.targetFiles].join(", ");
+const stale = (r: { reprojection?: { stale: { records: string[]; targetFiles: string[] } } }) =>
+  r.reprojection
+    ? [...r.reprojection.stale.records, ...r.reprojection.stale.targetFiles].join(", ")
+    : "";
+
+/** The record line every written decision carries: who, and the retained generation. */
+const recorded = (r: {
+  reprojection?: { record: { reviewer: string }; history?: { id: string } };
+}) =>
+  r.reprojection
+    ? ` · recorded by ${r.reprojection.record.reviewer}${r.reprojection.history ? ` · retained ${r.reprojection.history.id}` : ""}`
+    : "";
 
 /** Applying a pack writes AIR; regeneration is a separate, explicit action. */
 const RECOMPILE_AFTER_APPLY =
@@ -70,6 +81,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ConsoleApiError>();
   const [receipt, setReceipt] = useState<ReactNode>();
+  const [preview, setPreview] = useState<ApprovalPreview>();
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const filterRef = useRef<HTMLInputElement>(null);
   const reasonRef = useRef<HTMLTextAreaElement>(null);
@@ -98,6 +110,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
     setBusy(true);
     setError(undefined);
     setReceipt(undefined);
+    setPreview(undefined);
     try {
       setReceipt(await work());
       await reload();
@@ -109,26 +122,60 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
     }
   };
 
+  /** The reviewer identity as the contract takes it: absent when blank, so the record says "unrecorded". */
+  const identity = () => (reviewer.trim() ? { reviewer: reviewer.trim() } : {});
+
+  const capabilityBody = () =>
+    allowLarge ? { allowLarge: true, note: note.trim() } : note.trim() ? { note: note.trim() } : {};
+
+  /** The same decision with `dryRun: true`: every gate runs, nothing is written. */
+  const previewDecision = (row: DecisionRow) => {
+    if (row.kind !== "operation" && row.kind !== "capability") return;
+    setBusy(true);
+    setError(undefined);
+    setReceipt(undefined);
+    setPreview(undefined);
+    void (async () => {
+      try {
+        const result =
+          row.kind === "operation"
+            ? await api.approveOperations(bundleId, { ids: [row.id], dryRun: true })
+            : await api.approveCapability(bundleId, row.id, { ...capabilityBody(), dryRun: true });
+        if (result.written || !result.preview) {
+          throw new Error("The server wrote a decision that was asked for as a preview.");
+        }
+        setPreview(result.preview);
+      } catch (caught) {
+        if (caught instanceof ConsoleApiError) setError(caught);
+        else throw caught;
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+
   const approve = (row: DecisionRow) => {
     switch (row.kind) {
       case "operation":
         if (row.blocking) return;
         return settle(async () => {
-          const result = await api.approveOperations(bundleId, { ids: [row.id] });
-          return `approved ${result.approved.join(", ") || "nothing new"} · reprojected ${result.reprojection.bundleDir} (${result.regeneratedFiles} files)${stale(result) ? ` · stale: ${stale(result)}` : ""}`;
+          const result = await api.approveOperations(bundleId, {
+            ids: [row.id],
+            ...identity(),
+            ...(note.trim() ? { note: note.trim() } : {}),
+          });
+          return `approved ${result.approved.join(", ") || "nothing new"} · reprojected ${result.reprojection?.bundleDir} (${result.regeneratedFiles} files)${stale(result) ? ` · stale: ${stale(result)}` : ""}${recorded(result)}`;
         });
       case "capability": {
         const blocked = row.subject.budget.verdict === "blocked";
         if (blocked && !allowLarge) return noteRef.current?.focus();
         if (allowLarge && !note.trim()) return noteRef.current?.focus();
         return settle(async () => {
-          const body = allowLarge
-            ? { allowLarge: true, note: note.trim() }
-            : note.trim()
-              ? { note: note.trim() }
-              : {};
-          const result = await api.approveCapability(bundleId, row.id, body);
-          return `approved ${result.capabilityId} · budget ${result.budget.verdict} (${result.budget.toolCount} tools) · reprojected ${result.reprojection.bundleDir}`;
+          const result = await api.approveCapability(bundleId, row.id, {
+            ...capabilityBody(),
+            ...identity(),
+          });
+          return `approved ${result.capabilityId} · budget ${result.budget.verdict} (${result.budget.toolCount} tools) · reprojected ${result.reprojection?.bundleDir}${recorded(result)}`;
         });
       }
       case "pack": {
@@ -162,8 +209,11 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
     if (row.kind === "capability") {
       if (!reason.trim()) return reasonRef.current?.focus();
       return settle(async () => {
-        const result = await api.rejectCapability(bundleId, row.id, { reason: reason.trim() });
-        return `rejected ${result.capabilityId} · reprojected ${result.reprojection.bundleDir}`;
+        const result = await api.rejectCapability(bundleId, row.id, {
+          reason: reason.trim(),
+          ...identity(),
+        });
+        return `rejected ${result.capabilityId} · reprojected ${result.reprojection?.bundleDir}${recorded(result)}`;
       });
     }
     if (row.kind === "pack") {
@@ -181,10 +231,11 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
     }
   };
 
-  const applyPack = (pack: PackList[number]) =>
+  const applyPack = (pack: PackList[number], dryRun = false) =>
     settle(async () => {
-      const result = await api.applyPack(bundleId, pack.hash, {});
-      if (!result.written) return `dry run: ${result.applied.join(", ")} → ${result.airPath}`;
+      const result = await api.applyPack(bundleId, pack.hash, dryRun ? { dryRun: true } : {});
+      if (!result.written)
+        return `dry run — AIR was not written: would apply ${result.applied.join(", ") || "nothing"} (${result.changes.length} change(s)) → ${result.airPath}`;
       return `applied ${result.applied.join(", ") || "nothing"} → ${result.airPath} · ${RECOMPILE_AFTER_APPLY}${result.reprojection ? ` · reprojected (${result.reprojection.generatedFileCount} files)` : ""}`;
     });
 
@@ -227,11 +278,11 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
     const opIds = chosen.filter((row) => row.kind === "operation").map((row) => row.id);
     if (opIds.length > 0) {
       try {
-        const result = await api.approveOperations(bundleId, { ids: opIds });
+        const result = await api.approveOperations(bundleId, { ids: opIds, ...identity() });
         push({
           label: `operations ${opIds.join(", ")}`,
           status: "ok",
-          detail: `approved ${result.approved.length} · reprojected ${result.reprojection.bundleDir}`,
+          detail: `approved ${result.approved.length} · reprojected ${result.reprojection?.bundleDir}${recorded(result)}`,
         });
       } catch (caught) {
         if (!(caught instanceof ConsoleApiError)) throw caught;
@@ -242,7 +293,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
     for (const row of chosen) {
       if (row.kind !== "capability") continue;
       try {
-        const result = await api.approveCapability(bundleId, row.id, {});
+        const result = await api.approveCapability(bundleId, row.id, identity());
         push({
           label: `capability ${row.id}`,
           status: "ok",
@@ -318,6 +369,9 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
         case "r":
           if (current && !busy) void reject(current);
           break;
+        case "p":
+          if (current && !busy) previewDecision(current);
+          break;
         case "/":
           event.preventDefault();
           filterRef.current?.focus();
@@ -346,6 +400,15 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
                 <code>{pack.hash.slice(0, 12)}</code> · {pack.dir} · approved{" "}
                 {pack.receipts.filter((r) => r.decision === "approved").length}, rejected{" "}
                 {pack.receipts.filter((r) => r.decision === "rejected").length}{" "}
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={busy}
+                  onClick={() => void applyPack(pack, true)}
+                  title="applyPackToBundle with dryRun — what `anvil refine apply-pack --dry-run` does; writes nothing"
+                >
+                  preview pack
+                </button>{" "}
                 <button
                   type="button"
                   className="btn btn-sm"
@@ -494,6 +557,23 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
                   <Chip value="blocked" />
                 </label>
               ) : null}
+              {current.kind === "operation" || current.kind === "capability" ? (
+                <label className="field">
+                  <Label>reviewer (optional; kept in this browser, recorded verbatim)</Label>
+                  <input
+                    ref={reviewerRef}
+                    type="text"
+                    value={reviewer}
+                    onChange={(e) => setReviewer(e.target.value)}
+                  />
+                </label>
+              ) : null}
+              {current.kind === "operation" ? (
+                <label className="field">
+                  <Label>note (optional)</Label>
+                  <textarea value={note} onChange={(e) => setNote(e.target.value)} />
+                </label>
+              ) : null}
               {current.kind === "capability" ? (
                 <>
                   <label className="field">
@@ -550,8 +630,10 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
                   canCapReject={reason.trim().length > 0}
                   onApprove={() => void approve(current)}
                   onReject={() => void reject(current)}
+                  onPreview={() => previewDecision(current)}
                 />
               </div>
+              {preview ? <PreviewPanel preview={preview} /> : null}
               {receipt ? <Receipt>{receipt}</Receipt> : null}
               {error ? <ErrorBox error={error} /> : null}
             </Panel>

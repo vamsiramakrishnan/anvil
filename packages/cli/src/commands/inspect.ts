@@ -1,4 +1,11 @@
-import { exampleInput, operationCatalog, readBundleDir, resolveBundleDir } from "@anvil/generators";
+import {
+  exampleInput,
+  operationCatalog,
+  readApprovalRecords,
+  readBundleDir,
+  resolveBundleDir,
+  summarizeApprovalRecords,
+} from "@anvil/generators";
 import { cliFlagsFor } from "@anvil/harness";
 import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
@@ -26,12 +33,15 @@ export function registerInspect(parent: Command, ctx: CommandContext): void {
 }
 
 function runInspect(path: string, opts: { json?: boolean }, io: CliIO): number {
-  const air = loadAir(path);
+  const airWarnings: string[] = [];
+  const air = loadAir(path, { onWarning: (message) => airWarnings.push(message) });
   const catalog = operationCatalog(air);
   if (opts.json === true) {
     io.out(JSON.stringify(catalog, null, 2));
     return 0;
   }
+  // An older AIR is read and said so; a newer-major one was refused by the loader.
+  for (const warning of airWarnings) io.err(`Warning: ${warning}`);
   io.out(
     `${air.service.displayName ?? air.service.id} @ ${air.service.version} — ${air.operations.length} operations`,
   );
@@ -58,6 +68,9 @@ function runInspect(path: string, opts: { json?: boolean }, io: CliIO): number {
   // would for any bundle that has never been benchmarked.
   const bundleDir = resolveBundleDir(path);
   io.out(ladderStatusSummary(bundleDir, readBundleDir(bundleDir), air).line);
+  // Who decided what, last: the append-only record every approval, capability
+  // decision, and rollback writes beside the bundle (.anvil/approvals.jsonl).
+  io.out(summarizeApprovalRecords(readApprovalRecords(bundleDir)));
   io.out("");
   for (const op of catalog.operations) {
     const operation = air.operations.find((candidate) => candidate.id === op.id);
