@@ -739,3 +739,71 @@ spec enveloped its list response (`{views: [...]}`), and one-level
 refusal is pinned by test (group-cluster.test.ts, `$.output.nonexistent`),
 and the envelope-vs-array distinction decides whether the workflow arm is
 even available on an estate.
+
+## 2026-09-20 — The eight weakest capability sets, audited and closed
+
+Eight parallel code audits ranked what was least developed against the
+product's own promise. Every claim below was verified in the source before
+it was acted on; cite these rather than re-deriving them.
+
+- **Caller gates reached one surface only.** `buildLimitsGate` had exactly one
+  call site in the repo (`cli/src/commands/serve.ts`, the local fleet), and
+  the deployed server's `mcpContext()` set neither `principal` nor `limits`.
+  So `ANVIL_RATE_LIMIT_*`, `ANVIL_SPEND_*` and `ANVIL_PRINCIPALS` were parsed
+  and discarded on Cloud Run, on both generated MCP entrypoints and in the
+  generated CLI, and every caller resolved to the anonymous every-scope
+  principal. This is the same defect class `boot.ts:26-33` already names for
+  `PolicyHooks` and `ANVIL_OTEL_EXPORTER`: the composition root stopped one
+  step short and five entrypoints each had to remember the rest. Closed by
+  moving both gates into `bootRuntime` (`contextDeps` carries the limiters,
+  `principalFor(inbound?)` resolves the caller) with a drift test in
+  `@anvil/generators` and a harness test on the prebuilt artifact. **Lesson
+  worth keeping: a config key with one consumer is an unwired key. Grep call
+  sites, not declarations.**
+- **The wire disagreed with the contract in four silent ways.** `codec.ts` set
+  the declared `content-type` and then `JSON.stringify`'d the body regardless;
+  `HttpResponse.body` was string-typed through a `TextDecoder`, so a binary
+  response was mangled; `executor.ts` did `String(value)` for query values, so
+  an array was comma-joined and an object became `[object Object]`; and
+  `wire-gate.ts` let a protocol facade bypass every refusal except
+  `graphql_sse`, including refusals that are about framing and cannot be
+  fixed by a facade. None of the four emitted a diagnostic — out of character
+  for a compiler that diagnoses every schema truncation.
+- **GraphQL and WSDL lowering promised data the query could not return.**
+  `graphql-binding.ts` selected `{ __typename }` for a union while
+  `graphql.ts` published a `oneOf` of full member types; fields needing
+  required arguments stayed in the schema but left the query; `xsd:choice`
+  compiled to co-required siblings; a WSDL 2.0 document was labelled 2.0 and
+  then parsed with 1.1 vocabulary, yielding zero operations in silence.
+- **Three assurance claims outran the code.** `cli/commands/certify.ts`
+  hard-coded `assessStaticContract` and threw on any other status, while
+  `docs/simulation-and-backtesting.md` described an executable phase. The
+  mutation battery scored a mutant "killed" when the surface-signature hash
+  changed, which proves attestation tightness, not enforcement, and scored an
+  inapplicable mutant killed. `evals grade` was never handed a judge and
+  nothing produced answers, so `runtime.evals-present` only checked that
+  files existed.
+- **The SDKs were the surfaces that disagreed.** Dry-run existed on the CLI
+  and on MCP and in none of the four languages; `oauth2_on_behalf_of` was
+  implemented in the runtime and both MCP transports and in no SDK; and
+  client-credentials was consumed as a pre-minted token rather than granted.
+- **Approvals were anonymous.** `contract.ts:551-556` states it outright: the
+  library records no reviewer identity for a capability decision. The only
+  identity anywhere in the approval path was self-asserted free text in
+  browser storage on a pack decision. There was no pre-approval diff, the
+  console could not edit the manifest, and `anvilVersion` was written as
+  "0.1.0" and read by nothing.
+- **MCP was half-featured where the thesis needs it most.** `structuredContent`
+  was returned with no `outputSchema` to validate against, and there was no
+  elicitation at all — for a product whose value is confirmation-gating a
+  dangerous mutation, the server could only refuse and delegate escalation to
+  the client.
+- **The legacy bridge's one real transport was unreachable.** `StompClient`
+  had zero construction sites outside its own module, its own header admitted
+  no test opened a socket, and nothing hosted `createLegacyBridgeFacade`.
+
+All eight are closed on the branch that carries this entry. Two habits paid
+for themselves and are worth repeating: every audit cited `file:line` and was
+re-verified against the source before any code moved, and each fix landed with
+either a drift guard or an end-to-end proof on the real artifact rather than a
+unit test of the fix's own shape.
