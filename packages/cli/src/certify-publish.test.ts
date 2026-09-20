@@ -188,6 +188,36 @@ describe("anvil publish (gated)", () => {
     expect(record.operatorActionRequired).toBe(true);
   });
 
+  it("prepares a kubernetes plan under the same gates, pointing at the kustomize artifacts", async () => {
+    // Ungated first: the kubernetes target fails closed exactly as cloud-run does.
+    const refused = bufferIO();
+    expect(runPublish(dir, { target: "kubernetes", env: "prod" }, refused, { env: noEnv })).toBe(1);
+    expect(refused.text()).toContain("uncertified_publish_refused");
+
+    certify();
+    writePassingExecutableEvidence();
+    const io = bufferIO();
+    expect(
+      await runAnvilCli(["publish", dir, "--env", "prod", "--target", "kubernetes"], { io }),
+      io.text(),
+    ).toBe(0);
+    expect(io.text()).toContain("Deployment plan prepared for payments → kubernetes ('prod')");
+    expect(io.text()).toContain("Kubernetes deployment plan only");
+    expect(io.text()).toContain("No cluster call is made");
+    expect(io.text()).not.toContain("gcloud builds submit");
+    const record = JSON.parse(readFileSync(join(dir, "publication.json"), "utf8"));
+    expect(record.target).toBe("kubernetes");
+    expect(record.cloudCallsMade).toBe(false);
+    expect(record.artifacts).toContain("deploy/kubernetes/kustomization.yaml");
+    expect(record.artifacts).toContain("deploy/kubernetes/deployment.yaml");
+    expect(record.artifacts).toContain("deploy/Dockerfile");
+    expect(record.artifacts).not.toContain("deploy/terraform/main.tf");
+    // The record is schema-valid for status, like a cloud-run one.
+    const status = await buildStatusReport(dir);
+    expect(status.publication.state).toBe("planned");
+    expect(status.publication.target).toBe("kubernetes");
+  });
+
   it("defaults the sole publish target to cloud-run at the CLI boundary", async () => {
     certify();
     writePassingExecutableEvidence();

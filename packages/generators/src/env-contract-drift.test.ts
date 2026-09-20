@@ -1,10 +1,12 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadAirDocument } from "@anvil/air";
 import { SERVING_ENV_CONTRACT } from "@anvil/mcp-runtime";
 import { RUNTIME_ENV_CONTRACT } from "@anvil/runtime";
 import { describe, expect, it } from "vitest";
 import { COMPILER_OWNED_RUNTIME_ENV_NAMES, envSchema } from "./deploy.js";
+import { kubernetesRuntimeEnv } from "./deploy-kubernetes.js";
 
 /**
  * Drift guard: every environment variable a serving process reads must be
@@ -122,5 +124,32 @@ describe("deploy/env.schema.json is derived from the runtime's own env contract"
       "otlp",
       "cloud_trace",
     ]);
+  });
+});
+
+describe("deploy/kubernetes/configmap.yaml is derived from the same env contract", () => {
+  it("sets only declared variables, carries every contract default, and covers the compiler-owned set", () => {
+    const air = loadAirDocument({
+      service: {
+        id: "drift",
+        version: "1.0.0",
+        source: { kind: "openapi" },
+        servers: [{ url: "https://drift.example.com" }],
+      },
+      operations: [],
+      workflows: [],
+    });
+    const declared = new Set([...RUNTIME_ENV_CONTRACT, ...SERVING_ENV_CONTRACT].map((v) => v.name));
+    const data = kubernetesRuntimeEnv(air);
+    const undeclared = Object.keys(data).filter((name) => !declared.has(name));
+    expect(undeclared, "ConfigMap keys with no entry in the env contract").toEqual([]);
+    for (const v of [...RUNTIME_ENV_CONTRACT, ...SERVING_ENV_CONTRACT]) {
+      if (v.default !== undefined) expect(data[v.name], v.name).toBe(v.default);
+    }
+    // No required ledger: every compiler-owned variable is pinned by the compiler.
+    expect([...COMPILER_OWNED_RUNTIME_ENV_NAMES].filter((name) => !(name in data))).toEqual([]);
+    for (const name of ["ANVIL_SERVICE_ID", "ANVIL_ENV", "ANVIL_ALLOWED_HOSTS"]) {
+      expect(data[name], `${name} is required by every deployment`).toBeTruthy();
+    }
   });
 });
