@@ -121,6 +121,11 @@ async function runServeMcp(dir: string, io: CliIO): Promise<number> {
       allowedHosts,
       env: config.env,
       timeoutMs: config.upstreamTimeoutMs,
+      // One stdio session, one caller, resolved from ANVIL_PRINCIPAL. Spreading
+      // `contextDeps` without this would hand `execute()` a configured
+      // directory and no caller, which it refuses fail-closed — so omitting it
+      // breaks every call the moment an operator sets ANVIL_PRINCIPALS.
+      principal: boot.principalFor(),
     }),
   });
   io.err(`anvil: serving MCP for ${air.service.id} over stdio`);

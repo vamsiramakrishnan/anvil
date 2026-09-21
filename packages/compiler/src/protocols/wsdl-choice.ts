@@ -6,12 +6,15 @@
  * "all of these at once": a request schema an agent could satisfy only by
  * sending every branch, which no SOAP service accepts. The lowering here keeps
  * every member as an optional property — so each one is still visible and
- * typed — and adds a `oneOf` whose alternatives require one branch apiece, so
- * a request that carries two branches, or none of a required choice, is
- * refused by the schema before it is ever encoded.
+ * typed — and adds a `oneOf` whose alternatives require one branch apiece and
+ * mark the other branches' members absent, so a request that carries two
+ * branches, or none of a required choice, is refused by the schema before it
+ * is ever encoded.
  *
  * Only what is directly expressible is expressed. A branch that is itself a
- * `sequence` requires that sequence's non-optional elements; a nested `choice`
+ * `sequence` requires that sequence's non-optional elements, and expands into
+ * one alternative per combination when it holds a choice of its own, so the
+ * inner exactly-one rule survives; a nested `choice` directly under a choice
  * is flattened into the outer one's branches, since "one of (a | one of (b, c))"
  * is "one of (a, b, c)"; a `choice` with `minOccurs="0"`, or a branch whose
  * only element is itself optional, admits the empty case. `maxOccurs` on the
@@ -67,9 +70,48 @@ function memberName(el: XmlElement): string | undefined {
   return undefined;
 }
 
-/** A sequence/all branch: every element it holds, the non-optional ones required. */
-function sequenceBranch(seq: XmlElement, members: Set<XmlElement>): Branch {
-  const branch: Branch = { carries: [], requires: [] };
+/**
+ * How many alternatives one sequence branch may expand into before the
+ * lowering stops enumerating. Nested choices multiply, and a schema with
+ * thousands of alternatives helps no reader; past the cap the sequence keeps
+ * its own requirements and carries the inner members as optional, which is
+ * permissive rather than wrong, and the diagnostic still names the choice.
+ */
+const MAX_SEQUENCE_ALTERNATIVES = 64;
+
+/**
+ * A sequence/all branch, as one alternative per combination it admits.
+ *
+ * A nested choice cannot ride along as a bag of optional members: that
+ * accepts both none of them and all of them, while the XSD admits exactly
+ * one. Expanding the sequence into one alternative per inner branch keeps
+ * that rule — `constraintFor` then excludes the inner members each
+ * alternative did not pick — so a request carrying two of them, or none where
+ * the choice is required, is refused by the schema instead of being encoded
+ * into SOAP the service rejects.
+ */
+function sequenceBranches(seq: XmlElement, members: Set<XmlElement>): Branch[] {
+  let alternatives: Branch[] = [{ carries: [], requires: [] }];
+  let capped = false;
+  const combine = (variants: readonly Branch[]): void => {
+    if (variants.length === 0) return;
+    if (alternatives.length * variants.length > MAX_SEQUENCE_ALTERNATIVES) {
+      capped = true;
+      // Keep every member visible, require nothing extra: the permissive case.
+      const carried = variants.flatMap((v) => v.carries);
+      alternatives = alternatives.map((base) => ({
+        carries: [...base.carries, ...carried],
+        requires: [...base.requires],
+      }));
+      return;
+    }
+    alternatives = alternatives.flatMap((base) =>
+      variants.map((variant) => ({
+        carries: [...base.carries, ...variant.carries],
+        requires: [...base.requires, ...variant.requires],
+      })),
+    );
+  };
   const walk = (node: XmlElement): void => {
     for (const child of node.children) {
       const kind = localName(child.tag);
@@ -77,20 +119,20 @@ function sequenceBranch(seq: XmlElement, members: Set<XmlElement>): Branch {
         members.add(child);
         const name = memberName(child);
         if (!name) continue;
-        branch.carries.push(name);
-        if (child.attrs.minOccurs !== "0") branch.requires.push(name);
+        combine([{ carries: [name], requires: child.attrs.minOccurs === "0" ? [] : [name] }]);
       } else if (kind === "choice") {
-        // A choice inside a sequence branch: its members ride along as
-        // optional. Its own exactly-one rule is not restated here; the
-        // diagnostic names the choice so a reviewer can tighten it by hand.
-        for (const inner of branchesOf(child, members)) branch.carries.push(...inner.carries);
+        const inner = branchesOf(child, members);
+        if (inner.length === 0) continue;
+        // An optional inner choice also admits picking none of it.
+        combine(child.attrs.minOccurs === "0" ? [...inner, { carries: [], requires: [] }] : inner);
       } else if (kind === "sequence" || kind === "all") {
         walk(child);
       }
     }
   };
   walk(seq);
-  return branch;
+  if (capped) return [{ carries: alternatives.flatMap((a) => a.carries), requires: [] }];
+  return alternatives;
 }
 
 function branchesOf(choice: XmlElement, members: Set<XmlElement>): Branch[] {
@@ -105,15 +147,29 @@ function branchesOf(choice: XmlElement, members: Set<XmlElement>): Branch[] {
     } else if (kind === "choice") {
       out.push(...branchesOf(child, members));
     } else if (kind === "sequence" || kind === "all") {
-      out.push(sequenceBranch(child, members));
+      out.push(...sequenceBranches(child, members));
     }
     // `any` and `group ref` are not lowered; there is no element to name.
   }
   return out;
 }
 
-const requireEach = (names: readonly string[]): JsonSchemaLike[] =>
-  names.map((name) => ({ required: [name] }));
+/**
+ * "This property must be absent", as the one spelling of the false schema that
+ * survives the trip to a served surface. The obvious encoding — a sibling
+ * `not: { anyOf: [{ required: [other] }, ...] }` — does not: Zod's JSON Schema
+ * importer rejects `not` outright except for this exact `{ not: {} }` form, so
+ * an alternative carrying one takes the generated MCP server down at tool
+ * registration; and the bundler's depth bound truncates the `required` arrays
+ * nested that far down to `[]`, which turns "must not carry the others" into a
+ * branch nothing can satisfy. Marking the excluded members absent keeps the
+ * constraint shallow, inside `properties` where a reader already looks, and
+ * degrades to merely permissive if it is ever truncated.
+ */
+const absent = (): JsonSchemaLike => ({ not: {} });
+
+const excluding = (names: readonly string[]): JsonSchemaLike =>
+  Object.fromEntries(names.map((name) => [name, absent()]));
 
 /**
  * The `oneOf` for one choice. When every branch is a single required element
@@ -136,11 +192,11 @@ function constraintFor(
         const others = carried.filter((name) => !b.carries.includes(name));
         return {
           ...(b.requires.length > 0 ? { required: b.requires } : {}),
-          ...(others.length > 0 ? { not: { anyOf: requireEach(others) } } : {}),
+          ...(others.length > 0 ? { properties: excluding(others) } : {}),
         };
       });
   const optional = choice.attrs.minOccurs === "0";
-  if (optional) alternatives.push({ not: { anyOf: requireEach(carried) } });
+  if (optional) alternatives.push({ properties: excluding(carried) });
   return { oneOf: alternatives };
 }
 

@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   APPROVAL_RECORD_FILE,
@@ -7,7 +7,6 @@ import {
   type ApprovalRecordSubject,
   UNRECORDED_REVIEWER,
 } from "@anvil/air";
-import { z } from "zod";
 
 /**
  * The approval record: an append-only log of every decision that changed a
@@ -81,6 +80,29 @@ export function buildApprovalRecord(
 }
 
 /** Append one record; returns the log's path. Creates `.anvil/` on first use. */
+/**
+ * Carry the log across an atomic swap by writing it into the STAGE, so the
+ * rename that installs the new bytes installs the decision that produced them
+ * in the same instant. Two failures this avoids: a record appended after the
+ * swap can fail with the new surface already live, leaving a generation no
+ * line accounts for; and the swap moves the old directory aside, so a log
+ * written only to the old one is buried with it — which silently reduced an
+ * append-only log to whichever decision came last.
+ */
+export function stageApprovalRecord(
+  bundleDir: string,
+  stageDir: string,
+  record: ApprovalRecord,
+): void {
+  const prior = existsSync(join(bundleDir, APPROVAL_RECORD_FILE))
+    ? readFileSync(join(bundleDir, APPROVAL_RECORD_FILE), "utf8")
+    : "";
+  const path = join(stageDir, APPROVAL_RECORD_FILE);
+  mkdirSync(dirname(path), { recursive: true });
+  const head = prior.length === 0 || prior.endsWith("\n") ? prior : `${prior}\n`;
+  writeFileSync(path, `${head}${JSON.stringify(ApprovalRecord.parse(record))}\n`, "utf8");
+}
+
 export function appendApprovalRecord(bundleDir: string, record: ApprovalRecord): string {
   const path = join(bundleDir, APPROVAL_RECORD_FILE);
   mkdirSync(dirname(path), { recursive: true });

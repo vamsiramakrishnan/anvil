@@ -1,5 +1,7 @@
-import type { Diagnostic } from "@anvil/air";
+import type { Diagnostic, JsonSchema } from "@anvil/air";
+import { materializeSchemaBranches } from "@anvil/air";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { compile } from "../compile.js";
 import { detectProtocolFormat } from "./index.js";
 import { adaptWsdl, wsdlVersionOf } from "./wsdl.js";
@@ -45,6 +47,10 @@ const wsdl = (types: string, requestElement = "PayRequest") => `<?xml version="1
 const RESPONSE = `<xsd:element name="PayResponse"><xsd:complexType><xsd:sequence>
   <xsd:element name="receiptId" type="xsd:string"/>
 </xsd:sequence></xsd:complexType></xsd:element>`;
+
+/** "Must be absent": the false schema, as `constraintFor` spells it. */
+const ABSENT = { not: {} };
+const absent = (...names: string[]) => Object.fromEntries(names.map((n) => [n, ABSENT]));
 
 type Schema = Record<string, unknown>;
 const requestSchemaOf = (doc: ReturnType<typeof adaptWsdl>): Schema => {
@@ -126,7 +132,7 @@ describe("the less regular choices", () => {
     expect(requestSchemaOf(doc).oneOf).toEqual([
       { required: ["card"] },
       { required: ["bankAccount"] },
-      { not: { anyOf: [{ required: ["card"] }, { required: ["bankAccount"] }] } },
+      { properties: { card: ABSENT, bankAccount: ABSENT } },
     ]);
   });
 
@@ -151,12 +157,11 @@ describe("the less regular choices", () => {
     );
     const schema = requestSchemaOf(doc);
     expect(schema.required).toBeUndefined();
-    const exclude = (...names: string[]) => ({ anyOf: names.map((n) => ({ required: [n] })) });
     expect(schema.oneOf).toEqual([
-      { required: ["card"], not: exclude("routing", "account", "memo", "wallet", "voucher") },
-      { required: ["routing", "account"], not: exclude("card", "wallet", "voucher") },
-      { required: ["wallet"], not: exclude("card", "routing", "account", "memo", "voucher") },
-      { required: ["voucher"], not: exclude("card", "routing", "account", "memo", "wallet") },
+      { required: ["card"], properties: absent("routing", "account", "memo", "wallet", "voucher") },
+      { required: ["routing", "account"], properties: absent("card", "wallet", "voucher") },
+      { required: ["wallet"], properties: absent("card", "routing", "account", "memo", "voucher") },
+      { required: ["voucher"], properties: absent("card", "routing", "account", "memo", "wallet") },
     ]);
   });
 
@@ -201,6 +206,114 @@ describe("the less regular choices", () => {
     const method = (schema.properties as Record<string, Schema>).method;
     expect(method?.oneOf).toEqual([{ required: ["card"] }, { required: ["bankAccount"] }]);
     expect(method?.required).toBeUndefined();
+  });
+});
+
+describe("a choice nested inside a sequence branch keeps its own rule", () => {
+  /** An outer choice: `card`, or a bank sequence that itself chooses a rail. */
+  const NESTED = (railMinOccurs = "1") => `
+    <xsd:element name="PayRequest"><xsd:complexType>
+      <xsd:choice>
+        <xsd:element name="card" type="xsd:string"/>
+        <xsd:sequence>
+          <xsd:element name="routing" type="xsd:string"/>
+          <xsd:choice minOccurs="${railMinOccurs}">
+            <xsd:element name="wire" type="xsd:string"/>
+            <xsd:element name="ach" type="xsd:string"/>
+          </xsd:choice>
+        </xsd:sequence>
+      </xsd:choice>
+    </xsd:complexType></xsd:element>
+    ${RESPONSE}`;
+
+  it("expands the sequence into one alternative per inner branch", () => {
+    // Flattening the inner members as unconstrained optionals would accept
+    // both `{routing}` with no rail and `{routing, wire, ach}` with two, and
+    // encode either into SOAP the service rejects. One alternative per
+    // combination is what keeps the inner exactly-one rule.
+    const schema = requestSchemaOf(adaptWsdl(wsdl(NESTED())));
+    expect(schema.oneOf).toEqual([
+      { required: ["card"], properties: absent("routing", "wire", "ach") },
+      { required: ["routing", "wire"], properties: absent("card", "ach") },
+      { required: ["routing", "ach"], properties: absent("card", "wire") },
+    ]);
+  });
+
+  it("adds the no-rail combination when the inner choice is optional", () => {
+    const schema = requestSchemaOf(adaptWsdl(wsdl(NESTED("0"))));
+    expect(schema.oneOf).toEqual([
+      { required: ["card"], properties: absent("routing", "wire", "ach") },
+      { required: ["routing", "wire"], properties: absent("card", "ach") },
+      { required: ["routing", "ach"], properties: absent("card", "wire") },
+      { required: ["routing"], properties: absent("card", "wire", "ach") },
+    ]);
+  });
+
+  it("still names every member of the sequence branch in the diagnostic", () => {
+    const diagnostics: Diagnostic[] = [];
+    adaptWsdl(wsdl(NESTED()), undefined, "pay.wsdl", diagnostics);
+    const lowered = diagnostics.filter((d) => d.code === "wsdl_choice_lowered");
+    expect(lowered).toHaveLength(1);
+    expect(lowered[0]?.message).toContain("(card | routing | wire | ach)");
+  });
+
+  it("falls back to the permissive branch past the alternative cap", () => {
+    // Nested choices multiply. Past the cap the sequence keeps its members
+    // visible and requires nothing extra — permissive, not wrong — because
+    // refusing valid requests is worse than admitting a few invalid ones, and
+    // a schema with thousands of alternatives helps no reader.
+    const rails = Array.from(
+      { length: 7 },
+      (_, i) => `<xsd:choice>
+        <xsd:element name="a${i}" type="xsd:string"/>
+        <xsd:element name="b${i}" type="xsd:string"/>
+      </xsd:choice>`,
+    ).join("");
+    const schema = requestSchemaOf(
+      adaptWsdl(
+        wsdl(`
+          <xsd:element name="PayRequest"><xsd:complexType>
+            <xsd:choice>
+              <xsd:element name="card" type="xsd:string"/>
+              <xsd:sequence>${rails}</xsd:sequence>
+            </xsd:choice>
+          </xsd:complexType></xsd:element>
+          ${RESPONSE}`),
+      ),
+    );
+    const alternatives = schema.oneOf as Schema[];
+    expect(alternatives).toHaveLength(2);
+    expect(alternatives[1]?.required).toBeUndefined();
+    expect(Object.keys((alternatives[1]?.properties ?? {}) as object)).toEqual(["card"]);
+  });
+
+  it("refuses none and both, and accepts exactly one, at the served surface", async () => {
+    // The whole point of the lowering. This is the shape a serving surface
+    // actually validates against: the operation's own body schema, through
+    // the same branch materialization and JSON-Schema import the MCP runtime
+    // and the generated CLI use. An encoding the importer refuses, or one the
+    // bundler's depth bound guts, fails here rather than in production.
+    const air = await compile({
+      spec: wsdl(NESTED()),
+      serviceId: "payments",
+      sourceUri: "pay.wsdl",
+    });
+    const pay = air.operations.find((o) => o.sourceRef.operationId === "Pay");
+    const body = pay?.input.body?.schema;
+    expect(body).toBeDefined();
+    const validator = z.fromJSONSchema(
+      materializeSchemaBranches(body as JsonSchema) as Parameters<typeof z.fromJSONSchema>[0],
+    );
+    const accepts = (value: unknown) => validator.safeParse(value).success;
+    expect(accepts({ card: "4111" })).toBe(true);
+    expect(accepts({ routing: "021", wire: "w" })).toBe(true);
+    expect(accepts({ routing: "021", ach: "a" })).toBe(true);
+    // The two the flattened lowering used to let through.
+    expect(accepts({ routing: "021" })).toBe(false);
+    expect(accepts({ routing: "021", wire: "w", ach: "a" })).toBe(false);
+    // And the outer rule, which it also lost.
+    expect(accepts({ card: "4111", routing: "021", wire: "w" })).toBe(false);
+    expect(accepts({})).toBe(false);
   });
 });
 

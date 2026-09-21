@@ -325,11 +325,27 @@ export class StompClient implements QueueBrokerClient {
     }
   }
 
+  /** Drop the waiter for `idempotencyKey`; the caller has stopped waiting. */
+  cancel(idempotencyKey: string): void {
+    this.pending.delete(idempotencyKey);
+  }
+
   async requestReply(options: QueueRequestReplyOptions): Promise<QueueReply> {
     if (!this.socket || this.state !== "connected") {
       throw new QueueBrokerTransportError("STOMP client is not connected");
     }
     const socket = this.socket;
+    // One key, one exchange in flight. Overwriting a live waiter would let a
+    // late reply settle a different invocation while the first waits out its
+    // timeout — a reply delivered to the wrong caller, which is worse than a
+    // refusal an operator can see.
+    if (this.pending.has(options.idempotencyKey)) {
+      return Promise.reject(
+        new QueueBrokerTransportError(
+          `a request with idempotency key '${options.idempotencyKey}' is already in flight`,
+        ),
+      );
+    }
     return new Promise<QueueReply>((resolve, reject) => {
       this.pending.set(options.idempotencyKey, { resolve, reject });
       socket.write(

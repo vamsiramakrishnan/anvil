@@ -14,9 +14,9 @@ import {
   type ApprovalRecord,
   type ApprovalRecordInput,
   type ApprovalRecordSubject,
-  appendApprovalRecord,
   buildApprovalRecord,
   normalizeReviewer,
+  stageApprovalRecord,
 } from "./approval-record.js";
 import {
   GENERATION_METADATA_FILE,
@@ -456,11 +456,22 @@ export interface CommitOptions {
 }
 
 /**
- * The commit: swap the verified stage into place, retire the replaced
- * generation into history, append the approval record. The swap is the only
- * step that can leave the bundle in doubt, and `replaceBundle` restores the
- * original if it fails; the two bookkeeping steps run after the live bundle
- * is already coherent, so a failure there is reported, never rolled back.
+ * The commit: write the approval record into the stage, swap the verified
+ * stage into place, then retire the replaced generation into history.
+ *
+ * The record goes in BEFORE the swap on purpose. Appending it afterwards has
+ * two failure modes that both break the guarantee it exists to make: an
+ * append that throws leaves the new surface live with no line accounting for
+ * it, and — because the swap moves the old directory aside — a log written
+ * only to the old directory is retired with it, which quietly turned an
+ * append-only log into a record of whichever decision came last. Staging it
+ * means the rename that installs the new bytes installs the decision that
+ * produced them, in the same instant, or neither.
+ *
+ * History archival is the one genuinely best-effort step, and it runs last:
+ * the live bundle is already coherent and audited by then, so a failure there
+ * is reported and the replaced generation is RETAINED. Deleting it would turn
+ * a bookkeeping problem into the loss of the only copy a rollback could use.
  */
 export function commitStagedBundle(
   bundleDir: string,
@@ -470,6 +481,14 @@ export function commitStagedBundle(
 ): CommittedStage {
   const now = (deps.now ?? (() => new Date()))();
   const historyLimit = resolveHistoryLimit(deps.historyLimit);
+  const record = buildApprovalRecord(options.record, {
+    bundleHash: { before: options.before, after: options.after },
+    now: () => now,
+  });
+  // Carries the existing log forward and adds this decision, so the swap
+  // installs both together. A throw here happens while the live bundle is
+  // still the old one, which is the safe moment to fail.
+  stageApprovalRecord(bundleDir, stageDir, record);
   const backupDir = replaceBundle(bundleDir, stageDir, deps);
   let history: HistoryEntry | undefined;
   let retainedBackup: string | undefined;
@@ -480,19 +499,12 @@ export function commitStagedBundle(
       historyLimit,
     });
   } catch {
-    // The live bundle is already coherent and installed. Retaining the old
-    // sibling is safer than turning a bookkeeping problem into a false rollback.
-    try {
-      rmSync(backupDir, { recursive: true, force: true });
-    } catch {
-      retainedBackup = backupDir;
-    }
+    // The live bundle is coherent, installed and audited. The replaced
+    // generation stays exactly where it is: it is the only intact copy, and
+    // a caller is told where to find it rather than losing it to a failure
+    // in the bookkeeping that was meant to preserve it.
+    retainedBackup = backupDir;
   }
-  const record = buildApprovalRecord(options.record, {
-    bundleHash: { before: options.before, after: options.after },
-    now: () => now,
-  });
-  appendApprovalRecord(bundleDir, record);
   return {
     record,
     ...(history ? { history } : {}),

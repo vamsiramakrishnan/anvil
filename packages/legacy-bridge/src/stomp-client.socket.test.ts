@@ -207,4 +207,23 @@ describe("StompClient over a STOMP 1.2 server double (real loopback socket)", ()
     await expect(client.connect()).rejects.toThrow(QueueBrokerTransportError);
     expect(client.isConnected).toBe(false);
   });
+
+  it("drops the waiter when the caller gives up, and refuses a duplicate key in flight", async () => {
+    // Two failures a correlation map invites: a timed-out exchange whose
+    // waiter is never removed (one leaked closure per timeout, for the life of
+    // the connection), and a second request reusing a live key, which would
+    // overwrite the first waiter and hand its reply to the wrong call.
+    const { client } = await boot({ silentDestinations: new Set([REQUEST]) });
+    await client.connect();
+    const request = exchange("k-abandoned", "{}");
+
+    const first = requestReplyWithTimeout(client, request, 40);
+    await expect(client.requestReply(request)).rejects.toThrow(/already in flight/);
+    await expect(first).rejects.toBeInstanceOf(QueueBrokerTimeoutError);
+
+    // Released, so the same key is usable again rather than refused forever.
+    await expect(requestReplyWithTimeout(client, request, 40)).rejects.toBeInstanceOf(
+      QueueBrokerTimeoutError,
+    );
+  });
 });

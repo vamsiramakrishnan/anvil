@@ -1,10 +1,15 @@
 import type { JsonSchema } from "./schema.js";
 
 /**
- * Make inherited object properties explicit on required-only union branches.
- * Zod's JSON Schema importer otherwise ignores `required` without `properties`,
- * turning a valid exclusive union into two always-matching unconstrained branches.
- * This preserves the original constraint; it does not relax oneOf into anyOf.
+ * Make inherited object properties explicit on union branches that carry only
+ * `required` and/or a partial `properties` override. Zod's JSON Schema importer
+ * otherwise ignores `required` without `properties`, turning a valid exclusive
+ * union into two always-matching unconstrained branches — and a branch that
+ * names only the properties it constrains (an `xsd:choice` alternative marking
+ * the other branches' members absent) loses every sibling's type as well as its
+ * own requiredness. The branch's own entries win over the inherited ones, which
+ * is what lets such an override stand. This preserves the original constraint;
+ * it does not relax oneOf into anyOf.
  */
 export function materializeSchemaBranches(schema: JsonSchema): JsonSchema {
   const seen = new WeakMap<object, JsonSchema>();
@@ -32,9 +37,9 @@ export function materializeSchemaBranches(schema: JsonSchema): JsonSchema {
           value.type === "object" &&
             properties &&
             branch &&
-            Array.isArray(branch.required) &&
+            (Array.isArray(branch.required) || branch.properties !== undefined) &&
             Object.keys(branch).every((key) =>
-              ["required", "type", "title", "description"].includes(key),
+              ["required", "properties", "type", "title", "description"].includes(key),
             ) &&
             (branch.type === undefined || branch.type === "object")
             ? {

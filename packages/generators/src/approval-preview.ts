@@ -1,5 +1,5 @@
 import type { AirDocument } from "@anvil/air";
-import type { ApproveCapabilityOptions } from "@anvil/compiler";
+import type { ApproveCapabilityOptions, CapabilityBudgetCheck } from "@anvil/compiler";
 import { loadAir } from "@anvil/refinement";
 import type { ApprovalRecordSubject } from "./approval-record.js";
 import {
@@ -80,15 +80,27 @@ export function previewOperationApproval(path: string, ids: readonly string[]): 
 }
 
 /** What `anvil capability approve|reject` would do. Same review gate, no write. */
+export interface CapabilityDecisionPreview extends ApprovalPreview {
+  /**
+   * The budget the admission path PREPARED, not a fresh reading of the
+   * unchanged AIR. They differ exactly where it matters: an explicit
+   * `allowLarge` waiver turns a blocked budget into an accepted one with a
+   * warning, and a preview that recomputed would tell a reviewer the decision
+   * is blocked while the approval it is previewing would record it accepted.
+   */
+  budget?: CapabilityBudgetCheck;
+}
+
 export function previewCapabilityDecision(
   path: string,
   capabilityId: string,
   decision: "approve" | "reject",
   opts: ApproveCapabilityOptions & { reason?: string } = {},
-): ApprovalPreview {
+): CapabilityDecisionPreview {
   const before = loadAir(path);
   const prepared = prepareCapabilityDecision(path, capabilityId, decision, opts);
-  return previewReprojection(path, before, prepared.air, prepared.subjects);
+  const preview = previewReprojection(path, before, prepared.air, prepared.subjects);
+  return { ...preview, ...(prepared.budget ? { budget: prepared.budget } : {}) };
 }
 
 /** The preview as the CLI prints it: one line per surface that would change. */

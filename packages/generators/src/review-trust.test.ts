@@ -1,4 +1,12 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +34,7 @@ import {
 import {
   approveCapabilityInBundle,
   approveOperationsInBundle,
+  commitStagedBundle,
   rejectCapabilityInBundle,
   reprojectBundleAtomically,
 } from "./bundle-reproject.js";
@@ -355,6 +364,87 @@ describe("rollback", () => {
   it("says so when there is nothing to roll back to", async () => {
     const dir = await paymentsBundle();
     expect(() => rollbackBundle(dir)).toThrow(/nothing to roll back to/);
+  });
+});
+
+describe("the approval log across a swap", () => {
+  it("keeps every prior decision, because the swap moves the old directory aside", async () => {
+    // The log is append-only by contract. It is also written into a directory
+    // the swap retires, so carrying it forward is what makes the contract
+    // true: without that, the log holds only whichever decision came last.
+    const dir = await paymentsBundle();
+    const ops = airOf(dir)
+      .operations.filter((op) => op.state === "review_required")
+      .slice(0, 2)
+      .map((op) => op.id);
+    expect(ops.length, "the payments fixture has two reviewable operations").toBe(2);
+
+    for (const id of ops) {
+      approveOperationsInBundle(dir, [id], {}, { reviewer: "alice" });
+    }
+    const records = readApprovalRecords(dir);
+    expect(records.map((r) => r.subjects.map((s) => s.id).join(","))).toEqual(ops);
+    expect(records.every((r) => r.reviewer === "alice")).toBe(true);
+    // Each line is the hash pair for its own swap, chaining one to the next.
+    expect(records[1]?.bundleHash.before).toBe(records[0]?.bundleHash.after);
+  });
+
+  it("installs the decision with the bytes it describes, never after them", async () => {
+    // Staged into the candidate, so the rename publishes both or neither.
+    const dir = await paymentsBundle();
+    const src = readFileSync(
+      fileURLToPath(new URL("./bundle-reproject.ts", import.meta.url)),
+      "utf8",
+    );
+    const staged = src.indexOf("stageApprovalRecord(bundleDir, stageDir, record)");
+    const swapped = src.indexOf("replaceBundle(bundleDir, stageDir, deps)");
+    expect(staged, "the record is staged").toBeGreaterThan(-1);
+    expect(staged, "the record is staged BEFORE the swap").toBeLessThan(swapped);
+    const id = airOf(dir).operations.find((op) => op.state === "review_required")?.id;
+    if (!id) throw new Error("fixture has no reviewable operation");
+    approveOperationsInBundle(dir, [id], {}, { reviewer: "alice" });
+    expect(existsSync(join(dir, APPROVAL_RECORD_FILE))).toBe(true);
+  });
+
+  it("retains the replaced generation when history archival fails", () => {
+    // The backup is the only intact copy of what was just replaced, so a
+    // failure in the bookkeeping meant to preserve it must not delete it.
+    const dir = mkdtempSync(join(tmpdir(), "anvil-archive-fail-"));
+    dirs.push(dir);
+    const bundle = join(dir, "bundle");
+    const stage = join(dir, "stage");
+    for (const [path, air] of [
+      [bundle, '{"n":0}'],
+      [stage, '{"n":1}'],
+    ] as const) {
+      mkdirSync(path, { recursive: true });
+      writeFileSync(join(path, "air.json"), air, "utf8");
+    }
+    // A FILE where the retired generation's history directory belongs: it is
+    // carried across the swap and then cannot be created as a directory.
+    mkdirSync(join(bundle, ".anvil"), { recursive: true });
+    writeFileSync(join(bundle, ".anvil", "history"), "not a directory", "utf8");
+
+    const hash = (n: number) => String(n).repeat(64).slice(0, 64);
+    const committed = commitStagedBundle(
+      bundle,
+      stage,
+      {},
+      {
+        before: hash(1),
+        after: hash(2),
+        record: {
+          reviewer: "alice",
+          action: "approve_operations",
+          subjects: [{ kind: "operation", id: "op.one", from: "review_required", to: "approved" }],
+        },
+      },
+    );
+    expect(committed.history, "archival failed, so there is no history entry").toBeUndefined();
+    expect(committed.retainedBackup, "the replaced generation is kept and named").toBeTruthy();
+    expect(existsSync(committed.retainedBackup as string)).toBe(true);
+    // The decision still landed, because it shipped with the bytes.
+    expect(readApprovalRecords(bundle).map((r) => r.subjects[0]?.id)).toEqual(["op.one"]);
   });
 });
 

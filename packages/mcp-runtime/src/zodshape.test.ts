@@ -88,6 +88,44 @@ describe("operationZodShape", () => {
     ).toBe(false);
   });
 
+  it("publishes a compositor body the importer accepts, with its rule intact", () => {
+    // An `xsd:choice` reaches here as a whole-projection body carrying a
+    // `oneOf`. Registering the tool builds a validator from it, so an encoding
+    // the importer refuses (`not` outside the `{ not: {} }` never-form) takes
+    // the server down at startup for every operation, not just this one — and
+    // one whose alternatives lose their sibling property types admits the
+    // cross-branch mixture the choice exists to forbid.
+    const absent = { not: {} };
+    const operation = keyedOperation();
+    operation.input.body = {
+      contentType: "application/json",
+      required: true,
+      projection: "whole",
+      fields: [],
+      schema: {
+        type: "object",
+        properties: {
+          card: { type: "string" },
+          routing: { type: "string" },
+          wire: { type: "string" },
+        },
+        oneOf: [
+          { required: ["card"], properties: { routing: absent, wire: absent } },
+          { required: ["routing", "wire"], properties: { card: absent } },
+        ],
+      },
+    };
+    operation.input.schema = operationInputSchema(operation);
+    const validator = z.object(operationZodShape(operation));
+    const accepts = (body: unknown) => validator.safeParse({ body, idempotency_key: "k" }).success;
+
+    expect(accepts({ card: "4111" })).toBe(true);
+    expect(accepts({ routing: "021", wire: "w" })).toBe(true);
+    expect(accepts({ routing: "021" })).toBe(false);
+    expect(accepts({ card: "4111", routing: "021", wire: "w" })).toBe(false);
+    expect(accepts({})).toBe(false);
+  });
+
   it("retains modeled source constraints on the synthesized key", () => {
     const operation = keyedOperation();
     operation.input.params = [

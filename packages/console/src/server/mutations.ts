@@ -138,10 +138,17 @@ export function approveCapability(
   };
   if (body.dryRun === true) {
     const preview = previewCapabilityDecision(bundle.dir, capabilityId, "approve", opts);
-    const budget = capabilityDisclosureBudget(
-      loadBundleAir(bundle.dir, readBundleDir(bundle.dir)),
-      capabilityId,
-    );
+    // The budget the admission path prepared, not a fresh reading of the
+    // unchanged AIR: an explicit `allowLarge` waiver accepts a budget that
+    // recomputing would still report blocked, and a preview that disagreed
+    // with its own approval on exactly the decision a reviewer is weighing
+    // would be worse than no preview.
+    const budget =
+      preview.budget ??
+      capabilityDisclosureBudget(
+        loadBundleAir(bundle.dir, readBundleDir(bundle.dir)),
+        capabilityId,
+      );
     return { capabilityId, budget, written: false, preview: summarizePreview(preview) };
   }
   const { budget, reprojection } = approveCapabilityInBundle(
